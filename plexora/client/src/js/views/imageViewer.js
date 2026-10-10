@@ -3308,10 +3308,13 @@ class ImageViewer {
      */
     renderCurrentViewCanvas() {
         // PNG has no vector concept, so the scale bar and legend are baked
-        // in as raster pixels here, same as before.
-        const baseCanvas = this.viewer?.scalebarInstance && this.show_scalebar
+        // in as raster pixels here, same as before. In 3-D the picture is the
+        // volume renderer's canvas, not the tiles under it.
+        const volumeCanvas = window.__plexora?.viewState?.isVolume?.()
+            ? window.__plexora?.volumeView?.renderer?.snapshot?.() : null;
+        const baseCanvas = volumeCanvas || (this.viewer?.scalebarInstance && this.show_scalebar
             ? this.viewer.scalebarInstance.getImageWithScalebarAsCanvas()
-            : this.viewer?.drawer?.canvas;
+            : this.viewer?.drawer?.canvas);
         if (!baseCanvas) return null;
 
         const canvas = document.createElement("canvas");

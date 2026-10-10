@@ -46,7 +46,7 @@
          awaits it before it builds a single tile source, and every page that
          can open a viewer loads it. Costs one request that answers "{}" for a
          project with nothing on a node. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20260927_telemetry" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20261009_volume" type="text/javascript"></script>
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
@@ -81,7 +81,7 @@
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261009_depth"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261009_volume"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}

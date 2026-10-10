@@ -35,7 +35,9 @@
     "use strict";
 
     const SAVE_DELAY_MS = 400;
-    const MODES = ["plane", "slab"];
+    //: "volume" renders the stack in 3-D (views/volumeRenderer.js); the tiles
+    //: underneath stay at the current plane, so leaving it is instant.
+    const MODES = ["plane", "slab", "volume"];
     const OPS = ["max", "mean", "min", "std", "med", "pct"];
     const OP_LABELS = { max: "MIP", mean: "Mean", min: "Min", std: "Std. dev.",
                         med: "Median", pct: "Percentile" };
@@ -232,12 +234,23 @@
             return state && state.mode === "slab" && state.slab.op === "std" ? "std" : "volume";
         }
 
+        /** True while the volume renderer, not the tiles, is the picture. */
+        isVolume(state = this.state) {
+            return Boolean(state) && state.mode === "volume";
+        }
+
         /** What the badge and every capture print, e.g. "z 12 / 40 · 24.0 µm". */
         label(state = this.state) {
             if (!this.enabled() || !state) return "";
             const step = this.zStep();
             const prefix = this.frames > 1
                 ? `t ${state.t + 1}/${this.frames}${this._frameTime(state.t)} · ` : "";
+            if (state.mode === "volume") {
+                const composite = state.volume?.composite === "additive" ? "additive" : "MIP";
+                const { z0, z1 } = state.slab;
+                const range = z0 === 0 && z1 === this.depth - 1 ? "all planes" : `z ${z0}–${z1}`;
+                return `${prefix}Volume · ${composite} · ${range}`;
+            }
             if (state.mode === "slab") {
                 const { z0, z1, op, q } = state.slab;
                 const name = op === "pct" ? `${q}th pct.` : OP_LABELS[op] || op;

@@ -52,10 +52,14 @@
     }
 
     class DepthStrip {
-        constructor(viewState, { viewer = null, openCard = null } = {}) {
+        constructor(viewState, { viewer = null, openCard = null, volume = null } = {}) {
             this.viewState = viewState;
             this.viewer = viewer;
             this.openCard = openCard;
+            //: The volume renderer's controller (views/volumeRenderer.js), or
+            //: null where this browser cannot draw one -- then no 3-D button.
+            this.volume = volume;
+            this.volumeSupported = Boolean(volume);
             this.root = null;
             this.badge = null;
             this.playing = null;
@@ -102,16 +106,18 @@
             const modes = el("div", "depth-strip-modes", { role: "radiogroup",
                                                            "aria-label": "Show" });
             this.modeButtons = {};
-            for (const [mode, glyph, title] of [
+            const offered = [
                 ["plane", "square", "One plane"],
                 ["slab", "layer-group", "Projection of a range of planes"],
-            ]) {
+            ];
+            if (this.volumeSupported) offered.push(["volume", "cube", "The stack in 3-D"]);
+            for (const [mode, glyph, title] of offered) {
                 const button = el("button", "depth-strip-button", {
                     type: "button", role: "radio", title, "aria-label": title,
                     "data-depth-mode": mode,
                 });
                 button.appendChild(icon(glyph));
-                button.addEventListener("click", () => vs.set({ mode }));
+                button.addEventListener("click", () => this.chooseMode(mode));
                 modes.appendChild(button);
                 this.modeButtons[mode] = button;
             }
@@ -233,8 +239,12 @@
                 button.classList.toggle("is-active", on);
                 button.setAttribute("aria-checked", on ? "true" : "false");
             }
-            const slab = state.mode === "slab";
+            const volume = state.mode === "volume";
+            // In 3-D the band is the clip range, so it is drawn and dragged
+            // exactly as a projection's is.
+            const slab = state.mode === "slab" || volume;
             this.root.classList.toggle("is-slab", slab);
+            this.root.classList.toggle("is-volume", volume);
             this.thumb.style.top = `${this.fraction(state.z) * 100}%`;
             this.band.hidden = !slab;
             if (slab) {
@@ -245,7 +255,10 @@
             }
             this.rail.setAttribute("aria-valuenow", String(state.z));
             this.rail.setAttribute("aria-valuetext", vs.label());
-            if (slab) {
+            if (volume) {
+                this.readoutTop.textContent = "3-D";
+                this.readoutBottom.textContent = `${state.slab.z0}–${state.slab.z1}`;
+            } else if (slab) {
                 const op = state.slab.op === "pct" ? `p${state.slab.q}`
                     : (state.slab.op === "max" ? "MIP" : state.slab.op);
                 this.readoutTop.textContent = op;
@@ -254,6 +267,8 @@
                 this.readoutTop.textContent = String(state.z);
                 this.readoutBottom.textContent = `/ ${vs.depth}`;
             }
+            this.readoutBottom.classList.toggle(
+                "is-long", this.readoutBottom.textContent.length > 4);
             if (this.badgeText) {
                 this.badgeText.textContent = vs.label();
                 this.badge.classList.toggle("is-derived", vs.isDerived());
@@ -269,6 +284,22 @@
         }
 
         // -- interaction -----------------------------------------------------
+
+        /**
+         * Switch what the picture is. Entering 3-D with the slab still at its
+         * default (centred, following z) opens the whole stack: in 3-D the
+         * band is the clip range, and a first look should show everything.
+         */
+        chooseMode(mode) {
+            const vs = this.viewState;
+            const state = vs.get();
+            if (mode === "volume" && state.mode !== "volume" && state.slab.follow) {
+                vs.set({ mode, slab: { z0: 0, z1: vs.depth - 1, follow: false,
+                                       thickness: vs.depth } });
+                return;
+            }
+            vs.set({ mode });
+        }
 
         zAt(clientY) {
             const box = this.track.getBoundingClientRect();
@@ -333,6 +364,10 @@
         openOptions() {
             const vs = this.viewState;
             const state = vs.get();
+            if (state.mode === "volume") {
+                this.openVolumeOptions(state);
+                return;
+            }
             const items = [];
             const ops = [["max", "Maximum (MIP)"], ["mean", "Mean"], ["min", "Minimum"],
                          ["std", "Std. deviation"], ["med", "Median"]];
@@ -363,6 +398,36 @@
                 items.push({ separator: true });
                 items.push({ label: "Depth options…", onSelect: () => this.openCard() });
             }
+            global.PlexoraMenu?.open?.(this.readout, items);
+        }
+
+        openVolumeOptions(state) {
+            const vs = this.viewState;
+            const renderer = this.volume?.renderer;
+            const composite = state.volume?.composite === "additive" ? "additive" : "mip";
+            const items = [
+                { label: "Maximum intensity (MIP)", checked: composite === "mip",
+                  onSelect: () => vs.set({ volume: { composite: "mip" } }) },
+                { label: "Additive", checked: composite === "additive",
+                  onSelect: () => vs.set({ volume: { composite: "additive" } }) },
+                { separator: true },
+                { label: "View",
+                  actions: [
+                      { icon: "arrows-to-dot", title: "Looking down onto XY",
+                        onSelect: () => renderer?.preset("xy") },
+                      { icon: "grip-lines", title: "From the side, XZ",
+                        onSelect: () => renderer?.preset("xz") },
+                      { icon: "grip-lines-vertical", title: "From the side, YZ",
+                        onSelect: () => renderer?.preset("yz") },
+                      { icon: "cube", title: "Three-quarter view",
+                        onSelect: () => renderer?.preset("iso") },
+                  ] },
+                { label: "All planes",
+                  onSelect: () => vs.set({ slab: { z0: 0, z1: vs.depth - 1, follow: false,
+                                                    thickness: vs.depth } }) },
+                { separator: true },
+                { label: "Back to one plane", onSelect: () => vs.set({ mode: "plane" }) },
+            ];
             global.PlexoraMenu?.open?.(this.readout, items);
         }
 

@@ -534,9 +534,21 @@ async function init(config, savedViewTransform = null) {
     // (ImageViewer.init builds it). See views/depthStrip.js.
     if (viewState?.enabled() && window.PlexoraDepthStrip) {
         try {
+            // The 3-D view, where this browser can draw one; null otherwise,
+            // and then the strip offers no 3-D button (views/volumeRenderer.js).
+            let volume = null;
+            try {
+                volume = window.PlexoraVolumeRenderer?.attach?.(viewState, {
+                    datasource, eventHandler: seaDragonViewer.eventHandler,
+                }) || null;
+            } catch (error) {
+                console.error("main: the volume view could not be set up", error);
+            }
+            __plexora.volumeView = volume;
             const strip = new PlexoraDepthStrip(viewState, {
                 viewer: seaDragonViewer.viewer,
                 openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
+                volume,
             });
             strip.mount();
             __plexora.depthStrip = strip;

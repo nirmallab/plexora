@@ -3859,6 +3859,14 @@ body.sidebar-collapsed .viewer-shell,
 
 .depth-strip-readout-bottom {
     color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* A range ("12–135") is wider than the strip's 26px of text at the readout's
+   own size; it steps down rather than wrapping onto a third line. */
+.depth-strip-readout-bottom.is-long {
+    font-size: 8px;
+    letter-spacing: -0.02em;
 }
 
 /* The badge: what the picture is, in words, under the sample's name. Amber
@@ -4013,4 +4021,32 @@ body.sidebar-collapsed .viewer-shell,
 .viewer-depth-badge [hidden],
 .depth-panel [hidden] {
     display: none !important;
+}
+
+/* The 3-D view (views/volumeRenderer.js): its own canvas over the tiles,
+   under every piece of furniture (they sit at 220 and up), so the caption,
+   the legend and the strip stay where they are. The tiles keep drawing the
+   current plane underneath, which is why leaving 3-D is instant. */
+.viewer-volume-canvas {
+    background: #000;
+    cursor: grab;
+    height: 100%;
+    inset: 0;
+    outline: none;
+    position: absolute;
+    touch-action: none;
+    width: 100%;
+    z-index: 200;
+}
+
+.viewer-volume-canvas:active {
+    cursor: grabbing;
+}
+
+.viewer-volume-canvas[hidden] {
+    display: none;
+}
+
+.viewer-depth-strip.is-volume .depth-strip-thumb {
+    display: none;
 }
