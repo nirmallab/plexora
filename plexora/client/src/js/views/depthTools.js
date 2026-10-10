@@ -86,7 +86,81 @@
             }
             const follow = q("#depth_follow_input");
             if (follow) follow.checked = Boolean(state.slab.follow);
+            paintPin(vs, state);
             paintSpacing(vs);
+        }
+
+        //: The projection layers this card started, by layer id -> label, so
+        //: the note can follow their builds on the viewer's layer events.
+        const pinning = new Map();
+
+        function pinnedLayer(vs) {
+            const token = vs.spec();
+            const id = `proj-${token}`;
+            // The layer stack holds every registered layer's spec, status
+            // included (main.js marks it as builds finish).
+            return { id, layer: global.__plexora?.layers?.get?.(id)?.spec || null };
+        }
+
+        function paintPin(vs, state) {
+            const row = q("[data-depth-pin]");
+            if (!row) return;
+            row.hidden = state.mode !== "slab";
+            if (row.hidden) return;
+            const button = q("#depth_pin_button");
+            const note = q("[data-depth-pin-note]");
+            const { id, layer } = pinnedLayer(vs);
+            const busy = pinning.has(id) || layer?.status === "pending";
+            if (button) button.disabled = busy || Boolean(layer && layer.status !== "failed");
+            if (!note) return;
+            if (busy) note.textContent = `Adding ${vs.label()} as a layer…`;
+            else if (layer) note.textContent = `${vs.label()} is in Layers, computed exactly at full resolution.`;
+            else note.textContent = "Computes this projection exactly, at full resolution, "
+                + "as a layer you can keep, measure and export.";
+        }
+
+        async function pin() {
+            const vs = viewStateOf();
+            if (!vs) return;
+            const { id } = pinnedLayer(vs);
+            const label = vs.label();
+            pinning.set(id, label);
+            paint();
+            try {
+                const url = global.plexoraUrl
+                    ? global.plexoraUrl(`volume/${encodeURIComponent(vs.datasource)}/pin`)
+                    : `/volume/${encodeURIComponent(vs.datasource)}/pin`;
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ view: vs.spec() }),
+                });
+                const answer = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(answer.error || `HTTP ${response.status}`);
+                // Re-read /config so the Layers panel shows the card now, and
+                // the viewer's one poll follows the build from here.
+                await global.__plexora?.adoptLayers?.();
+                if (!answer.created) pinning.delete(id);
+            } catch (error) {
+                pinning.delete(id);
+                global.PlexoraToast?.show?.({
+                    title: `${label} could not be added as a layer.`,
+                    body: String(error.message || error), tone: "warning" });
+            }
+            paint();
+        }
+
+        function onLayerSettled(event) {
+            const id = event.detail?.layer;
+            if (!pinning.has(id)) return;
+            const label = pinning.get(id);
+            pinning.delete(id);
+            if (event.type === "plexora:layer-failed") {
+                global.PlexoraToast?.show?.({
+                    title: `${label} could not be added as a layer.`,
+                    body: event.detail?.error || "", tone: "warning" });
+            }
+            paint();
         }
 
         function paintSpacing(vs) {
@@ -190,6 +264,9 @@
                 q("#depth_follow_input")?.addEventListener("change", (event) => {
                     vs.set({ slab: { follow: event.target.checked } });
                 });
+                q("#depth_pin_button")?.addEventListener("click", pin);
+                global.addEventListener("plexora:layer-ready", onLayerSettled);
+                global.addEventListener("plexora:layer-failed", onLayerSettled);
                 q("#depth_spacing_button")?.addEventListener("click", () => setEditing(true));
                 q("#depth_spacing_save")?.addEventListener("click", saveSpacing);
                 q("#depth_spacing_input")?.addEventListener("keydown", (event) => {
@@ -201,6 +278,8 @@
                 ctx?.onCleanup?.(() => {
                     unsubscribe?.();
                     unsubscribe = null;
+                    global.removeEventListener("plexora:layer-ready", onLayerSettled);
+                    global.removeEventListener("plexora:layer-failed", onLayerSettled);
                     root = null;
                 });
             },
@@ -227,6 +306,11 @@
                     + "last and first. Shift with the mouse wheel over the image scrubs.",
                     "Every plane of a channel is drawn with the same contrast, so a "
                     + "plane that looks dimmer is dimmer.",
+                    "Add as a layer computes the projection once, over every plane in "
+                    + "the range at full resolution, and keeps it in Layers. On screen a "
+                    + "zoomed-out projection combines planes that were already shrunk, "
+                    + "which is right for looking but not for numbers. Removing the layer "
+                    + "deletes the file it made.",
                 ],
             },
             createSidebarController: createController,

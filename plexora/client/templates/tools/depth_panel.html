@@ -67,6 +67,19 @@
         </label>
     </div>
 
+    {# The projection on screen is computed tile by tile, and its zoomed-out
+       levels pool planes before combining them -- right for looking, not for
+       reading numbers off. Adding it as a layer computes it once, exactly, at
+       full resolution (server/volume/pin.py). Projection mode only. #}
+    <div class="depth-panel-pin" data-depth-pin hidden>
+        <button type="button" class="layer-card-action" id="depth_pin_button"
+                title="Compute this projection at full resolution over every plane in the range, and add it to Layers">
+            <span class="fas fa-thumbtack" aria-hidden="true"></span>
+            <span class="layer-card-action-text">Add as a layer</span>
+        </button>
+        <span class="depth-panel-note" data-depth-pin-note></span>
+    </div>
+
     <div class="depth-panel-spacing" id="depth_spacing_row">
         <span class="depth-panel-label">Z step</span>
         <span class="depth-panel-spacing-value" data-depth-spacing></span>

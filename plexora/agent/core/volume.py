@@ -455,6 +455,66 @@ def measure_objects(call, inp):
     return {**summary, "receipt": receipt.model_dump(mode="json")}
 
 
+# -- pin_projection --------------------------------------------------------------
+
+
+class PinInput(ProjectInput):
+    view: str = Field(..., description="The projection, as a view token: z4-19max, "
+                      "z0-30mean, z2-8p95 (planes inclusive; t3z0-9max for frame 3).")
+    replace: bool = Field(False, description="Compute it again when this projection is "
+                          "already a layer.")
+
+
+def pin_projection(call, inp):
+    """Compute a projection once, exactly, at full resolution, and add it as a layer."""
+    import time
+
+    from plexora.agent.receipts import make_receipt
+    from plexora.server.models import layer_jobs
+    from plexora.server.models.project import Project
+    from plexora.server.volume import pin
+
+    record = call.session.project(inp.project)
+    try:
+        answer = pin.pin(record, inp.view, replace_existing=inp.replace)
+    except pin.PinRefused as exc:
+        raise AgentError(exc.code, str(exc)) from None
+    layer_id = answer["layer"]
+    if call.notify is not None:
+        call.notify(record.name, "core", "layers", {})
+    while True:
+        job = layer_jobs.get(record.name, layer_id) or {}
+        status = job.get("status")
+        if status is None:
+            found = Project.find(record.name)
+            layer = found.layer(layer_id) if found is not None else None
+            status = getattr(layer, "status", None) or "ready"
+        if status != "pending":
+            break
+        if call.cancelled():
+            pin.cancel(record.name, layer_id)
+            raise InterruptedError("cancelled")
+        call.progress(job.get("progress"), 100, job.get("message") or "pinning")
+        time.sleep(0.25)
+    if status == "failed":
+        raise AgentError("internal_error", f"{layer_id} could not be built: "
+                         f"{job.get('error') or 'see the server log'}")
+    call.session.invalidate(inp.project)
+    if call.notify is not None:
+        call.notify(record.name, "core", "layers", {})
+    found = Project.find(record.name)
+    layer = found.layer(layer_id)
+    receipt = make_receipt(call, changed=bool(answer["created"]), before=None,
+                           after={"layer": layer_id, "src": layer.src},
+                           persistent_state="project_config")
+    return {"layer": layer_id, "label": layer.label, "created": answer["created"],
+            "path": layer.src, "channels": [c.get("name") for c in layer.channels],
+            "exact": True, "level": 0,
+            "note": "Computed over every plane in the range at full resolution; the "
+                    "file's description records the view, operation and planes.",
+            "receipt": receipt.model_dump(mode="json")}
+
+
 # -- render_sections -------------------------------------------------------------
 
 
@@ -547,6 +607,16 @@ def capabilities():
             permission="reversible_write", input_model=MeasureInput, handler=measure_objects,
             execution="job", writes=("project_config",), egress="aggregates",
             tags=TAGS + ("measure", "objects", "cells", "segmentation", "volume")),
+        Capability(
+            name="volume.pin_projection", tool_name="pin_projection", owner="core",
+            purpose="Compute a projection of a z-stack (max, mean, min, std, median, "
+                    "percentile over a range of planes) once, exactly, at full resolution, "
+                    "and add it to the project as an image layer -- for a projection whose "
+                    "numbers will be read, measured or exported, not just looked at. "
+                    "Removing the layer deletes the file.",
+            permission="reversible_write", input_model=PinInput, handler=pin_projection,
+            execution="job", writes=("project_config",), reads=("image",),
+            tags=TAGS + ("projection", "mip", "layer", "pin")),
         Capability(
             name="volume.render_sections", tool_name="render_sections", owner="core",
             purpose="One picture of a z-stack through a point: the XY plane, and the XZ and "

@@ -1238,8 +1238,7 @@ async function init(config, savedViewTransform = null) {
             const found = (list || []).find((layer) => layer.id === id);
             if (found) found.status = status;
         }
-        const record = seaDragonViewer.layerStack?.get(id);
-        if (record?.spec) record.spec.status = status;
+        seaDragonViewer.layerStack?.setStatus?.(id, status);
     }
 
     /**

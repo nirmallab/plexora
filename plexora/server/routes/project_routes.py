@@ -451,8 +451,13 @@ def project_remove_layer(name, layer_id):
     The synthesized ids are refused rather than silently ignored: the way to
     remove the mask is to clear the mask field, and an X that quietly did
     nothing would be worse than no X.
+
+    A pinned projection (plexora/server/volume/pin.py) is the one layer whose
+    file IS Plexora's: computed from the stack, in the project's derived
+    folder, reachable from nowhere else. Its file goes with it.
     """
     from plexora.server.models.project import RESERVED_LAYER_IDS
+    from plexora.server.volume import pin
 
     if layer_id in RESERVED_LAYER_IDS:
         return jsonify(error=f"{layer_id} is drawn from the project itself. "
@@ -460,9 +465,12 @@ def project_remove_layer(name, layer_id):
     project = Project.find(name)
     if project is None:
         return jsonify(error=f"Unknown project: {name!r}"), 404
-    if project.layer(layer_id) is None:
+    layer = project.layer(layer_id)
+    if layer is None:
         return jsonify(error=f"{name} has no layer {layer_id!r}"), 404
     Project.mutate(name, lambda current: current.without_layer(layer_id))
+    if layer.modality == pin.MODALITY:
+        pin.forget(project, layer)
     return jsonify(success=True, layer=layer_id)
 
 

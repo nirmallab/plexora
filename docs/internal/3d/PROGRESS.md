@@ -27,7 +27,7 @@ the new chunk files are committed beside the old ones).
 | Plugin contract: `Requires.dims/representations/spacing/time`, `plexora.api.representation` | done |
 | Agents: inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_projection, render_region(view), viewer_set_view/z/slab, volume-triage skill, MCP `volume` profile | done |
 | Import: .ims, the row says how a stack's planes are read | done |
-| Pin a projection as a layer | todo |
+| Pin a projection as a layer: exact level-0 pyramid in `projections_v1/`, `proj-<token>` layer built by the `projection` builder, Depth card button, `pin_projection` agent job; removing the layer deletes the file | done |
 | QC/gating fingerprints absorb the view (only needed once those tools take `view`) | deferred to Phase 3/4 |
 | DICOM focal planes as a volume; remote TIFF volumes; in-memory (notebook) volumes | todo |
 | Choice of z semantics (depth vs cycles): edit page "Planes on Z", re-reads the image | done (edit page); import dialog still silent |
@@ -46,6 +46,12 @@ the new chunk files are committed beside the old ones).
 Verified in headless Chrome (SwiftShader) against a synthetic 3×24×1024² stack: plane view
 with badge, MIP with band and notice, 3-D MIP render, section panes with content, 3-D label
 outlines that change with z.
+
+Real data (2026-10-09): the Xenium ovarian run's `morphology.ome.tif` (DAPI, 14 planes,
+45450×27241, 3 µm z step from the file, 8 levels) registers in 0.3 s as depth. Plane tiles
+~100 ms at level 0, a 14-plane MIP tile 0.86 s (cached after), sections 0.3–0.8 s. The first
+tile waits ~15 s for the window scan -- the same as the planar focus image of the same size
+today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level 0.
 
 ## Phase 3 — labels, objects, QC
 

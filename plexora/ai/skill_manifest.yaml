@@ -22,7 +22,7 @@ skills:
     tier: judgement
     tools: [inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_region,
             render_projection, render_sections, check_volume_quality, measure_objects,
-            viewer_set_view, viewer_set_z, viewer_set_slab]
+            pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab]
   - name: analysis-handoff
     title: Hand a question to the analysis application, and show the answer
     description: Route cohort and spatial statistics to the analysis side of the bridge (SCIMAP Pro) on the same table, run them there, and show the result on the image.

@@ -23,6 +23,7 @@ from flask import abort, jsonify, request
 from plexora import app
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
+from plexora.server.volume import pin
 
 #: What the viewer can be showing a volume as.
 MODES = ("plane", "slab", "sections", "volume")
@@ -313,3 +314,26 @@ def section_geometry(datasource):
 
 
 __all__ = ["normalize_view_state", "get_view_state", "save_view_state", "choose_level"]
+
+
+# -- pinned projections (plexora/server/volume/pin.py) -----------------------
+
+pin.register()
+
+
+@app.route('/volume/<string:datasource>/pin', methods=['POST'])
+def pin_projection(datasource):
+    """Compute a projection exactly at full resolution and add it as a layer.
+
+    `{"view": "z4-19max"}` -> 202 with `{layer, status, created}`; the layer
+    is `pending` until built and the viewer follows it on `/import/status`
+    like any other layer. 400 says why a view cannot be pinned.
+    """
+    project = _project_or_404(datasource)
+    payload = request.get_json(silent=True) or {}
+    try:
+        answer = pin.pin(project, payload.get("view"),
+                         replace_existing=bool(payload.get("replace")))
+    except pin.PinRefused as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(answer), 202 if answer["created"] else 200

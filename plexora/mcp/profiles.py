@@ -70,7 +70,7 @@ PROFILES: dict[str, tuple | None] = {
     # picture -- and the viewer commands that show them (skill volume-triage).
     "volume": _COMMON + (
         "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
-        "check_volume_quality",
+        "check_volume_quality", "pin_projection",
         "render_region", "render_projection", "render_sections", "get_artifact",
         "list_artifacts",
         "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",

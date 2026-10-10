@@ -35,7 +35,10 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
    - a single plane (`view: "z12"`) for anything about cells, morphology or overlap;
    - a projection (`render_projection`, `view: "z4-19max"`) only for an overview of where
      signal is across planes -- never to conclude colocalization, contact, or that one
-     cell is "inside" another.
+     cell is "inside" another;
+   - when a projection's numbers will be read, measured or exported, `pin_projection`
+     computes it exactly at full resolution and adds it as a layer. A zoomed-out
+     projection on screen combines planes that were already shrunk; the pinned one does not.
 5. Render with `render_region` (`view`) or `render_projection`. Read the manifest's `view`,
    `view_source` and `z_label` before the picture; a `default` view is still one plane of
    many.
@@ -51,8 +54,8 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
 ## Tools
 
 `inspect_volume`, `set_z_spacing`, `sample_z_planes`, `axis_profile`, `check_volume_quality`,
-`render_region`, `render_projection`, `render_sections`, `measure_objects`, `viewer_set_view`,
-`viewer_set_z`, `viewer_set_slab`.
+`render_region`, `render_projection`, `render_sections`, `measure_objects`, `pin_projection`,
+`viewer_set_view`, `viewer_set_z`, `viewer_set_slab`.
 
 ## Evidence
 
@@ -71,7 +74,8 @@ conclusion rests on and whether the z step was stated, typed or missing.
 ## Mutation policy
 
 `set_z_spacing` writes the project's z step; `measure_objects` writes an object table and,
-when the project has no table, makes it the cell table. Both are receipted. Viewer commands
+when the project has no table, makes it the cell table; `pin_projection` adds a layer and
+its file (removing the layer deletes the file). All are receipted. Viewer commands
 change the open tab only.
 
 ## Provenance
