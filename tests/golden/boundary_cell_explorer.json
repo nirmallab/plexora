@@ -397,7 +397,7 @@
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261010_ctxview"
+        "/client/src/js/main.js?v=20261010_frames"
       ],
       "status": 200,
       "styles": [
@@ -685,7 +685,7 @@
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261010_ctxview"
+        "/client/src/js/main.js?v=20261010_frames"
       ],
       "status": 200,
       "styles": [

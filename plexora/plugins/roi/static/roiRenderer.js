@@ -205,6 +205,8 @@ class RoiRenderer {
         if (!extent || extent.kind === "all") return true;
         const shown = this.ctx.view?.planes?.();
         if (!shown) return true;
+        // A time series: a region drawn on one frame is not on the others.
+        if ((extent.t || 0) !== (this.ctx.view?.frame?.() || 0)) return false;
         const [low, high] = extent.kind === "plane"
             ? [extent.z, extent.z] : [extent.z0, extent.z1];
         return !(high < shown[0] || low > shown[1]);

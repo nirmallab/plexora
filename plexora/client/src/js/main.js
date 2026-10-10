@@ -1847,6 +1847,7 @@ async function init(config, savedViewTransform = null) {
                 get enabled() { return Boolean(__plexora.viewState?.enabled?.()); },
                 get state() { return __plexora.viewState?.get?.() || null; },
                 get depth() { return __plexora.viewState?.depth || 1; },
+                get frames() { return __plexora.viewState?.frames || 1; },
                 label() { return __plexora.viewState?.label?.() || ""; },
                 /** `[first, last]` plane on screen, inclusive; null when flat. */
                 planes() {
@@ -1855,6 +1856,11 @@ async function init(config, savedViewTransform = null) {
                     const state = vs.get();
                     if (state.mode === "slab") return [state.slab.z0, state.slab.z1];
                     return [state.z, state.z];
+                },
+                /** The frame of a time series on screen; 0 for everything else. */
+                frame() {
+                    const vs = __plexora.viewState;
+                    return vs?.enabled?.() ? (vs.get().t || 0) : 0;
                 },
                 /** Called after the view on screen changes; cleaned up with the plugin. */
                 onChange(fn) {

@@ -364,12 +364,12 @@ class RoiTree {
             if (feature.flags && feature.flags.self_intersecting) {
                 parts.push("outline crosses itself");
             }
-            const planes = RoiTree.planesText(feature.extent);
+            const planes = RoiTree.planesText(feature.extent, this.view?.frames);
             if (planes) parts.push(`only on ${planes}`);
             row.label.title = parts.join(" — ");
         }
         if (row.planes) {
-            const planes = RoiTree.planesText(feature.extent);
+            const planes = RoiTree.planesText(feature.extent, this.view?.frames);
             row.planes.textContent = planes;
             row.planes.hidden = !planes;
         }
@@ -384,10 +384,12 @@ class RoiTree {
     }
 
     /** "z 12" or "z 8–20" for a region limited to some planes; "" for all. */
-    static planesText(extent) {
+    static planesText(extent, frames = 1) {
         if (!extent || extent.kind === "all") return "";
-        if (extent.kind === "plane") return `z ${extent.z}`;
-        return `z ${extent.z0}–${extent.z1}`;
+        // The frame only when there is more than one to tell apart.
+        const frame = frames > 1 ? `t ${(extent.t || 0) + 1} · ` : "";
+        if (extent.kind === "plane") return `${frame}z ${extent.z}`;
+        return `${frame}z ${extent.z0}–${extent.z1}`;
     }
 
     static rowAction(className, glyphs) {
@@ -715,10 +717,13 @@ class RoiTree {
         const shown = this.view?.planes?.();
         if (shown) {
             const extent = feature.extent && feature.extent.kind !== "all" ? feature.extent : null;
+            const t = this.view?.frame?.() || 0;
             const here = shown[0] === shown[1]
-                ? { kind: "plane", z: shown[0] }
-                : { kind: "slab", z0: shown[0], z1: shown[1] };
-            const sameAsHere = extent && RoiTree.planesText(extent) === RoiTree.planesText(here);
+                ? { kind: "plane", z: shown[0], t }
+                : { kind: "slab", z0: shown[0], z1: shown[1], t };
+            const frames = this.view?.frames || 1;
+            const sameAsHere = extent
+                && RoiTree.planesText(extent, frames) === RoiTree.planesText(here, frames);
             let section = true;
             if (extent) {
                 items.push({
@@ -731,7 +736,7 @@ class RoiTree {
             }
             if (!sameAsHere) {
                 items.push({
-                    label: `Only on ${RoiTree.planesText(here)}`,
+                    label: `Only on ${RoiTree.planesText(here, frames)}`,
                     className: section ? "is-sectioned" : "",
                     disabled: !editable || locked,
                     onSelect: () => act({ extent: here }),

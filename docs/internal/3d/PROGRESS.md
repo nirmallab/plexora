@@ -70,7 +70,13 @@ today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level
 
 ## Phase 4 / 5
 
-Not started: gating 3D evidence (waits for feature/spatial-gating), SCIMAP hand-off in µm, 4D.
+Gating 3D evidence waits for feature/spatial-gating; SCIMAP hand-off in µm not started.
+
+Time series (first slice): a T×Z OME-TIFF with a stated time increment registers with
+`imageTSemantics: time`; the viewer steps frames (`.`/`,`, the Depth card's Frame field), the
+badge reads "t 3/3 · 60 s · z 2/4", tiles carry `t2z2`. ROI extents carry `t`: a region drawn on
+one frame is faint on the others and its badge names the frame. Not yet: cell mapping by frame
+(object tables are measured per frame, t=0 today), a frame control on the strip, tracking.
 
 ## Decisions taken while implementing
 
