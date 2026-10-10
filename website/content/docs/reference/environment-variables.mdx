@@ -169,13 +169,43 @@ Set to `0` to switch magic select off everywhere -- the ROI and QC panels, and t
 
 <Param name={"PLEXORA_SEGMENT_DEVICE"} default={"auto"}>
 
-`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one.
+`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one. The optional through-planes model (SAM 2.1, the `volume3d` extra) uses CUDA when there is one and the CPU otherwise -- never Apple's GPU, where its tracking comes out wrong; `mps` forces it there, to check a newer PyTorch.
 
 </Param>
 
 <Param name={"PLEXORA_SEGMENT_MODEL_URL"}>
 
 Fetch magic select's model files from this address instead of Plexora's release (a mirror inside a firewalled site). The files are checked against the same checksums either way.
+
+</Param>
+
+<Param name={"PLEXORA_SEGMENT3D_MODEL_URL"}>
+
+Fetch the optional through-planes model (SAM 2.1, used when the `volume3d` extra is installed) from this address instead of Meta's release. Checked against the same checksum either way.
+
+</Param>
+
+</ParamTable>
+
+## Z-stacks
+
+<ParamTable>
+
+<Param name={"PLEXORA_VOLUME_BRICKS"}>
+
+Set to `0` to never copy a stack into 3-D bricks. A large stack stored plane by plane is otherwise copied in the background, its zoomed-out levels only, so projections, sections and the 3-D view read across planes quickly.
+
+</Param>
+
+<Param name={"PLEXORA_VOLUME_LEVEL_BUDGET"} default={"268435456 (256 MB)"}>
+
+Bytes of one channel's whole stack at the finest level the background copy takes; it copies that level and every coarser one.
+
+</Param>
+
+<Param name={"PLEXORA_ROI_BRICK_BUDGET"} default={"4294967296 (4 GB)"}>
+
+Disk, in bytes, kept for areas prepared at finer levels ("Prepare this area", and the section panes once the view settles); the areas used least recently go first.
 
 </Param>
 
