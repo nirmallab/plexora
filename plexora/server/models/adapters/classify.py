@@ -53,12 +53,18 @@ _METADATA_NAMES = {
     "x", "y", "xcentroid", "ycentroid", "centroidx", "centroidy",
     "xposition", "yposition", "xcoordinate", "ycoordinate",
     "columncentroid", "rowcentroid", "column", "row", "globalx", "globaly",
+    # position in depth and time: a z-stack's object table (server/volume)
+    "z", "zcentroid", "centroidz", "zposition", "zcoordinate", "globalz",
+    "t", "frame", "xum", "yum", "zum",
     # morphology
     "area", "convexarea", "filledarea", "bboxarea", "perimeter",
     "majoraxislength", "minoraxislength", "axismajorlength", "axisminorlength",
     "eccentricity", "solidity", "extent", "orientation", "circularity",
     "equivalentdiameter", "feretdiametermax", "eulernumber", "formfactor",
     "elongation", "compactness", "roundness", "aspectratio",
+    # morphology in 3-D (server/volume/measure.py's columns among them)
+    "volume", "volumevox", "volumeum3", "surfacearea", "surfaceareaum2",
+    "sphericity", "nplanes", "toucheszbounds", "touchesxybounds",
     # annotation
     "phenotype", "celltype", "cluster", "leiden", "louvain", "condition",
     "treatment", "patient", "donor", "batch", "replicate", "timepoint",
@@ -72,6 +78,15 @@ _METADATA_SUFFIXES = (
     "orientation", "axislength", "diameter", "circularity",
 )
 
+# Prefixes of the same kind: a bounding box's corners ("bbox_z0"), an object's
+# contact with the image edge ("touches_z_bounds").
+_METADATA_PREFIXES = ("bbox", "touches")
+
+#: How Plexora names a derived per-channel value: "<channel>__<statistic>"
+#: ("CD8__integrated", "CD8__p90"). The channel's own column is its mean and
+#: the marker; these sit beside it and are never a second marker.
+DERIVED_SEPARATOR = "__"
+
 #: Role -> ordered patterns, most specific first. The first column matching the
 #: earliest pattern wins, so "X_centroid" beats a bare "X" for the x role but a
 #: table with only "X" still resolves.
@@ -81,6 +96,8 @@ _ROLE_PATTERNS = {
           r"^columncentroid$", r"^globalx$", r"^x$"),
     "y": (r"^ycentroid$", r"^centroidy$", r"^yposition$", r"^ycoordinate$",
           r"^rowcentroid$", r"^globaly$", r"^y$"),
+    "z": (r"^zcentroid$", r"^centroidz$", r"^zposition$", r"^zcoordinate$",
+          r"^globalz$", r"^z$"),
     "celltype": (r"^phenotype$", r"^celltype$", r"^cluster$", r"^leiden$"),
     "image_id": tuple(rf"^{re.escape(name)}$" for name in sorted(_LIKELY_IMAGE_IDENTIFIER_NAMES)),
 }
@@ -163,6 +180,10 @@ def looks_like_metadata(name: Any, dtype: Any = None) -> bool:
         # whatever it is called.
         return True
     if normalized in _METADATA_NAMES:
+        return True
+    if DERIVED_SEPARATOR in str(name).strip(DERIVED_SEPARATOR[0]):
+        return True
+    if any(normalized.startswith(prefix) for prefix in _METADATA_PREFIXES):
         return True
     return any(normalized.endswith(suffix) for suffix in _METADATA_SUFFIXES)
 
