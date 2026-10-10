@@ -15,7 +15,7 @@ export const tileQuality = { hd: false };
 //: to a tile source, not to the ViewerManager. Read only when an item is
 //: BUILT, and pinned on its source (see addChannelItems), so an outgoing item
 //: keeps fetching its own plane while its replacement loads.
-export const viewSelection = { spec: "" };
+export const viewSelection = { spec: "", labels: "" };
 
 //: How long a plane swap waits for its replacements before handing over
 //: anyway. Shorter than a quality swap's: scrubbing asks for a new plane every
@@ -370,9 +370,10 @@ function getTileUrl(level, x, y) {
     const version = this.tileFormat === 32 && this.labelVersion
         ? `v=${encodeURIComponent(this.labelVersion)}` : "";
     // A plane, projection or section of a volume, pinned on the source like
-    // `hd`. Channel tiles only: a 2-D mask is the same picture on every plane.
-    const view = this.tileFormat !== 32 && this.view
-        ? `view=${encodeURIComponent(this.view)}` : "";
+    // `hd`. A 2-D mask is the same picture on every plane and names none; a
+    // 3-D label volume names the plane its labels are read from (`labelView`).
+    const viewToken = this.tileFormat === 32 ? this.labelView : this.view;
+    const view = viewToken ? `view=${encodeURIComponent(viewToken)}` : "";
     const query = [hd, this.srcQuery || "", version, view].filter(Boolean).join("&");
     const suffix = query ? `?${query}` : "";
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
@@ -406,7 +407,8 @@ function getTileKey(level, x, y) {
     // The view is part of the key (glInit.js caches GPU textures on it): plane
     // 13 of a channel must never bind plane 12's texture. Absent for a planar
     // image, so its keys are what they always were.
-    const view = this.view ? `-${this.view}` : "";
+    const token = tileFormat === 32 ? this.labelView : this.view;
+    const view = token ? `-${token}` : "";
     return `${tileFormat}-${srcIdx}${view}-${s.level}-${s.x}-${s.y}`;
 }
 
@@ -627,6 +629,23 @@ export class ViewerManager {
         window.dispatchEvent(new CustomEvent("plexora:view-tiles-changed",
             { detail: { spec: next } }));
         return done;
+    }
+
+    /**
+     * Read a 3-D label volume's outlines from another plane. The label layer
+     * is rebuilt at the new address; a 2-D mask never calls this (its labels
+     * are the same on every plane).
+     */
+    setLabelPlane(token) {
+        const next = String(token || "");
+        if (next === viewSelection.labels) return;
+        viewSelection.labels = next;
+        if (this.labelLayerRequested && !this.imageViewer?.noLabel) this.reloadLabelLayer();
+    }
+
+    /** Set the label plane before the label layer is first loaded. */
+    presetLabelPlane(token) {
+        viewSelection.labels = String(token || "");
     }
 
     /** The view token the reference channels are built at ("" = default). */
@@ -2448,6 +2467,9 @@ export class ViewerManager {
                         scale > 1 ? `s${scale}` : null,
                     ].filter(Boolean).join("."),
                     layerId: PlexoraLayerStack.MASK_LAYER_ID,
+                    //: The plane of a 3-D label volume these tiles are read
+                    //: from; empty for a 2-D mask (see setLabelPlane).
+                    labelView: viewSelection.labels,
                 },
                 // On the TiledImage, where OSD actually reads it -- the copy
                 // inside the tileSource above is inert, and the viewer-wide

@@ -285,6 +285,12 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
     # over a network share is real time spent with nothing said.
     if stage_callback is not None:
         stage_callback("inspecting")
+    # A 3-D label volume: stored as one, plane by plane, whatever the mode --
+    # outlines are derived per tile from the filled labels (renderLabelTile).
+    label_volume = _resolve_label_volume(segmentation_path, dataDirectory,
+                                         progress_callback, stage_callback)
+    if label_volume is not None:
+        return label_volume
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
     location = segmentation_pyramid.resolve_derived_mask(
@@ -300,6 +306,47 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         progress_callback=progress_callback,
         stage_callback=stage_callback,
     )
+
+
+def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callback=None,
+                          stage_callback=None):
+    """The label-volume store for a (Z, Y, X) mask, built or adopted; None for
+    anything else (every 2-D mask takes the path below, unchanged).
+
+    Written beside the project's other derived files (or beside the mask when
+    there is no project directory), named after the mask, and adopted when
+    one built from the same file -- same fingerprint -- is already there.
+    """
+    if providers.is_remote_locator(segmentation_path):
+        return None
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.is_label_volume(segmentation_path):
+        return str(segmentation_path)
+    if volume_labels.label_volume_shape(segmentation_path) is None:
+        return None
+    source = Path(segmentation_path)
+    folder = Path(dataDirectory) if dataDirectory else source.parent
+    stem = source.name.split(".")[0]
+    target = folder / f"{stem}_labels_v1.zarr"
+    key = segmentation_pyramid.source_fingerprint(source)
+    if volume_labels.is_label_volume(target):
+        try:
+            import zarr as _zarr
+
+            attrs = dict(_zarr.open_group(str(target), mode="r").attrs)
+            if attrs.get("source_key") == key and attrs.get("source") == str(source):
+                return str(target)
+        except Exception:
+            pass
+    if stage_callback is not None:
+        stage_callback("building")
+    folder.mkdir(parents=True, exist_ok=True)
+    built = volume_labels.build_label_volume(source, target, progress=progress_callback)
+    import zarr as _zarr
+
+    _zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
+    return built
 
 
 def segmentation_mode(entry):
@@ -2656,10 +2703,21 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
     pyramid = seg if segmentation else channels
     if view and not segmentation:
         # A plane, projection or section of a volume (server/models/views.py).
-        # A label mask is one 2-D plane drawn on every view, so it ignores it.
         from plexora.server.models import views
 
         pyramid = views.plane_pyramid_for(datasource_name, view)
+    elif view and segmentation and hasattr(seg, "plane"):
+        # A 3-D label volume: the labels of the plane the view names (a slab's
+        # middle plane). A 2-D mask is one plane drawn on every view and
+        # ignores the view entirely.
+        from plexora.server.models import views
+
+        spec = views.resolve(datasource_name, view)
+        if spec is not None:
+            if spec.kind == "plane":
+                pyramid = seg.plane(spec.z)
+            elif spec.kind == "slab":
+                pyramid = seg.plane((spec.z0 + spec.z1) // 2)
     return read_tile(
         pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],

@@ -26,7 +26,7 @@ from plexora.server.models.project import Project
 
 #: What the viewer can be showing a volume as.
 MODES = ("plane", "slab", "sections", "volume")
-LAYOUTS = ("single", "split-h", "quad", "strip")
+LAYOUTS = ("single", "split-h", "quad", "strip", "sections")
 COMPOSITES = ("mip", "additive")
 VIEW_STATE_VERSION = 1
 
@@ -55,7 +55,20 @@ def volume_info(datasource):
                         "z_semantics": project.image.z_semantics})
     info["pixel_size_z"] = project.image.pixel_size_z
     info["frame_interval"] = project.image.frame_interval
+    info["segmentation"] = _segmentation_info(project)
     return jsonify(info)
+
+
+def _segmentation_info(project):
+    """Whether the mask is a 3-D label volume (one id per cell across planes)
+    or one 2-D mask drawn on every plane -- which decides whether the viewer
+    asks for its outlines plane by plane."""
+    from plexora.server.volume import labels as volume_labels
+
+    seg = project.segmentation
+    if not seg.available:
+        return {"ndim": 0}
+    return {"ndim": 3 if volume_labels.is_label_volume(seg.derived) else 2}
 
 
 def _int(value, default=0, low=None, high=None):

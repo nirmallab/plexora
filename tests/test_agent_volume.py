@@ -170,3 +170,73 @@ def test_the_volume_tools_never_load_the_viewers_project(tmp_path):
                        ("axis_profile", {"project": "vol"})]:
         _ok(invoke(session, name, args))
     assert data_model._loaded_source is None
+
+
+# -- 3-D objects -----------------------------------------------------------------
+
+
+def _volume_with_mask(tmp_path, name="obj"):
+    import tifffile
+
+    from plexora import datasets
+
+    path, data = vf.write_ome_volume(tmp_path / f"{name}.ome.tif", axes="CZYX", channels=2,
+                                     depth=6, height=64, width=64, names=["DNA", "CD8"])
+    labels = np.zeros((6, 64, 64), dtype=np.uint16)
+    labels[1:4, 10:20, 10:20] = 5
+    labels[3:6, 30:40, 30:46] = 9
+    tifffile.imwrite(tmp_path / "mask.tif", labels)
+    register_image_datasource(name, path)
+    datasets.add_layers(name, tmp_path / "mask.tif", wait=True)
+    return data, labels
+
+
+def test_measure_objects_writes_and_attaches_an_object_table(tmp_path):
+    import polars as pl
+
+    from plexora.server.models.project import Project
+
+    data, labels = _volume_with_mask(tmp_path)
+    session = AgentSession()
+    started = _ok(invoke(session, "measure_objects", {"project": "obj"}))
+    done = _ok(invoke(session, "job_wait", {"job_id": started["job_id"], "timeout_s": 60}))
+    job = done["job"]
+    assert job["status"] == "done", job.get("error")
+    result = job["result"]
+    assert result["objects"] == 2 and result["attached"] is True
+    frame = pl.read_parquet(result["table"])
+    assert frame["label"].to_list() == [5, 9]
+    assert frame["volume_vox"].to_list() == [3 * 10 * 10, 3 * 10 * 16]
+    expected = data[0, 1][labels == 9].mean()
+    assert frame.filter(pl.col("label") == 9)["CD8"][0] == pytest.approx(expected)
+    project = Project.find("obj")
+    assert project.dataset.roles.z == "Z"
+    assert project.dataset.roles.cell_id == "label"
+
+
+def test_measure_objects_refuses_a_2d_mask(tmp_path):
+    import tifffile
+
+    from plexora import datasets
+
+    path, _ = vf.write_ome_volume(tmp_path / "flatmask.ome.tif", axes="CZYX", channels=2,
+                                  depth=4, height=64, width=64)
+    tifffile.imwrite(tmp_path / "mask2d.tif", np.ones((64, 64), dtype=np.uint16))
+    register_image_datasource("flatmask", path)
+    datasets.add_layers("flatmask", tmp_path / "mask2d.tif", wait=True)
+    session = AgentSession()
+    started = _ok(invoke(session, "measure_objects", {"project": "flatmask"}))
+    done = invoke(session, "job_wait", {"job_id": started["job_id"], "timeout_s": 60})
+    text = str(done)
+    assert "inference_forbidden" in text or "2-D" in text
+
+
+def test_check_volume_quality_reports_per_channel(tmp_path):
+    _volume(tmp_path)
+    out = _ok(invoke(AgentSession(), "check_volume_quality",
+                     {"project": "vol", "channels": ["DNA"]}))
+    assert out["depth"] == 8
+    assert set(out["channels"]) == {"DNA"}
+    assert len(out["channels"]["DNA"]["focus"]) == 8
+    assert isinstance(out["findings"], list)
+    assert out["params"]["focus_deficit"] > 0

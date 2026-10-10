@@ -487,7 +487,12 @@ async function init(config, savedViewTransform = null) {
     if (viewState?.enabled()) {
         __plexora.viewState = viewState;
         viewerManager.presetView(viewState.spec());
+        viewerManager.presetLabelPlane(viewState.labelSpec());
         viewState.applier = (spec) => viewerManager.setView(spec);
+        // A 3-D label volume's outlines follow the plane on screen.
+        if (viewState.labelsAre3d()) {
+            viewState.subscribe(() => viewerManager.setLabelPlane(viewState.labelSpec()));
+        }
     }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
@@ -545,10 +550,21 @@ async function init(config, savedViewTransform = null) {
                 console.error("main: the volume view could not be set up", error);
             }
             __plexora.volumeView = volume;
+            // Orthogonal XZ / YZ sections beside the plane (views/sectionPanes.js).
+            let sections = null;
+            try {
+                sections = window.PlexoraSectionPanes?.attach?.(viewState, {
+                    imageViewer: seaDragonViewer, viewerManager, config, datasource,
+                }) || null;
+            } catch (error) {
+                console.error("main: the section panes could not be set up", error);
+            }
+            __plexora.sectionPanes = sections;
             const strip = new PlexoraDepthStrip(viewState, {
                 viewer: seaDragonViewer.viewer,
                 openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
                 volume,
+                sections,
             });
             strip.mount();
             __plexora.depthStrip = strip;

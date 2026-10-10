@@ -211,12 +211,16 @@ class LocalSegmentationProvider:
     def locator(self) -> ResourceLocator:
         return ResourceLocator(kind="segmentation", provider=LOCAL, path=self._path)
 
-    def read_region(self, level, box, max_pixels=0):
+    def read_region(self, level, box, max_pixels=0, z=None):
         """Labels (uint32) for `box` = (x0, y0, x1, y1) at `level`, 0 where it
         runs off the mask. Opens the mask on first use and keeps it open.
 
         The same answer `NodeSegmentationProvider.read_region` gives for a mask
         on another machine, so a caller holding either need not know which.
+
+        `z` picks the plane of a 3-D label volume (plexora/server/volume/
+        labels.py); without it a volume answers for its middle plane, and a
+        2-D mask ignores it -- it is the same picture on every plane.
         """
         from plexora.server.utils.label_overlay import padded_label_region
 
@@ -228,7 +232,10 @@ class LocalSegmentationProvider:
             self._opened = self.open()
             if self._opened is None:
                 raise FileNotFoundError("this project has no segmentation mask")
-        return padded_label_region(self._opened, level, box)
+        pyramid = self._opened
+        if z is not None and hasattr(pyramid, "plane"):
+            pyramid = pyramid.plane(int(z))
+        return padded_label_region(pyramid, level, box)
 
     @property
     def path(self) -> str | None:
@@ -248,7 +255,13 @@ class LocalSegmentationProvider:
         import zarr
 
         from plexora.server.utils import ome_zarr
+        from plexora.server.volume import labels as volume_labels
 
+        # A 3-D label volume: one id per cell across every plane it spans,
+        # served a plane at a time (LabelVolume.plane). Its default answer is
+        # the middle plane, what a caller that knows nothing of volumes reads.
+        if volume_labels.is_label_volume(self._path):
+            return volume_labels.open_label_volume(self._path)
         # Whether it READS as zarr, not whether it is named `.zarr`: a mask
         # that is an element inside a SpatialData store
         # (`store.zarr/labels/cells`) is a zarr group with an ordinary name,

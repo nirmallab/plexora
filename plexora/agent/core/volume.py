@@ -344,6 +344,116 @@ def _attenuation(rows, z_spacing):
     return out
 
 
+# -- check_volume_quality --------------------------------------------------------
+
+
+class VolumeQcInput(ProjectInput):
+    channels: list[str] | None = Field(None, max_length=8, description="Channels to check "
+                                       "(default: every channel, at most eight).")
+    checks: list[Literal["focus_profile", "axial_attenuation", "missing_slices"]] | None = \
+        Field(None, description="Which checks (default: all three).")
+    t: int = Field(0, ge=0, description="Frame of a time series.")
+
+
+def _read_planes(call, project, volume, channel, t):
+    """Every plane of one channel at the profile level, as arrays."""
+    from plexora.server.utils.source_image import SourceImage
+
+    data = call.session.image_data(project)
+    level = _profile_level(volume)
+    info = volume["levels"][level]
+    box = (0, 0, info["width"], info["height"])
+    prefix = f"t{t}" if t else ""
+    planes = []
+    for z in range(int(volume["depth"])):
+        with SourceImage(data, view=f"{prefix}z{z}") as source:
+            plane, _clipped = source.read(channel, level, box)
+        planes.append(np.asarray(plane))
+    return planes, level
+
+
+def check_volume_quality(call, inp):
+    """Which planes of a z-stack are out of focus, faded, empty or repeated."""
+    from plexora.server.volume import qc3d
+
+    record, _data, volume = _volume_of(call, inp.project)
+    depth = int(volume["depth"])
+    if depth < 2:
+        raise AgentError("invalid_input", f"{inp.project} has one plane per frame; these "
+                         "checks compare planes")
+    if depth > MAX_PLANES_PER_PROFILE:
+        raise AgentError("too_large", f"{depth} planes is more than one check reads "
+                         f"({MAX_PLANES_PER_PROFILE})")
+    names = [c.get("fullname") or c.get("name") for c in record.image.real_channels]
+    wanted = inp.channels or names[:8]
+    checks = tuple(inp.checks or qc3d.CHECKS)
+    findings, per_channel = [], {}
+    for name in wanted:
+        index, label = _channel_index(record, name)
+        call.check_cancelled()
+        planes, level = _read_planes(call, inp.project, volume, index, inp.t)
+        found, stats = qc3d.run_checks(planes, channel=label, checks=checks)
+        findings += found
+        per_channel[label] = {
+            "best_z": int(np.argmax([row["focus"] for row in stats])),
+            "focus": [round(row["focus"], 3) for row in stats],
+            "median": [round(row["median"], 3) for row in stats],
+        }
+    return {"project": record.name, "t": inp.t, "depth": depth, "level": level,
+            "checks": list(checks), "findings": findings, "channels": per_channel,
+            "params": dict(qc3d.PARAMS),
+            "clean": not findings}
+
+
+# -- measure_objects -------------------------------------------------------------
+
+
+class MeasureInput(ProjectInput):
+    units: Literal["physical", "voxel"] = Field(
+        "physical", description="physical: µm, µm³ and µm² columns (needs the z step); "
+                                "voxel: counts and planes only.")
+    channels: list[str] | None = Field(None, description="Channels to measure per object "
+                                       "(default: every channel).")
+    attach_as_table: bool | None = Field(
+        None, description="Make the object table the project's cell table. Default: only "
+                          "when the project has no table yet.")
+
+
+def measure_objects(call, inp):
+    """Measure every object of a 3-D label volume: one row per cell, whole."""
+    from plexora.agent.receipts import make_receipt
+    from plexora.api import features
+    from plexora.server.volume import measure as volume_measure
+    from plexora.server.volume import objects
+
+    record = call.session.project(inp.project)
+    try:
+        summary = objects.measure_project_objects(
+            record, units=inp.units, channels=inp.channels, attach=inp.attach_as_table,
+            progress=lambda done, total: call.progress(done, total, "measuring objects"),
+            cancelled=call.cancelled)
+    except volume_measure.SpacingMissing as exc:
+        raise AgentError("precondition_missing", str(exc), detail={"missing": [
+            {"key": "spacing:z", "kind": "spacing", "label": "Distance between planes"}],
+            "hint": "set_z_spacing, or units='voxel'"}) from None
+    except objects.ObjectsUnavailable as exc:
+        message = str(exc)
+        if "2-D segmentation" in message:
+            from plexora.api.representation import forbid
+
+            raise forbid("object_from_plane_labels") from None
+        raise AgentError("precondition_missing", message) from None
+    call.session.invalidate(inp.project)
+    if summary["attached"]:
+        features.reload_if_loaded(inp.project)
+    receipt = make_receipt(
+        call, changed=True, before=None,
+        after={"objects": summary["objects"], "table": summary["table"],
+               "attached": summary["attached"]},
+        persistent_state="project_config" if summary["attached"] else "artifact")
+    return {**summary, "receipt": receipt.model_dump(mode="json")}
+
+
 # -- render_projection ---------------------------------------------------------
 
 
@@ -393,6 +503,23 @@ def capabilities():
                     "region): the sharpest plane and how fast signal fades with depth.",
             permission="read", input_model=AxisProfileInput, handler=axis_profile,
             egress="aggregates", reads=("image",), tags=TAGS),
+        Capability(
+            name="volume.check_quality", tool_name="check_volume_quality", owner="core",
+            purpose="Which planes of a z-stack are usable: runs of planes much less sharp "
+                    "than the sharpest, signal fading with depth, and empty, repeated or "
+                    "outlier planes -- as plane ranges with reasons, per channel.",
+            permission="read", input_model=VolumeQcInput, handler=check_volume_quality,
+            egress="aggregates", reads=("image",), tags=TAGS + ("qc", "quality", "blur")),
+        Capability(
+            name="volume.measure_objects", tool_name="measure_objects", owner="core",
+            purpose="Measure every cell of a 3-D segmentation once, whole: volume, centroid "
+                    "in pixels and µm, bounding box, surface area, sphericity, and each "
+                    "channel's mean and integrated intensity. Writes an object table (and "
+                    "makes it the cell table when the project has none). Needs a 3-D label "
+                    "volume; physical units need the z step.",
+            permission="reversible_write", input_model=MeasureInput, handler=measure_objects,
+            execution="job", writes=("project_config",), egress="aggregates",
+            tags=TAGS + ("measure", "objects", "cells", "segmentation", "volume")),
         Capability(
             name="volume.render_projection", tool_name="render_projection", owner="core",
             purpose="Draw a projection of a z-stack's planes (max = MIP, mean, min, std, "

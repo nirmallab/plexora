@@ -234,6 +234,22 @@
             return state && state.mode === "slab" && state.slab.op === "std" ? "std" : "volume";
         }
 
+        /** Whether the project's mask is a 3-D label volume (one id per cell
+         *  across planes) rather than one 2-D mask drawn on every plane. */
+        labelsAre3d() {
+            return Number(this.info?.segmentation?.ndim) === 3;
+        }
+
+        /** The plane a 3-D label volume's outlines are read from: the plane on
+         *  screen (a projection's middle plane), or "" for a 2-D mask. */
+        labelSpec(state = this.state) {
+            if (!this.labelsAre3d() || !state) return "";
+            const t = this.frames > 1 && state.t ? `t${state.t}` : "";
+            const z = state.mode === "slab"
+                ? Math.floor((state.slab.z0 + state.slab.z1) / 2) : state.z;
+            return `${t}z${z}`;
+        }
+
         /** True while the volume renderer, not the tiles, is the picture. */
         isVolume(state = this.state) {
             return Boolean(state) && state.mode === "volume";

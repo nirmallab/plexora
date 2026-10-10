@@ -137,6 +137,11 @@ assert.equal(
     "a 2-D mask is the same picture on every plane, so its tile never names one "
     + "and its cache record is shared by every plane");
 
+assert.equal(
+    urlFor({ tileFormat: 32, hd: false, labelView: "z12" }),
+    "/generated/data/demo/demo_0/3/4_5.png?view=z12",
+    "a 3-D label volume's tile names the plane its labels are read from");
+
 tileQuality.hd = false;
 assert.equal(
     urlFor({ view: "" }),

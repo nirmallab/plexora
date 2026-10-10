@@ -481,6 +481,14 @@ def looks_like_label_image(path):
                 # samples as planes.
                 return False
             if planes > 1:
+                # A stack of integer planes can be a 3-D label volume -- one id
+                # per cell across every plane it spans (plexora/server/volume/
+                # labels.py). Said so by its name, or by the middle plane
+                # looking like ids (sparse values, a background of zeros); a
+                # stack of intensities is anything else.
+                if len(shape) == 3 and dtype.kind in "ui" and _volume_looks_like_labels(
+                        handle, path, dtype):
+                    return True
                 return False
             if dtype.kind not in "ui":
                 return False
@@ -515,6 +523,23 @@ def looks_like_label_image(path):
             return True if _name_says_mask(path) else None
     except Exception:
         return None
+
+
+def _volume_looks_like_labels(handle, path, dtype) -> bool:
+    """Whether a (Z, Y, X) integer stack is label ids rather than intensities."""
+    import numpy as np
+
+    if _name_says_mask(path):
+        return True
+    if dtype.itemsize < 2:
+        return False
+    try:
+        pages = handle.series[0].pages
+        window = pages[len(pages) // 2].asarray()[:512, :512]
+    except Exception:
+        return False
+    unique = int(np.unique(window).size)
+    return 1 < unique < 2048 and bool((window == 0).any())
 
 
 def _name_says_mask(path) -> bool:

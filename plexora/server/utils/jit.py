@@ -106,7 +106,8 @@ def register_primer(module: str):
 #: every one of them even in a process that has not used them yet.
 for _name in ("plexora.server.utils.label_kernels",
               "plexora.plugins.gating.server.autogate.kernels",
-              "plexora.plugins.qc.server.segqc.kernels"):
+              "plexora.plugins.qc.server.segqc.kernels",
+              "plexora.server.volume.measure"):
     register_primer(_name)
 
 

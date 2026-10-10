@@ -480,6 +480,13 @@ def plane_size(path) -> Optional[tuple]:
             close()
     except Exception:
         return None
+    if len(shape) == 3:
+        # A 3-D label volume (plexora/server/volume/labels.py): every plane
+        # is the image's size, which is the size worth comparing.
+        from plexora.server.volume import labels as volume_labels
+
+        if volume_labels.is_label_volume(candidate):
+            return shape[2], shape[1]
     if len(shape) != 2:
         return None
     return shape[1], shape[0]

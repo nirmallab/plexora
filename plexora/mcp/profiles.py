@@ -69,7 +69,8 @@ PROFILES: dict[str, tuple | None] = {
     # Look at a z-stack or time series: what it is, which planes, which
     # picture -- and the viewer commands that show them (skill volume-triage).
     "volume": _COMMON + (
-        "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile",
+        "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
+        "check_volume_quality",
         "render_region", "render_projection", "get_artifact", "list_artifacts",
         "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
         "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
