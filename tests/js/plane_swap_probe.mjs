@@ -217,6 +217,95 @@ const at = (items, view) => items.filter((item) => item.source.view === view);
         world.items.length === 2 && at(world.items, "z9").length === 2);
 }
 
+// == as a navigation revision (services/viewState.js) ======================
+
+/** A revision as viewState makes one: an id, a spec, and a way to supersede it. */
+function revision(id, spec) {
+    const listeners = [];
+    const rev = {
+        id, spec, superseded: false,
+        onSupersede(fn) { if (rev.superseded) fn(rev); else listeners.push(fn); },
+        supersede() { rev.superseded = true; for (const fn of listeners.splice(0)) fn(rev); },
+    };
+    return rev;
+}
+
+{
+    // Prepared, not performed: the commit is handed back to run with the
+    // other surfaces, in their one task.
+    const { manager, world, items } = makeManager(["dapi", "cd3"]);
+    const log = [];
+    manager.planeFade = { capture() { log.push("capture"); return true; },
+                          release() { log.push("release"); } };
+    const rev = revision(1, "z11");
+    const prepared = manager.setView("z11", rev);
+    await tick();
+    for (const item of at(items, "z11")) item.ready();
+    const commit = await prepared;
+    check("for a revision the swap is prepared and its commit handed back, not run",
+        typeof commit === "function" && at(world.items, "z10").length === 4
+        && at(world.items, "z11").every((item) => item.opacity === 0) && log.length === 0);
+    commit();
+    check("running it swaps every channel at once, behind one fade",
+        world.items.length === 4 && at(world.items, "z11").every((item) => item.opacity === 1)
+        && log.join() === "capture,release");
+}
+
+{
+    // Superseded while loading: nothing of it ever shows, and the token the
+    // next channel is built at is the plane on screen.
+    const { manager, world, items } = makeManager(["dapi", "cd3"]);
+    manager.planeFade = { capture: () => true, release() {} };
+    const rev = revision(2, "z12");
+    const prepared = manager.setView("z12", rev);
+    await tick();
+    at(items, "z12")[0].ready();
+    rev.supersede();
+    const commit = await prepared;
+    check("a superseded swap commits nothing and drops what it built",
+        commit === null && at(world.items, "z12").length === 0
+        && at(world.items, "z10").length === 4 && at(world.items, "z10").every((i) => i.opacity === 1));
+    check("and the view the next channel is built at is the one on screen",
+        manager.currentView() === "z10");
+    // A channel switched off and on again is drawn at the plane on screen.
+    manager.channel_remove(1);
+    manager.channel_add(1);
+    await tick();
+    check("a channel switched on afterwards is built at the plane on screen, not the abandoned one",
+        at(world.items, "z10").length === 4 && at(world.items, "z12").length === 0);
+}
+
+{
+    // Superseded after it was ready but before its commit ran.
+    const { manager, world, items } = makeManager(["dapi"]);
+    manager.planeFade = { capture: () => true, release() {} };
+    const rev = revision(3, "z13");
+    const prepared = manager.setView("z13", rev);
+    await tick();
+    for (const item of at(items, "z13")) item.ready();
+    const commit = await prepared;
+    rev.supersede();
+    check("a swap superseded between ready and commit drops its pairs",
+        typeof commit === "function" && at(world.items, "z13").length === 0
+        && at(world.items, "z10").length === 2);
+    commit();
+    check("and running the stale commit afterwards changes nothing",
+        at(world.items, "z10").length === 2 && at(world.items, "z13").length === 0);
+}
+
+{
+    // Units pinned: an item knows the window its bytes are in.
+    const { manager, items } = makeManager(["dapi"]);
+    manager.planeFade = { capture: () => false, release() {} };
+    const swap = manager.setView("z2-8std");
+    await tick();
+    for (const item of at(items, "z2-8std")) item.ready();
+    await swap;
+    check("a standard-deviation projection's items say their bytes are in its own window",
+        at(items, "z2-8std").every((item) => item.source.windowClass === "std")
+        && at(items, "z10").every((item) => item.source.windowClass === "volume"));
+}
+
 console.log(failures.length ? `\n${failures.length} check(s) failed` : "\nall checks passed");
 if (failures.length) {
     console.error(failures.join("\n"));

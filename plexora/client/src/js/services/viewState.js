@@ -17,13 +17,27 @@
  * keeps every 2-D project exactly as it was.
  *
  * HOW A CHANGE REACHES THE PICTURE. `set` updates the state and announces it
- * at once (`plexora:view-requested`), so the readout and the badge move under
- * the user's hand. The tiles follow through `applier` -- the ViewerManager's
- * `setView`, which rebuilds every channel at the new plane and hands over
- * only once it can draw. At most ONE swap is in flight; requests made while it
- * runs collapse into the newest, which is applied when it lands. A scrub
- * through forty planes is therefore a few swaps, and the picture is never a
- * plane the user has already left behind for long.
+ * at once (`plexora:view-requested`), so the readout, the badge and the rail
+ * move under the user's hand. The PICTURE follows as one NAVIGATION REVISION:
+ * an immutable snapshot of the state with an id, handed to every SURFACE that
+ * draws it (`registerSurface`) -- the plane's tiles, a 3-D label volume's
+ * outlines, the section panes, the 3-D view, the contrast that follows a
+ * projection. Each prepares off screen (`prepare(rev)` resolves to a commit
+ * closure: new tiles loaded at opacity 0, a label plane read, a level
+ * fetched) and every closure that is ready runs in ONE task, so the main
+ * plane, its outlines, the panes' z-line and the 3-D view change in the same
+ * frame. The plane decides the moment; another surface gets SYNC_WAIT_MS more
+ * and, if still not ready, commits late under the same revision -- never over
+ * a newer one. At most ONE revision is in flight; requests made while it runs
+ * collapse into the newest, which is applied when it lands. A scrub through
+ * forty planes is therefore a few revisions, and the picture is never a plane
+ * the user has already left behind for long. A revision that cannot help any
+ * more -- the user went back to the plane on screen, or it has been loading
+ * for SUPERSEDE_AFTER_MS while a newer one waits -- is SUPERSEDED: its signal
+ * aborts, its surfaces drop what they built and commit nothing.
+ *
+ * With no surface registered, `applier` (the ViewerManager's `setView`) is
+ * the one thing applied, as before surfaces existed.
  *
  * Saved to `/view_state/<datasource>`, debounced, like the view transform.
  * URL `?z=`, `?t=` and `?view=` win over what was saved, and what was saved
@@ -35,6 +49,76 @@
     "use strict";
 
     const SAVE_DELAY_MS = 400;
+    //: How long the other surfaces get once the plane is ready: past it the
+    //: plane commits with those that are, and the rest join under the same
+    //: revision when they can (never over a newer one).
+    const SYNC_WAIT_MS = 120;
+    //: An in-flight revision still loading after this long, with a newer one
+    //: waiting, is superseded: the newest wins rather than queueing behind it.
+    const SUPERSEDE_AFTER_MS = 1000;
+
+    function now() {
+        return global.performance?.now?.() ?? Date.now();
+    }
+
+    function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * One state of the view, as every surface is to draw it: an immutable
+     * snapshot, an id that only grows, and a signal that aborts when the
+     * revision is superseded (a surface's fetches and half-built items go with
+     * it).
+     */
+    class NavigationRevision {
+        constructor(id, view, key) {
+            this.id = id;
+            this.key = key;
+            this.state = view.get();
+            this.spec = view.spec(this.state);
+            this.labelSpec = view.labelSpec(this.state);
+            this.windowClass = view.windowClass(this.state);
+            this.controller = typeof AbortController === "function" ? new AbortController() : null;
+            this.signal = this.controller ? this.controller.signal : null;
+            this.superseded = false;
+            this.started = now();
+            this._listeners = [];
+        }
+
+        supersede() {
+            if (this.superseded) return;
+            this.superseded = true;
+            try {
+                this.controller?.abort?.();
+            } catch (error) {
+                // An abort that throws is still an abort.
+            }
+            for (const fn of this._listeners.splice(0)) {
+                try {
+                    fn(this);
+                } catch (error) {
+                    console.error("viewState: a surface failed to stand down", error);
+                }
+            }
+        }
+
+        /** Call `fn` when this revision is superseded (at once if it was). */
+        onSupersede(fn) {
+            if (this.superseded) fn(this);
+            else this._listeners.push(fn);
+        }
+    }
+
+    function abortError() {
+        try {
+            return new DOMException("superseded", "AbortError");
+        } catch (error) {
+            const out = new Error("superseded");
+            out.name = "AbortError";
+            return out;
+        }
+    }
     //: "volume" renders the stack in 3-D (views/volumeRenderer.js); the tiles
     //: underneath stay at the current plane, so leaving it is instant.
     const MODES = ["plane", "slab", "volume"];
@@ -92,6 +176,20 @@
             this._pending = null;
             this._frame = 0;
             this._windowClass = "volume";
+            //: Surfaces by name: {prepare(rev, prev) -> commit | null, order}.
+            this._surfaces = new Map();
+            this._revCount = 0;
+            //: The revision on screen, and the key it was made for.
+            this._committed = null;
+            this._appliedKey = "";
+            this._pendingKey = null;
+            //: name -> id of the newest revision that surface committed.
+            this._surfaceRev = new Map();
+            //: While the 3-D view is the picture: the state the tiles under it
+            //: were at when it was entered. They are hidden, so a plane or a
+            //: slab moved in 3-D (the clip) must not swap them; leaving 3-D
+            //: swaps once, to wherever z is then.
+            this._frozen = null;
         }
 
         /** Read the image's extent and the saved position. Never rejects: a
@@ -107,7 +205,9 @@
             if (!this.enabled()) return this;
             this.state = this._clean({ ...this._defaults(), ...(saved || {}) });
             this._applyUrl(search);
+            if (this.state.mode === "volume") this._frozen = { ...this.get(), mode: "plane" };
             this._applied = this.spec();
+            this._appliedKey = this.revisionKey();
             this._windowClass = this.windowClass();
             return this;
         }
@@ -220,6 +320,7 @@
         /** The token the main pane's tiles are fetched at ("" when planar). */
         spec(state = this.state) {
             if (!this.enabled() || !state) return "";
+            if (state.mode === "volume" && this._frozen) return this.spec(this._frozen);
             const t = this.frames > 1 && state.t ? `t${state.t}` : "";
             if (state.mode === "slab" && this.depth > 1) {
                 const { z0, z1, op, q } = state.slab;
@@ -244,6 +345,7 @@
          *  screen (a projection's middle plane), or "" for a 2-D mask. */
         labelSpec(state = this.state) {
             if (!this.labelsAre3d() || !state) return "";
+            if (state.mode === "volume" && this._frozen) return this.labelSpec(this._frozen);
             const t = this.frames > 1 && state.t ? `t${state.t}` : "";
             const z = state.mode === "slab"
                 ? Math.floor((state.slab.z0 + state.slab.z1) / 2) : state.z;
@@ -316,7 +418,10 @@
                     && patch.slab.z0 === undefined && patch.slab.z1 === undefined) {
                 merged.__recentre = true;
             }
+            const wasVolume = before.mode === "volume";
             this.state = this._clean(merged);
+            if (this.state.mode === "volume" && !wasVolume) this._frozen = before;
+            else if (this.state.mode !== "volume") this._frozen = null;
             const fromClass = this._windowClass;
             const toClass = this.windowClass();
             this._announce("plexora:view-requested");
@@ -372,9 +477,46 @@
             }
         }
 
-        _announce(name) {
+        _announce(name, rev = null) {
             this._event(name, { state: this.get(), spec: this.spec(), label: this.label(),
-                                derived: this.isDerived(), windowClass: this.windowClass() });
+                                derived: this.isDerived(), windowClass: this.windowClass(),
+                                rev: rev ? rev.id : (this._committed ? this._committed.id : null) });
+        }
+
+        // -- revisions ------------------------------------------------------
+
+        /**
+         * Draw every revision on `name` too. `prepare(rev, prev)` gets the new
+         * revision and the one on screen and returns (or resolves to) a
+         * closure that puts it on screen, or null for nothing to do; it should
+         * stop and drop what it built when `rev.signal` aborts. `order` places
+         * the closure among the others in the commit task (lower first).
+         * `hold` (ms) makes the plane wait for this surface too, up to that
+         * long from the request: for a surface whose commit decides how the
+         * new tiles LOOK (the contrast a projection is levelled to), so they
+         * never show for a frame with the old one. Returns the way to take
+         * the surface off again.
+         */
+        registerSurface(name, { prepare, order = 50, hold = 0 } = {}) {
+            if (typeof prepare !== "function") throw new TypeError("a surface needs prepare()");
+            this._surfaces.set(name, { prepare, order, hold });
+            return () => {
+                if (this._surfaces.get(name)?.prepare === prepare) this._surfaces.delete(name);
+            };
+        }
+
+        /** Everything a surface draws from, as one comparable string. */
+        revisionKey(state = this.state) {
+            if (!state) return "";
+            const slab = state.slab || {};
+            return JSON.stringify([this.spec(state), this.labelSpec(state), state.t, state.z,
+                                   state.mode, slab.z0, slab.z1, slab.op, slab.q ?? null,
+                                   state.volume?.composite || "mip"]);
+        }
+
+        /** The revision on screen (null before the first commit). */
+        revision() {
+            return this._committed;
         }
 
         /** One swap in flight; the newest request after it. */
@@ -388,6 +530,10 @@
         }
 
         _pump() {
+            if (this._surfaces.size) {
+                this._pumpRevision();
+                return;
+            }
             const target = this.spec();
             if (this._applying) {
                 this._pending = target;
@@ -413,6 +559,139 @@
                     }
                 });
             this._applying = run;
+        }
+
+        /** `_pump` for surfaces: one revision in flight, the newest after it. */
+        _pumpRevision() {
+            const key = this.revisionKey();
+            const flight = this._applying;
+            if (flight) {
+                if (flight.rev.key !== key) {
+                    this._pendingKey = key;
+                    // Back to what is on screen, or stuck behind something
+                    // slow: the revision in flight has nothing left to give.
+                    if (key === this._appliedKey
+                            || now() - flight.rev.started >= SUPERSEDE_AFTER_MS) {
+                        flight.rev.supersede();
+                    } else if (!flight.timer) {
+                        flight.timer = setTimeout(() => {
+                            if (this._applying === flight && this._pendingKey
+                                    && this._pendingKey !== flight.rev.key) {
+                                flight.rev.supersede();
+                            }
+                        }, Math.max(0, SUPERSEDE_AFTER_MS - (now() - flight.rev.started)));
+                    }
+                }
+                return;
+            }
+            this._pendingKey = null;
+            if (key === this._appliedKey) {
+                this._announce("plexora:view-changed");
+                return;
+            }
+            this._revCount += 1;
+            const rev = new NavigationRevision(this._revCount, this, key);
+            global.PlexoraViewPerf?.mark?.("view", "requested", rev.id, rev.spec);
+            const flightRecord = { rev, timer: 0 };
+            this._applying = flightRecord;
+            flightRecord.run = this._applyRevision(rev)
+                .catch((error) => {
+                    console.error("viewState: could not show", rev.spec, error);
+                    return false;
+                })
+                .then((committed) => {
+                    clearTimeout(flightRecord.timer);
+                    this._applying = null;
+                    const next = this._pendingKey;
+                    this._pendingKey = null;
+                    if (next !== null && next !== this._appliedKey) {
+                        this._pump();
+                    } else if (committed || next === this._appliedKey) {
+                        this._announce("plexora:view-changed", rev);
+                    } else if (this.revisionKey() !== this._appliedKey) {
+                        // Superseded with nothing waiting: show what is wanted.
+                        this._pump();
+                    }
+                });
+        }
+
+        /**
+         * Prepare `rev` on every surface and commit what is ready in one task.
+         * Resolves true when it was committed, false when it was superseded.
+         */
+        async _applyRevision(rev) {
+            const prev = this._committed;
+            const entries = [];
+            for (const [name, surface] of this._surfaces) {
+                const entry = { name, order: surface.order, hold: surface.hold || 0,
+                                commit: null, ready: false, done: false };
+                entry.promise = Promise.resolve()
+                    .then(() => (rev.superseded ? null : surface.prepare(rev, prev)))
+                    .then((commit) => {
+                        entry.commit = typeof commit === "function" ? commit : null;
+                    }, (error) => {
+                        if (error?.name !== "AbortError") {
+                            console.error(`viewState: the ${name} surface could not prepare`, error);
+                        }
+                        entry.commit = null;
+                    })
+                    .then(() => {
+                        entry.ready = true;
+                        global.PlexoraViewPerf?.mark?.(name, "ready", rev.id);
+                    });
+                entries.push(entry);
+            }
+            const superseded = new Promise((resolve) => rev.onSupersede(resolve));
+            const main = entries.find((entry) => entry.name === "main");
+            if (main) await Promise.race([main.promise, superseded]);
+            if (rev.superseded) return false;
+            const held = entries.filter((entry) => entry.hold > 0 && !entry.ready);
+            if (held.length) {
+                const longest = Math.max(...held.map((entry) => entry.hold));
+                await Promise.race([Promise.all(held.map((entry) => entry.promise)),
+                                    delay(Math.max(0, longest - (now() - rev.started))), superseded]);
+                if (rev.superseded) return false;
+            }
+            const all = Promise.all(entries.map((entry) => entry.promise));
+            if (entries.some((entry) => !entry.ready)) {
+                await Promise.race([all, delay(SYNC_WAIT_MS), superseded]);
+            }
+            if (rev.superseded) return false;
+            this._commitEntries(rev, entries.filter((entry) => entry.ready), false);
+            this._committed = rev;
+            this._applied = rev.spec;
+            this._appliedKey = rev.key;
+            global.PlexoraViewPerf?.mark?.("view", "committed", rev.id, rev.spec);
+            const late = entries.filter((entry) => !entry.ready);
+            if (late.length) all.then(() => this._commitEntries(rev, late, true));
+            return true;
+        }
+
+        /** Run ready commit closures, lowest order first, in this one task. */
+        _commitEntries(rev, entries, late) {
+            for (const entry of entries.slice().sort((a, b) => a.order - b.order)) {
+                if (entry.done) continue;
+                entry.done = true;
+                if (!entry.commit) continue;
+                // Late, and a newer revision already reached this surface (or
+                // this one was superseded): what it built is older than what is
+                // on screen there.
+                if (late && (rev.superseded || (this._surfaceRev.get(entry.name) || 0) > rev.id)) {
+                    try {
+                        entry.commit.discard?.();
+                    } catch (error) {
+                        console.error(`viewState: the ${entry.name} surface could not discard`, error);
+                    }
+                    continue;
+                }
+                try {
+                    entry.commit(rev);
+                    this._surfaceRev.set(entry.name, rev.id);
+                    global.PlexoraViewPerf?.mark?.(entry.name, late ? "committedLate" : "committed", rev.id);
+                } catch (error) {
+                    console.error(`viewState: the ${entry.name} surface could not commit`, error);
+                }
+            }
         }
 
         /** Settles once the picture shows the current state (tests, agents). */
@@ -466,6 +745,10 @@
 
     ViewState.parseToken = parseToken;
     ViewState.OP_LABELS = OP_LABELS;
+    ViewState.NavigationRevision = NavigationRevision;
+    ViewState.abortError = abortError;
+    ViewState.SYNC_WAIT_MS = SYNC_WAIT_MS;
+    ViewState.SUPERSEDE_AFTER_MS = SUPERSEDE_AFTER_MS;
     global.PlexoraViewState = ViewState;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = ViewState;

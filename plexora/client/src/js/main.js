@@ -496,9 +496,17 @@ async function init(config, savedViewTransform = null) {
         viewerManager.presetView(viewState.spec());
         viewerManager.presetLabelPlane(viewState.labelSpec());
         viewState.applier = (spec) => viewerManager.setView(spec);
-        // A 3-D label volume's outlines follow the plane on screen.
+        // Every change of plane, frame or projection is ONE navigation
+        // revision drawn by every surface in the same frame
+        // (services/viewState.js): the plane's tiles decide the moment; a 3-D
+        // label volume's outlines, the section panes (sectionPanes.js), the
+        // 3-D view (volumeRenderer.js) and the contrast that follows a
+        // projection (viewerSidebar.prepareContrast) commit with them.
+        viewState.registerSurface("main", {
+            order: 20, prepare: (rev) => viewerManager.setView(rev.spec, rev) });
         if (viewState.labelsAre3d()) {
-            viewState.subscribe(() => viewerManager.setLabelPlane(viewState.labelSpec()));
+            viewState.registerSurface("labels", {
+                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
         }
     }
     // A node that finishes converting this project's mask while it is open:

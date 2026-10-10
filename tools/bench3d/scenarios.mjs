@@ -175,45 +175,32 @@ async function zsteps(ctx) {
     const z0 = ctx.params.z0 ?? Math.floor(ctx.info.depth / 2) - 10;
     await reset(ctx, { z: Math.max(0, z0) });
     const F = await period(ctx);
-    // single steps, each from rest, with the screen's luminance recorded
-    const singles = await ctx.browser.eval(async (reps, F) => {
+    // Single steps, each from rest. TIMED WITH NO PIXEL READBACK: reading
+    // the plane's canvas back every frame (the luminance trace) makes Chrome
+    // move that canvas off the GPU, and every later draw then pays for it --
+    // measured: 25-33 ms frames for the rest of the page's life. So the
+    // timings run first, and the luminance trace on a page of its own below.
+    const singles = await ctx.browser.eval(async (reps) => {
         const k = __bench.k;
         const vs = k.vs();
-        __bench.start({ lum: true });
+        __bench.start();
         const out = [];
         for (let i = 0; i < reps; i += 1) {
             await k.quiet(500);
             await k.sleep(300);
-            const before = __bench.lum[__bench.lum.length - 1]?.[1];
             const c0 = k.counters();
             const t0 = performance.now();
             vs.step(1);
-            const token = vs.spec();
-            const r = await k.waitPlane(token, t0);
+            const r = await k.waitPlane(vs.spec(), t0);
             await k.quiet(300);
-            await k.sleep(400);   // the fade's end
-            const after = __bench.lum[__bench.lum.length - 1]?.[1];
-            const fl = before && after ? k.flashFrames(t0, t0 + r.full + 400, before, after) : null;
-            let change = null;
-            if (before) {
-                for (const [t, grid] of __bench.lum) {
-                    if (t < t0) continue;
-                    const d = grid.reduce((s, v, j) => s + Math.abs(v - before[j]), 0) / grid.length;
-                    if (d > 1) { change = t - t0; break; }
-                }
-            }
-            out.push({ ...r, flash: fl?.flash ?? null, worst: fl?.worst ?? null, change,
-                       counters: k.delta(c0, k.counters()) });
+            out.push({ ...r, counters: k.delta(c0, k.counters()) });
         }
         __bench.stop();
         return out;
-    }, ctx.reps, F);
+    }, ctx.reps);
     for (const s of singles) {
         put(metrics, "step_commit", s.commit);
         put(metrics, "step_full", s.full);
-        put(metrics, "step_firstVisibleChange", s.change);
-        put(metrics, "step_flashFrames", s.flash);
-        put(metrics, "step_flashWorst", s.worst);
         put(metrics, "step_shaderCompiles", s.counters.shaderCompiles || 0);
         put(metrics, "step_shaderXhrs", s.counters.shaderXhrs || 0);
     }
@@ -312,6 +299,43 @@ async function zsteps(ctx) {
         put(metrics, "held_frameP95", held.p95);
         put(metrics, "held_frameP99", held.p99);
         put(metrics, "held_dropped", held.dropped);
+    }
+    // What the screen showed through each step: a page of its own (see above).
+    await boot(ctx);
+    await reset(ctx, { z: Math.max(0, z0) });
+    const traced = await ctx.browser.eval(async (reps) => {
+        const k = __bench.k;
+        const vs = k.vs();
+        __bench.start({ lum: true });
+        const out = [];
+        for (let i = 0; i < reps; i += 1) {
+            await k.quiet(500);
+            await k.sleep(300);
+            const before = __bench.lum[__bench.lum.length - 1]?.[1];
+            const t0 = performance.now();
+            vs.step(1);
+            const r = await k.waitPlane(vs.spec(), t0);
+            await k.quiet(300);
+            await k.sleep(400);   // the fade's end
+            const after = __bench.lum[__bench.lum.length - 1]?.[1];
+            const fl = before && after ? k.flashFrames(t0, t0 + r.full + 400, before, after) : null;
+            let change = null;
+            if (before) {
+                for (const [t, grid] of __bench.lum) {
+                    if (t < t0) continue;
+                    const d = grid.reduce((s, v, j) => s + Math.abs(v - before[j]), 0) / grid.length;
+                    if (d > 1) { change = t - t0; break; }
+                }
+            }
+            out.push({ flash: fl?.flash ?? null, worst: fl?.worst ?? null, change });
+        }
+        __bench.stop();
+        return out;
+    }, ctx.reps);
+    for (const s of traced) {
+        put(metrics, "step_firstVisibleChange", s.change);
+        put(metrics, "step_flashFrames", s.flash);
+        put(metrics, "step_flashWorst", s.worst);
     }
     return { metrics, F };
 }

@@ -71,6 +71,11 @@ async function plexoraMapWithLimit(items, limit, fn) {
  * Every default is the previous behaviour, and the viewer passes no options at
  * all.
  */
+
+//: How long a navigation revision's tiles wait for the statistics of the view
+//: they show (prepareContrast) before showing with the contrast there is.
+const CONTRAST_HOLD_MS = 1500;
+
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {
         this.config = config;
@@ -158,6 +163,14 @@ class ViewerSidebar {
             window.addEventListener("plexora:view-class-changed", this._viewClassListener);
             this._viewRequestedListener = () => this.onViewRequested();
             window.addEventListener("plexora:view-requested", this._viewRequestedListener);
+            // The view's contrast changes with the view's tiles, in one
+            // navigation revision (services/viewState.js), when the viewer
+            // has one; on its own timer (onViewRequested) otherwise.
+            const vs = window.__plexora?.viewState;
+            if (typeof vs?.registerSurface === "function") {
+                this._contrastSurface = vs.registerSurface("ranges", {
+                    order: 10, hold: CONTRAST_HOLD_MS, prepare: (rev) => this.prepareContrast(rev) });
+            }
             this._volumeHintListener = (e) => this.onVolumeHint(e.detail || {});
             window.addEventListener("plexora:volume-hint", this._volumeHintListener);
         }
@@ -181,6 +194,8 @@ class ViewerSidebar {
             this._hdModeListener = null;
         }
         if (this._viewRequestedListener) {
+            this._contrastSurface?.();
+            this._contrastSurface = null;
             window.removeEventListener("plexora:view-requested", this._viewRequestedListener);
             window.removeEventListener("plexora:volume-hint", this._volumeHintListener);
             this._viewRequestedListener = null;
@@ -1180,7 +1195,10 @@ class ViewerSidebar {
             return;
         }
         const markerName = slot.name;
-        const stillCurrent = () => slot.name === markerName &&
+        // The newest levelling of this slot wins: one asked for by an older
+        // view and still waiting on a fetch must not land after it.
+        const turn = slot.levelTurn = (slot.levelTurn || 0) + 1;
+        const stillCurrent = () => slot.name === markerName && slot.levelTurn === turn &&
             (options.force || !slot.userRangeChanged);
         slot.autoLeveling = true;
         try {
@@ -1189,11 +1207,14 @@ class ViewerSidebar {
             // window saturates it. Its hints are the view's own statistics --
             // for the 3-D view, those of the level it draws (`viewStats`).
             // Nothing is saved, so the project's channel ranges stay the plane's.
-            const viewToken = this.contrastView();
+            // `options.view` is the view a navigation revision is showing
+            // (prepareContrast), which may trail the one asked for.
+            const viewToken = options.view !== undefined ? options.view : this.contrastView();
             if (viewToken) {
                 await this.channelList.ensureChannelStats(markerName);
                 const stats = await this.viewStats(markerName, viewToken);
-                if (!stillCurrent() || this.contrastView() !== viewToken) return;
+                if (!stillCurrent()
+                    || (options.view === undefined && this.contrastView() !== viewToken)) return;
                 if (stats && stats.vmin_hint !== undefined) {
                     const packet = this.quantWindow(markerName) || stats;
                     slot.autoSilent = true;
@@ -1239,14 +1260,43 @@ class ViewerSidebar {
      * `3d` for the 3-D view, or "" for a plane (the channel's own statistics,
      * as on a flat image). Only the viewer's own sidebar follows the view.
      */
-    contrastView() {
+    contrastView(state = null) {
         if (this.hdModeOverride !== undefined || this.root !== document || this.idPrefix) return "";
         const vs = window.__plexora?.viewState;
-        const state = vs?.enabled?.() ? vs.get?.() : null;
+        if (!vs?.enabled?.()) return "";
+        state = state || vs.get?.();
         if (!state) return "";
         if (state.mode === "slab") return vs.spec(state);
         if (state.mode === "volume") return "3d";
         return "";
+    }
+
+    /**
+     * The contrast's part of a navigation revision: when the view auto-contrast
+     * follows changes (a plane, a projection, the 3-D view), the statistics of
+     * the new one are fetched while its tiles load, and the channels are
+     * levelled in the same task that shows them. Levelled on a timer of its
+     * own, a projection's first frames were drawn with the plane's window
+     * (too bright) or the plane's with the projection's (too dark) for as long
+     * as the two disagreed. Channels the user set are never touched.
+     */
+    prepareContrast(rev) {
+        const view = this.contrastView(rev.state);
+        if (view === this._contrastViewShown) return null;
+        const auto = this.channelSlots.filter((slot) => slot.enabled && slot.name
+                                              && !slot.userRangeChanged);
+        const commit = () => {
+            this._contrastViewShown = view;
+            for (const slot of auto) {
+                if (slot.enabled && slot.name && !slot.userRangeChanged) {
+                    this.autoChannel(slot.index, { force: true, view });
+                }
+            }
+        };
+        if (!view || view === "3d" || !auto.length) return commit;
+        return Promise.all(auto.map((slot) => this.channelList.ensureChannelStats(slot.name)
+            .then(() => this.viewStats(slot.name, view)).catch(() => null)))
+            .then(() => (rev.superseded ? null : commit));
     }
 
     /**
@@ -1277,6 +1327,8 @@ class ViewerSidebar {
      * range asks for one view, not one per step.
      */
     onViewRequested() {
+        // Levelled with the tiles instead (prepareContrast).
+        if (this._contrastSurface) return;
         clearTimeout(this._contrastTimer);
         this._contrastTimer = setTimeout(() => {
             const view = this.contrastView();

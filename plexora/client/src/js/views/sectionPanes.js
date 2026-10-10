@@ -49,7 +49,10 @@
     //: Pixels per arrow key on a divider; Shift for KEY_STEP_LARGE.
     const KEY_STEP = 16;
     const KEY_STEP_LARGE = 64;
-    const REBUILD_DELAY_MS = 180;
+    //: A pan that stopped moving (the hand still, or let go): the section at
+    //: the place the view is heading to is asked for after this long, while
+    //: the view still eases there -- not 1.2 s later, once it has.
+    const TARGET_STILL_MS = 60;
     //: How long the view stays put before its area is prepared in 3-D.
     const PREPARE_DELAY_MS = 2000;
     const HANDOVER_TIMEOUT_MS = 6000;
@@ -100,6 +103,11 @@
             this.geometry = null;
             this.token = "";
             this.items = new Map();         // srcIdx -> TiledImage
+            //: The show() still loading, if any: {token, generation, promise,
+            //: cancel}. Each show() takes a new generation; anything a
+            //: superseded one still has in flight drops itself on arrival.
+            this.loading = null;
+            this.generation = 0;
             this.view = { top: 0, rows: 0, scale: 1 };
             this.root = el("div", `viewer-section-pane is-${axis}`, {
                 role: "img", "aria-label": axis === "xz" ? "XZ section" : "YZ section" });
@@ -137,7 +145,9 @@
                 compositeOperation: "lighter",
                 immediateRender: false,
                 maxImageCacheCount: 96,
-                imageLoaderLimit: 6,
+                // The tile scheduler (tileFetch.js) decides the order across
+                // the plane and both panes; this only hands it the jobs.
+                imageLoaderLimit: owner.imageViewer?.tileFetch ? 16 : 6,
                 timeout: 90000,
                 preserveViewport: true,
                 visibilityRatio: 0,
@@ -163,6 +173,7 @@
             this.osd.addHandler("tile-drawing",
                 (event) => owner.tileDrawing.tileDrawingCustom(owner.tileDrawing.tileDrawingDefault, event));
             this.osd.addHandler("tile-unloaded", (event) => { delete event.tile._array; });
+            owner.imageViewer?.tileFetch?.watch(this.osd);
         }
 
         tileSource(srcIdx, channel, token) {
@@ -172,7 +183,9 @@
             const config = owner.config;
             const entry = config.imageData[srcIdx] || {};
             const hd = owner.isHd();
-            return {
+            const fetcher = owner.imageViewer?.tileFetch;
+            const attach = (source) => (fetcher ? fetcher.attach(source, { owner: "pane" }) : source);
+            return attach({
                 height: geometry.height,
                 width: geometry.width,
                 tileWidth: config.tileWidth,
@@ -183,6 +196,10 @@
                 srcIdx,
                 src: channel.url,
                 view: token,
+                //: The units this section's pixels are in (ImageViewer.itemRange):
+                //: sections are always in the volume's window.
+                hd,
+                windowClass: "volume",
                 getTileUrl(level, x, y) {
                     const serverLevel = this.maxLevel - level;
                     const query = [hd ? "q=hd" : "", entry.srcQuery || "",
@@ -203,59 +220,145 @@
                 toMagnifiedBounds() {
                     return { x: [0, 1], y: [0, 1] };
                 },
-            };
+            });
         }
 
-        /** Show the section at `token`: new items load invisibly, the old
-         *  ones go once the new can draw -- the plane swap's handover. */
-        show(token) {
-            if (!this.osd || !this.geometry) return;
-            if (token === this.token && this.items.size === this.owner.channelCount()) return;
-            this.token = token;
+        /** The token on screen, or the one loading to replace it. */
+        wanted() {
+            return this.loading ? this.loading.token : this.token;
+        }
+
+        /**
+         * Show the section at `token`: new items load invisibly, the old ones
+         * go once the new can draw -- the plane swap's handover.
+         *
+         * ONE HANDOVER AT A TIME, and only the newest ever lands: a show()
+         * superseded by another (a pan that kept going, a new frame) drops its
+         * items -- arrived or still to arrive -- and never fades up, and its
+         * deadline never fires. `defer` hands the commit back instead of
+         * running it (resolves to the closure, or null), for a navigation
+         * revision that reveals every surface in one task; `rev` superseded
+         * cancels it.
+         *
+         * @returns a promise of the commit closure (with `defer`) or null
+         */
+        show(token, { defer = false, rev = null } = {}) {
+            if (!this.osd || !this.geometry) return Promise.resolve(null);
+            const count = this.owner.channelCount();
+            if (!this.loading && token === this.token && this.items.size === count) {
+                return Promise.resolve(null);
+            }
+            if (this.loading && this.loading.token === token && !defer && !this.loading.defer) {
+                return this.loading.promise;
+            }
+            this.loading?.cancel();
+            const generation = ++this.generation;
+            const live = () => generation === this.generation;
+            const world = this.osd.world;
             const channels = this.owner.channels();
             const outgoing = [...this.items.values()];
-            this.items = new Map();
-            const added = [];
+            const added = new Map();
             let pending = channels.length;
+            let settled = false;
+            let finished = false;
+            let timer = null;
+            let resolve = null;
+            const promise = new Promise((done) => { resolve = done; });
+            const dropAdded = () => {
+                for (const item of added.values()) {
+                    if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
+                }
+                added.clear();
+            };
+            const cancel = () => {
+                if (finished) return;
+                if (timer !== null) clearTimeout(timer);
+                timer = null;
+                if (this.loading?.generation === generation) this.loading = null;
+                if (!settled) {
+                    settled = true;
+                    this.owner.superseded += 1;
+                    resolve(null);
+                }
+                dropAdded();
+            };
             const finish = () => {
-                for (const item of added) item.setOpacity(1);
+                if (!live()) {
+                    dropAdded();
+                    return;
+                }
+                finished = true;
+                if (this.loading?.generation === generation) this.loading = null;
+                this.token = token;
+                this.items = new Map(added);
+                for (const item of added.values()) item.setOpacity(1);
                 for (const item of outgoing) {
-                    if (this.osd.world.getIndexOfItem(item) >= 0) this.osd.world.removeItem(item);
+                    if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
                 }
                 this.align();
+                global.PlexoraViewPerf?.mark?.(this.axis, "committed", rev ? rev.id : null, token);
             };
-            if (!pending) {
-                finish();
-                return;
-            }
-            let handed = false;
+            finish.discard = cancel;
             const hand = () => {
-                if (handed) return;
-                handed = true;
-                finish();
+                if (settled || !live()) return;
+                settled = true;
+                if (timer !== null) clearTimeout(timer);
+                timer = null;
+                if (defer) {
+                    resolve(finish);
+                } else {
+                    finish();
+                    resolve(null);
+                }
             };
-            setTimeout(hand, HANDOVER_TIMEOUT_MS);
+            this.loading = { token, generation, promise, cancel, defer };
+            rev?.onSupersede?.(cancel);
+            if (!pending) {
+                hand();
+                return promise;
+            }
+            timer = setTimeout(() => {
+                if (!live()) return;
+                this.owner.timeouts += 1;
+                hand();
+            }, HANDOVER_TIMEOUT_MS);
             for (const [srcIdx, channel] of channels) {
                 this.osd.addTiledImage({
                     tileSource: this.tileSource(srcIdx, channel, token),
                     compositeOperation: "lighter",
-                    opacity: outgoing.length ? 0 : 1,
+                    // Hidden until the handover, unless there is nothing on
+                    // screen to hand over from.
+                    opacity: outgoing.length || defer ? 0 : 1,
                     preload: true,
                     success: (event) => {
-                        this.items.set(srcIdx, event.item);
-                        added.push(event.item);
+                        if (!live()) {
+                            world.removeItem(event.item);
+                            return;
+                        }
+                        if (finished) {
+                            // Late, after its handover (the deadline): part of
+                            // what is on screen now.
+                            event.item.setOpacity(1);
+                            this.items.set(srcIdx, event.item);
+                            event.item.addHandler("fully-loaded-change", () => {
+                                if (live()) requestAnimationFrame(() => this.redraw());
+                            });
+                            this.align();
+                            return;
+                        }
+                        added.set(srcIdx, event.item);
                         // Decoding is asynchronous and finishes after OSD's own
                         // draw for the tile; draw again once the item has
                         // everything it needs.
                         event.item.addHandler("fully-loaded-change", () => {
-                            requestAnimationFrame(() => this.redraw());
+                            if (live()) requestAnimationFrame(() => this.redraw());
                         });
                         this.align();
                         const ready = () => {
                             pending -= 1;
                             if (pending <= 0) hand();
                         };
-                        if (!outgoing.length || event.item.getFullyLoaded?.()) {
+                        if ((!outgoing.length && !defer) || event.item.getFullyLoaded?.()) {
                             ready();
                         } else {
                             const onChange = () => {
@@ -272,6 +375,7 @@
                     },
                 });
             }
+            return promise;
         }
 
         /** Match the plane's scale and position (x for XZ, y for YZ). */
@@ -486,6 +590,24 @@
             this.prefs = global.PlexoraViewerPrefs || null;
             //: A size being dragged, before it is saved: {xz?, yz?} shares.
             this.liveShare = {};
+            //: The view state the panes DRAW -- the revision on screen, which
+            //: the z-line follows -- as opposed to the one asked for, which
+            //: the rail follows. Null until the first revision (then: asked).
+            this.shown = null;
+            //: Whether navigation reaches the panes as revisions (main.js
+            //: registers them as a surface); the old subscriber path otherwise.
+            this.surface = false;
+            //: Counters, for the benchmark and a person asking: handovers that
+            //: hit their deadline, and shows superseded before they landed.
+            this.timeouts = 0;
+            this.superseded = 0;
+            this.targetTimer = 0;
+            this.targetKey = "";
+        }
+
+        /** The state the panes draw (see `shown`). */
+        drawn() {
+            return this.shown || this.viewState.get();
         }
 
         /** A pane's chosen share of the plane, or null for the default. */
@@ -610,7 +732,7 @@
         }
 
         zRow(rows) {
-            const state = this.viewState.get();
+            const state = this.drawn();
             const depth = Math.max(1, this.viewState.depth);
             return ((state.z + 0.5) / depth) * rows;
         }
@@ -634,6 +756,8 @@
                 renderer: imageViewer.glRenderer,
                 floatRange: imageViewer.numericData?.floatRange,
                 findCurrentChannel: (sub) => imageViewer.findCurrentChannel(sub),
+                itemRange: imageViewer.itemRange
+                    ? (channel, source) => imageViewer.itemRange(channel, source) : null,
                 selectCenterProps: centerProps(imageViewer),
                 labelOutlinesEnabled: () => false,
                 modeFlags: () => ({ edge: 0, or: 0 }),
@@ -668,12 +792,13 @@
             return true;
         }
 
-        /** The plane's frame in image pixels, and how big it is on screen. */
-        measure() {
+        /** The plane's frame in image pixels, and how big it is on screen --
+         *  where the view is now, or with `target` where it is easing to. */
+        measure(target = false) {
             const viewer = this.imageViewer?.viewer;
             const item = viewer?.world?.getItemAt?.(0);
             if (!viewer || !item) return null;
-            const bounds = viewer.viewport.getBounds(true);
+            const bounds = viewer.viewport.getBounds(!target);
             const rect = item.viewportToImageRectangle(bounds);
             const size = viewer.viewport.getContainerSize();
             return {
@@ -691,7 +816,7 @@
          * pane covers -- left of YZ, above XZ -- in image pixels (`cx`, `cy`)
          * and in the plane's container pixels (`cutX`, `cutY`).
          */
-        locateCut() {
+        locateCut(target = false) {
             const frame = this.frame;
             const viewer = this.imageViewer?.viewer;
             const item = viewer?.world?.getItemAt?.(0);
@@ -709,23 +834,56 @@
             const cutX = Math.max(0, (right - box.left) / 2);
             const cutY = Math.max(0, (bottom - box.top) / 2);
             const point = item.viewportToImageCoordinates(
-                viewer.viewport.pointFromPixel(new OpenSeadragon.Point(cutX, cutY), true));
+                viewer.viewport.pointFromPixel(new OpenSeadragon.Point(cutX, cutY), !target));
             if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
             Object.assign(frame, { cx: point.x, cy: point.y, cutX, cutY });
         }
 
-        tokens() {
-            const frame = this.frame;
+        /**
+         * The section tokens for `frame` (the view's, by default) at frame `t`.
+         *
+         * A cut that moved by less than one screen pixel keeps the token the
+         * pane already has: the section through the next image row is the
+         * same picture at this zoom, and a new token is a new set of tiles for
+         * every channel. Zoomed out, one screen pixel is many image rows.
+         */
+        tokens(frame = this.frame, t = this.drawn()?.t || 0) {
             const info = this.viewState.info || {};
             const width = Number(info.width) || 1;
             const height = Number(info.height) || 1;
-            const t = this.viewState.get()?.t || 0;
             const prefix = this.viewState.frames > 1 && t ? `t${t}` : "";
-            const y = Math.max(0, Math.min(height - 1, Math.round(frame.cy)));
-            const x = Math.max(0, Math.min(width - 1, Math.round(frame.cx)));
+            let y = Math.max(0, Math.min(height - 1, Math.round(frame.cy)));
+            let x = Math.max(0, Math.min(width - 1, Math.round(frame.cx)));
+            const slack = Math.max(1, 1 / Math.max(1e-9, frame.scale || 1));
+            const held = (pane, axis) => {
+                const match = new RegExp(`^${prefix}${axis}(\\d+)$`).exec(pane?.wanted?.() || "");
+                return match ? Number(match[1]) : null;
+            };
+            const heldY = held(this.panes?.xz, "xzy");
+            const heldX = held(this.panes?.yz, "yzx");
+            if (heldY !== null && Math.abs(heldY - frame.cy) < slack) y = heldY;
+            if (heldX !== null && Math.abs(heldX - frame.cx) < slack) x = heldX;
             return { xz: `${prefix}xzy${y}`, yz: `${prefix}yzx${x}`, x, y };
         }
 
+        /** Ask both panes for the section through `frame` (the view's). */
+        showAt(frame = this.frame) {
+            if (!frame || !this.panes) return;
+            const tokens = this.tokens(frame);
+            this.panes.xz.show(tokens.xz);
+            this.panes.yz.show(tokens.yz);
+            this.paintLabels(tokens);
+        }
+
+        /**
+         * The panes follow the plane. Every frame the view moves, they are
+         * laid out and aligned with it (`settled` false); the SECTIONS are
+         * refetched only where the cut ends up. That used to be once the view
+         * had finished easing and then 180 ms more -- over a second after the
+         * hand let go. Now the cut the view is easing TO is known as soon as
+         * the hand is still (TARGET_STILL_MS), and its sections load while the
+         * view gets there.
+         */
         follow(settled) {
             if (!this.enabled || !this.panes) return;
             this.frame = this.measure();
@@ -734,17 +892,39 @@
             this.locateCut();
             for (const pane of Object.values(this.panes)) pane.apply();
             this.paintCrosshair();
-            clearTimeout(this.timer);
-            const apply = () => {
-                const tokens = this.tokens();
-                this.panes.xz.show(tokens.xz);
-                this.panes.yz.show(tokens.yz);
-                this.paintLabels(tokens);
-            };
             if (settled) {
-                this.timer = setTimeout(apply, REBUILD_DELAY_MS);
+                clearTimeout(this.targetTimer);
+                this.targetKey = "";
+                this.showAt(this.frame);
                 clearTimeout(this.prepareTimer);
                 this.prepareTimer = setTimeout(() => this.prepareArea(), PREPARE_DELAY_MS);
+                return;
+            }
+            // OSD raises `animation` every frame the view eases, so the wait
+            // restarts only when the place it is heading to moves -- a hand
+            // still dragging -- not on every frame of the ease.
+            const target = this.measure(true);
+            if (!target) return;
+            const key = [target.x0, target.y0, target.x1, target.y1].map((v) => v.toFixed(2)).join(",");
+            if (key === this.targetKey) return;
+            this.targetKey = key;
+            clearTimeout(this.targetTimer);
+            this.targetTimer = setTimeout(() => {
+                const at = this.measure(true);
+                if (!at) return;
+                this.locateCutIn(at);
+                this.showAt(at);
+            }, TARGET_STILL_MS);
+        }
+
+        /** locateCut for a frame other than the one on screen (a target). */
+        locateCutIn(frame) {
+            const current = this.frame;
+            this.frame = frame;
+            try {
+                this.locateCut(true);
+            } finally {
+                this.frame = current;
             }
         }
 
@@ -777,6 +957,45 @@
             if (!this.enabled || !this.panes) return;
             for (const pane of Object.values(this.panes)) pane.token = "";
             this.follow(true);
+        }
+
+        /**
+         * The panes' part of a navigation revision (services/viewState.js):
+         * the z-line (and the scroll of a pane too small for its stack) moves
+         * in the same frame as the plane's picture, never ahead of it; a new
+         * frame `t` rebuilds both sections invisibly and reveals them in that
+         * frame too.
+         */
+        prepare(rev) {
+            const state = rev.state;
+            const show = () => {
+                this.shown = state;
+                if (!this.enabled || !this.panes) return;
+                this.follow(false);
+            };
+            if (!this.enabled || !this.panes || (this.drawn()?.t || 0) === (state.t || 0)) {
+                return show;
+            }
+            this.frame = this.measure() || this.frame;
+            if (!this.frame) return show;
+            const tokens = this.tokens(this.frame, state.t || 0);
+            return Promise.all([
+                this.panes.xz.show(tokens.xz, { defer: true, rev }),
+                this.panes.yz.show(tokens.yz, { defer: true, rev }),
+            ]).then(([xz, yz]) => {
+                if (rev.superseded) return null;
+                const commit = () => {
+                    xz?.();
+                    yz?.();
+                    show();
+                    this.paintLabels(tokens);
+                };
+                commit.discard = () => {
+                    xz?.discard?.();
+                    yz?.discard?.();
+                };
+                return commit;
+            });
         }
 
         redraw() {
@@ -845,7 +1064,9 @@
                 this.setEnabled(wanted);
                 return;
             }
-            if (!this.enabled || !this.panes) return;
+            // Planes and frames reach the panes as revisions (prepare): the
+            // z-line moves with the picture, not with the hand.
+            if (this.surface || !this.enabled || !this.panes) return;
             if (this._lastZ !== state.z) {
                 // A pane too small for its whole stack scrolls with the plane.
                 this._lastZ = state.z;
@@ -875,6 +1096,10 @@
         if (!viewState?.enabled?.() || viewState.depth < 2) return null;
         const panes = new SectionPanes({ viewState, ...options });
         viewState.subscribe((state) => panes.onState(state));
+        if (typeof viewState.registerSurface === "function") {
+            panes.surface = true;
+            viewState.registerSurface("panes", { order: 40, prepare: (rev) => panes.prepare(rev) });
+        }
         const lists = typeof ChannelList !== "undefined" ? ChannelList : global.ChannelList;
         const handler = options.imageViewer?.eventHandler;
         if (handler?.bind && lists?.events) {

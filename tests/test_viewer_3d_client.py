@@ -41,3 +41,22 @@ def test_a_plane_step_never_flashes():
 
 def test_the_tile_shaders_are_compiled_once_per_page():
     _passed(_run("gl_init_probe.mjs"), 9)
+
+
+def test_every_surface_draws_one_navigation_revision():
+    """The plane, the panes, the outlines and the 3-D view commit in one task;
+    late surfaces never overwrite a newer revision; superseded revisions commit
+    nothing (tests/js/nav_revision_probe.mjs)."""
+    _passed(_run("nav_revision_probe.mjs"), 20)
+
+
+def test_the_section_panes_show_the_newest_section_in_step():
+    """Superseded section handovers never land; the z-line follows the picture;
+    a sub-pixel cut keeps its section (tests/js/section_panes_probe.mjs)."""
+    _passed(_run("section_panes_probe.mjs"), 15)
+
+
+def test_one_scheduler_fetches_and_decodes_each_tile_once():
+    """Dedup, order of need, decode once with a transferred buffer, cancellation
+    with the item that wanted the tile (tests/js/tile_fetch_probe.mjs)."""
+    _passed(_run("tile_fetch_probe.mjs"), 16)

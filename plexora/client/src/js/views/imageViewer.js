@@ -539,6 +539,7 @@ class ImageViewer {
         const { tileDrawingDefault, tileDrawingCustom } = PlexoraTileColorize.createTileDrawing({
             renderer,
             floatRange: this.numericData.floatRange,
+            itemRange: (channel, source) => this.itemRange(channel, source),
             findCurrentChannel: this.findCurrentChannel.bind(this),
             selectCenterProps: this.selectCenterProps.bind(this),
             // `overlayMuted` is a DRAW-TIME gate and nothing else: the mask item
@@ -569,6 +570,24 @@ class ImageViewer {
             Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4)),
         );
         this.decoderPool = decoderPool;
+        // A volume's channel and section tiles go through ONE scheduler
+        // (views/tileFetch.js): fetched once per address, decoded once, in
+        // order of need, and cancelled with the item that wanted them. Built
+        // here for every image and only ATTACHED to a volume's tile sources
+        // (ViewerManager.addChannelItems, sectionPanes.js), so a planar
+        // image's tiles take exactly the path they always did.
+        this.tileFetch = window.PlexoraTileFetch
+            ? new PlexoraTileFetch.TileFetchScheduler({
+                decoderPool,
+                decodeInline: PlexoraTileDecode.decodeTileInline,
+                // The plane's loader hands the scheduler more jobs than it
+                // runs, so the order across viewers is decided in one place.
+                onAttach: () => {
+                    const loader = this.viewer?.imageLoader;
+                    if (loader && loader.jobLimit && loader.jobLimit < 32) loader.jobLimit = 32;
+                },
+            }).watch(this.viewer)
+            : null;
 
         // tile-loaded handling: decode the raw tile bytes ourselves rather than
         // letting OSD turn them into an image. See views/tileDecode.js for the
@@ -2156,10 +2175,44 @@ class ImageViewer {
         if (this.currentChannels[channelIdx]) {
             let channelRange = [tfmin / range[1], tfmax / range[1]];
             this.currentChannels[channelIdx].range = channelRange;
+            // The units the range is in, for an item fetched in others
+            // (itemRange): HD or not, and which quantization window.
+            this.currentChannels[channelIdx].rangeDomain = {
+                hd, cls: window.__plexora?.viewerSidebar?.viewClass || "volume", name };
             this.channelList.rangeConnector[channelIdx] = channelRange;
         }
         this.miniMap?.invalidate();
         this.scheduleRepaint();
+    }
+
+    /**
+     * A channel's range in the units of one item's pixels.
+     *
+     * A volume's tiles come in more than one unit: 8-bit bytes over the
+     * volume's window or over a standard-deviation projection's narrower one,
+     * or HD's raw 16-bit values. `channel.range` is in whatever units the
+     * sidebar is in NOW (`rangeDomain`), and the sidebar moves at the moment a
+     * change is asked for -- while the items it replaces are still on screen
+     * for as long as the new ones take to load. Drawn with the new units, they
+     * flash too bright or too dark for that long. Each item says which units
+     * its pixels are in (`hd`, `windowClass`, pinned when it was built), and
+     * the range is carried over through raw values. The same units -- every
+     * planar image, and a volume between changes -- return the range itself.
+     */
+    itemRange(channel, source) {
+        const range = channel?.range;
+        const domain = channel?.rangeDomain;
+        if (!range || !domain || !source?.view) return range;
+        const hd = source.hd === undefined ? domain.hd : Boolean(source.hd);
+        const cls = source.windowClass || "volume";
+        if (hd === domain.hd && cls === domain.cls) return range;
+        const sidebar = window.__plexora?.viewerSidebar;
+        const windowOf = (c) => sidebar?.quantWindow?.(domain.name, c) || null;
+        return PlexoraTileColorize.rangeInUnits(
+            range,
+            { hd: domain.hd, window: domain.hd ? null : windowOf(domain.cls) },
+            { hd, window: hd ? null : windowOf(cls) },
+            Number(this.numericData?.intRange?.[1]) || 65535) || range;
     }
 
     /**

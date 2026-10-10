@@ -25,11 +25,13 @@
  * motion off -- the system's reduced-motion setting, or the Depth card's
  * switch (services/viewerPrefs.js) -- there is no ghost at all.
  *
- * NeighbourPrefetch: once a plane has settled and the hand is still, the tiles
- * on screen are asked for at the next plane and the one before, at low
- * priority, so the next step is served from the browser's cache (tiles are
- * cached for a year) and its fade starts within a frame or two. Only what is
- * on screen, only one plane each way, and dropped the moment the plane moves.
+ * NeighbourPrefetch: once a plane has settled and the hand is still, the planes
+ * the hand is heading to are made ready. With the tile scheduler
+ * (tileFetch.js) they are BUILT -- every channel's pair at the next plane, the
+ * one after it and the one behind, loaded invisibly and last in line
+ * (ViewerManager.prepareStandby) -- so a step to one is a flip of opacity.
+ * Without it, the tiles on screen are asked for at the next plane and the one
+ * before at low priority, so the next step is served from the browser's cache.
  */
 (function (global) {
     "use strict";
@@ -40,10 +42,13 @@
     const MIN_FADE_MS = 60;
     //: The ghost holds one viewport of pixels; given back after this long idle.
     const RELEASE_AFTER_MS = 4000;
-    //: --ease-standard (tokens.css): quick to show the new plane, soft to land.
-    const EASING = "cubic-bezier(0.2, 0, 0, 1)";
+    //: Quick to show the new plane, soft to land: a decelerating curve, so the
+    //: frame after a step already shows it changing. (--ease-standard, which
+    //: this was, starts flat -- the old plane held still for the first third
+    //: of the fade, which read as the step arriving late.)
+    const EASING = "cubic-bezier(0, 0, 0.2, 1)";
 
-    const PREFETCH_IDLE_MS = 250;
+    const PREFETCH_IDLE_MS = 150;
     const PREFETCH_LIMIT = 48;
     const PREFETCH_PARALLEL = 4;
 
@@ -305,9 +310,10 @@
 
     class NeighbourPrefetch {
         constructor(viewer, viewState, { fetchImpl = null, idleMs = PREFETCH_IDLE_MS,
-                                         limit = PREFETCH_LIMIT } = {}) {
+                                         limit = PREFETCH_LIMIT, viewerManager = null } = {}) {
             this.viewer = viewer;
             this.viewState = viewState;
+            this.viewerManager = viewerManager;
             this._fetch = fetchImpl || ((...args) => global.fetch(...args));
             this.idleMs = idleMs;
             this.limit = limit;
@@ -321,6 +327,8 @@
         attach() {
             global.addEventListener?.("plexora:view-requested", (event) => this.onRequested(event));
             global.addEventListener?.("plexora:view-changed", () => this.onSettled());
+            // A channel or the tile quality changed under prefetched planes.
+            global.addEventListener?.("plexora:standby-dropped", () => this.onSettled());
             return this;
         }
 
@@ -381,7 +389,26 @@
             return out;
         }
 
+        /** The planes worth having ready: ahead twice, behind once. */
+        neighbours() {
+            const vs = this.viewState;
+            const state = vs?.get?.();
+            if (!state || state.mode !== "plane" || vs.depth < 2) return [];
+            const dir = this.direction || 1;
+            const out = [];
+            for (const dz of [dir, 2 * dir, -dir]) {
+                const z = state.z + dz;
+                if (z >= 0 && z < vs.depth) out.push(vs.spec({ ...state, z }));
+            }
+            return out;
+        }
+
         async run() {
+            if (typeof this.viewerManager?.prepareStandby === "function"
+                    && this.viewerManager.imageViewer?.tileFetch) {
+                this.viewerManager.prepareStandby(this.neighbours());
+                return;
+            }
             const queue = this.plan();
             if (!queue.length) return;
             const controller = typeof AbortController === "function" ? new AbortController() : null;
@@ -413,7 +440,7 @@
         const wrapper = document.getElementById("openseadragon_wrapper");
         const fade = new PlaneFade(viewer, { prefs, wrapper });
         if (viewerManager) viewerManager.planeFade = fade;
-        const prefetch = new NeighbourPrefetch(viewer, viewState).attach();
+        const prefetch = new NeighbourPrefetch(viewer, viewState, { viewerManager }).attach();
         return { fade, prefetch };
     }
 

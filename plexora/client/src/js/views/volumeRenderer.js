@@ -878,7 +878,8 @@ ${sample.join("\n")}
             gl.uniform1fv(uniform("u_opacity"), channels.map((channel) => channel.opacity));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
             gl.uniform3fv(uniform("u_extent"), this.extent());
-            const state = this.viewState?.get?.();
+            // The revision on screen (attach's surface), not the one asked for.
+            const state = this.view || this.viewState?.get?.();
             const depth = Math.max(1, this.viewState?.depth || 1);
             const clip = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
             gl.uniform2fv(uniform("u_clip_z"), clip);
@@ -1090,6 +1091,7 @@ ${sample.join("\n")}
         const controller = {
             get renderer() { return renderer; },
             sync(state) {
+                if (renderer) renderer.view = state;
                 const on = viewState.isVolume(state);
                 const entering = on && !wasOn;
                 wasOn = on;
@@ -1101,6 +1103,7 @@ ${sample.join("\n")}
                 }
                 if (!renderer) {
                     renderer = new VolumeRenderer({ viewState, datasource });
+                    renderer.view = state;
                     if (!renderer.mount()) {
                         renderer = null;
                         global.PlexoraToast?.show?.({
@@ -1156,7 +1159,15 @@ ${sample.join("\n")}
         }, true);
         // HD swaps the textures for half floats (or back): the same refresh.
         global.addEventListener?.("plexora:hd-mode-changed", () => controller.channelsChanged());
-        viewState.subscribe((state) => controller.sync(state));
+        if (typeof viewState.registerSurface === "function") {
+            // As a navigation revision (services/viewState.js): the clip, the
+            // composite and the mode change in the frame the plane, the panes
+            // and the outlines do.
+            viewState.registerSurface("volume", { order: 50,
+                                                  prepare: (rev) => () => controller.sync(rev.state) });
+        } else {
+            viewState.subscribe((state) => controller.sync(state));
+        }
         // `class ChannelList` in a classic script is a global LEXICAL binding,
         // never a property of window -- so it is reached by name.
         const lists = typeof ChannelList !== "undefined" ? ChannelList : global.ChannelList;

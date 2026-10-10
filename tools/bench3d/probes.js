@@ -208,10 +208,14 @@
         }
         return n ? `${[...views].sort().join("|")}#${n}` : "";
     }
+    /** Where the pane marks the plane: its z-line, and -- for a pane smaller
+     *  than its stack, which scrolls instead of moving the line -- its scroll. */
     function zline(pane) {
         const line = pane.zline;
         if (!line || line.hidden || pane.root?.hidden) return "";
-        return String(Math.round(parseFloat(line.style.top || line.style.left || "0")));
+        const at = Math.round(parseFloat(line.style.top || line.style.left || "0"));
+        const top = Number.isFinite(pane.view?.top) ? Math.round(pane.view.top * 4) / 4 : "";
+        return `${at}|${top}`;
     }
     function sample(frameTs) {
         const P = window.__plexora;
@@ -242,9 +246,71 @@
             }
         }
         if (B.lumOn) {
-            const grid = luminance();
-            if (grid) B.lum.push([t, grid, ghostOpacity()]);
+            if (B.lumMode === "bitmap") {
+                luminanceAsync(t);
+            } else {
+                const grid = luminance();
+                if (grid) B.lum.push([t, grid, ghostOpacity()]);
+            }
         }
+    }
+
+    /**
+     * The same grid, without reading the plane's canvas back: each canvas is
+     * downscaled by createImageBitmap (a snapshot taken now, resized off the
+     * main thread) and only the 32x20 results are read. Reading a full canvas
+     * back every frame makes Chrome move it off the GPU, which slows every
+     * later draw of the page.
+     */
+    let lumBusy = 0;
+    function luminanceAsync(t) {
+        const P = window.__plexora;
+        const main = P?.seaDragonViewer?.viewer?.drawer?.canvas;
+        if (!main || !main.width || lumBusy > 3) return;
+        const [gw, gh] = B.lumGrid;
+        const region = B.lumRegion;
+        const crop = (canvas) => (region
+            ? [region[0] * canvas.width, region[1] * canvas.height, region[2] * canvas.width,
+               region[3] * canvas.height]
+            : [0, 0, canvas.width, canvas.height]);
+        const resize = { resizeWidth: gw, resizeHeight: gh, resizeQuality: "medium" };
+        const renderer = P.volumeView?.renderer;
+        const volume = renderer?.canvas && !renderer.canvas.hidden && renderer.canvas.width ? renderer.canvas : null;
+        const ghost = P.planeMotion?.fade?.ghost;
+        const opacity = ghostOpacity();
+        const ground = groundOf(document.getElementById("openseadragon"));
+        const snap = (canvas) => createImageBitmap(canvas, ...crop(canvas), resize);
+        lumBusy += 1;
+        Promise.all([snap(volume || main), !volume && ghost && opacity > 0 && ghost.width ? snap(ghost) : null])
+            .then(([plane, held]) => {
+                if (!lumCanvas) {
+                    lumCanvas = document.createElement("canvas");
+                    lumCanvas.width = gw;
+                    lumCanvas.height = gh;
+                    lumContext = lumCanvas.getContext("2d", { willReadFrequently: true });
+                }
+                const ctx = lumContext;
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = ground;
+                ctx.fillRect(0, 0, gw, gh);
+                ctx.drawImage(plane, 0, 0);
+                plane.close();
+                if (held) {
+                    ctx.globalAlpha = opacity;
+                    ctx.drawImage(held, 0, 0);
+                    ctx.globalAlpha = 1;
+                    held.close();
+                }
+                const data = ctx.getImageData(0, 0, gw, gh).data;
+                const grid = new Array(gw * gh);
+                for (let i = 0, j = 0; i < data.length; i += 4, j += 1) {
+                    grid[j] = Math.round(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]);
+                }
+                B.lum.push([t, grid, opacity]);
+                B.lum.sort((a, b) => a[0] - b[0]);
+            })
+            .catch(() => count("lumErrors"))
+            .finally(() => { lumBusy -= 1; });
     }
     B.sample = sample;
 
@@ -332,6 +398,7 @@
     /** Start recording: frames, transitions, luminance when asked. */
     B.start = ({ lum = false, grid = null, region = null } = {}) => {
         B.lumOn = Boolean(lum);
+        B.lumMode = lum === "sync" ? "sync" : "bitmap";
         if (grid) B.lumGrid = grid;
         B.lumRegion = region;
         if (B.recording) return now();

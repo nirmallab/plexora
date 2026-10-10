@@ -371,6 +371,32 @@ function labelEvent(rendered, array = new Uint8Array(16)) {
 }
 
 
+// == units pinned per item (ImageViewer.itemRange -> rangeInUnits) ============
+//
+// A volume's sidebar moves a channel's range into new units the moment a
+// change is asked for (HD on, a std projection), while the items it replaces
+// stay on screen until the new ones load. Each item converts the range into
+// its own units, so it draws exactly what it drew before.
+{
+    const { rangeInUnits } = ctx.PlexoraTileColorize;
+    const volume = { qmin: 0, qmax: 4000 };
+    const std = { qmin: 0, qmax: 2000 };
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    // The sidebar is in HD now: raw 1000..3000 of 65535.
+    const raw = [1000 / 65535, 3000 / 65535];
+    const asBytes = rangeInUnits(raw, { hd: true }, { hd: false, window: volume });
+    check("an 8-bit item still on screen after HD went on keeps its window",
+        near(asBytes[0], 0.25) && near(asBytes[1], 0.75), JSON.stringify(asBytes));
+    const back = rangeInUnits(asBytes, { hd: false, window: volume }, { hd: true });
+    check("and the conversion is exact both ways", near(back[0], raw[0]) && near(back[1], raw[1]));
+    // The sidebar moved to a std projection's window: 0.25..0.75 of 0..2000.
+    const plane = rangeInUnits([0.25, 0.75], { hd: false, window: std }, { hd: false, window: volume });
+    check("a plane item still drawn while a std projection loads draws raw 500..1500 of its window",
+        near(plane[0], 500 / 4000) && near(plane[1], 1500 / 4000), JSON.stringify(plane));
+    check("an unknown window is not guessed",
+        rangeInUnits([0.2, 0.4], { hd: false, window: null }, { hd: true }) === null);
+}
+
 console.log(failures.length ? `\n${failures.length} check(s) failed`
                             : "\nall checks passed");
 if (failures.length) {
