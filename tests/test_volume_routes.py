@@ -183,14 +183,38 @@ def test_volume_info_for_a_planar_image(tmp_path, client):
     assert client.get("/volume/flat/info").get_json()["volumetric"] is False
 
 
-def test_a_typed_z_step_overrides_the_file(tmp_path, client):
-    _register_volume(tmp_path, physical_z=None, name="noz")
-    # No z step stated: a multi-channel stack would import as cycles, so the
-    # user picks depth explicitly.
+def test_the_edit_page_reads_planes_on_z_either_way(tmp_path, client):
+    """No z step stated: a multi-channel stack imports as cycles (3 x 5 = 15
+    channels). The edit page offers the other reading, and choosing it re-reads
+    the same file as 3 channels over 5 planes -- and back again."""
     from plexora.server.models.project import Project
 
+    _register_volume(tmp_path, physical_z=None, name="noz")
     project = Project.find("noz")
     assert project.image.z_semantics == "cycle"
+    assert project.image.num_channels == 15
+    page = client.get("/edit_config/noz").get_data(as_text=True)
+    assert 'id="edit_z_semantics"' in page and 'data-stored="cycle"' in page
+
+    assert client.post("/project/noz", json={"zSemantics": "depth"}).status_code == 200
+    project = Project.find("noz")
+    assert project.image.z_semantics == "depth"
+    assert project.image.num_channels == 3 and project.image.depth == 5
+    assert client.get("/volume/noz/info").get_json()["depth"] == 5
+
+    assert client.post("/project/noz", json={"zSemantics": "cycle"}).status_code == 200
+    project = Project.find("noz")
+    assert project.image.z_semantics == "cycle" and project.image.num_channels == 15
+
+
+def test_a_flat_image_offers_no_planes_choice(tmp_path, client):
+    path = tmp_path / "flat.ome.tif"
+    tifffile.imwrite(path, np.zeros((3, 32, 32), dtype=np.uint16), ome=True)
+    register_image_datasource("flat", path)
+    page = client.get("/edit_config/flat").get_data(as_text=True)
+    assert "edit_z_semantics" not in page
+    # And a stray value changes nothing.
+    assert client.post("/project/flat", json={"zSemantics": "depth"}).status_code == 200
 
 
 def test_setting_the_z_step(tmp_path, client):

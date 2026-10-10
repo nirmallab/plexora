@@ -1771,7 +1771,8 @@ def reregister_image(name, data_dir=None):
     # which is the copy when one was made, and nobody is watching a rail.
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=project.image.image_type_choice, pyramidize=False)
+        image_type=project.image.image_type_choice, pyramidize=False,
+        z_semantics=project.image.z_semantics, t_semantics=project.image.t_semantics)
 
     channel_names = _brightfield_channel_names(channel_info)
     if channel_names is None:
@@ -1789,6 +1790,10 @@ def reregister_image(name, data_dir=None):
             image_type_choice=current.image.image_type_choice,
             source=current.image.source,
             source_key=current.image.source_key,
+            # Typed calibrations are facts about the project, not the reading.
+            pixel_size=current.image.pixel_size,
+            pixel_size_z=current.image.pixel_size_z,
+            frame_interval=current.image.frame_interval,
         ))
 
     return Project.mutate(name, _swap, data_root)

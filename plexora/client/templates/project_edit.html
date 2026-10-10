@@ -230,6 +230,7 @@
                         <span class="config-layer-meta">
                             {%- if is_reference and not project.image.blank %}
                                 {%- if project.imageType == 'brightfield' %}H&amp;E / brightfield{% else %}Fluorescence{% endif %}
+                                {%- if project.zAxis %} &middot; {% if project.zAxis.reading == 'depth' %}z-stack of {{ project.zAxis.planes }} planes{% else %}{{ project.zAxis.planes }} Z planes read as cycles{% endif %}{% endif %}
                             {%- else %}{{ named or layer.modality or layer.kind }}{% endif %}
                             {%- if layer.status != 'ready' %} &middot; {{ layer.status }}{% endif %}
                             {%- if layer.unresolved %} &middot; needs {{ layer.unresolved|join(', ') }}{% endif %}
@@ -278,6 +279,28 @@
                                 {%- if project.imageTypeChoice %}, as set for this sample
                                 {%- elif project.imageTypeReason %}, because {{ project.imageTypeReason }}{% endif %}.
                                 Changing this re-reads the image; the file on disk is never modified.</span>
+                            {% if project.zAxis %}
+                            {# A stack's Z axis: depth to move through, or imaging
+                               cycles folded into channels (the Akoya/CODEX
+                               convention). Nothing in the file settles it unless
+                               it states a z step, so it is a choice. #}
+                            <label class="config-layer-field">
+                                <span>Planes on Z</span>
+                                <select id="edit_z_semantics" class="form-select"
+                                        data-stored="{{ project.zAxis.reading }}">
+                                    <option value="depth" {% if project.zAxis.reading == 'depth' %}selected{% endif %}>
+                                        Depth — a z-stack of {{ project.zAxis.planes }} planes
+                                    </option>
+                                    <option value="cycle" {% if project.zAxis.reading == 'cycle' %}selected{% endif %}>
+                                        Imaging cycles — more channels
+                                    </option>
+                                </select>
+                            </label>
+                            <span class="field-hint">The file stores {{ project.zAxis.planes }} planes on Z.
+                                As depth they are one stack to move through; as cycles each plane
+                                is read as its own channels, the way an Akoya or CODEX export
+                                stores them.</span>
+                            {% endif %}
                             {% else %}
                             <label class="config-layer-field">
                                 <span>Name</span>
@@ -389,7 +412,7 @@
    import pages that used to overlay a progress card over a form are gone --
    the import dialog reports progress inline and opens the sample as soon as
    its record exists. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260925_visium_spots" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261009_zsemantics" defer></script>
 {# `alwaysShow`, unlike the viewer's: this page is where a physical size the
    FILE states is meant to be correctable. No viewer to tell -- the scale bar
    is on the other page, and it re-reads the endpoint when it loads. Deferred

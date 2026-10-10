@@ -4165,3 +4165,18 @@ body.sidebar-collapsed .viewer-shell,
 #openseadragon_wrapper.has-sections .viewer-depth-strip {
     z-index: 231;
 }
+
+/* The strip's gutter beside the YZ pane. Without a ground of its own it shows
+   a sliver of the plane (and of XZ) that no longer lines up with anything. */
+#openseadragon_wrapper.has-sections::after {
+    background: #000;
+    bottom: 0;
+    box-shadow: inset 1px 0 0 var(--border-strong);
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 56px;
+    z-index: 211;
+}

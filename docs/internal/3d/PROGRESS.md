@@ -30,7 +30,7 @@ the new chunk files are committed beside the old ones).
 | Pin a projection as a layer | todo |
 | QC/gating fingerprints absorb the view (only needed once those tools take `view`) | deferred to Phase 3/4 |
 | DICOM focal planes as a volume; remote TIFF volumes; in-memory (notebook) volumes | todo |
-| Import-dialog choice of z semantics (depth vs cycles) | todo |
+| Choice of z semantics (depth vs cycles): edit page "Planes on Z", re-reads the image | done (edit page); import dialog still silent |
 
 ## Phase 2 — bricks, sections, volume rendering
 
@@ -38,17 +38,29 @@ the new chunk files are committed beside the old ones).
 |---|---|
 | `/volume/<ds>/level` (whole level as uint8 voxels) and `/volume/<ds>/section` | done |
 | WebGL2 raycaster (MIP / additive, presets, clip range from the slab band) | done |
-| Section panes (XZ / YZ) in the viewer | todo |
+| Section panes (XZ / YZ) in the viewer, aligned with the main view, shared centre | done |
 | Bricked store (coarse 3-D pyramid + ROI cache) | todo — native TIFF/NGFF levels suffice so far |
-| render_sections / render_object_views agent tools | todo |
+| render_sections agent tool (XY + XZ + YZ through one point, one window per channel) | done |
+| render_object_views | todo |
 
 Verified in headless Chrome (SwiftShader) against a synthetic 3×24×1024² stack: plane view
-with badge, MIP with band and notice, 3-D MIP render.
+with badge, MIP with band and notice, 3-D MIP render, section panes with content, 3-D label
+outlines that change with z.
 
-## Phase 3 / 4 / 5
+## Phase 3 — labels, objects, QC
 
-Not started: 3-D label volumes + object table + measurement, segmentation plugin, ROI schema v2,
-QC 3D checks, gating 3D evidence (waits for feature/spatial-gating), 4D.
+| Item | State |
+|---|---|
+| 3-D label import → label volume (OME-Zarr z,y,x uint32, XY levels), per-plane label tiles | done |
+| `measure_objects` job → `objects_v1.parquet` (+ manifest), attached with roles label/X/Y/Z | done |
+| Plane-level stack QC: focus_profile, axial_attenuation, missing_slices (`check_volume_quality`) | done |
+| Segmentation plugin (Cellpose 3-D on a node, extra `segment3d`) | todo |
+| ROI schema v2 (extents, 3-D kinds, propagate) | todo |
+| QC plugin integration (findings as ROIs, z_registration_drift, seams, segmentation_3d) | todo — coordinate with the gating session |
+
+## Phase 4 / 5
+
+Not started: gating 3D evidence (waits for feature/spatial-gating), SCIMAP hand-off in µm, 4D.
 
 ## Decisions taken while implementing
 
@@ -67,7 +79,7 @@ QC 3D checks, gating 3D evidence (waits for feature/spatial-gating), 4D.
 
 ## Open questions for the user
 
-- Should the import dialog ask "depth or cycles?" for multi-channel stacks with no z step,
-  or keep the silent `cycle` default (today's behaviour) with the edit page as the way out?
+- Should the import dialog also ask "depth or cycles?" for multi-channel stacks with no z
+  step, or is the edit page's "Planes on Z" enough as the way out of the silent `cycle` default?
 - A node computes a volume's window synchronously on first use (a large stack's first tile
   waits for the scan).
