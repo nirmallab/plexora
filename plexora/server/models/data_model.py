@@ -3719,6 +3719,18 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
     # detection reason, which the edit page shows. Z is pinned there (see
     # dicom_wsi.open_image) and never becomes channels.
     channel_info['focalPlanes'] = int(pyramid.focal_plane_count)
+    if channel_info['image_kind'] == dicom_wsi.IMAGE_KIND and pyramid.focal_plane_count > 1:
+        # A fluorescence slide's focal planes are a z-stack: recorded as one
+        # (plexora/server/volume/sources/dicom.py), its default plane the
+        # middle one this pyramid already reads.
+        from plexora.server.volume.sources.dicom import describe_volume
+
+        try:
+            volume = describe_volume(pyramid)
+        except Exception:
+            volume = None
+        if volume is not None:
+            channel_info.update(_volume_fields(volume))
     if detection is not None:
         channel_info['imageTypeDetected'] = detection.verdict
         channel_info['imageTypeReason'] = detection.reason

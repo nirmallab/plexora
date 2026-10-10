@@ -3,8 +3,8 @@
 `open_volume(path, ...)` takes the same dispatch order as
 `LocalImageProvider.open` (a Xenium focus folder, OME-Zarr, DICOM, colour,
 IMS, TIFF) and returns a `VolumeSource` for an image that serves more than one
-plane or frame, or None for a planar image -- which every existing reader keeps
-serving exactly as before. IMS is the exception: no other reader opens one,
+plane or frame (a DICOM slide's focal planes included), or None for a planar
+image -- which every existing reader keeps serving exactly as before. IMS is the exception: no other reader opens one,
 so a planar .ims comes back as a one-plane source too.
 
 `z_semantics`/`t_semantics` are the project's recorded choices (see
@@ -50,9 +50,16 @@ def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
 
         return open_ngff_volume(path, extension=extension)
     if dicom_wsi.is_dicom_path(path):
-        # DICOM focal planes are read as the middle plane by dicom_wsi; serving
-        # them as a stack is not wired yet.
-        return None
+        if rgb:
+            return None
+        from plexora.server.volume.sources.dicom import open_dicom_volume
+
+        try:
+            return open_dicom_volume(path, extension=extension)
+        except Exception:
+            # The 2-D reader is the authority on whether the slide opens at
+            # all; it is asked next and says why if it does not.
+            return None
     if ims.is_ims_path(path):
         return ims.open_ims_volume(path)
     if rgb or not Path(str(path)).is_file():

@@ -578,7 +578,14 @@ class LocalImageProvider:
         from plexora.server.volume.sources.ngff import (
             build_volume_extension, needs_volume_extension)
 
-        source = open_volume(self._path, extension=self._pyramid, rgb=self._rgb,
+        from plexora.server.utils import dicom_wsi
+
+        # A DICOM slide's derived coarse levels are rebuilt when they have
+        # gone, exactly as its 2-D branch below does, so its default plane has
+        # the levels the project records.
+        extension = (self._missing_pyramid() if dicom_wsi.is_dicom_path(self._path)
+                     else self._pyramid)
+        source = open_volume(self._path, extension=extension, rgb=self._rgb,
                              z_semantics=self._z_semantics,
                              t_semantics=self._t_semantics)
         if source is None:
@@ -601,7 +608,13 @@ class LocalImageProvider:
         self.volume_source = source
         default = source.volume.default_view
         channels = source.plane_pyramid(default.t, default.z)
-        return channels, volume_overview(channels), volume_metadata(source, self._path)
+        # A source whose 2-D reader has its own overview and metadata (DICOM)
+        # answers with them, so its default plane opens exactly as before.
+        overview = (source.overview(channels) if hasattr(source, "overview")
+                    else volume_overview(channels))
+        metadata = (source.physical_metadata() if hasattr(source, "physical_metadata")
+                    else volume_metadata(source, self._path))
+        return channels, overview, metadata
 
     def volume(self):
         """The volume this provider opened, or None (planar)."""

@@ -409,7 +409,7 @@ format_notes:
   ".bif": Roche Ventana whole-slide image, read as brightfield. Local or at a web address.
   ".mrxs": 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). Local only.
   ".svslide": Sakura whole-slide image. Needs the `wsi` extra. Local only.
-  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom. Local or at a web address (`pip install "plexora[remote]"`).
+  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom; a fluorescence slide's focal planes open as a z-stack. Local or at a web address (`pip install "plexora[remote]"`).
   ".zarr": OME-Zarr image, or a SpatialData store when it contains tables.
   ".h5ad": AnnData. Coordinates from `obsm["spatial"]` or two `obs` columns.
   ".parquet": Parquet cell table.
