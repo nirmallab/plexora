@@ -15,7 +15,12 @@
  *   image decode never runs;
  * - an item removed from its world gives up its jobs: finished at once (its
  *   loader slot freed), and a request nobody wants any more is aborted;
- * - an aborted download is never retried; a failed one is, by OSD.
+ * - an aborted download is never retried; a failed one is, by OSD;
+ * - batched only on a slow link: the wait for a first byte, less the
+ *   server's own time, over BATCH_ENTER_MS -- a slow server is not a slow
+ *   link; a batch carries one server's tiles of one tier in order of need,
+ *   each tile its own part, and a server without the route goes back to
+ *   single tiles for good.
  *
  * Run directly:  node tests/js/tile_fetch_probe.mjs
  */
@@ -36,7 +41,8 @@ function check(label, ok, why) {
     if (!ok) failures.push(`${label}${why ? ` -- ${why}` : ""}`);
 }
 
-const box = { console, setTimeout, clearTimeout, performance, AbortController, Promise };
+const box = { console, setTimeout, clearTimeout, performance, AbortController, Promise, URL,
+              TextDecoder, location: { href: "http://127.0.0.1:8792/proj" } };
 box.window = box;
 box.globalThis = box;
 runInContext(readFileSync(join(JS, "views/tileFetch.js"), "utf8"), createContext(box));
@@ -239,6 +245,147 @@ function scheduler(extra = {}) {
     const b = job("/t/500", item());
     s.start(b);
     check("a retry is a new request", net.calls.length === 2);
+}
+
+// -- batched on a slow link ---------------------------------------------------------------
+
+const { BATCH } = box.PlexoraTileFetch;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A response with headers, as fetch gives one. */
+function answer(buffer, { status = 200, timing = "" } = {}) {
+    return { ok: status < 400, status, arrayBuffer: async () => buffer,
+             headers: { get: (name) => (name === "Server-Timing" ? timing : null) } };
+}
+/** A batch body: a tile per path, its bytes "RIFF" and its index. */
+function batchBody(paths, status = 200) {
+    const parts = paths.map((_, i) => new Uint8Array([0x52, 0x49, 0x46, 0x46, i]));
+    const header = new TextEncoder().encode(JSON.stringify({
+        tiles: parts.map((part) => ({ status, bytes: part.length })) }));
+    const out = new Uint8Array(4 + header.length + parts.reduce((n, part) => n + part.length, 0));
+    new DataView(out.buffer).setUint32(0, header.length, true);
+    out.set(header, 4);
+    let at = 4 + header.length;
+    for (const part of parts) {
+        out.set(part, at);
+        at += part.length;
+    }
+    return out.buffer;
+}
+/** A fetch whose single tiles take `wait` ms, `server` of them the server's. */
+function slowFetch(wait, server) {
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+        const call = { url, options };
+        calls.push(call);
+        await sleep(wait);
+        if (options?.method === "POST") {
+            if (call.missing) return answer(new ArrayBuffer(0), { status: 404 });
+            const { tiles } = JSON.parse(options.body);
+            call.tiles = tiles;
+            return answer(batchBody(tiles), { timing: `total;dur=${server}` });
+        }
+        return answer(webp(), { timing: `total;dur=${server}` });
+    };
+    return { calls, fetchImpl };
+}
+async function warm(s, prefix, count = BATCH.SAMPLES) {
+    for (let i = 0; i < count; i += 1) {
+        s.start(job(`${prefix}/warm/0/${i}_0.png`, item()));
+        await sleep(1);
+    }
+    for (let i = 0; i < 40 && s.inFlight; i += 1) await sleep(10);
+}
+
+{
+    const net = slowFetch(90, 5);
+    const decoder = pool();
+    const s = new TileFetchScheduler({ decoderPool: decoder, fetchImpl: net.fetchImpl,
+                                       makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    await warm(s, "/generated/data/ds/ds_0");
+    const link = s.linkOf("/generated/data/ds/ds_0/0/0_0.png").link;
+    check("a link that keeps a tile waiting 85 ms past the server's time is batched",
+          link.batching === true && link.wait > BATCH.ENTER_MS, JSON.stringify(link));
+    const shown = item();
+    const jobs = Array.from({ length: 20 }, (_, i) =>
+        job(`/generated/data/ds/ds_0/2/${i}_1.png?view=z3`, shown, { level: 2, distance: i }));
+    net.calls.length = 0;
+    for (const j of jobs) s.start(j);
+    await tick();
+    const posts = net.calls.filter((call) => call.options?.method === "POST");
+    check("queued tiles go BATCH_MAX at a time, in one POST each, to the server's batch route",
+          posts.length === 2 && posts.every((call) => call.url === "http://127.0.0.1:8792/generated/batch"),
+          JSON.stringify(net.calls.map((c) => [c.options?.method, c.url])));
+    for (let i = 0; i < 40 && s.inFlight; i += 1) await sleep(10);
+    await tick(); await tick();
+    const sent = posts.flatMap((call) => call.tiles || []);
+    check("in order of need, each as its path from the route",
+          sent.length === 20 && sent[0] === "/generated/data/ds/ds_0/2/0_1.png?view=z3"
+          && sent[16] === "/generated/data/ds/ds_0/2/16_1.png?view=z3", JSON.stringify(sent.slice(0, 2)));
+    check("every job is finished with its own tile",
+          jobs.every((j) => j.finished?.dataType === "context2d")
+          && decoder.seen.length >= 20 && s.stats.batches === 2 && s.stats.batchedTiles === 20,
+          JSON.stringify(s.stats));
+    const indices = decoder.seen.slice(-20).map((seen) => new Uint8Array(seen.buffer)[4]).sort((a, b) => a - b);
+    check("each part its own buffer",
+          // a batch of 16 and one of 4: parts 0-15 and 0-3
+          indices.join() === [0, 0, 1, 1, 2, 2, 3, 3].concat(Array.from({ length: 12 }, (_, i) => i + 4)).join(),
+          indices.join());
+}
+
+{
+    const net = slowFetch(90, 85);
+    const s = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: net.fetchImpl,
+                                       makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    await warm(s, "/generated/data/slow/slow_0");
+    check("a slow server on a fast link is not batched",
+          s.linkOf("/generated/data/slow/slow_0/0/0_0.png").link.batching === false);
+}
+
+{
+    // A busy page: most tiles answer at once, some after a long stall.
+    let n = 0;
+    const busy = async (url, options) => {
+        n += 1;
+        await sleep(n % 3 ? 2 : 150);
+        return answer(webp(), { timing: "total;dur=1" });
+    };
+    const s = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: busy,
+                                       makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    await warm(s, "/generated/data/busy/busy_0", 12);
+    check("stalls among quick tiles are a busy page, not a slow link",
+          s.linkOf("/generated/data/busy/busy_0/0/0_0.png").link.batching === false);
+}
+
+{
+    const net = slowFetch(90, 0);
+    const s = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: net.fetchImpl,
+                                       makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    const node = "http://node.example:7000/node/v1/image/r1/tile/r1_0";
+    await warm(s, node);
+    const where = s.linkOf(`${node}/0/0_0.png?tw=1024&th=1024&t=SECRET`);
+    check("a node's batch route is its own, behind its token",
+          where.link.url === "http://node.example:7000/node/v1/batch?t=SECRET"
+          && where.tilePath === "/node/v1/image/r1/tile/r1_0/0/0_0.png?tw=1024&th=1024&t=SECRET",
+          JSON.stringify(where));
+    // A node without the route: 404 once, then single tiles for good.
+    const old = slowFetch(90, 0);
+    const posts404 = [];
+    const t = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: async (url, options) => {
+        if (options?.method === "POST") {
+            posts404.push(url);
+            return answer(new ArrayBuffer(0), { status: 404 });
+        }
+        return old.fetchImpl(url, options);
+    }, makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    await warm(t, "/generated/data/old/old_0");
+    const late = Array.from({ length: 3 }, (_, i) => job(`/generated/data/old/old_0/1/${i}_0.png`, item()));
+    for (const j of late) t.start(j);
+    for (let i = 0; i < 60 && (t.inFlight || t.queue.length); i += 1) await sleep(10);
+    await tick();
+    const link = t.linkOf("/generated/data/old/old_0/0/0_0.png").link;
+    check("a server without the batch route is asked singly from then on",
+          link.unbatchable && !link.batching && late.every((j) => j.finished) && posts404.length === 1,
+          JSON.stringify({ link, posts: posts404.length, done: late.map((j) => Boolean(j.finished)) }));
 }
 
 if (failures.length) {

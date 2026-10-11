@@ -71,9 +71,11 @@ causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/b
 | S2 `NavigationRevision`: plane, labels, panes, 3-D and contrast commit one revision in one task; units pinned per item | done |
 | S3 `views/tileFetch.js` scheduler (dedup, order of need, one decode, cancellation); standby planes in the direction of travel | done (residency ledger and coarse-first commit not needed at measured sizes) |
 | S4 3-D textures kept in a 1 GB LRU by what their bytes are; level payload cached, ETag/304, `w=` immutable | done |
-| S5 provisional window first, exact in the background; decoded-chunk cache; Imaris inflate outside the lock; bricks pinned not locked; section read budget | done (brick routes not built) |
+| S5 provisional window first, exact in the background; decoded-chunk cache; Imaris inflate outside the lock; bricks pinned not locked; section read budget | done (brick routes with the atlas, below) |
 | S6 3-D detail sub-volume where the camera rests (re-scoped from a brick atlas) | done |
 | S7 node `/image/<rid>/level` from the same builder, forwarded and revalidated by the primary; node tiles honour `w=`; node provisional windows; node view pyramids cached | done |
+| Brick atlas (2026-10-11): `/volume/<ds>/bricks/manifest` + `/bricks` (`server/volume/brick_serve.py`: apron, pooled planes, per-brick max, empty bricks, read per source tile), `views/volumeAtlas.js` (page table, greedy cut by screen-space size within 384 MB, shader walk with empty-space skipping); the detail sub-volume stays for node-backed images | done |
+| Slow links (2026-10-11): HTTP/2 measured and not adopted (TLS-only in browsers); tile batching when a server's least first-byte wait is over 60 ms (`/generated/batch`, `/node/v1/batch`, `server/tile_batch.py`); gzip for levels and bricks once the link measures under 30 MB/s (`z=gzip`) | done |
 
 ## Phase 3 — labels, objects, QC
 

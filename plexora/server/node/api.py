@@ -119,8 +119,11 @@ def stamp(response):
         response.headers["Access-Control-Expose-Headers"] = ", ".join((
             "X-Value-Kind", "X-Cell-Count", "X-Fb-Shape", "X-Fb-Box",
             "X-Centroid-Record-Count", GENERATION_HEADER, RESOURCE_HEADER,
-            API_HEADER, FILE_NAME_HEADER, "ETag",
+            API_HEADER, FILE_NAME_HEADER, "ETag", "Server-Timing",
         ))
+        # The timing of a direct tile is the browser's measure of the link
+        # (views/tileFetch.js), which it may read only when allowed to.
+        response.headers["Timing-Allow-Origin"] = origin
     return response
 
 
@@ -1002,6 +1005,19 @@ def seg_region(resource_id):
 
 
 # -- image ----------------------------------------------------------------
+
+
+@node_bp.route("/batch", methods=["POST"])
+def tile_batch_route():
+    """Several of this node's tiles in one request, for a browser reaching it
+    over a slow link (server/tile_batch.py). Each tile is dispatched as its
+    own GET -- the token in its query is checked like any tile's -- and the
+    token this request came with is passed on to each."""
+    from plexora.server import tile_batch
+
+    token = request.headers.get(TOKEN_HEADER)
+    return tile_batch.respond(current_app._get_current_object(), request, tile_batch.NODE,
+                              {TOKEN_HEADER: token} if token else None)
 
 
 @node_bp.route("/image/<resource_id>/geometry")

@@ -244,6 +244,11 @@ conversations (skill `review-objects`), each `object_review_next` shows one cell
 views, and `object_review_finish` writes the cells judged not one whole cell as one QC
 segmentation region holding exactly them.
 
+**Sharp up close in 3-D.** Zoom into the 3-D view and let it rest: within a second or two the
+part near you sharpens to full resolution, farther parts as fine as they need to be (a stack
+of a few hundred MB fills in about a second here). Nothing to switch on. On a slow connection
+the 3-D view's data comes compressed, and a volume's tiles come several to a request.
+
 **Gating on a z-stack.** Measure the cells (Depth card), then gate a marker as usual. The
 validation pictures draw each field at the plane its cells are on (the header says "A, B at
 plane z 7/10") with a fourth panel under them: the field in XY, XZ and YZ, cut where the
@@ -289,8 +294,8 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 
 - The 3-D neighbourhood in automatic gating's per-cell model, and a z-profile line in its
   packets: both live in the gating work that is not merged yet.
-- Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
-  you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
+- Full resolution in 3-D for an image on a data node: it refines the part you rest on (bricks
+  are served for local images only). 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).
 
 ## Questions for you

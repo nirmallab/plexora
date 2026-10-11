@@ -1197,6 +1197,17 @@ def generate_layer_channel_gmm(datasource, layer, channel):
 # branch inside `generate_png`: that function is the hot path of the entire
 # viewer -- one call per tile per pan -- and a sample with a real image must
 # not pay a comparison per tile for a case it can never be in. The bytes are
+@app.route('/generated/batch', methods=['POST'])
+def generate_batch():
+    """Several of this server's tiles in one request: the viewer's scheduler
+    batches when the link to it is slow (server/tile_batch.py). Body
+    `{"tiles": ["/generated/data/...png?...", ...]}`; each tile is its own
+    GET's answer, bytes and headers alike."""
+    from plexora.server import tile_batch
+
+    return tile_batch.respond(app, request, tile_batch.PRIMARY)
+
+
 # the same for every level and every tile, so this is a dictionary lookup and a
 # send_file, and the browser is told it can keep them for a year.
 @app.route('/generated/blank/<string:datasource>/<string:level>/<string:tile>')

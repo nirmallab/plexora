@@ -4948,8 +4948,16 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   to one is an opacity flip. `planeMotion.compose` lays an OPAQUE ghost
   (ground + canvas) for the plane fade. `GLRenderer.ready()` builds the tile
   program once per page. `volumeRenderer.js` keeps 3-D textures by what their
-  bytes are in a `GPU_BUDGET` LRU whatever channels are on, and fetches a
-  finer detail sub-volume (`z=` + `box=`) where the camera rests.
+  bytes are in a `GPU_BUDGET` LRU whatever channels are on; at rest
+  `views/volumeAtlas.js` (`PlexoraVolumeAtlas`, loaded before it from
+  `index.html`) fills a brick atlas -- page table of every finer level
+  (RESIDENT | REFINED | EMPTY), greedy cut by screen-space size, a shader walk
+  per brick crossed -- and the finer detail sub-volume (`z=` + `box=`) stands
+  in for node-backed images. `volumeAtlas.LINK` asks `/level` and `/bricks`
+  for `z=gzip` once the link measures under 30 MB/s. The tile scheduler
+  batches a volume's tiles (`/generated/batch`, `/node/v1/batch`;
+  `server/tile_batch.py`) when a server's least first-byte wait, less
+  `Server-Timing`, is over 60 ms.
   `services/volumeWindows.js` (`PlexoraVolumeWindows`) polls a provisional
   window until it is exact and announces `plexora:volume-window`;
   `services/perfProbe.js` (`window.PlexoraViewPerf`) holds the marks and
@@ -4969,6 +4977,9 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   way when asked `provisional=1`. `plane_view.SECTION_READ_BUDGET`
   (`PLEXORA_SECTION_READ_BUDGET_MB`) bounds what one section tile
   decompresses. `GET /volume/<ds>/window` and `GET /volume/<ds>/perf`.
+  `server/volume/brick_serve.py` -- `GET /volume/<ds>/bricks/manifest` and
+  `/bricks` (32 x 64 x 64 bricks, one-voxel apron, planes pooled per level,
+  per-brick max, read once per source tile, `MAX_PER_REQUEST`).
   Further env (all in `tools/docs/env_vars.yaml`, group Z-stacks):
   `PLEXORA_PROJECTION_GATE`, `PLEXORA_PLANE_CACHE`, `PLEXORA_WINDOW_SCAN`.
 - Benchmark: `tools/bench3d/` (README there; Chrome over CDP with the GPU,

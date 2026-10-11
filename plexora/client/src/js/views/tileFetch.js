@@ -26,6 +26,15 @@
  * - CANCELLED when nobody wants it: an item removed from its world gives up
  *   its jobs, and a request whose every job is gone is aborted.
  *
+ * - BATCHED ON A SLOW LINK: each server's link is measured -- a tile's wait
+ *   for its first byte, less the server's own time (`Server-Timing`) -- and
+ *   where even its least recent wait is over BATCH_ENTER_MS (a data node through a tunnel, a
+ *   server across the internet), queued tiles go BATCH_MAX at a time in one
+ *   request (`/generated/batch`, a node's `/node/v1/batch`;
+ *   server/tile_batch.py): six connections then carry six batches rather
+ *   than six tiles. HTTP/2 would multiplex them, but browsers speak it only
+ *   over TLS. On localhost the wait is nothing and nothing is batched.
+ *
  * Label (32) and RGB (24) tiles keep OSD's own path: they are not channels.
  * Classic script, `window.PlexoraTileFetch`; loaded before imageViewer.js.
  */
@@ -39,6 +48,18 @@
     //: wire cannot be overtaken, and the server answers in the order asked --
     //: a prefetch must never be what a tile on screen waits behind.
     const MAX_STANDBY_IN_FLIGHT = 1;
+    //: A link whose wait for a tile's first byte -- the server's time taken
+    //: out -- is over BATCH_ENTER_MS for every one of its last BATCH_WINDOW
+    //: tiles is batched, and stops being when one comes under BATCH_LEAVE_MS;
+    //: BATCH_SAMPLES tiles are timed before either. The least wait, not the
+    //: average: a link's latency is a floor that a busy page or a queue in
+    //: the server only adds to, and localhost always has tiles near zero.
+    const BATCH_ENTER_MS = 60;
+    const BATCH_LEAVE_MS = 25;
+    const BATCH_SAMPLES = 6;
+    const BATCH_WINDOW = 12;
+    //: Tiles in one batch.
+    const BATCH_MAX = 16;
     //: Priority tiers: on screen, a handover behind it, a prefetch.
     const TIER = { visible: 0, handover: 1, standby: 2 };
     const OWNER = { main: 0, pane: 1 };
@@ -70,8 +91,74 @@
             this.standbyInFlight = 0;
             this.maxStandbyInFlight = MAX_STANDBY_IN_FLIGHT;
             this.enabled = true;
+            //: batch endpoint -> {url, wait (ms, averaged), samples, batching,
+            //: unbatchable}: one per server the tiles come from.
+            this.links = new Map();
+            this.batching = true;
             this.stats = { requests: 0, shared: 0, aborted: 0, cancelled: 0, decoded: 0,
-                           failed: 0, bytes: 0 };
+                           failed: 0, bytes: 0, batches: 0, batchedTiles: 0 };
+        }
+
+        /**
+         * The server a tile comes from, as `{link, tilePath}`: where its batch
+         * route is, and the tile's path from there. Null for an address with
+         * neither a `/generated/` nor a `/node/v1/` route in it.
+         */
+        linkOf(url) {
+            let parsed;
+            try {
+                parsed = new URL(url, global.location?.href || "http://localhost/");
+            } catch (error) {
+                return null;
+            }
+            const path = parsed.pathname;
+            let at = path.indexOf("/node/v1/");
+            let batchPath;
+            if (at >= 0) {
+                // A node's batch is behind its token, like any of its routes.
+                const token = parsed.searchParams.get("t");
+                batchPath = `${path.slice(0, at)}/node/v1/batch${token ? `?t=${encodeURIComponent(token)}` : ""}`;
+            } else {
+                at = path.indexOf("/generated/");
+                if (at < 0) return null;
+                batchPath = `${path.slice(0, at)}/generated/batch`;
+            }
+            const key = parsed.origin + batchPath;
+            let link = this.links.get(key);
+            if (!link) {
+                link = { url: key, wait: null, recent: [], samples: 0, batching: false,
+                         unbatchable: false };
+                this.links.set(key, link);
+            }
+            return { link, tilePath: path.slice(at) + parsed.search };
+        }
+
+        /**
+         * A response's headers arrived: what it says about its link. The
+         * browser's own timing of the request when it has it (request sent
+         * to first byte, which no busy main thread delays), else the time
+         * from the call to the headers; the server's `Server-Timing` total
+         * taken out of either.
+         */
+        observe(link, sentAt, headersAt, response, url = null) {
+            if (!link) return;
+            const timing = response?.headers?.get?.("Server-Timing") || "";
+            const server = Number((/total;dur=([\d.]+)/.exec(timing) || [])[1]) || 0;
+            let elapsed = headersAt - sentAt;
+            const entries = url && global.performance?.getEntriesByName?.(url);
+            const entry = entries && entries[entries.length - 1];
+            if (entry && entry.requestStart > 0 && entry.responseStart >= entry.requestStart
+                    && entry.startTime >= sentAt - 50) {
+                elapsed = entry.responseStart - entry.requestStart;
+            }
+            const wait = Math.max(0, elapsed - server);
+            link.recent.push(wait);
+            if (link.recent.length > BATCH_WINDOW) link.recent.shift();
+            link.wait = Math.min(...link.recent);
+            link.samples += 1;
+            if (link.unbatchable || link.samples < BATCH_SAMPLES) return;
+            if (!link.batching && link.wait > BATCH_ENTER_MS) link.batching = true;
+            else if (link.batching && link.wait < BATCH_LEAVE_MS) link.batching = false;
         }
 
         /**
@@ -127,14 +214,28 @@
             if (request) {
                 this.stats.shared += 1;
             } else {
+                const where = this.linkOf(job.src);
                 request = { url: job.src, jobs: new Set(), controller: null, state: "queued",
-                            key: null, queuedAt: now() };
+                            key: null, queuedAt: now(), link: where?.link || null,
+                            tilePath: where?.tilePath || null };
                 this.requests.set(job.src, request);
                 this.queue.push(request);
                 this.stats.requests += 1;
             }
             request.jobs.add(job);
             job.userData.plexoraRequest = request;
+            if (request.link?.batching && this.batching) {
+                // OSD starts a frame's tiles one call at a time: on a batched
+                // link, line them all up before any batch is cut.
+                if (!this._pumpSoon) {
+                    this._pumpSoon = true;
+                    Promise.resolve().then(() => {
+                        this._pumpSoon = false;
+                        this.pump();
+                    });
+                }
+                return;
+            }
             this.pump();
         }
 
@@ -220,8 +321,111 @@
                     this.drop(request);
                     continue;
                 }
+                if (this.batching && request.link?.batching && !request.link.unbatchable) {
+                    // The next queued tiles from the same server, in the same
+                    // tier, ride along (the queue is in order of need).
+                    const batch = [request];
+                    for (let i = 0; i < this.queue.length && batch.length < BATCH_MAX;) {
+                        const other = this.queue[i];
+                        if (other.link === request.link && other.jobs.size
+                                && other.key[0] === request.key[0]) {
+                            this.queue.splice(i, 1);
+                            batch.push(other);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    this.runBatch(request.link, batch);
+                    continue;
+                }
                 this.run(request);
             }
+        }
+
+        /** Several tiles from one server in one request (server/tile_batch.py). */
+        async runBatch(link, requests) {
+            this.inFlight += 1;
+            const tier = requests[0].key ? requests[0].key[0] : TIER.visible;
+            const standby = tier === TIER.standby;
+            if (standby) this.standbyInFlight += 1;
+            for (const request of requests) request.state = "fetching";
+            this.stats.batches += 1;
+            this.stats.batchedTiles += requests.length;
+            let parts = null;
+            let error = null;
+            let requeued = false;
+            try {
+                const sentAt = now();
+                const response = await this._fetch(link.url, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    // text/plain: a "simple" request, so a node across origins
+                    // answers it without a preflight round trip first.
+                    headers: { "Content-Type": "text/plain" },
+                    body: JSON.stringify({ tiles: requests.map((request) => request.tilePath) }),
+                    priority: standby ? "low" : (tier === TIER.visible ? "high" : "auto"),
+                });
+                this.observe(link, sentAt, now(), response, link.url);
+                if (response.status === 404 || response.status === 405) {
+                    // A server without the route (an older node): never again,
+                    // and these tiles go back in line one at a time.
+                    link.unbatchable = true;
+                    link.batching = false;
+                    for (const request of requests) {
+                        request.state = "queued";
+                        this.queue.push(request);
+                    }
+                    requeued = true;
+                }
+                if (requeued) return;
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const buffer = await response.arrayBuffer();
+                this.stats.bytes += buffer.byteLength;
+                parts = splitBatch(buffer);
+            } catch (caught) {
+                error = caught;
+            } finally {
+                this.inFlight -= 1;
+                if (standby) this.standbyInFlight -= 1;
+                if (requeued) this.pump();
+            }
+            if (parts || error) {
+                await Promise.all(requests.map(async (request, i) => {
+                    const part = parts?.[i];
+                    let decoded = null;
+                    let failure = error;
+                    if (!failure && request.state !== "dropped") {
+                        if (part && part.status === 200 && part.bytes.byteLength) {
+                            try {
+                                request.state = "decoding";
+                                decoded = await this.decode(part.bytes);
+                                this.stats.decoded += 1;
+                            } catch (caught) {
+                                failure = caught;
+                            }
+                        } else {
+                            failure = new Error(`HTTP ${part ? part.status : "missing"}`);
+                        }
+                    }
+                    this.settle(request, decoded, failure);
+                }));
+            }
+            this.pump();
+        }
+
+        /** A request is over: its jobs get the tile, or its failure. */
+        settle(request, decoded, error) {
+            if (this.requests.get(request.url) === request) this.requests.delete(request.url);
+            const dropped = request.state === "dropped";
+            request.state = "done";
+            if (!dropped) {
+                for (const job of request.jobs) {
+                    job.userData.plexoraRequest = null;
+                    if (decoded) this.deliver(job, decoded);
+                    else this.fail(job, error);
+                }
+            }
+            request.jobs.clear();
         }
 
         async run(request) {
@@ -235,11 +439,13 @@
             let decoded = null;
             let error = null;
             try {
+                const sentAt = now();
                 const response = await this._fetch(request.url, {
                     signal: controller?.signal,
                     credentials: "same-origin",
                     priority: tier === TIER.standby ? "low" : (tier === TIER.visible ? "high" : "auto"),
                 });
+                this.observe(request.link, sentAt, now(), response, request.url);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const buffer = await response.arrayBuffer();
                 if (request.state === "dropped") return;
@@ -253,17 +459,7 @@
             } finally {
                 this.inFlight -= 1;
                 if (standby) this.standbyInFlight -= 1;
-                if (this.requests.get(request.url) === request) this.requests.delete(request.url);
-                const dropped = request.state === "dropped";
-                request.state = "done";
-                if (!dropped) {
-                    for (const job of request.jobs) {
-                        job.userData.plexoraRequest = null;
-                        if (decoded) this.deliver(job, decoded);
-                        else this.fail(job, error);
-                    }
-                }
-                request.jobs.clear();
+                this.settle(request, decoded, error);
                 this.pump();
             }
         }
@@ -326,6 +522,19 @@
         }
     }
 
+    /** A batch's body: `[{status, bytes: ArrayBuffer}]` in the order asked. */
+    function splitBatch(buffer) {
+        const length = new DataView(buffer).getUint32(0, true);
+        const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, length)));
+        let at = 4 + length;
+        return header.tiles.map((meta) => {
+            // Each its own buffer: an 8-bit tile's is transferred to a decoder.
+            const bytes = buffer.slice(at, at + meta.bytes);
+            at += meta.bytes;
+            return { status: meta.status, bytes };
+        });
+    }
+
     function compare(a, b) {
         for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
             const d = (a[i] ?? 0) - (b[i] ?? 0);
@@ -334,7 +543,10 @@
         return 0;
     }
 
-    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, MAX_STANDBY_IN_FLIGHT, TIER, kindOf };
+    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, MAX_STANDBY_IN_FLIGHT, TIER, kindOf,
+                                splitBatch, BATCH: { ENTER_MS: BATCH_ENTER_MS, LEAVE_MS: BATCH_LEAVE_MS,
+                                                     SAMPLES: BATCH_SAMPLES, MAX: BATCH_MAX,
+                                                     WINDOW: BATCH_WINDOW } };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraTileFetch;
     }

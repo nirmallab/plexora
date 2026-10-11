@@ -58,8 +58,9 @@ def test_the_section_panes_show_the_newest_section_in_step():
 
 def test_one_scheduler_fetches_and_decodes_each_tile_once():
     """Dedup, order of need, decode once with a transferred buffer, cancellation
-    with the item that wanted the tile (tests/js/tile_fetch_probe.mjs)."""
-    _passed(_run("tile_fetch_probe.mjs"), 18)
+    with the item that wanted the tile; batched only on a slow link
+    (tests/js/tile_fetch_probe.mjs)."""
+    _passed(_run("tile_fetch_probe.mjs"), 27)
 
 
 def test_the_3d_view_keeps_its_textures():
@@ -67,6 +68,14 @@ def test_the_3d_view_keeps_its_textures():
     another area fetch, going back does not; LRU past the GPU budget; zoomed in
     at rest, the part seen is fetched finer, once (tests/js/volume_renderer_probe.mjs)."""
     _passed(_run("volume_renderer_probe.mjs"), 15)
+
+
+def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
+    """The atlas: levels finer than the base, the cut (fine near, coarse far,
+    within the atlas's room), the page table, slot reuse, batched requests,
+    gzip only on a slow link, and the shader's walk
+    (tests/js/volume_atlas_probe.mjs)."""
+    _passed(_run("volume_atlas_probe.mjs"), 35)
 
 
 def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():

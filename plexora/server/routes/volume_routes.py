@@ -443,7 +443,7 @@ def volume_level(datasource):
     response.set_etag(tag)
     response.headers.update(headers)
     response.headers.update(serve.payload_headers(shape, hint))
-    return response
+    return _maybe_gzip(response)
 
 
 def _level_context(datasource):
@@ -529,6 +529,137 @@ def volume_hint(datasource):
     response.headers['Cache-Control'] = ('private, max-age=31536000, immutable'
                                          if ask.named is not None else 'no-store')
     return response
+
+
+def _maybe_gzip(response, started=None):
+    """`z=gzip` in the query, and a browser that takes gzip: the body
+    compressed at gzip's fastest setting. The 3-D view asks for it once it has
+    measured its link slower than compressing (views/volumeAtlas.js
+    `LINK`): voxels compress about fivefold, which on a slow link is five
+    times the speed, and on localhost is CPU time spent for nothing -- hence
+    only when asked. The query is part of the address, so a compressed body
+    never answers for an uncompressed one in any cache."""
+    import gzip
+    import time
+
+    if request.args.get('z') == 'gzip' and 'gzip' in (request.headers.get('Accept-Encoding') or ''):
+        response.set_data(gzip.compress(response.get_data(), compresslevel=1))
+        response.headers['Content-Encoding'] = 'gzip'
+        response.headers['Vary'] = 'Accept-Encoding'
+    if started is not None:
+        response.headers['Server-Timing'] = f"total;dur={(time.perf_counter() - started) * 1000:.1f}"
+    return response
+
+
+def _brick_source(datasource):
+    """The source bricks are read from, or the error answer: a planar image
+    has none, and a data node's volume is not served as bricks yet (the 3-D
+    view then refines with a finer area instead)."""
+    _project_or_404(datasource)
+    from plexora.server.models import views
+
+    source = views.current_source(datasource)
+    if source is None or source.volume.is_planar:
+        return None, (jsonify(error="this image has a single plane"), 400)
+    if not getattr(source, "is_local", True):
+        return None, (jsonify(error="bricks of an image on a data node are not served; the "
+                                    "3-D view refines the area it rests on instead",
+                              available=False), 501)
+    return source, None
+
+
+@app.route('/volume/<string:datasource>/bricks/manifest', methods=['GET'])
+def bricks_manifest(datasource):
+    """The brick grid of every level the 3-D view's atlas can draw from
+    (server/volume/brick_serve.py): brick size, apron, and per level its
+    planes pooled per voxel, its shape in voxels and its grid of bricks."""
+    from plexora.server.volume import brick_serve
+
+    source, error = _brick_source(datasource)
+    if error:
+        return error
+    return jsonify(brick_serve.manifest(source.volume))
+
+
+@app.route('/volume/<string:datasource>/bricks', methods=['GET'])
+def volume_bricks(datasource):
+    """Bricks of one level for the 3-D view's atlas, several at once.
+
+    `level`, `t`, `format` (`u8` | `f16`), `at=z.y.x,z.y.x,...` (up to
+    `MAX_PER_REQUEST`), and `channel` with its `w=qmin,qmax` repeated per
+    channel (the window the bytes are made with, as the level route takes
+    it; without one, the channel's window now). The body is
+    `brick_serve.payload`'s: header length, JSON header, voxels. A request
+    whose every channel names its window is an address no other bytes have:
+    kept for a year."""
+    import hashlib
+    import time
+
+    from plexora.server.models import data_model
+    from plexora.server.volume import brick_serve
+    from plexora.server.volume.windows import parse_stamp
+
+    started = time.perf_counter()
+    source, error = _brick_source(datasource)
+    if error:
+        return error
+    volume = source.volume
+    try:
+        level = int(request.args.get('level', ''))
+        t = int(request.args.get('t', 0))
+    except ValueError:
+        return jsonify(error="level and t are integers"), 400
+    voxel_format = request.args.get('format', 'u8')
+    if voxel_format not in ('u8', 'f16'):
+        return jsonify(error="format is u8 or f16"), 400
+    if not 0 <= t < volume.frames:
+        return jsonify(error=f"t {t} is outside this image's {volume.frames} frames"), 400
+    names = request.args.getlist('channel')
+    stamps = request.args.getlist('w')
+    if not names or len(names) > brick_serve.MAX_CHANNELS:
+        return jsonify(error=f"name 1 to {brick_serve.MAX_CHANNELS} channels"), 400
+    try:
+        entry = brick_serve.level_of(volume, level)
+        at = brick_serve.parse_at(request.args.get('at'), entry["grid"])
+    except brick_serve.BadBricks as exc:
+        return jsonify(error=str(exc)), 400
+    performance.skip()
+    channels, exact = [], True
+    for position, name in enumerate(names):
+        try:
+            index = data_model.real_channel_index(name, datasource)
+        except Exception:
+            return jsonify(error=f"no channel {name!r}"), 400
+        full = data_model.real_channels(datasource)[index]['fullname']
+        named = parse_stamp(stamps[position]) if position < len(stamps) else None
+        if named is not None:
+            window = named
+        else:
+            window, settled = data_model.volume_window_state(full, datasource)
+            exact = exact and settled
+            named = None
+        channels.append((index, full, tuple(float(v) for v in window)))
+    every_named = len(stamps) >= len(names) and all(parse_stamp(s) for s in stamps[:len(names)])
+    identity = serve.source_identity(
+        (data_model.config.get(datasource) or {}).get('channelFile'))
+    tag = "bk-" + hashlib.sha1("|".join(str(part) for part in (
+        serve.PAYLOAD_VERSION, identity, level, entry["pool"], t, voxel_format,
+        [(c[0], c[2]) for c in channels], at)).encode("utf-8")).hexdigest()[:24]
+    cache = ('private, max-age=31536000, immutable' if every_named
+             else ('private, no-cache' if exact else 'no-store'))
+    if request.if_none_match.contains(tag):
+        response = app.response_class(status=304)
+        response.set_etag(tag)
+        response.headers['Cache-Control'] = cache
+        return response
+    with serve.LEVEL_GATE:
+        performance.mark("gate")
+        body = brick_serve.payload(source, entry, t, channels, at, voxel_format, identity)
+        performance.mark("read")
+    response = app.response_class(body, mimetype='application/octet-stream')
+    response.set_etag(tag)
+    response.headers['Cache-Control'] = cache
+    return _maybe_gzip(response, started)
 
 
 @app.route('/volume/<string:datasource>/window', methods=['GET'])

@@ -216,11 +216,13 @@ void main() {
      * array of samplers with a loop variable, so the channel loop is unrolled
      * into NCH explicit samples.
      */
-    function fragmentSource(count, detail = false) {
+    function fragmentSource(count, detail = false, atlas = false) {
         const samplers = [];
         const sample = [];
+        const chunk = atlas ? global.PlexoraVolumeAtlas.shaderChunk(count) : null;
         for (let c = 0; c < count; c += 1) {
             samplers.push(`uniform sampler3D u_volume${c};`);
+            if (atlas) continue;
             if (detail) {
                 // The detail sub-volume where the sample falls in it, the
                 // whole level everywhere else (see `detail` in the renderer).
@@ -248,6 +250,7 @@ uniform int u_mode;            // 0 MIP, 1 additive
 uniform int u_steps;
 uniform vec3 u_ground;
 ${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;" : ""}
+${chunk ? chunk.declarations : ""}
 in vec2 v_ndc;
 out vec4 outColor;
 
@@ -288,12 +291,12 @@ void main() {
     for (int c = 0; c < NCH; c++) peak[c] = 0.0;
     vec3 colour = vec3(0.0);
     float alpha = 0.0;
-    for (int i = 0; i < 4096; i++) {
+${atlas ? ATLAS_MARCH(chunk.sample) : `    for (int i = 0; i < 4096; i++) {
         if (i >= count) break;
         float t = t0 + (float(i) + jitter) * stepLength;
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;${locate}
-${sample.join("\n")}
+${sample.join("\n")}`}
         if (u_mode == 0) {
             for (int c = 0; c < NCH; c++) peak[c] = max(peak[c], v[c]);
         } else {
@@ -308,7 +311,7 @@ ${sample.join("\n")}
             colour += (1.0 - alpha) * emit * a;
             alpha += (1.0 - alpha) * a;
             if (alpha > 0.97) break;
-        }
+        }${atlas ? "\n        t += stepLength;" : ""}
     }
     if (u_mode == 0) {
         for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c]);
@@ -317,6 +320,36 @@ ${sample.join("\n")}
         outColor = vec4(min(colour + (1.0 - alpha) * u_ground, vec3(1.0)), 1.0);
     }
 }`;
+    }
+
+    /**
+     * The atlas variant's march (views/volumeAtlas.js): the ray advances by
+     * its own `t`, walks the page table once per brick it enters (the brick
+     * it ended in is remembered in cLo..cHi), and leaves an empty brick at
+     * once rather than sampling it. `full` is the sample in full-resolution
+     * pixels and planes, an affine function of t (A + B t).
+     */
+    function ATLAS_MARCH(sample) {
+        return `    vec3 A = u_full_lo + (origin / u_extent + 0.5) * u_full_span;
+    vec3 B = dir / u_extent * u_full_span;
+    B = mix(B, vec3(1e-9), equal(B, vec3(0.0)));
+    vec3 cLo = vec3(1.0), cHi = vec3(0.0), cBase = vec3(0.0), cVox = vec3(1.0), cAnchor = vec3(0.0);
+    int cState = 0;
+    float t = t0 + jitter * stepLength;
+    for (int i = 0; i < 8192; i++) {
+        if (t > hit.y) break;
+        vec3 world = origin + dir * t;
+        vec3 p = world / u_extent + 0.5;
+        vec3 full = A + B * t;
+        if (any(lessThan(full, cLo)) || any(greaterThanEqual(full, cHi))) {
+            locate(full, cLo, cHi, cState, cBase, cVox, cAnchor);
+        }
+        if (cState == 2) {
+            t = max(t + stepLength * 0.5, hitBox(A, B, cLo, cHi).y + stepLength * 0.01);
+            continue;
+        }
+        vec3 a = (cBase + (full - cAnchor) / cVox) / u_atlas_dim;
+${sample}`;
     }
 
     function compile(gl, type, text) {
@@ -331,10 +364,11 @@ ${sample.join("\n")}
         return shader;
     }
 
-    function program(gl, count, detail = false) {
+    function program(gl, count, detail = false, atlas = false) {
         const built = gl.createProgram();
         gl.attachShader(built, compile(gl, gl.VERTEX_SHADER, VERTEX));
-        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER, fragmentSource(count, detail)));
+        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER,
+                                       fragmentSource(count, detail, atlas)));
         gl.bindAttribLocation(built, 0, "a_position");
         gl.linkProgram(built);
         if (!gl.getProgramParameter(built, gl.LINK_STATUS)) {
@@ -444,6 +478,11 @@ ${sample.join("\n")}
             //: `${name}|${level}|${box}|${t}|${stamp}|${z0},${z1}`.
             this._clipHints = new Map();
             this._hintTimer = 0;
+            //: Finer levels where the camera needs them (views/volumeAtlas.js),
+            //: made the first time the view is drawn; the detail sub-volume
+            //: (considerDetail) stands in where bricks are not served.
+            this.atlas = null;
+            global.PlexoraViewPerf?.provide?.("volumeAtlasBytes", () => this.atlas?.bytes || 0);
         }
 
         /** Whether this browser can draw a volume at all. */
@@ -511,6 +550,8 @@ ${sample.join("\n")}
             this.textureBytes = 0;
             this.detail = null;
             clearTimeout(this._detailTimer);
+            this.atlas?.destroy();
+            this.atlas = null;
             this.canvas?.remove();
             this.gizmo?.root.remove();
             this.gizmo = null;
@@ -561,6 +602,7 @@ ${sample.join("\n")}
             this.textures.clear();
             this.textureBytes = 0;
             this.detail = null;
+            this.atlas?.lost();
             this.programs.clear();
             this.status = "lost";
             global.PlexoraToast?.show?.({
@@ -705,6 +747,7 @@ ${sample.join("\n")}
                                                 max_side: String(this.maxTexture), format });
             if (area) query.set("box", area);
             if (stamp) query.set("w", stamp);
+            global.PlexoraVolumeAtlas?.LINK?.ask(query);
             const address = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`volume/${ds}/level?${query}`)
                 : `/volume/${ds}/level?${query}`;
@@ -715,6 +758,10 @@ ${sample.join("\n")}
                     .split(",").map(Number);
                 const half = (response.headers.get("X-Plexora-Format") || "u8") === "f16";
                 const buffer = await response.arrayBuffer();
+                // How fast the link is: a slow one gets the next levels gzipped.
+                if (global.location?.href) {
+                    global.PlexoraVolumeAtlas?.LINK?.note(new URL(address, global.location.href).href);
+                }
                 const voxels = half ? new Uint16Array(buffer) : new Uint8Array(buffer);
                 const [depth, height, width] = shape;
                 if (!(depth * height * width === voxels.length)) {
@@ -1035,6 +1082,11 @@ ${sample.join("\n")}
         }
 
         matrices() {
+            return this.cameraMatrices().inverse;
+        }
+
+        /** `{view, forward (clip from box), inverse, eye (in the box's space)}`. */
+        cameraMatrices() {
             const canvas = this.canvas;
             const aspect = canvas.width / Math.max(1, canvas.height);
             const { q, dist, panX, panY } = this.camera;
@@ -1044,7 +1096,44 @@ ${sample.join("\n")}
                                             -panX, -panY, -dist, 1]);
             const view = mat4Multiply(shift, Camera().quat.toMat4(q));
             const projection = mat4Perspective(FOV_Y, aspect, 0.01, 20);
-            return mat4Invert(mat4Multiply(projection, view));
+            const forward = mat4Multiply(projection, view);
+            const back = mat4Invert(view);
+            return { view, forward, inverse: mat4Invert(forward),
+                     eye: back ? [back[12], back[13], back[14]] : [0, 0, dist] };
+        }
+
+        /** What the atlas draws and plans with, for base texture `lead`. */
+        atlasView(lead) {
+            const info = this.viewState?.info || {};
+            const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const depth = Math.max(1, this.viewState?.depth || 1);
+            const extent = this.extent();
+            const shape = lead.shape;                       // (z, y, x)
+            const state = this.view || this.viewState?.get?.();
+            const camera = this.cameraMatrices();
+            return {
+                fullLo: [covered[0], covered[1], 0],
+                fullSpan: [covered[2] - covered[0], covered[3] - covered[1], depth],
+                extent,
+                eye: camera.eye,
+                forward: camera.forward,
+                clip: state ? [state.slab.z0, state.slab.z1] : [0, depth - 1],
+                // A screen pixel's size at distance 1; a base voxel in
+                // full-resolution pixels, pixels and planes.
+                pixel: (2 * Math.tan(FOV_Y / 2)) / Math.max(1, this.canvas?.height || 1),
+                baseVox: [(covered[2] - covered[0]) / Math.max(1, shape[2]),
+                          (covered[3] - covered[1]) / Math.max(1, shape[1]),
+                          depth / Math.max(1, shape[0])],
+            };
+        }
+
+        /** The atlas made to fit what `channels` draw now; false when it is
+         *  not served, not loaded yet, or has nothing finer than the base. */
+        atlasFits(channels, lead) {
+            const atlas = this.atlas;
+            if (!atlas || atlas.status !== "ready" || !lead) return false;
+            return atlas.configure(channels.map((c) => ({ name: c.name, stamp: c.stamp || "" })),
+                                   this.frameT(), this.format(), lead.level);
         }
 
         draw(time = now()) {
@@ -1083,11 +1172,13 @@ ${sample.join("\n")}
             const details = detail
                 ? channels.map((channel) => this.textures.get(this.detailKey(channel, detail)) || null)
                 : [];
-            const withDetail = Boolean(detail) && details.length > 0 && details.every(Boolean);
-            const programKey = `${channels.length}|${withDetail ? 1 : 0}`;
+            const withAtlas = this.atlasFits(channels, lead) && this.atlas.active();
+            const withDetail = !withAtlas && Boolean(detail) && details.length > 0
+                && details.every(Boolean);
+            const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}`;
             let built = this.programs.get(programKey);
             if (!built) {
-                built = program(gl, channels.length, withDetail);
+                built = program(gl, channels.length, withDetail, withAtlas);
                 this.programs.set(programKey, built);
             }
             gl.useProgram(built);
@@ -1117,6 +1208,8 @@ ${sample.join("\n")}
                 gl.uniform3fv(uniform("u_detail_lo"), detail.lo);
                 gl.uniform3fv(uniform("u_detail_hi"), detail.hi);
             }
+            const atlasView = withAtlas ? this.atlasView(lead) : null;
+            if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
             gl.uniform3fv(uniform("u_color"), channels.flatMap((channel) => channel.colour));
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => channel.window));
             gl.uniform1fv(uniform("u_opacity"), channels.map((channel) => channel.opacity));
@@ -1137,8 +1230,15 @@ ${sample.join("\n")}
                               detail.hi[0] - detail.lo[0]];
                 longest = Math.max(longest, ...shape.map((side, i) => side / Math.max(1e-3, span[i])));
             }
+            // The finest bricks the atlas draws: as many samples as their voxels
+            // -- at rest. Moving, the base's count: the bricks are still read,
+            // and a turning view is drawn again in full the moment it stops.
+            const finest = withAtlas && !fast ? this.atlas.finestVox() : null;
+            if (finest) {
+                longest = Math.max(longest, ...atlasView.fullSpan.map((side, i) => side / finest[i]));
+            }
             // Along the diagonal, so about one sample per texel along any axis.
-            const steps = Math.min(1024, Math.max(96, Math.round(longest * 2)));
+            const steps = Math.min(finest ? 2048 : 1024, Math.max(96, Math.round(longest * 2)));
             gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
@@ -1169,6 +1269,12 @@ ${sample.join("\n")}
         async refresh() {
             if (!this.gl) return;
             const channels = this.channels();
+            if (!this.atlas && global.PlexoraVolumeAtlas) {
+                this.atlas = new global.PlexoraVolumeAtlas({
+                    gl: this.gl, datasource: this.datasource, maxTexture: this.maxTexture,
+                    fetchImpl: this.fetch, onChange: () => this.invalidate() });
+                this.atlas.load().then(() => this.scheduleDetail());
+            }
             try {
                 await this.ensureTextures(channels);
             } catch (error) {
@@ -1357,7 +1463,35 @@ ${sample.join("\n")}
         scheduleDetail() {
             clearTimeout(this._detailTimer);
             if (this.status !== "ready" || !this.gl) return;
-            this._detailTimer = setTimeout(() => this.considerDetail(), DETAIL_REST_MS);
+            this._detailTimer = setTimeout(() => this.refine(), DETAIL_REST_MS);
+        }
+
+        /**
+         * Finer where the camera needs it: the atlas's bricks wherever this
+         * image is served as bricks (every visible part at the level its
+         * distance asks for), else one finer area where the camera looks.
+         */
+        refine() {
+            if (this.moving() || this.status !== "ready" || !this.gl) return;
+            const atlas = this.atlas;
+            if (atlas?.status === "loading") return;          // load() schedules again
+            if (atlas?.status === "ready") {
+                const channels = this.channels();
+                const lead = channels.length ? this.textureOf(channels[0]) : null;
+                if (this.atlasFits(channels, lead)) {
+                    if (this.detail) {
+                        this.detail = null;
+                        this.invalidate();
+                    }
+                    atlas.update(this.atlasView(lead)).catch((error) =>
+                        console.error("volumeRenderer: the atlas could not be filled", error));
+                    return;
+                }
+                // Nothing finer than the base (a small stack), or no room on
+                // the GPU: the base is all there is to draw.
+                if (lead && lead.level === 0) return;
+            }
+            this.considerDetail();
         }
 
         /** The key a channel's detail texture is kept under. */
@@ -1471,6 +1605,7 @@ ${sample.join("\n")}
                 max_side: String(this.maxTexture), format: request.format,
                 box: [r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0].join(","), z: `${r.z0},${r.z1}` });
             if (channel.stamp) query.set("w", channel.stamp);
+            global.PlexoraVolumeAtlas?.LINK?.ask(query);
             const address = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`volume/${ds}/level?${query}`) : `/volume/${ds}/level?${query}`;
             const response = await this.fetch(address);

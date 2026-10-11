@@ -83,7 +83,7 @@ wrong numbers:
 | S4 | Level payload (`server/volume/serve.py`): LUT quantization (byte-identical), ETag + 304 before a voxel is read, a year's cache when the request names its window, gate + single flight, LRU | shipped |
 | S5 | Provisional window first, exact scan in the background (user's choice); every 8-bit tile/section/level names its window (`w=`); `services/volumeWindows.js` polls and hands over | shipped |
 | S5 | Decoded-chunk cache (`server/volume/chunk_cache.py`); Imaris raw chunks read under the lock, inflated outside it (libdeflate); bricks pinned rather than locked; section read budget with drawn-up tiles; 304 before work on the tile route | shipped |
-| S5 | Brick / batch-brick / manifest routes and per-brick stats | not done — S6 was re-scoped (below) and nothing else needs them yet |
+| S5 | Brick / batch-brick / manifest routes and per-brick stats | shipped 2026-10-11 with the atlas (below) |
 | S5 | A badge saying the brightness is provisional | not done — the change is small and brief on the stacks measured; a question for the user |
 | S6 | 3-D detail sub-volume: when the camera rests on part of the stack, that part is fetched one or more levels finer (`z=` plane range + `box=`) and drawn inside its box over the whole level; uploaded a slab per frame | shipped (re-scoped from a GPU brick atlas) |
 | S7 | Data node: `/node/v1/image/<rid>/level` built by the same `serve.py` functions with the primary's choices sent explicitly; the primary forwards, caches and revalidates; node tiles honour `w=`; derived (slab/section) pyramids cached per view on the node (LRU 16) instead of rebuilt per tile | shipped |
@@ -112,15 +112,58 @@ Headline numbers (p50 unless stated; full tables below). "Before" is `e7f386bc`.
 
 <!-- headline table: filled from the final run -->
 
+## The atlas and the slow link (2026-10-11)
+
+**Brick atlas.** `server/volume/brick_serve.py` + `/volume/<ds>/bricks/manifest` and
+`/volume/<ds>/bricks` (up to 48 bricks of one level, up to 6 channels, one request): bricks of
+32 x 64 x 64 voxels with a one-voxel apron (the edge repeated past the stack), planes max-pooled
+per level so a voxel is about as deep as wide, each brick's maximum per channel (a brick at or
+below the window's floor is sent as empty and stored nowhere), quantized with the window the
+base uses, read once per source tile per request (grouped by `LevelInfo.chunks`). Client
+`views/volumeAtlas.js`: one atlas texture per channel (384 MB in all), a page table of every
+atlas level (RGBA8UI: slot x/y/z + RESIDENT | REFINED | EMPTY), a greedy cut -- refine where a
+voxel covers the most screen pixels first, until every voxel is under a pixel or the atlas is
+full -- and a shader walk per brick crossed (REFINED before EMPTY: a coarse brick can be empty
+where a finer one is not), skipping empty bricks along the ray. The whole level stays the base;
+the detail sub-volume (S6) remains for images on a data node, which are not served as bricks.
+
+Measured on this Mac (M2 Pro, Chrome, GPU), the Imaris stack (190 x 763 x 1538, 3 channels, base
+level 1, atlas level 0): close up along z, 356 level-0 bricks in 1.2 s; sharpness of a 400 px
+crop (variance of the Laplacian) 38 -> 299; a draw at rest 42 ms with the atlas, 9 ms without
+(once, when the view settles); moving, 14 ms with it and 5 without -- moving frames take the
+base's sample count and still read the bricks; no seams between bricks or against the base. The whole stack at an angle: 652 bricks (the room),
+nearest first. The Xenium stack (14 x 27241 x 45450, 8 levels, base level 5): the walk passes
+levels 0-4, close up the cut is level 2; 24 bricks a request read in 1.8 s (75 ms a brick)
+once bricks were grouped by tile -- 0.9 s a brick before, each decoding 14 whole 1024-px tiles.
+
+**HTTP/2 -- measured, not adopted.** Browsers speak HTTP/2 only over TLS; Plexora serves plain
+HTTP on loopback and through tunnels that already encrypt. Chrome with 100 ms of latency and
+50 Mbit/s (CDP `Network.emulateNetworkConditions`), the Imaris stack:
+
+| | localhost | 100 ms, 50 Mbit/s |
+|---|---|---|
+| plane step, the tiles on screen (9) | 80 ms | 250-290 ms |
+| 3-D base levels (3 x 32.7 MB, uncompressed) | -- | 18 s |
+| atlas close up, uncompressed (159 MB) | 1.2 s | 43 s |
+| atlas close up, gzip (78 MB of voxels, 21 MB on the wire) | -- | 3.8 s |
+
+A plane step is a handful of tiles: two waves of six connections, one round trip that
+multiplexing could save. The 3-D view is bandwidth-bound, where multiplexing saves nothing and
+compression saves five-sixths. So:
+
+- **Tile batching on a slow link** (`views/tileFetch.js`, `server/tile_batch.py`,
+  `/generated/batch`, a node's `/node/v1/batch`): each server's link is the least wait for a
+  first byte, less `Server-Timing`, over its last 12 tiles; over 60 ms, queued tiles of one tier
+  go 16 to a request, each answered by its own GET dispatched in the server. Localhost never
+  batches (its least wait is ~1 ms; a page stalled at load is not a slow link). A server without
+  the route (an older node) is asked singly from then on. Only a volume's tiles go through the
+  scheduler, so a flat image's tiles are unchanged.
+- **gzip for voxels on a slow link** (`z=gzip` on `/level` and `/bricks`, level 1, ~195 MB/s):
+  asked once two large responses have arrived under 30 MB/s, from the first request when the
+  page itself is served from another machine.
+
 ## Beyond 2 TB: what is left
 
-- **A brick atlas for full resolution everywhere.** The detail box refines one region; a
-  page-table atlas (Usher & Pascucci 2020; BigVolumeViewer's `TextureCache`) would let every ray
-  pick its own level. It needs the brick routes and per-brick statistics (empty-space skipping)
-  that S5 left out.
-- **HTTP/2.** The server is HTTP/1.1 (six connections per origin); the scheduler keeps that
-  budget for the tiles on screen, but a node-served project behind a slow link would gain more
-  from multiplexing than from anything else here. Measure with a throttled network first.
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;
   levels still go through the primary (which caches and revalidates them).
 - **Pooled coarse brick levels built once** (`"{level}p{pool}"`), so pooling costs nothing on a
