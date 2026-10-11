@@ -4929,6 +4929,57 @@ them.
   `tests/js/{view_snapshot,segment_service,roi_magic,qc_magic,magic_toolbar}_probe.mjs`,
   and `test_magic_select_wording.py`.
 
+**3-D view performance** (branch `feature/volumetric-3d`; the write-up,
+what was slow and what each stage measures, is `docs/internal/3d/PERF.md`;
+the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
+
+- Client: `services/viewState.js`'s `NavigationRevision` +
+  `registerSurface(name, {prepare, order})` — the surfaces `main`, `labels`
+  (`main.js`), `panes` (`sectionPanes.js`), `volume` (`volumeRenderer.js`)
+  and `ranges` (`viewerSidebar.js`'s contrast) each prepare a revision off
+  screen and every ready one commits in one task, so the plane, its outlines,
+  the panes' z-line and the 3-D view change in the same frame.
+  `views/tileFetch.js` (`PlexoraTileFetch`, classic script loaded from
+  `base.html` before `imageViewer.js`) — one scheduler for channel and
+  section tiles via OSD's `downloadTileStart`: one request per address, in
+  order of need, decoded once in a worker, cancelled with its item; label and
+  RGB tiles keep OSD's path. `ViewerManager.prepareStandby`/`takeStandby`
+  keep the next planes in the direction of travel built invisibly, so a step
+  to one is an opacity flip. `planeMotion.compose` lays an OPAQUE ghost
+  (ground + canvas) for the plane fade. `GLRenderer.ready()` builds the tile
+  program once per page. `volumeRenderer.js` keeps 3-D textures by what their
+  bytes are in a `GPU_BUDGET` LRU whatever channels are on, and fetches a
+  finer detail sub-volume (`z=` + `box=`) where the camera rests.
+  `services/volumeWindows.js` (`PlexoraVolumeWindows`) polls a provisional
+  window until it is exact and announces `plexora:volume-window`;
+  `services/perfProbe.js` (`window.PlexoraViewPerf`) holds the marks and
+  counters the benchmark reads. Both are loaded from `index.html`.
+- Server: `server/volume/serve.py` — the level payload builder
+  (`parse_level`, `read_level`, `level_payload`, `forwarded_payload`, an
+  LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
+  `/volume/<ds>/level` and the node's `/node/v1/image/<rid>/level`; the
+  route answers 304 on its ETag before a voxel is read, and is
+  `immutable` for a year when the request names its window.
+  `server/volume/chunk_cache.py` — one process-wide decoded-chunk LRU
+  (`CACHE`, `PLEXORA_CHUNK_CACHE_MB`) with one load per chunk, and
+  `DECODE_POOL` (`PLEXORA_DECODE_THREADS`) where readers decompress outside
+  their locks. `server/volume/windows.py`'s `provisional_window` +
+  `data_model.volume_window_state`/`queue_exact_window`: a provisional window
+  at once, the exact scan on a background worker; the node answers the same
+  way when asked `provisional=1`. `plane_view.SECTION_READ_BUDGET`
+  (`PLEXORA_SECTION_READ_BUDGET_MB`) bounds what one section tile
+  decompresses. `GET /volume/<ds>/window` and `GET /volume/<ds>/perf`.
+  Further env (all in `tools/docs/env_vars.yaml`, group Z-stacks):
+  `PLEXORA_PROJECTION_GATE`, `PLEXORA_PLANE_CACHE`, `PLEXORA_WINDOW_SCAN`.
+- Benchmark: `tools/bench3d/` (README there; Chrome over CDP with the GPU,
+  scratch data root), results as `docs/internal/3d/perf/<sha>-<label>.json`.
+- Tests: JS probes
+  `tests/js/{plane_flash,gl_init,nav_revision,section_panes,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
+  (wrapped in `tests/test_viewer_3d_client.py`), `test_volume_level_cache.py`,
+  `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
+  `test_volume_sections.py`, and node level parity in
+  `test_volume_backend.py`.
+
 ## Telemetry
 
 Optional, anonymous, allowlisted usage telemetry -- off in the test suite and
@@ -7528,6 +7579,32 @@ in **5.6 s**.
 - **Embeddings are read under the SHELF lock and computed outside it.** Inference
   is slow and holding the lock would stall every tile read; `_INFER` serialises
   the model itself.
+- **Every 8-bit volume tile, section and level names its window (`w=`).**
+  A provisional window and the exact one are different pictures, so the
+  window is part of every address, cache key and ETag (node tiles too); a
+  provisional tile can never be served after the exact window lands, and a
+  named window is what makes a year's `immutable` cache safe. Under pytest
+  (or `PLEXORA_WINDOW_SCAN=inline`) the exact window is computed inline,
+  because fixtures read a window right after registering.
+- **A Z change reaches the picture only as one `NavigationRevision`.** A
+  surface that draws view state registers with `registerSurface` and commits
+  under a revision, never on its own schedule; a late surface commits under
+  the same revision and never over a newer one, because surfaces that each
+  followed Z separately are what put the panes' z-line ahead of the plane.
+- **The plane fade's ghost is opaque.** OSD's canvas is transparent wherever
+  a channel is dim (the ground is CSS), so a ghost copied from it alone let
+  the next plane show through and the sum overshot both — the brightness
+  flash. `planeMotion.compose` paints ground + canvas.
+- **Prefetch never fills the wire.** Standby planes take at most one request
+  at a time and start only once the plane on screen has loaded, because a
+  cold channel enable regressed to 2.9 s while standby tiles held the server.
+- **Volume readers decompress outside their locks.** Raw chunks are read
+  under the file or store lock and inflated on `chunk_cache.DECODE_POOL`;
+  holding a lock across decompression serialised every thread.
+- **A 3-D level is built by the same `serve.py` functions locally and on a
+  node.** The node's `/node/v1/image/<rid>/level` is built with the
+  primary's choices sent explicitly, so a node-served volume is byte-for-byte
+  a local read; the primary forwards, caches and revalidates it.
 
 ## Validation
 

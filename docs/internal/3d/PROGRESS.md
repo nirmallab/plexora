@@ -57,6 +57,22 @@ Real data (2026-10-09): the Xenium ovarian run's `morphology.ome.tif` (DAPI, 14 
 tile waits ~15 s for the window scan -- the same as the planar focus image of the same size
 today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level 0.
 
+## Performance — one revision, one scheduler, resident textures (2026-10-10) — done
+
+Plan: `~/.claude/plans/pasted-content-id-7217-deep-lively-orbit.md` (S0–S7). Method, root
+causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/bench3d/`.
+
+| Item | State |
+|---|---|
+| S0 harness + `window.PlexoraViewPerf` + Server-Timing on the volume routes + `/volume/<ds>/perf` | done |
+| S1 opaque fade ghost (the Z-step brightness flash), shaders built once per page, zombie cache on disable | done |
+| S2 `NavigationRevision`: plane, labels, panes, 3-D and contrast commit one revision in one task; units pinned per item | done |
+| S3 `views/tileFetch.js` scheduler (dedup, order of need, one decode, cancellation); standby planes in the direction of travel | done (residency ledger and coarse-first commit not needed at measured sizes) |
+| S4 3-D textures kept in a 1 GB LRU by what their bytes are; level payload cached, ETag/304, `w=` immutable | done |
+| S5 provisional window first, exact in the background; decoded-chunk cache; Imaris inflate outside the lock; bricks pinned not locked; section read budget | done (brick routes not built) |
+| S6 3-D detail sub-volume where the camera rests (re-scoped from a brick atlas) | done |
+| S7 node `/image/<rid>/level` from the same builder, forwarded and revalidated by the primary; node tiles honour `w=`; node provisional windows; node view pyramids cached | done |
+
 ## Phase 3 — labels, objects, QC
 
 | Item | State |
@@ -94,6 +110,12 @@ one frame is faint on the others and its badge names the frame. Not yet: cell ma
   interest" in both projection and 3-D).
 - Node-backed volumes use the primary's all-planes window, so node tiles are byte-identical
   to a local read; an old node refuses views rather than serving the default plane.
+- A volume opens on a provisional window (the default plane at a fine level plus the coarsest
+  level's planes), the exact scan runs in the background (on the node for a node-backed one),
+  and every 8-bit tile, section and 3-D level names the window it was made with (`w=`), so a
+  provisional picture and the exact one never share an address in any cache (user's choice,
+  2026-10-10).
+- 3-D detail is a sub-volume over the whole level, not a brick atlas (`PERF.md` says why).
 
 - ROI schema stays at version 1: a version bump would make main refuse every ROI document
   drawn on this branch if the user goes back to main after testing; at version 1 main simply
@@ -103,5 +125,3 @@ one frame is faint on the others and its badge names the frame. Not yet: cell ma
 
 - Should the import dialog also ask "depth or cycles?" for multi-channel stacks with no z
   step, or is the edit page's "Planes on Z" enough as the way out of the silent `cycle` default?
-- A node computes a volume's window synchronously on first use (a large stack's first tile
-  waits for the scan).

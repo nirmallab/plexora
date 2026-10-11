@@ -34,7 +34,29 @@ every channel changes plane in the same frame, and the picture dissolves into th
 up to 0.16 s (shorter while you scrub fast) -- on screen only: when it ends you see the plane the
 readout names, unblended, and captures never contain a fade. A pan or zoom during a fade ends it
 at once. Under the hand the rail's thumb moves between planes and settles onto the plane on
-screen when you let go. Once you stop, the next plane up and down is fetched ahead.
+screen when you let go. Once you stop, the next planes in the direction you were going (and one
+behind) are built ahead, invisibly, so the next step is immediate.
+
+**Speed and staying in step (the performance pass, `PERF.md`).** Try these on the Imaris stack
+and the light-sheet stack, with the section panes on:
+
+- *No brightness flash on a Z step.* Step with `]` through a bright and a dim plane: the picture
+  dissolves from one to the other and is never brighter than both mid-fade.
+- *Everything moves together.* Step or hold `]`: the plane, the panes' z-line, the 3-D label
+  outlines and (in a projection) the contrast change in the same frame. Pan and zoom: the panes
+  follow within about a tenth of a second rather than over a second later.
+- *Channels.* Switch a channel off and on, or swap one for another, in the plane and in 3-D:
+  it should be immediate (a channel already seen is not downloaded again). In 3-D, entering,
+  leaving and re-entering over the same area fetches nothing; a reload re-enters 3-D without
+  downloading the levels again.
+- *Contrast drags* move the plane, both panes and the 3-D view together.
+- *First open of a stack nobody has opened before* (or after deleting its saved windows): the
+  first picture appears on a provisional brightness within about a second, and may shift once,
+  a little, when the exact brightness arrives seconds later. Nothing on screen says the first
+  brightness is provisional yet -- tell me if it should.
+- *3-D detail.* In 3-D, zoom in on part of a large stack and hold still: within about two
+  seconds that part sharpens (a finer level drawn inside its box); turning keeps the frame rate.
+- *A project whose image is on a data node* behaves the same: 3-D levels, windows and sections.
 
 **Projections.** The strip's second button, or the Depth card (View menu → Depth). Maximum,
 mean, minimum, standard deviation, median, percentile, over a range you set. The badge turns
@@ -183,8 +205,11 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
-- Hand-off to SCIMAP Pro with µm coordinates; a bricked store for very large stacks; colour
-  (brightfield) DICOM z-stacks; object tables per frame of a time series.
+- Hand-off to SCIMAP Pro with µm coordinates; colour (brightfield) DICOM z-stacks; object
+  tables per frame of a time series.
+- Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
+  you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
+  (tiles may be fetched straight from the node).
 
 ## Questions for you
 
