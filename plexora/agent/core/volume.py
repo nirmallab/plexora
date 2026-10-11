@@ -63,11 +63,16 @@ def _channel_index(record, name):
 
 
 def _profile_level(volume):
-    """The finest level whose longest side is at most PROFILE_SIDE."""
-    for info in volume["levels"]:
+    """The finest level whose longest side is at most PROFILE_SIDE -- among
+    the levels that keep every plane: one that pools planes (an Imaris file's
+    coarse levels) reads neighbouring planes back alike, which a plane-by-plane
+    comparison would take for repeated planes."""
+    whole = [info for info in volume["levels"] if not info.get("depth")]
+    whole = whole or volume["levels"]
+    for info in whole:
         if max(info["height"], info["width"]) <= PROFILE_SIDE:
             return info["level"]
-    return volume["levels"][-1]["level"]
+    return whole[-1]["level"]
 
 
 def _focus(plane: np.ndarray) -> float:

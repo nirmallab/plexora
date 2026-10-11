@@ -11,7 +11,7 @@ def core_capabilities() -> list:
         capabilities.extend(module.capabilities())
     # Added by later modules when they exist in this build.
     for name in ("plexora.agent.core.scene", "plexora.agent.core.visual",
-                 "plexora.agent.core.volume",
+                 "plexora.agent.core.volume", "plexora.agent.core.volume_analysis",
                  "plexora.agent.core.cells", "plexora.agent.core.viewer",
                  "plexora.agent.core.selection", "plexora.agent.core.bridge",
                  # The Plexora AI conversation and in-app runs (plexora/ai/harness), absent from a

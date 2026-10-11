@@ -48,6 +48,7 @@ from collections import OrderedDict
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 
 VERSION = "4"
 
@@ -627,7 +628,7 @@ def _plan(session, project, record, state):
     keys = {role: source_image.channel_key(resolve_channel(name, channels)[1])
             for role, name in (("reference", reference), ("comparison", comparison))}
     image_data = session.image_data(project)
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     pixel = pixel_scale.pixel_size(record)
     pixel_um = float(pixel["value"]) if pixel else None
     return state, keys, image_data, identity, pixel_um
@@ -932,7 +933,7 @@ def compute(session, project, state, *, force=False, include_overlay=True,
     sigma_full = MAP_SIGMA_UM / pixel_um if pixel_um else MAP_SIGMA_PX
     cell_full = MAP_CELL_UM / pixel_um if pixel_um else MAP_CELL_PX
     started = perf_counter()
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no nuclear channels to register")
@@ -1106,7 +1107,7 @@ def disagreement(session, project, state, box, *, max_px=1024, comparison=None) 
     state, keys, image_data, identity, pixel_um = _plan(session, project, record, state)
     max_px = int(min(max(64, int(max_px)), MAX_RASTER_PX))
     stamp = _stamp(identity)
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no nuclear channels to register")

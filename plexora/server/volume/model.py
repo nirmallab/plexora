@@ -60,11 +60,17 @@ class LevelInfo:
     height: int
     width: int
     chunks: tuple[int, int] | None = None
+    #: Planes the level stores, when fewer than the stack's (an Imaris file
+    #: pools z in its coarse levels): its plane z is then a pooled plane, so
+    #: neighbouring planes read back alike. None: every plane.
+    depth: int | None = None
 
     def to_dict(self) -> dict:
         out = {"level": self.index, "height": self.height, "width": self.width}
         if self.chunks:
             out["chunks"] = list(self.chunks)
+        if self.depth is not None:
+            out["depth"] = self.depth
         return out
 
 
@@ -158,6 +164,7 @@ class Volume:
         """
         levels = tuple(
             LevelInfo(index=int(entry.get("level", index)), height=int(entry["height"]),
+                      depth=int(entry["depth"]) if entry.get("depth") else None,
                       width=int(entry["width"]),
                       chunks=tuple(int(c) for c in entry["chunks"]) if entry.get("chunks")
                       else None)
@@ -287,7 +294,12 @@ def is_single_array(obj) -> bool:
 
 
 def level_infos(level_shapes: Sequence[Sequence[int]],
-                chunks: Sequence[int] | None = None) -> tuple[LevelInfo, ...]:
+                chunks: Sequence[int] | None = None,
+                depths: Sequence[int] | None = None) -> tuple[LevelInfo, ...]:
+    """`depths`: each level's planes, recorded only where fewer than level 0's."""
+    full = int(depths[0]) if depths else None
     return tuple(LevelInfo(index=i, height=int(h), width=int(w),
-                           chunks=tuple(int(c) for c in chunks[-2:]) if chunks else None)
+                           chunks=tuple(int(c) for c in chunks[-2:]) if chunks else None,
+                           depth=(int(depths[i]) if depths and int(depths[i]) < full
+                                  else None))
                  for i, (h, w) in enumerate(level_shapes))

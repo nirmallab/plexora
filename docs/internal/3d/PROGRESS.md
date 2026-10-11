@@ -87,11 +87,19 @@ causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/b
 | ROI extents: `extent {kind: plane|slab, z|z0,z1, t}` per region (absent = every plane, so 2-D documents are unchanged); cell mapping and counts filter by the z role; off-plane regions draw as a faint outline; row badge + menu "Only on z N" / "On every plane"; agent create/update_roi `extent`; GeoJSON round-trip; plugins get `ctx.view` | done |
 | ROI 3-D shapes: `solid` contours / ellipsoid (a box is a rectangle with a slab extent), `roi.set_solid`, plane-by-plane mapping, GeoJSON, section-pane overlays; magic select carried through planes (`vision/propagate.py`, `/segment/v1/carry`, MobileSAM or SAM 2.1 via the `volume3d` extra; `carry_roi_through_planes`). Measured in `MAGIC_3D.md` | done |
 | ROI cells and hand edits (2026-10-11): `labels` solids (mask label ids + per-plane outlines from `SegHandle.label_volume`, gaps allowed; membership by id in `mapping.assign(cell_ids=)` / `cells_in_roi`), `/plugins/roi/api/from_cells` + panel "From cells" (viewer selection) + `create_roi(cells=)`; one plane's outline dragged by hand (`RoiGeometry.editableGeometry`, `keys`), the server re-deriving the footprint when `set_solid` sends none; a cells region reshaped becomes contours | done |
-| QC plugin integration (findings as ROIs, z_registration_drift, seams, segmentation_3d) | todo — coordinate with the gating session |
+| QC plugin integration (2026-10-11): `qc3d` gains `z_registration_drift` (3-D phase correlation per cycle), `stitching_seams`, `segmentation_3d` (flat / clipped / taller than wide / split / volume outliers), faint planes, runs merged; QC `run_qc_3d` (job) / `get_qc_3d` / `write_qc_3d_regions` (plane findings as QC regions with `extent`, existing classes) / `set_qc_plane`; every QC check reads the chosen plane and fingerprints it (`server/plane.py`); QC's cell propagation keeps a region's planes/frame and maps by centroid on a 3-D mask; panel Stack section. Per-object findings stay data (not regions) | done |
 
 ## Phase 4 / 5
 
 Gating 3D evidence waits for feature/spatial-gating.
+
+Agent tools (2026-10-11): `colocalize_3d` (core `agent/core/volume_analysis.py`: voxels at the
+finest level under 30 M per channel, ROI by its extent / cells by id, Otsu Manders, refuses a
+projection), `find_regions_of_interest_3d` (bright / dense / seg_suspicious / clipped /
+out_of_focus), `run_qc_3d` (QC), object review in QC (`capabilities_objects.py`: start / next /
+answer / status / finish, delegation role `object_review_worker`, skill `review-objects`,
+quota `OBJECT_REVIEW.objects_per_worker`; finish writes a `labels` region in QC's
+segmentation category with a `qc-class` token).
 
 SCIMAP hand-off in µm (2026-10-11): `pixel_scale.spacing(project)` (x/y pixel size, z step typed
 or from the file, never defaulted); `TableHandle.physical_coordinates()` (X_um/Y_um/Z_um, read

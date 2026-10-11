@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 
 from plexora.plugins.qc.server import schemas
+from plexora.plugins.qc.server import plane as qc_plane
 
 #: Bumped when the background's outline means something else.
 VERSION = "1"
@@ -85,7 +86,7 @@ def plan(session, project, *, scan=None) -> dict:
                           "counted as tissue): no background written"}
     image_size = None
     try:
-        with source_image.SHELF.reader(session.image_data(project)) as source:
+        with qc_plane.reader(session.image_data(project)) as source:
             height, width = source.level_shape(0)
             image_size = (width, height)
     except Exception:  # noqa: BLE001 -- the outline is clipped only when the size is known

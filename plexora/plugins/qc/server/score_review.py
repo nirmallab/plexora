@@ -22,6 +22,7 @@ the tiles drawn.
 from __future__ import annotations
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 from plexora.plugins.qc.server import schemas, score_fields
 
 #: A tile's side, microns: enough tissue round the scored place to tell an
@@ -34,7 +35,7 @@ SEG_TILE_NUCLEI = 4.0
 def image_size(session, project):
     from plexora.server.utils import source_image
 
-    with source_image.SHELF.reader(session.image_data(project)) as source:
+    with qc_plane.reader(session.image_data(project)) as source:
         height, width = source.level_shape(0)
     return [int(width), int(height)]
 

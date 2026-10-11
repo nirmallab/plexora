@@ -430,7 +430,8 @@ def open_ims_volume(path):
             height=levels[0]["height"], width=levels[0]["width"],
             dtype=levels[0]["dtype"], spacing=spacing,
             levels=level_infos([(lv["height"], lv["width"]) for lv in levels],
-                               levels[0]["chunks"][-2:]),
+                               levels[0]["chunks"][-2:],
+                               depths=[lv["depth"] for lv in levels]),
             source_kind="ims", z_semantics="depth", t_semantics="time",
             channel_names=tuple(names) if names else None, provenance=provenance,
             stored_axes=("t" if frames > 1 else "") + "c"

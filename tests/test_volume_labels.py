@@ -229,3 +229,81 @@ def test_qc3d_says_nothing_about_a_clean_stack():
 
     findings, _ = qc3d.run_checks(_stack())
     assert findings == []
+
+
+# -- checks across channels and objects -------------------------------------------
+
+
+def _nuclei_volume(depth=16, size=64, seed=1, shift=(0, 0, 0)):
+    from scipy import ndimage
+
+    rng = np.random.default_rng(seed)
+    zz, yy, xx = np.mgrid[0:depth, 0:size, 0:size]
+    volume = np.zeros((depth, size, size))
+    for _ in range(14):
+        z, y, x = rng.uniform(4, depth - 4), rng.uniform(8, size - 8), rng.uniform(8, size - 8)
+        volume[((zz - z) * 1.5) ** 2 + (yy - y) ** 2 + (xx - x) ** 2 < 25] = 1000
+    volume = ndimage.gaussian_filter(volume, 1.0)
+    return ndimage.shift(volume, shift, order=1, mode="nearest")
+
+
+def test_qc3d_finds_a_cycle_sitting_deeper_than_the_reference():
+    from plexora.server.volume import qc3d
+
+    reference = _nuclei_volume()
+    deeper = _nuclei_volume(shift=(2, 0, 0))
+    aligned = _nuclei_volume(shift=(0, 1, 0))
+    dz, dy, dx, peak = qc3d.phase_shift_3d(reference, deeper)
+    assert dz == pytest.approx(2, abs=0.3) and abs(dy) < 0.3 and peak > 0.05
+    findings = qc3d.z_registration_drift(reference, [(1, ["DNA_1", "CD3"], deeper),
+                                                     (2, ["DNA_2"], aligned)])
+    assert [f["cycle"] for f in findings] == [1]
+    assert "deeper" in findings[0]["reason"] and findings[0]["channels"] == ["DNA_1", "CD3"]
+
+
+def test_qc3d_finds_tile_seams_at_the_same_columns_of_every_plane():
+    from plexora.server.volume import qc3d
+
+    rng = np.random.default_rng(0)
+    planes = []
+    for _ in range(6):
+        plane = rng.normal(100, 3, (90, 120))
+        for start in (0, 40, 80):                    # tiles 40 px wide, each its own level
+            plane[:, start:start + 40] += rng.uniform(0, 60)
+        planes.append(plane)
+    findings = qc3d.stitching_seams(planes, channel="DNA", scale=4)
+    columns = [f for f in findings if f["axis"] == "x"]
+    assert columns and columns[0]["positions"] == [158, 318], columns
+    assert columns[0]["regular"] is True and not [f for f in findings if f["axis"] == "y"]
+    assert qc3d.stitching_seams([rng.normal(100, 3, (90, 120)) for _ in range(6)]) == []
+
+
+def test_qc3d_flags_objects_that_are_not_one_whole_cell():
+    import polars as pl
+
+    from plexora.server.volume import qc3d
+
+    rows = [
+        # label, z0, z1, x0, x1, y0, y1, volume_vox, touches
+        (1, 3, 6, 10, 19, 10, 19, 300, False),       # an ordinary cell
+        (2, 3, 6, 30, 39, 10, 19, 310, False),
+        (3, 0, 3, 50, 59, 10, 19, 290, True),        # cut off by the first plane
+        (4, 5, 5, 10, 19, 40, 49, 80, False),        # one plane only
+        (5, 1, 13, 30, 37, 40, 47, 700, False),      # 13 planes tall, 8 wide: stacked
+        (6, 2, 4, 60, 69, 40, 49, 280, False),       # a cell cut between planes 4 and 5...
+        (7, 5, 7, 60, 69, 40, 49, 270, False),       # ...and its other half
+        (8, 3, 6, 10, 19, 70, 79, 305, False),
+    ]
+    frame = pl.DataFrame(rows, schema=["label", "bbox_z0", "bbox_z1", "bbox_x0", "bbox_x1",
+                                       "bbox_y0", "bbox_y1", "volume_vox", "touches_z_bounds"],
+                         orient="row").with_columns(
+        (pl.col("bbox_z1") - pl.col("bbox_z0") + 1).alias("n_planes"),
+        ((pl.col("bbox_x0") + pl.col("bbox_x1")) / 2).alias("X"),
+        ((pl.col("bbox_z0") + pl.col("bbox_z1")) / 2 + 0.5).alias("Z"))
+    # 0.5 µm pixels, 2 µm planes.
+    frame = frame.with_columns((pl.col("X") * 0.5).alias("x_um"), (pl.col("Z") * 2.0).alias("z_um"))
+    findings, flagged = qc3d.segmentation_3d(frame, depth=14)
+    assert "clipped_z" in flagged[3] and "flat" in flagged[4] and "merged_z" in flagged[5]
+    assert "split_z" in flagged[6] and "split_z" in flagged[7]
+    assert 1 not in flagged and 2 not in flagged and 8 not in flagged
+    assert {f["kind"] for f in findings} >= {"clipped_z", "flat", "merged_z", "split_z"}

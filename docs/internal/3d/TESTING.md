@@ -163,6 +163,21 @@ In the viewer, outlines, centroids, Cell Explorer's colours, gates and a click o
 the frame on screen's rows; step frames and they follow. A region drawn on one frame counts and
 maps only that frame's cells.
 
+**QC on a stack.** The QC card has a Stack section on a z-stack. Run checks the planes of every
+channel (up to eight): runs of planes much less sharp than the sharpest, signal fading with
+depth, empty planes, planes carrying almost no signal (beyond the tissue, usually), planes
+repeated pixel for pixel, planes whose level jumps, straight edges at the same columns of every
+plane (tile seams), a cycle whose nuclear stain sits deeper or shallower than the first cycle's,
+and -- with a measured 3-D mask -- objects that are not one whole cell (one plane only, cut off
+by the stack's ends, much taller than wide, split between neighbouring planes, far from the
+usual volume). Click a line to go to its first plane. "Make regions" writes the findings as QC
+regions limited to their planes, in the category their class belongs to (focus as blur, fading
+as illumination, empty planes as a failed channel, seams as acquisition, a drifting cycle as
+registration); a region on some planes only holds the cells on them, which needs the cell
+table's z column -- without one those findings are skipped and the card says why. The plane line
+says which plane every other QC check reads ("Use this plane" makes it the one on screen); each
+check runs again on a new plane. On the Imaris stack: 47 findings over six channels.
+
 **Segmenting in 3-D (Cellpose).** Tools → Segment in 3-D, on a z-stack. It needs the optional
 install `pip install "plexora[segment3d]"` (Cellpose 4 and PyTorch); without it the card says so.
 The first run downloads Cellpose-SAM's weights (about 1.2 GB, from the Cellpose authors' model
@@ -219,6 +234,15 @@ the whole stack.
 `check_volume_quality`, `render_region` with `view`, `render_projection`, `render_sections`,
 `render_object_views` (a measured cell by id, outlined in yellow), `measure_objects`,
 `pin_projection`, `viewer_set_z` / `viewer_set_slab`, and `create_roi` with an `extent`.
+Since 2026-10-11 also: `segment_3d`, `track_objects`, `create_roi` with `cells`,
+`colocalize_3d` (Pearson and Manders over planes in a region or cells; ask it on a projection
+view and it refuses, saying why), `find_regions_of_interest_3d` (brightest spots of a marker,
+crowded cells, suspicious or clipped cells, blurred planes -- each with a centre and a reason),
+`run_qc_3d` / `write_qc_3d_regions` / `set_qc_plane`, and an object review:
+`object_review_start` queues the suspicious cells and returns a `delegate` block for worker
+conversations (skill `review-objects`), each `object_review_next` shows one cell's XY/XZ/YZ
+views, and `object_review_finish` writes the cells judged not one whole cell as one QC
+segmentation region holding exactly them.
 
 ## Measured on this machine
 
@@ -256,8 +280,6 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 
 ## Not in this branch yet
 
-- The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
-  are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
 - Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
   you rest on, not the whole stack. 3-D levels of a node-backed image go through this server

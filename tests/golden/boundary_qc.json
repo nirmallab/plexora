@@ -407,7 +407,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_frames",
+        "/client/src/js/views/depthTools.js?v=20261011_stack_qc",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -418,7 +418,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_roi_cells"
+        "/client/src/js/main.js?v=20261011_stack_qc"
       ],
       "status": 200,
       "styles": [
@@ -447,20 +447,21 @@
           "tool_panel_slot": "qc/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/qc/static/qcApi.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcTree.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcLayers.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcDraw.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcHover.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcRegistration.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcBlur.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcArtifacts.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcSegmentation.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcSidebarController.js?v=20261005_lean_panel",
-          "/plugins/qc/static/qcAgentBridge.js?v=20261005_lean_panel"
+          "/plugins/qc/static/qcApi.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcTree.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcLayers.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcDraw.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcHover.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcRegistration.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcBlur.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcArtifacts.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcSegmentation.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcStack.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcSidebarController.js?v=20261011_stack_qc",
+          "/plugins/qc/static/qcAgentBridge.js?v=20261011_stack_qc"
         ],
         "active_tool_styles": [
-          "/plugins/qc/static/qc.css?v=20261005_lean_panel"
+          "/plugins/qc/static/qc.css?v=20261011_stack_qc"
         ],
         "available_tools": [
           {
@@ -673,6 +674,18 @@
         "qc_seg_under_eye",
         "qc_seg_under_pct",
         "qc_seg_view_heat",
+        "qc_stack_body",
+        "qc_stack_default_plane",
+        "qc_stack_fill",
+        "qc_stack_fold",
+        "qc_stack_list",
+        "qc_stack_phase",
+        "qc_stack_plane",
+        "qc_stack_progress",
+        "qc_stack_run",
+        "qc_stack_summary",
+        "qc_stack_use_plane",
+        "qc_stack_write",
         "qc_start_ai",
         "qc_status",
         "qc_status_row",
@@ -683,6 +696,7 @@
         "qc_tool_reg",
         "qc_tool_roi",
         "qc_tool_seg",
+        "qc_tool_stack",
         "qc_tree",
         "remote_globe",
         "sample-import-menu",
@@ -779,17 +793,18 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/qc/static/qcApi.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcTree.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcLayers.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcDraw.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcHover.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcRegistration.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcBlur.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcArtifacts.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcSegmentation.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcSidebarController.js?v=20261005_lean_panel",
-        "/plugins/qc/static/qcAgentBridge.js?v=20261005_lean_panel",
+        "/plugins/qc/static/qcApi.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcTree.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcLayers.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcDraw.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcHover.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcRegistration.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcBlur.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcArtifacts.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcSegmentation.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcStack.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcSidebarController.js?v=20261011_stack_qc",
+        "/plugins/qc/static/qcAgentBridge.js?v=20261011_stack_qc",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261010_carry",
@@ -812,7 +827,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_frames",
+        "/client/src/js/views/depthTools.js?v=20261011_stack_qc",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -823,7 +838,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_roi_cells"
+        "/client/src/js/main.js?v=20261011_stack_qc"
       ],
       "status": 200,
       "styles": [
@@ -833,7 +848,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/qc/static/qc.css?v=20261005_lean_panel"
+        "/plugins/qc/static/qc.css?v=20261011_stack_qc"
       ],
       "tool_mounts": [
         [
@@ -847,7 +862,7 @@
       ]
     }
   },
-  "route_count": 259,
+  "route_count": 263,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -928,6 +943,7 @@
     "GET /plugins/qc/segmentation/cells",
     "GET /plugins/qc/segmentation/density",
     "GET /plugins/qc/segmentation/download",
+    "GET /plugins/qc/stack",
     "GET /plugins/qc/state",
     "GET /plugins/qc/static/<path:filename>",
     "GET /plugins/qc/vocabulary",
@@ -1043,6 +1059,9 @@
     "POST /plugins/qc/segmentation/clear",
     "POST /plugins/qc/segmentation/run",
     "POST /plugins/qc/segmentation/write",
+    "POST /plugins/qc/stack/plane",
+    "POST /plugins/qc/stack/run",
+    "POST /plugins/qc/stack/write",
     "POST /plugins/qc/strictness",
     "POST /plugins/roi/api/adapters/anndata",
     "POST /plugins/roi/api/adapters/spatialdata",

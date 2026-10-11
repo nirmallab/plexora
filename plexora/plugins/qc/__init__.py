@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261005_lean_panel"
+VERSION = "20261011_stack_qc"
 
 
 def _blueprint():
@@ -64,6 +64,7 @@ PLUGIN = Plugin(
     # checks' rows.
     scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcHover.js",
              "qcRegistration.js", "qcBlur.js", "qcArtifacts.js", "qcSegmentation.js",
+             "qcStack.js",
              "qcSidebarController.js", "qcAgentBridge.js"),
     styles=("qc.css",),
     # An image is all image QC needs; a table (and a mask) add the cell half.

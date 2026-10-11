@@ -400,7 +400,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_frames",
+        "/client/src/js/views/depthTools.js?v=20261011_stack_qc",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -411,7 +411,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_roi_cells"
+        "/client/src/js/main.js?v=20261011_stack_qc"
       ],
       "status": 200,
       "styles": [
@@ -696,7 +696,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_frames",
+        "/client/src/js/views/depthTools.js?v=20261011_stack_qc",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -707,7 +707,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_roi_cells"
+        "/client/src/js/main.js?v=20261011_stack_qc"
       ],
       "status": 200,
       "styles": [

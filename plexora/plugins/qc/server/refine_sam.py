@@ -44,6 +44,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from plexora.plugins.qc.server import refine
+from plexora.plugins.qc.server import plane as qc_plane
 
 #: The artifact classes the model traces: physical objects with an edge, and
 #: a blurred patch (its edge is where the texture goes soft, which the model
@@ -384,7 +385,7 @@ def refine_object(candidate, envelope_mask, scan, image_data, *, outline, pixel_
     if pixel_um:
         pad = max(pad, SAM["margin_um"] / float(pixel_um))
     envelope = mapping(shape(outline).buffer(pad))
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         size = image_size
         if size is None:
             full_h, full_w = source.level_shape(0)
@@ -409,7 +410,7 @@ def redraw(candidate, envelope_mask, scan, image_data, *, pixel_um, envelope, op
 
     from plexora.server.utils import source_image
 
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         classical = refine.refine(candidate, envelope_mask, scan, source, pixel_um=pixel_um,
                                   envelope=envelope, options=options)
         size = image_size
@@ -441,7 +442,7 @@ def trace(candidate, envelope_mask, scan, image_data, *, pixel_um, envelope, opt
     return when the model is absent or its outline fails a guard."""
     from plexora.server.utils import source_image
 
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         classical = refine.refine(candidate, envelope_mask, scan, source, pixel_um=pixel_um,
                                   envelope=envelope, options=options)
         job = None

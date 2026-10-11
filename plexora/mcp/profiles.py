@@ -63,6 +63,9 @@ PROFILES: dict[str, tuple | None] = {
         "write_segmentation_flags", "compute_registration_mismatch", "step_registration_comparison",
         "get_registration_check", "set_registration_check", "write_registration_regions",
         "write_qc_background_roi", "run_dna_retention", "get_dna_retention", "clear_dna_retention",
+        "run_qc_3d", "get_qc_3d", "write_qc_3d_regions", "set_qc_plane",
+        "object_review_start", "object_review_next", "object_review_answer",
+        "object_review_status", "object_review_finish",
         "list_rois", "get_roi", "create_roi", "update_roi", "delete_roi", "count_cells_in_roi",
         "render_region", "render_cell_gallery", "explain_cell",
     ),
@@ -70,7 +73,9 @@ PROFILES: dict[str, tuple | None] = {
     # picture -- and the viewer commands that show them (skill volume-triage).
     "volume": _COMMON + (
         "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
-        "track_objects", "segment_3d",
+        "track_objects", "segment_3d", "run_qc_3d", "get_qc_3d", "colocalize_3d",
+        "find_regions_of_interest_3d", "object_review_start", "object_review_next",
+        "object_review_answer", "object_review_status", "object_review_finish",
         "check_volume_quality", "pin_projection",
         "render_region", "render_projection", "render_sections", "render_object_views",
         "get_artifact",

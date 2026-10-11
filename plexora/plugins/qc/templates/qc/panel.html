@@ -118,6 +118,45 @@
     </div>
 
     {# -- Blur QC -------------------------------------------------------------- #}
+    {# Stack QC (qcStack.js), on a z-stack only: which planes are out of focus,
+       fading with depth, empty or repeated; tile seams; a cycle drifting in z;
+       3-D objects that are not one whole cell. Its findings are plane ranges,
+       written as regions limited to those planes. The plane line says which
+       plane every other check here reads. #}
+    <div class="qc-tool" id="qc_tool_stack" data-tool="stack" data-open="false" data-state="idle" hidden>
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_stack_fold" type="button" aria-expanded="false"
+                    aria-controls="qc_stack_body" title="Stack QC: which planes, cycles and 3-D cells are not usable?">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-layer-group" aria-hidden="true"></span>
+                <span class="qc-tool-title">Stack</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_stack_summary"></span>
+            <span class="qc-tool-actions">
+                <button id="qc_stack_run" class="qc-tool-run qc-tool-play" type="button"
+                        title="Check the stack's planes" aria-label="Run Stack QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_stack_body">
+            <div class="qc-stack-plane">
+                <span class="qc-stack-plane-text" id="qc_stack_plane"></span>
+                <button id="qc_stack_use_plane" class="qc-line-action" type="button"
+                        title="Every QC check reads the plane on screen">Use this plane</button>
+                <button id="qc_stack_default_plane" class="qc-line-action" type="button" hidden
+                        title="Every QC check reads the stack's default plane">Default</button>
+            </div>
+            <div class="qc-progress" id="qc_stack_progress" hidden>
+                <span class="qc-progress-track"><span class="qc-progress-fill" id="qc_stack_fill"></span></span>
+                <span class="qc-progress-note" id="qc_stack_phase"></span>
+            </div>
+            <div class="qc-lines" id="qc_stack_list" role="list" aria-label="What the stack check found"></div>
+            <div class="qc-views">
+                <button id="qc_stack_write" class="layer-card-action qc-view" type="button" hidden
+                        title="Write these findings as QC regions limited to their planes"><span class="fas fa-file-export" aria-hidden="true"></span><span class="layer-card-action-text">Make regions</span></button>
+            </div>
+        </div>
+    </div>
+
     <div class="qc-tool" id="qc_tool_blur" data-tool="blur" data-open="true" data-state="idle">
         <div class="qc-tool-head">
             <button class="qc-tool-fold" id="qc_blur_fold" type="button" aria-expanded="true"

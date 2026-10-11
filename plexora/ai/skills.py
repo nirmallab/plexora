@@ -107,6 +107,9 @@ def constants() -> dict:
         from plexora.plugins.qc.server import schemas as qc_schemas
 
         out["QC_ENGINE"] = dict(qc_schemas.ENGINE)
+        from plexora.plugins.qc import capabilities_objects
+
+        out["OBJECT_REVIEW"] = dict(capabilities_objects.OBJECT_REVIEW)
         out["qc_budget"] = dict(qc_schemas.QC_UNIT_DEFAULT)
         out["VISUAL"] = dict(qc_schemas.VISUAL)
     except ImportError:  # pragma: no cover - QC not shipped in this build

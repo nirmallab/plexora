@@ -93,3 +93,72 @@ def test_binding_a_table_records_its_depth_and_frame_columns(tmp_path):
     record = Project.load("deep")
     assert record.roles.get("z") == "Z_centroid"
     assert "role:z" in set(record.confirmed)
+
+
+# -- voxels: colocalization and where to look ------------------------------------------
+
+
+def _coloc_project(tmp_path, name="coloc"):
+    from plexora.server.volume import objects
+
+    rng = np.random.default_rng(2)
+    depth, size = 6, 64
+    a = rng.normal(100, 5, (depth, size, size))
+    b = rng.normal(100, 5, (depth, size, size))
+    a[1:4, 10:30, 10:30] += 2000                # A and B together here...
+    b[1:4, 10:30, 10:30] += 2000
+    a[1:4, 40:60, 40:60] += 2000                # ...A alone here
+    image = np.stack([a, b]).astype(np.uint16)
+    path = tmp_path / f"{name}.ome.tif"
+    tifffile.imwrite(path, image, ome=True, metadata={
+        "axes": "CZYX", "PhysicalSizeX": 0.5, "PhysicalSizeY": 0.5, "PhysicalSizeZ": 2.0,
+        "Channel": {"Name": ["A", "B"]}})
+    labels = np.zeros((depth, size, size), dtype=np.uint16)
+    # Each cell reaches past its stained box: the channels co-vary inside it
+    # (bright together, dim together) only where both are stained.
+    labels[1:4, 5:35, 5:35] = 1
+    labels[1:4, 36:64, 36:64] = 2
+    tifffile.imwrite(tmp_path / f"{name}_mask.tif", labels)
+    register_image_datasource(name, path)
+    datasets.add_layers(name, tmp_path / f"{name}_mask.tif", wait=True)
+    objects.measure_project_objects(Project.find(name), units="physical")
+
+
+def _job(name, arguments):
+    session = AgentSession()
+    answer = registry.invoke(session, name, arguments)
+    assert answer["ok"], answer
+    done = registry.invoke(session, "job_wait", {"job_id": answer["result"]["job_id"],
+                                                 "timeout_s": 60})
+    job = done["result"]["job"]
+    assert job["status"] == "done", job.get("error")
+    return job["result"]
+
+
+def test_colocalization_is_counted_on_voxels_and_refused_on_a_projection(tmp_path):
+    _coloc_project(tmp_path)
+    together = _job("colocalize_3d", {"project": "coloc", "channels": ["A", "B"],
+                                      "object_ids": [1]})
+    apart = _job("colocalize_3d", {"project": "coloc", "channels": ["A", "B"],
+                                   "object_ids": [2]})
+    assert together["pearson_r"] > 0.9 and abs(apart["pearson_r"] or 0) < 0.2
+    assert together["manders_m1"] > 0.9 and apart["manders_m1"] < together["manders_m1"] - 0.3
+    assert together["voxels"] == 3 * 30 * 30 and together["level"] == 0
+    refused = registry.invoke(AgentSession(), "colocalize_3d", {
+        "project": "coloc", "channels": ["A", "B"], "view": "z0-5max"})
+    error = refused.get("error") or {}
+    if refused["ok"]:   # a job: the refusal arrives when it runs
+        done = registry.invoke(AgentSession(), "job_wait", {
+            "job_id": refused["result"]["job_id"], "timeout_s": 60})
+        error = done["result"]["job"]["error"] or {}
+    assert error.get("code") == "inference_forbidden", error
+
+
+def test_the_places_to_look_come_with_a_centre_and_a_reason(tmp_path):
+    _coloc_project(tmp_path, "where")
+    found = _job("find_regions_of_interest_3d", {"project": "where",
+                                                 "criteria": ["bright", "clipped"],
+                                                 "marker": "A", "n": 4, "size_um": 10})
+    bright = [r for r in found["regions"] if r["criterion"] == "bright"]
+    assert bright and all(1 <= r["center"]["z"] <= 3 for r in bright)
+    assert all(r["suggested_view"].startswith("z") for r in found["regions"])

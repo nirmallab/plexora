@@ -39,6 +39,7 @@ from time import perf_counter
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 from plexora.plugins.qc.server import schemas
 
 VERSION = "1"
@@ -200,7 +201,7 @@ def plan(session, project, *, reference=None, params=None) -> tuple:
         _i, rec = resolve_channel(entry["channel"], channel_records)
         entry["key"] = source_image.channel_key(rec)
     image_data = session.image_data(project)
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     image_stamp = None if str(identity or "").startswith("node://") \
         else segqc._stamp(identity)
     mask = segqc.mask_identity(record)
@@ -284,7 +285,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
 
     say(0, 1, "measuring the glass and the tissue")
     found = tissue_rules.for_project(session, project)
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality", "a brightfield image has no DNA cycles")
         indexes = []

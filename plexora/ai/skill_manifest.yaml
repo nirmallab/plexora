@@ -76,6 +76,13 @@ skills:
     when: A brief names a QC session, this skill and its tasks.
     tier: judgement
     tools: [read_skill, qc_session_status, qc_next, qc_answer]
+  - name: review-objects
+    title: Judge a 3-D mask's suspicious cells from their views
+    description: The worker's loop of an object review -- the next cell's XY, XZ and YZ views, a verdict (ok, merged, split, clipped, debris, unsure) and one line per cell.
+    when: A brief names an object review and this skill, or the user asks to check a 3-D segmentation cell by cell.
+    tier: judgement
+    tools: [read_skill, object_review_start, object_review_status, object_review_next,
+            object_review_answer, object_review_finish]
   - name: gate-dataset
     prompt: gate_dataset
     title: Gate every image of a dataset from a reference image

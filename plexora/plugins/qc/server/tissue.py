@@ -25,6 +25,7 @@ import json
 import numpy as np
 
 from plexora.plugins.qc.server import schemas
+from plexora.plugins.qc.server import plane as qc_plane
 
 
 def feather(mask, feather_px):
@@ -139,7 +140,7 @@ def for_project(session, project, *, scan_result=None) -> dict:
     names = [c.get("fullname") or c.get("name") for c in channel_records]
     pixel = pixel_scale.pixel_size(record)
     pixel_um = float(pixel["value"]) if pixel else None
-    with source_image.SHELF.reader(session.image_data(project)) as source:
+    with qc_plane.reader(session.image_data(project)) as source:
         level = image_qc.overview_level(source)
         ov_h, ov_w = source.level_shape(level)
         width = source.level_shape(0)[1]

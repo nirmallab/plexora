@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from plexora.plugins.qc.server import schemas
+from plexora.plugins.qc.server import plane as qc_plane
 
 #: [cal] one map cell's side in microns, and in full-resolution pixels when
 #: the image states no pixel size.
@@ -545,11 +546,11 @@ def plan(session, project, *, params=None, override=None, channels=None):
     for name in wanted:
         index, found = resolve_channel(name, channel_records)
         keys[found.get("fullname") or found.get("name")] = source_image.channel_key(found)
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         grid = choose_map_grid(source, pixel_um, cell_um=params["cell_um"],
                                cell_px=params["cell_px"])
         brightfield = bool(source.is_brightfield)
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     fp = fingerprint(identity, grid, keys, pixel_um, params, override)
     return fp, {"record": record, "image_data": image_data, "pixel_um": pixel_um,
                 "names": names, "keys": keys, "grid": grid, "params": params,
@@ -598,7 +599,7 @@ def run(session, project, fp, context, *, progress=None, cancelled=None) -> Scan
     blocks = list(iter_blocks(grid))
     tophat_px = int(min(TOPHAT_MAX_PX, math.ceil(TOPHAT_UM / (pixel_um * grid["factor"]))
                         if pixel_um else 3))
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         overview_level = image_qc.overview_level(source)
         ov_h, ov_w = source.level_shape(overview_level)
         overview_factor = grid["image_size"][0] / max(1, ov_w)
