@@ -948,19 +948,57 @@ def seg_tile(resource_id, level, tile):
     as the conversion took, and forever when it failed.
     """
     resource = _registry().get(resource_id, kind="segmentation")
-    encoded, mimetype = _seg_tile_bytes(resource, level, tile)
-    return _stamped(_image(encoded, mimetype, _etag(resource, "seg", level, tile)),
+    # The plane of a 3-D mask (a label volume): the same `view` token the
+    # viewer puts on every label tile, whether it asks the primary (which
+    # forwards it) or this node directly. A 2-D mask has one plane for every
+    # view, so the token is dropped from its cache key and ETag -- otherwise
+    # each plane of the image would re-fetch the identical tile.
+    view = (request.args.get("view") or "").strip()
+    encoded, mimetype = _seg_tile_bytes(resource, level, tile, view)
+    return _stamped(_image(encoded, mimetype,
+                           _etag(resource, "seg", level, tile, _seg_view_key(resource, view))),
                     resource)
 
 
-def _seg_tile_bytes(resource, level, tile):
+def _label_volume_of(pyramid):
+    """`pyramid` when it is a label volume (anything with `at_view`), else None."""
+    return pyramid if hasattr(pyramid, "at_view") else None
+
+
+def _seg_view_key(resource, view):
+    """`view` for a mask served as a label volume, "" for a 2-D one."""
+    if not view or not getattr(resource, "path", None):
+        return ""
+    # Held per path on the resource (`_label_volume_facts`): asked per tile.
+    return view if resource._label_volume_facts() is not None else ""
+
+
+def _seg_tile_bytes(resource, level, tile, view=""):
     from plexora.server.models import data_model
 
     width, height = _tile_size()
+    view = _seg_view_key(resource, view)
 
     def encode():
+        import numpy as np
+
         with _reading(resource) as pyramid:
-            array = data_model.read_tile(pyramid, None, level, tile, width, height)
+            volume = _label_volume_of(pyramid)
+            if volume is not None and view:
+                try:
+                    pyramid = volume.at_view(view)
+                except BadView as exc:
+                    raise ResourceError(str(exc)) from exc
+            try:
+                array = data_model.read_tile(pyramid, None, level, tile, width, height)
+            except Exception:
+                if resource.state != node_resources.PREPARING:
+                    raise
+                # The file it was shared as, while it converts, is not always
+                # readable as a 2-D mask -- a 3-D TIFF or an Imaris file is
+                # becoming a label volume. No cells until it lands (the
+                # repoint bumps the generation, so nothing blank is kept).
+                array = np.zeros((height, width, 4), dtype=np.uint8)
         _perf.mark("read")
         encoded = data_model.encode_tile_array(array, True, "png")
         _perf.mark("enc")
@@ -968,7 +1006,7 @@ def _seg_tile_bytes(resource, level, tile):
 
     return _cached_tile(
         (resource.id, _open_generation(resource), "seg",
-         str(level), str(tile), width, height),
+         str(level), str(tile), width, height, view),
         encode)
 
 
@@ -998,10 +1036,180 @@ def seg_region(resource_id):
             "this region covers more of the mask than one read can carry; "
             "ask for a lower resolution")
     with _reading(resource) as pyramid:
+        volume = _label_volume_of(pyramid)
+        if volume is not None and (body.get("z") is not None or body.get("t") is not None):
+            # A plane of a 3-D mask, as `LocalSegmentationProvider.read_region`
+            # reads one; no z is the frame's default plane.
+            frame = volume.frame(int(body.get("t") or 0))
+            z = body.get("z")
+            pyramid = frame.plane(int(z)) if z is not None else frame.default_plane()
         labels = padded_label_region(pyramid, level, box)
     return _stamped(_frame(wire.pack_array(np.ascontiguousarray(labels, dtype=np.uint32),
                                            box=box, level=level)),
                     resource)
+
+
+#: The most label ids one block read carries: (Z, H, W) uint32 at 4 bytes each,
+#: so 512 MB -- an XZ/YZ section through a whole stack, or a measurement's
+#: chunk of planes, and not an accidental whole-volume download.
+BLOCK_MAX_VOXELS = 128 * 1024 * 1024
+
+
+@node_bp.route("/seg/<resource_id>/block", methods=["POST"])
+def seg_block(resource_id):
+    """`(Z, H, W)` label ids of a 3-D mask: planes z0..z1 inclusive of frame
+    `t` at `level`, over `rows`/`cols` (half-open [start, stop], clipped to
+    the level) -- `LabelVolume.read`, for the primary's `NodeLabelVolume`.
+    Measurement, sections and QC in depth read a node's mask through this.
+    """
+    import numpy as np
+
+    resource = _registry().get(resource_id, kind="segmentation")
+    body = request.get_json(silent=True) or {}
+    level = int(body.get("level") or 0)
+    with _reading(resource) as pyramid:
+        volume = _label_volume_of(pyramid)
+        if volume is None:
+            raise ResourceError("this mask is one 2-D segmentation, not a label volume; "
+                                "it has no planes to read a block of")
+        volume = volume.frame(int(body.get("t") or 0))
+        if not 0 <= level < volume.levels:
+            raise ResourceError(f"level {level} is outside this mask's {volume.levels} levels")
+        height, width = volume.level_shapes()[level]
+        z0 = max(0, min(volume.depth - 1, int(body.get("z0") or 0)))
+        z1 = int(body["z1"]) if body.get("z1") is not None else z0
+        z1 = max(z0, min(volume.depth - 1, z1))
+        rows = slice(*slice(*(body.get("rows") or [None, None])).indices(height)[:2])
+        cols = slice(*slice(*(body.get("cols") or [None, None])).indices(width)[:2])
+        voxels = (z1 - z0 + 1) * max(0, rows.stop - rows.start) * max(0, cols.stop - cols.start)
+        if voxels > BLOCK_MAX_VOXELS:
+            raise ResourceError("this block covers more of the mask than one read can "
+                                "carry; ask for fewer planes or a lower resolution")
+        block = volume.read(level, z0, z1, rows, cols)
+    return _stamped(_frame(wire.pack_array(np.ascontiguousarray(block, dtype=np.uint32),
+                                           level=level, z0=z0, z1=z1)),
+                    resource)
+
+
+# -- 3-D objects, measured where the pixels are ---------------------------
+#
+# A z-stack's objects are measured against the whole stack, plane by plane, so
+# the measurement runs on the node that holds the image and its label volume
+# (`volume.objects.measure_columns`, the same code the primary runs for a local
+# image) and only the table travels. A job, polled, because it is minutes to
+# hours: progress goes back to the primary's task and a cancel stops it.
+
+#: job id -> {"state", "done", "total", "error", "manifest", "result", "cancel"}
+_MEASURES: "OrderedDict[str, dict]" = OrderedDict()
+_MEASURES_LOCK = threading.Lock()
+#: Finished jobs kept for their result; the oldest go first.
+MEASURES_KEPT = 8
+
+
+def _measure_job(job_id) -> dict:
+    with _MEASURES_LOCK:
+        job = _MEASURES.get(str(job_id))
+    if job is None:
+        raise ResourceError(f"no measurement {job_id!r} on this node")
+    return job
+
+
+@node_bp.route("/volume/measure", methods=["POST"])
+def volume_measure():
+    """Start measuring a label volume's objects against an image's planes."""
+    import secrets
+
+    from plexora.server.volume.model import T_SEMANTICS, Z_SEMANTICS
+
+    body = request.get_json(silent=True) or {}
+    image = _registry().get(str(body.get("image") or ""), kind="image")
+    seg = _registry().get(str(body.get("segmentation") or ""), kind="segmentation")
+    zs = body.get("zs") or None
+    ts = body.get("ts") or None
+    if zs is not None and zs not in Z_SEMANTICS:
+        raise ResourceError(f"zs is one of {', '.join(Z_SEMANTICS)}, not {zs!r}")
+    if ts is not None and ts not in T_SEMANTICS:
+        raise ResourceError(f"ts is one of {', '.join(T_SEMANTICS)}, not {ts!r}")
+    names = [str(name) for name in body.get("channel_names") or []]
+    indices = [int(index) for index in body.get("indices") or []]
+    units = str(body.get("units") or "physical")
+    job_id = secrets.token_hex(8)
+    job = {"state": "running", "done": 0, "total": 0, "error": None,
+           "manifest": None, "result": None, "cancel": threading.Event()}
+
+    def progress(done, total):
+        job["done"], job["total"] = int(done), int(total)
+
+    def work():
+        from dataclasses import replace
+
+        from plexora.server.volume import labels as volume_labels
+        from plexora.server.volume import objects
+        from plexora.server.volume.sources import open_volume
+
+        source = None
+        try:
+            # Opened here, not borrowed from the tile path's handles: an hour
+            # of reading must not hold those resources' locks.
+            if not volume_labels.is_label_volume(seg.path):
+                raise ResourceError("this node holds the mask as one 2-D segmentation, "
+                                    "not a label volume")
+            labels = volume_labels.open_label_volume(seg.path)
+            source = open_volume(image.path, rgb=image.reads_colour,
+                                 z_semantics=zs, t_semantics=ts)
+            if source is None or source.volume.is_planar:
+                raise ResourceError("this node reads the image as a single plane, so it "
+                                    "has no planes to measure objects in")
+            spacing = source.volume.spacing.overlaid(
+                pixel_size=body.get("pixel_size"), pixel_size_z=body.get("pixel_size_z"),
+                frame_interval=body.get("frame_interval"), frames=source.volume.frames)
+            if spacing is not source.volume.spacing:
+                source.volume = replace(source.volume, spacing=spacing)
+            frame, manifest = objects.measure_columns(
+                labels, source, channel_names=names, indices=indices, units=units,
+                progress=progress, cancelled=job["cancel"].is_set)
+            buffer = io.BytesIO()
+            frame.write_parquet(buffer)
+            job.update(state="done", manifest=manifest, result=buffer.getvalue())
+        except InterruptedError:
+            job.update(state="cancelled")
+        except Exception as exc:  # noqa: BLE001 -- said to the primary, not raised
+            job.update(state="error", error=str(exc) or type(exc).__name__)
+        finally:
+            if source is not None:
+                source.close()
+
+    with _MEASURES_LOCK:
+        _MEASURES[job_id] = job
+        while len(_MEASURES) > MEASURES_KEPT:
+            oldest = next(iter(_MEASURES))
+            if _MEASURES[oldest]["state"] == "running":
+                break
+            _MEASURES.pop(oldest)
+    threading.Thread(target=work, name=f"plexora-measure-{job_id}", daemon=True).start()
+    return jsonify(success=True, job=job_id), 202
+
+
+@node_bp.route("/volume/measure/<job_id>")
+def volume_measure_status(job_id):
+    job = _measure_job(job_id)
+    return jsonify(success=True, state=job["state"], done=job["done"], total=job["total"],
+                   error=job["error"], manifest=job["manifest"])
+
+
+@node_bp.route("/volume/measure/<job_id>/result")
+def volume_measure_result(job_id):
+    """The finished table, as parquet: every column keeps its dtype."""
+    job = _measure_job(job_id)
+    if job["state"] != "done" or job["result"] is None:
+        raise ResourceError(f"measurement {job_id!r} is {job['state']}, not done")
+    return current_app.response_class(job["result"], mimetype="application/octet-stream")
+
+
+@node_bp.route("/volume/measure/<job_id>/cancel", methods=["POST"])
+def volume_measure_cancel(job_id):
+    _measure_job(job_id)["cancel"].set()
+    return jsonify(success=True)
 
 
 # -- image ----------------------------------------------------------------

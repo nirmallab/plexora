@@ -395,7 +395,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260927_docs",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/viewState.js?v=20261011_colour_z",
+        "/client/src/js/services/viewState.js?v=20261011_node_labels",
         "/client/src/js/services/perfProbe.js?v=20261010_perf",
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
@@ -412,7 +412,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261011_merge",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_stack_qc"
+        "/client/src/js/main.js?v=20261011_node_labels"
       ],
       "status": 200,
       "styles": [
@@ -692,7 +692,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260927_docs",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/viewState.js?v=20261011_colour_z",
+        "/client/src/js/services/viewState.js?v=20261011_node_labels",
         "/client/src/js/services/perfProbe.js?v=20261010_perf",
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
@@ -709,7 +709,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261011_merge",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_stack_qc"
+        "/client/src/js/main.js?v=20261011_node_labels"
       ],
       "status": 200,
       "styles": [

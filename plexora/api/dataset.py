@@ -526,20 +526,18 @@ class SegHandle:
     def label_volume(self, t: int = 0):
         """The mask as a 3-D label volume -- one id per cell across planes --
         at frame `t` of a time series, or None for a 2-D mask (one
-        segmentation drawn on every plane) or a mask held on a data node.
+        segmentation drawn on every plane).
 
         Its `read(level, z0, z1, rows, cols)` gives `(Z, H, W)` label ids;
         `plane(z)` one plane's 2-D pyramid; `depth`, `height`, `width`,
-        `frames`.
+        `frames`. A mask held on a data node comes back as a
+        `providers.node.NodeLabelVolume`, the same face read over the wire.
         """
         from plexora.server.volume import labels
 
-        derived = self._project.segmentation.derived
-        if not self.available or self._project.resources.get("segmentation") is not None:
+        if not self.available:
             return None
-        if not derived or not labels.is_label_volume(derived):
-            return None
-        return labels.open_label_volume(derived).frame(t)
+        return labels.project_label_volume(self._project, t)
 
     @property
     def pending(self) -> bool:

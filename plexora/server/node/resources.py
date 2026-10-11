@@ -317,6 +317,24 @@ class Resource:
             # mistaken for one of the pyramid's.
             self.generation += 1
 
+    def _label_volume_facts(self):
+        """`LabelVolume.describe()` for a mask served as a label volume, else
+        None. Kept per path: `/hello` asks on every handshake."""
+        path = str(self.path or "")
+        held = getattr(self, "_label_volume_held", None)
+        if held is not None and held[0] == path:
+            return held[1]
+        from plexora.server.volume import labels as volume_labels
+
+        facts = None
+        if path and volume_labels.is_label_volume(path):
+            try:
+                facts = volume_labels.open_label_volume(path).describe()
+            except Exception:  # noqa: BLE001 -- a store mid-write says nothing yet
+                return None
+        self._label_volume_held = (path, facts)
+        return facts
+
     def describe(self) -> dict:
         """What `/hello` says about this resource."""
         fingerprint = None
@@ -364,6 +382,14 @@ class Resource:
             # primary shows neither.
             described["warning"] = self.warning
             described["progress"] = self.progress
+            # A 3-D mask (a label volume: one id per cell across planes) says
+            # so, with its extent, and the primary reads it as one
+            # (providers/node.NodeLabelVolume, `/volume/info`'s ndim). Absent
+            # for a 2-D mask -- and from an older node, which served a 3-D
+            # mask flattened anyway.
+            facts = self._label_volume_facts()
+            if facts is not None:
+                described["label_volume"] = facts
         if self.kind == "image":
             # A flat image's pyramidization offer, and how far a build of it
             # has got. Additive, like everything else here: an older node

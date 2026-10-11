@@ -335,26 +335,10 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
         return None
     source = Path(segmentation_path)
     folder = Path(dataDirectory) if dataDirectory else source.parent
-    stem = source.name.split(".")[0]
-    target = folder / f"{stem}_labels_v1.zarr"
-    key = segmentation_pyramid.source_fingerprint(source)
-    if volume_labels.is_label_volume(target):
-        try:
-            import zarr as _zarr
-
-            attrs = dict(_zarr.open_group(str(target), mode="r").attrs)
-            if attrs.get("source_key") == key and attrs.get("source") == str(source):
-                return str(target)
-        except Exception:
-            pass
-    if stage_callback is not None:
-        stage_callback("building")
-    folder.mkdir(parents=True, exist_ok=True)
-    built = volume_labels.build_label_volume(source, target, progress=progress_callback)
-    import zarr as _zarr
-
-    _zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
-    return built
+    # The rule a data node follows too (volume_labels.resolve_label_volume),
+    # so a mask converted by either is adopted by both.
+    return volume_labels.resolve_label_volume(
+        source, [folder], progress=progress_callback, stage=stage_callback)
 
 
 def segmentation_mode(entry):
@@ -3081,7 +3065,7 @@ def encode_tile(datasource_name, channel, level, tile, quality, view="", window=
             # spells the default as its own plane and adds the project's z/t
             # reading -- and not at all for a planar image, whose URL is the
             # one it has always been.
-            forwarded = (node.tile(level, tile) if is_segmentation
+            forwarded = (node.tile(level, tile, view=view) if is_segmentation
                          else node.tile(channel, level, tile, quality, view=view,
                                         window=window))
             _perf.mark("node")

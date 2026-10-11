@@ -7137,9 +7137,39 @@ in **5.6 s**.
   says mask, no id channel is False. A single-plane `.ims` takes the 2-D
   pyramid path (`ims.ImsPlane`, the middle plane of frame 0); a 3-D or
   time-series one becomes a label volume like a 3-D TIFF, through
-  `volume/labels.py` (`label_volume_shape`, `build_label_volume`). A data node
-  still serves a 3-D mask as its middle plane. `tests/test_ims_masks.py` and
-  `tests/test_mask_formats.py` pin it;
+  `volume/labels.py` (`label_volume_shape`, `build_label_volume`).
+  **A data node serves a 3-D mask as a label volume too.**
+  `resolve_label_volume(source, folders, progress, stage)` is the one
+  adopt-or-build rule (`<stem>_labels_v1.zarr`, adopted by source path plus the
+  `source_key` fingerprint attr); `data_model._resolve_label_volume` calls it
+  with the project folder, the node with beside-the-mask then
+  `node-masks/<id>`. `node/app._convert_mask_if_needed` refuses
+  `mask_format_refusal` formats with that sentence (`NodeStartupError`), serves
+  a label-volume store as is, and builds a (Z,Y,X)/(T,Z,Y,X) TIFF or `.ims` into
+  one and repoints the resource (`plexora node prepare` does the same).
+  `Resource.describe()` carries `label_volume` facts (`_label_volume_facts`,
+  cached per path). `seg_tile` takes `view` (`LabelVolume.at_view` picks the
+  plane a view token names; `_seg_view_key` drops it from the cache key and
+  ETag for a 2-D mask), and a tile that fails to read while the resource is
+  PREPARING is blank, because the raw 3-D/`.ims` source has no pyramid yet;
+  `seg_region` takes `z`/`t`; `POST /seg/<id>/block` returns (Z,H,W) uint32
+  (`BLOCK_MAX_VOXELS` 128M). On the primary, `NodeSegmentationProvider`
+  (`label_volume(t)`, `tile(level, tile, view)`, `read_block`) hands back a
+  `providers.node.NodeLabelVolume` with `LabelVolume`'s face, and
+  `project_label_volume(project, t)`/`project_has_label_volume` answer for a
+  mask wherever it is held, so `volume_routes`, `agent/sections.py`,
+  `SegHandle.label_volume` and `volume/objects` never ask where it lives.
+  Client side, `__plexora.trackLabelPlanes()` runs on `onMaskReady` so a node
+  mask that finishes converting after load still registers the "labels"
+  surface. 3-D object measurement runs on the node that holds the image:
+  `volume/objects.measure_columns` is the pixel-reading half,
+  `measure_project_objects` writes the table here, and the job is
+  `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,
+  `.../cancel`; `_MEASURES` keeps the last 8), driven by
+  `measure_objects_on_node`. The mask must be on the same node, or
+  `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
+  `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
+  `tests/test_node_new_formats.py` pin it;
   `tests/test_nan_tables.py` pins the NaN-position rules above.
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.

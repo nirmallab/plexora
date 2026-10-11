@@ -292,6 +292,32 @@ class LabelVolume:
     def default_plane(self) -> _PlanePyramid:
         return self.plane(self.depth // 2)
 
+    def at_view(self, token) -> _PlanePyramid:
+        """The plane a view token names: a plane's own, a projection's middle
+        plane, this frame's default for an empty token or a section. The rule
+        `data_model.generate_zarr_png` applies to a local mask, here for a
+        mask whose tiles a data node serves (node/api.seg_tile). The frame is
+        the token's, clamped like `frame` -- one segmentation drawn on every
+        frame answers every t. BadView for a token that is not one."""
+        from plexora.server.volume.viewspec import ViewSpec
+
+        if not str(token or "").strip():
+            return self.default_plane()
+        spec = ViewSpec.parse(token)
+        volume = self.frame(spec.t)
+        if spec.kind == "plane":
+            return volume.plane(volume.depth // 2 if spec.z < 0 else spec.z)
+        if spec.kind == "slab":
+            z1 = volume.depth - 1 if spec.z1 is None else spec.z1
+            return volume.plane(((spec.z0 or 0) + z1) // 2)
+        return volume.default_plane()
+
+    def describe(self) -> dict:
+        """What a data node says about this mask, so the primary can read it
+        as one (providers/node.NodeLabelVolume) without opening anything."""
+        return {"depth": self.depth, "frames": self.frames, "height": self.height,
+                "width": self.width, "level_shapes": self.level_shapes()}
+
     def frame(self, t: int) -> "LabelVolume":
         """Frame `t`'s label volume (this one for a single-frame store: one
         segmentation drawn on every frame)."""
@@ -326,3 +352,82 @@ class LabelVolume:
 
 def open_label_volume(path, t: int = 0) -> LabelVolume:
     return LabelVolume(path, t)
+
+
+def resolve_label_volume(source, folders, *, progress: Optional[Callable] = None,
+                         stage: Optional[Callable] = None) -> str:
+    """The label-volume store for the (Z, Y, X) or (T, Z, Y, X) mask at
+    `source`, adopted or built.
+
+    `<stem>_labels_v1.zarr` in one of `folders`: the first that already holds
+    one built from this very file (same path, same fingerprint) is adopted;
+    otherwise it is built in the first that accepts a write. One rule for the
+    viewer's own machine (`data_model._resolve_label_volume`: the project's
+    folder) and a data node (`node/app._convert_mask_if_needed`: beside the
+    mask, then the node's own folder for it), so a mask converted by either is
+    found by both.
+    """
+    from plexora import paths
+    from plexora.server.utils import segmentation_pyramid
+
+    source = Path(source)
+    stem = source.name.split(".")[0]
+    key = segmentation_pyramid.source_fingerprint(source)
+    targets = [Path(folder) / f"{stem}_labels_v1.zarr" for folder in folders]
+    for target in targets:
+        if is_label_volume(target):
+            try:
+                attrs = dict(zarr.open_group(str(target), mode="r").attrs)
+            except Exception:
+                continue
+            if attrs.get("source_key") == key and attrs.get("source") == str(source):
+                return str(target)
+    for target in targets:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if paths.is_writable(target.parent):
+            break
+    else:
+        raise OSError(f"none of {', '.join(str(f) for f in folders)} can be written, "
+                      f"so {source.name} cannot be stored as a label volume")
+    if stage is not None:
+        stage("building")
+    built = build_label_volume(source, target, progress=progress)
+    zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
+    return built
+
+
+def project_label_volume(project, t: int = 0):
+    """`project`'s mask as a label volume at frame `t`, wherever it is held,
+    or None for a 2-D mask or none.
+
+    A local store opens as a `LabelVolume`. A mask a data node holds as one
+    (it says so in its resource status, `label_volume`) opens as a
+    `providers.node.NodeLabelVolume`, the same face over the wire. What every
+    3-D consumer asks -- measurement, sections, QC in depth, `/volume/info`'s
+    `ndim` -- instead of testing `seg.derived`, which for a node mask is a
+    `node://` locator no path test can answer.
+    """
+    seg = project.segmentation
+    if not seg.available:
+        return None
+    binding = project.resource("segmentation") if hasattr(project, "resource") else None
+    if binding is not None:
+        from plexora.server.providers.node import NodeSegmentationProvider
+
+        try:
+            return NodeSegmentationProvider(binding).label_volume(t)
+        except Exception:
+            # An unreachable node cannot say; it reads as no volume here, and
+            # the tile path reports the node in its own terms.
+            return None
+    if not seg.derived or not is_label_volume(seg.derived):
+        return None
+    return open_label_volume(seg.derived).frame(t)
+
+
+def project_has_label_volume(project) -> bool:
+    """Whether `project`'s mask is a 3-D label volume, local or on a node."""
+    return project_label_volume(project) is not None
