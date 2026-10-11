@@ -115,7 +115,7 @@ Entry points:
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
 | `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
-| `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
+| `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `model_files.py` is the verified download every model shares (a file gets its real name only after its sha256 matched, so a half-finished download is never loaded); `sam_weights.py` and gating's `cellcall_weights.py` both delegate to it. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
 | `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
 | `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
@@ -2564,15 +2564,6 @@ deliberately left out and what should be built next.
   `digest` and `channel_verdict` for a marker; the wire is `WIRE_VERSION` 2,
   and a version-1 payload still decodes. `ProjectData.not_called()`/
   `.calls()` (`api/dataset.py`) are the plugin-facing form.
-- `agent/cell_features.py` — what plugins know of one cell's surroundings,
-  without core importing them: `describe(session, data, cell_id, marker)`
-  asks every loaded plugin's `Plugin.cell_features_factory` (a zero-argument
-  callable returning `provider(session, data, cell_id, marker) -> dict`) and
-  merges the answers, skipping a provider that fails, because a plugin's
-  extra never breaks `explain_cell`; `agent/cell_explain.py` puts the result
-  under `surroundings` when a marker is named. Gating registers
-  `capabilities_autogate.cell_features` (the spatial evidence at the marker's
-  current gate) — the same seam shape as `cell_exclusions_factory`.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
@@ -2848,35 +2839,79 @@ deliberately left out and what should be built next.
   in `packets._sheet`), `events.py` (the `gating.session` event payload and its
   `control` URL, the one place core's agent panel learns which route to post
   pause/resume/stop/take-over to, so it never names the plugin),
-  `spatial.py` (the spatial evidence feature layer; it decides nothing
-  itself: `detect_mode` picks evidence mode A — mask matching the table plus
-  image — B — image and centroids only, a Voronoi region is not a boundary —
-  or C — expression only (`schemas.SPATIAL_MODES`); `density_class` gives
-  sparse/intermediate/dense terciles of the physical neighbour count;
-  `background_map` a per-~50 µm-tile background and noise from a coarse
-  level; `per_cell` the bright-neighbour features, cached for
-  `SPATIAL["per_cell_cache_markers"]` (2) markers in an LRU because each is
-  N-sized; `excesses` the self-calibrated numbers every rule reads;
-  `targeted_from_crops` the targeted pass, reading only the crops a collage
-  already reads (`collage.render_collage(crop_hook=...)`); `t1_audit`;
-  `corrected_values`/`corrected_column` an empty, separate seam),
-  `calls.py` (the uncertain-cell layer: `UNCERTAIN = 2` beside
-  `cell_exclusions`' three states, written only over positives whose spill
-  or SNR excess says proximity matters for that marker, unless a look or the
-  targeted pass confirmed them; derived from the gate, never stored, `None`
-  with the switch off). `SessionOptions.spatial` (`schemas.SPATIAL_OPTIONS`
-  `off`/`diagnose`/`stratify`/`decide`, each adding to the one before;
-  default `off`, env `PLEXORA_GATING_SPATIAL`, `plexora mcp serve
-  --gating-spatial`) turns it on; `decide` adds the like-for-like look
-  `t3_contrast` (a budgeted kind), the case table (`schemas.SPATIAL_CASES`),
-  the T1 audit, `regression.spatial_checks` and the uncertain layer. Table
-  ops `gating.autogate.spatial`/`spatial_cells`/`contrast`/`purity`/
-  `uncertain` keep it local-or-node; `GET /plugins/gating/get_uncertain`
-  feeds the viewer's `setCellFlagMask`, which writes those cells as 3 in the
-  gate mask, drawn amber by `label.frag.glsl` and `labelTile.js` alike, and
-  the sidebar's "N uncertain" count and "Show uncertain cells" toggle.
-  `SPATIAL_VERSION`/`TARGETED_VERSION`/
-  `UNCERTAIN_VERSION` are in every cache key over them. Nothing
+  `neighbourhood.py` (what the cell model selects with: `of(ds, marker,
+  pixel_um=)` gives each cell's fit-space value `vf`, whether it is
+  `eligible`, its `nearest_strong` positive and `adjacent_px`, one
+  `kernels.neighbour_values` walk per marker, the arrays kept for
+  `NEIGHBOURHOOD["cache_markers"]` (2) markers because each is N-sized;
+  `image_facts`, `mask_identity`, `qc_fingerprint`, `radius_px`,
+  `clear_cache`). The spatial-evidence switch that once sat here
+  (`spatial.py`, `calls.py`, `SessionOptions.spatial`, `t3_contrast`, the
+  uncertain layer) was removed, because on real tissue its decide mode
+  engaged none of its rules (`AUTOMATIC_GATING.md` §2a).
+  `cellcall.py` is the cell model's layer (`docs/internal/AUTOMATIC_GATING.md`
+  §2b): a small ONNX CNN gives each cell near the gate a `p_own`, and
+  `decide` keeps **the gate's call unless the model is confident**
+  (`CELLCALL["confident"]` 0.1), because on lsp11385_2 letting it call every
+  cell was worse far from the gate than the gate itself. `select` (table op
+  `gating.autogate.cellcall_select`) runs where the table is, `predict`
+  where the pixels are, reading crops `tiles_per_read` pyramid tiles at a
+  time on a reader thread so memory stays bounded; `resample` reproduces
+  scipy's zoom bit for bit, because that is what the weights were trained
+  on. `Pool` holds `workers` onnxruntime sessions of one file
+  (`default_workers`: a quarter of the cores, at most two) and `predict`
+  pipelines reads against them; `sweep` runs several jobs in one pass;
+  `select`/`run` take a reach and cap override. Runs are cached as `.npz` under
+  `agent_root/gating/<project>/cellcall/`, keyed on `CELLCALL_VERSION`,
+  the model's `cellcall_weights.identity()`, the gate and the data, each
+  storing the fit-space values `vf`, and only a marker's newest
+  `CELLCALL["keep_runs"]` (3) are kept; `current` finds the
+  run at the gate as it stands, `codes` turns it into one byte per row (1
+  uncertain, 2 not own, 3 own). `cellcall_weights.py` fetches
+  `cellcall_v1.onnx`, sha-pinned, from release `cellcall-model-v1` of
+  `nirmallab/plexora-models` (env `PLEXORA_CELLCALL_MODEL_DIR`/
+  `PLEXORA_CELLCALL_MODEL_URL`, default `<data_root>/.models/cellcall`);
+  `PLEXORA_CELLCALL_MODEL_FILE` loads an unpinned (dev or held-out) file
+  instead, identified as `unpinned:<sha16>` so its calls never mix with the
+  shipped model's.
+  `hybrid.py` is hybrid gating (`AUTOMATIC_GATING.md` §2c),
+  `SessionOptions.hybrid` `off`/`tiles`/`model`/`full`
+  (`schemas.HYBRID_OPTIONS`/`HYBRID_FEATURES`; default `off`, env
+  `PLEXORA_GATING_HYBRID`, `plexora mcp serve --gating-hybrid`; a resumed
+  session's options complete as `off`, so resuming never
+  changes how it decides). `tiles` draws each looked-at cell as the
+  `collage.LAYOUTS["t2m"]` 2 x 2 block — morphology, the context with the
+  judged cell outlined, the expected and the not-expected partner
+  (`Engine.partner_panels`), 64 px a panel. `model` queues cell-model runs
+  on the session record (`record["cellcall"]`), submitted by
+  `gating_next`/`gating_answer` and drained by the session job
+  `gating.session_cellcall` (tool `gating_session_cellcall`), so
+  `gating_next` may answer `model_running`; purpose `decide` reads ahead
+  when a marker's first look goes out (`Engine.model_ahead`), `layer` makes
+  the per-cell layer at the written gate. A look-approved gate is then
+  corrected at `Engine.settle` (`plan_correction`; `correct_for_review` for
+  a gate written for review) to the minimum of the pure `correction.py`'s
+  J(g) = flagged(g) + lam x unflagged_changed(g, g_v) (`CORRECTION`: `lam`
+  0.6, window 4 band halves), so the model moves only the cells it is
+  confident about and pays for every other cell the move changes. With
+  `HYBRID["confirm"]` off (the default) the correction is applied as
+  computed and recorded; on, it waits in state `awaiting_correction` for one
+  `correction_check` packet (`answers.CorrectionAnswer`, a `CHECK_KINDS`
+  member, `tasks.yaml`'s `final_validation`). Which steps earned their place
+  is `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`; the default stays `off`
+  until the live ablation clears its bar there.
+  Tools `run_cell_model` (a job) and `get_cell_model_calls`
+  (`capabilities_cellcall.py`, chained from `capabilities_autogate`,
+  entitlement `ai:gating:analytics`); routes `GET get_cell_model` (bytes
+  plus `X-Cell-Model-*` headers), `POST run_cell_model`, `GET jobs/<job_id>`,
+  `POST jobs/<job_id>/cancel`; the sidebar's `#gate_cell_model` block
+  (`gatingSidebarController.paintCellModel`/`startCellModel`/…). Through
+  `setCellFlagMask`, `evaluateGateMask` writes code 1 as 3 (amber, the
+  model's unconfident lean against a positive) and code 2 as 5 (magenta,
+  `MODEL_NOT_OWN`) over a positive, and code 3 as 4 (sky blue, `MODEL_OWN`)
+  over a negative only when every other gated key passes, and counts them
+  apart (`uncertainCount`/`modelOwnCount`/`modelNotOwnCount`); the gate's `count` is
+  unchanged. Nothing
   here imports `data_model` —
   `tests/test_agent_architecture.py` scans the folder for it. Exposed as
   tools through `plugins/gating/capabilities_autogate.py` (analytical,
@@ -2929,7 +2964,11 @@ deliberately left out and what should be built next.
   `obsm["<table>_not_called"]` beside the `uns` gates
   (`anndata_gates.save_not_called`, from the `gating.save_gates` payload
   `capabilities.py` builds), and the provenance rows written with it carry
-  `call_mode`, `qc_fingerprint` and `n_not_called`.
+  `call_mode`, `qc_fingerprint` and `n_not_called`. The same write puts
+  the cell model's confident disagreements beside them,
+  `obsm["<table>_model_own"]`/`obsm["<table>_model_not_own"]`
+  (`anndata_gates.save_model_calls`), only for markers with a run at their
+  current gate, so a write without one is unchanged.
 - `plexora/plugins/qc/` — automated image QC, built on the shared
   `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
   Server: `schemas.py` (the closed vocabulary of QC classes and the
@@ -3451,13 +3490,15 @@ deliberately left out and what should be built next.
   against a trusted one, not an expert) or `--truth csv:<path>` (a
   `marker,value` file, `bench.reference_csv`; `--truth-column "Human gate"`
   picks the gates column of a wider file); `--variants
-  baseline,stratified,spatial` runs the spatial ablation, one session per
-  variant (`bench.variant_arm`); `--cell-truth column-prefix:gatediff_`
-  scores per-cell expert calls; `--synthetic spatial` runs
-  `bench_data.SPATIAL_SCENARIOS`; `plexora ai bench spatial [--sizes
-  200000,1000000 --targeted 50,200]` (`ai/bench_spatial.py`) times the
-  spatial fast pass and its memory (tracemalloc, a separate pass) and the
-  targeted pass in modes A and B, on synthetic data only; `--score-session ID` scores a
+  baseline,tiles,model,hybrid` runs one session per variant
+  (`bench.variant_arm`, `bench.VARIANTS`), the hybrid arms against the
+  baseline, the synthetic bench standing in for the cell
+  model with an oracle (`bench.oracle_cell_model`); `plexora ai bench
+  cellcall --project P --markers A,B --workers 1,2 --halves R --cells N`
+  (`ai/bench_cellcall.py`) times the cell model's reads per worker count;
+  `--synthetic spatial` runs `bench_data.SPATIAL_SCENARIOS` (scenes with
+  per-cell causes), and the summary's `causes` (`bench.cause_scores`,
+  `CAUSE_METRICS`) says where each arm's errors fall; `--score-session ID` scores a
   stored session's `SESSION_ARMS` (gmm/proposal/ceiling/control/final: MAE
   and the share within `WITHIN` 0.1), and `--replay-session ID [--rerender]`
   (`bench.replay_session`) re-asks a stored session's packets and, with
@@ -4167,9 +4208,16 @@ deliberately left out and what should be built next.
   naming its layer through `Requires.first_layer` (see `api/plugin.py`
   below), and `TranscriptsSidebarController.setLayerVisible()`, which used to
   drive that checkbox, was deleted along with it.
-- `views/miniMap.js` — the bottom-left circular lens (`class MiniMap`, a global,
-  loaded the same way as `imageViewer.js`): expands into a circular overview of
-  the whole tissue per active channel, fetched from `/generated/overview/...`.
+- `views/miniMap.js` — the bottom-left overview lens (`class MiniMap`, a global,
+  loaded the same way as `imageViewer.js`): a round button that expands into a
+  rectangular overview of the whole tissue per active channel, fetched from
+  `/generated/overview/...`. `_fitRoot()` sizes the open map to `SIZE_RATIO` of
+  the viewer (clamped by one factor, so it keeps the canvas's aspect ratio) and
+  `_layout()` fits the whole image inside it at the view's current angle
+  (`geom.turn`), letterboxed, never clipped; because the frame is not round, a
+  change of angle refits and redraws once from the cached greyscale
+  (`_syncOrientation`). `tests/test_mini_map.py` drives the probe with a
+  `viewerWidth`/`viewerHeight` stand-in for the viewer's box.
   Its `.viewer-mini-map-orient` layer (the picture and the viewport indicator,
   not the note) turns and mirrors with the main view's Rotate & Flip state — see
   the screen-space invariant under Key Invariants — and `_stagePoint` takes a
@@ -4584,16 +4632,22 @@ deliberately left out and what should be built next.
   **L | R** switch every data-selection field gets (one letter each because it
   sits inside the field's row; the meaning is on the per-button `aria-label`
   and a `data-tooltip` on the group reading "Data Location — (L)ocal |
-  (R)emote"). **One render, everywhere** — the two surfaces that give the
-  switch a row of its own rather than a field to share, the home page and the
-  import dialog, spell the missing word out around it instead: a `Label`-step
-  kicker before the chip ("Image location" / "Data location") and a caption
+  (R)emote"). **One render, everywhere it renders** — the import dialog, the
+  one surface that gives the switch a row of its own rather than a field to
+  share, spells the missing word out around it instead: a `Label`-step
+  kicker before the chip ("Data location") and a caption
   after it ("this computer", local only — on Remote the switch's own place
   button stands there and names the machine, and unlike the caption it is
   clickable). Two renderings of the switch itself would be two things to learn
   for one question, and inside a dialog the tooltip is clipped by
   `.plx-dialog { overflow: auto }` anyway, so the label and caption are what
-  carry the meaning there. `attach()`
+  carry the meaning there. The one exception is `options.bare`: `attach()`
+  then renders no switch at all, and the caller draws its own and moves the
+  state with `setWhere()`. Only the home page does this (`bare: true` with a
+  `statusMount`), because it asks "which machine?" with a chip inside its path
+  box and a menu of the actual machines; the state stays here, since this is
+  still the one thing that knows what to submit for a path on another
+  machine — only the two letters go. `attach()`
   renders on **every** launch (`available()` is unconditionally true) because
   there is always somewhere else a file could be. What each half means is
   derived, not configured — `plainPath()` is the one predicate everything hangs
@@ -5135,12 +5189,44 @@ holds that catalogue to what `import_proposal.py` actually emits.
 
 **The home page is not one of the dialog's surfaces; it is an entry point of
 its own.** `index.html`'s `{% else %}` branch (no datasource registered) is
-`views/quickViewLanding.js` + `css/quickView.css`: the Local/Remote switch, a
-Select File / Select Folder pair, a path box and Load — the page's own
-controls, because the one thing somebody does on an empty install is open an
-image and a modal over an empty page is a step rather than a shortcut. The
-dialog is the *footer* link there, for what the page cannot ask: a name, a
-dataset, several samples out of one folder.
+`views/quickViewLanding.js` + `css/quickView.css`: under the heading "Explore
+your tissue", one raised card (`#quick_view_card`) holding File/Folder tabs
+(`#quick_view_kind`, whose `data-kind` file|directory is passed straight to
+`browseForPath` as its mode), a path box (`#quick_view_path_input`) led by a
+machine chip (`#quick_view_where`, "Local" or the server's name) and ONE
+button, `#quick_view_go`, which is Browse while the box is empty and Load once
+it holds a path — the page's own controls, because the one thing somebody
+does on an empty install is open an image and a modal over an empty page is a
+step rather than a shortcut. The chip's menu (`#quick_view_where_menu`) lists
+`PlexoraRemotes`' places, connects or adds a server where it stands through
+`PlexoraConnectionModal` rather than sending anybody to Settings first, and
+links Settings `#remotes` to manage them; picking moves the shared state with
+`setWhere()` (the page attaches `dataLocation.js` with `bare: true`). The card
+carries its state as classes (`is-local`/`is-remote`, `is-directory`,
+`is-working`, `has-lines`) and two attributes, `data-face`
+(browse | load | busy) and `data-check` (idle | checking | ok | bad | url), so
+the CSS draws every state from one place. It has one status line
+(`#quick_view_status`) plus the location service's own
+(`#quick_view_where_status`), and format chips built from `browsePicker.js`'s
+`KIND_EXAMPLES.image`, then "and more" and `#quick_view_help` ("What's
+supported"), so the examples cannot drift from the pickers'. The dialog is the
+*footer* link (`#sample-import-home`), for what the page cannot ask: a name, a
+dataset, several samples out of one folder. Below it, a **Recent** list of the
+three projects opened last, each a link into its viewer, with "All projects"
+to `/open_project`; it is absent on an install with nothing to reopen. It is
+server-rendered (`page_routes._recent_rows` into `my_index`) rather than
+fetched, because the column is centred and a list that arrived late would push
+the card up under the pointer. `project_routes.recent_projects(limit=3)` sorts
+the config entries by `lastOpenedAt`/`createdAt` BEFORE building any card
+(`_project_card`, the same builder `/projects` uses), so an install with two
+hundred samples does not summarise two hundred manifests to draw three rows,
+and it skips (and logs) a project that fails to summarise, because one broken
+record must not cost somebody the page — the library still lists it. Each
+row's words are the library card's: `_IMAGE_KIND_WORDS` mirrors
+`openProjectPage.js`'s `IMAGE_KINDS` (change that one first), and
+`_opened_phrase()` is its `timeAgo` worked out server-side, because
+`lastOpenedAt` is this machine's local time with no zone and a browser
+elsewhere would measure it against its own clock.
 
 That page is **not** a second importer, which is the whole difference from the
 `POST /quick_view` it used to call. Load POSTs `{paths: [path]}` to
@@ -5286,8 +5372,8 @@ where-row — a direct child of the `<dialog>`, not of the body, because
 `renderProposal`/`renderImporting` clear the body with `innerHTML` and would
 tear the mounted switch out from under itself — carrying a "Data location"
 kicker, the Local/Remote switch mounted once via `dataLocation.attach()` and a
-"this computer" caption painted by `paintCaption()`, which is the home page's
-arrangement to the word (the switch decides whose filesystem the two halves
+"this computer" caption painted by `paintCaption()`, the arrangement the home page
+had until it drew its own machine chip over a `bare` attach (the switch decides whose filesystem the two halves
 below browse, so it sits above them rather than inside a row it would qualify,
 and is hidden outside `pick` by CSS rather than rebuilt); a `buildSplitControl(
 "sample", pickWith, {file: "Choose a file", directory: "Choose a folder"})`
@@ -7032,7 +7118,7 @@ in **5.6 s**.
   `client/src/` are read from disk per request. So a live process serves the
   NEW frontend against the OLD backend: a newly added route 404s while the
   feature that calls it looks fully deployed. This cost real debugging time on
-  the mini-map, whose lens, circle, viewport indicator and drag all worked
+  the mini-map, whose lens, map, viewport indicator and drag all worked
   against a server that had never heard of `/generated/overview`. Before
   suspecting the code, compare `ps -eo pid,lstart | grep plexora` against the
   source mtime.
@@ -7491,21 +7577,19 @@ in **5.6 s**.
   never creates a positive population, and never overrides a relation the
   user or the panel context stated. An `inferred` source is always reported
   as inferred, never as the sample's diagnosis.
-- **Spatial evidence never moves a gate by itself.**
-  - `spatial: off` computes nothing and is byte for byte the session without
-    the switch — memo keys, payloads, provenance
-    (`tests/test_gating_spatial_session.py`) — so the default costs nothing.
-  - Every spatial rule reads an EXCESS — the share of the cells at the gate
-    in an environment minus the same share among clear positives
-    (`spatial.excesses`, `schemas.SPATIAL_RULES`) — never a raw share or a
-    positive-fraction ratio, because positives that cluster by biology put
-    the cells at the gate there too, and on lsp11385_2 the raw numbers read
-    that as artefact for 9 of 12 human-gated markers.
-  - A spatial regression check may hold or reject, never move a gate.
-  - Proximity to a bright cell is a circumstance, never a verdict: `spill`
-    stays `candidate`/`untested` until the targeted pass reads the pixels.
-  - The uncertain layer is shown, never applied: it never changes a gate,
-    the calls, the counts or an export.
+- **`hybrid: off` is a session without it, byte for byte**
+  (`schemas.HYBRID_OPTIONS`); `HYBRID_VERSION` joins a packet's memo key
+  only while it is on, so turning it on is a new look, never a remembered one.
+- **A spatial regression check may hold or reject, never move a gate**
+  (`engine.SPATIAL_CHECKS`: `edge_ratio`, `spatial_tiles`), because they say
+  where positives are, not how many.
+- **The cell model is a layer beside the gate, never applied to it**
+  (`autogate/cellcall.py`). The gate's call stands unless the model is
+  confident, and even its confident calls go only to the viewer's codes 4/5
+  and the `<table>_model_own`/`_model_not_own` obsm; the gate, `calls()`,
+  counts and exports stay the gate's. A changed reading or rule bumps
+  `schemas.CELLCALL_VERSION`, a new weights file `cellcall_weights.MODEL_VERSION`
+  plus new pins, because both are in every stored run's key.
 - **A failed gate is never used as a reference.** `hierarchy.grade` marks a
   unit closed `technically_failed`, `no_positive_population`,
   `manual_review_recommended`, `not_binary` or `insufficient_information` as
@@ -10469,25 +10553,35 @@ pytest run was already in progress in this tree and starting a second would
 race it on the golden files (see Sharp Edges); confirm a clean number before
 relying on **5653 passed** above.
 
-**Spatial evidence in gating** (`feature/spatial-gating`, see the
-`autogate/` Repository Map row and Key Invariants). New tests:
-`tests/test_autogate_spatial.py` (neighbour walk with and without numba,
-density strata, spill excess against clustered biology, background map,
-the case table, the T1 audit, the targeted pass, no correction offered), `tests/test_autogate_spatial_pixels.py` (modes, background
-map, density strata, the crop hook adding no reads, the targeted pass on
-painted spill), `tests/test_gating_spatial_session.py` (`spatial: off` is the
-base session byte for byte), `tests/test_spatial_timing.py` (the fast pass's
-budget at 200k cells, one graph per image, per-tile reads in the targeted
-pass); `tests/js/gate_not_called_probe.mjs` and `label_gpu_parity.mjs` check
-gate value 3 (amber, still counted positive) and the "N uncertain" count.
-Every boundary golden was regenerated for the asset tag
-`20261008_spatial_evidence`; against `main`, `route_count` is +1 in each for
-core's `GET /get_not_called` and +2 in `boundary_gating.json` (197 → 199),
-which also gains `GET /plugins/gating/get_uncertain`. Full suite on this
-branch (macOS, 2026-10-08): **7484 passed, 22 failed, 8 errors, 11 skipped**;
-all 30 failures/errors are the machine's missing `spatialbridge`/`bs4`
-modules, `test_docs_envvars` (`PLEXORA_QC_CHANGED`) and two
-`test_gating_delta` trims, all present on the branch's base commit.
+**Spatial evidence in gating — removed** (`feature/spatial-gating`; see
+`AUTOMATIC_GATING.md` §2a). Its tests went with it:
+`tests/test_autogate_spatial.py`, `tests/test_autogate_spatial_pixels.py`,
+`tests/test_gating_spatial_session.py`, `tests/test_spatial_timing.py` and
+the fixture `make_spatial_gating_project`, as did
+`GET /plugins/gating/get_uncertain`. Gate value 3 (amber, still counted
+positive) and the "uncertain" count stay in `gate_not_called_probe.mjs` and
+`label_gpu_parity.mjs`, now as the cell model's code 1. Against `main`,
+`route_count` is +1 in each golden for core's `GET /get_not_called`. The
+branch's last full-suite count, **7484 passed, 22 failed, 8 errors, 11
+skipped** (macOS, 2026-10-08; all 30 failures/errors the machine's missing
+`spatialbridge`/`bs4` modules, `test_docs_envvars` (`PLEXORA_QC_CHANGED`)
+and two `test_gating_delta` trims, all present on the branch's base commit),
+was taken with those tests in place and is stale; no count has been reported
+since their removal.
+
+**The cell model in gating** (same branch, see the `autogate/` row). New
+`tests/test_gating_cellcall.py`; its real-weights test runs only when
+`PLEXORA_TEST_CELLCALL_MODEL_DIR` points at the weights, otherwise it skips.
+`label_gpu_probe.mjs` (+ `test_label_gpu.py`'s list), `label_gpu_parity.mjs`
+(13 cases) and `gate_not_called_probe.mjs` (+ `test_gate_not_called_js.py`'s
+`CHECKS`) cover codes 4/5 and their counts; `test_licensing_enforcement`'s
+`PAID` gains `gating.cell_model_run`/`gating.cell_model_calls`. Every
+boundary golden was regenerated for the asset tag `20261010_cell_model`;
+`boundary_gating.json`'s `route_count` 199 → 202 (four cell-model routes
+in, `get_uncertain` out) and `test_plugin_boundary` counts 17 gating routes
+(16 API plus static). No
+full-suite count has been reported for this change. Hybrid gating adds
+`tests/test_gating_hybrid.py`; no count has been reported for it either.
 
 ## Sharp Edges
 
@@ -10537,9 +10631,12 @@ modules, `test_docs_envvars` (`PLEXORA_QC_CHANGED`) and two
   can recalibrate the display state (`calibrate_display` writes `display`),
   so snapshot both before the runs and restore them after, as the
   2026-10-08 spatial ablation did
-  (`docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md`: the switch's default
-  stays `off`, because the decision machinery never engaged on lsp11385_2
+  (`docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md`: the switch was
+  later removed, because the decision machinery never engaged on lsp11385_2
   and the plan's bar did not hold).
+- **`gate_rule.passes(values, low, None)` is all False.** `np.float32(None)`
+  is NaN and every comparison with NaN fails, so an open-ended gate must pass
+  `np.inf` as `high` (as `cellcall.select` does), never `None`.
 - `data_model` module globals are mutated under `load_lock`, but
   `generate_zarr_png` reads them without it. A datasource switch mid-pan can race.
 - `getTileKey` omits the HD flag while `getTileUrl` appends `?q=hd` — same key,
@@ -10604,6 +10701,12 @@ modules, `test_docs_envvars` (`PLEXORA_QC_CHANGED`) and two
   markup, and a comment discussing the trap must not spell the stem out
   either -- `views/datasetNav.js`'s own comment about this says so without
   doing it.
+- **An icon passed as data in JavaScript must be the bare name.** The same
+  test reads every `icon: "..."` value (`AS_DATA`) as a Font Awesome name, so
+  `icon: "globe"` rendered as `` `fas fa-${icon}` `` passes and
+  `icon: "fa-globe"` fails as an icon called `fa-globe`.
+  `views/quickViewLanding.js`'s status lines and machine menu carry icons
+  this way.
 - **Windows keeps an image file locked for as long as its project is
   loaded**, so a test that registered a file cannot unlink it to simulate it
   going missing. Swap the path in the record with `dataclasses.replace`
