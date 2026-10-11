@@ -91,7 +91,32 @@ causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/b
 
 ## Phase 4 / 5
 
-Gating 3D evidence waits for feature/spatial-gating.
+Gating evidence in depth (2026-10-11), kept to files `feature/spatial-gating` does not touch
+except one additive hunk each in `agent/cell_gallery.py` and `autogate/sheet.py`:
+
+- **Clipped cells** leave estimation under `qc="strict"` through QC's exclusion provider
+  (`plugins/qc/server/exclusions.py` `clipped_z`): the object table's `touches_z_bounds`, only
+  while the table describes the project's current mask, by id across frames, counted as reason
+  `clipped_z` and in `n_clipped_z`; none is left out when more than `CLIPPED_MAX_SHARE` (half)
+  of the cells touch an end (a stack thinner than its cells). `exclude` keeps them.
+- **Per-cell z profile**: `server/volume/zprofile.py`, agent `object_z_profile` (core; gating
+  and volume MCP profiles) and a `z_profile` block in `render_object_views`' manifest: each
+  marker's mean plane by plane inside the cell and over its footprint one plane past each end,
+  peak plane, width at half height (planes and µm), `beyond` ratios.
+- **Pictures at the cells' plane**: `render_region` now cuts a 3-D mask at the plane it draws
+  (it outlined the default plane under every view -- a bug); gate validation fields draw A and
+  B at the median plane of their borderline cells (else all their cells) and add row D (XY,
+  XZ, YZ through the field centre, `agent/sections.py`); the cell gallery crops each cell at
+  its centroid plane; the autogate context sheet draws each field at its cells' plane
+  (`sections.field_plane`).
+- A measured object table is attached as one image (`single_image`), so gating no longer asks
+  for an image-id column it cannot have.
+- Field sampling with every cell left out says so (`precondition_missing`) instead of failing.
+
+Not done, on purpose: display calibration per view kind (gating draws planes only, never a
+projection, so there is one kind of window); the 3-D neighbourhood for the hybrid cell model
+(the 2-D one is uncommitted work in the gating session's tree); the gating packets' z-profile
+sparkline (`autogate/packets.py` is the gating branch's).
 
 Agent tools (2026-10-11): `colocalize_3d` (core `agent/core/volume_analysis.py`: voxels at the
 finest level under 30 M per channel, ROI by its extent / cells by id, Otsu Manders, refuses a

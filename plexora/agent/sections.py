@@ -253,6 +253,61 @@ def render_sections(session, inp, *, store=True):
     return {"png": png, "manifest": manifest, "artifact": artifact}
 
 
+def table_planes(data, keep):
+    """`(plane per kept row, depth, 3-D mask?)` for a z-stack whose cell table
+    places each cell in depth (a `z` role, in planes); `(None, 1, False)` for
+    anything else. `keep` is the row mask `label_overlay.cell_ids` returns.
+
+    What a picture of a cell or a field reads to draw it at the plane its
+    cells are on rather than the stack's default plane."""
+    record = data.project
+    if not getattr(record.image, "is_volumetric", False):
+        return None, 1, False
+    volume = data.image.volume()
+    depth = int(volume["depth"]) if volume else 1
+    schema = data.schema
+    z_column = schema.get("z") if schema is not None else None
+    if depth < 2 or not z_column:
+        return None, depth, False
+    zs = np.asarray(data.table.columns([z_column])[z_column], dtype=np.float64)[keep]
+    from plexora.server.volume import labels as volume_labels
+
+    seg = record.segmentation
+    solid = bool(seg.available and seg.derived and volume_labels.is_label_volume(seg.derived))
+    return zs, depth, solid
+
+
+def field_plane(data, bounds):
+    """The median plane of the cells inside a field (`{x, y, width, height}`,
+    full-resolution pixels) of a z-stack; None for a flat image, a table with
+    no z role, or a field with no cell."""
+    if not getattr(data.project.image, "is_volumetric", False) or not data.table.available:
+        return None
+    from plexora.server.utils.label_overlay import cell_ids
+
+    schema = data.schema
+    frame = data.table.geometry()
+    if frame is None or schema is None:
+        return None
+    _ids, keep = cell_ids(frame, schema.cell_id)
+    zs, depth, _solid = table_planes(data, keep)
+    if zs is None:
+        return None
+    xs = frame[schema.x].to_numpy().astype(np.float64)[keep]
+    ys = frame[schema.y].to_numpy().astype(np.float64)[keep]
+    x0, y0 = float(bounds["x"]), float(bounds["y"])
+    inside = ((xs >= x0) & (xs < x0 + float(bounds["width"])) & (ys >= y0)
+              & (ys < y0 + float(bounds["height"])) & np.isfinite(zs))
+    return plane_of(float(np.median(zs[inside])), depth) if inside.any() else None
+
+
+def plane_of(z, depth):
+    """The plane a table's z value falls on, or None when it has none."""
+    if z is None or not np.isfinite(z):
+        return None
+    return int(np.clip(round(float(z)), 0, depth - 1))
+
+
 def _default_channel(channels, index):
     from plexora.agent.render_spec import ChannelSpec
 

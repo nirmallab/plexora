@@ -533,6 +533,32 @@ def _view_token(spec, record):
     return view.token()
 
 
+def _mask_plane(view_token):
+    """The plane of a 3-D mask to outline under a view: the view's own plane,
+    a projection's middle one; None for the default (the mask's own default
+    is the middle plane, as the image's is)."""
+    if not view_token:
+        return None
+    from plexora.api.representation import to_spec
+
+    view = to_spec(view_token)
+    if view.kind == "plane" and view.z is not None and view.z >= 0:
+        return int(view.z)
+    if view.kind == "slab" and view.z0 is not None and view.z1 is not None:
+        return (int(view.z0) + int(view.z1)) // 2
+    return None
+
+
+def _read_mask(mask, level, box, *, max_pixels, z):
+    """`mask.read_region` at plane `z` when the reader takes one (a local
+    mask does; a data node's answers for its middle plane)."""
+    import inspect
+
+    if z is not None and "z" in inspect.signature(mask.read_region).parameters:
+        return mask.read_region(level, box, max_pixels=max_pixels, z=z)
+    return mask.read_region(level, box, max_pixels=max_pixels)
+
+
 def _view_manifest(spec, provenance):
     """The manifest's account of WHICH picture of a volume this is.
 
@@ -697,10 +723,15 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         positive -= qc_left
     segmentation_mode = spec.segmentation or "none"
     mask_level = None
+    mask_plane = None
     labels = None
     if mask is not None and (segmentation_mode != "none" or highlight_info):
         mask_level = level + record.segmentation.extra_levels
-        labels = mask.read_region(mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT)
+        # A 3-D mask is cut at the plane drawn, so the outlines are the cells
+        # in the picture and not the ones on the default plane.
+        mask_plane = _mask_plane(view_token)
+        labels = _read_mask(mask, mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT,
+                            z=mask_plane)
         labels = resize_labels_nearest(labels, out_w, out_h)
         cells = spec.cells
         outline = cells.outline_color if cells else "#e6e6e6"
@@ -818,7 +849,8 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "channels_rendered": rendered,
         "segmentation": {"requested": segmentation_mode, "status": mask_status,
                          "reason": mask_reason, "mask_level": mask_level,
-                         "mask_scale": record.segmentation.scale},
+                         "mask_scale": record.segmentation.scale,
+                         **({"mask_plane": mask_plane} if mask_plane is not None else {})},
         "highlight": highlight_info,
         "cells": cells_manifest,
         "overlays": [o for o in (

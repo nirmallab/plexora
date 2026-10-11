@@ -40,9 +40,9 @@ def _invoke(name, arguments):
     return result
 
 
-def _blurred_stack(tmp_path, name="stackqc", measure=True):
+def _blurred_stack(tmp_path, name="stackqc", measure=True, whole=0):
     """Two channels, eight planes; DNA's first two planes out of focus. Cells
-    on planes 0-2, 3-5 and 5-7."""
+    on planes 0-2, 3-5 and 5-7, and `whole` more on planes 2-5."""
     rng = np.random.default_rng(4)
     depth, size = 8, 96
     image = np.zeros((2, depth, size, size), dtype=np.float32)
@@ -63,6 +63,8 @@ def _blurred_stack(tmp_path, name="stackqc", measure=True):
     labels[0:3, 10:20, 10:20] = 1
     labels[3:6, 40:50, 40:50] = 2
     labels[5:8, 70:80, 20:30] = 3
+    for i in range(whole):
+        labels[2:6, 82:90, 4 + i * 12:12 + i * 12] = 4 + i
     tifffile.imwrite(tmp_path / f"{name}_mask.tif", labels)
     register_image_datasource(name, path)
     datasets.add_layers(name, tmp_path / f"{name}_mask.tif", wait=True)
@@ -151,3 +153,43 @@ def test_an_object_review_judges_cells_from_their_views_and_writes_the_bad_ones(
     region = next(f for f in features if f["id"] == finished["region"]["roi_id"])
     assert region["solid"]["kind"] == "labels" and region["solid"]["ids"] == [1]
     assert region["category_id"].endswith("segmentation") and "qc-class:" in region["notes"]
+
+
+def test_cells_cut_off_by_the_stacks_ends_are_left_out_of_estimation_under_strict(tmp_path):
+    from plexora.agent import cell_exclusions
+    from plexora.plugins.qc.server import exclusions
+
+    _blurred_stack(tmp_path, "clipped", whole=2)
+    ds = project_data("clipped")
+    strict = cell_exclusions.for_project(ds, mode_value="strict")
+    assert strict is not None and strict.whole.tolist() == [1, 3], "cells 1 and 3 touch the ends"
+    with cell_exclusions.mode("strict"):
+        block = cell_exclusions.describe(ds, strict)
+    assert block["applied"] and block["n_left_out"] == 2 and block["n_clipped_z"] == 2
+    assert exclusions.summary(ds, "strict")["by_reason"] == {"clipped_z": 2}
+    # `exclude` keeps them: a cut-off cell is doubtful, not wrong.
+    assert cell_exclusions.for_project(ds, mode_value="exclude") is None
+
+
+def test_a_stack_that_cuts_off_most_of_its_cells_leaves_none_out(tmp_path):
+    from plexora.agent import cell_exclusions
+
+    _blurred_stack(tmp_path, "thin")            # two of three cells touch an end
+    assert cell_exclusions.for_project(project_data("thin"), mode_value="strict") is None
+
+
+def test_a_table_measured_from_another_mask_leaves_no_cell_out(tmp_path):
+    import json
+
+    from plexora import paths
+    from plexora.agent import cell_exclusions
+    from plexora.server.volume import objects
+
+    _blurred_stack(tmp_path, "othermask", whole=2)
+    manifest = paths.project_state_dir("othermask") / objects.MANIFEST_NAME
+    record = json.loads(manifest.read_text())
+    record["labels"] = "/somewhere/else.zarr"
+    manifest.write_text(json.dumps(record))
+    table = paths.project_state_dir("othermask") / objects.TABLE_NAME
+    table.touch()                     # a new stamp, so the answer is read again
+    assert cell_exclusions.for_project(project_data("othermask"), mode_value="strict") is None

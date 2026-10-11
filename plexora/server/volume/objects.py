@@ -153,12 +153,15 @@ def attach_object_table(project, table_path, frame=None):
     # A time series' rows name their frame; one frame's table needs no `t`.
     series = "t" in frame.columns and pl.read_parquet(
         table_path, columns=["t"])["t"].n_unique() > 1
-    spec = replace(spec, roles=replace(spec.roles, z="Z", t="t" if series else None))
+    # Measured from this project's own image, so it covers exactly one image:
+    # an answer, not a missing image-id column (gating asks for one).
+    spec = replace(spec, roles=replace(spec.roles, z="Z", t="t" if series else None),
+                   single_image=True)
     fresh = Project.load(project.name)
     # The roles are this module's own columns, so they are facts rather than
     # guesses to put in front of the user; which columns are markers is still
     # theirs to check once. Answers about a table this replaces go first.
-    confirmed = ("table", "role:cell_id", "role:x", "role:y", "role:z")
+    confirmed = ("table", "role:cell_id", "role:x", "role:y", "role:z", "role:image_id")
     fresh.forget_table_answers().patch(dataset=spec).with_confirmed(
         confirmed + (("role:t",) if series else ())).save()
 

@@ -641,8 +641,102 @@ def render_object_views(call, inp):
         key: (value.item() if hasattr(value, "item") else value)
         for key, value in row.items() if key in OBJECT_FIELDS or key in {
             c["name"] for c in manifest.get("channels", [])}}}
+    # The drawn channels plane by plane: where in the cell its signal sits.
+    drawn = [c["name"] for c in manifest.get("channels", []) if c.get("name")]
+    try:
+        profiles = _object_profiles(call, inp.project, frame, id_column, [inp.object_id],
+                                    drawn, inp.t)
+        manifest["z_profile"] = {name: _brief(summary) for name, summary in
+                                 profiles["objects"][0]["channels"].items()}
+    except AgentError as exc:
+        manifest.setdefault("warnings", []).append(f"no z profile: {exc.message}")
     return visual.with_image({"manifest": manifest, "artifact": rendered["artifact"]},
                              rendered["png"])
+
+
+# -- object_z_profile ------------------------------------------------------------
+
+
+class ZProfileInput(ProjectInput):
+    object_ids: list[int] = Field(..., min_length=1, max_length=24,
+                                  description="Cell ids (labels in the 3-D mask).")
+    channels: list[str] | None = Field(None, max_length=8, description="Channel names; "
+                                       "default: every channel, up to eight.")
+    t: int = Field(0, ge=0)
+
+
+def _brief(summary):
+    """A channel's profile without the per-plane rows: what a picture's
+    manifest carries beside it."""
+    out = {k: v for k, v in summary.items() if k != "profile"}
+    out["means_by_plane"] = {str(p["z"]): (round(p["mean"], 2) if p["mean"] is not None
+                                           else None) for p in summary.get("profile", [])}
+    return out
+
+
+def _object_profiles(call, project, frame, id_column, object_ids, channel_names, t):
+    from plexora.server.utils.source_image import open_project_volume
+    from plexora.server.volume import zprofile
+
+    import polars as pl
+
+    needed = ("bbox_z0", "bbox_z1", "bbox_y0", "bbox_y1", "bbox_x0", "bbox_x1")
+    if frame is None or any(c not in frame.columns for c in needed):
+        raise AgentError("precondition_missing", "a z profile needs the cells' boxes in depth: "
+                         "measure the 3-D mask's cells first (measure_objects)")
+    record, _data, volume = _volume_of(call, project)
+    labels = call.data.segmentation.label_volume(t)
+    if labels is None:
+        raise AgentError("precondition_missing", "a z profile needs a 3-D label volume as the "
+                         "project's mask")
+    if "t" in frame.columns:
+        frame = frame.filter(pl.col("t") == t)
+    channels = [_channel_index(record, name) for name in channel_names]
+    source = open_project_volume(record)
+    if source is None:
+        raise AgentError("invalid_input", f"{project}'s image is not a z-stack")
+    try:
+        spacing = source.volume.spacing
+        z_um = spacing.z.microns() if spacing.z.known else None
+        depth = int(volume["depth"])
+        out = []
+        for object_id in object_ids:
+            rows = frame.filter(pl.col(id_column) == object_id)
+            if rows.height == 0:
+                raise AgentError("invalid_input", f"no cell {object_id} in {project}'s table")
+            row = {**rows.row(0, named=True), "label": object_id}
+            try:
+                out.append(zprofile.object_profile(
+                    labels, lambda i, z0, z1, r, c: source.read_block(0, t, i, z0, z1, r, c),
+                    row, channels, depth=depth, z_um=z_um))
+            except zprofile.ProfileTooLarge as exc:
+                raise AgentError("too_large", str(exc)) from None
+    finally:
+        source.close()
+    return {"t": t, "z_step_um": z_um, "objects": out}
+
+
+def object_z_profile(call, inp):
+    """Where in depth each cell's signal sits: its markers plane by plane."""
+    data = call.data
+    schema = data.schema
+    if schema is None or not data.table.available:
+        raise AgentError("precondition_missing", f"{inp.project} has no cell table; measure "
+                         "the 3-D mask's cells first (measure_objects)")
+    frame = data.table.frame()
+    id_column = schema.cell_id if schema.cell_id in frame.columns else "label"
+    record = call.session.project(inp.project)
+    names = inp.channels or [c.get("fullname") or c.get("name")
+                             for c in list(record.image.real_channels)[:8]]
+    out = _object_profiles(call, inp.project, frame, id_column, inp.object_ids, names, inp.t)
+    out["reading"] = ("per channel: `mean` over the cell's voxels; `profile` the mean on each "
+                      "plane inside the cell (`mean`) and over its footprint "
+                      "(`footprint_mean`, also on the plane before and after it); `peak_z`; "
+                      "`fwhm_planes` the planes around the peak at half height or more; "
+                      "`beyond` the footprint mean just outside each end over the cell's "
+                      "mean -- near or above one, the signal does not stop where the cell "
+                      "does (a neighbour, or a cell cut short)")
+    return out
 
 
 # -- render_projection ---------------------------------------------------------
@@ -751,6 +845,15 @@ def capabilities():
             visual_output=True, egress="rendered_pixels",
             reads=("image", "table", "segmentation"),
             tags=TAGS + ("object", "cell", "segmentation", "orthogonal")),
+        Capability(
+            name="volume.object_z_profile", tool_name="object_z_profile", owner="core",
+            purpose="Where in depth a 3-D cell's markers sit: each channel's mean plane by "
+                    "plane inside the cell and over its footprint just past its ends, the "
+                    "peak plane, the width at half height, and whether the signal carries "
+                    "on beyond the cell -- the numbers behind a borderline call in a z-stack.",
+            permission="read", input_model=ZProfileInput, handler=object_z_profile,
+            egress="aggregates", reads=("image", "table", "segmentation"),
+            tags=TAGS + ("object", "cell", "profile", "gating", "marker")),
         Capability(
             name="volume.render_projection", tool_name="render_projection", owner="core",
             purpose="Draw a projection of a z-stack's planes (max = MIP, mean, min, std, "

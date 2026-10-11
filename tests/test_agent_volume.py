@@ -286,3 +286,59 @@ def test_render_sections_outlines_need_a_3d_mask(tmp_path):
     refused = invoke(AgentSession(), "render_sections", {
         "project": "vol", "segmentation": "outlines", "size_px": 64})
     assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
+
+
+def test_object_z_profile_says_where_in_depth_a_cells_signal_sits(tmp_path):
+    """CD8 in cell 5 rises to its last plane and carries on past it."""
+    import tifffile
+
+    from plexora import datasets
+
+    image = np.full((2, 6, 64, 64), 10, dtype=np.uint16)
+    image[0] = 100
+    for z, value in ((1, 100), (2, 200), (3, 800), (4, 700)):
+        image[1, z, 10:20, 10:20] = value
+    labels = np.zeros((6, 64, 64), dtype=np.uint16)
+    labels[1:4, 10:20, 10:20] = 5
+    path = tmp_path / "prof.ome.tif"
+    tifffile.imwrite(path, image, ome=True, metadata={
+        "axes": "CZYX", "PhysicalSizeX": 0.5, "PhysicalSizeY": 0.5, "PhysicalSizeZ": 2.0,
+        "Channel": {"Name": ["DNA", "CD8"]}})
+    tifffile.imwrite(tmp_path / "prof_mask.tif", labels)
+    register_image_datasource("prof", path)
+    datasets.add_layers("prof", tmp_path / "prof_mask.tif", wait=True)
+    session = AgentSession()
+    started = _ok(invoke(session, "measure_objects", {"project": "prof"}))
+    _ok(invoke(session, "job_wait", {"job_id": started["job_id"], "timeout_s": 60}))
+
+    out = _ok(invoke(session, "object_z_profile", {"project": "prof", "object_ids": [5],
+                                                   "channels": ["CD8"]}))
+    cd8 = out["objects"][0]["channels"]["CD8"]
+    assert [p["mean"] for p in cd8["profile"]] == [None, 100.0, 200.0, 800.0, None]
+    assert cd8["profile"][-1]["footprint_mean"] == 700.0
+    assert cd8["peak_z"] == 3 and cd8["peak_at_end_plane"] is True
+    assert cd8["fwhm_planes"] == 1 and cd8["fwhm_um"] == pytest.approx(2.0)
+    assert cd8["beyond"]["after"] == pytest.approx(700 / (1100 / 3), abs=1e-3)
+    assert cd8["beyond"]["before"] < 0.05
+
+    views = _ok(invoke(session, "render_object_views", {
+        "project": "prof", "object_id": 5, "output_px": 160,
+        "channels": [{"name": "CD8", "color": "#00ff00", "window": [0, 1000]}]}))
+    assert views["manifest"]["z_profile"]["CD8"]["peak_z"] == 3
+    assert views["manifest"]["z_profile"]["CD8"]["means_by_plane"]["3"] == 800.0
+
+
+def test_render_region_outlines_the_cells_on_the_plane_it_draws(tmp_path):
+    """Cell 5 spans planes 1-3 and cell 9 planes 3-5: plane 1 holds only 5,
+    plane 5 only 9, the middle plane both."""
+    _volume_with_mask(tmp_path)
+    session = AgentSession()
+    seen = {}
+    for view in ("z1", "z5", None):
+        args = {"project": "obj", "bounds": {"x": 0, "y": 0, "width": 64, "height": 64},
+                "channels": [{"name": "DNA"}], "segmentation": "outlines",
+                "output": {"width": 64, "height": 64}, **({"view": view} if view else {})}
+        manifest = _ok(invoke(session, "render_region", args))["manifest"]
+        seen[view] = (manifest["cells"]["visible_cells"],
+                      manifest["segmentation"].get("mask_plane"))
+    assert seen == {"z1": (1, 1), "z5": (1, 5), None: (2, None)}

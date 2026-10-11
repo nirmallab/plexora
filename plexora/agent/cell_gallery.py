@@ -139,6 +139,10 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
     crop, crop_how = crop_for(record, crop_um, crop_px)
 
     ids, xs, ys, keep = table_cells(data)
+    # On a z-stack, each cell at its own plane, not the stack's default one.
+    from plexora.agent.sections import plane_of, table_planes
+
+    zs, depth, _solid = table_planes(data, keep)
     gate = None
     values = None
     if marker:
@@ -220,8 +224,10 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
     tiles, captions, rows = [], [], []
     for index in chosen.tolist():
         cid = int(ids[index])
+        plane = plane_of(zs[index], depth) if zs is not None else None
         spec = RenderInput(
             project=record.name,
+            **({"view": f"z{plane}"} if plane is not None else {}),
             center=CenterBounds(center_x=float(xs[index]), center_y=float(ys[index]), **crop),
             channels=draw_channels,
             segmentation="outlines",
@@ -236,7 +242,8 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
                "bounds_fullres": rendered["manifest"]["bounds_fullres"],
                "level": rendered["manifest"]["level"],
                "segmentation_status": rendered["manifest"]["segmentation"]["status"],
-               "outline_drawn": rendered["manifest"]["cells"]["highlight_rendering"]}
+               "outline_drawn": rendered["manifest"]["cells"]["highlight_rendering"],
+               **({"z": plane} if plane is not None else {})}
         caption = f"#{cid}"
         if values is not None:
             value = float(values[index])
@@ -270,6 +277,8 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
                       "truncated": truncated},
         "crop": {**crop, "how": crop_how},
         "tile_px": int(tile_px),
+        **({"planes": "each cell at the plane of its centroid (its row's z)"}
+           if zs is not None else {}),
         "columns": columns,
         "channels": [c.model_dump(mode="json") for c in draw_channels],
         "tiles": rows,

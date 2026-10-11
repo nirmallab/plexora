@@ -244,6 +244,13 @@ conversations (skill `review-objects`), each `object_review_next` shows one cell
 views, and `object_review_finish` writes the cells judged not one whole cell as one QC
 segmentation region holding exactly them.
 
+**Gating on a z-stack.** Measure the cells (Depth card), then gate a marker as usual. The
+validation pictures draw each field at the plane its cells are on (the header says "A, B at
+plane z 7/10") with a fourth panel under them: the field in XY, XZ and YZ, cut where the
+dashed lines cross. Cells cut off by the top or bottom of the stack are left out of the gate's
+estimate (QC strict, the default) and counted as `clipped_z` in `get_qc_exclusions`, unless
+most cells are cut off. Over MCP, `object_z_profile` gives a cell's markers plane by plane.
+
 ## Measured on this machine
 
 The Xenium focus stack (DAPI, 14 planes, 45450×27241): registers in 0.3 s; plane tiles about
@@ -280,7 +287,8 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 
 ## Not in this branch yet
 
-- Gating evidence in depth waits for `feature/spatial-gating` to merge.
+- The 3-D neighbourhood in automatic gating's per-cell model, and a z-profile line in its
+  packets: both live in the gating work that is not merged yet.
 - Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
   you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).

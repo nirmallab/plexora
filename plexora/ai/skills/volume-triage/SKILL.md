@@ -49,6 +49,10 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
    `render_sections` through its centre: XY, XZ and YZ at one scale and one window. For a
    measured cell, `render_object_views` does this by its id, with its outline in yellow
    among the others and its row (volume, sphericity, planes, clipped) beside the picture.
+   `object_z_profile` gives the numbers behind it: each marker plane by plane inside the
+   cell, its peak plane, and whether the signal carries on past the cell's ends. A mean
+   over the cell cannot say where its signal sits; read the profile before calling a
+   borderline cell in a z-stack.
 8. To measure cells in depth the project needs a label volume -- one id per cell across planes (`inspect_volume`'s
    `segmentation`); `measure_objects` writes one row per whole cell. A flat mask cannot
    give volumes or surfaces -- say so rather than measuring plane by plane. With no mask
@@ -65,7 +69,7 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
 
 `inspect_volume`, `set_z_spacing`, `sample_z_planes`, `axis_profile`, `check_volume_quality`,
 `render_region`, `render_projection`, `render_sections`, `render_object_views`,
-`measure_objects`, `track_objects`, `segment_3d`, `pin_projection`, `viewer_set_view`,
+`object_z_profile`, `measure_objects`, `track_objects`, `segment_3d`, `pin_projection`, `viewer_set_view`,
 `viewer_set_z`, `viewer_set_slab`.
 
 ## Evidence
