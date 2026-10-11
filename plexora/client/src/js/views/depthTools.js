@@ -62,6 +62,11 @@
             }
             const framesOf = q("[data-depth-frames-of]");
             if (framesOf) framesOf.textContent = `of ${vs.frames}`;
+            // A colour slide's planes are shown one at a time: nothing here
+            // combines or cuts them (viewState keeps it in plane mode).
+            for (const node of root.querySelectorAll("[data-depth-combine]")) {
+                if (vs.color) node.hidden = true;
+            }
 
             const op = q("#depth_op_select");
             if (op && document.activeElement !== op) op.value = state.slab.op;
@@ -469,7 +474,7 @@
                             : "Fade planes, coast in 3-D";
                     }
                     for (const row of root.querySelectorAll("[data-depth-sizes-row]")) {
-                        row.hidden = vs.depth < 2;
+                        row.hidden = vs.depth < 2 || vs.color;
                     }
                     const reset = q("#depth_sections_reset");
                     if (reset) {

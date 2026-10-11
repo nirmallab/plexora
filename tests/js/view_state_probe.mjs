@@ -150,6 +150,22 @@ function check(condition, message) {
     check(vs.spec() === "z24-34p99.5", `a percentile spells its q (${vs.spec()})`);
 }
 
+// -- a colour stack's planes are shown one at a time -------------------------
+{
+    const vs = new ViewState("hez", { fetchImpl: fakeFetch({
+        "volume/hez/info": { ...VOLUME, color: true },
+        "view_state/hez": { mode: "slab", layout: "sections" } }) });
+    await vs.load({ search: "" });
+    check(vs.color && vs.get().mode === "plane" && vs.get().layout === "single",
+          "a saved projection or sections layout opens a colour stack on a plane");
+    vs.set({ mode: "volume" });
+    vs.set({ mode: "slab", layout: "sections" });
+    check(vs.get().mode === "plane" && vs.get().layout === "single" && /^z\d+$/.test(vs.spec()),
+          `nothing combines or cuts a colour stack's planes (${vs.spec()})`);
+    vs.set({ z: 3 });
+    check(vs.spec() === "z3", "its planes are stepped as any stack's");
+}
+
 // -- tokens parse the same grammar the server speaks -------------------------
 {
     const parse = ViewState.parseToken;

@@ -228,6 +228,9 @@
         }
 
         get depth() { return Math.max(1, int(this.info?.depth, 1)); }
+        /** A colour (brightfield) stack: its planes are shown one at a time,
+         *  never combined or cut (the server refuses those views). */
+        get color() { return Boolean(this.info?.color); }
         get frames() { return Math.max(1, int(this.info?.frames, 1)); }
 
         /** The z step in its unit, when the image states or was given one. */
@@ -267,6 +270,10 @@
             out.t = clamp(int(out.t, 0), 0, this.frames - 1);
             out.z = clamp(int(out.z, defaults.z), 0, top);
             out.mode = MODES.includes(out.mode) ? out.mode : "plane";
+            if (this.color) {
+                out.mode = "plane";
+                out.layout = "single";
+            }
             const slab = { ...defaults.slab, ...(raw.slab || {}) };
             slab.op = OPS.includes(slab.op) ? slab.op : "max";
             if (slab.op === "pct") {

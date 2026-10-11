@@ -675,6 +675,12 @@ export class ViewerManager {
                 }));
             }
         }
+        // A colour stack's planes: the one true-colour item, not channel pairs.
+        // A revision waits for it (below), so the readout, the fade and the
+        // outlines settle with the slide rather than before it.
+        const baseSwap = this.imageViewer.config?.image_kind === "brightfield"
+            ? this.swapBrightfieldBase(next) : null;
+        if (baseSwap) swaps.push(baseSwap);
         this.viewSwapPending = true;
         const done = Promise.all(swaps.filter(Boolean)).finally(() => {
             this.viewSwapPending = false;
@@ -690,7 +696,8 @@ export class ViewerManager {
         rev.onSupersede?.(() => {
             if (viewSelection.spec === next) viewSelection.spec = previous;
         });
-        const prepared = group ? group.prepared : Promise.resolve(null);
+        const prepared = group ? group.prepared
+            : (baseSwap ? baseSwap.then(() => null) : Promise.resolve(null));
         return prepared.then((commit) => {
             if (!commit) {
                 if (!rev.superseded) this.shownView = next;
@@ -1546,20 +1553,26 @@ export class ViewerManager {
      * Idempotent, because `rebuildTileLayers` calls it again after a routing
      * repair and OSD would otherwise stack a second copy behind the first.
      */
-    load_brightfield_base() {
+    load_brightfield_base({ view = viewSelection.spec, replacing = null, done = null } = {}) {
         // Not while the base layer's eye is off. `rebuildTileLayers` calls
         // this after a routing repair, and without the guard a reconnecting
         // node would put the slide back on screen under a closed eye.
-        if (this.referenceHidden) return;
+        if (this.referenceHidden) {
+            done?.();
+            return;
+        }
         // Found by its tile key, not by position. `imageData[0]` is the "Area"
         // mask placeholder whenever the project has a segmentation, so taking
         // the first entry drew the mask as the slide -- a blank viewer, with
         // every tile fetched successfully.
         const entry = (this.imageViewer.config["imageData"] || []).find(
             (channel) => keyOf(channel) === RGB_CHANNEL_KEY);
-        if (!entry?.src) return;
+        if (!entry?.src) {
+            done?.();
+            return;
+        }
         const world = this.viewer?.world;
-        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+        for (let i = 0; !replacing && world && i < world.getItemCount(); i += 1) {
             if (world.getItemAt(i)?.source?.tileFormat === RGB_TILE_FORMAT) return;
         }
 
@@ -1587,6 +1600,9 @@ export class ViewerManager {
                 src: url,
                 srcQuery: entry["srcQuery"] || "",
                 layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
+                // A colour stack's plane (`view=`), pinned on the source like
+                // a channel's: this item always shows the plane it was built at.
+                view: view || "",
             },
             // On the TiledImage rather than inside the tileSource: OSD reads
             // this one off the addTiledImage options, and the viewer-wide
@@ -1594,10 +1610,15 @@ export class ViewerManager {
             compositeOperation: "source-over",
             index: 0,
             // As channel_add: the base card's slider has to be carried onto
-            // the item, because it is added after the slider was set.
-            opacity: this.referenceOpacity(),
+            // the item, because it is added after the slider was set. Another
+            // plane being built stays invisible until it can draw whole.
+            opacity: replacing ? 0 : this.referenceOpacity(),
             preload: true,
             success: (e) => {
+                if (replacing) {
+                    this.handOverBrightfieldBase(e.item, replacing, done);
+                    return;
+                }
                 this.restoreView();
                 // Same reason channel_add raises it: 'open' is what wires up
                 // the GL pipeline the label layer still needs, and initGL is
@@ -1607,6 +1628,70 @@ export class ViewerManager {
                 this.applyWorldOrder();
             },
         });
+    }
+
+    /**
+     * A colour stack's other plane (`view`): the brightfield base rebuilt at
+     * it, invisible until every tile on screen has loaded, then put in the
+     * old one's place in one step -- the rule the channel pairs follow, so a
+     * plane step never shows a blank or half-drawn slide. A newer step drops
+     * a build still in flight. Resolves when the new plane is on screen (at
+     * once when there is no brightfield base, or it already shows `view`).
+     */
+    swapBrightfieldBase(view) {
+        const world = this.viewer?.world;
+        if (!world) return Promise.resolve();
+        if (this._baseBuild) {
+            const pending = this._baseBuild;
+            this._baseBuild = null;
+            pending.cancel();
+        }
+        let shown = null;
+        for (let i = 0; i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item?.source?.tileFormat === RGB_TILE_FORMAT
+                    && item.source.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                shown = item;
+                break;
+            }
+        }
+        if (!shown || (shown.source.view || "") === String(view || "")) return Promise.resolve();
+        return new Promise((resolve) => {
+            const build = { item: null, cancelled: false, resolve };
+            build.cancel = () => {
+                build.cancelled = true;
+                if (build.item) world.removeItem(build.item);
+                resolve();
+            };
+            this._baseBuild = build;
+            this.load_brightfield_base({ view, replacing: shown, done: resolve });
+        });
+    }
+
+    handOverBrightfieldBase(item, outgoing, done) {
+        const build = this._baseBuild;
+        const world = this.viewer?.world;
+        if (!world || !build || build.cancelled) {
+            world?.removeItem(item);
+            done?.();
+            return;
+        }
+        build.item = item;
+        let timer = 0;
+        let stop = () => {};
+        const hand = () => {
+            clearTimeout(timer);
+            stop();
+            if (build.cancelled) return;
+            this._baseBuild = null;
+            item.setOpacity?.(this.referenceOpacity());
+            if (world.getIndexOfItem(outgoing) >= 0) world.removeItem(outgoing);
+            this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, item);
+            this.applyWorldOrder();
+            done?.();
+        };
+        stop = whenItemCanDraw(item, hand);
+        timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
     }
 
     /**

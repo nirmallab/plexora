@@ -62,12 +62,11 @@ def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
 
         return open_ngff_volume(path, extension=extension)
     if dicom_wsi.is_dicom_path(path):
-        if rgb:
-            return None
         from plexora.server.volume.sources.dicom import open_dicom_volume
 
         try:
-            return open_dicom_volume(path, extension=extension)
+            # A brightfield project's focal planes are a colour stack.
+            return open_dicom_volume(path, extension=extension, rgb=rgb)
         except Exception:
             # The 2-D reader is the authority on whether the slide opens at
             # all; it is asked next and says why if it does not.

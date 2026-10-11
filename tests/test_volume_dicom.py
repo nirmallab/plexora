@@ -17,7 +17,7 @@ from plexora.datasource import register_image_datasource
 from plexora.server.utils import dicom_wsi
 from plexora.server.volume.sources import open_volume
 from plexora.server.volume.sources import dicom as dicom_volume
-from tests.dicom_fixtures import write_if_slide
+from tests.dicom_fixtures import write_he_slide, write_if_slide
 
 STEP = 100
 
@@ -123,3 +123,40 @@ def test_another_plane_never_reads_the_default_planes_derived_levels(tmp_path):
         assert pyramid["0"][0, 0:2, 0:2].shape == (2, 2)
     finally:
         pyramid.close()
+
+
+def test_a_colour_slides_focal_planes_are_a_colour_stack(tmp_path, client):
+    """A brightfield slide's focal planes are served one at a time, each the
+    RGB picture recorded at that depth; nothing combines or cuts them."""
+    from PIL import Image
+
+    slide = write_he_slide(tmp_path / "he", focal_planes=3, plane_step=40)
+    entry = register_image_datasource("hez", str(slide))
+    assert entry["image_kind"] == "brightfield"
+    assert entry["imageShape"]["z"] == 3 and entry["imageDefaultView"] == "z1"
+    info = client.get("/volume/hez/info").get_json()
+    assert info["volumetric"] is True and info["color"] is True
+    src = next(item["src"] for item in entry["imageData"] if item["src"].rstrip("/").endswith("rgb"))
+
+    def plane(view):
+        # HD: lossless, so the planes compare exactly.
+        response = client.get(f"{src}0/0_0.png?q=hd" + (f"&view={view}" if view else ""))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        return np.asarray(Image.open(io.BytesIO(response.data)).convert("RGB")).astype(int)
+
+    default, top, bottom = plane(""), plane("z0"), plane("z2")
+    np.testing.assert_array_equal(default, plane("z1"))
+    # Plane p is the picture plus p * 40, clipped at white.
+    np.testing.assert_array_equal(bottom, np.clip(top + 80, 0, 255)[..., :3])
+    for view in ("z0-2max", "xzy10"):
+        refused = client.get(f"{src}0/0_0.png?view={view}")
+        assert refused.status_code == 400 and b"one at a time" in refused.data, view
+
+
+def test_a_colour_slide_read_as_fluorescence_is_three_channels_through_z(tmp_path):
+    slide = write_he_slide(tmp_path / "he3", focal_planes=3, plane_step=40)
+    source = open_volume(str(slide), rgb=False)
+    try:
+        assert source.volume.color is False and source.volume.channels == 3
+    finally:
+        source.close()

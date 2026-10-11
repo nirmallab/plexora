@@ -128,6 +128,12 @@ and steps clear when one opens.
 3-D coast and every eased turn or zoom, for every image. The system's reduced-motion setting
 does the same (the switch then says so).
 
+**A colour (brightfield) DICOM slide with several focal planes** now opens as a stack: the strip
+steps through its planes (each the RGB picture scanned at that depth, swapped in only once it has
+drawn), but offers no projection, sections or 3-D -- a maximum or mean of colour samples is not a
+picture anybody stained. The Depth card hides those controls for it. The same slide read as
+fluorescence (the edit page's override) is three channels through z and projects like any stack.
+
 **How a stack's Z axis is read.** A multi-channel stack whose file states no z step imports as
 imaging cycles (the Akoya/CODEX reading, unchanged). If that is wrong, the project's edit page
 has "Planes on Z" beside the image type; switching to depth re-reads it.
@@ -218,8 +224,7 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
-- Hand-off to SCIMAP Pro with µm coordinates; colour (brightfield) DICOM z-stacks; object
-  tables per frame of a time series.
+- Hand-off to SCIMAP Pro with µm coordinates; object tables per frame of a time series.
 - Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
   you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).

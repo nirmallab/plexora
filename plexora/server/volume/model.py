@@ -96,6 +96,11 @@ class Volume:
     stored_axes: str = ""
     #: The XY translation of level 0, in spacing units, when the file states one.
     translation: Mapping[str, float] = field(default_factory=dict)
+    #: A colour (brightfield) stack: each plane is one RGB picture, served
+    #: whole. Its planes are shown one at a time -- a maximum or a mean of
+    #: colour samples is not a picture anybody stained, and a section through
+    #: three interleaved samples is not one either (viewspec refuses both).
+    color: bool = False
 
     @property
     def is_planar(self) -> bool:
@@ -140,6 +145,7 @@ class Volume:
             "default_view": self.default_view.token(),
             "source_kind": self.source_kind,
             "provenance": dict(self.provenance),
+            "color": self.color,
         }
 
     @classmethod
@@ -165,7 +171,8 @@ class Volume:
             z_semantics=str(raw.get("z_semantics") or "depth"),
             t_semantics=str(raw.get("t_semantics") or "time"),
             provenance=dict(raw.get("provenance") or {}),
-            stored_axes=str(raw.get("stored_axes") or ""))
+            stored_axes=str(raw.get("stored_axes") or ""),
+            color=bool(raw.get("color")))
 
 
 class VolumeSource:

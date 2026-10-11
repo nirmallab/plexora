@@ -355,11 +355,14 @@ def write_if_slide(directory, *, markers=MARKERS, height=256, width=320,
     return directory
 
 
-def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None):
+def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None,
+                   focal_planes=1, plane_step=0):
     """A brightfield H&E slide: one colour instance per level.
 
     RGB samples in one plane, which is what makes it one picture rather than
     three markers -- the distinction the whole reader is arranged around.
+    `focal_planes` > 1 makes it a colour z-stack, plane p brighter by
+    `p * plane_step` in every sample.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -369,7 +372,7 @@ def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None):
         pixels = stained(-(-height // step), -(-width // step))
         _write_instance(directory / f"he_level{level}.dcm", pixels, ids,
                         optical_path=_optical_path(0, "Brightfield", color=True),
-                        mpp=0.5 * step)
+                        mpp=0.5 * step, focal_planes=focal_planes, plane_step=plane_step)
     return directory
 
 

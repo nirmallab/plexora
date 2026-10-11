@@ -12,8 +12,10 @@ read from the file when the planes are evenly spaced, and as missing when they
 are not -- a stack whose planes are 1, 2 and 5 µm apart has no single step,
 and pretending it had one would put a section's rows at the wrong depths.
 
-Monochrome (fluorescence) slides only. A brightfield slide's colour planes
-keep the 2-D reading -- the colour viewer has no depth controls yet.
+A brightfield (colour) slide's focal planes are a stack too (`Volume.color`):
+each plane is the RGB picture the scanner recorded at that depth, served
+whole and shown one at a time. Projections and sections are refused for it
+(viewspec): a maximum of colour samples is not a picture anybody stained.
 """
 
 from __future__ import annotations
@@ -73,13 +75,18 @@ def _z_spacing(planes) -> tuple[AxisSpacing, dict]:
                      "note": "focal planes are not evenly spaced"}
 
 
-def describe_volume(pyramid) -> Volume | None:
+def describe_volume(pyramid, *, color: bool | None = None) -> Volume | None:
     """The `Volume` an opened DICOM pyramid's focal planes make, or None for a
-    slide with one focal plane or a colour slide. Opens nothing."""
+    slide with one focal plane. Opens nothing.
+
+    `color` is how the project reads a colour slide: as one RGB picture per
+    plane (brightfield, the default for a colour slide) or as three planes of
+    samples (a "fluorescence" override, which may be projected like any
+    other channels). A monochrome slide is never colour."""
     from plexora.server.utils import dicom_wsi
 
     planes = tuple(getattr(pyramid, "focal_planes", ()) or ())
-    if len(planes) < 2 or pyramid.is_color:
+    if len(planes) < 2:
         return None
     level0 = pyramid["0"]
     mpp = pyramid.mpp
@@ -95,21 +102,22 @@ def describe_volume(pyramid) -> Volume | None:
         levels=level_infos(pyramid.level_shapes, (dicom_wsi.TILE_SIZE, dicom_wsi.TILE_SIZE)),
         source_kind="dicom", z_semantics="depth", t_semantics="time",
         channel_names=tuple(pyramid.channel_names) if pyramid.channel_names else None,
-        provenance=provenance, stored_axes="czyx")
+        provenance=provenance, stored_axes="czyx",
+        color=bool(pyramid.is_color) and (color is None or bool(color)))
     if planes[volume.default_view.z] != pyramid.focal_plane:
         # The volume's default plane must be the one the 2-D reader shows.
         raise ValueError("DICOM default focal plane disagrees with the volume's")
     return volume
 
 
-def open_dicom_volume(path, *, extension=None):
-    """A `DicomVolumeSource`, or None for a slide with one focal plane, a
-    colour slide, or one this reader cannot open."""
+def open_dicom_volume(path, *, extension=None, rgb: bool = False):
+    """A `DicomVolumeSource`, or None for a slide with one focal plane or one
+    this reader cannot open."""
     from plexora.server.utils import dicom_wsi
 
     pyramid = dicom_wsi.open_image(path, extension=extension)
     try:
-        volume = describe_volume(pyramid)
+        volume = describe_volume(pyramid, color=rgb)
     except Exception:
         pyramid.close()
         raise

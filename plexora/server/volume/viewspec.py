@@ -123,6 +123,9 @@ class ViewSpec:
 
     def clipped(self, volume) -> "ViewSpec":
         """This view checked against a volume's extent; BadView when outside."""
+        if getattr(volume, "color", False) and self.kind != "plane":
+            raise BadView("a colour slide's focal planes are shown one at a time; they are "
+                          "not combined into a projection or cut into sections")
         depth = max(1, int(getattr(volume, "depth", 1) or 1))
         frames = max(1, int(getattr(volume, "frames", 1) or 1))
         if not 0 <= self.t < frames:

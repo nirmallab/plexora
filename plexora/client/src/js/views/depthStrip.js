@@ -131,7 +131,8 @@
                 modes.appendChild(button);
                 this.modeButtons[mode] = button;
             }
-            if (vs.depth < 2) modes.hidden = true;
+            // One plane at a time is all a colour stack offers.
+            if (vs.depth < 2 || vs.color) modes.hidden = true;
 
             this.sectionsButton = el("button", "depth-strip-button", {
                 type: "button", title: "Show XZ and YZ sections through the centre of the view",
@@ -144,7 +145,7 @@
                 vs.set({ layout: on ? "single" : "sections",
                          mode: !on && state.mode === "volume" ? "plane" : state.mode });
             });
-            if (!this.sections) this.sectionsButton.hidden = true;
+            if (!this.sections || vs.color) this.sectionsButton.hidden = true;
 
             this.playButton = el("button", "depth-strip-button", {
                 type: "button", title: "Step through the planes",
