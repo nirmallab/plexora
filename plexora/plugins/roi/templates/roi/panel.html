@@ -161,6 +161,12 @@
            polygons somewhere; this writes onto the rows, which is a different
            thing to want and is meaningless without a table -- so it is absent
            rather than disabled for a project that is nothing but an image. #}
+        {# A 3-D mask: the cells selected in the viewer as one region, which
+           holds exactly those cells (schema `labels`). #}
+        <button id="roi_from_cells" class="roi-action" type="button" hidden
+                title="Make the cells selected in the viewer one region, outlined plane by plane from the 3-D mask">
+            <span class="fas fa-object-group"></span><span class="roi-action-text">From cells</span>
+        </button>
         <button id="roi_map_to_cells" class="roi-action" type="button" hidden>
             <span class="fas fa-table-cells"></span><span class="roi-action-text">Map to cells</span>
         </button>

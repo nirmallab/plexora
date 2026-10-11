@@ -147,6 +147,17 @@ class RoiApi {
         return this._read(response);
     }
 
+    /** A region that IS cells `ids` of the 3-D mask, outlined by the server
+     *  plane by plane (frame `t` of a time series). */
+    async fromCells(ids, t = 0) {
+        const response = await fetch(this.url('plugins/roi/api/from_cells'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasource: this.datasource, ids, t })
+        });
+        return this._read(response);
+    }
+
     async saveToSpatialdata(elementName) {
         const response = await fetch(this.url('plugins/roi/api/adapters/spatialdata'), {
             method: 'POST',

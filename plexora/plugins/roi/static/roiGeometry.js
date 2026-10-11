@@ -187,7 +187,11 @@ const RoiGeometry = (function () {
     function sectionAt(feature, z) {
         const solid = feature && feature.solid;
         if (!solid) return feature ? feature.geometry : null;
-        if (solid.kind === "contours") return (solid.planes || {})[String(z)] || null;
+        // Contours, and a region of mask cells (`labels`), keep one outline
+        // per plane they reach.
+        if (solid.kind === "contours" || solid.kind === "labels") {
+            return (solid.planes || {})[String(z)] || null;
+        }
         if (solid.kind === "ellipsoid") {
             const offset = (z - solid.z) / solid.rz;
             const left = 1 - offset * offset;
@@ -415,6 +419,26 @@ const RoiGeometry = (function () {
         return false;
     }
 
+    /**
+     * What a vertex drag on `feature` reshapes, with `planes` the planes on
+     * screen ([z0, z1]): a flat shape's geometry; a shape through the planes'
+     * outline on the one plane shown -- reshaped there alone. Null under a
+     * projection, on a plane it does not reach, for an ellipsoid (one
+     * footprint, scaled), and for a region of mask cells whose planes have a
+     * gap (it could not become contours, which cover consecutive planes).
+     */
+    function editableGeometry(feature, planes) {
+        const solid = feature && feature.solid;
+        if (!solid) return feature ? feature.geometry : null;
+        if (solid.kind !== "contours" && solid.kind !== "labels") return null;
+        if (!planes || planes[0] !== planes[1]) return null;
+        if (solid.kind === "labels") {
+            const zs = Object.keys(solid.planes || {}).map(Number).sort((a, b) => a - b);
+            if (zs.length && zs[zs.length - 1] - zs[0] + 1 !== zs.length) return null;
+        }
+        return sectionAt(feature, planes[0]);
+    }
+
     /** Keep a point inside the image. Drawing tools clamp as the pointer moves,
      *  so a shape cannot be given coordinates that name no pixel; imported
      *  geometry is never clamped, because a region that genuinely continues off
@@ -428,7 +452,7 @@ const RoiGeometry = (function () {
     return Object.freeze({
         dedupe, distinctCount, closeRing, openRing, signedArea, area,
         polygonFrom, rings, polygons, vertexCount, isVertexEditable, bounds, translate,
-        centroid, scale, sectionAt, lineCuts,
+        centroid, scale, sectionAt, editableGeometry, lineCuts,
         containsPoint, distanceToSegment, distanceToBoundary, nearestVertex,
         simplify, selfIntersects, segmentsCross, clamp,
         MAX_INTERSECTION_CHECK,

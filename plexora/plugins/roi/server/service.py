@@ -82,10 +82,14 @@ def summarize(feature, categories, *, max_vertices=None):
 
 def solid_summary(solid):
     """What a region's shape through the planes is, without its outlines."""
-    if solid["kind"] == "contours":
+    if solid["kind"] in ("contours", "labels"):
         zs = sorted(int(z) for z in solid["planes"])
-        return {"kind": "contours", "planes": len(zs), "z0": zs[0], "z1": zs[-1],
-                "keys": list(solid.get("keys") or []), "t": solid.get("t", 0)}
+        out = {"kind": solid["kind"], "planes": len(zs), "z0": zs[0], "z1": zs[-1],
+               "keys": list(solid.get("keys") or []), "t": solid.get("t", 0)}
+        if solid["kind"] == "labels":
+            out["cells"] = len(solid["ids"])
+            out["ids"] = list(solid["ids"][:50])
+        return out
     return {"kind": "ellipsoid", "z": solid["z"], "rz": solid["rz"], "t": solid.get("t", 0)}
 
 
@@ -95,6 +99,82 @@ def footprint_of(planes):
     from plexora.vision.propagate import footprint
 
     return geometry_rules.validate_geometry(footprint(planes))
+
+
+def labels_solid(ds, ids, *, t=0, simplify_px=0.5):
+    """A `labels` solid for cells `ids` of the project's 3-D mask: each plane's
+    outline of those cells, and the ids themselves (membership is by id).
+
+    Reads the mask once over the cells' bounding box: from the object table's
+    `bbox_*` columns when the project has them (measure_objects), else found
+    in the mask itself. LookupError when the mask is not a 3-D label volume or
+    none of the ids is in it.
+    """
+    import numpy as np
+
+    from plexora.server.utils import mask_polygon
+
+    volume = ds.segmentation.label_volume(t)
+    if volume is None:
+        raise LookupError("this project's mask is not a 3-D label volume (one id per cell "
+                          "across planes), so no region can be made of its cells")
+    wanted = np.asarray(sorted({int(v) for v in ids if int(v) > 0}), dtype=np.int64)
+    if not wanted.size:
+        raise LookupError("name at least one cell (a label id above 0)")
+    box = _label_box(ds, wanted, t, volume)
+    if box is None:
+        raise LookupError("none of those cells is in the mask")
+    z0, z1, y0, y1, x0, x1 = box
+    planes = {}
+    rows, cols = slice(y0, y1 + 1), slice(x0, x1 + 1)
+    for z in range(z0, z1 + 1):
+        mask = np.isin(volume.read(0, z, z, rows, cols)[0], wanted)
+        if not mask.any():
+            continue
+        shape = mask_polygon.mask_to_shape(mask, (x0, y0), 1.0)
+        geometry = (mask_polygon.to_geojson(shape, simplify_px=simplify_px,
+                                            max_vertices=mask_polygon.MAX_VERTICES)
+                    if shape is not None else None)
+        if geometry is not None:
+            planes[str(z)] = geometry
+    if not planes:
+        raise LookupError("none of those cells is in the mask")
+    return schema.normalize_solid({"kind": "labels", "ids": wanted.tolist(), "planes": planes,
+                                   "t": t})
+
+
+def _label_box(ds, wanted, t, volume):
+    """(z0, z1, y0, y1, x0, x1) around cells `wanted`, inclusive, or None."""
+    import numpy as np
+
+    frame = ds.table.geometry() if (ds.table.available and ds.schema) else None
+    names = set(frame.columns) if frame is not None else set()
+    bbox = {"bbox_z0", "bbox_z1", "bbox_y0", "bbox_y1", "bbox_x0", "bbox_x1", "label"}
+    if bbox <= names:
+        rows = np.isin(frame["label"].to_numpy(), wanted)
+        if "t" in names:
+            rows &= frame["t"].to_numpy() == int(t)
+        if rows.any():
+            part = frame.filter(rows)
+            return (int(part["bbox_z0"].min()), int(part["bbox_z1"].max()),
+                    int(part["bbox_y0"].min()), int(part["bbox_y1"].max()),
+                    int(part["bbox_x0"].min()), int(part["bbox_x1"].max()))
+    # No object table: found in the mask, plane by plane in strips.
+    found = None
+    strip = 1024
+    for z in range(volume.depth):
+        for y in range(0, volume.height, strip):
+            block = volume.read(0, z, z, slice(y, min(volume.height, y + strip)),
+                                slice(None))[0]
+            hit = np.isin(block, wanted)
+            if not hit.any():
+                continue
+            ys, xs = np.nonzero(hit)
+            box = (z, z, y + int(ys.min()), y + int(ys.max()), int(xs.min()), int(xs.max()))
+            found = box if found is None else (
+                min(found[0], box[0]), max(found[1], box[1]), min(found[2], box[2]),
+                max(found[3], box[3]), min(found[4], box[4]), max(found[5], box[5]))
+    return found
 
 
 def list_rois(ds):
@@ -168,7 +248,7 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
     if solid is not None:
         # schema.normalize_solid; the extent follows from it.
         feature["solid"] = solid
-        if solid.get("kind") == "contours":
+        if solid.get("kind") in ("contours", "labels"):
             feature["geometry"] = footprint_of(schema.normalize_solid(solid)["planes"])
     ops.append({"op": "roi.create", "feature": feature})
     after = repo.apply(base, ops)
@@ -332,6 +412,12 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
     extent = feature.get("extent")
     z_column = ds.schema.get("z")
     z_applied = bool(extent and z_column and z_column in frame.columns)
+    id_column = ds.schema.cell_id if ds.schema.cell_id in frame.columns else "id"
+    if (feature.get("solid") or {}).get("kind") == "labels" and id_column in frame.columns:
+        # A region that is some cells of the mask holds exactly those cells.
+        inside = np.isin(frame[id_column].to_numpy(), np.asarray(feature["solid"]["ids"]))
+        z_applied = False
+        feature = {**feature, "solid": None}
     if z_applied and feature.get("solid"):
         xs = frame[x_column].to_numpy().astype("float64")
         ys = frame[y_column].to_numpy().astype("float64")
@@ -352,7 +438,6 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
     if extent and t_column and t_column in frame.columns:
         inside &= mapping.frames_mask([feature], np.zeros(frame.height, dtype=int),
                                       frame[t_column].to_numpy())
-    id_column = ds.schema.cell_id if ds.schema.cell_id in frame.columns else "id"
     ids = frame[id_column].to_numpy()[inside] if id_column in frame.columns else np.empty(0)
     total = int(frame.height)
     count = int(inside.sum())

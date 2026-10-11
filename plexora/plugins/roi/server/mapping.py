@@ -38,7 +38,7 @@ JOINER = "_"
 UNASSIGNED = ""
 
 
-def assign(features, categories, xs, ys, zs=None, ts=None):
+def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
     """(category_label, roi_name) for each point, in point order.
 
     `features` is the ROI list for one image, in document order; `categories`
@@ -57,6 +57,10 @@ def assign(features, categories, xs, ys, zs=None, ts=None):
     (one row per cell per frame): a region drawn on one frame (its extent's
     `t`) then holds only that frame's rows. A region with no frame covers
     every frame.
+
+    `cell_ids` is each point's cell id: a region that IS some cells of a 3-D
+    mask (a `labels` solid) then holds exactly those cells, by id. Without it
+    such a region is its outlines, like contours.
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
@@ -78,8 +82,12 @@ def assign(features, categories, xs, ys, zs=None, ts=None):
     # planes and a table that says where cells are in z, one per plane it
     # covers, tagged with that plane.
     polygons, owner, plane_of = [], [], []
+    by_label = {}
     for index, feature in enumerate(features):
         solid = feature.get("solid") if zs is not None else None
+        if cell_ids is not None and (feature.get("solid") or {}).get("kind") == "labels":
+            by_label[index] = feature["solid"]["ids"]
+            continue
         sections = list(solid_sections(feature, solid)) if solid else []
         if not sections:
             polygons.append(_shapely(feature["geometry"], sgeom))
@@ -91,6 +99,8 @@ def assign(features, categories, xs, ys, zs=None, ts=None):
             plane_of.append(float(plane))
     owner = np.asarray(owner, dtype=int)
     plane_of = np.asarray(plane_of, dtype="float64")
+    if not polygons:
+        polygons, owner, plane_of = [sgeom.Polygon()], np.array([-1]), np.array([np.nan])
 
     # One vectorised containment query rather than a Python loop over cells: a
     # real slide is 10^5-10^6 cells against 10^1-10^3 regions, and the loop
@@ -103,6 +113,21 @@ def assign(features, categories, xs, ys, zs=None, ts=None):
                             np.asarray(ys, dtype="float64"))
     point_index, part_index = tree.query(points, predicate="within")
     polygon_index = owner[part_index]
+    keep = polygon_index >= 0
+    point_index, part_index, polygon_index = (point_index[keep], part_index[keep],
+                                              polygon_index[keep])
+    # Regions that are cells of the mask: their rows, by id.
+    if by_label:
+        ids = np.asarray(cell_ids)
+        extra_points, extra_owner = [], []
+        for index, labels in by_label.items():
+            rows = np.flatnonzero(np.isin(ids, np.asarray(labels)))
+            extra_points.append(rows)
+            extra_owner.append(np.full(len(rows), index, dtype=int))
+        label_points = np.concatenate(extra_points)
+        label_owner = np.concatenate(extra_owner)
+    else:
+        label_points = label_owner = np.empty(0, dtype=int)
     if zs is not None:
         z = np.asarray(zs, dtype="float64")[point_index]
         sectioned = ~np.isnan(plane_of[part_index])
@@ -110,6 +135,8 @@ def assign(features, categories, xs, ys, zs=None, ts=None):
             on_plane = np.floor(z + 0.5) == plane_of[part_index]
         keep = np.where(sectioned, on_plane, planes_mask(features, polygon_index, z))
         point_index, polygon_index = point_index[keep], polygon_index[keep]
+    point_index = np.concatenate([point_index, label_points]).astype(int)
+    polygon_index = np.concatenate([polygon_index, label_owner]).astype(int)
     if ts is not None:
         keep = frames_mask(features, polygon_index, np.asarray(ts)[point_index])
         point_index, polygon_index = point_index[keep], polygon_index[keep]
@@ -145,7 +172,7 @@ def solid_sections(feature, solid):
     there (contours), or its footprint shrunk about its centre (ellipsoid)."""
     from plexora.plugins.roi.server import schema
 
-    if solid["kind"] == "contours":
+    if solid["kind"] in ("contours", "labels"):
         for key, geometry in solid["planes"].items():
             yield int(key), geometry
         return

@@ -319,13 +319,15 @@ class RoiRenderer {
      * dragged is worse than no handle. */
     drawHandles(context, feature, zoom, color) {
         if (this.store.isLocked(feature)) return;
-        // A shape through the planes is reshaped by carrying it again, not by
-        // dragging the vertices of whichever plane is on screen.
-        if (feature.solid) return;
-        if (!RoiGeometry.isVertexEditable(feature.geometry)) return;
+        // A shape with an outline per plane: the handles of the plane on
+        // screen's outline, which a drag reshapes on that plane alone
+        // (roiTools editing.vertex). Under a projection, or for an ellipsoid
+        // (one footprint, scaled), none.
+        const geometry = RoiGeometry.editableGeometry(feature, this.ctx.view?.planes?.());
+        if (!geometry || !RoiGeometry.isVertexEditable(geometry)) return;
 
         const radius = RoiRenderer.HANDLE_RADIUS / zoom;
-        const points = RoiGeometry.openRing(feature.geometry.coordinates[0]);
+        const points = RoiGeometry.openRing(geometry.coordinates[0]);
 
         context.save();
         context.lineWidth = 1.4 / zoom;

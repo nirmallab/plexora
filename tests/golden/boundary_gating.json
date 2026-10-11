@@ -409,7 +409,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [
@@ -706,7 +706,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [

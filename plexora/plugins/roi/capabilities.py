@@ -87,7 +87,7 @@ class ExtentInput(AgentModel):
 class SolidInput(AgentModel):
     """A region's shape through a z-stack (its geometry stays its footprint)."""
 
-    kind: Literal["ellipsoid", "contours"] = Field(
+    kind: Literal["ellipsoid", "contours", "labels"] = Field(
         description="ellipsoid: the geometry is the outline on its middle plane `z` and it "
                     "tapers to nothing `rz` planes above and below; contours: one outline "
                     "per plane in `planes` (consecutive planes, no gaps) -- usually made by "
@@ -121,16 +121,29 @@ class CreateInput(ProjectInput):
     solid: SolidInput | None = Field(
         None, description="On a z-stack: its shape through the planes (sets the planes "
                           "it covers too).")
+    cells: list[int] | None = Field(
+        None, description="On a z-stack with a 3-D mask: make the region exactly these cells "
+                          "(label ids, which are the table's cell ids), outlined plane by plane "
+                          "from the mask -- instead of geometry or points.")
+    t: int = Field(0, ge=0, description="With `cells`: the frame of a time series.")
 
 
 def create_roi(call, inp):
     ds = call.session.image_data(inp.project)
+    solid = inp.solid.to_solid() if inp.solid else None
+    geometry = inp.geometry
+    if inp.cells:
+        try:
+            solid = _service().labels_solid(ds, inp.cells, t=inp.t)
+        except LookupError as exc:
+            raise AgentError("precondition_missing", str(exc)) from None
+        geometry = _service().footprint_of(solid["planes"])
     before_rev, after_rev, roi = _guarded(
-        _service().create_roi, ds, category=inp.category, geometry=inp.geometry,
+        _service().create_roi, ds, category=inp.category, geometry=geometry,
         points=inp.points, name=inp.name, notes=inp.notes, color=inp.color,
         base_revision=inp.base_revision, method=inp.method,
         extent=inp.extent.to_extent() if inp.extent else None,
-        solid=inp.solid.to_solid() if inp.solid else None)
+        solid=solid)
     receipt = make_receipt(call, changed=True, before=None, after=roi,
                            revision_before=before_rev, revision_after=after_rev,
                            persistent_state=STATE,

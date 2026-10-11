@@ -171,9 +171,10 @@ def _roi_update_geometry(state, op):
     _require_unlocked(state, feature, "move or reshape")
     # One outline per plane has no single outline to drag: its footprint is
     # derived from them. (An ellipsoid's footprint IS its shape, so it can.)
-    if (feature.get("solid") or {}).get("kind") == "contours":
+    if (feature.get("solid") or {}).get("kind") in ("contours", "labels"):
         raise ValueError(f"ROI {feature['id']!r} has an outline on every plane it covers: "
-                         "carry it through the planes again, or make it flat first")
+                         "edit one plane's outline (roi.set_solid), carry it through the "
+                         "planes again, or make it flat first")
 
     feature["geometry"] = validate_geometry(op.get("geometry"))
     if "flags" in op:
@@ -232,9 +233,17 @@ def _roi_set_solid(state, op):
     entry = _image(state, op)
     feature = _feature(entry, op.get("id"))
     _require_unlocked(state, feature, "reshape")
-    geometry = (validate_geometry(op.get("geometry")) if op.get("geometry") is not None
-                else feature["geometry"])
     solid = schema.normalize_solid(op.get("solid"))
+    if op.get("geometry") is not None:
+        geometry = validate_geometry(op.get("geometry"))
+    elif solid is not None and solid["kind"] in ("contours", "labels"):
+        # One plane's outline edited by hand: the footprint is derived again
+        # from every plane's, rather than trusted from the editor.
+        from plexora.vision.propagate import footprint
+
+        geometry = validate_geometry(footprint(solid["planes"]))
+    else:
+        geometry = feature["geometry"]
     if solid is None:
         feature.pop("solid", None)
         extent = (schema.normalize_extent(op.get("extent")) if "extent" in op

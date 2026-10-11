@@ -122,10 +122,11 @@ function fakeViewer() {
     };
 }
 
-function makeTools(store, viewer = fakeViewer()) {
+function makeTools(store, viewer = fakeViewer(), planes = null) {
     const renderer = { draft: null, schedule() {}, invalidate() {}, setEnabled() {} };
     const tools = new ctx.__Tools(
-        { viewer: { viewer }, config: { width: 1000, height: 1000 } },
+        { viewer: { viewer }, config: { width: 1000, height: 1000 },
+          view: { planes: () => planes } },
         store, renderer);
     tools.armed = true;
     tools.said = [];
@@ -238,6 +239,51 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
         store.feature("r-A").geometry.coordinates[0][2], [110, 110]);
     check("...and leaving its neighbour alone",
         store.feature("r-A").geometry.coordinates[0][1], [100, 0]);
+}
+
+// -- one plane of a shape through the planes ----------------------------------
+
+{
+    // A region carried through planes 1..3; plane 2 is on screen.
+    const store = makeStore();
+    store.features[0].solid = { kind: "contours", t: 0,
+        planes: { 1: SQUARE(10, 10, 60), 2: SQUARE(0, 0, 100), 3: SQUARE(10, 10, 60) } };
+    store.features[0].extent = { kind: "slab", z0: 1, z1: 3, t: 0 };
+    const tools = makeTools(store, fakeViewer(), [2, 2]);
+    tools.setTool("select");
+    store.select("r-A");
+    tools.press(at(100, 100));            // a corner of plane 2's outline
+    tools.dragging(at(120, 130));
+    check("a handle of the plane on screen's outline edits it", tools.state, "editing.vertex");
+    tools.dragEnd(at(120, 130));
+    const entry = store.committed[store.committed.length - 1] || { redo: [] };
+    const op = entry.redo[0] || {};
+    check("...as one set_solid", op.op, "roi.set_solid");
+    check("...moving that corner on that plane", op.solid?.planes?.["2"]?.coordinates?.[0]?.[2], [120, 130]);
+    check("...and no other plane", op.solid?.planes?.["1"], SQUARE(10, 10, 60));
+    check("...that plane now set by hand", op.solid?.keys, [2]);
+    check("...and the footprint left for the server to derive", "geometry" in op && op.geometry !== undefined, false);
+
+    // Under a projection there is no single outline to drag.
+    const flat = makeTools(store, fakeViewer(), [1, 3]);
+    flat.setTool("select");
+    store.select("r-A");
+    flat.press(at(10, 10));
+    flat.dragging(at(30, 30));
+    check("under a projection a drag moves the region instead", flat.state, "editing.move");
+
+    // A region of mask cells edited on a plane is no longer exactly those cells.
+    const cells = makeStore();
+    cells.features[0].solid = { kind: "labels", ids: [4, 7], t: 0,
+        planes: { 2: SQUARE(0, 0, 100), 3: SQUARE(0, 0, 100) } };
+    const edit = makeTools(cells, fakeViewer(), [3, 3]);
+    edit.setTool("select");
+    cells.select("r-A");
+    edit.press(at(100, 100));
+    edit.dragging(at(90, 95));
+    edit.dragEnd(at(90, 95));
+    const made = (cells.committed[cells.committed.length - 1] || { redo: [{}] }).redo[0];
+    check("a region of cells reshaped by hand becomes contours", [made.solid?.kind, made.solid?.ids], ["contours", undefined]);
 }
 
 // -- Space hands the pointer back to the viewer --------------------------

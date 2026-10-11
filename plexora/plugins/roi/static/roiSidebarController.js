@@ -384,6 +384,12 @@ class RoiSidebarController {
 
         this.el("roi_save_to_source")?.addEventListener("click", () => this.saveToSource());
         this.el("roi_map_to_cells")?.addEventListener("click", () => this.mapToCells());
+        const fromCells = this.el("roi_from_cells");
+        if (fromCells) {
+            // Only where there are whole cells in depth to make a region of.
+            fromCells.hidden = !this.ctx.view?.labelsAre3d?.();
+            fromCells.addEventListener("click", () => this.regionFromCells());
+        }
         this.el("roi_destination_close")?.addEventListener("click", () => this.closeDestination());
 
         this.el("roi_map_info")?.addEventListener("click", () => this.openMapInfo());
@@ -1109,6 +1115,26 @@ class RoiSidebarController {
      * Branching on `needs` rather than on the message. The wording is for the
      * user; a client that greps it breaks the moment it is improved.
      */
+    /** The cells selected in the viewer, as one region of the 3-D mask. */
+    async regionFromCells() {
+        const selection = this.ctx.dataLayer?.getCurrentSelection?.();
+        const ids = selection ? [...selection.keys()].map(Number).filter((v) => v > 0) : [];
+        if (!ids.length) {
+            this.notify("Select cells in the viewer first (click a cell; Shift-click adds more), "
+                + "then make them a region.");
+            return;
+        }
+        const result = await window.PlexoraStatus.track(
+            "Outlining the cells", this.api.fromCells(ids, this.ctx.view?.frame?.() || 0));
+        const data = result.data || {};
+        if (!result.ok || !data.success) {
+            this.notify(data.error || "The cells could not be made a region.");
+            return;
+        }
+        await this.store.load();
+        if (data.roi?.id) this.store.select?.(data.roi.id);
+    }
+
     async mapToCells(replace = false) {
         const button = this.el("roi_map_to_cells");
         if (!button || button.hidden) return;

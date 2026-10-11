@@ -478,7 +478,8 @@ class RoiInteraction {
             this.pending = null;
             if (hit && hit.vertex) {
                 this.state = "editing.vertex";
-                this.drag = { id: hit.feature.id, vertex: hit.vertex, before: hit.feature.geometry };
+                this.drag = { id: hit.feature.id, vertex: hit.vertex, before: hit.feature.geometry,
+                              plane: hit.plane ?? null, solidBefore: hit.feature.solid || null };
             } else if (hit) {
                 this.state = "editing.move";
                 this.drag = { id: hit.feature.id, origin, before: hit.feature.geometry,
@@ -505,12 +506,20 @@ class RoiInteraction {
                 event.preventDefaultAction = true;
                 const feature = this.store.feature(this.drag.id);
                 if (!feature) return;
-                const rings = feature.geometry.coordinates.map((ring) => ring.slice());
+                const plane = this.drag.plane ?? null;
+                const source = plane !== null ? RoiGeometry.sectionAt(feature, plane) : feature.geometry;
+                if (!source) return;
+                const rings = source.coordinates.map((ring) => ring.slice());
                 const points = RoiGeometry.openRing(rings[this.drag.vertex.ring]);
                 points[this.drag.vertex.index] = this.clamp(point);
                 rings[this.drag.vertex.ring] = RoiGeometry.closeRing(points);
+                const reshaped = { type: source.type, coordinates: rings };
                 // Local only: the server hears about this once, at drag end.
-                feature.geometry = { type: feature.geometry.type, coordinates: rings };
+                if (plane !== null) {
+                    feature.solid = RoiInteraction.withPlane(feature.solid, plane, reshaped);
+                } else {
+                    feature.geometry = reshaped;
+                }
                 this.renderer.invalidate(feature.id);
                 this.renderer.schedule();
                 return;
@@ -523,7 +532,8 @@ class RoiInteraction {
                 const dy = point[1] - this.drag.origin[1];
                 feature.geometry = RoiGeometry.translate(this.drag.before, dx, dy);
                 // A shape through the planes moves as a whole: every plane's outline.
-                if (this.drag.solidBefore?.kind === "contours") {
+                if (this.drag.solidBefore?.kind === "contours"
+                        || this.drag.solidBefore?.kind === "labels") {
                     feature.solid = RoiInteraction.movedSolid(this.drag.solidBefore, dx, dy);
                 }
                 this.renderer.invalidate(feature.id);
@@ -576,10 +586,20 @@ class RoiInteraction {
                 const feature = this.store.feature(this.drag?.id);
                 const before = this.drag?.before;
                 const solidBefore = this.drag?.solidBefore;
+                const plane = this.drag?.plane ?? null;
+                const moving = this.state === "editing.move";
                 this.drag = null;
                 this.state = "idle.select";
                 if (!feature || !before) return;
-                if (solidBefore?.kind === "contours") {
+                if (plane !== null && solidBefore) {
+                    // One plane's outline reshaped: the server derives the
+                    // footprint again from every plane's (no geometry sent).
+                    this.commitSolid(feature, { solid: solidBefore, geometry: before },
+                                     { solid: feature.solid },
+                                     { label: `Reshape ROI on z ${plane}` });
+                    return;
+                }
+                if (moving && (solidBefore?.kind === "contours" || solidBefore?.kind === "labels")) {
                     this.commitSolid(feature, { solid: solidBefore, geometry: before },
                                      { solid: feature.solid, geometry: feature.geometry },
                                      { label: "Move ROI" });
@@ -700,11 +720,18 @@ class RoiInteraction {
         const tolerance = this.imageDistance(RoiInteraction.GRAB_RADIUS);
         const selected = this.store.selected;
 
-        if (selected && this.store.isVisible(selected) && !this.store.isLocked(selected)
-            && !selected.solid && RoiGeometry.isVertexEditable(selected.geometry)) {
-            const vertex = RoiGeometry.nearestVertex(
-                selected.geometry, point[0], point[1], tolerance);
-            if (vertex) return { feature: selected, vertex };
+        if (selected && this.store.isVisible(selected) && !this.store.isLocked(selected)) {
+            // A shape through the planes: the outline on the plane on screen
+            // (RoiGeometry.editableGeometry), reshaped on that plane alone.
+            const planes = this.ctx.view?.planes?.();
+            const geometry = RoiGeometry.editableGeometry(selected, planes);
+            if (geometry && RoiGeometry.isVertexEditable(geometry)) {
+                const vertex = RoiGeometry.nearestVertex(geometry, point[0], point[1], tolerance);
+                if (vertex) {
+                    return { feature: selected, vertex,
+                             plane: selected.solid ? planes[0] : null };
+                }
+            }
         }
 
         const candidates = this.store.visibleFeatures();
@@ -1212,13 +1239,33 @@ class RoiInteraction {
         return `Outlined on ${span} (${zs.length} plane${zs.length === 1 ? "" : "s"}).${where}`;
     }
 
-    /** A contours solid with every plane's outline moved by (dx, dy). */
+    /** A contours solid with every plane's outline moved by (dx, dy). A
+     *  region of mask cells moved off them is no longer those cells: it
+     *  becomes contours. */
     static movedSolid(solid, dx, dy) {
         const planes = {};
         for (const [z, geometry] of Object.entries(solid.planes || {})) {
             planes[z] = RoiGeometry.translate(geometry, dx, dy);
         }
-        return { ...solid, planes };
+        return RoiInteraction.asContours({ ...solid, planes });
+    }
+
+    /** `solid` with plane `z`'s outline replaced by `geometry`, that plane now
+     *  set by hand (`keys`); a region of mask cells becomes contours. */
+    static withPlane(solid, z, geometry) {
+        const planes = { ...(solid.planes || {}), [String(z)]: geometry };
+        const keys = [...new Set([...(solid.keys || []), Number(z)])].sort((a, b) => a - b);
+        return RoiInteraction.asContours({ ...solid, planes, keys });
+    }
+
+    static asContours(solid) {
+        if (solid.kind !== "labels") return solid;
+        const { ids, ...rest } = solid;
+        // Contours cover consecutive planes: a plane between two cells' that
+        // neither reached would be a gap, so such a region keeps its kind.
+        const zs = Object.keys(rest.planes || {}).map(Number).sort((a, b) => a - b);
+        if (zs.length && zs[zs.length - 1] - zs[0] + 1 !== zs.length) return solid;
+        return { ...rest, kind: "contours" };
     }
 
     static padded(bbox, fraction) {

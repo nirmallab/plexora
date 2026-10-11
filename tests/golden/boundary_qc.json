@@ -416,7 +416,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [
@@ -821,7 +821,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [
@@ -845,7 +845,7 @@
       ]
     }
   },
-  "route_count": 258,
+  "route_count": 259,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -1044,6 +1044,7 @@
     "POST /plugins/qc/strictness",
     "POST /plugins/roi/api/adapters/anndata",
     "POST /plugins/roi/api/adapters/spatialdata",
+    "POST /plugins/roi/api/from_cells",
     "POST /plugins/roi/api/import",
     "POST /plugins/roi/api/map_to_cells",
     "POST /plugins/roi/api/operations",

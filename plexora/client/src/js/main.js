@@ -1842,7 +1842,7 @@ async function init(config, savedViewTransform = null) {
      *   reference image layer, the modalities present, and whether it has no
      *   image of its own.
      * @property {Object} view - The view on screen and the room over it. On a
-     *   z-stack: `planes()`, `frame()`, `tableFrame()`, `label()`, `onChange(fn)`, and
+     *   z-stack: `planes()`, `frame()`, `tableFrame()`, `labelsAre3d()`, `label()`, `onChange(fn)`, and
      *   `addSectionOverlay(id, provider)` to draw in the XZ / YZ panes. On
      *   every image: `dock(element, {corner, order, collapse})` floats a control over
      *   the image in core's canvas layout -- corners "top-left", "top-right",
@@ -1943,6 +1943,11 @@ async function init(config, savedViewTransform = null) {
                 tableFrame() {
                     const frame = __plexora.dataLayer?.tableFrame;
                     return frame ? frame.t : null;
+                },
+                /** Whether the mask is a 3-D label volume (one id per cell
+                 *  across planes): whole cells in depth to work with. */
+                labelsAre3d() {
+                    return Boolean(__plexora.viewState?.labelsAre3d?.());
                 },
                 /** Called after the view on screen changes; cleaned up with the plugin. */
                 onChange(fn) {

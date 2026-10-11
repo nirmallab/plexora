@@ -523,6 +523,24 @@ class SegHandle:
         """
         return self._project.segmentation.available
 
+    def label_volume(self, t: int = 0):
+        """The mask as a 3-D label volume -- one id per cell across planes --
+        at frame `t` of a time series, or None for a 2-D mask (one
+        segmentation drawn on every plane) or a mask held on a data node.
+
+        Its `read(level, z0, z1, rows, cols)` gives `(Z, H, W)` label ids;
+        `plane(z)` one plane's 2-D pyramid; `depth`, `height`, `width`,
+        `frames`.
+        """
+        from plexora.server.volume import labels
+
+        derived = self._project.segmentation.derived
+        if not self.available or self._project.resources.get("segmentation") is not None:
+            return None
+        if not derived or not labels.is_label_volume(derived):
+            return None
+        return labels.open_label_volume(derived).frame(t)
+
     @property
     def pending(self) -> bool:
         """Whether the background mask-conversion job is still running.

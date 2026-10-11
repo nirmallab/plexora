@@ -341,8 +341,17 @@ def extent_planes(extent):
 #:
 #: A box needs no kind of its own: it is a rectangle limited to a range of
 #: planes (`extent`). Planes are indices, as extents are.
-SOLID_KINDS = ("contours", "ellipsoid")
+#:
+#: `labels` is a region that IS some cells of a 3-D mask: `ids` (the mask's
+#: label ids, which are the table's cell ids) and, for drawing, each plane's
+#: outline of those cells in `planes` as contours keep them -- a plane where
+#: none of them lies is simply absent. Membership is by id (exact), never by
+#: outline. Editing a plane's outline by hand makes it contours: it no longer
+#: is exactly those cells.
+SOLID_KINDS = ("contours", "ellipsoid", "labels")
 MAX_SOLID_PLANES = 1024
+#: Most cells one `labels` region may name.
+MAX_LABEL_IDS = 20_000
 
 
 def normalize_solid(raw):
@@ -364,9 +373,20 @@ def normalize_solid(raw):
         if not (z >= 0 and rz > 0) or z != z or rz != rz:
             raise ValueError("an ellipsoid's z is 0 or more and its rz more than 0")
         return {"kind": "ellipsoid", "z": round(z, 3), "rz": round(rz, 3), "t": t}
+    ids = None
+    if kind == "labels":
+        try:
+            ids = sorted({int(v) for v in raw.get("ids") or []})
+        except (TypeError, ValueError):
+            raise ValueError("a labels region's ids are the mask's label ids (integers)") \
+                from None
+        if not ids or ids[0] <= 0:
+            raise ValueError("a labels region names at least one label id above 0")
+        if len(ids) > MAX_LABEL_IDS:
+            raise ValueError(f"a labels region names at most {MAX_LABEL_IDS} cells")
     planes = raw.get("planes")
     if not isinstance(planes, dict) or not planes:
-        raise ValueError("contours need at least one plane: {planes: {z: geometry}}")
+        raise ValueError(f"{kind} need at least one plane: {{planes: {{z: geometry}}}}")
     if len(planes) > MAX_SOLID_PLANES:
         raise ValueError(f"at most {MAX_SOLID_PLANES} planes of contours")
     cleaned = {}
@@ -377,11 +397,14 @@ def normalize_solid(raw):
             raise ValueError(f"contours are keyed by plane index, not {key!r}") from None
         cleaned[str(z)] = validate_geometry(geometry)
     zs = sorted(int(z) for z in cleaned)
-    if zs[-1] - zs[0] + 1 != len(zs):
+    # Cells at different depths leave planes between them where none lies.
+    if kind == "contours" and zs[-1] - zs[0] + 1 != len(zs):
         raise ValueError("contours cover consecutive planes, with no gaps")
     keys = sorted({int(z) for z in raw.get("keys") or [] if str(z).isdigit()
                    and str(int(z)) in cleaned})
-    out = {"kind": "contours", "planes": {str(z): cleaned[str(z)] for z in zs}, "t": t}
+    out = {"kind": kind, "planes": {str(z): cleaned[str(z)] for z in zs}, "t": t}
+    if ids is not None:
+        out["ids"] = ids
     if keys:
         out["keys"] = keys
     return out
@@ -390,7 +413,7 @@ def normalize_solid(raw):
 def solid_extent(solid):
     """The planes a solid covers, as an extent (inclusive bounds)."""
     t = solid.get("t", 0)
-    if solid["kind"] == "contours":
+    if solid["kind"] in ("contours", "labels"):
         zs = sorted(int(z) for z in solid["planes"])
         z0, z1 = zs[0], zs[-1]
     else:

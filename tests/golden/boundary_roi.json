@@ -409,7 +409,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [
@@ -438,18 +438,18 @@
           "tool_panel_slot": "roi/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/roi/static/roiApi.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiGeometry.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiState.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiRenderer.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiTools.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiTree.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiSidebarController.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiFigureBridge.js?v=20261010_roi_solids",
-          "/plugins/roi/static/roiAgentBridge.js?v=20261010_roi_solids"
+          "/plugins/roi/static/roiApi.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiGeometry.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiState.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiRenderer.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiTools.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiTree.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiSidebarController.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiFigureBridge.js?v=20261011_roi_cells",
+          "/plugins/roi/static/roiAgentBridge.js?v=20261011_roi_cells"
         ],
         "active_tool_styles": [
-          "/plugins/roi/static/roi.css?v=20261010_roi_solids"
+          "/plugins/roi/static/roi.css?v=20261011_roi_cells"
         ],
         "available_tools": [
           {
@@ -563,6 +563,7 @@
         "roi_destination_hint",
         "roi_destination_name",
         "roi_export_button",
+        "roi_from_cells",
         "roi_help_button",
         "roi_import_button",
         "roi_import_file",
@@ -677,15 +678,15 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/roi/static/roiApi.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiGeometry.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiState.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiRenderer.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiTools.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiTree.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiSidebarController.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiFigureBridge.js?v=20261010_roi_solids",
-        "/plugins/roi/static/roiAgentBridge.js?v=20261010_roi_solids",
+        "/plugins/roi/static/roiApi.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiGeometry.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiState.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiRenderer.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiTools.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiTree.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiSidebarController.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiFigureBridge.js?v=20261011_roi_cells",
+        "/plugins/roi/static/roiAgentBridge.js?v=20261011_roi_cells",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261010_carry",
@@ -719,7 +720,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_frames"
+        "/client/src/js/main.js?v=20261011_roi_cells"
       ],
       "status": 200,
       "styles": [
@@ -729,7 +730,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/roi/static/roi.css?v=20261010_roi_solids"
+        "/plugins/roi/static/roi.css?v=20261011_roi_cells"
       ],
       "tool_mounts": [
         [
@@ -743,7 +744,7 @@
       ]
     }
   },
-  "route_count": 210,
+  "route_count": 211,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -894,6 +895,7 @@
     "POST /picker_prefs",
     "POST /plugins/roi/api/adapters/anndata",
     "POST /plugins/roi/api/adapters/spatialdata",
+    "POST /plugins/roi/api/from_cells",
     "POST /plugins/roi/api/import",
     "POST /plugins/roi/api/map_to_cells",
     "POST /plugins/roi/api/operations",

@@ -546,7 +546,7 @@ class RoiStore {
         const t = solid.t || 0;
         let z0;
         let z1;
-        if (solid.kind === "contours") {
+        if (solid.kind === "contours" || solid.kind === "labels") {
             const zs = Object.keys(solid.planes || {}).map(Number).sort((a, b) => a - b);
             [z0, z1] = [zs[0], zs[zs.length - 1]];
         } else {

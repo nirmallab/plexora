@@ -163,6 +163,15 @@ In the viewer, outlines, centroids, Cell Explorer's colours, gates and a click o
 the frame on screen's rows; step frames and they follow. A region drawn on one frame counts and
 maps only that frame's cells.
 
+**Regions of cells, and one plane's outline by hand.** With a 3-D mask, select cells in the
+viewer (click one, Shift-click to add) and press "From cells" in the ROI panel: the region is
+those cells, outlined on every plane they reach, and it holds exactly them when counted or
+mapped (by id, not by outline -- a neighbour whose centre falls inside is not in it). Select a
+region carried through planes (or made from cells) and step to one of its planes: its outline
+there has handles; drag one to reshape that plane only. The footprint follows, and a region of
+cells reshaped this way becomes an ordinary outline region. Under a projection there are no
+handles (no single plane to edit).
+
 **Hand-off to SCIMAP Pro in µm.** A hand-off from Plexora now says where the cells are and in
 what units: an object table measured in µm hands over its `x_um`/`y_um`/`z_um` columns; any
 other table hands over its pixel columns with the µm per pixel (and per plane, for 3-D objects)
@@ -236,8 +245,6 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 ## Not in this branch yet
 
 - 3-D segmentation inside Plexora (Cellpose on a node): bring a label volume made elsewhere.
-- Region shapes edited plane by plane by hand (a carried outline is redrawn by carrying again),
-  and labels/masks as regions (`LabelRef`).
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
