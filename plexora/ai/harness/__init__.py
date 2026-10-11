@@ -9,22 +9,25 @@ gateway (`ai.biocognia.com`), which holds the provider keys, meters the
 provider's usage and bills the organisation's AI credits; nothing about a
 user's data is stored there.
 
-    gateway.py       the streamed model call, on biocognia.gateway's token and transport
-    wire.py          the request envelope, canonical JSON, usage
-    prefix.py        the byte-stable cached prefix a worker starts from
-    cache_plan.py    prefix fingerprints and the cache-hit monitor
-    schema.py        answer models -> structured-output JSON schema
+The runtime underneath is shared with SCIMAP Pro: `spatialagents` holds the
+streamed model call and its wire types, the cache-hit monitor, the scheduler,
+the trace, the conversational tool loop with its approvals, cache, offloading
+and stores, and `biocognia.gateway` the token and the transport. What is here
+is Plexora:
+
+    gateway.py       the model call on this device's token, naming Plexora's tasks
+    prefix.py        the byte-stable cached prefixes: gating and QC workers, conversations
+    schema.py        Plexora's answer models -> structured-output JSON schema, per kind and task
     decision.py      the decision loop, gating and QC (rolling workers)
     capabilities.py  ai.run_session / run_status / run_control / balance (in-app runs)
-    orchestrator.py  task graph, parallel scheduler, shared blackboard
-    trace.py         the local trace: runs, model calls, cache verdicts, tool calls
-    runner.py        the conversational agent: a tool loop, sub-agents, compaction
-    tools.py         the registry as deferred tools (load_tool), executed through the cache
-    approvals.py     source-file writes and deletes wait for the user (control.json)
-    toolcache.py     read results remembered per project revision (Layer 3)
-    offload.py       large tool results as stubs, read back in slices
-    conversations.py conversations on disk, and the service that runs their turns
+    backend.py       the capability registry as the conversation's tool backend
+    conversations.py Plexora AI conversations: spatialagents' chat bound to Plexora, and the service
     chat_capabilities.py  ai.chat_* (the HTTP routes and the CLI call these)
+    toolcache.py     what the registry may cache, where, under which version
+    trace.py         the trace at <data_root>/.agent/ai/trace.sqlite
+    cache_plan.py    the cache monitor, logging to plexora.ai.harness
+    cli.py           the `plexora ai` commands
+    route_bench.py   the routing bench for a gateway route
 
 `plexora ai run gating|qc <project>` and `plexora ai chat` are the command-line
 entries, `/ai/v1` the viewer's; `--dev` uses the

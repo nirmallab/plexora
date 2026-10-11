@@ -7,77 +7,25 @@ rendered pictures and change Plexora's own state (gates, regions -- all
 reversible, all receipted), but it may not write into the user's source files
 or delete anything without the server having been started to allow it AND the
 call saying `confirm: true`.
+
+The vocabulary -- the permission and egress classes, the four scope states --
+and `Policy` itself are spatialagents' (`spatialagents.policy`), shared with
+SCIMAP Pro and the chat runtime. What is Plexora's is how a capability is
+checked against a policy (`check`, with the server flags its hints name) and
+how a request is classified (`classify_scope`).
 """
 
 from __future__ import annotations
 
-import dataclasses
 import re
-from dataclasses import dataclass, field
+
+from spatialagents.policy import (CAN_ANALYZE, CAN_EXECUTE, CAN_RECOMMEND, DEFAULT_EGRESS, EGRESS, OUTSIDE_DOMAIN,
+                                 PERMISSIONS, SCOPE_STATES, Policy, permitted)
 
 from plexora.agent.errors import AgentError
 
-PERMISSIONS = ("read", "reversible_write", "source_file_write", "destructive")
-
-#: What a result carries out of Plexora, least to most.
-EGRESS = ("metadata", "aggregates", "row_level", "rendered_pixels", "raw_pixels")
-
-DEFAULT_EGRESS = frozenset({"metadata", "aggregates", "rendered_pixels"})
-
-#: What `validate_scope` answers, most capable first.
-SCOPE_STATES = ("can_execute", "can_analyze", "can_recommend", "outside_domain")
-CAN_EXECUTE, CAN_ANALYZE, CAN_RECOMMEND, OUTSIDE_DOMAIN = SCOPE_STATES
-
-
-@dataclass(frozen=True)
-class Policy:
-    allow_source_writes: bool = False
-    allow_destructive: bool = False
-    egress: frozenset = field(default_factory=lambda: DEFAULT_EGRESS)
-    #: False: reads only -- a `read`-scoped token's policy.
-    allow_writes: bool = True
-    #: Who is calling, when the transport knows (a token's id); in audit lines.
-    principal: str | None = None
-
-    @classmethod
-    def from_flags(cls, *, allow_source_writes=False, allow_destructive=False,
-                   egress=None) -> "Policy":
-        allowed = set(DEFAULT_EGRESS)
-        for item in egress or ():
-            item = item.strip()
-            if not item:
-                continue
-            if item not in EGRESS:
-                raise ValueError(f"unknown egress class {item!r}; expected any of {EGRESS}")
-            allowed.add(item)
-        return cls(bool(allow_source_writes), bool(allow_destructive), frozenset(allowed))
-
-    def describe(self) -> dict:
-        return {"allow_source_writes": self.allow_source_writes,
-                "allow_destructive": self.allow_destructive,
-                "allow_writes": self.allow_writes,
-                "egress": sorted(self.egress, key=EGRESS.index),
-                "principal": self.principal}
-
-    def narrowed_by_scope(self, scope: str, principal: str | None = None) -> "Policy":
-        """This policy as a token of `scope` may use it: narrower, never wider.
-
-        `read` allows no writes at all; `write` (and `bridge`, the same policy
-        for another application) allows Plexora's own reversible state but no
-        source-file writes or deletes; `admin` leaves the server's policy as it
-        is. An unknown scope is treated as `read`.
-        """
-        if scope == "admin":
-            return dataclasses.replace(self, principal=principal)
-        if scope in ("write", "bridge"):
-            # `bridge`: another application's token. It writes Plexora's own
-            # reversible state like `write`, never the user's source files --
-            # the source writes rewrite the whole `obs` group in place, which a
-            # peer holding the same file open must never have done under it.
-            return dataclasses.replace(self, allow_source_writes=False,
-                                       allow_destructive=False, principal=principal)
-        return dataclasses.replace(self, allow_writes=False, allow_source_writes=False,
-                                   allow_destructive=False, principal=principal)
+__all__ = ["CAN_ANALYZE", "CAN_EXECUTE", "CAN_RECOMMEND", "DEFAULT_EGRESS", "EGRESS", "OUTSIDE_DOMAIN",
+           "PERMISSIONS", "SCOPE_STATES", "Policy", "check", "classify_scope", "permitted", "route_for"]
 
 
 def _confirmed(inp) -> bool:
@@ -146,19 +94,6 @@ def check(capability, inp, policy: Policy, *, undo_of=None, arguments=None) -> N
                 f"{capability.name} cannot be undone; pass confirm: true once the user "
                 "has explicitly asked for it",
                 detail={"permission": "destructive", "needs": "confirm"})
-
-
-def permitted(capability, policy: Policy) -> bool:
-    """Whether a call COULD run under this policy, given confirmation."""
-    if capability.egress not in policy.egress:
-        return False
-    if capability.permission != "read" and not policy.allow_writes:
-        return False
-    if capability.permission == "source_file_write":
-        return policy.allow_source_writes
-    if capability.permission == "destructive":
-        return policy.allow_destructive
-    return True
 
 
 _WORD = re.compile(r"[a-z0-9]+")

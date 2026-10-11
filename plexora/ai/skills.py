@@ -216,6 +216,13 @@ def vocabulary() -> set:
             if "tests" in file.parts:
                 continue
             _harvest(ast.parse(file.read_text(encoding="utf-8")), words)
+    # The vocabulary Plexora shares with SCIMAP Pro, defined in spatialagents:
+    # the permission and egress classes, the four scope states, the error codes.
+    import spatialagents.errors
+    import spatialagents.policy
+
+    for module in (spatialagents.policy, spatialagents.errors):
+        _harvest(ast.parse(Path(module.__file__).read_text(encoding="utf-8")), words)
     registry.discover()
     for capability in registry.all_capabilities():
         words.update((capability.name, capability.tool_name))

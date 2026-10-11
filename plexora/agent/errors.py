@@ -5,11 +5,20 @@ not have to: every failure here is a `code` it can branch on, a `message` it can
 repeat to the user, a `detail` with whatever makes the failure actionable (the
 requirements a project is missing, the revision somebody else wrote, the node
 that is asleep), and whether trying again could help.
+
+`AgentError` itself is spatialagents' (`spatialagents.errors`), the one class
+every BioCognia product's agents and harness raise, so a failure raised in the
+shared runtime and one raised by a capability are caught alike. Its closed
+list of codes is the shared one plus each product's: Plexora's are registered
+here, at import, so every module that raises one has imported this first.
+`as_agent_error` -- what an exception means in Plexora -- stays Plexora's.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from spatialagents.errors import AgentError, register
+
+__all__ = ["CODES", "AgentError", "as_agent_error"]
 
 #: Every code a capability may fail with. A closed list, so an agent's
 #: instructions (plexora/ai/skills) can name them and mean something.
@@ -45,23 +54,7 @@ CODES = (
     "internal_error",
 )
 
-
-class AgentError(Exception):
-    """A failure with a code an agent can act on."""
-
-    def __init__(self, code: str, message: str, *, detail: Any = None,
-                 retryable: bool = False):
-        if code not in CODES:
-            raise ValueError(f"unknown agent error code {code!r}")
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.detail = detail
-        self.retryable = retryable
-
-    def to_problem(self) -> dict:
-        return {"code": self.code, "message": self.message,
-                "detail": self.detail, "retryable": self.retryable}
+register(*CODES)
 
 
 def as_agent_error(exc: BaseException) -> AgentError:

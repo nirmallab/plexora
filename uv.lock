@@ -2367,6 +2367,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "shapely" },
+    { name = "spatialagents" },
     { name = "spatialdata" },
     { name = "threadpoolctl" },
     { name = "tifffile" },
@@ -2451,6 +2452,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
+    { name = "spatialagents", specifier = ">=0.1,<0.2" },
     { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
@@ -3473,6 +3475,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4e/e7/d82eec7ceb782e17d60df9b68c78b2e13e86b143c4225198b99cfed9650f/spatial_image-1.2.3.tar.gz", hash = "sha256:b0bb8ed84c9c11de00b3bbed7041375048327e0ffcb233f61aca7a24dcd75537", size = 32254, upload-time = "2025-08-08T17:11:18.065Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/5a/8ef888a4f56fa2ea5c10a7d6ff02286f503a93ea298bcaa9f51a41a20df8/spatial_image-1.2.3-py3-none-any.whl", hash = "sha256:b5280386a4d540c32c14cb4fdf74bd0242c99c168a7dac36204b29f8c27ce19a", size = 8737, upload-time = "2025-08-08T17:11:18.857Z" },
+]
+
+[[package]]
+name = "spatialagents"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "biocognia" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/73/a2a21169af8309eb3b59976c1d920d41db44c843d407823e3988346bd668/spatialagents-0.1.0.tar.gz", hash = "sha256:277c5944d5f5490d6362161f5e551c8ffcd2031a8df0701591a3468de3377fc4", size = 162633, upload-time = "2026-10-07T22:47:34.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/4a/fc04ce8a6b59c0d110e6ae3adc60efdf01c88489f5979f45fc68759a7b73/spatialagents-0.1.0-py3-none-any.whl", hash = "sha256:2a528ffc4171239561fa3e8aa5f8ce2bcae686373df1ee1b39df408b6c437015", size = 116027, upload-time = "2026-10-07T22:47:32.979Z" },
 ]
 
 [[package]]

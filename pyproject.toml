@@ -109,6 +109,14 @@ dependencies = [
     # project, whatever format it was imported from.
     "shapely>=2.1.2",
     "spatialdata>=0.8.0",
+    # The in-app AI harness's runtime, shared with SCIMAP Pro (plexora/ai/harness
+    # builds on it): the gateway's streamed call, the decision loop's wire
+    # types, cache monitor, scheduler and trace, and the conversation's tool
+    # loop, approvals, caches and stores. A core dependency rather than an
+    # extra, because Auto Gating and Auto QC are core features gated by the
+    # licence, like the biocognia client above. Stdlib-only at import; it adds
+    # pydantic and pyyaml, both already here.
+    "spatialagents>=0.1,<0.2",
     # Called at import of the package itself (plexora/__init__.py), to cap the
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",

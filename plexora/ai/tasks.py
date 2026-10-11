@@ -19,21 +19,22 @@ under the `plexora` key, and `--check` fails when the gateway's copy differs.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from spatialagents import wire
+
 REGISTRY_PATH = Path(__file__).parent / "tasks.yaml"
 
 #: A task id inside Plexora: `module.task`, lower snake case.
-TASK_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+TASK_ID = wire.TASK_ID
 #: The product key every task is filed under on the gateway: the certificate's `aud`.
 PRODUCT = "plexora"
 #: A task id on the wire: `plexora.module.task` (the gateway's WIRE_TASK).
-WIRE_TASK = re.compile(r"^[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+WIRE_TASK = wire.WIRE_TASK
 #: What a call whose kind no task maps is sent as, under its module.
-FALLBACK_TASK = "default"
+FALLBACK_TASK = wire.FALLBACK_TASK
 #: A task's default effort; the gateway maps it onto each model's own levels.
 EFFORTS = ("low", "medium", "high")
 
@@ -109,12 +110,9 @@ def wire_id(task_id: str | None, *, module: str | None = None) -> str:
 
     None (a packet kind no task maps) is `plexora.<module>.default`; the
     gateway serves an unknown task at the product's default and records it,
-    so a Plexora release never waits for a gateway deploy."""
-    if task_id and TASK_ID.match(task_id):
-        return f"{PRODUCT}.{task_id}"
-    head = module if isinstance(module, str) and re.match(r"^[a-z][a-z0-9_]{0,31}$", module) \
-        else "app"
-    return f"{PRODUCT}.{head}.{FALLBACK_TASK}"
+    so a Plexora release never waits for a gateway deploy. The rule is
+    spatialagents' (`wire.task_id`), the one every product's tasks follow."""
+    return wire.task_id(PRODUCT, task_id, module=module)
 
 
 def fragment() -> dict:

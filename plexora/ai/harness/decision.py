@@ -49,15 +49,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from biocognia import codes as _codes
+from spatialagents import gateway as _gateway
+from spatialagents.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
+                               with_breakpoints)
 
 from plexora.ai import tasks
 from plexora.ai.context import ContextRefused
 from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.gateway import GatewayClient, GatewayError
 from plexora.ai.harness.trace import TraceStore
-from plexora.ai.harness.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
-                                      with_breakpoints)
 
 log = logging.getLogger("plexora.ai.harness")
 
@@ -72,10 +72,10 @@ PARK_POLL_S = 1.0
 #: member's and product's monthly caps, the run's envelope, AI switched off or
 #: not licensed), and the harness's own -- a provider still down after its
 #: retries, a closed run, the dev route refused, no licence on this device.
-PAUSE_CODES = (*_codes.PAUSE_CODES, "run_closed", "provider_unavailable", "circuit_open",
-               "provider_rate_limited", "dev_not_allowed", "no_license", "offline_refused")
+#: spatialagents', so a conversation pauses on exactly these too.
+PAUSE_CODES = _gateway.PAUSE_CODES
 #: The pauses that money or a raised cap answers ("add credits, then resume").
-CREDIT_CODES = _codes.CREDIT_CODES
+CREDIT_CODES = _gateway.CREDIT_CODES
 FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
 KEPT_OPEN = ("paused", "waiting_for_user")
@@ -671,7 +671,7 @@ class DecisionRun:
         orchestrator's scheduler: lane 0 (the session's default reader) takes
         the packet the start returned; the rest start once its first call
         has written the cached prefix."""
-        from plexora.ai.harness.orchestrator import Scheduler, TaskGraph
+        from spatialagents.orchestrator import Scheduler, TaskGraph
 
         for index in range(1, self.parallel):
             with self._lock:
@@ -1040,7 +1040,7 @@ def run_many(projects: list, options: DecisionOptions, *, gateway: GatewayClient
     start, so N sessions write the prefix once, not N times."""
     from dataclasses import replace
 
-    from plexora.ai.harness.orchestrator import Scheduler, TaskGraph
+    from spatialagents.orchestrator import Scheduler, TaskGraph
 
     name = workflow or ("qc" if isinstance(options, QCOptions) else "gating")
     runner = RUNS[name]

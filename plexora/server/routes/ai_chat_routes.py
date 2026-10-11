@@ -9,8 +9,12 @@
     POST /ai/v1/conversations/<id>/approve     approve|deny       (ai.chat_approve)
     POST /ai/v1/conversations/<id>/undo        an Undo chip       (undo_operation)
 
-Every route calls `registry.invoke` on an `ai.chat_*` capability, so the
-licence check, validation and audit are those of any other surface.
+The contract itself -- paths, payloads, status codes, the event stream -- is
+spatialagents' (`spatialagents.chat.http.ChatApi`), the one the shared chat
+page speaks; this blueprint is Plexora's adapter onto it. What it adds is
+Plexora's: every operation is a `registry.invoke` of an `ai.chat_*`
+capability (`RegistryOperations`), so the licence check, validation and audit
+are those of any other surface, and Undo is `undo_operation`.
 
 `/events` streams server-sent events when the client asks for them (`Accept:
 text/event-stream`, what `EventSource` sends) and otherwise answers a held
@@ -28,11 +32,12 @@ from __future__ import annotations
 
 import dataclasses
 import ipaddress
-import json
-import time
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
+from spatialagents.chat.http import ChatApi
+from spatialagents.errors import known
 
+from plexora.agent.errors import AgentError
 from plexora.licensing import guards
 
 ai_chat_bp = Blueprint("ai_chat_v1", __name__)
@@ -82,7 +87,21 @@ def _policy(*, approving: bool = False):
     return policy
 
 
-def _invoke(tool, arguments, *, approving=False):
+class _Refused(AgentError):
+    """A capability's refusal, carried to `ChatApi` exactly as the registry said it."""
+
+    def __init__(self, problem: dict):
+        code = problem.get("code")
+        super().__init__(code if code in known() else "internal_error", str(problem.get("message") or ""),
+                         detail=problem.get("detail"), retryable=bool(problem.get("retryable")))
+        self.problem = problem
+
+    def to_problem(self) -> dict:
+        return self.problem
+
+
+def _invoke(tool, arguments, *, approving=False) -> dict:
+    """`tool`'s result through `registry.invoke`, or `_Refused` with its problem."""
     from plexora.agent import registry
 
     def notify(project, plugin, kind, body):
@@ -92,110 +111,89 @@ def _invoke(tool, arguments, *, approving=False):
 
     answer = registry.invoke(_session(), tool, arguments, policy=_policy(approving=approving), notify=notify)
     if not answer["ok"]:
-        error = answer["error"]
-        status = {"conflict": 409, "license_required": 403, "permission_required": 403}.get(error.get("code"), 400)
-        return jsonify(success=False, ok=False, error=error), status
-    return jsonify(success=True, ok=True, **(answer["result"] or {}))
+        raise _Refused(answer["error"])
+    return answer["result"] or {}
 
 
-def _body():
-    return request.get_json(silent=True) or {}
+class RegistryOperations:
+    """`ChatApi`'s operations (those of `spatialagents.chat.http.ChatOperations`)
+    as the `ai.chat_*` capabilities, for the person at the viewer."""
+
+    def start(self, *, title=None, viewer=False) -> dict:
+        return _invoke("ai.chat_start", {"title": title, "viewer": bool(viewer)})
+
+    def history(self, conversation_id=None, **options) -> dict:
+        arguments = {"conversation_id": conversation_id} if conversation_id is not None else {}
+        return _invoke("ai.chat_history", {**arguments, **options})
+
+    def send(self, conversation_id, text, images) -> dict:
+        return _invoke("ai.chat_send", {"conversation_id": conversation_id, "text": text, "images": images})
+
+    def control(self, conversation_id, action) -> dict:
+        return _invoke("ai.chat_control", {"conversation_id": conversation_id, "action": action})
+
+    def approve(self, conversation_id, approval_id, decision) -> dict:
+        return _invoke("ai.chat_approve", {"conversation_id": conversation_id, "approval_id": approval_id,
+                                           "decision": decision}, approving=True)
 
 
-def _number(name, default):
-    try:
-        return float(request.args.get(name, default))
-    except (TypeError, ValueError):
-        return default
+def _undo(operation_id: str) -> dict:
+    return _invoke("undo_operation", {"operation_id": operation_id})
+
+
+def _api() -> ChatApi:
+    from plexora.ai.harness import conversations
+
+    return ChatApi(conversations.service(), operations=RegistryOperations(), undo=_undo, stream_s=STREAM_S,
+                   held_poll_s=HELD_POLL_S)
+
+
+def _dispatch(path: str):
+    """This request, answered by `ChatApi`, as Flask sends it."""
+    answer = _api().handle(request.method, path, query=request.args.to_dict(),
+                           body=request.get_json(silent=True) or {}, headers=dict(request.headers))
+    if answer.stream is not None:
+        return Response(stream_with_context(answer.stream), mimetype="text/event-stream", headers=answer.headers)
+    return jsonify(answer.body), answer.status
 
 
 @ai_chat_bp.route("/conversations", methods=["POST"])
 def start_conversation():
-    body = _body()
-    return _invoke("ai.chat_start", {"title": body.get("title"), "viewer": bool(body.get("viewer"))})
+    return _dispatch("/conversations")
 
 
 @ai_chat_bp.route("/conversations", methods=["GET"])
 def list_conversations():
-    return _invoke("ai.chat_history", {"limit": int(_number("limit", 50))})
+    return _dispatch("/conversations")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>", methods=["GET"])
 def get_conversation(conversation_id):
-    return _invoke("ai.chat_history", {"conversation_id": conversation_id, "after": int(_number("after", 0))})
+    return _dispatch(f"/conversations/{conversation_id}")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>/messages", methods=["POST"])
 def send_message(conversation_id):
-    body = _body()
-    return _invoke("ai.chat_send", {"conversation_id": conversation_id, "text": body.get("text") or "",
-                                    "images": body.get("images") or []})
+    return _dispatch(f"/conversations/{conversation_id}/messages")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>/control", methods=["POST"])
 def control_conversation(conversation_id):
-    return _invoke("ai.chat_control", {"conversation_id": conversation_id, "action": _body().get("action")})
+    return _dispatch(f"/conversations/{conversation_id}/control")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>/approve", methods=["POST"])
 def approve_call(conversation_id):
-    body = _body()
-    return _invoke("ai.chat_approve", {"conversation_id": conversation_id,
-                                       "approval_id": body.get("approval_id"),
-                                       "decision": body.get("decision")}, approving=True)
+    return _dispatch(f"/conversations/{conversation_id}/approve")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>/undo", methods=["POST"])
 def undo_operation(conversation_id):
     """The panel's Undo chip: `undo_operation` on a write the conversation made,
     and a note the model reads at the start of its next turn."""
-    from plexora.ai.harness import conversations
-
-    operation_id = str(_body().get("operation_id") or "")
-    service = conversations.service()
-    if not service.store.exists(conversation_id):
-        return jsonify(success=False, error=f"no conversation {conversation_id!r}"), 404
-    made = {e.get("operation_id") for e in service.store.decisions(conversation_id) if e.get("event") == "tool_result"}
-    if not operation_id or operation_id not in made:
-        return jsonify(success=False, error="that operation was not made by this conversation"), 400
-    answer = _invoke("undo_operation", {"operation_id": operation_id})
-    body = answer[0] if isinstance(answer, tuple) else answer
-    if body.get_json().get("ok"):
-        service.note(conversation_id, f"[The user undid operation {operation_id} from the chat panel.]")
-        service.store.append_event(conversation_id, {"event": "undone", "operation_id": operation_id})
-    return answer
+    return _dispatch(f"/conversations/{conversation_id}/undo")
 
 
 @ai_chat_bp.route("/conversations/<conversation_id>/events", methods=["GET"])
 def conversation_events(conversation_id):
-    after = int(_number("after", 0))
-    wants_stream = "text/event-stream" in (request.headers.get("Accept") or "") or request.args.get("stream") == "1"
-    if not wants_stream:
-        wait = max(0.0, min(_number("wait", 0), HELD_POLL_S))
-        return _invoke("ai.chat_history", {"conversation_id": conversation_id, "after": after, "wait_s": wait})
-    from plexora.ai.harness import conversations
-
-    service = conversations.service()
-    if not service.store.exists(conversation_id):
-        return jsonify(success=False, error=f"no conversation {conversation_id!r}"), 404
-    last = request.headers.get("Last-Event-ID")
-    if last and last.isdigit():
-        after = int(last)
-
-    def stream():
-        cursor = after
-        deadline = time.monotonic() + STREAM_S
-        yield "retry: 2000\n\n"
-        while time.monotonic() < deadline:
-            polled = service.events(conversation_id, cursor, wait_s=10.0)
-            for event in polled["events"]:
-                cursor = event["seq"]
-                yield f"id: {cursor}\nevent: {event.get('event', 'message')}\ndata: {json.dumps(event, default=str)}\n\n"
-            if not polled["events"]:
-                if not polled["running"] and request.args.get("until_idle") == "1":
-                    yield f"event: idle\ndata: {json.dumps({'after': cursor})}\n\n"
-                    return
-                yield ": keep-alive\n\n"
-
-    return Response(stream_with_context(stream()), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _dispatch(f"/conversations/{conversation_id}/events")
