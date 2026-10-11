@@ -2302,7 +2302,9 @@ class ImageViewer {
 
     updateCentroidFilter(filter = {}, showSpinner = false) {
         this.centroidFilter = filter || {};
-        const signature = JSON.stringify(this.centroidFilter);
+        // The frame is part of what is drawn (dataLayer.withFrame narrows
+        // every tile request to it): another frame's tiles are other cells.
+        const signature = JSON.stringify([this.centroidFilter, this.dataLayer?.tableFrame || null]);
         if (signature !== this.centroidFilterSignature) {
             this.centroidFilterSignature = signature;
             this.centroidTiles.clear();
@@ -2611,10 +2613,12 @@ class ImageViewer {
                 layer.filterIds = ids;
                 layer.gateMask = gate ? gate.mask : null;
                 layer.gateCount = gate ? gate.count : null;
+                layer.lastGates = gates;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
+                this.segmentationLastGates = gates;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2623,6 +2627,42 @@ class ImageViewer {
                 this.setLoading(false);
             }
         }
+    }
+
+    /**
+     * Follow the frame on screen with the table's rows, for a time series'
+     * object table (one row per cell per frame; `frame` is `{column, t}`, or
+     * null for any other table). Every row-reading request then carries the
+     * frame (dataLayer.tableFrame), so the cells, their centroids, the nearest
+     * cell and every gate are this frame's: the frame's cells are read again,
+     * the centroid tiles dropped, and each layer's last gate run again.
+     */
+    async setTableFrame(frame) {
+        const next = frame && frame.column && Number.isFinite(Number(frame.t))
+            ? { column: String(frame.column), t: Number(frame.t) } : null;
+        if (!this.dataLayer || JSON.stringify(this.dataLayer.tableFrame) === JSON.stringify(next)) {
+            return;
+        }
+        this.dataLayer.tableFrame = next;
+        this.numericData?.invalidateColumns?.();
+        if (this.numericData) this.numericData.cellsPromise = null;
+        this.updateCentroidFilter(this.centroidFilter);
+        if (!this.segmentationReady) return;
+        const { ids, centers } = await this.numericData.loadCells();
+        if (JSON.stringify(this.dataLayer.tableFrame) !== JSON.stringify(next)) return;
+        this.ids = ids || [];
+        this.centers = centers || [];
+        this.bindSegmentationBuffers(this.ids, this.centers);
+        for (const layer of this._cellStack.all?.() || []) {
+            if (layer.lastGates && Object.keys(layer.lastGates).length) {
+                this.updateSegmentationFilter(layer.lastGates, false, layer.name);
+            }
+        }
+        if (this.segmentationLastGates && Object.keys(this.segmentationLastGates).length) {
+            this.updateSegmentationFilter(this.segmentationLastGates, false, null);
+        }
+        this.rerenderSegmentationTiles?.(null);
+        this.viewer?.forceRedraw?.();
     }
 
     /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,

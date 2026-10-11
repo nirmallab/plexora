@@ -143,7 +143,7 @@ _past_transient_locks = past_transient_locks
 
 #: Column roles the core records centrally. A plugin names these, never a
 #: literal column name -- see plexora/api/dataset.py.
-ROLE_NAMES = ("cell_id", "x", "y", "image_id", "celltype", "z")
+ROLE_NAMES = ("cell_id", "x", "y", "image_id", "celltype", "z", "t")
 
 #: Human labels for the roles, used by the requirements modal and the edit page
 #: so the wording is identical wherever a role is asked for.
@@ -156,6 +156,9 @@ ROLE_LABELS = {
     # A cell's depth in a z-stack, in planes (an object table measured from a
     # 3-D label volume names it; plexora/server/volume/objects.py).
     "z": "Z coordinate column",
+    # The frame a row belongs to, in a time series' object table (measured
+    # per frame; plexora/server/volume/objects.py).
+    "t": "Frame column",
 }
 
 #: The column roles the import used to ask about, and no longer does.
@@ -262,6 +265,9 @@ class ColumnRoles:
     #: The plane a cell sits at, for a table of 3-D objects. None for every
     #: 2-D table, which is every table before volumes.
     z: str | None = None
+    #: The frame a row belongs to, for a time series' objects (one row per
+    #: cell per frame). None for every other table.
+    t: str | None = None
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "ColumnRoles":

@@ -181,6 +181,16 @@ class CellExplorerSidebarController {
             window.removeEventListener("plexora:segmentation-failed", onMaskFailed);
         });
 
+        // A time series' table: another frame is other rows, so the colours
+        // are read again for it (the values are cached per frame).
+        let shownFrame = this.ctx.view?.tableFrame?.() ?? null;
+        this.ctx.view?.onChange?.(() => {
+            const frame = this.ctx.view?.tableFrame?.() ?? null;
+            if (frame === shownFrame) return;
+            shownFrame = frame;
+            this.recolor();
+        });
+
         this.el("cell_explorer_mask_wait_skip")?.addEventListener("click", async () => {
             // An explicit "I would rather see something", which is a different
             // thing from the silent substitution this wait replaced. The mask

@@ -72,7 +72,7 @@ def cell_ids(dataset):
     return raw[keep].astype(np.uint32, copy=False), keep
 
 
-def encode(dataset, column: str, descriptor: dict) -> tuple[bytes, str, int]:
+def encode(dataset, column: str, descriptor: dict, t=None) -> tuple[bytes, str, int]:
     """(gzipped bytes, kind, cell count) for one column.
 
     `descriptor` is passed in rather than looked up so the codes below are
@@ -89,6 +89,15 @@ def encode(dataset, column: str, descriptor: dict) -> tuple[bytes, str, int]:
             f"column {column!r} has {values.size} values but the table has "
             f"{keep.size} rows"
         )
+
+    # A time series' table holds one row per cell per frame: `t` keeps the
+    # frame on screen's rows, so every id in the payload is one cell once.
+    frame_column = dataset.schema.get("t") if (dataset.schema and t is not None) else None
+    if frame_column:
+        frames = np.asarray(dataset.table.metadata_values(frame_column).values)
+        if frames.size == keep.size:
+            on = frames[keep] == int(t)
+            ids, values = ids[on], values[on]
 
     kind = descriptor.get("kind", "categorical")
     if kind == "continuous":

@@ -153,6 +153,13 @@
                     title="Measure in voxels and planes, without a z step">
                 <span class="layer-card-action-text">Measure in voxels</span>
             </button>
+            {# A time series measured with a mask per frame: link each cell
+               from frame to frame (server/volume/tracking.py). #}
+            <button type="button" class="layer-card-action" id="depth_track_button" hidden
+                    title="Link each cell from one frame to the next, so it keeps one track number through the series">
+                <span class="fas fa-route" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Link across frames</span>
+            </button>
             <button type="button" class="layer-card-action" id="depth_reload_button" hidden>
                 <span class="fas fa-rotate-right" aria-hidden="true"></span>
                 <span class="layer-card-action-text">Reload to use them</span>

@@ -17,6 +17,13 @@ Z is never downsampled.
 Built once at registration by `build_label_volume`; opened by
 `open_label_volume`, which returns a `LabelVolume`. Its `plane(z)` is the
 2-D pyramid of one plane: what `data_model.seg` was for a 2-D mask.
+
+A TIME SERIES of label volumes -- a (T, Z, Y, X) mask, one segmentation per
+frame -- is the same store with each frame in a group of its own (`t0`,
+`t1`, ...) and `frames` on the root; `frame(t)` opens one. A frame's ids are
+its own: the same id in two frames is the same cell only once the frames
+have been linked (`server/volume/tracking.py`). A single-frame store keeps
+its levels at the root, as every store built before time series did.
 """
 
 from __future__ import annotations
@@ -48,8 +55,8 @@ def _level_shapes(height: int, width: int, target: int = TARGET):
 
 
 def label_volume_shape(path) -> Optional[tuple]:
-    """`(Z, Y, X)` when `path` is a TIFF holding one integer label volume,
-    else None. Header only."""
+    """`(Z, Y, X)` when `path` is a TIFF holding one integer label volume, or
+    `(T, Z, Y, X)` for one label volume per frame; else None. Header only."""
     import tifffile as tf
 
     try:
@@ -59,16 +66,41 @@ def label_volume_shape(path) -> Optional[tuple]:
             dtype = np.dtype(series.dtype)
     except Exception:
         return None
-    if len(shape) != 3 or dtype.kind not in "ui" or shape[0] < 2:
+    if dtype.kind not in "ui" or shape[-1] in (3, 4):
         return None
-    if shape[-1] in (3, 4):
-        return None
-    return shape
+    if len(shape) == 3 and shape[0] >= 2:
+        return shape
+    if len(shape) == 4 and shape[0] >= 2:
+        return shape
+    return None
+
+
+def _write_frame(group, array, shapes, progress, done, total):
+    """One (Z, Y, X) label volume's levels into `group`; returns `done`."""
+    depth = int(array.shape[0])
+    arrays = []
+    for index, (h, w) in enumerate(shapes):
+        arrays.append(group.create_array(
+            str(index), shape=(depth, h, w), dtype=np.uint32,
+            chunks=(1, min(CHUNK, h), min(CHUNK, w)), fill_value=0))
+    for z in range(depth):
+        plane = np.asarray(array[z])
+        if plane.dtype.itemsize > 4 and plane.size and int(plane.max()) > 2**32 - 1:
+            raise ValueError("a label id does not fit in 32 bits")
+        plane = plane.astype(np.uint32, copy=False)
+        for index in range(len(shapes)):
+            step = 2 ** index
+            arrays[index][z] = plane[::step, ::step]
+            done += 1
+            if progress is not None:
+                progress(done, total)
+    return done
 
 
 def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
                        target: int = TARGET) -> str:
-    """Write the label volume at `source` (a (Z, Y, X) TIFF or array) to `dest`.
+    """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF or
+    array) to `dest`.
 
     Written to a sibling temp directory and renamed into place, so a reader
     never finds a half-built store under the final name.
@@ -87,30 +119,27 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
         array = zarr.open(handle.series[0].aszarr(), mode="r")
         close = handle.close
     try:
-        depth, height, width = (int(s) for s in array.shape)
+        shape = tuple(int(s) for s in array.shape)
+        if len(shape) == 4 and shape[0] == 1:
+            array, shape = array[0], shape[1:]
+        if len(shape) not in (3, 4):
+            raise ValueError(f"a label volume is (z, y, x) or (t, z, y, x), not {shape}")
+        frames = shape[0] if len(shape) == 4 else 1
+        depth, height, width = shape[-3:]
         dtype = np.dtype(array.dtype)
         if dtype.kind not in "ui":
             raise TypeError(f"a label volume has integer ids, not {dtype}")
         shapes = _level_shapes(height, width, target)
         group = zarr.open_group(str(tmp), mode="w")
-        arrays = []
-        for index, (h, w) in enumerate(shapes):
-            arrays.append(group.create_array(
-                str(index), shape=(depth, h, w), dtype=np.uint32,
-                chunks=(1, min(CHUNK, h), min(CHUNK, w)), fill_value=0))
-        total = depth * len(shapes)
-        done = 0
-        for z in range(depth):
-            plane = np.asarray(array[z])
-            if plane.dtype.itemsize > 4 and plane.size and int(plane.max()) > 2**32 - 1:
-                raise ValueError("a label id does not fit in 32 bits")
-            plane = plane.astype(np.uint32, copy=False)
-            for index in range(len(shapes)):
-                step = 2 ** index
-                arrays[index][z] = plane[::step, ::step]
-                done += 1
-                if progress is not None:
-                    progress(done, total)
+        total = frames * depth * len(shapes)
+        if frames == 1:
+            _write_frame(group, array, shapes, progress, 0, total)
+        else:
+            done = 0
+            for t in range(frames):
+                child = group.create_group(f"t{t}")
+                done = _write_frame(child, array[t], shapes, progress, done, total)
+                child.update_attributes({"frame": t, "depth": depth})
         datasets = [{"path": str(index), "coordinateTransformations": [
             {"type": "scale", "scale": [1.0, float(2 ** index), float(2 ** index)]}]}
             for index in range(len(shapes))]
@@ -123,6 +152,7 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
             "image-label": {"version": "0.4", "source": {"image": "../../"}},
             MARKER: True,
             "depth": depth,
+            "frames": frames,
             "source": str(source) if not isinstance(source, np.ndarray) else None,
         })
     finally:
@@ -208,11 +238,17 @@ class _PlanePyramid:
 
 class LabelVolume:
     """An opened label volume. `plane(z)` is one plane's 2-D pyramid; the
-    volume itself reads `(Z, H, W)` blocks for measurement."""
+    volume itself reads `(Z, H, W)` blocks for measurement. A store with a
+    label volume per frame opens at frame `t` (0 by default); `frame(t)` is
+    another frame's, on the same store."""
 
-    def __init__(self, path):
+    def __init__(self, path, t: int = 0):
         self.path = str(path)
-        self._group = zarr.open_group(self.path, mode="r")
+        root = zarr.open_group(self.path, mode="r")
+        self.frames = max(1, int(dict(root.attrs).get("frames") or 1))
+        self.t = max(0, min(self.frames - 1, int(t))) if self.frames > 1 else 0
+        self._group = root[f"t{self.t}"] if self.frames > 1 else root
+        self._frames = {self.t: self}
         keys = sorted((key for key in self._group.array_keys()), key=int)
         self._arrays = [self._group[key] for key in keys]
         self.depth = int(self._arrays[0].shape[0])
@@ -239,6 +275,19 @@ class LabelVolume:
     def default_plane(self) -> _PlanePyramid:
         return self.plane(self.depth // 2)
 
+    def frame(self, t: int) -> "LabelVolume":
+        """Frame `t`'s label volume (this one for a single-frame store: one
+        segmentation drawn on every frame)."""
+        if self.frames == 1:
+            return self
+        t = max(0, min(self.frames - 1, int(t)))
+        held = self._frames.get(t)
+        if held is None:
+            held = LabelVolume(self.path, t)
+            held._frames = self._frames
+            self._frames[t] = held
+        return held
+
     def read(self, level: int, z0: int, z1: int, rows: slice, cols: slice) -> np.ndarray:
         """`(Z, H, W)` for planes z0..z1 inclusive at `level`."""
         return np.asarray(self._arrays[level][int(z0):int(z1) + 1, rows, cols])
@@ -258,5 +307,5 @@ class LabelVolume:
         return key in self.default_plane()
 
 
-def open_label_volume(path) -> LabelVolume:
-    return LabelVolume(path)
+def open_label_volume(path, t: int = 0) -> LabelVolume:
+    return LabelVolume(path, t)

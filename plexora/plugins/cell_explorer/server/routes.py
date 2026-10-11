@@ -102,8 +102,10 @@ def get_values():
                            error=f"{column!r} cannot be read as {kind}"), 400
         descriptor = {**descriptor, "kind": kind}
 
+    frame = request.args.get('t')
     try:
-        payload, resolved_kind, count = value_encoder.encode(dataset, column, descriptor)
+        payload, resolved_kind, count = value_encoder.encode(
+            dataset, column, descriptor, t=int(frame) if frame not in (None, "") else None)
     except (KeyError, ValueError) as exc:
         return jsonify(success=False, error=str(exc)), 400
 

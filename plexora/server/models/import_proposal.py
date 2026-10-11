@@ -486,7 +486,8 @@ def looks_like_label_image(path):
                 # labels.py). Said so by its name, or by the middle plane
                 # looking like ids (sparse values, a background of zeros); a
                 # stack of intensities is anything else.
-                if len(shape) == 3 and dtype.kind in "ui" and _volume_looks_like_labels(
+                # A (T, Z, Y, X) stack is one label volume per frame.
+                if len(shape) in (3, 4) and dtype.kind in "ui" and _volume_looks_like_labels(
                         handle, path, dtype):
                     return True
                 return False

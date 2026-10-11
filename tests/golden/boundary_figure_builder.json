@@ -127,7 +127,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -141,7 +141,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -355,7 +355,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -369,7 +369,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -442,7 +442,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_colour_z",
+        "/client/src/js/views/depthTools.js?v=20261011_frames",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -453,7 +453,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_fold"
+        "/client/src/js/main.js?v=20261011_frames"
       ],
       "status": 200,
       "styles": [
@@ -668,7 +668,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -682,7 +682,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -792,7 +792,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_colour_z",
+        "/client/src/js/views/depthTools.js?v=20261011_frames",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -803,7 +803,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_fold"
+        "/client/src/js/main.js?v=20261011_frames"
       ],
       "status": 200,
       "styles": [
@@ -827,7 +827,7 @@
       ]
     }
   },
-  "route_count": 232,
+  "route_count": 233,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/figure_builder/api/captures",
@@ -1055,6 +1055,7 @@
     "POST /upload_data_file",
     "POST /volume/<string:datasource>/objects",
     "POST /volume/<string:datasource>/pin",
+    "POST /volume/<string:datasource>/tracks",
     "PUT /plugins/figure_builder/api/figures/<figure_id>",
     "PUT /plugins/figure_builder/api/figures/<figure_id>/thumbnail",
     "PUT /project/<string:name>/layers/order",

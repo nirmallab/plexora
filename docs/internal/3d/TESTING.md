@@ -153,6 +153,16 @@ only cells on its planes (needs a table with a z column, e.g. the measured one).
 between frames, the Depth card has a Frame field, the badge reads `t 3/3 · 60 s · z 2/4`. A
 region limited on one frame is faint on the others.
 
+*Cells through time.* Add a mask with one label volume per frame (a T×Z×Y×X label TIFF), or one
+3-D mask for every frame. "Measure cells" now measures every frame: one row per cell per frame,
+its frame in a `t` column, which becomes the table's frame. With a mask per frame, each frame
+numbers its cells on its own: "Link across frames" matches each frame's cells to the next frame's
+by distance and writes a `track` column (the same number for the same cell through the series;
+the card says how many were followed). Divisions and a cell missed for a frame are not followed.
+In the viewer, outlines, centroids, Cell Explorer's colours, gates and a click on a cell all use
+the frame on screen's rows; step frames and they follow. A region drawn on one frame counts and
+maps only that frame's cells.
+
 **Magic select on a stack.** It outlines the plane (or projection) on screen; move to another
 plane and the next click is outlined from that plane's pixels.
 
@@ -224,7 +234,7 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
-- Hand-off to SCIMAP Pro with µm coordinates; object tables per frame of a time series.
+- Hand-off to SCIMAP Pro with µm coordinates.
 - Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
   you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).

@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261005_analysis_bridge"
+VERSION = "20261011_table_frames"
 
 
 def _blueprint():

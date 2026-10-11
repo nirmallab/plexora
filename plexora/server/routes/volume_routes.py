@@ -58,6 +58,9 @@ def volume_info(datasource):
     info["frame_interval"] = project.image.frame_interval
     info["segmentation"] = _segmentation_info(project)
     info["bricks"] = bricks_state(datasource)
+    # A time series' object table names each row's frame: the viewer then
+    # reads only the frame on screen's rows (ImageViewer.setTableFrame).
+    info["table_t"] = project.roles.get("t") if project.has_table else None
     return jsonify(info)
 
 
@@ -628,6 +631,8 @@ def pin_projection(datasource):
 
 OBJECTS_TASK = "objects"
 OBJECTS_STAGES = {"measuring": (0, 97, "Measuring cells")}
+TRACKS_TASK = "tracks"
+TRACKS_STAGES = {"linking": (0, 97, "Linking cells across frames")}
 #: The last finished measurement's summary per project, for the card that
 #: started it (the object table's manifest outlives this; see `objects_state`).
 _objects_results: dict = {}
@@ -657,7 +662,13 @@ def objects_state(project) -> dict:
         "measured": ({"objects": manifest.get("objects"), "created": manifest.get("created"),
                       "units": manifest.get("units"), "table": str(table),
                       "attached": str(project.dataset.src if project.dataset else "")
-                      == str(table)} if manifest else None),
+                      == str(table),
+                      # A time series: rows per frame, and whether they were
+                      # linked across frames (server/volume/tracking.py).
+                      "frames": manifest.get("frames"),
+                      "labels_per_frame": manifest.get("labels_per_frame"),
+                      "tracking": manifest.get("tracking")} if manifest else None),
+        "tracks_task": layer_jobs.tasks(project.name).get(TRACKS_TASK),
     }
 
 
@@ -670,6 +681,43 @@ def _z_step_known(project) -> bool:
         return False
     source = views.current_source(project.name)
     return bool(source is not None and source.volume.spacing.volumetric_ok())
+
+
+@app.route('/volume/<string:datasource>/tracks', methods=['POST'])
+def track_objects_route(datasource):
+    """Link a time series' measured cells from frame to frame (a `track`
+    column in the object table). `{"max_distance": number}` in the table's
+    units (µm, or voxels), optional -> 202 and the task record; the Depth
+    card polls GET /objects. 400 says why it cannot run."""
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume import tracking
+
+    project = _project_or_404(datasource)
+    payload = request.get_json(silent=True) or {}
+    limit = payload.get("max_distance")
+    if limit is not None:
+        try:
+            limit = float(limit)
+        except (TypeError, ValueError):
+            return jsonify(error="max_distance is a number"), 400
+        if not limit > 0:
+            return jsonify(error="max_distance is above zero"), 400
+    measured = objects_state(project).get("measured") or {}
+    if not measured:
+        return jsonify(error="Measure this project's cells first: there is nothing to "
+                             "link."), 400
+    if (measured.get("frames") or 1) < 2:
+        return jsonify(error="The object table has one frame: there is nothing to link "
+                             "across."), 400
+    name = project.name
+
+    def work(stage, report, cancel):
+        stage("linking")
+        tracking.track_project_objects(Project.load(name), max_distance=limit,
+                                       progress=lambda done, total: report(done, total))
+
+    record = layer_jobs.start_task(name, TRACKS_TASK, work, stages=TRACKS_STAGES)
+    return jsonify(task=record), 202
 
 
 @app.route('/volume/<string:datasource>/objects', methods=['GET'])

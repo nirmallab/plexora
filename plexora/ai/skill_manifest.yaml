@@ -22,7 +22,7 @@ skills:
     tier: judgement
     tools: [inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_region,
             render_projection, render_sections, render_object_views, check_volume_quality,
-            measure_objects, pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab,
+            measure_objects, track_objects, pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab,
             carry_roi_through_planes, update_roi]
   - name: analysis-handoff
     title: Hand a question to the analysis application, and show the answer

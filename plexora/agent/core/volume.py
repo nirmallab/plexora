@@ -455,6 +455,38 @@ def measure_objects(call, inp):
     return {**summary, "receipt": receipt.model_dump(mode="json")}
 
 
+# -- track_objects ---------------------------------------------------------------
+
+
+class TrackInput(ProjectInput):
+    max_distance: float | None = Field(
+        None, gt=0, description="The farthest a cell may move between frames and still be "
+                                "linked, in the object table's units (µm when it was measured "
+                                "in µm, else voxels). Default: the median distance from a cell "
+                                "to its nearest neighbour in the first frame.")
+
+
+def track_objects(call, inp):
+    """Link a time series' measured cells from frame to frame: a `track` column."""
+    from plexora.agent.receipts import make_receipt
+    from plexora.api import features
+    from plexora.server.volume import objects, tracking
+
+    record = call.session.project(inp.project)
+    try:
+        summary = tracking.track_project_objects(
+            record, max_distance=inp.max_distance,
+            progress=lambda done, total: call.progress(done, total, "linking frames"))
+    except objects.ObjectsUnavailable as exc:
+        raise AgentError("precondition_missing", str(exc),
+                         detail={"hint": "measure_objects first, on a time series"}) from None
+    call.session.invalidate(inp.project)
+    features.reload_if_loaded(inp.project)
+    receipt = make_receipt(call, changed=True, before=None, after={"tracking": summary},
+                           persistent_state="artifact")
+    return {**summary, "receipt": receipt.model_dump(mode="json")}
+
+
 # -- pin_projection --------------------------------------------------------------
 
 
@@ -674,6 +706,16 @@ def capabilities():
             permission="reversible_write", input_model=MeasureInput, handler=measure_objects,
             execution="job", writes=("project_config",), egress="aggregates",
             tags=TAGS + ("measure", "objects", "cells", "segmentation", "volume")),
+        Capability(
+            name="volume.track_objects", tool_name="track_objects", owner="core",
+            purpose="Link a time series' measured cells from frame to frame, so the same cell "
+                    "has the same `track` number in every frame: each pair of frames matched "
+                    "one to one on centroid distance (least total distance, none farther than "
+                    "a cap). Needs an object table measured per frame (measure_objects on a "
+                    "series). Divisions and gap closing are not done, and the result says so.",
+            permission="reversible_write", input_model=TrackInput, handler=track_objects,
+            execution="job", writes=("project_config",), egress="aggregates",
+            tags=TAGS + ("track", "tracking", "time", "frames", "objects", "cells")),
         Capability(
             name="volume.pin_projection", tool_name="pin_projection", owner="core",
             purpose="Compute a projection of a z-stack (max, mean, min, std, median, "

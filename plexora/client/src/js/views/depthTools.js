@@ -177,7 +177,7 @@
                 cells = null;
             }
             paintCells();
-            const pending = cells?.task?.status === "pending";
+            const pending = cells?.task?.status === "pending" || cells?.tracks_task?.status === "pending";
             clearTimeout(cellsTimer);
             if (pending && root) cellsTimer = setTimeout(loadCells, 1000);
         }
@@ -193,8 +193,16 @@
             const reload = q("#depth_reload_button");
             const task = cells.task || {};
             const result = cells.result;
-            const pending = task.status === "pending";
+            const tracks = cells.tracks_task || {};
+            const pending = task.status === "pending" || tracks.status === "pending";
             if (measure) measure.disabled = pending;
+            // A series measured frame by frame with its own ids per frame.
+            const track = q("#depth_track_button");
+            const series = (cells.measured?.frames || 1) > 1 && cells.measured?.labels_per_frame;
+            if (track) {
+                track.hidden = !series;
+                track.disabled = pending;
+            }
             if (voxels) {
                 voxels.hidden = Boolean(cells.z_step_known) || pending;
                 voxels.disabled = pending;
@@ -202,7 +210,13 @@
             if (reload) reload.hidden = !(result && result.attached && task.status === "ready");
             if (!note) return;
             const count = (n) => `${Number(n).toLocaleString()} cell${n === 1 ? "" : "s"}`;
-            if (pending) {
+            const linked = cells.measured?.tracking;
+            if (tracks.status === "pending") {
+                const percent = Number.isFinite(tracks.progress) ? ` ${Math.round(tracks.progress)} %` : "";
+                note.textContent = `Linking cells across frames…${percent}`;
+            } else if (tracks.status === "failed") {
+                note.textContent = `Could not link: ${tracks.error || "see the server log"}`;
+            } else if (pending) {
                 const percent = Number.isFinite(task.progress) ? ` ${Math.round(task.progress)} %` : "";
                 note.textContent = `Measuring cells…${percent}`;
             } else if (task.status === "failed") {
@@ -213,14 +227,38 @@
                     + (result.attached ? ". They are this project's cell table now."
                         : ". The table is written beside the project's own.");
             } else if (cells.measured) {
+                const frames = cells.measured.frames || 1;
                 note.textContent = `${count(cells.measured.objects)} measured`
+                    + (frames > 1 ? ` over ${frames} frames` : "")
                     + (cells.measured.attached ? "; the cell table." : ".")
+                    + (linked ? ` Linked into ${Number(linked.tracks).toLocaleString()} tracks`
+                        + ` (${Math.round(100 * (linked.linked_fraction || 0))} % of cells followed`
+                        + " to the next frame; divisions are not followed)."
+                        : (frames > 1 && cells.measured.labels_per_frame
+                            ? " Each frame numbers its cells on its own until they are linked." : ""))
                     + " Measure again after editing the mask or the z step.";
             } else {
                 note.textContent = "Measures every cell of the 3-D mask once, whole: volume, "
                     + "surface, centroid and each channel's mean, one row per cell."
                     + (cells.z_step_known ? "" : " In µm it needs the z step above.");
             }
+        }
+
+        async function track() {
+            const vs = viewStateOf();
+            if (!vs) return;
+            const path = `volume/${encodeURIComponent(vs.datasource)}/tracks`;
+            try {
+                const response = await fetch(global.plexoraUrl ? global.plexoraUrl(path) : `/${path}`, {
+                    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+                const answer = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(answer.error || `HTTP ${response.status}`);
+            } catch (error) {
+                global.PlexoraToast?.show?.({
+                    title: "Cells could not be linked across frames.",
+                    body: String(error.message || error), tone: "warning" });
+            }
+            loadCells();
         }
 
         async function measure(units) {
@@ -443,6 +481,7 @@
                 q("#depth_pin_button")?.addEventListener("click", pin);
                 q("#depth_measure_button")?.addEventListener("click", () => measure("physical"));
                 q("#depth_measure_voxels_button")?.addEventListener("click", () => measure("voxel"));
+                q("#depth_track_button")?.addEventListener("click", () => track());
                 q("#depth_reload_button")?.addEventListener("click", () => global.location.reload());
                 loadCells();
                 loadBricks();

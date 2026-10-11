@@ -38,7 +38,7 @@ JOINER = "_"
 UNASSIGNED = ""
 
 
-def assign(features, categories, xs, ys, zs=None):
+def assign(features, categories, xs, ys, zs=None, ts=None):
     """(category_label, roi_name) for each point, in point order.
 
     `features` is the ROI list for one image, in document order; `categories`
@@ -52,6 +52,11 @@ def assign(features, categories, xs, ys, zs=None):
     (`schema.normalize_solid`) holds a cell when the cell lies inside that
     shape's outline on the cell's plane. Without `zs` every region covers every
     plane, as on a flat image, and a solid region is its footprint.
+
+    `ts` is each point's frame (the table's `t` role) for a time series' table
+    (one row per cell per frame): a region drawn on one frame (its extent's
+    `t`) then holds only that frame's rows. A region with no frame covers
+    every frame.
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
@@ -104,6 +109,9 @@ def assign(features, categories, xs, ys, zs=None):
         with np.errstate(invalid="ignore"):
             on_plane = np.floor(z + 0.5) == plane_of[part_index]
         keep = np.where(sectioned, on_plane, planes_mask(features, polygon_index, z))
+        point_index, polygon_index = point_index[keep], polygon_index[keep]
+    if ts is not None:
+        keep = frames_mask(features, polygon_index, np.asarray(ts)[point_index])
         point_index, polygon_index = point_index[keep], polygon_index[keep]
 
     # Sorted by polygon index within each point, so the joined order is
@@ -174,6 +182,28 @@ def planes_mask(features, feature_index, z):
     with np.errstate(invalid="ignore"):
         inside = (plane >= low[feature_index]) & (plane <= high[feature_index])
     return every[feature_index] | inside
+
+
+def frames_mask(features, feature_index, t):
+    """For each (feature, row) pair, whether the feature is on the row's frame.
+
+    A region drawn on one frame of a time series names it (`extent["t"]`) and
+    holds only rows of that frame; one that names none holds every frame's.
+    A row with no frame (NaN) is held only by a region on every frame.
+    """
+    import numpy as np
+
+    frames = []
+    for feature in features:
+        extent = feature.get("extent") or {}
+        value = extent.get("t") if isinstance(extent, dict) else None
+        frames.append(np.nan if value is None else float(value))
+    frame_of = np.asarray(frames, dtype="float64")
+    feature_index = np.asarray(feature_index, dtype=int)
+    wanted = frame_of[feature_index]
+    with np.errstate(invalid="ignore"):
+        same = np.asarray(t, dtype="float64") == wanted
+    return np.isnan(wanted) | same
 
 
 def current_image_id(dataset):

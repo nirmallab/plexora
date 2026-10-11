@@ -347,6 +347,11 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
         inside &= mapping.planes_mask(
             [feature], np.zeros(frame.height, dtype=int),
             frame[z_column].to_numpy().astype("float64"))
+    # A time series' table: a region drawn on one frame holds that frame's rows.
+    t_column = ds.schema.get("t")
+    if extent and t_column and t_column in frame.columns:
+        inside &= mapping.frames_mask([feature], np.zeros(frame.height, dtype=int),
+                                      frame[t_column].to_numpy())
     id_column = ds.schema.cell_id if ds.schema.cell_id in frame.columns else "id"
     ids = frame[id_column].to_numpy()[inside] if id_column in frame.columns else np.empty(0)
     total = int(frame.height)

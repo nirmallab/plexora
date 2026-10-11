@@ -10,6 +10,13 @@ it was made) and, when the project has no table yet, attached as its table
 with roles `cell_id = label`, `x = X`, `y = Y`, `z = Z` -- so the label ids
 ARE the cell ids and outlines, picking and colour-by line up with the rows.
 
+A TIME SERIES is measured frame by frame: one row per object per frame, its
+frame in `t` (the table's `t` role). With a label volume per frame each
+frame's own objects are measured (their ids are the frame's until the frames
+are linked, server/volume/tracking.py); with one label volume for every
+frame, the same objects are measured at every frame -- each cell's intensity
+through time.
+
 A project that already has a table keeps it: the object table is written
 beside it and the caller decides (attach_as_table=True replaces it).
 """
@@ -75,22 +82,38 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
         if unknown:
             raise ObjectsUnavailable(f"no channel(s) {unknown!r} in this image")
         indices = [all_names.index(name) for name in wanted]
+        frames = max(1, int(volume.frames))
+        if labels.frames > 1 and labels.frames != frames:
+            raise ObjectsUnavailable(
+                f"the mask has {labels.frames} frames and the image {frames}; "
+                "they do not describe the same series")
 
-        def read(index, z, rows, cols):
-            if cancelled is not None and cancelled():
-                raise InterruptedError("cancelled")
-            level = source.level_array(0, z, 0)
-            return np.asarray(level[indices[index], rows, cols])
+        parts, manifest = [], None
+        for t in range(frames):
+            def read(index, z, rows, cols, t=t):
+                if cancelled is not None and cancelled():
+                    raise InterruptedError("cancelled")
+                level = source.level_array(t, z, 0)
+                return np.asarray(level[indices[index], rows, cols])
 
-        columns, manifest = volume_measure.measure(
-            labels, read, channel_names=wanted, spacing=volume.spacing, units=units,
-            progress=progress)
+            def step(done, total, t=t):
+                if progress is not None:
+                    progress(t * total + done, frames * total)
+
+            columns, manifest = volume_measure.measure(
+                labels.frame(t), read, channel_names=wanted, spacing=volume.spacing,
+                units=units, t=t, progress=step)
+            parts.append(columns)
     finally:
         source.close()
 
     import polars as pl
 
-    frame = pl.DataFrame({name: np.asarray(values) for name, values in columns.items()})
+    frame = pl.concat([pl.DataFrame({name: np.asarray(values) for name, values in part.items()})
+                       for part in parts], how="vertical")
+    if frames > 1:
+        manifest["frames"] = frames
+        manifest["labels_per_frame"] = labels.frames > 1
     table_path, manifest_path = object_paths(project)
     table_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = table_path.with_name(table_path.name + ".tmp")
@@ -120,17 +143,38 @@ def attach_object_table(project, table_path, frame=None):
     from plexora.datasource import flat_table_spec
     from plexora.server.models.project import Project
 
-    if frame is None:
-        import polars as pl
+    import polars as pl
 
+    if frame is None:
         frame = pl.read_parquet(table_path, n_rows=1)
     schema = [{"name": name, "dtype": str(dtype)} for name, dtype in frame.schema.items()]
     spec = flat_table_spec(str(table_path), schema, x="X", y="Y", id_column="label",
                            data_type="parquet")
-    spec = replace(spec, roles=replace(spec.roles, z="Z"))
+    # A time series' rows name their frame; one frame's table needs no `t`.
+    series = "t" in frame.columns and pl.read_parquet(
+        table_path, columns=["t"])["t"].n_unique() > 1
+    spec = replace(spec, roles=replace(spec.roles, z="Z", t="t" if series else None))
     fresh = Project.load(project.name)
     # The roles are this module's own columns, so they are facts rather than
     # guesses to put in front of the user; which columns are markers is still
     # theirs to check once. Answers about a table this replaces go first.
+    confirmed = ("table", "role:cell_id", "role:x", "role:y", "role:z")
     fresh.forget_table_answers().patch(dataset=spec).with_confirmed(
-        ("table", "role:cell_id", "role:x", "role:y", "role:z")).save()
+        confirmed + (("role:t",) if series else ())).save()
+
+
+def note_table_column(project, table_path, column):
+    """A column added to the object table after it was attached (`track`):
+    recorded with the table's other non-marker columns, so the project's
+    reading of the table keeps every answer it had."""
+    from plexora.server.models.project import Project
+
+    fresh = Project.load(project.name)
+    spec = fresh.dataset
+    if spec is None or str(spec.src) != str(table_path):
+        return False
+    if column in spec.columns.metadata or column in spec.columns.markers:
+        return True
+    columns = replace(spec.columns, metadata=tuple(spec.columns.metadata) + (column,))
+    fresh.patch(dataset=replace(spec, columns=columns)).save()
+    return True

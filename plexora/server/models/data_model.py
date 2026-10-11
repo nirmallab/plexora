@@ -1493,14 +1493,40 @@ def _warm_datasource_caches(datasource_name):
         lock.release()
 
 
-def query_for_closest_cell(x, y, datasource_name):
+def _frame_rows(datasource_name, t):
+    """For a time series' object table (a `t` role) and a frame: a boolean
+    row mask over the loaded table, True on that frame's rows. None when
+    there is no frame to keep to."""
+    if t is None or datasource is None:
+        return None
+    column = _project(datasource_name).roles.get("t")
+    if not column or column not in datasource.columns:
+        return None
+    return datasource[column].to_numpy() == int(t)
+
+
+def query_for_closest_cell(x, y, datasource_name, t=None):
     global datasource
     global source
     global ball_tree
     _ensure_loaded(datasource_name)
     if ball_tree is None:
         return {}
-    distance, index = ball_tree.query([[x, y]], k=1)
+    keep = _frame_rows(datasource_name, t)
+    if keep is not None:
+        # The tree holds every frame's cells; the nearest of THIS frame's is
+        # among the nearest few of all (every frame's copy of a still cell
+        # sits on the same spot), asked for widely enough to find one.
+        frames = max(1, int(np.unique(datasource[_project(datasource_name).roles.get("t")]
+                                      .to_numpy()).size))
+        k = min(len(keep), max(8, 4 * frames))
+        distances, indices = ball_tree.query([[x, y]], k=k)
+        picked = [(d, i) for d, i in zip(distances[0], indices[0]) if keep[int(i)]]
+        if not picked:
+            return {}
+        distance, index = np.array([[picked[0][0]]]), np.array([[picked[0][1]]])
+    else:
+        distance, index = ball_tree.query([[x, y]], k=1)
     if distance == np.inf:
         return {}
     #         Nothing found
@@ -1825,7 +1851,7 @@ def _all_cells_from_frame(frame, start_keys, data_type, read_missing=None):
     return query.astype(np.float32)
 
 
-def get_all_cells(datasource_name, start_keys, data_type=float):
+def get_all_cells(datasource_name, start_keys, data_type=float, t=None):
     global datasource
     global source
 
@@ -1837,8 +1863,13 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
     remote = _remote_table()
     if remote is not None:
         return remote.all_cells(start_keys, data_type)
-    return _all_cells_from_frame(datasource, start_keys, data_type,
-                                 _feature_reader())
+    values = _all_cells_from_frame(datasource, start_keys, data_type, _feature_reader())
+    keep = _frame_rows(datasource_name, t)
+    if keep is not None:
+        # One frame's rows of a time series' table, in table order: the ids
+        # in them are unique, which is what the viewer's id-keyed tables need.
+        values = values.reshape(-1, len(start_keys))[keep].reshape(-1)
+    return values
 
 
 def get_centroid_manifest(datasource_name):
@@ -2877,10 +2908,13 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
 
         spec = views.resolve(datasource_name, view)
         if spec is not None:
+            # A label volume per frame: the view's frame's (frame(t) is the
+            # one volume when the mask has a single frame).
+            labels = seg.frame(spec.t) if hasattr(seg, "frame") else seg
             if spec.kind == "plane":
-                pyramid = seg.plane(spec.z)
+                pyramid = labels.plane(spec.z)
             elif spec.kind == "slab":
-                pyramid = seg.plane((spec.z0 + spec.z1) // 2)
+                pyramid = labels.plane((spec.z0 + spec.z1) // 2)
     return read_tile(
         pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],

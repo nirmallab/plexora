@@ -516,6 +516,14 @@ async function init(config, savedViewTransform = null) {
             viewState.registerSurface("labels", {
                 order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
         }
+        // A time series' object table (one row per cell per frame): the rows
+        // the viewer reads follow the frame on screen -- the cells, their
+        // centroids, the nearest cell to a click and every gate.
+        const tableT = viewState.info?.table_t;
+        if (tableT && viewState.frames > 1) {
+            seaDragonViewer.setTableFrame({ column: tableT, t: viewState.get().t });
+            viewState.subscribe((state) => seaDragonViewer.setTableFrame({ column: tableT, t: state.t }));
+        }
     }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
@@ -1834,7 +1842,7 @@ async function init(config, savedViewTransform = null) {
      *   reference image layer, the modalities present, and whether it has no
      *   image of its own.
      * @property {Object} view - The view on screen and the room over it. On a
-     *   z-stack: `planes()`, `frame()`, `label()`, `onChange(fn)`, and
+     *   z-stack: `planes()`, `frame()`, `tableFrame()`, `label()`, `onChange(fn)`, and
      *   `addSectionOverlay(id, provider)` to draw in the XZ / YZ panes. On
      *   every image: `dock(element, {corner, order, collapse})` floats a control over
      *   the image in core's canvas layout -- corners "top-left", "top-right",
@@ -1927,6 +1935,14 @@ async function init(config, savedViewTransform = null) {
                 frame() {
                     const vs = __plexora.viewState;
                     return vs?.enabled?.() ? (vs.get().t || 0) : 0;
+                },
+                /** The frame the cell table's rows on screen belong to, for a
+                 *  time series' object table (one row per cell per frame), or
+                 *  null for any other table: a plugin reading rows asks for
+                 *  this frame's (`t=`), as core's own requests do. */
+                tableFrame() {
+                    const frame = __plexora.dataLayer?.tableFrame;
+                    return frame ? frame.t : null;
                 },
                 /** Called after the view on screen changes; cleaned up with the plugin. */
                 onChange(fn) {

@@ -105,7 +105,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -119,7 +119,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -311,7 +311,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -325,7 +325,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -398,7 +398,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_colour_z",
+        "/client/src/js/views/depthTools.js?v=20261011_frames",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -409,7 +409,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_fold"
+        "/client/src/js/main.js?v=20261011_frames"
       ],
       "status": 200,
       "styles": [
@@ -438,18 +438,18 @@
           "tool_panel_slot": "cell_explorer/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerState.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261005_analysis_bridge",
-          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261005_analysis_bridge"
+          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerState.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261011_table_frames",
+          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261011_table_frames"
         ],
         "active_tool_styles": [
-          "/plugins/cell_explorer/static/cell_explorer.css?v=20261005_analysis_bridge"
+          "/plugins/cell_explorer/static/cell_explorer.css?v=20261011_table_frames"
         ],
         "available_tools": [
           {
@@ -598,7 +598,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261010_hd",
+        "/client/src/js/services/dataLayer.js?v=20261011_frames",
         "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -612,7 +612,7 @@
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
         "/client/src/js/services/canvasLayout.js?v=20261011_fold",
-        "/client/src/js/views/imageViewer.js?v=20261010_windows",
+        "/client/src/js/views/imageViewer.js?v=20261011_frames",
         "/client/src/js/views/miniMap.js?v=20261011_fold",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -663,15 +663,15 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerState.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261005_analysis_bridge",
-        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerState.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261011_table_frames",
+        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261011_table_frames",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261010_carry",
@@ -694,7 +694,7 @@
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
         "/client/src/js/views/depthStrip.js?v=20261011_colour_z",
-        "/client/src/js/views/depthTools.js?v=20261011_colour_z",
+        "/client/src/js/views/depthTools.js?v=20261011_frames",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
         "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
@@ -705,7 +705,7 @@
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_fold"
+        "/client/src/js/main.js?v=20261011_frames"
       ],
       "status": 200,
       "styles": [
@@ -715,7 +715,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/cell_explorer/static/cell_explorer.css?v=20261005_analysis_bridge"
+        "/plugins/cell_explorer/static/cell_explorer.css?v=20261011_table_frames"
       ],
       "tool_mounts": [
         [
@@ -729,7 +729,7 @@
       ]
     }
   },
-  "route_count": 205,
+  "route_count": 206,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -932,6 +932,7 @@
     "POST /upload_data_file",
     "POST /volume/<string:datasource>/objects",
     "POST /volume/<string:datasource>/pin",
+    "POST /volume/<string:datasource>/tracks",
     "PUT /project/<string:name>/layers/order",
     "PUT /view_state/<string:datasource>",
     "PUT /view_transform/<string:datasource>",

@@ -95,8 +95,20 @@ Gating 3D evidence waits for feature/spatial-gating; SCIMAP hand-off in µm not 
 Time series (first slice): a T×Z OME-TIFF with a stated time increment registers with
 `imageTSemantics: time`; the viewer steps frames (`.`/`,`, the Depth card's Frame field), the
 badge reads "t 3/3 · 60 s · z 2/4", tiles carry `t2z2`. ROI extents carry `t`: a region drawn on
-one frame is faint on the others and its badge names the frame. Not yet: cell mapping by frame
-(object tables are measured per frame, t=0 today), a frame control on the strip, tracking.
+one frame is faint on the others and its badge names the frame. The strip has frame step
+buttons under its readout.
+
+Cells through time (2026-10-11): label volumes per frame (`labels_v1` with `t<k>` groups,
+`LabelVolume.frame(t)`, label tiles at the view's frame; a (T, Z, Y, X) mask TIFF is detected as
+one); `measure_objects` measures every frame (rows per cell per frame, `t` column, new table
+role `t`); `server/volume/tracking.py` links consecutive frames by least-total-distance
+assignment under a cap (median nearest-neighbour distance by default; greedy past 16 M
+candidate pairs) into a `track` column (`/volume/<ds>/tracks`, Depth card "Link across frames",
+agent `track_objects`); ROI mapping and counts keep a frame-limited region to its frame's rows;
+the viewer's row reads (cells, centroids, nearest cell, gates, Cell Explorer values) carry the
+frame on screen (`dataLayer.tableFrame`, `ctx.view.tableFrame()`). Not done: divisions, gap
+closing; the gating plugin's server-side gated-id route ignores the frame (the viewer's local
+gate does not).
 
 ## Decisions taken while implementing
 

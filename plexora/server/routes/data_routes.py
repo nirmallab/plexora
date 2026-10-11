@@ -60,7 +60,10 @@ def get_nearest_cell():
     x = float(request.args.get('point_x'))
     y = float(request.args.get('point_y'))
     datasource = request.args.get('datasource')
-    resp = data_model.query_for_closest_cell(x, y, datasource)
+    # The frame on screen, for a time series' object table: its cells only.
+    t = request.args.get('t')
+    resp = data_model.query_for_closest_cell(x, y, datasource,
+                                             t=int(t) if t not in (None, "") else None)
     return serialize_and_submit_json(resp)
 
 
@@ -77,7 +80,9 @@ def get_all_cells(dtype):
     datasource = request.args.get('datasource')
     data_type = int if 'integer' == dtype else float
     start_keys = list(request.args.get('start_keys').split(','))
-    resp = data_model.get_all_cells(datasource, start_keys, data_type)
+    t = request.args.get('t')
+    resp = data_model.get_all_cells(datasource, start_keys, data_type,
+                                    t=int(t) if t not in (None, "") else None)
     content = gzip.compress(resp.tobytes('C'))
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
