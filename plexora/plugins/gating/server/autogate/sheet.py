@@ -111,7 +111,7 @@ def _ascii(text):
 
 
 def _field_panel(session, record, bounds, layers, marker, low, high, pixel=None,
-                 ids=None):
+                 ids=None, view=None):
     from PIL import Image
     import io
 
@@ -127,7 +127,8 @@ def _field_panel(session, record, bounds, layers, marker, low, high, pixel=None,
         cells=CellsSpec(highlight=(IdHighlight(cell_ids=ids) if ids is not None
                                    else MarkerHighlight(marker=marker, low=low, high=high)),
                         show_negative=False),
-        output=OutputSpec(width=SHEET_PX, height=SHEET_PX), scale_bar=True)
+        output=OutputSpec(width=SHEET_PX, height=SHEET_PX), scale_bar=True,
+        **({"view": view} if view else {}))
     rendered = render.render_region(session, spec, store=False, pixel_size=pixel)
     image = Image.open(io.BytesIO(rendered["png"])).convert("RGB")
     return image, rendered["manifest"]
@@ -193,7 +194,7 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     gate); `rows` which of `ROWS` to draw (the sheet is shorter by the rest)."""
     from PIL import Image, ImageDraw
 
-    from plexora.agent import artifacts, gate_sampling
+    from plexora.agent import artifacts, gate_sampling, sections
     from plexora.agent.evidence import calibration, collage
     from plexora.agent.presets import nuclear_channel
     from plexora.plugins.gating.server.autogate import views
@@ -276,8 +277,11 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
                 caption = (f"{found['field_id']} · {CLASS_LABELS[found['class']]} · "
                            f"{len(ids)}/{found['cells']} positive within "
                            f"{positives_within['marker']}+")
+        # On a z-stack, the plane the field's cells are on (agent/sections.py).
+        plane = sections.field_plane(ds, found["bounds"])
         panel, _manifest = _field_panel(session, record, found["bounds"], layers, marker,
-                                        gate_low, top, pixel=pixel, ids=ids)
+                                        gate_low, top, pixel=pixel, ids=ids,
+                                        view=f"z{plane}" if plane is not None else None)
         canvas.paste(panel, (x, y0))
         draw.text((x + 2, y0 + SHEET_PX + 1), _ascii(caption), fill=collage.TEXT, font=small)
         entry = {k: found[k] for k in ("field_id", "class", "bounds", "cells", "positives",
@@ -285,6 +289,8 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
                                        "borderline_above") if k in found}
         if cand_id:
             entry.update(candidate=cand_id, low=gate_low)
+        if plane is not None:
+            entry["plane"] = plane
         field_records.append(entry)
 
     # -- slide scale: the stain, the positives, the partner plot ---------------

@@ -7,6 +7,22 @@ import "regenerator-runtime/runtime.js";
 // needs the toggle state and can't reach it via `this`.
 export const tileQuality = { hd: false };
 
+//: Which view of a volume the reference channels are showing -- a plane
+//: (`z12`), a projection (`z4-19max`) -- as the token the tile route's `view=`
+//: takes (server/volume/viewspec.py). Empty for a planar image, which is what
+//: keeps every 2-D project's tile addresses and keys exactly what they were.
+//: Module scope for the same reason `tileQuality` is: `getTileUrl` runs bound
+//: to a tile source, not to the ViewerManager. Read only when an item is
+//: BUILT, and pinned on its source (see addChannelItems), so an outgoing item
+//: keeps fetching its own plane while its replacement loads.
+export const viewSelection = { spec: "", labels: "" };
+
+//: How long a plane swap waits for its replacements before handing over
+//: anyway. Shorter than a quality swap's: scrubbing asks for a new plane every
+//: frame, and a plane that will not load should not hold the one before it on
+//: screen for twenty seconds.
+const PLANE_SWAP_TIMEOUT_MS = 8000;
+
 //: `tileFormat` for a brightfield/H&E layer: one tiled image carrying all
 //: three colour samples, drawn by OpenSeadragon itself. The other two are 16
 //: (a quantized channel plane, colorized in WebGL) and 32 (a label mask,
@@ -89,6 +105,16 @@ const QUALITY_SWAP_TIMEOUT_MS = 20000;
  * @returns a function that stops listening, for the caller that gave up
  *   waiting -- a handler left on a TiledImage fires for the rest of its life.
  */
+/** The quantization window a view token's tiles are in (viewState.windowClass). */
+export function windowClassOf(token) {
+    return /std$/.test(String(token || "")) ? "std" : "volume";
+}
+
+/** A perf mark for revision `rev`, when the page has the probe. */
+function global_mark(surface, name, rev) {
+    globalThis.PlexoraViewPerf?.mark?.(surface, name, rev ? rev.id : null);
+}
+
 function whenItemCanDraw(item, done) {
     if (typeof item?.getFullyLoaded !== "function"
         || typeof item?.addHandler !== "function") {
@@ -353,7 +379,17 @@ function getTileUrl(level, x, y) {
     // The server ignores the parameter; changing it is what changes the URL.
     const version = this.tileFormat === 32 && this.labelVersion
         ? `v=${encodeURIComponent(this.labelVersion)}` : "";
-    const query = [hd, this.srcQuery || "", version].filter(Boolean).join("&");
+    // A plane, projection or section of a volume, pinned on the source like
+    // `hd`. A 2-D mask is the same picture on every plane and names none; a
+    // 3-D label volume names the plane its labels are read from (`labelView`).
+    const viewToken = this.tileFormat === 32 ? this.labelView : this.view;
+    const view = viewToken ? `view=${encodeURIComponent(viewToken)}` : "";
+    // The window a volume's 8-bit tile is quantized with, pinned like the
+    // view (services/volumeWindows.js): a provisional window's bytes and the
+    // exact window's never share an address.
+    const window = this.tileFormat !== 32 && !hd && viewToken && this.windowStamp
+        ? `w=${this.windowStamp}` : "";
+    const query = [hd, this.srcQuery || "", version, view, window].filter(Boolean).join("&");
     const suffix = query ? `?${query}` : "";
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
@@ -383,7 +419,14 @@ const LABEL_TILE_REVISION = "2";
 function getTileKey(level, x, y) {
     const { srcIdx, tileFormat } = this;
     const s = this.toTileLevels(level, x, y).inputTile;
-    return `${tileFormat}-${srcIdx}-${s.level}-${s.x}-${s.y}`;
+    // The view is part of the key (glInit.js caches GPU textures on it): plane
+    // 13 of a channel must never bind plane 12's texture. Absent for a planar
+    // image, so its keys are what they always were.
+    const token = tileFormat === 32 ? this.labelView : this.view;
+    const view = token ? `-${token}` : "";
+    const window = tileFormat !== 32 && token && this.windowStamp && !this.hd
+        ? `-w${this.windowStamp}` : "";
+    return `${tileFormat}-${srcIdx}${view}${window}-${s.level}-${s.x}-${s.y}`;
 }
 
 /**
@@ -431,6 +474,9 @@ export class ViewerManager {
         this.viewer = imageViewer.viewer;
         this.imageViewer = imageViewer;
         this.channelList = channelList;
+        //: Planes prefetched for the next step: token -> {key, pairs, pending}
+        //: (prepareStandby).
+        this.standby = new Map();
         //: THE ONE PLACE the model reaches the renderers. Before this the
         //: Layers panel's eye and opacity slider wrote the stack and nothing
         //: read them back, so a card promised two controls that moved nothing.
@@ -494,6 +540,8 @@ export class ViewerManager {
      */
     setHdMode(enabled) {
         tileQuality.hd = Boolean(enabled);
+        // Prefetched planes are at the old quality.
+        this.dropStandby();
         // The swap is no longer instant -- it waits for a viewport of tiles at
         // the new quality -- so something has to say the click was heard. The
         // navbar chip is the one indicator the app has (services/appStatus.js);
@@ -557,6 +605,446 @@ export class ViewerManager {
         tileQuality.hd = Boolean(enabled);
         window.dispatchEvent(new CustomEvent("plexora:hd-mode-changed",
             { detail: { enabled: tileQuality.hd } }));
+    }
+
+    /**
+     * Show another plane or projection of a volume.
+     *
+     * The HD toggle's rebuild, for a different reason: every reference
+     * channel's tile ADDRESS changes (the `view=` parameter), and OpenSeadragon
+     * cannot re-point a TiledImage at a new address space -- `reset()` drops
+     * cache records but keeps every Tile with its URL fixed at construction.
+     * So each channel's pair is rebuilt at opacity 0 and handed over once it can
+     * draw (`addChannelItems` + `handOverWhenReady`): the old plane stays on
+     * screen until the new one is ready, and nothing is ever drawn at two
+     * planes or at none.
+     *
+     * The outgoing pairs are dropped with their cache records kept as ZOMBIES
+     * (`allowZombieCache`), so going back to a plane just left costs neither a
+     * fetch nor a decode: a new item asking for the same URL is served from the
+     * record, decoded plane and all (tileDecode.adoptShared). OSD purges zombies
+     * wholesale when its cache overflows, which bounds what this keeps.
+     *
+     * Callers coalesce (services/viewState.js runs at most one swap at a time
+     * and only the newest request after it), so a scrub through forty planes is
+     * a handful of swaps, not forty.
+     *
+     * EVERY CHANNEL CHANGES PLANE IN THE SAME FRAME (`planeSwapGroup`): one
+     * channel's tiles arriving first no longer shows it at the new plane over
+     * the others at the old. And that frame is where the plane on screen
+     * dissolves into the new one (views/planeMotion.js) -- a copy of the
+     * picture, faded over it; the tiles themselves are never blended.
+     *
+     * FOR A NAVIGATION REVISION (`rev`, services/viewState.js) the swap is
+     * PREPARED rather than performed: the promise resolves to the closure that
+     * commits it -- held, so viewState can run it in the same task as every
+     * other surface's (the panes' z-line, a 3-D label plane, the 3-D view) --
+     * or to null when there is nothing to swap. When the revision is
+     * superseded the half-built pairs are dropped, the view token goes back to
+     * the one on screen, and nothing is committed.
+     *
+     * @param spec - the view token, or "" for the image's default view
+     * @param rev - the revision this swap is for; without one the swap commits
+     *   itself, as it always did
+     * @returns a promise that settles once every channel shows the new view
+     *   (or, with `rev`, once the swap is ready: the commit closure or null)
+     */
+    setView(spec, rev = null) {
+        const next = String(spec || "");
+        if (next === viewSelection.spec && !this.viewSwapPending) {
+            return Promise.resolve(rev ? null : undefined);
+        }
+        const previous = this.shownView ?? viewSelection.spec;
+        viewSelection.spec = next;
+        const swaps = [];
+        let group = null;
+        if (!this.referenceHidden) {
+            const replacing = Object.keys(this.channelList.currentChannels).map(Number)
+                .map((srcIdx) => [srcIdx, this.referenceItemsFor(
+                    this.channelList.currentChannels[srcIdx]?.url)]);
+            group = this.planeSwapGroup(
+                replacing.filter(([, outgoing]) => outgoing.filter(Boolean).length).length, rev);
+            // The plane prefetched (prepareStandby): every channel's pair is
+            // already on the world and loading, so the swap is a flip.
+            const prefetched = this.takeStandby(next);
+            for (const [srcIdx, outgoing] of replacing) {
+                swaps.push(this.addChannelItems(srcIdx, outgoing, {
+                    zombie: true,
+                    group: outgoing.filter(Boolean).length ? group : null,
+                    adopt: prefetched?.get(srcIdx) || null,
+                }));
+            }
+        }
+        // A colour stack's planes: the one true-colour item, not channel pairs.
+        // A revision waits for it (below), so the readout, the fade and the
+        // outlines settle with the slide rather than before it.
+        const baseSwap = this.imageViewer.config?.image_kind === "brightfield"
+            ? this.swapBrightfieldBase(next) : null;
+        if (baseSwap) swaps.push(baseSwap);
+        this.viewSwapPending = true;
+        const done = Promise.all(swaps.filter(Boolean)).finally(() => {
+            this.viewSwapPending = false;
+        });
+        window.dispatchEvent(new CustomEvent("plexora:view-tiles-changed",
+            { detail: { spec: next, rev: rev ? rev.id : null } }));
+        if (!rev) {
+            done.then(() => { this.shownView = next; });
+            return done;
+        }
+        // A superseded revision leaves the token where the picture is, so a
+        // channel switched on afterwards is built at the plane on screen.
+        rev.onSupersede?.(() => {
+            if (viewSelection.spec === next) viewSelection.spec = previous;
+        });
+        const prepared = group ? group.prepared
+            : (baseSwap ? baseSwap.then(() => null) : Promise.resolve(null));
+        return prepared.then((commit) => {
+            if (!commit) {
+                if (!rev.superseded) this.shownView = next;
+                return rev.superseded ? null : () => {};
+            }
+            const run = () => {
+                commit();
+                this.shownView = next;
+            };
+            run.discard = commit.discard;
+            return run;
+        });
+    }
+
+    /**
+     * One handover for every channel of a plane swap.
+     *
+     * Each channel's `addChannelItems` JOINS with its new pair and the commit
+     * that reveals it (or LEAVES, when its pair could not be built); once all
+     * `expected` have answered, the whole set waits for every new item to be
+     * able to draw and is committed in one go -- after the picture on screen
+     * was held for the fade (`planeFade.capture`), which then runs over the
+     * new plane. Nothing to wait for (`expected` 0) commits nothing.
+     */
+    planeSwapGroup(expected, rev = null) {
+        let pending = expected;
+        const entries = [];
+        //: Committed or abandoned: either way nothing more happens.
+        let closed = false;
+        const stops = [];
+        let timer = null;
+        let resolvePrepared = null;
+        //: For a revision: the commit, held, or null (nothing to swap, or
+        //: superseded).
+        const prepared = new Promise((resolve) => { resolvePrepared = resolve; });
+        const stopWaiting = () => {
+            if (timer !== null) clearTimeout(timer);
+            timer = null;
+            for (const stop of stops.splice(0)) stop();
+        };
+        const commitAll = () => {
+            if (closed) return;
+            closed = true;
+            const fade = this.planeFade;
+            let held = false;
+            try {
+                held = Boolean(fade?.capture?.());
+            } catch (error) {
+                console.error("ViewerManager: could not hold the plane for its fade", error);
+            }
+            for (const entry of entries) entry.commit();
+            if (held) fade.release();
+        };
+        //: Superseded: every new pair goes, the old ones stay on screen.
+        const abandon = () => {
+            if (closed) return;
+            closed = true;
+            stopWaiting();
+            for (const entry of entries) entry.abort?.();
+            resolvePrepared(null);
+        };
+        commitAll.discard = abandon;
+        rev?.onSupersede?.(abandon);
+        // `handOverWhenReady`'s wait, plus one case it never meets alone: an
+        // item taken off the world mid-swap -- its channel switched off --
+        // never becomes loaded, and would hold every OTHER channel at the old
+        // plane until the deadline. Gone counts as ready; its own commit then
+        // finds it gone and drops the pair.
+        const close = () => {
+            if (closed) return;
+            if (!entries.length) {
+                resolvePrepared(null);
+                return;
+            }
+            const world = this.viewer?.world;
+            const waiting = new Set(entries.flatMap((entry) => entry.items));
+            let handed = false;
+            const hand = () => {
+                if (handed || closed) return;
+                handed = true;
+                stopWaiting();
+                if (rev) {
+                    global_mark("main", "ready", rev);
+                    resolvePrepared(commitAll);
+                } else {
+                    commitAll();
+                }
+            };
+            const ready = (item) => {
+                if (waiting.delete(item) && !waiting.size) hand();
+            };
+            const onRemove = (event) => ready(event?.item);
+            if (world?.addHandler) {
+                world.addHandler("remove-item", onRemove);
+                stops.push(() => world.removeHandler?.("remove-item", onRemove));
+            }
+            for (const item of [...waiting]) {
+                if (handed) break;
+                if (world?.getIndexOfItem && world.getIndexOfItem(item) < 0) {
+                    ready(item);
+                } else {
+                    stops.push(whenItemCanDraw(item, () => ready(item)));
+                }
+            }
+            if (!handed) timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
+        };
+        const answered = () => {
+            pending -= 1;
+            if (pending === 0) close();
+        };
+        if (expected <= 0) resolvePrepared(null);
+        return {
+            join(items, commit, abort = null) {
+                // A pair that lands after the swap was abandoned goes at once.
+                if (closed && rev?.superseded) {
+                    abort?.();
+                    return;
+                }
+                entries.push({ items, commit, abort });
+                answered();
+            },
+            leave: answered,
+            prepared,
+        };
+    }
+
+    /**
+     * Keep the planes the hand is heading to BUILT: every channel's pair at
+     * each of `tokens`, on the world at opacity 0 and loading -- last in the
+     * tile scheduler's line, after everything on screen -- so that a step to
+     * one of them adopts items that already hold the plane (setView) and the
+     * swap is a flip of opacity rather than a fetch. Planes no longer wanted
+     * are dropped with their tiles kept as zombies. Nothing for a planar
+     * image, a hidden base layer, or a view with no scheduler.
+     */
+    prepareStandby(tokens) {
+        const wanted = new Set((tokens || []).filter((token) => token && token !== viewSelection.spec));
+        const key = this.standbyKey();
+        for (const [token, entry] of [...this.standby.entries()]) {
+            if (!wanted.has(token) || entry.key !== key) this.dropStandby(token);
+        }
+        if (this.referenceHidden || !viewSelection.spec || !this.imageViewer.tileFetch) return;
+        for (const token of wanted) {
+            if (this.standby.has(token)) continue;
+            const entry = { token, key, pairs: new Map(), pending: 0 };
+            this.standby.set(token, entry);
+            for (const srcIdx of Object.keys(this.channelList.currentChannels).map(Number)) {
+                entry.pending += 1;
+                this.addChannelItems(srcIdx, null, { standby: token }).then((pair) => {
+                    entry.pending -= 1;
+                    if (this.standby.get(token) !== entry) {
+                        this.dropPair(pair);
+                        return;
+                    }
+                    if (pair) entry.pairs.set(srcIdx, pair);
+                });
+            }
+        }
+    }
+
+    /** What a prefetched plane must match to be adopted: channels, quality
+     *  and every channel's window. */
+    standbyKey() {
+        const channels = Object.keys(this.channelList.currentChannels).sort();
+        const windows = window.__plexora?.volumeWindows;
+        const stamps = channels.map((srcIdx) => windows?.stamp?.(
+            this.imageViewer.config["imageData"][srcIdx]?.fullname) || "").join(";");
+        return `${channels.join(",")}|${tileQuality.hd ? "hd" : "u8"}|${stamps}`;
+    }
+
+    /**
+     * A channel's window changed (services/volumeWindows.js: the exact window
+     * replacing the provisional one): its pair is rebuilt with tiles made
+     * with the new window and handed over once they can draw -- the HD
+     * toggle's handover. The ranges move with it (viewerSidebar), and the
+     * items on screen until then convert theirs (ImageViewer.itemRange).
+     */
+    onVolumeWindow({ name } = {}) {
+        if (this.referenceHidden || tileQuality.hd || !viewSelection.spec) return;
+        const srcIdx = (this.imageViewer.config["imageData"] || []).findIndex(
+            (entry) => entry?.fullname === name);
+        if (srcIdx < 0 || !(srcIdx in this.channelList.currentChannels)) return;
+        this.dropStandby();
+        const outgoing = this.referenceItemsFor(this.channelList.currentChannels[srcIdx]?.url);
+        if (outgoing.length) this.addChannelItems(srcIdx, outgoing);
+    }
+
+    /** The prefetched plane at `token`, taken for a swap: Map(srcIdx -> pair), or null. */
+    takeStandby(token) {
+        const entry = this.standby.get(token);
+        if (!entry) return null;
+        this.standby.delete(token);
+        const complete = !entry.pending && entry.key === this.standbyKey()
+            && Object.keys(this.channelList.currentChannels).every(
+                (srcIdx) => entry.pairs.has(Number(srcIdx)));
+        if (!complete) {
+            for (const pair of entry.pairs.values()) this.dropPair(pair);
+            entry.pending = -Infinity;
+            return null;
+        }
+        globalThis.PlexoraViewPerf?.count?.("standbyAdopted");
+        return entry.pairs;
+    }
+
+    /** Drop a prefetched plane (all of them with no token), keeping its tiles. */
+    dropStandby(token = null) {
+        if (!this.standby) {
+            this.standby = new Map();
+            return;
+        }
+        const tokens = token === null ? [...this.standby.keys()] : [token];
+        for (const one of tokens) {
+            const entry = this.standby.get(one);
+            if (!entry) continue;
+            this.standby.delete(one);
+            for (const pair of entry.pairs.values()) this.dropPair(pair);
+        }
+        // All of them: the channels or the quality changed. Whoever keeps
+        // planes ready (planeMotion.NeighbourPrefetch) builds them again.
+        if (token === null && tokens.length) {
+            window.dispatchEvent(new CustomEvent("plexora:standby-dropped"));
+        }
+    }
+
+    dropPair(pair) {
+        if (!pair) return;
+        const items = pair.map((entry) => entry.item);
+        for (const item of items) item?.allowZombieCache?.(true);
+        this.dropWorldItems(items);
+    }
+
+    /**
+     * Read a 3-D label volume's outlines from another plane. The label layer
+     * is rebuilt at the new address; a 2-D mask never calls this (its labels
+     * are the same on every plane).
+     */
+    setLabelPlane(token) {
+        const next = String(token || "");
+        if (next === viewSelection.labels) return;
+        viewSelection.labels = next;
+        if (this.labelLayerRequested && !this.imageViewer?.noLabel) this.reloadLabelLayer();
+    }
+
+    /**
+     * Prepare a 3-D label volume's outlines at another plane, for a navigation
+     * revision: the new label item loads INVISIBLY beside the one on screen
+     * and the returned closure swaps them, in the same task as the plane's own
+     * swap -- so outlines never show one plane over the picture of another,
+     * and never go missing while the new ones load. (`setLabelPlane` took the
+     * old item down first.) Resolves to null when there is nothing to change
+     * or the revision was superseded; the half-built item is dropped then.
+     */
+    prepareLabelPlane(token, rev = null) {
+        const next = String(token || "");
+        if (next === viewSelection.labels) return Promise.resolve(null);
+        const world = this.viewer?.world;
+        const outgoing = [];
+        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item?.source?.tileFormat === 32) outgoing.push(item);
+        }
+        // Not drawn yet (no mask, or not loaded): the plane is simply where
+        // the layer will be read from when it is.
+        if (!outgoing.length || !this.labelLayerRequested || this.imageViewer?.noLabel) {
+            return Promise.resolve(() => { viewSelection.labels = next; });
+        }
+        return new Promise((resolve) => {
+            let item = null;
+            let answered = false;
+            let stop = () => {};
+            let timer = null;
+            const drop = () => {
+                stop();
+                if (timer !== null) clearTimeout(timer);
+                if (item && world.getIndexOfItem(item) >= 0) world.removeItem(item);
+                item = null;
+            };
+            const answer = (value) => {
+                if (answered) return;
+                answered = true;
+                resolve(value);
+            };
+            rev?.onSupersede?.(() => {
+                drop();
+                answer(null);
+            });
+            const commit = () => {
+                if (timer !== null) clearTimeout(timer);
+                stop();
+                if (!item || world.getIndexOfItem(item) < 0) return;
+                viewSelection.labels = next;
+                const opacity = outgoing[0].getOpacity?.() ?? 1;
+                item.setOpacity?.(opacity);
+                item.setPreload?.(false);
+                this.claimWorldItem(PlexoraLayerStack.MASK_LAYER_ID, item);
+                for (const old of outgoing) {
+                    this.releaseWorldItem(old);
+                    if (world.getIndexOfItem(old) >= 0) world.removeItem(old);
+                }
+                this.applyWorldOrder();
+                this.viewer.forceRedraw?.();
+            };
+            commit.discard = drop;
+            this.viewer.addTiledImage({
+                tileSource: this.labelTileSource(next),
+                compositeOperation: outgoing[0].compositeOperation
+                    || (this.imageViewer.config.image_kind === "brightfield" ? "source-over" : "lighter"),
+                opacity: 0,
+                preload: true,
+                success: (e) => {
+                    if (answered || rev?.superseded) {
+                        if (world.getIndexOfItem(e.item) >= 0) world.removeItem(e.item);
+                        return;
+                    }
+                    item = e.item;
+                    // Draws through the same GL pass; `open` redraws.
+                    this.viewer.raiseEvent("open", e.item);
+                    stop = whenItemCanDraw(e.item, () => answer(commit));
+                    // A plane that never finishes loading still swaps, late,
+                    // rather than holding the outlines of the old one forever.
+                    if (!answered) timer = setTimeout(() => answer(commit), PLANE_SWAP_TIMEOUT_MS);
+                },
+                // The old outlines stay; the next plane may do better.
+                error: () => answer(null),
+            });
+        });
+    }
+
+    /** Set the label plane before the label layer is first loaded. */
+    presetLabelPlane(token) {
+        viewSelection.labels = String(token || "");
+    }
+
+    /** The view token the reference channels are built at ("" = default). */
+    currentView() {
+        return viewSelection.spec;
+    }
+
+    /**
+     * Set the view before anything has been drawn, without the rebuild --
+     * `presetHdMode`'s counterpart, for boot: the saved plane is known before
+     * the first channel is added, and every channel added after this point is
+     * already built at it.
+     */
+    presetView(spec) {
+        viewSelection.spec = String(spec || "");
+        this.shownView = viewSelection.spec;
     }
 
     /**
@@ -669,7 +1157,7 @@ export class ViewerManager {
      *
      * The wait is bounded. See QUALITY_SWAP_TIMEOUT_MS.
      */
-    handOverWhenReady(items, commit) {
+    handOverWhenReady(items, commit, timeoutMs = QUALITY_SWAP_TIMEOUT_MS) {
         const waiting = (items || []).filter(Boolean);
         if (!waiting.length) {
             commit();
@@ -694,7 +1182,7 @@ export class ViewerManager {
         // After the loop, because a harness world (and a warm tile cache)
         // answers synchronously -- arming a 20 s timer that is already spent
         // would hold a node probe's event loop open for exactly that long.
-        if (!handed) timer = setTimeout(hand, QUALITY_SWAP_TIMEOUT_MS);
+        if (!handed) timer = setTimeout(hand, timeoutMs);
     }
 
     /**
@@ -724,6 +1212,7 @@ export class ViewerManager {
             range: range || this.imageViewer.numericData.bitRange,
         };
         this.channelList.currentChannels[srcIdx] = viewerChannel;
+        this.dropStandby();
 
         // Chosen while the base layer is switched off: the slot is recorded
         // above and nothing is added, so turning the eye back on brings this
@@ -747,11 +1236,29 @@ export class ViewerManager {
      *   screen and removed only once the new pair can draw (see
      *   `handOverWhenReady`). Null or empty for an ordinary add, which has
      *   nothing to protect and so lands visible straight away.
+     * @param group - a plane swap's `planeSwapGroup`, when replacing: the pair
+     *   is committed together with every other channel's, not on its own.
      * @returns a promise that settles when the pair is on screen, for a caller
      *   that wants to say so (the HD toggle's status chip). Never rejects: a
      *   channel that cannot be rebuilt keeps the pair it has.
      */
-    addChannelItems(srcIdx, outgoing = null) {
+    addChannelItems(srcIdx, outgoing = null, options = {}) {
+        const { zombie = false, group = null, standby = null, adopt = null } = options;
+        // A volume's tiles name the window they are quantized with: the
+        // channel's must be known before a single address is (it is, but for
+        // the first add of a channel -- one quick request).
+        const windows = (standby || viewSelection.spec) && !adopt
+            ? window.__plexora?.volumeWindows : null;
+        const fullName = this.imageViewer.config["imageData"][srcIdx]?.fullname;
+        if (windows && fullName && !windows.peek(fullName) && !options.windowAsked) {
+            return windows.ensure([fullName]).then(() => {
+                if (!(srcIdx in this.channelList.currentChannels)) {
+                    group?.leave();
+                    return null;
+                }
+                return this.addChannelItems(srcIdx, outgoing, { ...options, windowAsked: true });
+            });
+        }
         const url = this.imageViewer.config["imageData"][srcIdx]["src"];
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
         const magnification = 2 ** extraZoomLevels;
@@ -759,6 +1266,9 @@ export class ViewerManager {
         const replacing = held.length > 0;
         let settle = null;
         const settled = new Promise((resolve) => { settle = resolve; });
+        //: The view this pair is built at: the current one, or a prefetched
+        //: plane's (`standby`, see prepareStandby).
+        const builtAt = standby || viewSelection.spec;
 
         const tileSource = {
             height: this.imageViewer.config.height * magnification,
@@ -790,7 +1300,28 @@ export class ViewerManager {
             //: moment it is built. See getTileUrl for why it cannot be read
             //: off the live flag any more.
             hd: Boolean(tileQuality.hd),
+            //: Which plane or projection of a volume, pinned the same way and
+            //: for the same reason. Empty for a planar image.
+            view: builtAt,
+            //: Which quantization window this item's bytes are in ("volume",
+            //: or "std" for a standard-deviation projection): with `hd`, the
+            //: units its pixels mean. The colorize pass converts the channel's
+            //: current range into them (ImageViewer.itemRange), so an item
+            //: still on screen while its replacement loads never draws with
+            //: the replacement's units.
+            windowClass: windowClassOf(builtAt),
+            //: ...and with which window, for the 8-bit path: the address
+            //: names it (`w=`) and the colorize pass converts ranges into it.
+            windowStamp: windows && fullName ? windows.stamp(fullName) : "",
+            windowRange: windows && fullName && windows.peek(fullName)
+                ? [windows.peek(fullName).qmin, windows.peek(fullName).qmax] : null,
         };
+        // A volume's tiles go through the one scheduler (views/tileFetch.js):
+        // fetched once, decoded once, in order of need -- a prefetched plane
+        // last. A planar image's take OSD's own path, as they always have.
+        if (builtAt && this.imageViewer.tileFetch) {
+            this.imageViewer.tileFetch.attach(tileSource, { owner: "main", standby: Boolean(standby) });
+        }
 
         // The base card's slider, carried onto every channel as it is added:
         // `applyReferenceState` can only reach items that already exist, and
@@ -819,10 +1350,11 @@ export class ViewerManager {
             // still correct, still on screen.
             if (landed.length !== 2) {
                 this.dropWorldItems(landed.map((entry) => entry.item));
+                group?.leave();
                 settle();
                 return;
             }
-            this.handOverWhenReady(landed.map((entry) => entry.item), () => {
+            const commit = () => {
                 const world = this.viewer?.world;
                 // The slot may have gone while this was loading -- a channel
                 // switched off mid-swap takes its replacement with it (see
@@ -841,11 +1373,25 @@ export class ViewerManager {
                     this.claimWorldItem(
                         PlexoraLayerStack.REFERENCE_LAYER_ID, entry.item, entry.z);
                 }
+                // A plane left behind is kept in OSD's cache rather than
+                // unloaded, so stepping back to it is free (see setView).
+                if (zombie) for (const item of held) item.allowZombieCache?.(true);
                 this.dropWorldItems(held);
                 this.applyWorldOrder();
                 this.viewer?.forceRedraw?.();
                 settle();
-            });
+            };
+            // A plane swap commits every channel in one frame (planeSwapGroup).
+            if (group) {
+                group.join(landed.map((entry) => entry.item), commit, () => {
+                    // The swap was superseded: this pair never shows.
+                    this.dropWorldItems(landed.map((entry) => entry.item));
+                    settle();
+                });
+            } else {
+                this.handOverWhenReady(landed.map((entry) => entry.item), commit,
+                                       zombie ? PLANE_SWAP_TIMEOUT_MS : QUALITY_SWAP_TIMEOUT_MS);
+            }
         };
         //: Called once per add, whether it arrived or failed. The handover
         //: starts when both have spoken, not when both have arrived.
@@ -853,6 +1399,25 @@ export class ViewerManager {
             answered += 1;
             if (answered === 2) handOver();
         };
+        // A prefetched plane: the pair loads invisibly and waits, unclaimed,
+        // for a step to adopt it (setView) or for prepareStandby to drop it.
+        if (standby) {
+            const pair = [];
+            let answers = 0;
+            const done = () => {
+                answers += 1;
+                if (answers === 2) settle(pair.length === 2 ? pair : null);
+            };
+            for (const [operation, z] of [[COVER_OPERATION, COVER_Z], [PAINT_OPERATION, PAINT_Z]]) {
+                this.viewer.addTiledImage({
+                    tileSource, compositeOperation: operation, opacity: 0, preload: true,
+                    success: (e) => { pair.push({ item: e.item, z }); done(); },
+                    error: done,
+                });
+            }
+            return settled;
+        }
+
         const claim = (e, z) => {
             this.restoreView();
             // "open" is what wires up the GL colorize pipeline (see
@@ -874,6 +1439,18 @@ export class ViewerManager {
             landed.push({ item: e.item, z });
             settleOne();
         };
+
+        // A prefetched pair adopted by a step: already on the world, already
+        // loading (or loaded); handed over like a fresh one.
+        if (adopt) {
+            for (const entry of adopt) {
+                entry.item.source.plexoraStandby = false;
+                landed.push(entry);
+            }
+            answered = 2;
+            handOver();
+            return settled;
+        }
 
         // TWO BLITS PER CHANNEL, for the same reason a registered layer gets
         // them -- and this is the change that stopped the reference image
@@ -976,20 +1553,26 @@ export class ViewerManager {
      * Idempotent, because `rebuildTileLayers` calls it again after a routing
      * repair and OSD would otherwise stack a second copy behind the first.
      */
-    load_brightfield_base() {
+    load_brightfield_base({ view = viewSelection.spec, replacing = null, done = null } = {}) {
         // Not while the base layer's eye is off. `rebuildTileLayers` calls
         // this after a routing repair, and without the guard a reconnecting
         // node would put the slide back on screen under a closed eye.
-        if (this.referenceHidden) return;
+        if (this.referenceHidden) {
+            done?.();
+            return;
+        }
         // Found by its tile key, not by position. `imageData[0]` is the "Area"
         // mask placeholder whenever the project has a segmentation, so taking
         // the first entry drew the mask as the slide -- a blank viewer, with
         // every tile fetched successfully.
         const entry = (this.imageViewer.config["imageData"] || []).find(
             (channel) => keyOf(channel) === RGB_CHANNEL_KEY);
-        if (!entry?.src) return;
+        if (!entry?.src) {
+            done?.();
+            return;
+        }
         const world = this.viewer?.world;
-        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+        for (let i = 0; !replacing && world && i < world.getItemCount(); i += 1) {
             if (world.getItemAt(i)?.source?.tileFormat === RGB_TILE_FORMAT) return;
         }
 
@@ -1017,6 +1600,9 @@ export class ViewerManager {
                 src: url,
                 srcQuery: entry["srcQuery"] || "",
                 layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
+                // A colour stack's plane (`view=`), pinned on the source like
+                // a channel's: this item always shows the plane it was built at.
+                view: view || "",
             },
             // On the TiledImage rather than inside the tileSource: OSD reads
             // this one off the addTiledImage options, and the viewer-wide
@@ -1024,10 +1610,15 @@ export class ViewerManager {
             compositeOperation: "source-over",
             index: 0,
             // As channel_add: the base card's slider has to be carried onto
-            // the item, because it is added after the slider was set.
-            opacity: this.referenceOpacity(),
+            // the item, because it is added after the slider was set. Another
+            // plane being built stays invisible until it can draw whole.
+            opacity: replacing ? 0 : this.referenceOpacity(),
             preload: true,
             success: (e) => {
+                if (replacing) {
+                    this.handOverBrightfieldBase(e.item, replacing, done);
+                    return;
+                }
                 this.restoreView();
                 // Same reason channel_add raises it: 'open' is what wires up
                 // the GL pipeline the label layer still needs, and initGL is
@@ -1037,6 +1628,70 @@ export class ViewerManager {
                 this.applyWorldOrder();
             },
         });
+    }
+
+    /**
+     * A colour stack's other plane (`view`): the brightfield base rebuilt at
+     * it, invisible until every tile on screen has loaded, then put in the
+     * old one's place in one step -- the rule the channel pairs follow, so a
+     * plane step never shows a blank or half-drawn slide. A newer step drops
+     * a build still in flight. Resolves when the new plane is on screen (at
+     * once when there is no brightfield base, or it already shows `view`).
+     */
+    swapBrightfieldBase(view) {
+        const world = this.viewer?.world;
+        if (!world) return Promise.resolve();
+        if (this._baseBuild) {
+            const pending = this._baseBuild;
+            this._baseBuild = null;
+            pending.cancel();
+        }
+        let shown = null;
+        for (let i = 0; i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item?.source?.tileFormat === RGB_TILE_FORMAT
+                    && item.source.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                shown = item;
+                break;
+            }
+        }
+        if (!shown || (shown.source.view || "") === String(view || "")) return Promise.resolve();
+        return new Promise((resolve) => {
+            const build = { item: null, cancelled: false, resolve };
+            build.cancel = () => {
+                build.cancelled = true;
+                if (build.item) world.removeItem(build.item);
+                resolve();
+            };
+            this._baseBuild = build;
+            this.load_brightfield_base({ view, replacing: shown, done: resolve });
+        });
+    }
+
+    handOverBrightfieldBase(item, outgoing, done) {
+        const build = this._baseBuild;
+        const world = this.viewer?.world;
+        if (!world || !build || build.cancelled) {
+            world?.removeItem(item);
+            done?.();
+            return;
+        }
+        build.item = item;
+        let timer = 0;
+        let stop = () => {};
+        const hand = () => {
+            clearTimeout(timer);
+            stop();
+            if (build.cancelled) return;
+            this._baseBuild = null;
+            item.setOpacity?.(this.referenceOpacity());
+            if (world.getIndexOfItem(outgoing) >= 0) world.removeItem(outgoing);
+            this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, item);
+            this.applyWorldOrder();
+            done?.();
+        };
+        stop = whenItemCanDraw(item, hand);
+        timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
     }
 
     /**
@@ -1960,6 +2615,8 @@ export class ViewerManager {
     channel_remove(srcIdx) {
         if (!(srcIdx in this.channelList.currentChannels)) return;
         const url = this.channelList.currentChannels[srcIdx]?.url;
+        // Prefetched planes were built for the channels there were.
+        this.dropStandby();
 
         // EVERY item drawn from this channel, not the first one found.
         //
@@ -1978,7 +2635,16 @@ export class ViewerManager {
         // and the invisible replacement loading behind it -- and this takes
         // all of them, which is what it has to do: the slot is going, so the
         // replacement has nothing left to replace.
-        this.dropWorldItems(this.referenceItemsFor(url));
+        //
+        // Their cache records are kept as ZOMBIES, as a plane swap keeps the
+        // plane it leaves: switching the channel back on asks for the same
+        // tile keys and is served from the records -- decoded arrays and all
+        // (tileDecode.adoptShared) -- with no fetch and no decode. OSD drops
+        // zombies first when its cache is full, so this costs nothing that
+        // live tiles need.
+        const items = this.referenceItemsFor(url);
+        for (const item of items) item?.allowZombieCache?.(true);
+        this.dropWorldItems(items);
         delete this.channelList.currentChannels[srcIdx];
     }
 
@@ -1995,7 +2661,7 @@ export class ViewerManager {
         const found = [];
         for (let i = 0; i < world.getItemCount(); i += 1) {
             const item = world.getItemAt(i);
-            if (item?.source?.src === url
+            if (item?.source?.src === url && !item.source.plexoraStandby
                 && item?.source?.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
                 found.push(item);
             }
@@ -2205,6 +2871,7 @@ export class ViewerManager {
      * make the sidebar forget the whole composite because somebody blinked.
      */
     hideReference() {
+        this.dropStandby();
         const world = this.viewer?.world;
         if (!world) return;
         // Emptying the world makes OSD fit the whole slide again when the next
@@ -2313,51 +2980,8 @@ export class ViewerManager {
         // as a label layer, silently, with no error to trigger the centroid
         // fallback below.
         if (this.imageViewer.config["segmentation"] && this.imageViewer.config["imageData"]?.[0]?.["src"]) {
-            let url = this.imageViewer.config["imageData"][0]["src"];
-            const { maxLevel, extraZoomLevels } = this.imageViewer.config;
-            const magnification = 2 ** extraZoomLevels;
-            // A mask drawn from polygons can be a power of two FINER than the
-            // image (boundary_mask.mask_scale): `scale` times the pixels and a
-            // level per doubling past the image's finest, so the mask's level
-            // j is the image's j - log2(scale). Same world rectangle -- OSD
-            // gives both items width 1 -- so only the source's size changes,
-            // and the viewer's zoom ceiling rises with it to where the cells
-            // are readable.
-            const scale = maskScale(this.imageViewer.config);
-            const fine = Math.log2(scale);
             this.viewer.addTiledImage({
-                tileSource: {
-                    height: this.imageViewer.config.height * magnification * scale,
-                    width: this.imageViewer.config.width * magnification * scale,
-                    maxLevel: extraZoomLevels + maxLevel - 1 + fine,
-                    maxImageCacheCount: 50,
-                    compositeOperation: "source-over",
-                    tileWidth: this.imageViewer.config.tileWidth,
-                    tileHeight: this.imageViewer.config.tileHeight,
-                    toMagnifiedBounds: toMagnifiedBounds,
-                    extraZoomLevels: extraZoomLevels,
-                    toTileBoundary: toTileBoundary,
-                    getImagePixel: getImagePixel,
-                    toTileLevels: toTileLevels,
-                    toIdealTile: toIdealTile,
-                    toRealTile: toRealTile,
-                    getTileUrl: getTileUrl,
-                    getTileKey: getTileKey,
-                    tileFormat: 32,
-                    srcIdx: 0,
-                    src: url,
-                    srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
-                    labelVersion: [
-                        LABEL_TILE_REVISION,
-                        this.imageViewer.config.segmentationVersion,
-                        // A redrawn mask keeps its path, and its level numbers
-                        // change meaning with the scale -- so the scale is in
-                        // the address, or a year-cached tile of the old grid
-                        // answers for the new one.
-                        scale > 1 ? `s${scale}` : null,
-                    ].filter(Boolean).join("."),
-                    layerId: PlexoraLayerStack.MASK_LAYER_ID,
-                },
+                tileSource: this.labelTileSource(viewSelection.labels),
                 // On the TiledImage, where OSD actually reads it -- the copy
                 // inside the tileSource above is inert, and the viewer-wide
                 // default is `lighter`. Additive is right over a fluorescence
@@ -2394,5 +3018,59 @@ export class ViewerManager {
                 this.imageViewer.updateCentroidFallback(true);
             }
         }
+    }
+
+    /**
+     * The label layer's tile source, read from `labelView` (a 3-D label
+     * volume's plane; "" for a 2-D mask).
+     */
+    labelTileSource(labelView) {
+        const url = this.imageViewer.config["imageData"][0]["src"];
+        const { maxLevel, extraZoomLevels } = this.imageViewer.config;
+        const magnification = 2 ** extraZoomLevels;
+        // A mask drawn from polygons can be a power of two FINER than the
+        // image (boundary_mask.mask_scale): `scale` times the pixels and a
+        // level per doubling past the image's finest, so the mask's level
+        // j is the image's j - log2(scale). Same world rectangle -- OSD
+        // gives both items width 1 -- so only the source's size changes,
+        // and the viewer's zoom ceiling rises with it to where the cells
+        // are readable.
+        const scale = maskScale(this.imageViewer.config);
+        const fine = Math.log2(scale);
+        return {
+            height: this.imageViewer.config.height * magnification * scale,
+            width: this.imageViewer.config.width * magnification * scale,
+            maxLevel: extraZoomLevels + maxLevel - 1 + fine,
+            maxImageCacheCount: 50,
+            compositeOperation: "source-over",
+            tileWidth: this.imageViewer.config.tileWidth,
+            tileHeight: this.imageViewer.config.tileHeight,
+            toMagnifiedBounds: toMagnifiedBounds,
+            extraZoomLevels: extraZoomLevels,
+            toTileBoundary: toTileBoundary,
+            getImagePixel: getImagePixel,
+            toTileLevels: toTileLevels,
+            toIdealTile: toIdealTile,
+            toRealTile: toRealTile,
+            getTileUrl: getTileUrl,
+            getTileKey: getTileKey,
+            tileFormat: 32,
+            srcIdx: 0,
+            src: url,
+            srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
+            labelVersion: [
+                LABEL_TILE_REVISION,
+                this.imageViewer.config.segmentationVersion,
+                // A redrawn mask keeps its path, and its level numbers
+                // change meaning with the scale -- so the scale is in
+                // the address, or a year-cached tile of the old grid
+                // answers for the new one.
+                scale > 1 ? `s${scale}` : null,
+            ].filter(Boolean).join("."),
+            layerId: PlexoraLayerStack.MASK_LAYER_ID,
+            //: The plane of a 3-D label volume these tiles are read
+            //: from; empty for a 2-D mask (see prepareLabelPlane).
+            labelView: String(labelView || ""),
+        };
     }
 }

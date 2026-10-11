@@ -177,7 +177,10 @@ window.PlexoraRouting = (function () {
                     node: route.node,
                     base: route.tile_base,
                     appendKey: route.append_key !== false,
-                    query: route.query,
+                    // A volume's node tiles also carry the project's z/t
+                    // reading (a node has no project); getTileUrl adds the
+                    // view itself. Absent for every planar image.
+                    query: [route.query, route.volume_query].filter(Boolean).join("&"),
                 };
             });
             return { routes: routes };

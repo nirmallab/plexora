@@ -1,0 +1,69 @@
+{
+ "_doc": "Targets per metric. `value` is ms unless it ends in F (the run's measured display period). `stat` is p50 | p95 | max | min | mean. `datasets` limits a target; absent means every dataset that reports the metric.",
+ "targets": [
+  {"metric": "tMeaningful_warm", "stat": "p50", "op": "<=", "value": 400, "datasets": ["small"]},
+  {"metric": "tMeaningful_warm", "stat": "p50", "op": "<=", "value": 600, "datasets": ["ims"]},
+  {"metric": "tMeaningful_cold", "stat": "max", "op": "<=", "value": 1200, "datasets": ["small"]},
+  {"metric": "tMeaningful_cold", "stat": "max", "op": "<=", "value": 1800, "datasets": ["ims"]},
+  {"metric": "tMeaningful_cold", "stat": "max", "op": "<=", "value": 2500, "datasets": ["meso"]},
+
+  {"metric": "enable_commit", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "enable_paint", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "enable_cold_paint", "stat": "max", "op": "<=", "value": 250, "datasets": ["small"]},
+  {"metric": "enable_cold_paint", "stat": "max", "op": "<=", "value": 450, "datasets": ["ims"]},
+  {"metric": "disable_commit", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "enable_shaderCompiles", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "switch_paint", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "switch_mixedMs", "stat": "p95", "op": "<=", "value": "1F"},
+
+  {"metric": "step_commit", "stat": "p50", "op": "<=", "value": 16, "datasets": ["small"]},
+  {"metric": "step_commit", "stat": "p50", "op": "<=", "value": 50, "datasets": ["ims"]},
+  {"metric": "step_commit", "stat": "p50", "op": "<=", "value": 250, "datasets": ["meso"]},
+  {"metric": "step_firstVisibleChange", "stat": "p50", "op": "<=", "value": "2F", "datasets": ["small"]},
+  {"metric": "step_flashFrames", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "step_shaderCompiles", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "scrub_stale", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "scrub_frameP95", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "scrub_frameP99", "stat": "p50", "op": "<=", "value": "3F"},
+  {"metric": "crossing_commit", "stat": "max", "op": "<=", "value": 400, "datasets": ["ims"]},
+  {"metric": "flash_frames", "stat": "max", "op": "<=", "value": 0},
+
+  {"metric": "zline_leadMs", "stat": "max", "op": "<=", "value": "1F"},
+  {"metric": "zstep_spread", "stat": "p95", "op": "<=", "value": "1F"},
+  {"metric": "pan_staleTokens", "stat": "max", "op": "<=", "value": 0},
+
+  {"metric": "toggle3d_on", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "toggle3d_off", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "toggle3d_levelFetches", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "toggle3d_texImage3D", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "reenter_levelFetches", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "enter_first", "stat": "p50", "op": "<=", "value": 700, "datasets": ["ims"]},
+  {"metric": "enter_first", "stat": "p50", "op": "<=", "value": 1000, "datasets": ["meso"]},
+  {"metric": "reload_volumeReady", "stat": "p50", "op": "<=", "value": 1500, "datasets": ["ims", "small"]},
+  {"metric": "rotate_dropped", "stat": "p50", "op": "<=", "value": 0},
+  {"metric": "detail_ms", "stat": "max", "op": "<=", "value": 3000, "datasets": ["meso", "large", "medium"]},
+  {"metric": "detail_levelGain", "stat": "min", "op": ">=", "value": 1, "datasets": ["meso", "large", "medium"]},
+  {"metric": "detail_dropped", "stat": "max", "op": "<=", "value": 6},
+  {"metric": "volume_gpuMB", "stat": "max", "op": "<=", "value": 1024},
+
+  {"metric": "zoomOut_decodes", "stat": "p50", "op": "<=", "value": 0},
+  {"metric": "zoomOut_full", "stat": "p50", "op": "<=", "value": "2F"},
+  {"metric": "zoomIn_full", "stat": "p50", "op": "<=", "value": 100, "datasets": ["small"]},
+  {"metric": "zoomIn_full", "stat": "p50", "op": "<=", "value": 400, "datasets": ["ims"]},
+  {"metric": "zoomIn_full", "stat": "p50", "op": "<=", "value": 500, "datasets": ["meso"]},
+
+  {"metric": "contrast_main", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "contrast_xz", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "contrast_yz", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "contrast_volume", "stat": "p50", "op": "<=", "value": "1F"},
+  {"metric": "contrast_fetches", "stat": "max", "op": "<=", "value": 0},
+
+  {"metric": "first_shaderXhrs", "stat": "max", "op": "<=", "value": 2},
+  {"metric": "first_decodeRatio", "stat": "max", "op": "<=", "value": 1.0},
+  {"metric": "reload_levelMB", "stat": "max", "op": "<=", "value": 0.1, "datasets": ["small", "ims"]},
+
+  {"metric": "heap_endGrowth", "stat": "max", "op": "<=", "value": 1.15},
+  {"metric": "heap_peakMB", "stat": "max", "op": "<=", "value": 600, "datasets": ["ims", "small"]},
+  {"metric": "heap_peakMB", "stat": "max", "op": "<=", "value": 900, "datasets": ["meso"]}
+ ]
+}

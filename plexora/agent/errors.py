@@ -32,6 +32,15 @@ CODES = (
     "conflict",
     "capability_unavailable",
     "unsupported_modality",
+    # A volume: the capability's 2-D code cannot run on the picture it was
+    # given (a maximum projection handed to a tool that measures one plane).
+    # `detail` lists what it does accept and how to ask for it
+    # (plexora/api/representation.py). Not retryable as asked.
+    "representation_unsupported",
+    # A volume: the conclusion asked for cannot be drawn from that picture at
+    # all -- a z position, a colocalization or a 3-D object out of a
+    # projection. `detail.inference` names which; the message says why.
+    "inference_forbidden",
     "too_large",
     "internal_error",
 )

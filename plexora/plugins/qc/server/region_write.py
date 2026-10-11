@@ -14,7 +14,7 @@ from plexora.agent.receipts import make_receipt
 
 def check_candidate(detector, version, klass, key, region, *, channels, scope,
                     threshold, action="exclude", cycles=(), extra_metrics=None,
-                    score_key="max", trace="method", cell_um=None):
+                    score_key="max", trace="method", cell_um=None, extent=None):
     """A check's region as a result candidate the user asked to write: its
     action pinned as an approval pins one, so a strictness change never
     renames it."""
@@ -41,7 +41,9 @@ def check_candidate(detector, version, klass, key, region, *, channels, scope,
             "origin": "check", "fine_grid": True,
             "created_by": detector, "state": "confirmed", "action": action,
             "created_at": results.now_iso(),
-            "user_state": {"approved": True, "approved_action": action}}
+            "user_state": {"approved": True, "approved_action": action},
+            # The planes (and frame) of a z-stack the finding is on, or None.
+            **({"extent": dict(extent)} if extent else {})}
 
 
 #: The refinement record of a region that is a detector's own traced object.

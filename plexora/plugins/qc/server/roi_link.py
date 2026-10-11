@@ -466,6 +466,14 @@ def create(ds, candidate, *, action, session_id=None, channel_names=None, cycles
                "geometry": candidate["geometry"],
                "notes": notes_for(candidate, session_id=session_id, action=action,
                                   channel_names=channel_names, cycles=cycles)}
+    # A finding on some planes of a z-stack (the stack checks): the region is
+    # limited to them, as a region drawn there would be.
+    if candidate.get("extent"):
+        from plexora.plugins.roi.server import schema as roi_schema
+
+        extent = roi_schema.normalize_extent(candidate["extent"])
+        if extent is not None:
+            feature["extent"] = extent
     # An outline magic select made (the agent's, or the tracer's model method)
     # says so in the ROI panel too.
     if candidate.get("method") in ("sam", "sam_agent") \
@@ -822,6 +830,9 @@ def live_regions(ds, result) -> list:
                     or (user.get("created_by") if isinstance(user, dict) else None),
                     "action": candidate.get("action") or "exclude",
                     "geometry": feature["geometry"],
+                    # A region on some planes of a z-stack (or one frame):
+                    # its cells are the ones on them (propagate.py).
+                    "extent": feature.get("extent"),
                     "channels": list(candidate.get("channels") or [])})
     return out
 

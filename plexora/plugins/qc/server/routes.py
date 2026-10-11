@@ -897,6 +897,45 @@ def artifacts_regions_write():
     return _invoke("write_artifact_regions", _with_project(_body()))
 
 
+# -- a z-stack as a stack (capabilities_stack.py) ----------------------------------------
+
+
+@qc_bp.route("/stack", methods=["GET"])
+def stack_state():
+    """The last stack check (or `{ok: false}` before one) and the plane QC reads."""
+    from plexora.plugins.qc.server import plane
+
+    project = request.args.get("datasource")
+    answer = registry_answer("get_qc_3d", {"project": project})
+    body = answer if answer.get("ok") else {"ok": True, "findings": None}
+    body["plane"] = plane.view_of(project) if project else ""
+    return api.json_response(body)
+
+
+@qc_bp.route("/stack/run", methods=["POST"])
+def stack_run():
+    """Starts the stack checks; answers `{job_id}`. The panel polls `/jobs/<id>`."""
+    return _invoke("run_qc_3d", _with_project(_body()))
+
+
+@qc_bp.route("/stack/write", methods=["POST"])
+def stack_write():
+    return _invoke("write_qc_3d_regions", _with_project(_body()))
+
+
+@qc_bp.route("/stack/plane", methods=["POST"])
+def stack_plane():
+    return _invoke("set_qc_plane", _with_project(_body()))
+
+
+def registry_answer(tool, arguments):
+    """A capability's answer as a dict (not a response), for a route that adds to it."""
+    from plexora.agent import registry
+
+    answer = registry.invoke(_session(), tool, arguments)
+    return {"ok": True, **(answer["result"] or {})} if answer["ok"] else {"ok": False}
+
+
 def _qc_job(job_id):
     """A job record, only when it is one of QC's (the panel reads nothing else)."""
     from plexora.agent import jobs

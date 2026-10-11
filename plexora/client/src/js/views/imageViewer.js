@@ -443,6 +443,14 @@ class ImageViewer {
         this.initLegend();
         this.initMiniMap();
         this.addScaleBar();
+        // The scale bar is drawn inside #openseadragon, out of reach of the
+        // canvas layout's docks (services/canvasLayout.js); it steps clear of
+        // the bands -- the depth strip, the section panes -- by its offsets.
+        window.addEventListener("plexora:canvas-layout", (event) => {
+            const insets = event.detail?.insets;
+            if (!insets || !this.viewer?.scalebarInstance) return;
+            this.viewer.scalebar({ xOffset: 5 + insets.right, yOffset: 5 + insets.bottom });
+        });
         this.selectionPolygonToDraw = [];
 
         // OSD's own full-page button only resizes the #openseadragon element
@@ -488,6 +496,8 @@ class ImageViewer {
         const group = button.parentElement;
         const controlsAnchor = group.parentElement.parentElement;
         group.classList.add('viewer-nav-controls');
+        // Named so the section panes can keep it clear of them (viewer.css).
+        controlsAnchor.classList.add('viewer-nav-anchor');
         group.style.display = 'flex';
         group.style.flexDirection = 'column';
         controlsAnchor.style.right = 'unset';
@@ -529,6 +539,7 @@ class ImageViewer {
         const { tileDrawingDefault, tileDrawingCustom } = PlexoraTileColorize.createTileDrawing({
             renderer,
             floatRange: this.numericData.floatRange,
+            itemRange: (channel, source) => this.itemRange(channel, source),
             findCurrentChannel: this.findCurrentChannel.bind(this),
             selectCenterProps: this.selectCenterProps.bind(this),
             // `overlayMuted` is a DRAW-TIME gate and nothing else: the mask item
@@ -559,6 +570,24 @@ class ImageViewer {
             Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4)),
         );
         this.decoderPool = decoderPool;
+        // A volume's channel and section tiles go through ONE scheduler
+        // (views/tileFetch.js): fetched once per address, decoded once, in
+        // order of need, and cancelled with the item that wanted them. Built
+        // here for every image and only ATTACHED to a volume's tile sources
+        // (ViewerManager.addChannelItems, sectionPanes.js), so a planar
+        // image's tiles take exactly the path they always did.
+        this.tileFetch = window.PlexoraTileFetch
+            ? new PlexoraTileFetch.TileFetchScheduler({
+                decoderPool,
+                decodeInline: PlexoraTileDecode.decodeTileInline,
+                // The plane's loader hands the scheduler more jobs than it
+                // runs, so the order across viewers is decided in one place.
+                onAttach: () => {
+                    const loader = this.viewer?.imageLoader;
+                    if (loader && loader.jobLimit && loader.jobLimit < 32) loader.jobLimit = 32;
+                },
+            }).watch(this.viewer)
+            : null;
 
         // tile-loaded handling: decode the raw tile bytes ourselves rather than
         // letting OSD turn them into an image. See views/tileDecode.js for the
@@ -2146,10 +2175,58 @@ class ImageViewer {
         if (this.currentChannels[channelIdx]) {
             let channelRange = [tfmin / range[1], tfmax / range[1]];
             this.currentChannels[channelIdx].range = channelRange;
+            // The units the range is in, for an item fetched in others
+            // (itemRange): HD or not, and which quantization window.
+            const sidebar = window.__plexora?.viewerSidebar;
+            const cls = sidebar?.viewClass || "volume";
+            const packet = hd ? null : sidebar?.quantWindow?.(name, cls);
+            this.currentChannels[channelIdx].rangeDomain = {
+                hd, cls, name,
+                window: packet ? [Number(packet.qmin), Number(packet.qmax)] : null };
             this.channelList.rangeConnector[channelIdx] = channelRange;
         }
         this.miniMap?.invalidate();
         this.scheduleRepaint();
+    }
+
+    /**
+     * A channel's range in the units of one item's pixels.
+     *
+     * A volume's tiles come in more than one unit: 8-bit bytes over the
+     * volume's window or over a standard-deviation projection's narrower one,
+     * or HD's raw 16-bit values. `channel.range` is in whatever units the
+     * sidebar is in NOW (`rangeDomain`), and the sidebar moves at the moment a
+     * change is asked for -- while the items it replaces are still on screen
+     * for as long as the new ones take to load. Drawn with the new units, they
+     * flash too bright or too dark for that long. Each item says which units
+     * its pixels are in (`hd`, `windowClass`, pinned when it was built), and
+     * the range is carried over through raw values. The same units -- every
+     * planar image, and a volume between changes -- return the range itself.
+     */
+    itemRange(channel, source) {
+        const range = channel?.range;
+        const domain = channel?.rangeDomain;
+        if (!range || !domain || !source?.view) return range;
+        const hd = source.hd === undefined ? domain.hd : Boolean(source.hd);
+        const cls = source.windowClass || "volume";
+        // The window this item's bytes were made with, when it says
+        // (services/volumeWindows.js; a std projection's is half of it).
+        const pinned = source.windowRange;
+        const itemWindow = hd || !pinned ? null
+            : (cls === "std" ? { qmin: 0, qmax: Math.max(1, Math.ceil(pinned[1] / 2)) }
+                             : { qmin: pinned[0], qmax: pinned[1] });
+        const domainWindow = domain.hd || !domain.window ? null
+            : { qmin: domain.window[0], qmax: domain.window[1] };
+        const sameWindow = !itemWindow || !domainWindow
+            || (itemWindow.qmin === domainWindow.qmin && itemWindow.qmax === domainWindow.qmax);
+        if (hd === domain.hd && cls === domain.cls && sameWindow) return range;
+        const sidebar = window.__plexora?.viewerSidebar;
+        const windowOf = (c) => sidebar?.quantWindow?.(domain.name, c) || null;
+        return PlexoraTileColorize.rangeInUnits(
+            range,
+            { hd: domain.hd, window: domain.hd ? null : (domainWindow || windowOf(domain.cls)) },
+            { hd, window: hd ? null : (itemWindow || windowOf(cls)) },
+            Number(this.numericData?.intRange?.[1]) || 65535) || range;
     }
 
     /**
@@ -2225,7 +2302,9 @@ class ImageViewer {
 
     updateCentroidFilter(filter = {}, showSpinner = false) {
         this.centroidFilter = filter || {};
-        const signature = JSON.stringify(this.centroidFilter);
+        // The frame is part of what is drawn (dataLayer.withFrame narrows
+        // every tile request to it): another frame's tiles are other cells.
+        const signature = JSON.stringify([this.centroidFilter, this.dataLayer?.tableFrame || null]);
         if (signature !== this.centroidFilterSignature) {
             this.centroidFilterSignature = signature;
             this.centroidTiles.clear();
@@ -2534,10 +2613,12 @@ class ImageViewer {
                 layer.filterIds = ids;
                 layer.gateMask = gate ? gate.mask : null;
                 layer.gateCount = gate ? gate.count : null;
+                layer.lastGates = gates;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
+                this.segmentationLastGates = gates;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2546,6 +2627,42 @@ class ImageViewer {
                 this.setLoading(false);
             }
         }
+    }
+
+    /**
+     * Follow the frame on screen with the table's rows, for a time series'
+     * object table (one row per cell per frame; `frame` is `{column, t}`, or
+     * null for any other table). Every row-reading request then carries the
+     * frame (dataLayer.tableFrame), so the cells, their centroids, the nearest
+     * cell and every gate are this frame's: the frame's cells are read again,
+     * the centroid tiles dropped, and each layer's last gate run again.
+     */
+    async setTableFrame(frame) {
+        const next = frame && frame.column && Number.isFinite(Number(frame.t))
+            ? { column: String(frame.column), t: Number(frame.t) } : null;
+        if (!this.dataLayer || JSON.stringify(this.dataLayer.tableFrame) === JSON.stringify(next)) {
+            return;
+        }
+        this.dataLayer.tableFrame = next;
+        this.numericData?.invalidateColumns?.();
+        if (this.numericData) this.numericData.cellsPromise = null;
+        this.updateCentroidFilter(this.centroidFilter);
+        if (!this.segmentationReady) return;
+        const { ids, centers } = await this.numericData.loadCells();
+        if (JSON.stringify(this.dataLayer.tableFrame) !== JSON.stringify(next)) return;
+        this.ids = ids || [];
+        this.centers = centers || [];
+        this.bindSegmentationBuffers(this.ids, this.centers);
+        for (const layer of this._cellStack.all?.() || []) {
+            if (layer.lastGates && Object.keys(layer.lastGates).length) {
+                this.updateSegmentationFilter(layer.lastGates, false, layer.name);
+            }
+        }
+        if (this.segmentationLastGates && Object.keys(this.segmentationLastGates).length) {
+            this.updateSegmentationFilter(this.segmentationLastGates, false, null);
+        }
+        this.rerenderSegmentationTiles?.(null);
+        this.viewer?.forceRedraw?.();
     }
 
     /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,
@@ -2822,7 +2939,11 @@ class ImageViewer {
         head.className = "viewer-canvas-caption-head";
         head.append(label, hint);
         caption.append(head);
-        wrapper.appendChild(caption);
+        // Top-left of the shared canvas layout (services/canvasLayout.js),
+        // where nothing else can be docked over it.
+        if (!window.PlexoraCanvasLayout?.place?.(caption, { corner: "top-left", order: 0, id: "caption" })) {
+            wrapper.appendChild(caption);
+        }
     }
     initLegend() {
         const wrapper = document.getElementById("openseadragon_wrapper");
@@ -2830,7 +2951,9 @@ class ImageViewer {
         const legend = document.createElement("div");
         legend.id = "viewer_channel_legend";
         legend.className = "viewer-channel-legend";
-        wrapper.appendChild(legend);
+        if (!window.PlexoraCanvasLayout?.place?.(legend, { corner: "bottom-right", order: 0, id: "legend" })) {
+            wrapper.appendChild(legend);
+        }
         this.eventHandler.bind(ChannelList.events.COLOR_TRANSFER_CHANGE, () => this.updateLegend());
         this.eventHandler.bind(ChannelList.events.CHANNELS_CHANGE, () => this.updateLegend());
         this.updateLegend();
@@ -3308,10 +3431,13 @@ class ImageViewer {
      */
     renderCurrentViewCanvas() {
         // PNG has no vector concept, so the scale bar and legend are baked
-        // in as raster pixels here, same as before.
-        const baseCanvas = this.viewer?.scalebarInstance && this.show_scalebar
+        // in as raster pixels here, same as before. In 3-D the picture is the
+        // volume renderer's canvas, not the tiles under it.
+        const volumeCanvas = window.__plexora?.viewState?.isVolume?.()
+            ? window.__plexora?.volumeView?.renderer?.snapshot?.() : null;
+        const baseCanvas = volumeCanvas || (this.viewer?.scalebarInstance && this.show_scalebar
             ? this.viewer.scalebarInstance.getImageWithScalebarAsCanvas()
-            : this.viewer?.drawer?.canvas;
+            : this.viewer?.drawer?.canvas);
         if (!baseCanvas) return null;
 
         const canvas = document.createElement("canvas");
@@ -3321,7 +3447,38 @@ class ImageViewer {
         this.fillExportGround(ctx, canvas.width, canvas.height);
         ctx.drawImage(baseCanvas, 0, 0);
         this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
+        this.drawViewLabelOnCanvas(ctx, canvas.width, canvas.height);
         return canvas;
+    }
+
+    /**
+     * Which plane or projection of a volume the picture is, written into it.
+     *
+     * The badge's own words (services/viewState.js `label`), bottom-left. A
+     * maximum projection looks like a plane once it leaves the viewer, and a
+     * capture is exactly the thing that leaves: this line is what keeps a
+     * projection from being read as a single plane in a slide deck or by an
+     * agent. Nothing at all for a planar image.
+     */
+    drawViewLabelOnCanvas(ctx, width, height) {
+        const viewState = window.__plexora?.viewState;
+        if (!viewState?.enabled?.()) return;
+        const text = viewState.label();
+        if (!text) return;
+        const scale = window.devicePixelRatio || 1;
+        const size = Math.round(12 * scale);
+        ctx.save();
+        ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+        ctx.textBaseline = "bottom";
+        const pad = Math.round(6 * scale);
+        const x = Math.round(12 * scale);
+        const y = height - Math.round(12 * scale);
+        const measured = ctx.measureText(text).width;
+        ctx.fillStyle = "rgba(5, 7, 10, 0.72)";
+        ctx.fillRect(x - pad, y - size - pad, measured + 2 * pad, size + 2 * pad);
+        ctx.fillStyle = viewState.isDerived() ? "#f3b845" : "#f8fafc";
+        ctx.fillText(text, x, y);
+        ctx.restore();
     }
 
     downloadCurrentView(format = "png") {

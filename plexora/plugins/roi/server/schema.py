@@ -36,6 +36,7 @@ travel with the annotations and are checked on load.
 
 from __future__ import annotations
 
+import math
 import re
 
 from plexora.plugins.roi.server.geometry import validate_geometry
@@ -82,8 +83,15 @@ MAX_FEATURES = 100_000
 
 FEATURE_FIELDS = (
     "id", "category_id", "name", "locked", "visible", "created_at", "updated_at",
-    "geometry", "flags", "source_roi_id", "notes",
+    "geometry", "flags", "source_roi_id", "notes", "extent", "solid",
 )
+
+#: Which planes of a z-stack a region covers (plexora/server/volume). "all" is
+#: what every region on a flat image means and what every region drawn before
+#: z-stacks existed meant, so it is stored as ABSENT: a 2-D project's document
+#: is byte for byte what it was. Planes are indices, never µm, so correcting
+#: the z step can never move an annotation.
+EXTENT_KINDS = ("all", "plane", "slab")
 
 
 def default_state(width=None, height=None):
@@ -264,7 +272,164 @@ def normalize_feature(raw):
     notes = clean_text(raw.get("notes"), MAX_NOTE_LENGTH)
     if notes:
         feature["notes"] = notes
+    extent = normalize_extent(raw.get("extent"))
+    solid = normalize_solid(raw.get("solid"))
+    if solid is not None:
+        # A solid says which planes it covers; the extent is kept in step so
+        # everything that only reads extents (mapping without a z role, the
+        # tree's badge, main's reader) sees the same planes.
+        feature["solid"] = solid
+        extent = solid_extent(solid)
+    if extent is not None:
+        feature["extent"] = extent
     return feature
+
+
+def _plane_index(value, what):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or int(value) != value or value < 0:
+        raise ValueError(f"extent {what} must be a plane index (0 or more), not {value!r}")
+    return int(value)
+
+
+def normalize_extent(raw):
+    """`{kind: "plane", z, t}` or `{kind: "slab", z0, z1, t}`; None for "all".
+
+    Bounds are inclusive plane indices, ordered on the way in. `t` is the
+    frame of a time series, 0 for everything else.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("an extent is an object: {kind, z} or {kind, z0, z1}")
+    kind = raw.get("kind", "all")
+    if kind not in EXTENT_KINDS:
+        raise ValueError(f"unknown extent kind {kind!r}; one of {', '.join(EXTENT_KINDS)}")
+    if kind == "all":
+        return None
+    t = _plane_index(raw.get("t", 0), "t")
+    if kind == "plane":
+        return {"kind": "plane", "z": _plane_index(raw.get("z"), "z"), "t": t}
+    z0 = _plane_index(raw.get("z0"), "z0")
+    z1 = _plane_index(raw.get("z1"), "z1")
+    if z1 < z0:
+        z0, z1 = z1, z0
+    return {"kind": "slab", "z0": z0, "z1": z1, "t": t}
+
+
+def extent_planes(extent):
+    """`(first, last)` plane an extent covers, inclusive; None for all planes."""
+    if not extent:
+        return None
+    if extent.get("kind") == "plane":
+        return extent["z"], extent["z"]
+    if extent.get("kind") == "slab":
+        return extent["z0"], extent["z1"]
+    return None
+
+
+#: A region's shape through a z-stack, beside its 2-D `geometry` (which stays
+#: its footprint -- what it covers seen from above -- so everything that reads
+#: one outline per region, and main's reader, keeps working):
+#:
+#: - `contours`: one outline per plane, `planes: {"z": geometry}`, with no gaps
+#:   (an outline carried through planes, plexora/vision/propagate.py). `keys`
+#:   are the planes a person or a prompt fixed; the rest were carried.
+#: - `ellipsoid`: the footprint is the outline on its middle plane `z` (which
+#:   may fall between planes); on plane p it shrinks about its centre by
+#:   sqrt(1 - ((p - z) / rz)^2), and is gone where |p - z| >= rz.
+#:
+#: A box needs no kind of its own: it is a rectangle limited to a range of
+#: planes (`extent`). Planes are indices, as extents are.
+#:
+#: `labels` is a region that IS some cells of a 3-D mask: `ids` (the mask's
+#: label ids, which are the table's cell ids) and, for drawing, each plane's
+#: outline of those cells in `planes` as contours keep them -- a plane where
+#: none of them lies is simply absent. Membership is by id (exact), never by
+#: outline. Editing a plane's outline by hand makes it contours: it no longer
+#: is exactly those cells.
+SOLID_KINDS = ("contours", "ellipsoid", "labels")
+MAX_SOLID_PLANES = 1024
+#: Most cells one `labels` region may name.
+MAX_LABEL_IDS = 20_000
+
+
+def normalize_solid(raw):
+    """A validated `solid`, or None for a flat region."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("a solid is an object: {kind: contours|ellipsoid, ...}")
+    kind = raw.get("kind")
+    if kind not in SOLID_KINDS:
+        raise ValueError(f"unknown solid kind {kind!r}; one of {', '.join(SOLID_KINDS)}")
+    t = _plane_index(raw.get("t", 0), "t")
+    if kind == "ellipsoid":
+        try:
+            z, rz = float(raw.get("z")), float(raw.get("rz"))
+        except (TypeError, ValueError):
+            raise ValueError("an ellipsoid needs its middle plane z and its half-depth rz") \
+                from None
+        if not (z >= 0 and rz > 0) or z != z or rz != rz:
+            raise ValueError("an ellipsoid's z is 0 or more and its rz more than 0")
+        return {"kind": "ellipsoid", "z": round(z, 3), "rz": round(rz, 3), "t": t}
+    ids = None
+    if kind == "labels":
+        try:
+            ids = sorted({int(v) for v in raw.get("ids") or []})
+        except (TypeError, ValueError):
+            raise ValueError("a labels region's ids are the mask's label ids (integers)") \
+                from None
+        if not ids or ids[0] <= 0:
+            raise ValueError("a labels region names at least one label id above 0")
+        if len(ids) > MAX_LABEL_IDS:
+            raise ValueError(f"a labels region names at most {MAX_LABEL_IDS} cells")
+    planes = raw.get("planes")
+    if not isinstance(planes, dict) or not planes:
+        raise ValueError(f"{kind} need at least one plane: {{planes: {{z: geometry}}}}")
+    if len(planes) > MAX_SOLID_PLANES:
+        raise ValueError(f"at most {MAX_SOLID_PLANES} planes of contours")
+    cleaned = {}
+    for key, geometry in planes.items():
+        try:
+            z = _plane_index(int(key) if str(key).lstrip("-").isdigit() else key, "plane")
+        except ValueError:
+            raise ValueError(f"contours are keyed by plane index, not {key!r}") from None
+        cleaned[str(z)] = validate_geometry(geometry)
+    zs = sorted(int(z) for z in cleaned)
+    # Cells at different depths leave planes between them where none lies.
+    if kind == "contours" and zs[-1] - zs[0] + 1 != len(zs):
+        raise ValueError("contours cover consecutive planes, with no gaps")
+    keys = sorted({int(z) for z in raw.get("keys") or [] if str(z).isdigit()
+                   and str(int(z)) in cleaned})
+    out = {"kind": kind, "planes": {str(z): cleaned[str(z)] for z in zs}, "t": t}
+    if ids is not None:
+        out["ids"] = ids
+    if keys:
+        out["keys"] = keys
+    return out
+
+
+def solid_extent(solid):
+    """The planes a solid covers, as an extent (inclusive bounds)."""
+    t = solid.get("t", 0)
+    if solid["kind"] in ("contours", "labels"):
+        zs = sorted(int(z) for z in solid["planes"])
+        z0, z1 = zs[0], zs[-1]
+    else:
+        z, rz = solid["z"], solid["rz"]
+        # Planes strictly inside the ellipsoid; at least its middle one.
+        z0 = max(0, math.floor(z - rz) + 1)
+        z1 = max(z0, math.ceil(z + rz) - 1)
+    if z0 == z1:
+        return {"kind": "plane", "z": z0, "t": t}
+    return {"kind": "slab", "z0": z0, "z1": z1, "t": t}
+
+
+def solid_scale(solid, plane):
+    """How much an ellipsoid's footprint shrinks on `plane` (0 where it is gone)."""
+    offset = (float(plane) - solid["z"]) / solid["rz"]
+    return math.sqrt(max(0.0, 1.0 - offset * offset))
 
 
 #: How a shape was first drawn, kept as `flags.method`. "sam" is magic select

@@ -71,6 +71,11 @@ async function plexoraMapWithLimit(items, limit, fn) {
  * Every default is the previous behaviour, and the viewer passes no options at
  * all.
  */
+
+//: How long a navigation revision's tiles wait for the statistics of the view
+//: they show (prepareContrast) before showing with the contrast there is.
+const CONTRAST_HOLD_MS = 1500;
+
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {
         this.config = config;
@@ -137,6 +142,40 @@ class ViewerSidebar {
             this._hdModeListener = (e) => this.onHdModeChanged(Boolean(e.detail?.enabled));
             window.addEventListener("plexora:hd-mode-changed", this._hdModeListener);
         }
+        //: Which quantization window the reference tiles are in, for a volume:
+        //: "volume" (every plane and most projections share one) or "std" (a
+        //: standard-deviation projection, quantized against half the range --
+        //: server/volume/windows.py). Only the viewer's own sidebar follows
+        //: it; a scoped copy shows somebody else's channels.
+        this.viewClass = "volume";
+        this._viewClassListener = null;
+        //: Per-view statistics (`viewStats`) and the view auto-contrast last
+        //: levelled for (`onViewRequested`).
+        this._viewStats = new Map();
+        this._volumeHints = new Map();
+        this._contrastViewShown = "";
+        this._contrastTimer = null;
+        this._viewRequestedListener = null;
+        this._volumeHintListener = null;
+        if (this.hdModeOverride === undefined && this.root === document && !this.idPrefix) {
+            this._viewClassListener = (e) => this.onViewClassChanged(
+                e.detail?.from || "volume", e.detail?.to || "volume");
+            window.addEventListener("plexora:view-class-changed", this._viewClassListener);
+            this._viewRequestedListener = () => this.onViewRequested();
+            window.addEventListener("plexora:view-requested", this._viewRequestedListener);
+            // The view's contrast changes with the view's tiles, in one
+            // navigation revision (services/viewState.js), when the viewer
+            // has one; on its own timer (onViewRequested) otherwise.
+            const vs = window.__plexora?.viewState;
+            if (typeof vs?.registerSurface === "function") {
+                this._contrastSurface = vs.registerSurface("ranges", {
+                    order: 10, hold: CONTRAST_HOLD_MS, prepare: (rev) => this.prepareContrast(rev) });
+            }
+            this._volumeHintListener = (e) => this.onVolumeHint(e.detail || {});
+            window.addEventListener("plexora:volume-hint", this._volumeHintListener);
+            this._volumeWindowListener = (e) => this.onVolumeWindow(e.detail || {});
+            window.addEventListener("plexora:volume-window", this._volumeWindowListener);
+        }
     }
 
     /**
@@ -155,6 +194,21 @@ class ViewerSidebar {
         if (this._hdModeListener) {
             window.removeEventListener("plexora:hd-mode-changed", this._hdModeListener);
             this._hdModeListener = null;
+        }
+        if (this._viewRequestedListener) {
+            this._contrastSurface?.();
+            this._contrastSurface = null;
+            window.removeEventListener("plexora:view-requested", this._viewRequestedListener);
+            window.removeEventListener("plexora:volume-hint", this._volumeHintListener);
+            window.removeEventListener("plexora:volume-window", this._volumeWindowListener);
+            this._viewRequestedListener = null;
+            this._volumeHintListener = null;
+            this._volumeWindowListener = null;
+            clearTimeout(this._contrastTimer);
+        }
+        if (this._viewClassListener) {
+            window.removeEventListener("plexora:view-class-changed", this._viewClassListener);
+            this._viewClassListener = null;
         }
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = null;
@@ -217,11 +271,17 @@ class ViewerSidebar {
      * convert a range they had already saved. Falls back to the GMM packet so
      * a caller that somehow has one but no stats still works.
      */
-    quantWindow(name) {
+    quantWindow(name, viewClass = this.viewClass) {
         const fullName = this.dataLayer.getFullChannelName(name);
         const stats = this.databaseDescription[fullName];
-        if (stats && stats.qmax !== undefined) return stats;
-        return this.channelList.hasChannelGMM[name];
+        const base = (stats && stats.qmax !== undefined) ? stats : this.channelList.hasChannelGMM[name];
+        // A standard-deviation projection's tiles are quantized against
+        // (0, ceil(qmax / 2)) -- the exact bound on a std of values in
+        // [0, qmax], so the server needs no scan and this needs no request.
+        if (base && viewClass === "std") {
+            return { ...base, qmin: 0, qmax: Math.max(1, Math.ceil(base.qmax / 2)) };
+        }
+        return base;
     }
 
     /**
@@ -290,6 +350,31 @@ class ViewerSidebar {
             // A new domain, not a new value: `setBounds` re-clamps and repaints
             // in place, where the old slider had to be thrown away and drawn
             // again from scratch.
+            this.syncChannelSlider(slot);
+        });
+    }
+
+    /**
+     * @function onViewClassChanged
+     * The tiles moved to another quantization window (a volume switched
+     * between planes and a standard-deviation projection): remap every slot's
+     * byte-domain range so each keeps the same RAW window, the same move
+     * `onHdModeChanged` makes between bytes and raw units. In HD mode ranges
+     * are raw already and nothing moves.
+     */
+    onViewClassChanged(from, to) {
+        if (from === to) return;
+        this.viewClass = to;
+        if (this.isHdMode()) return;
+        this.channelSlots.forEach((slot) => {
+            if (!slot.name) return;
+            const before = this.quantWindow(slot.name, from);
+            const after = this.quantWindow(slot.name, to);
+            if (!before || !after) return;
+            const remap = (range) => this.rawToByteRange(this.byteToRawRange(range, before), after);
+            slot.range = remap(slot.range);
+            if (slot.preAutoRange) slot.preAutoRange.range = remap(slot.preAutoRange.range);
+            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
             this.syncChannelSlider(slot);
         });
     }
@@ -1114,16 +1199,43 @@ class ViewerSidebar {
             return;
         }
         const markerName = slot.name;
-        const stillCurrent = () => slot.name === markerName &&
+        // The newest levelling of this slot wins: one asked for by an older
+        // view and still waiting on a fetch must not land after it.
+        const turn = slot.levelTurn = (slot.levelTurn || 0) + 1;
+        const stillCurrent = () => slot.name === markerName && slot.levelTurn === turn &&
             (options.force || !slot.userRangeChanged);
         slot.autoLeveling = true;
         try {
+            // A projection, or the 3-D view, has its own brightness: a maximum
+            // over 200 planes sits far above any one plane, and the plane's
+            // window saturates it. Its hints are the view's own statistics --
+            // for the 3-D view, those of the level it draws (`viewStats`).
+            // Nothing is saved, so the project's channel ranges stay the plane's.
+            // `options.view` is the view a navigation revision is showing
+            // (prepareContrast), which may trail the one asked for.
+            const viewToken = options.view !== undefined ? options.view : this.contrastView();
+            if (viewToken) {
+                await this.channelList.ensureChannelStats(markerName);
+                const stats = await this.viewStats(markerName, viewToken);
+                if (!stillCurrent()
+                    || (options.view === undefined && this.contrastView() !== viewToken)) return;
+                if (stats && stats.vmin_hint !== undefined) {
+                    const packet = this.quantWindow(markerName) || stats;
+                    slot.autoSilent = true;
+                    this.applyAutoRange(slotIndex, slot, [stats.vmin_hint, stats.vmax_hint], packet);
+                    this.askForHdIfCoarse({ ...packet, vmin_hint: stats.vmin_hint,
+                                            vmax_hint: stats.vmax_hint });
+                }
+                return;
+            }
+
             // Pass 1 -- provisional, so the channel is visible right away.
             await this.channelList.ensureChannelStats(markerName);
             if (!stillCurrent()) return;
             const stats = this.quantWindow(markerName);
             if (stats && stats.vmin_hint !== undefined) {
                 this.applyAutoRange(slotIndex, slot, [stats.vmin_hint, stats.vmax_hint], stats);
+                this.askForHdIfCoarse(stats);
             }
 
             // Pass 2 -- the real fit. Slow and produces no other visible sign
@@ -1145,6 +1257,155 @@ class ViewerSidebar {
         } finally {
             slot.autoLeveling = false;
         }
+    }
+
+    /**
+     * The view whose statistics auto-contrast reads: a projection's token,
+     * `3d` for the 3-D view, or "" for a plane (the channel's own statistics,
+     * as on a flat image). Only the viewer's own sidebar follows the view.
+     */
+    contrastView(state = null) {
+        if (this.hdModeOverride !== undefined || this.root !== document || this.idPrefix) return "";
+        const vs = window.__plexora?.viewState;
+        if (!vs?.enabled?.()) return "";
+        state = state || vs.get?.();
+        if (!state) return "";
+        if (state.mode === "slab") return vs.spec(state);
+        if (state.mode === "volume") return "3d";
+        return "";
+    }
+
+    /**
+     * The contrast's part of a navigation revision: when the view auto-contrast
+     * follows changes (a plane, a projection, the 3-D view), the statistics of
+     * the new one are fetched while its tiles load, and the channels are
+     * levelled in the same task that shows them. Levelled on a timer of its
+     * own, a projection's first frames were drawn with the plane's window
+     * (too bright) or the plane's with the projection's (too dark) for as long
+     * as the two disagreed. Channels the user set are never touched.
+     */
+    prepareContrast(rev) {
+        const view = this.contrastView(rev.state);
+        if (view === this._contrastViewShown) return null;
+        const auto = this.channelSlots.filter((slot) => slot.enabled && slot.name
+                                              && !slot.userRangeChanged);
+        const commit = () => {
+            this._contrastViewShown = view;
+            for (const slot of auto) {
+                if (slot.enabled && slot.name && !slot.userRangeChanged) {
+                    this.autoChannel(slot.index, { force: true, view });
+                }
+            }
+        };
+        if (!view || view === "3d" || !auto.length) return commit;
+        return Promise.all(auto.map((slot) => this.channelList.ensureChannelStats(slot.name)
+            .then(() => this.viewStats(slot.name, view)).catch(() => null)))
+            .then(() => (rev.superseded ? null : commit));
+    }
+
+    /**
+     * One channel's statistics in `view`, fetched once per view. The 3-D
+     * view's are the hints its renderer received with the level it uploaded
+     * (`plexora:volume-hint`): a coarse level's voxels are averages, far
+     * dimmer than a full-resolution projection's maxima. Null until it has.
+     */
+    viewStats(name, view) {
+        const fullName = this.dataLayer.getFullChannelName(name);
+        if (view === "3d") {
+            const hint = this._volumeHints.get(fullName);
+            return Promise.resolve(hint ? { vmin_hint: hint[0], vmax_hint: hint[1] } : null);
+        }
+        const key = `${fullName}|${view}`;
+        if (!this._viewStats.has(key)) {
+            this._viewStats.set(key, this.dataLayer.getImageChannelStats(fullName, view)
+                .then((stats) => (stats && stats.vmin_hint !== undefined ? stats : null),
+                      () => null));
+        }
+        return this._viewStats.get(key);
+    }
+
+    /**
+     * Re-level every channel whose range the user has not set, when the view
+     * on screen changes between a plane, a projection and the 3-D view (see
+     * `contrastView`). Settles for a moment first: dragging a projection's
+     * range asks for one view, not one per step.
+     */
+    onViewRequested() {
+        // Levelled with the tiles instead (prepareContrast).
+        if (this._contrastSurface) return;
+        clearTimeout(this._contrastTimer);
+        this._contrastTimer = setTimeout(() => {
+            const view = this.contrastView();
+            if (view === this._contrastViewShown) return;
+            this._contrastViewShown = view;
+            this.channelSlots.forEach((slot, index) => {
+                if (slot.enabled && slot.name && !slot.userRangeChanged) {
+                    this.autoChannel(index, { force: true });
+                }
+            });
+        }, 250);
+    }
+
+    /**
+     * A channel's window changed (services/volumeWindows.js -- the exact one
+     * replacing the provisional one): the bytes the tiles are made of now map
+     * to other raw values, so each slot showing that channel keeps the SAME
+     * raw range, moved into the new bytes -- what a class change does
+     * (onViewClassChanged). In HD the ranges are raw already.
+     */
+    onVolumeWindow({ name, window: next } = {}) {
+        if (!name || !Array.isArray(next)) return;
+        const packet = this.databaseDescription?.[name];
+        if (!packet) return;
+        const before = { qmin: Number(packet.qmin), qmax: Number(packet.qmax) };
+        if (before.qmin === next[0] && before.qmax === next[1]) return;
+        const after = { qmin: next[0], qmax: next[1] };
+        packet.qmin = after.qmin;
+        packet.qmax = after.qmax;
+        if (this.isHdMode() || !Number.isFinite(before.qmax)) return;
+        this.channelSlots.forEach((slot) => {
+            if (!slot.name || this.dataLayer.getFullChannelName(slot.name) !== name) return;
+            const remap = (range) => this.rawToByteRange(this.byteToRawRange(range, before), after);
+            slot.range = remap(slot.range);
+            if (slot.preAutoRange) slot.preAutoRange.range = remap(slot.preAutoRange.range);
+            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
+            this.syncChannelSlider(slot);
+        });
+    }
+
+    /** A 3-D level arrived with its hints: level its channel if it is auto. */
+    onVolumeHint({ name, hint }) {
+        if (!name || !Array.isArray(hint)) return;
+        this._volumeHints.set(name, hint);
+        if (this.contrastView() !== "3d") return;
+        this.channelSlots.forEach((slot, index) => {
+            if (slot.enabled && slot.name && !slot.userRangeChanged
+                && this.dataLayer.getFullChannelName(slot.name) === name) {
+                this.autoChannel(index, { force: true });
+            }
+        });
+    }
+
+    /**
+     * A z-stack whose fast tiles cannot draw its own default contrast asks for HD.
+     *
+     * Fast tiles map [qmin, qmax] -- zero to the channel's brightest voxel on
+     * any plane -- onto 256 byte levels. A light-sheet stack with its tissue
+     * under 1000 and a few saturated voxels at 65535 has four of them across its
+     * default range: a posterised picture no slider can repair. Under
+     * MIN_DEFAULT_LEVELS the viewer turns HD on (16-bit tiles, windowed on the
+     * GPU; main.js, once per page). Only the viewer's own sidebar asks, and
+     * only for a stack: a flat image's tiles are what they always were.
+     */
+    askForHdIfCoarse(stats) {
+        if (this.hdModeOverride !== undefined || this.root !== document || this.idPrefix) return;
+        if (!window.__plexora?.viewState?.enabled?.() || this.isHdMode()) return;
+        const span = Number(stats.qmax) - Number(stats.qmin);
+        const range = Number(stats.vmax_hint) - Number(stats.vmin_hint);
+        if (!(span > 0) || !(range > 0)) return;
+        const levels = (255 * range) / span;
+        if (levels >= ViewerSidebar.MIN_DEFAULT_LEVELS) return;
+        window.dispatchEvent(new CustomEvent("plexora:hd-needed", { detail: { levels } }));
     }
 
     addFirstAvailableChannel() {
@@ -1869,3 +2130,7 @@ class ViewerSidebar {
         return this.defaultColors[slotIndex % this.defaultColors.length];
     }
 }
+
+//: Byte levels a stack's fast tiles must spend on its default contrast range
+//: before the viewer stops asking for HD (askForHdIfCoarse).
+ViewerSidebar.MIN_DEFAULT_LEVELS = 32;

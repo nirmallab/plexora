@@ -140,3 +140,19 @@ def test_an_anndata_split_comes_from_the_file_structure():
 def test_empty_input_is_not_an_error():
     assert classify_columns([]) == {"markers": [], "metadata": [], "roles": {}}
     assert classify_columns(None)["markers"] == []
+
+
+def test_a_3d_object_table_has_only_its_channels_as_markers():
+    """The columns server/volume/measure.py writes: position in depth, the
+    bounding box, shape in 3-D and the per-channel `<channel>__<statistic>`
+    values are all metadata; each channel's own column (its mean) is the
+    marker. A marker that merely ends in "um" stays one."""
+    from plexora.server.models.adapters.classify import classify_columns
+
+    columns = ["label", "X", "Y", "Z", "t", "bbox_z0", "bbox_x1", "n_planes",
+               "touches_z_bounds", "touches_xy_bounds", "volume_vox", "x_um", "y_um",
+               "z_um", "volume_um3", "surface_area_um2", "sphericity", "DNA", "CD8",
+               "DNA__integrated", "CD8__integrated", "Calcium"]
+    result = classify_columns([{"name": c, "dtype": "float64"} for c in columns])
+    assert result["markers"] == ["DNA", "CD8", "Calcium"]
+    assert result["roles"]["z"] == "Z"

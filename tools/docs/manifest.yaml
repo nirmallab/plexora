@@ -103,6 +103,10 @@ sections:
           - plexora.api.Requirement
           - plexora.api.requirement
           - plexora.api.layer_requirement
+          - plexora.api.plugin.DIMS
+          - plexora.api.plugin.REPRESENTATIONS
+          - plexora.api.plugin.SPACING_AXES
+          - plexora.api.plugin.TIME_MODES
 
   - dir: plugin-api/runtime
     title: Server API
@@ -405,7 +409,7 @@ format_notes:
   ".bif": Roche Ventana whole-slide image, read as brightfield. Local or at a web address.
   ".mrxs": 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). Local only.
   ".svslide": Sakura whole-slide image. Needs the `wsi` extra. Local only.
-  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom. Local or at a web address (`pip install "plexora[remote]"`).
+  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom; a fluorescence slide's focal planes open as a z-stack. Local or at a web address (`pip install "plexora[remote]"`).
   ".zarr": OME-Zarr image, or a SpatialData store when it contains tables.
   ".h5ad": AnnData. Coordinates from `obsm["spatial"]` or two `obs` columns.
   ".parquet": Parquet cell table.
@@ -415,8 +419,9 @@ format_notes:
   ".png": Single-plane RGB or grayscale image. Local or at a web address.
   ".jpg": Single-plane RGB or grayscale image. Local or at a web address.
   ".jpeg": Single-plane RGB or grayscale image. Local or at a web address.
-  ".tif": TIFF or OME-TIFF image, or a label mask. An image may also be at a web address.
-  ".tiff": TIFF or OME-TIFF image, or a label mask. An image may also be at a web address.
+  ".tif": TIFF or OME-TIFF image (a z-stack opens plane by plane), or a label mask, 2-D or 3-D. An image may also be at a web address.
+  ".tiff": TIFF or OME-TIFF image (a z-stack opens plane by plane), or a label mask, 2-D or 3-D. An image may also be at a web address.
+  ".ims": Imaris image (HDF5), with every channel, plane and resolution level and the voxel size the file states. Local only.
   ".qptiff": Akoya PhenoImager (Vectra/Polaris) multiplex image. Local or at a web address.
 
 # Folders and stores, which have no single extension (formats.py).

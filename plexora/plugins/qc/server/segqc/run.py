@@ -28,6 +28,7 @@ from time import perf_counter
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 from plexora.plugins.qc.server.segqc import analysis, kernels
 
 VERSION = "2"
@@ -154,7 +155,7 @@ def plan(session, project, *, dna_channel=None, params=None) -> tuple:
     _index, found = resolve_channel(dna, list(record.image.real_channels))
     key = source_image.channel_key(found)
     image_data = session.image_data(project)
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     image_stamp = None if str(identity or "").startswith("node://") else _stamp(identity)
     mask = mask_identity(record)
     params = {**PARAMS_DEFAULT, **(params or {})}
@@ -313,7 +314,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
         raise AgentError("resource_unavailable", reason or f"the mask is {status}")
     extra = int(getattr(record.segmentation, "extra_levels", 0) or 0)
     params = context["params"]
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no DNA channel to check a mask against")

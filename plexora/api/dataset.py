@@ -198,6 +198,9 @@ class ImageHandle:
 
     def __init__(self, project: Project):
         self._project = project
+        self._node_provider = None
+        self._volume_described = False
+        self._volume_info = None
 
     @property
     def locator(self) -> ResourceLocator:
@@ -349,7 +352,7 @@ class ImageHandle:
                 "its geometry over an API")
         return provider.geometry()
 
-    def read_region(self, level, box, channel_indices, max_pixels=0):
+    def read_region(self, level, box, channel_indices, max_pixels=0, view=None):
         """Read a rectangle of pixels from one or more channels.
 
         Works whether the image is local or on a data node, which is the
@@ -364,6 +367,12 @@ class ImageHandle:
                 names -- the same indexing a pyramid tile is addressed by.
             max_pixels (int, optional): Downsample so the returned array has
                 at most this many pixels. 0 (the default) means no limit.
+            view (str, optional): For a z-stack or time series, which view to
+                read -- a plane (`"z12"`), a slab projection (`"z4-19max"`,
+                `"zmean"`) or a section (`"xzy1200"`), in that view's own
+                pixels (a section's rows are z). Given, it reads a local image
+                too. None reads the default plane of a node-backed volume and
+                keeps every other call exactly as it was.
 
         Returns:
             tuple: `(pixels, clipped_box)` -- the array read, and the box
@@ -372,16 +381,103 @@ class ImageHandle:
             than `box`.
 
         Raises:
-            ResourceNotLocal: If the image is a local file; open it directly
-                instead of reading it through this API.
+            ResourceNotLocal: If the image is a local file and no `view` was
+                given; open it directly instead of reading it through this
+                API.
+            RenderError: If `view` names a view this image does not have --
+                any view of a planar image, or a plane past the stack's end.
         """
         provider = self._provider()
         if provider is None:
+            if view is not None:
+                return self._read_local_view(level, box, channel_indices, max_pixels,
+                                             view)
             raise ResourceNotLocal(
                 f"the image for {self._project.name!r} is on this machine; open "
                 "it directly rather than reading it through this API")
+        if view is not None:
+            return provider.read_region(level, box, channel_indices,
+                                        max_pixels=max_pixels, view=view)
         return provider.read_region(level, box, channel_indices,
                                     max_pixels=max_pixels)
+
+    def _read_local_view(self, level, box, channel_indices, max_pixels, view):
+        """`read_region` of one view of a local volume, through `SourceImage`.
+
+        The same clipping, budget and stacking the node's region route applies,
+        so a caller cannot tell where the file was.
+        """
+        import numpy as np
+
+        from plexora.server.providers.base import ResourceError
+        from plexora.server.utils.source_image import SourceImage
+
+        x0, y0, x1, y1 = (int(value) for value in box)
+        indices = [int(index) for index in channel_indices]
+        with SourceImage(_project_data_for(self._project), view=view) as source:
+            height, width = source.level_shape(int(level))
+            x0, x1 = max(0, min(x0, width)), max(0, min(x1, width))
+            y0, y1 = max(0, min(y0, height)), max(0, min(y1, height))
+            x1, y1 = max(x0, x1), max(y0, y1)
+            if max_pixels and (x1 - x0) * (y1 - y0) * max(1, len(indices)) > max_pixels:
+                raise ResourceError(
+                    "this region covers more of the image than one read can carry; "
+                    "ask for a lower resolution")
+            if x1 <= x0 or y1 <= y0:
+                return (np.zeros((max(1, len(indices)), 1, 1), dtype=np.float32),
+                        (x0, y0, x1, y1))
+            planes = [source.read(index, int(level), (x0, y0, x1, y1))[0]
+                      for index in indices]
+        return np.stack(planes), (x0, y0, x1, y1)
+
+    def volume(self) -> dict | None:
+        """What this image is as a volume, or None for a planar image.
+
+        A z-stack or time series is one object of which every plane, slab
+        projection and section is a view; this is its description -- extent,
+        spacing (with where each step came from), pyramid levels, the default
+        view -- the same payload the viewer reads from `/volume/<name>/info`.
+        Read from the image file (or asked of the data node holding it) once
+        per handle, without loading the project into the viewer.
+
+        Returns:
+            dict | None: The volume's description, or None for a planar
+            image. A node-backed volume whose node cannot describe it as one
+            is also None; its default plane still reads.
+        """
+        if not self._volume_described:
+            self._volume_info = self._describe_volume()
+            self._volume_described = True
+        return dict(self._volume_info) if self._volume_info is not None else None
+
+    @property
+    def is_volumetric(self) -> bool:
+        """Whether this image is a z-stack or time series (see `volume`).
+
+        Returns:
+            bool: True when the image has more than one plane or frame to
+            choose between.
+        """
+        return self.volume() is not None
+
+    def _describe_volume(self):
+        provider = self._provider()
+        if provider is not None:
+            # Only a project that records itself as a volume asks the node --
+            # a planar one costs no round trip, exactly as before.
+            if not self._project.image.is_volumetric:
+                return None
+            source = provider.volume()
+            return source.volume.to_dict() if source is not None else None
+        from plexora.server.utils.source_image import open_project_volume
+
+        source = open_project_volume(self._project)
+        if source is None:
+            return None
+        try:
+            return source.volume.to_dict()
+        finally:
+            source.close()
 
     def _provider(self):
         """The node provider for this image, or None when it is local.
@@ -389,16 +485,21 @@ class ImageHandle:
         Built here rather than taken from data_model's `_providers`, because a
         plugin may ask about a project that is not the loaded one -- Figure
         Builder's library spans projects, and its export runs against whichever
-        one a panel came from.
+        one a panel came from. Kept for this handle's life: a node-backed
+        volume's description is a round trip, and every region read of one
+        needs it.
         """
         binding = self._project.resources.get("image")
         if binding is None:
             return None
-        from plexora.server.providers.node import NodeImageProvider
+        if self._node_provider is None:
+            from plexora.server.providers.node import NodeImageProvider
 
-        return NodeImageProvider(binding).with_channels(
-            self._project.image.channel_names,
-            self._project.image.tile_width, self._project.image.tile_height)
+            self._node_provider = NodeImageProvider(binding).with_channels(
+                self._project.image.channel_names,
+                self._project.image.tile_width, self._project.image.tile_height,
+            ).with_volume(self._project.image)
+        return self._node_provider
 
 
 class SegHandle:
@@ -421,6 +522,24 @@ class SegHandle:
             bool: True once a mask has been registered.
         """
         return self._project.segmentation.available
+
+    def label_volume(self, t: int = 0):
+        """The mask as a 3-D label volume -- one id per cell across planes --
+        at frame `t` of a time series, or None for a 2-D mask (one
+        segmentation drawn on every plane) or a mask held on a data node.
+
+        Its `read(level, z0, z1, rows, cols)` gives `(Z, H, W)` label ids;
+        `plane(z)` one plane's 2-D pyramid; `depth`, `height`, `width`,
+        `frames`.
+        """
+        from plexora.server.volume import labels
+
+        derived = self._project.segmentation.derived
+        if not self.available or self._project.resources.get("segmentation") is not None:
+            return None
+        if not derived or not labels.is_label_volume(derived):
+            return None
+        return labels.open_label_volume(derived).frame(t)
 
     @property
     def pending(self) -> bool:
@@ -553,6 +672,15 @@ class TableSource:
             the table is on a data node and `path` is empty.
         """
         return self.locator.is_local
+
+
+class CoordinatesUnavailable(ValueError):
+    """Positions cannot be given in µm: `missing` names what would let them
+    (`pixel_size`, or `spacing:z` for depth)."""
+
+    def __init__(self, message: str, *, missing: str):
+        super().__init__(message)
+        self.missing = missing
 
 
 class TableHandle:
@@ -726,6 +854,69 @@ class TableHandle:
             return self._provider.frame
         data_model._ensure_loaded(self._project.name)
         return data_model.get_datasource_df()
+
+    def physical_coordinates(self):
+        """Each cell's position in micrometres, for analysis that measures
+        distance (neighbourhoods, contact, density) in the tissue's own units.
+
+        A polars DataFrame of the cell id (`cell_id`), `X_um`, `Y_um` and,
+        for a table with a z role (3-D objects), `Z_um`; with a frame role (a
+        time series), `t` too. An object table measured in µm (`x_um`,
+        `y_um`, `z_um`) is read as measured; any other table's pixel columns
+        are scaled by the image's pixel size and z step
+        (`pixel_scale.spacing`). Nothing is written to the table.
+
+        Returns:
+            polars.DataFrame | None: None if this project has no feature table.
+
+        Raises:
+            CoordinatesUnavailable: The pixel size is unknown (no µm at all), or
+                the table has a z role and the z step is unknown -- say which,
+                rather than substituting a default.
+        """
+        import polars as pl
+
+        from plexora.server.utils import pixel_scale
+
+        frame = self.geometry()
+        if frame is None:
+            return None
+        roles = self._project.roles
+        id_column = roles.get("cell_id") if roles.get("cell_id") in frame.columns else "id"
+        z_role = roles.get("z")
+        t_role = roles.get("t")
+        names = set(frame.columns)
+        measured = {"x_um", "y_um"} <= names and (not z_role or "z_um" in names)
+        out = {"cell_id": frame[id_column]}
+        if measured:
+            out["X_um"] = frame["x_um"]
+            out["Y_um"] = frame["y_um"]
+            if z_role:
+                out["Z_um"] = frame["z_um"]
+        else:
+            steps = pixel_scale.spacing(self._project)
+            if steps["x"] is None:
+                raise CoordinatesUnavailable(
+                    "the image's pixel size is unknown, so positions cannot be given in µm; "
+                    "set it (set_pixel_size) first", missing="pixel_size")
+            if z_role and steps["z"] is None:
+                raise CoordinatesUnavailable(
+                    "the table places cells in depth but the distance between planes is "
+                    "unknown; set it (set_z_spacing) first", missing="spacing:z")
+            x_um, y_um = float(steps["x"]["value"]), float(steps["y"]["value"])
+            out["X_um"] = frame[roles.get("x")].cast(pl.Float64) * x_um
+            out["Y_um"] = frame[roles.get("y")].cast(pl.Float64) * y_um
+            if z_role:
+                z_values = frame[z_role] if z_role in names else self._column(z_role)
+                out["Z_um"] = z_values.cast(pl.Float64) * float(steps["z"]["value"])
+        if t_role:
+            out["t"] = frame[t_role] if t_role in names else self._column(t_role)
+        return pl.DataFrame(out)
+
+    def _column(self, name):
+        import polars as pl
+
+        return pl.Series(name, self.columns([name])[name])
 
     def run(self, operation: str, payload: Mapping[str, Any] | None = None) -> Any:
         """Run a registered table operation wherever this table's file is.

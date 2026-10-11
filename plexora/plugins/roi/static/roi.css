@@ -510,6 +510,20 @@
     font-size: 9px;
 }
 
+/* Which planes of a z-stack a region covers, when not every one. */
+.roi-row-planes {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+.roi-row-planes[hidden] {
+    display: none;
+}
+
 .roi-row.is-locked .roi-row-lock {
     display: inline-flex;
 }

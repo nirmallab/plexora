@@ -18,7 +18,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_IDS, MAX_VERTICES
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
-from plexora.agent.schemas import ProjectInput
+from plexora.agent.schemas import AgentModel, ProjectInput
 from plexora.api.plugin import Requires
 from plexora.plugins.roi import PLUGIN
 
@@ -69,6 +69,39 @@ def get_roi(call, inp):
 Point = list[float]
 
 
+class ExtentInput(AgentModel):
+    """Which planes of a z-stack a region covers. Plane indices, inclusive."""
+
+    kind: Literal["all", "plane", "slab"] = Field(
+        "all", description="all: every plane (a flat image's only meaning); plane: one "
+                           "plane `z`; slab: planes `z0` to `z1`.")
+    z: int | None = Field(None, ge=0)
+    z0: int | None = Field(None, ge=0)
+    z1: int | None = Field(None, ge=0)
+    t: int = Field(0, ge=0, description="Frame of a time series.")
+
+    def to_extent(self) -> dict:
+        return self.model_dump(exclude_none=True)
+
+
+class SolidInput(AgentModel):
+    """A region's shape through a z-stack (its geometry stays its footprint)."""
+
+    kind: Literal["ellipsoid", "contours", "labels"] = Field(
+        description="ellipsoid: the geometry is the outline on its middle plane `z` and it "
+                    "tapers to nothing `rz` planes above and below; contours: one outline "
+                    "per plane in `planes` (consecutive planes, no gaps) -- usually made by "
+                    "carry_roi_through_planes rather than by hand.")
+    z: float | None = Field(None, ge=0, description="ellipsoid: its middle plane.")
+    rz: float | None = Field(None, gt=0, description="ellipsoid: half its depth, in planes.")
+    planes: dict[str, dict[str, Any]] | None = Field(
+        None, description="contours: {plane index: GeoJSON Polygon in image pixels}.")
+    t: int = Field(0, ge=0, description="Frame of a time series.")
+
+    def to_solid(self) -> dict:
+        return self.model_dump(exclude_none=True)
+
+
 class CreateInput(ProjectInput):
     category: str = Field(description="Category label; created if the project has none "
                           "by that name (matched case-insensitively).")
@@ -83,14 +116,34 @@ class CreateInput(ProjectInput):
                                       "if the regions changed since.")
     method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
         None, description="Which tool drew the shape, recorded as provenance.")
+    extent: ExtentInput | None = Field(
+        None, description="On a z-stack: the planes the region covers (default: all).")
+    solid: SolidInput | None = Field(
+        None, description="On a z-stack: its shape through the planes (sets the planes "
+                          "it covers too).")
+    cells: list[int] | None = Field(
+        None, description="On a z-stack with a 3-D mask: make the region exactly these cells "
+                          "(label ids, which are the table's cell ids), outlined plane by plane "
+                          "from the mask -- instead of geometry or points.")
+    t: int = Field(0, ge=0, description="With `cells`: the frame of a time series.")
 
 
 def create_roi(call, inp):
     ds = call.session.image_data(inp.project)
+    solid = inp.solid.to_solid() if inp.solid else None
+    geometry = inp.geometry
+    if inp.cells:
+        try:
+            solid = _service().labels_solid(ds, inp.cells, t=inp.t)
+        except LookupError as exc:
+            raise AgentError("precondition_missing", str(exc)) from None
+        geometry = _service().footprint_of(solid["planes"])
     before_rev, after_rev, roi = _guarded(
-        _service().create_roi, ds, category=inp.category, geometry=inp.geometry,
+        _service().create_roi, ds, category=inp.category, geometry=geometry,
         points=inp.points, name=inp.name, notes=inp.notes, color=inp.color,
-        base_revision=inp.base_revision, method=inp.method)
+        base_revision=inp.base_revision, method=inp.method,
+        extent=inp.extent.to_extent() if inp.extent else None,
+        solid=solid)
     receipt = make_receipt(call, changed=True, before=None, after=roi,
                            revision_before=before_rev, revision_after=after_rev,
                            persistent_state=STATE,
@@ -111,6 +164,12 @@ class UpdateInput(RoiInput):
     base_revision: int | None = None
     method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
         None, description="With a new outline: which tool drew it.")
+    extent: ExtentInput | None = Field(
+        None, description="On a z-stack: the planes the region covers; kind 'all' for every plane.")
+    solid: SolidInput | None = Field(
+        None, description="On a z-stack: its shape through the planes.")
+    flatten: bool = Field(False, description="Drop its shape through the planes (keep its "
+                                             "footprint, on the planes in `extent`).")
 
 
 def update_roi(call, inp):
@@ -119,12 +178,24 @@ def update_roi(call, inp):
         _service().update_roi, ds, inp.roi_id, name=inp.name, notes=inp.notes,
         category=inp.category, geometry=inp.geometry, points=inp.points,
         visible=inp.visible, locked=inp.locked, base_revision=inp.base_revision,
-        method=inp.method)
+        method=inp.method, extent=inp.extent.to_extent() if inp.extent else None,
+        solid=inp.solid.to_solid() if inp.solid else None, flatten=inp.flatten)
     undo = {"project": inp.project, "roi_id": inp.roi_id, "name": before["name"],
             "notes": before["notes"], "category": before["category"],
             "visible": before["visible"], "locked": before["locked"],
             "base_revision": after_rev}
+    if inp.extent is not None:
+        undo["extent"] = before.get("extent") or {"kind": "all"}
     reshaped = inp.geometry is not None or bool(inp.points)
+    if inp.solid is not None or inp.flatten:
+        # Back to how it was: flat (its old footprint and planes), or a solid
+        # whose outlines a summary does not carry -- then the hint is partial.
+        reshaped = True
+        if before.get("solid"):
+            undo["geometry"] = None
+            before = dict(before, geometry=None)
+        else:
+            undo.update(flatten=True, extent=before.get("extent") or {"kind": "all"})
     # The summary carries the old outline only up to a vertex budget; past it
     # the hint cannot put the shape back, and says so by not claiming to.
     partial = reshaped and before.get("geometry") is None
@@ -138,6 +209,54 @@ def update_roi(call, inp):
                            persistent_state=STATE, reversible=not partial,
                            undo_hint=hint)
     return {"receipt": receipt.model_dump(mode="json"), "roi": after}
+
+
+class CarryInput(RoiInput):
+    z: int | None = Field(None, ge=0, description="The plane whose outline is carried "
+                          "(default: the middle of the planes the region covers).")
+    z_first: int | None = Field(None, ge=0, description="Go no further down than this plane.")
+    z_last: int | None = Field(None, ge=0, description="Go no further up than this plane.")
+    engine: Literal["auto", "sam2", "mobile"] = Field(
+        "auto", description="auto: SAM 2 through the planes when the 3-D extra is installed, "
+                            "else MobileSAM plane by plane (which tends to run past the "
+                            "object's poles in blurred stacks).")
+    channels: list[str] | None = Field(None, description="Channel names to outline from "
+                                       "(default: the first channel).")
+    base_revision: int | None = None
+
+
+def carry_roi(call, inp):
+    from plexora.vision.segment import SegmentError
+
+    ds = call.session.image_data(inp.project)
+    z_range = None
+    if inp.z_first is not None or inp.z_last is not None:
+        z_range = (inp.z_first if inp.z_first is not None else 0,
+                   inp.z_last if inp.z_last is not None else 10**6)
+    try:
+        before_rev, after_rev, before, after, result = _guarded(
+            _service().carry_through_planes, ds, call.session, inp.roi_id, z=inp.z,
+            z_range=z_range, engine=inp.engine,
+            channels=[{"name": name} for name in inp.channels] if inp.channels else None,
+            base_revision=inp.base_revision)
+    except SegmentError as exc:
+        raise AgentError("precondition_missing" if exc.code == "precondition_missing"
+                         else "invalid_input", str(exc), detail=exc.detail) from exc
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from exc
+    undo = {"project": inp.project, "roi_id": inp.roi_id, "base_revision": after_rev}
+    partial = bool(before.get("solid")) or before.get("geometry") is None
+    if not partial:
+        undo.update(flatten=True, geometry=before["geometry"],
+                    extent=before.get("extent") or {"kind": "all"})
+    hint = {"tool": "update_roi", "arguments": undo, **({"partial": True} if partial else {})}
+    receipt = make_receipt(call, changed=True, before=before, after=after,
+                           revision_before=before_rev, revision_after=after_rev,
+                           persistent_state=STATE, reversible=not partial, undo_hint=hint)
+    return {"receipt": receipt.model_dump(mode="json"), "roi": after,
+            "carried": {key: result[key] for key in
+                        ("start", "range", "stopped", "engine", "per_plane", "timing",
+                         "provenance") if key in result}}
 
 
 class DeleteInput(RoiInput):
@@ -198,6 +317,12 @@ def capabilities():
         cap(name="roi.update", tool_name="update_roi",
             purpose="Rename, recategorize, reshape, hide or lock a region.",
             permission="reversible_write", input_model=UpdateInput, handler=update_roi,
+            writes=("rois",), persistent=True),
+        cap(name="roi.carry", tool_name="carry_roi_through_planes",
+            purpose="On a z-stack: follow a region's outline up and down the planes until "
+                    "the object ends, and keep one outline per plane as the region's 3-D "
+                    "shape. Says why each direction stopped. Reversible.",
+            permission="reversible_write", input_model=CarryInput, handler=carry_roi,
             writes=("rois",), persistent=True),
         cap(name="roi.delete", tool_name="delete_roi",
             purpose="Delete a region. Destructive: needs --allow-destructive and "

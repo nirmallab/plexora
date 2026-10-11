@@ -264,6 +264,67 @@ def set_hd_mode(call, inp):
     return _receipted(call, view, ack)
 
 
+class SetViewInput(ViewInput):
+    view: str | dict = Field(description="Which plane or projection of a volume to show: a "
+                             "token ('z12', 'z4-19max', 'zmean', 'z2-8p95', 't3z12') or "
+                             "{kind: 'plane', z} / {kind: 'slab', z0, z1, op, q}.")
+
+
+def _view_argument(view):
+    """The view checked for form before it is sent: a malformed token is the
+    caller's mistake and is said here, not by a browser that cannot parse it."""
+    from plexora.api.representation import BadView, to_spec
+
+    try:
+        spec = to_spec(view)
+    except BadView as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    if spec.kind == "section":
+        raise AgentError("capability_unavailable",
+                         "The viewer does not show sections yet; render_region and "
+                         "render_projection read them.")
+    if not spec.served:
+        raise AgentError("invalid_input", "A sum projection is not a picture; use mean.")
+    return spec.token() if isinstance(view, str) else view
+
+
+def set_view(call, inp):
+    _c, view, ack = _send(call, inp, "set_view", {"view": _view_argument(inp.view)},
+                          timeout=45)
+    return _receipted(call, view, ack)
+
+
+class SetZInput(ViewInput):
+    z: int = Field(ge=0, description="Plane index (0 = first).")
+    t: int | None = Field(None, ge=0, description="Frame of a time series.")
+
+
+def set_z(call, inp):
+    arguments = {"z": inp.z, "mode": "plane"}
+    if inp.t is not None:
+        arguments["t"] = inp.t
+    _c, view, ack = _send(call, inp, "set_z", arguments, timeout=45)
+    return _receipted(call, view, ack)
+
+
+class SetSlabInput(ViewInput):
+    z0: int = Field(ge=0, description="First plane, inclusive.")
+    z1: int = Field(ge=0, description="Last plane, inclusive.")
+    op: Literal["max", "mean", "min", "std", "med", "pct"] = Field(
+        "max", description="max is a maximum-intensity projection (MIP).")
+    q: float | None = Field(None, ge=0, le=100, description="Percentile when op='pct'.")
+
+
+def set_slab(call, inp):
+    if inp.z1 < inp.z0:
+        raise AgentError("invalid_input", "z1 is before z0; planes are z0..z1 inclusive.")
+    arguments = {"z0": inp.z0, "z1": inp.z1, "op": inp.op}
+    if inp.op == "pct":
+        arguments["q"] = 95.0 if inp.q is None else inp.q
+    _c, view, ack = _send(call, inp, "set_slab", arguments, timeout=45)
+    return _receipted(call, view, ack)
+
+
 class PreviewGateInput(ViewInput):
     marker: str
     low: float = Field(description="The gate to show on the slider (nothing is saved).")
@@ -453,6 +514,18 @@ def capabilities():
             purpose="Switch the viewer's HD mode (16-bit tiles: finer intensity steps for "
                     "dim markers; not more pixels). This tab only.",
             input_model=HdInput, handler=set_hd_mode),
+        cap(name="viewer.set_view", tool_name="viewer_set_view",
+            purpose="Show a plane or a projection of a z-stack in the viewer ('z12', "
+                    "'z4-19max'). A projection is labelled as one on screen and in every "
+                    "capture. This tab only.",
+            input_model=SetViewInput, handler=set_view),
+        cap(name="viewer.set_z", tool_name="viewer_set_z",
+            purpose="Move the viewer to one plane (and frame) of a z-stack. This tab only.",
+            input_model=SetZInput, handler=set_z),
+        cap(name="viewer.set_slab", tool_name="viewer_set_slab",
+            purpose="Show a projection of planes z0..z1 of a z-stack (max, mean, min, std, "
+                    "median, percentile). This tab only.",
+            input_model=SetSlabInput, handler=set_slab),
         cap(name="viewer.preview_gate", tool_name="viewer_preview_gate",
             purpose="Move the gating slider to a candidate gate so the user sees which cells "
                     "it calls positive. Nothing is saved.",

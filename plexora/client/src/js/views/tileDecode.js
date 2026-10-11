@@ -76,19 +76,22 @@ class TileDecoderPool {
     /**
      * @param buffer - the raw tile bytes as delivered by the server
      * @param kind - "webp" (default 8-bit path) or "gray16png" (HD path)
+     * @param transfer - hand the buffer to the worker instead of copying it
+     *   (tileFetch.js, which owns its responses); the caller must not touch
+     *   it afterwards
      * @returns Promise<{array: Uint8Array, width: number, height: number}>
      */
-    decode(buffer, kind) {
+    decode(buffer, kind, { transfer = false } = {}) {
         const id = this.nextId++;
         const worker = this.workers[this.next];
         this.next = (this.next + 1) % this.workers.length;
         return new Promise((resolve, reject) => {
             this.pending.set(id, { resolve, reject });
-            // `buffer` is deliberately copied, not transferred: it belongs to
-            // OpenSeadragon's XHR response and detaching it here would corrupt
-            // whatever OSD does with the response afterwards. The decoded
-            // result, which is the large one, IS transferred back.
-            worker.postMessage({ id, buffer, kind });
+            // Copied unless the caller owns the bytes: an XHR response
+            // belongs to OpenSeadragon, and detaching it would corrupt
+            // whatever OSD does with it afterwards. The decoded result, which
+            // is the large one, is always transferred back.
+            worker.postMessage({ id, buffer, kind }, transfer ? [buffer] : []);
         });
     }
 
@@ -129,6 +132,27 @@ const decodeLabelTile = (responseArray) => {
     };
 };
 
+
+/**
+ * A channel tile's bytes decoded on this thread (tileFetch.js's fallback when
+ * there is no worker pool): `{array, width, height, format}`.
+ */
+const decodeTileInline = async (buffer, kind) => {
+    if (kind === "webp") {
+        const out = await decodeWebpInline(buffer);
+        return { ...out, format: "u8" };
+    }
+    const img = window.UPNG.decode(buffer);
+    if (img.ctype == 0 && img.depth == 16) {
+        return { array: img.data.slice(0, 2 * img.width * img.height), width: img.width,
+                 height: img.height, format: "u16" };
+    }
+    if (img.ctype == 6 && img.depth == 8) {
+        return { array: img.data.slice(0, 4 * img.width * img.height), width: img.width,
+                 height: img.height, format: "u32" };
+    }
+    throw new Error(`a tile PNG of an unexpected kind (ctype ${img.ctype}, depth ${img.depth})`);
+};
 
 // Same algorithm as the worker, for when workers aren't available.
 const decodeWebpInline = async (responseArray) => {
@@ -385,13 +409,13 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
 
 if (typeof window !== "undefined") {
     window.PlexoraTileDecode = {
-        TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, createTileLoadedHandler,
-        shareDecoded,
+        TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, decodeTileInline,
+        createTileLoadedHandler, shareDecoded,
     };
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraTileDecode) {
     globalThis.PlexoraTileDecode = {
-        TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, createTileLoadedHandler,
-        shareDecoded,
+        TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, decodeTileInline,
+        createTileLoadedHandler, shareDecoded,
     };
 }

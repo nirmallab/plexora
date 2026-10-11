@@ -122,8 +122,10 @@ class PlexoraProvider(Adapter):
 
         Roles arrive in the protocol's words (`cell_id, x, y, image_id,
         celltype`), which are `bind_project`'s own."""
+        # `z` (a cell's plane, 3-D objects) and `t` (its frame, a time series)
+        # too: recorded on the project once it is made (bind_project).
         roles = {k: v for k, v in (roles or {}).items()
-                 if k in ("cell_id", "x", "y", "image_id", "celltype") and v}
+                 if k in ("cell_id", "x", "y", "image_id", "celltype", "z", "t") and v}
         found = self.invoke("find_project_for_table", {
             "table": table, "image_id": image_id, "table_name": table_name or None})
         if found.get("project"):
@@ -151,13 +153,14 @@ class PlexoraProvider(Adapter):
         name = str(dataset)
         if name.startswith("plexora://project/"):
             name = name[len("plexora://project/"):].split("/", 1)[0]
+        from plexora.agent import coordinates
         from plexora.server.models.project import Project
 
         record = Project.find(name)
         if record is None or record.dataset is None:
             return None
         return {"table": record.dataset.src, "table_name": record.dataset.table or "",
-                "project": name}
+                "project": name, **coordinates.coordinates_for(record)}
 
     def _project(self, arguments, image_id):
         project = (arguments or {}).get("project")
@@ -398,3 +401,4 @@ def tools_for(provider, *, read_only=False):
     from spatialbridge.tools import BridgeTools
 
     return BridgeTools(provider, read_only=read_only)
+

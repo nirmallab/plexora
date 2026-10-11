@@ -55,7 +55,11 @@ def _band(values, low, band):
     finite = values[np.isfinite(values)]
     if band is not None:
         return float(band[0]), float(band[1]), "explicit"
-    at = float((finite <= low).mean()) * 100 if finite.size else 50.0
+    if not finite.size:
+        raise AgentError("precondition_missing", "no cell has a value to judge the gate "
+                         "against: QC leaves every cell out of estimation here (qc='exclude' "
+                         "keeps warn calls, qc='off' keeps every cell)")
+    at = float((finite <= low).mean()) * 100
     lo_p = max(0.0, at - BAND_PERCENTILE)
     hi_p = min(100.0, at + BAND_PERCENTILE)
     band_low, band_high = np.percentile(finite, [lo_p, hi_p])

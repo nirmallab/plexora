@@ -15,7 +15,9 @@ const __plexora = window.__plexora = {
   // Activated plugins by name: { definition, instance, sidebarController,
   // cleanups }. Replaces the single csv_gatingList slot -- core no longer has
   // a place that can only hold one plugin, or that names a particular one.
-  plugins: new Map()
+  plugins: new Map(),
+  // Marks and counters for the 3-D viewer's surfaces (services/perfProbe.js).
+  perf: window.PlexoraViewPerf || null
 }
 
 //DATA MANAGEMENT
@@ -87,10 +89,26 @@ function fetchViewTransform() {
         });
 }
 
+/**
+ * Where the viewer was in a volume -- the plane, the projection, the frame
+ * (services/viewState.js). Read beside /config for the same reason as the
+ * view transform: the first tiles are fetched at the saved plane rather than
+ * at the default one and then swapped. A planar image answers
+ * `{volumetric: false}` and the state stays off.
+ */
+const viewState = window.PlexoraViewState && datasource
+    ? new PlexoraViewState(datasource) : null;
+
 // Data prevent caching on the config file, as it may have been modified
 window.__plexoraReady = Promise.all([
     d3.json(`${plexoraUrl("config")}?t=${Date.now()}`),
     fetchViewTransform(),
+    // The viewer's motion and section sizes (services/viewerPrefs.js) only
+    // matter to a volume, so a planar image never asks for them.
+    viewState ? viewState.load().catch(() => viewState).then(async (state) => {
+        if (state?.enabled?.()) await window.PlexoraViewerPrefs?.load?.();
+        return state;
+    }) : Promise.resolve(null),
 ]).then(function ([config, viewTransform]) {
     return init(config[datasource], viewTransform);
 }).catch(async (error) => {
@@ -469,6 +487,44 @@ async function init(config, savedViewTransform = null) {
     // up here too.
     window.PlexoraLayerManager?.init(seaDragonViewer.layerStack);
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
+    // A volume: every channel is built at the saved plane from the first tile,
+    // and every later change of plane or projection goes through the
+    // ViewerManager's held handover (setView). Nothing at all for a planar
+    // image -- its tile addresses stay exactly what they were.
+    if (viewState?.enabled()) {
+        __plexora.viewState = viewState;
+        viewerManager.presetView(viewState.spec());
+        viewerManager.presetLabelPlane(viewState.labelSpec());
+        // The window each channel's tiles are quantized with -- provisional
+        // at first on a large stack, exact once the server has scanned it
+        // (services/volumeWindows.js); a change is handed over like HD.
+        if (window.PlexoraVolumeWindows) {
+            __plexora.volumeWindows = new PlexoraVolumeWindows(datasource);
+            window.addEventListener("plexora:volume-window",
+                (event) => viewerManager.onVolumeWindow(event.detail || {}));
+        }
+        viewState.applier = (spec) => viewerManager.setView(spec);
+        // Every change of plane, frame or projection is ONE navigation
+        // revision drawn by every surface in the same frame
+        // (services/viewState.js): the plane's tiles decide the moment; a 3-D
+        // label volume's outlines, the section panes (sectionPanes.js), the
+        // 3-D view (volumeRenderer.js) and the contrast that follows a
+        // projection (viewerSidebar.prepareContrast) commit with them.
+        viewState.registerSurface("main", {
+            order: 20, prepare: (rev) => viewerManager.setView(rev.spec, rev) });
+        if (viewState.labelsAre3d()) {
+            viewState.registerSurface("labels", {
+                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
+        }
+        // A time series' object table (one row per cell per frame): the rows
+        // the viewer reads follow the frame on screen -- the cells, their
+        // centroids, the nearest cell to a click and every gate.
+        const tableT = viewState.info?.table_t;
+        if (tableT && viewState.frames > 1) {
+            seaDragonViewer.setTableFrame({ column: tableT, t: viewState.get().t });
+            viewState.subscribe((state) => seaDragonViewer.setTableFrame({ column: tableT, t: state.t }));
+        }
+    }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
     // pyramid, at a new tile address.
@@ -509,6 +565,75 @@ async function init(config, savedViewTransform = null) {
     const imageInit = [viewerManager, channelList, null, [], []];
     const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
     __plexora.databaseDescription = dd;
+
+    // The Z strip and the caption's badge, once the caption exists
+    // (ImageViewer.init builds it). See views/depthStrip.js.
+    if (viewState?.enabled() && window.PlexoraDepthStrip) {
+        try {
+            // The 3-D view, where this browser can draw one; null otherwise,
+            // and then the strip offers no 3-D button (views/volumeRenderer.js).
+            let volume = null;
+            try {
+                volume = window.PlexoraVolumeRenderer?.attach?.(viewState, {
+                    datasource, eventHandler: seaDragonViewer.eventHandler,
+                }) || null;
+            } catch (error) {
+                console.error("main: the volume view could not be set up", error);
+            }
+            __plexora.volumeView = volume;
+            // Orthogonal XZ / YZ sections beside the plane (views/sectionPanes.js).
+            let sections = null;
+            try {
+                sections = window.PlexoraSectionPanes?.attach?.(viewState, {
+                    imageViewer: seaDragonViewer, viewerManager, config, datasource,
+                }) || null;
+            } catch (error) {
+                console.error("main: the section panes could not be set up", error);
+            }
+            __plexora.sectionPanes = sections;
+            const strip = new PlexoraDepthStrip(viewState, {
+                viewer: seaDragonViewer.viewer,
+                openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
+                volume,
+                sections,
+            });
+            strip.mount();
+            __plexora.depthStrip = strip;
+        } catch (error) {
+            console.error("main: could not build the depth strip", error);
+        }
+        // One plane fading into the next, and the next plane's tiles fetched
+        // ahead of the step (views/planeMotion.js).
+        try {
+            __plexora.planeMotion = window.PlexoraPlaneMotion?.attach?.({
+                viewer: seaDragonViewer.viewer, viewState, viewerManager,
+            }) || null;
+        } catch (error) {
+            console.error("main: plane fades could not be set up", error);
+        }
+    }
+
+    // HD for a stack whose fast tiles cannot draw its default contrast
+    // (ViewerSidebar.askForHdIfCoarse): once per page, and after that the
+    // toggle is the user's.
+    let hdAskedFor = false;
+    window.addEventListener("plexora:hd-needed", () => {
+        if (hdAskedFor || viewerManager.isHdMode()) return;
+        hdAskedFor = true;
+        try {
+            // Nothing drawn yet: preset, as the carried-over HD below does.
+            if (seaDragonViewer.viewer?.world?.getItemCount?.()) viewerManager.setHdMode(true);
+            else viewerManager.presetHdMode(true);
+            const hdCheckbox = document.querySelector("#viewer_controls_hd");
+            if (hdCheckbox) hdCheckbox.checked = true;
+            window.PlexoraToast?.show?.({
+                title: "HD is on: this stack's brightness sits in too narrow a range for "
+                    + "8-bit tiles to show it.",
+            });
+        } catch (error) {
+            console.error("main: could not turn HD on", error);
+        }
+    });
 
     // HD, if the sample this walk came from had it on. Here and not earlier:
     // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
@@ -1096,6 +1221,12 @@ async function init(config, savedViewTransform = null) {
     if (typeof ViewerSidebar !== "undefined" && document.getElementById("viewer_sidebar")) {
         const viewerSidebar = new ViewerSidebar(config, columns, dataLayer, eventHandler, channelList);
         __plexora.viewerSidebar = viewerSidebar;
+        // A volume reopened on a standard-deviation projection: its tiles are in
+        // the std window from the first one, so the saved ranges are converted
+        // against it from the start (later changes arrive as events).
+        if (__plexora.viewState?.enabled()) {
+            viewerSidebar.viewClass = __plexora.viewState.windowClass();
+        }
         for (const definition of pluginDefs) {
             const controller = createPluginSidebar(definition, viewerSidebar);
             if (!controller) continue;
@@ -1169,8 +1300,7 @@ async function init(config, savedViewTransform = null) {
             const found = (list || []).find((layer) => layer.id === id);
             if (found) found.status = status;
         }
-        const record = seaDragonViewer.layerStack?.get(id);
-        if (record?.spec) record.spec.status = status;
+        seaDragonViewer.layerStack?.setStatus?.(id, status);
     }
 
     /**
@@ -1711,6 +1841,19 @@ async function init(config, savedViewTransform = null) {
      *   - What this sample is: its name, the run folders it came from, its
      *   reference image layer, the modalities present, and whether it has no
      *   image of its own.
+     * @property {Object} view - The view on screen and the room over it. On a
+     *   z-stack: `planes()`, `frame()`, `tableFrame()`, `labelsAre3d()`, `setPlane(z, t)`, `label()`,
+     *   `onChange(fn)`, and
+     *   `addSectionOverlay(id, provider)` to draw in the XZ / YZ panes. On
+     *   every image: `dock(element, {corner, order, collapse})` floats a control over
+     *   the image in core's canvas layout -- corners "top-left", "top-right",
+     *   "bottom-left", "bottom-right", "top-center", "bottom-center"; lower
+     *   `order` nearer the corner, core's own at 0 -- stacked with core's
+     *   controls and never under the depth strip or a section pane (the same
+     *   as appending it to #openseadragon_wrapper with `data-canvas-dock`);
+     *   `reserve(id, {edge, size})` takes a band along an edge for a panel of
+     *   the plugin's own, and docked controls step clear of it; `insets()`
+     *   says what the bands take. All undone with the plugin.
      * @property {(fn: Function) => void} onCleanup - Register a function to
      *   run when the plugin is torn down.
      * @property {?Object} instance - What `createInstance` returned.
@@ -1771,6 +1914,120 @@ async function init(config, savedViewTransform = null) {
                         .map((layer) => layer.modality).filter(Boolean))];
                 },
                 get blank() { return config.image_kind === "blank"; },
+            },
+            // Which planes of a z-stack are on screen (services/viewState.js).
+            // On a flat image `enabled` is false and `planes()` null, so a
+            // plugin that never asks behaves exactly as before.
+            view: {
+                get enabled() { return Boolean(__plexora.viewState?.enabled?.()); },
+                get state() { return __plexora.viewState?.get?.() || null; },
+                get depth() { return __plexora.viewState?.depth || 1; },
+                get frames() { return __plexora.viewState?.frames || 1; },
+                label() { return __plexora.viewState?.label?.() || ""; },
+                /** `[first, last]` plane on screen, inclusive; null when flat. */
+                planes() {
+                    const vs = __plexora.viewState;
+                    if (!vs?.enabled?.()) return null;
+                    const state = vs.get();
+                    if (state.mode === "slab") return [state.slab.z0, state.slab.z1];
+                    return [state.z, state.z];
+                },
+                /** The frame of a time series on screen; 0 for everything else. */
+                frame() {
+                    const vs = __plexora.viewState;
+                    return vs?.enabled?.() ? (vs.get().t || 0) : 0;
+                },
+                /** The frame the cell table's rows on screen belong to, for a
+                 *  time series' object table (one row per cell per frame), or
+                 *  null for any other table: a plugin reading rows asks for
+                 *  this frame's (`t=`), as core's own requests do. */
+                tableFrame() {
+                    const frame = __plexora.dataLayer?.tableFrame;
+                    return frame ? frame.t : null;
+                },
+                /** Whether the mask is a 3-D label volume (one id per cell
+                 *  across planes): whole cells in depth to work with. */
+                labelsAre3d() {
+                    return Boolean(__plexora.viewState?.labelsAre3d?.());
+                },
+                /** Show plane `z` (of frame `t`, when given) of a z-stack, as
+                 *  one plane: a plugin taking the user to what it found. */
+                setPlane(z, t = undefined) {
+                    const vs = __plexora.viewState;
+                    if (!vs?.enabled?.()) return;
+                    vs.set({ z: Number(z), mode: "plane",
+                             ...(t === undefined ? {} : { t: Number(t) }) });
+                },
+                /** Called after the view on screen changes; cleaned up with the plugin. */
+                onChange(fn) {
+                    const listener = (event) => fn(event.detail || {});
+                    window.addEventListener("plexora:view-changed", listener);
+                    const off = () => window.removeEventListener("plexora:view-changed", listener);
+                    record.cleanups.push(off);
+                    return off;
+                },
+                /**
+                 * Draw where the XZ / YZ section panes cut a plugin's shapes:
+                 * `provider({axis, at, depth, t})` answers
+                 * `[{color, selected, spans: [{z0, z1, a0, a1}]}]` (views/
+                 * sectionPanes.js). Removed with the plugin; a no-op where
+                 * there are no section panes.
+                 */
+                addSectionOverlay(id, provider) {
+                    const panes = __plexora.sectionPanes;
+                    if (!panes?.addOverlay) return () => {};
+                    const off = panes.addOverlay(`${record.definition?.name || "plugin"}:${id}`, provider);
+                    record.cleanups.push(off);
+                    return off;
+                },
+                /** Ask the section panes to draw the overlays again. */
+                repaintSections() {
+                    __plexora.sectionPanes?.paintOverlays?.();
+                },
+                /**
+                 * Float `element` over the image in core's canvas layout
+                 * (services/canvasLayout.js): a corner dock -- "top-left",
+                 * "top-right", "bottom-left", "bottom-right", "top-center",
+                 * "bottom-center" -- where it stacks with core's own controls
+                 * and never lands under the depth strip or a section pane.
+                 * Lower `order` sits nearer the corner (core's own: 0). Taken
+                 * out again with the plugin, or by calling what this returns.
+                 * The same as appending it to #openseadragon_wrapper with
+                 * `data-canvas-dock` (and `data-canvas-order`) set.
+                 * `collapse(folded)`, if given, is called when the corner runs
+                 * out of room (true: fold to something small) and when the
+                 * room comes back (false); without it the control is never
+                 * folded. Declaratively: `data-canvas-collapsible` and a
+                 * `plexora:canvas-collapse` listener ({detail: {collapsed}}).
+                 */
+                dock(element, { corner = "top-right", order = 50, collapse = null } = {}) {
+                    const undock = window.PlexoraCanvasLayout?.place?.(element, {
+                        corner, order, collapse, id: `${record.definition?.name || "plugin"}` });
+                    const off = () => {
+                        undock?.();
+                        element?.remove?.();
+                    };
+                    record.cleanups.push(off);
+                    return off;
+                },
+                /**
+                 * Take a band `size` px deep along `edge` ("top", "right",
+                 * "bottom", "left") out of the image for a panel of the
+                 * plugin's own: docked controls step clear of it. Given back
+                 * with the plugin, or by calling what this returns.
+                 */
+                reserve(id, { edge, size, order = 50 } = {}) {
+                    const key = `${record.definition?.name || "plugin"}-${id}`;
+                    const release = window.PlexoraCanvasLayout?.reserve?.(key, { edge, size, order })
+                        || (() => {});
+                    record.cleanups.push(release);
+                    return release;
+                },
+                /** `{top, right, bottom, left}` px the bands take from the image. */
+                insets() {
+                    return window.PlexoraCanvasLayout?.insets?.()
+                        || { top: 0, right: 0, bottom: 0, left: 0 };
+                },
             },
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,

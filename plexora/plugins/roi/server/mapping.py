@@ -38,12 +38,29 @@ JOINER = "_"
 UNASSIGNED = ""
 
 
-def assign(features, categories, xs, ys):
+def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
     """(category_label, roi_name) for each point, in point order.
 
     `features` is the ROI list for one image, in document order; `categories`
     is the project's category list. Points are full-resolution image pixels --
     the same space ROI geometry is stored in, so nothing is transformed here.
+
+    `zs` is each point's plane (the table's z role, in plane units) when the
+    project has one. A region limited to some planes of a z-stack
+    (`schema.extent_planes`) then holds only the cells whose nearest plane is
+    among them, and a region with a shape through the planes
+    (`schema.normalize_solid`) holds a cell when the cell lies inside that
+    shape's outline on the cell's plane. Without `zs` every region covers every
+    plane, as on a flat image, and a solid region is its footprint.
+
+    `ts` is each point's frame (the table's `t` role) for a time series' table
+    (one row per cell per frame): a region drawn on one frame (its extent's
+    `t`) then holds only that frame's rows. A region with no frame covers
+    every frame.
+
+    `cell_ids` is each point's cell id: a region that IS some cells of a 3-D
+    mask (a `labels` solid) then holds exactly those cells, by id. Without it
+    such a region is its outlines, like contours.
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
@@ -61,7 +78,29 @@ def assign(features, categories, xs, ys):
     from shapely import geometry as sgeom
 
     by_id = {c["id"]: c for c in categories}
-    polygons = [_shapely(feature["geometry"], sgeom) for feature in features]
+    # One polygon per region -- or, for a region with a shape through the
+    # planes and a table that says where cells are in z, one per plane it
+    # covers, tagged with that plane.
+    polygons, owner, plane_of = [], [], []
+    by_label = {}
+    for index, feature in enumerate(features):
+        solid = feature.get("solid") if zs is not None else None
+        if cell_ids is not None and (feature.get("solid") or {}).get("kind") == "labels":
+            by_label[index] = feature["solid"]["ids"]
+            continue
+        sections = list(solid_sections(feature, solid)) if solid else []
+        if not sections:
+            polygons.append(_shapely(feature["geometry"], sgeom))
+            owner.append(index)
+            plane_of.append(np.nan)
+        for plane, geometry in sections:
+            polygons.append(_shapely(geometry, sgeom))
+            owner.append(index)
+            plane_of.append(float(plane))
+    owner = np.asarray(owner, dtype=int)
+    plane_of = np.asarray(plane_of, dtype="float64")
+    if not polygons:
+        polygons, owner, plane_of = [sgeom.Polygon()], np.array([-1]), np.array([np.nan])
 
     # One vectorised containment query rather than a Python loop over cells: a
     # real slide is 10^5-10^6 cells against 10^1-10^3 regions, and the loop
@@ -72,7 +111,35 @@ def assign(features, categories, xs, ys):
     tree = shapely.STRtree(polygons)
     points = shapely.points(np.asarray(xs, dtype="float64"),
                             np.asarray(ys, dtype="float64"))
-    point_index, polygon_index = tree.query(points, predicate="within")
+    point_index, part_index = tree.query(points, predicate="within")
+    polygon_index = owner[part_index]
+    keep = polygon_index >= 0
+    point_index, part_index, polygon_index = (point_index[keep], part_index[keep],
+                                              polygon_index[keep])
+    # Regions that are cells of the mask: their rows, by id.
+    if by_label:
+        ids = np.asarray(cell_ids)
+        extra_points, extra_owner = [], []
+        for index, labels in by_label.items():
+            rows = np.flatnonzero(np.isin(ids, np.asarray(labels)))
+            extra_points.append(rows)
+            extra_owner.append(np.full(len(rows), index, dtype=int))
+        label_points = np.concatenate(extra_points)
+        label_owner = np.concatenate(extra_owner)
+    else:
+        label_points = label_owner = np.empty(0, dtype=int)
+    if zs is not None:
+        z = np.asarray(zs, dtype="float64")[point_index]
+        sectioned = ~np.isnan(plane_of[part_index])
+        with np.errstate(invalid="ignore"):
+            on_plane = np.floor(z + 0.5) == plane_of[part_index]
+        keep = np.where(sectioned, on_plane, planes_mask(features, polygon_index, z))
+        point_index, polygon_index = point_index[keep], polygon_index[keep]
+    point_index = np.concatenate([point_index, label_points]).astype(int)
+    polygon_index = np.concatenate([polygon_index, label_owner]).astype(int)
+    if ts is not None:
+        keep = frames_mask(features, polygon_index, np.asarray(ts)[point_index])
+        point_index, polygon_index = point_index[keep], polygon_index[keep]
 
     # Sorted by polygon index within each point, so the joined order is
     # document order and not whatever order the index happened to return.
@@ -98,6 +165,72 @@ def assign(features, categories, xs, ys):
         labels[row] = JOINER.join(matched_labels)
 
     return labels, names
+
+
+def solid_sections(feature, solid):
+    """(plane, geometry) for every plane a region's solid covers: its outline
+    there (contours), or its footprint shrunk about its centre (ellipsoid)."""
+    from plexora.plugins.roi.server import schema
+
+    if solid["kind"] in ("contours", "labels"):
+        for key, geometry in solid["planes"].items():
+            yield int(key), geometry
+        return
+    from shapely import affinity
+    from shapely.geometry import mapping, shape
+
+    footprint = shape(feature["geometry"])
+    centre = footprint.centroid
+    bounds = schema.extent_planes(schema.solid_extent(solid))
+    for plane in range(bounds[0], bounds[1] + 1):
+        factor = schema.solid_scale(solid, plane)
+        if factor <= 0:
+            continue
+        yield plane, mapping(affinity.scale(footprint, factor, factor, origin=centre))
+
+
+def planes_mask(features, feature_index, z):
+    """For each (feature, plane) pair, whether the feature covers that plane.
+
+    `z` is a point's plane, possibly fractional (an object's centroid): it
+    belongs to its nearest plane. A region covering every plane holds a cell
+    whatever its z, a NaN z included; a limited one never holds a NaN.
+    """
+    import numpy as np
+
+    from plexora.plugins.roi.server import schema
+
+    bounds = [schema.extent_planes(feature.get("extent")) for feature in features]
+    low = np.array([b[0] if b else -np.inf for b in bounds], dtype="float64")
+    high = np.array([b[1] if b else np.inf for b in bounds], dtype="float64")
+    every = np.array([b is None for b in bounds], dtype=bool)
+    feature_index = np.asarray(feature_index, dtype=int)
+    plane = np.floor(np.asarray(z, dtype="float64") + 0.5)
+    with np.errstate(invalid="ignore"):
+        inside = (plane >= low[feature_index]) & (plane <= high[feature_index])
+    return every[feature_index] | inside
+
+
+def frames_mask(features, feature_index, t):
+    """For each (feature, row) pair, whether the feature is on the row's frame.
+
+    A region drawn on one frame of a time series names it (`extent["t"]`) and
+    holds only rows of that frame; one that names none holds every frame's.
+    A row with no frame (NaN) is held only by a region on every frame.
+    """
+    import numpy as np
+
+    frames = []
+    for feature in features:
+        extent = feature.get("extent") or {}
+        value = extent.get("t") if isinstance(extent, dict) else None
+        frames.append(np.nan if value is None else float(value))
+    frame_of = np.asarray(frames, dtype="float64")
+    feature_index = np.asarray(feature_index, dtype=int)
+    wanted = frame_of[feature_index]
+    with np.errstate(invalid="ignore"):
+        same = np.asarray(t, dtype="float64") == wanted
+    return np.isnan(wanted) | same
 
 
 def current_image_id(dataset):

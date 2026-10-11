@@ -15,6 +15,10 @@
  *            over what to leave out
  *   ×        magic select off; the bar goes with it
  *
+ * On a z-stack, an owner that can (`onCarry`) gets one more button, Through
+ * planes: the outline on the plane on screen is followed up and down the
+ * stack (plexora/vision/propagate.py) and kept as the region's 3-D shape.
+ *
  * In Add and Remove a drag still pans, so navigating never needs a mode
  * change; Shift held in Add removes for that click. The active mode is lit,
  * and the wand at the left breathes while an outline is on its way.
@@ -86,6 +90,21 @@
             buttons[mode.id] = button;
         }
         root.appendChild(group);
+        const carry = document.createElement("button");
+        carry.type = "button";
+        carry.className = "plx-magic-bar-button plx-magic-bar-carry";
+        carry.title = "Through planes -- follow this outline up and down the stack";
+        carry.setAttribute("aria-label", "Through planes");
+        carry.hidden = true;
+        const layers = document.createElement("span");
+        layers.className = "fas fa-layer-group";
+        layers.setAttribute("aria-hidden", "true");
+        carry.appendChild(layers);
+        carry.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (!carry.disabled) bar?.onCarry?.();
+        });
+        root.appendChild(carry);
         const close = document.createElement("button");
         close.type = "button";
         close.className = "plx-magic-bar-button plx-magic-bar-close";
@@ -104,14 +123,14 @@
         for (const name of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) {
             root.addEventListener(name, (event) => event.stopPropagation());
         }
-        return { root, buttons, mark };
+        return { root, buttons, mark, carry };
     }
 
     /**
      * Show the bar for `owner` (any token; the caller's own object), with the
      * mode lit. Returns a handle: {setMode, setBusy, hide, isShown}.
      */
-    function show({ owner, mode = "add", onMode, onClose } = {}) {
+    function show({ owner, mode = "add", onMode, onClose, onCarry } = {}) {
         const mount = host();
         if (!mount) return null;
         if (!bar) {
@@ -120,6 +139,10 @@
         bar.owner = owner;
         bar.onMode = onMode;
         bar.onClose = onClose;
+        bar.onCarry = onCarry;
+        const stack = global.__plexora?.viewState;
+        bar.carry.hidden = !(onCarry && stack?.enabled?.() && stack.depth > 1);
+        bar.carry.disabled = true;
         if (bar.root.parentNode !== mount) mount.appendChild(bar.root);
         bar.root.hidden = false;
         setMode(owner, mode);
@@ -127,6 +150,10 @@
         return {
             setMode: (next) => setMode(owner, next),
             setBusy: (busy) => setBusy(owner, busy),
+            /** Through planes is offered while there is an outline to carry. */
+            setCanCarry: (can) => {
+                if (bar && bar.owner === owner) bar.carry.disabled = !can;
+            },
             hide: () => hide(owner),
             isShown: () => Boolean(bar && bar.owner === owner && !bar.root.hidden),
         };

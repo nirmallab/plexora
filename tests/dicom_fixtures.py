@@ -168,7 +168,7 @@ def _staining_steps(container, markers) -> Dataset:
 
 def _write_instance(path, pixels, ids, *, optical_path, flavor="VOLUME",
                     focal_planes=1, mpp=0.5, specimen=None, tile=TILE,
-                    total_size=None, sparse=False):
+                    total_size=None, sparse=False, plane_step=0):
     """One `.dcm` file holding one optical path of one resolution level.
 
     `total_size` overrides the total pixel matrix dimensions, which is how a
@@ -289,8 +289,19 @@ def _write_instance(path, pixels, ids, *, optical_path, flavor="VOLUME",
     # Focal planes repeat the whole grid, which is what makes a z-stack look
     # like more frames rather than more channels -- the mistake the reader is
     # built not to make.
-    payload = b"".join(frame.tobytes() for _ in range(focal_planes)
-                       for frame in frames)
+    if plane_step:
+        # Plane p is the frame plus p * plane_step, so a reader that serves the
+        # wrong focal plane is caught by the value, not just the shape.
+        def shifted(frame, plane):
+            limit = np.iinfo(frame.dtype).max
+            return np.clip(frame.astype(np.int64) + plane * plane_step, 0,
+                           limit).astype(frame.dtype)
+
+        payload = b"".join(shifted(frame, plane).tobytes()
+                           for plane in range(focal_planes) for frame in frames)
+    else:
+        payload = b"".join(frame.tobytes() for _ in range(focal_planes)
+                           for frame in frames)
     dataset.PixelData = payload
     dataset.save_as(str(path), enforce_file_format=False)
     return path
@@ -312,7 +323,7 @@ MARKERS = ("DNA", "CD3", "Ki67")
 
 def write_if_slide(directory, *, markers=MARKERS, height=256, width=320,
                    levels=1, ids=None, nested=False, describe=True,
-                   focal_planes=1, sparse=False, mpp=0.5):
+                   focal_planes=1, sparse=False, mpp=0.5, plane_step=0):
     """A multiplex fluorescence slide: one instance per (level, marker).
 
     The layout every real multiplex export has and the one Plexora exists to
@@ -340,15 +351,18 @@ def write_if_slide(directory, *, markers=MARKERS, height=256, width=320,
             _write_instance(
                 target / f"level{level}_path{index}.dcm", plane, ids,
                 optical_path=path, focal_planes=focal_planes, sparse=sparse,
-                mpp=mpp * step)
+                mpp=mpp * step, plane_step=plane_step)
     return directory
 
 
-def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None):
+def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None,
+                   focal_planes=1, plane_step=0):
     """A brightfield H&E slide: one colour instance per level.
 
     RGB samples in one plane, which is what makes it one picture rather than
     three markers -- the distinction the whole reader is arranged around.
+    `focal_planes` > 1 makes it a colour z-stack, plane p brighter by
+    `p * plane_step` in every sample.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -358,7 +372,7 @@ def write_he_slide(directory, *, height=256, width=320, levels=1, ids=None):
         pixels = stained(-(-height // step), -(-width // step))
         _write_instance(directory / f"he_level{level}.dcm", pixels, ids,
                         optical_path=_optical_path(0, "Brightfield", color=True),
-                        mpp=0.5 * step)
+                        mpp=0.5 * step, focal_planes=focal_planes, plane_step=plane_step)
     return directory
 
 

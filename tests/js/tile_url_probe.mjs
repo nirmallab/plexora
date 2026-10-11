@@ -43,6 +43,7 @@ function extractFunction(text, name) {
 const tileQuality = { hd: false };
 const context = createContext({ tileQuality });
 runInContext(extractFunction(source, "getTileUrl"), context);
+runInContext(extractFunction(source, "getTileKey"), context);
 
 /** A stand-in tile source: only the fields getTileUrl reads. */
 function tileSource(overrides) {
@@ -110,5 +111,51 @@ assert.equal(
     urlFor({ src: NODE_SRC, srcQuery: "", tileFormat: 32 }),
     `${NODE_SRC}3/4_5.png`,
     "an empty srcQuery adds nothing -- absent and empty mean the same thing");
+
+// -- a plane or projection of a volume ------------------------------------
+
+tileQuality.hd = false;
+assert.equal(
+    urlFor({ view: "z12" }),
+    "/generated/data/demo/demo_0/3/4_5.png?view=z12",
+    "a volume's channel tile names its plane");
+
+tileQuality.hd = true;
+assert.equal(
+    urlFor({ view: "z4-19max", hd: true }),
+    "/generated/data/demo/demo_0/3/4_5.png?q=hd&view=z4-19max",
+    "the view joins HD with '&'");
+
+assert.equal(
+    urlFor({ view: "z4-19p99.5" }),
+    "/generated/data/demo/demo_0/3/4_5.png?q=hd&view=z4-19p99.5",
+    "a percentile token passes through unescaped -- it is URL-safe by design");
+
+assert.equal(
+    urlFor({ view: "z12", tileFormat: 32, hd: false }),
+    "/generated/data/demo/demo_0/3/4_5.png",
+    "a 2-D mask is the same picture on every plane, so its tile never names one "
+    + "and its cache record is shared by every plane");
+
+assert.equal(
+    urlFor({ tileFormat: 32, hd: false, labelView: "z12" }),
+    "/generated/data/demo/demo_0/3/4_5.png?view=z12",
+    "a 3-D label volume's tile names the plane its labels are read from");
+
+tileQuality.hd = false;
+assert.equal(
+    urlFor({ view: "" }),
+    "/generated/data/demo/demo_0/3/4_5.png",
+    "a planar image's view is empty and its URL is exactly what it was");
+
+// -- the GPU texture key ---------------------------------------------------
+
+function keyFor(overrides) {
+    return context.getTileKey.call(tileSource(Object.assign({ srcIdx: 2 }, overrides)), 3, 4, 5);
+}
+assert.equal(keyFor({}), "16-2-3-4-5", "a planar key is the key it always was");
+assert.notEqual(keyFor({ view: "z12" }), keyFor({ view: "z13" }),
+    "plane 13 must never bind plane 12's texture (glInit.js caches on this key)");
+assert.equal(keyFor({ view: "z12" }), "16-2-z12-3-4-5");
 
 console.log("tile URL probe OK");

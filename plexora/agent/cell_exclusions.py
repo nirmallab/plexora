@@ -312,7 +312,8 @@ def describe(ds, record=_NONE, marker=None, n_total=None) -> dict:
     out = {"mode": record.mode, "applied": True, "n_left_out": left, "n_cells": n,
            "fraction": round(left / n, 4) if n else None,
            "fingerprint": record.fingerprint}
-    for key in ("result_id", "origin", "n_exclude", "n_warn", "n_marker", "regions"):
+    for key in ("result_id", "origin", "n_exclude", "n_warn", "n_marker", "regions",
+                "n_clipped_z"):
         if key in record.source:
             out[key] = record.source[key]
     if marker is not None:

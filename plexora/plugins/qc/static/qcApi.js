@@ -139,6 +139,25 @@ class QcApi {
             + new URLSearchParams(Object.assign({ datasource: this.datasource }, params || {}))));
     }
 
+    // -- a z-stack as a stack (qc.run_qc_3d and friends) -------------------------
+
+    stack() {
+        return this._get("plugins/qc/stack");
+    }
+
+    stackRun(body) {
+        return this._post("plugins/qc/stack/run", body || {});
+    }
+
+    stackWrite(body) {
+        return this._post("plugins/qc/stack/write", body || {});
+    }
+
+    /** `{z, t}`, or `{}` for the stack's default plane. */
+    stackPlane(body) {
+        return this._post("plugins/qc/stack/plane", body || {});
+    }
+
     // -- Registration Check (qc.registration_*) -------------------------------
 
     registration(includeOverlay = false) {

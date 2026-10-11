@@ -1,0 +1,7 @@
+[
+ {"waitFor": "window.__plexora && __plexora.sectionPanes && __plexora.sectionPanes.panes", "timeout": 30000},
+ {"wait": 4000},
+ {"label": "state", "eval": "JSON.stringify({enabled: __plexora.sectionPanes.enabled, frame: __plexora.sectionPanes.frame, channels: __plexora.sectionPanes.channels().map(c=>c[0]), xz: {token: __plexora.sectionPanes.panes.xz.token, items: __plexora.sectionPanes.panes.xz.items.size, world: __plexora.sectionPanes.panes.xz.osd.world.getItemCount(), view: __plexora.sectionPanes.panes.xz.view, zoom: __plexora.sectionPanes.panes.xz.osd.viewport.getZoom(true), center: __plexora.sectionPanes.panes.xz.osd.viewport.getCenter(true), cs: __plexora.sectionPanes.panes.xz.osd.viewport.getContainerSize()}})"},
+ {"label": "tiles", "eval": "(() => { const w = __plexora.sectionPanes.panes.xz.osd.world; const out=[]; for (let i=0;i<w.getItemCount();i++){ const it=w.getItemAt(i); out.push({op: it.getOpacity(), loaded: it.getFullyLoaded(), bounds: it.getBounds(true), url: it.source.getTileUrl(it.source.maxLevel,0,0)}); } return out; })()"},
+ {"shot": "sec1.png"}
+]

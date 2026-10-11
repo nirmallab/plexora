@@ -200,6 +200,13 @@ class RenderInput(ProjectInput):
                                "'visible' (as the viewer shows them), 'none', or a list "
                                "of layer ids. Ones that cannot be drawn are listed in "
                                "the manifest's not_rendered, with the reason.")
+    view: str | None = Field(
+        None, max_length=48,
+        description="For a z-stack (inspect_volume): which plane or projection to draw -- "
+                    "'z12' (plane 12), 'z4-19max' (maximum projection of planes 4-19, "
+                    "inclusive), 'zmean', 'z2-8p95'; 't3z12' for a frame. Default: the plane "
+                    "the image opens on. The manifest's `view` says which was drawn; a "
+                    "projection's overlap is not colocalization.")
 
     @model_validator(mode="after")
     def _one_region(self):

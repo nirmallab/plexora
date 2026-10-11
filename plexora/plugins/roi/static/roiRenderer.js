@@ -64,6 +64,9 @@ class RoiRenderer {
             draw: (opts) => this.draw(opts),
         }) || null;
         this.enabled = true;
+        // A z-stack: a region limited to some planes is drawn differently
+        // once those planes leave the screen, so the change of plane repaints.
+        this._offView = this.ctx.view?.onChange?.(() => this.schedule()) || null;
         this.schedule();
     }
 
@@ -80,6 +83,8 @@ class RoiRenderer {
 
     destroy() {
         this.enabled = false;
+        this._offView?.();
+        this._offView = null;
         this._paths.clear();
         this.handle?.remove();
         this.handle = null;
@@ -92,6 +97,44 @@ class RoiRenderer {
     schedule() {
         if (!this.enabled) return;
         this.handle?.invalidate();
+        // The section panes draw where they cut the regions (sectionSpans).
+        this.ctx.view?.repaintSections?.();
+    }
+
+    /**
+     * The section panes' question (views/sectionPanes.js): where does the cut
+     * `axis` at `at` cross each region, plane by plane. A flat region is one
+     * span over the planes it covers; one with a shape through the planes is
+     * its outline's crossing on each plane.
+     */
+    sectionSpans({ axis, at, depth, t = 0 }) {
+        if (!this.enabled) return [];
+        const out = [];
+        for (const feature of this.store.visibleFeatures()) {
+            const extent = feature.extent && feature.extent.kind !== "all" ? feature.extent : null;
+            if (extent && (extent.t || 0) !== t) continue;
+            const [low, high] = !extent ? [0, depth - 1]
+                : extent.kind === "plane" ? [extent.z, extent.z] : [extent.z0, extent.z1];
+            const spans = [];
+            if (!feature.solid) {
+                for (const [a0, a1] of RoiGeometry.lineCuts(feature.geometry, axis, at)) {
+                    spans.push({ z0: low, z1: high, a0, a1 });
+                }
+            } else {
+                for (let z = low; z <= high; z++) {
+                    const section = RoiGeometry.sectionAt(feature, z);
+                    if (!section) continue;
+                    for (const [a0, a1] of RoiGeometry.lineCuts(section, axis, at)) {
+                        spans.push({ z0: z, z1: z, a0, a1 });
+                    }
+                }
+            }
+            if (!spans.length) continue;
+            const category = this.store.category(feature.category_id) || {};
+            out.push({ color: category.color || "#8b93a6", spans,
+                       selected: feature.id === this.store.selectionId });
+        }
+        return out;
     }
 
     /** Drop a cached path because its geometry changed. */
@@ -108,20 +151,33 @@ class RoiRenderer {
      * scrolling around a project with a thousand regions rebuilds nothing, and
      * dragging one vertex rebuilds one shape.
      */
-    pathFor(feature) {
+    pathFor(feature, geometry = feature.geometry) {
         const cached = this._paths.get(feature.id);
-        if (cached && cached.geometry === feature.geometry) return cached.path;
+        if (cached && cached.geometry === geometry) return cached.path;
 
         const path = new Path2D();
-        for (const ring of RoiGeometry.rings(feature.geometry)) {
+        for (const ring of RoiGeometry.rings(geometry)) {
             const points = RoiGeometry.closeRing(ring);
             if (!points.length) continue;
             path.moveTo(points[0][0], points[0][1]);
             for (let i = 1; i < points.length; i++) path.lineTo(points[i][0], points[i][1]);
             path.closePath();
         }
-        this._paths.set(feature.id, { path, geometry: feature.geometry });
+        this._paths.set(feature.id, { path, geometry });
         return path;
+    }
+
+    /**
+     * What a region looks like on the planes on screen: a region with a shape
+     * through a z-stack is its outline on the one plane shown, and its
+     * footprint under a projection (which shows many planes at once) or on a
+     * plane it does not reach (drawn dashed: see onScreenPlanes).
+     */
+    shownGeometry(feature) {
+        if (!feature.solid) return feature.geometry;
+        const shown = this.ctx.view?.planes?.();
+        if (!shown || shown[0] !== shown[1]) return feature.geometry;
+        return RoiGeometry.sectionAt(feature, shown[0]) || feature.geometry;
     }
 
     draw(opts) {
@@ -188,18 +244,42 @@ class RoiRenderer {
             || box.maxY < view.minY || box.minY > view.maxY);
     }
 
+    /**
+     * Whether a region covers a plane that is on screen.
+     *
+     * A region with no extent covers every plane -- every region on a flat
+     * image, and every one drawn before z-stacks existed -- so this is true
+     * for all of them and nothing about how they draw changes.
+     */
+    onScreenPlanes(feature) {
+        const extent = feature.extent;
+        if (!extent || extent.kind === "all") return true;
+        const shown = this.ctx.view?.planes?.();
+        if (!shown) return true;
+        // A time series: a region drawn on one frame is not on the others.
+        if ((extent.t || 0) !== (this.ctx.view?.frame?.() || 0)) return false;
+        const [low, high] = extent.kind === "plane"
+            ? [extent.z, extent.z] : [extent.z0, extent.z1];
+        return !(high < shown[0] || low > shown[1]);
+    }
+
     drawFeature(context, feature, zoom) {
         const category = this.store.category(feature.category_id) || {};
         const color = category.color || "#8b93a6";
         const selected = feature.id === this.store.selectionId;
-        const path = this.pathFor(feature);
+        const path = this.pathFor(feature, this.shownGeometry(feature));
+        // On another plane: an outline to find it by, never a filled region
+        // that reads as being here.
+        const elsewhere = !this.onScreenPlanes(feature);
 
         context.save();
         // Even-odd so an imported polygon's interior rings read as holes rather
         // than being filled over. Nonzero would paint straight across them.
-        context.fillStyle = color;
-        context.globalAlpha = selected ? RoiRenderer.FILL_ALPHA * 1.6 : RoiRenderer.FILL_ALPHA;
-        context.fill(path, "evenodd");
+        if (!elsewhere) {
+            context.fillStyle = color;
+            context.globalAlpha = selected ? RoiRenderer.FILL_ALPHA * 1.6 : RoiRenderer.FILL_ALPHA;
+            context.fill(path, "evenodd");
+        }
 
         context.globalAlpha = 1;
         context.strokeStyle = color;
@@ -214,6 +294,10 @@ class RoiRenderer {
         }
         if (this.store.isLocked(feature)) {
             context.globalAlpha = 0.75;
+        }
+        if (elsewhere) {
+            context.setLineDash([3 / zoom, 5 / zoom]);
+            context.globalAlpha = 0.5;
         }
         context.stroke(path);
         context.setLineDash([]);
@@ -235,10 +319,15 @@ class RoiRenderer {
      * dragged is worse than no handle. */
     drawHandles(context, feature, zoom, color) {
         if (this.store.isLocked(feature)) return;
-        if (!RoiGeometry.isVertexEditable(feature.geometry)) return;
+        // A shape with an outline per plane: the handles of the plane on
+        // screen's outline, which a drag reshapes on that plane alone
+        // (roiTools editing.vertex). Under a projection, or for an ellipsoid
+        // (one footprint, scaled), none.
+        const geometry = RoiGeometry.editableGeometry(feature, this.ctx.view?.planes?.());
+        if (!geometry || !RoiGeometry.isVertexEditable(geometry)) return;
 
         const radius = RoiRenderer.HANDLE_RADIUS / zoom;
-        const points = RoiGeometry.openRing(feature.geometry.coordinates[0]);
+        const points = RoiGeometry.openRing(geometry.coordinates[0]);
 
         context.save();
         context.lineWidth = 1.4 / zoom;

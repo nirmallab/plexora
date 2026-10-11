@@ -84,7 +84,7 @@ def test_nothing_else_the_registry_answers_includes_them():
 def test_rotate_and_flip_are_one_tool():
     """They edit one state and answer one question, so they are one menu row
     and one card -- not two cards that fold each other away."""
-    assert [tool.name for tool in core_tools.CORE_TOOLS] == ["rotate"]
+    assert [tool.name for tool in core_tools.CORE_TOOLS] == ["rotate", "depth"]
     assert core_tools.ROTATE.label == "Rotate & Flip"
     app = FakeApp()
     registry.install(app, [])
@@ -180,3 +180,16 @@ def test_the_scale_bar_stops_clamping_to_a_turned_corner():
     hook = viewer[viewer.index("this.viewTransform?.subscribe((state) => {"):]
     hook = hook[:hook.index("});")]
     assert "stayInsideImage: PlexoraViewTransform.isIdentity(state)" in hook
+
+
+def test_depth_is_offered_only_on_a_volume():
+    """Moving through planes means nothing on a flat image, so the Depth card
+    is hidden there rather than offered and refused."""
+    app = FakeApp()
+    registry.install(app, [])
+    flat = {p.name for p in registry.tools_for(app, {"image_kind": "ome_tiff"})}
+    assert "depth" not in flat
+    volume = {"image_kind": "ome_tiff",
+              "imageShape": {"t": 1, "c": 3, "z": 12, "y": 512, "x": 512}}
+    assert "depth" in {p.name for p in registry.tools_for(app, volume)}
+    assert core_tools.DEPTH.requires.dims == ("3d",)

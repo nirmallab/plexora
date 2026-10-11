@@ -143,7 +143,7 @@ _past_transient_locks = past_transient_locks
 
 #: Column roles the core records centrally. A plugin names these, never a
 #: literal column name -- see plexora/api/dataset.py.
-ROLE_NAMES = ("cell_id", "x", "y", "image_id", "celltype")
+ROLE_NAMES = ("cell_id", "x", "y", "image_id", "celltype", "z", "t")
 
 #: Human labels for the roles, used by the requirements modal and the edit page
 #: so the wording is identical wherever a role is asked for.
@@ -153,6 +153,12 @@ ROLE_LABELS = {
     "y": "Y coordinate column",
     "image_id": "Image ID column",
     "celltype": "Cell type column",
+    # A cell's depth in a z-stack, in planes (an object table measured from a
+    # 3-D label volume names it; plexora/server/volume/objects.py).
+    "z": "Z coordinate column",
+    # The frame a row belongs to, in a time series' object table (measured
+    # per frame; plexora/server/volume/objects.py).
+    "t": "Frame column",
 }
 
 #: The column roles the import used to ask about, and no longer does.
@@ -256,6 +262,12 @@ class ColumnRoles:
     y: str | None = None
     image_id: str | None = None
     celltype: str | None = None
+    #: The plane a cell sits at, for a table of 3-D objects. None for every
+    #: 2-D table, which is every table before volumes.
+    z: str | None = None
+    #: The frame a row belongs to, for a time series' objects (one row per
+    #: cell per frame). None for every other table.
+    t: str | None = None
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "ColumnRoles":
@@ -601,6 +613,26 @@ class ImageSpec:
     #: the config when unset.
     source: str | None = None
     source_key: str | None = None
+    #: What a VOLUME is, recorded at registration (plexora/server/volume).
+    #: `axes` is the served axes ("czyx", "tczyx"); `shape` the served extent
+    #: `{t, c, z, y, x}`; `default_view` the view token the viewer opens on;
+    #: `z_semantics`/`t_semantics` whether a stored z/t axis is depth/time or
+    #: imaging cycles folded into channels (see volume/sources/tiff.py for why
+    #: that is a decision and not a fact). All None for a planar image, and
+    #: dropped from the config when unset, so every project that predates
+    #: volumes is written back byte for byte.
+    axes: str | None = None
+    shape: Mapping[str, int] | None = None
+    default_view: str | None = None
+    z_semantics: str | None = None
+    t_semantics: str | None = None
+    #: The z step and frame interval somebody TYPED, `{value, unit, source}`
+    #: like `pixel_size`. What the file states is read from the file on every
+    #: load and never copied in here (same rule as `pixel_size`).
+    pixel_size_z: Mapping[str, Any] | None = None
+    frame_interval: Mapping[str, Any] | None = None
+    #: Projections pinned to disk as layers: `[{token, layer, path, key, pinnedAt}]`.
+    views: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -623,6 +655,14 @@ class ImageSpec:
             modality=entry.get("imageModality"),
             source=entry.get("imageSource"),
             source_key=entry.get("imageSourceKey"),
+            axes=entry.get("imageAxes") or None,
+            shape=_volume_shape(entry.get("imageShape")),
+            default_view=entry.get("imageDefaultView") or None,
+            z_semantics=entry.get("imageZSemantics") or None,
+            t_semantics=entry.get("imageTSemantics") or None,
+            pixel_size_z=normalize_pixel_size(entry.get("pixelSizeZ")),
+            frame_interval=_frame_interval(entry.get("frameInterval")),
+            views=tuple(v for v in (entry.get("imageViews") or ()) if isinstance(v, Mapping)),
         )
 
     def to_entry(self) -> dict:
@@ -645,7 +685,35 @@ class ImageSpec:
             "imageModality": self.modality,
             "imageSource": self.source,
             "imageSourceKey": self.source_key,
+            "imageAxes": self.axes,
+            "imageShape": dict(self.shape) if self.shape else None,
+            "imageDefaultView": self.default_view,
+            "imageZSemantics": self.z_semantics,
+            "imageTSemantics": self.t_semantics,
+            "pixelSizeZ": dict(self.pixel_size_z) if self.pixel_size_z else None,
+            "frameInterval": dict(self.frame_interval) if self.frame_interval else None,
+            "imageViews": [dict(v) for v in self.views] if self.views else None,
         })
+
+    @property
+    def depth(self) -> int:
+        """Planes along z served as depth (1 for a planar image)."""
+        try:
+            return max(1, int((self.shape or {}).get("z", 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    @property
+    def frames(self) -> int:
+        """Time points served as frames (1 for a still image)."""
+        try:
+            return max(1, int((self.shape or {}).get("t", 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    @property
+    def is_volumetric(self) -> bool:
+        return self.depth > 1 or self.frames > 1
 
     @property
     def is_blank(self) -> bool:
@@ -666,6 +734,30 @@ class ImageSpec:
     @property
     def channel_names(self) -> list[str]:
         return [c["fullname"] for c in self.real_channels]
+
+
+def _volume_shape(value) -> dict | None:
+    """A stored `{t, c, z, y, x}`, or None for anything unusable."""
+    if not isinstance(value, Mapping):
+        return None
+    out = {}
+    for axis in ("t", "c", "z", "y", "x"):
+        try:
+            size = int(value.get(axis, 1))
+        except (TypeError, ValueError):
+            return None
+        if size < 1:
+            return None
+        out[axis] = size
+    return out
+
+
+def _frame_interval(raw) -> dict | None:
+    """A typed frame interval `{value, unit, source}` (unit defaults to s)."""
+    if not isinstance(raw, Mapping):
+        return None
+    normalized = normalize_pixel_size({**raw, "unit": raw.get("unit") or "s"})
+    return normalized
 
 
 def _mask_scale(value) -> int:
@@ -844,6 +936,8 @@ _MODELLED_KEYS = frozenset({
     "segmentationSourceKey", "segmentationMode", "segmentationScale",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
     "resources", "spatialLayers", "imageRender", "imageDepth",
+    "imageAxes", "imageShape", "imageDefaultView", "imageZSemantics",
+    "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews",
 })
 
 #: Requirement keys that describe the feature table rather than the project.

@@ -124,6 +124,8 @@ class QcSidebarController {
         this.segmentation = new QcSegmentationQc(ctx, this.api, this);
         this.blur = new QcBlurQc(ctx, this.api, this);
         this.artifacts = new QcArtifactsQc(ctx, this.api, this);
+        // A z-stack's own checks (qcStack.js): hidden on a flat image.
+        this.stack = window.QcStack ? new QcStack(ctx, this.api, this) : null;
         this.tree = new QcTree({
             listId: "qc_tree",
             onActivate: (spec) => this.activate(spec),
@@ -947,7 +949,7 @@ class QcSidebarController {
     /** Which of the five tools are open: {reg, blur, art, seg, roi}. All
      *  folded on every load, and not remembered. */
     loadFolds() {
-        return { reg: false, blur: false, art: false, seg: false, roi: false };
+        return { reg: false, blur: false, art: false, seg: false, roi: false, stack: false };
     }
 
     /** The nuclear channel the viewer shows (a slot the Artifact Detector

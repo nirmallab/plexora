@@ -24,6 +24,8 @@ class RoiSidebarController {
         this.api = new RoiApi(ctx);
         this.store = new RoiStore(ctx, this.api);
         this.renderer = new RoiRenderer(ctx, this.store);
+        // Regions where the XZ / YZ section panes cut them, on a z-stack.
+        ctx.view?.addSectionOverlay?.("regions", (query) => this.renderer.sectionSpans(query));
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
         this.tools.onBusy = (busy) => {
@@ -44,7 +46,14 @@ class RoiSidebarController {
             onFeatureRename: (feature, name) => this.propertyChange(feature, { name }),
             onFeatureChange: (feature, changes) => this.propertyChange(feature, changes),
             onFeatureDelete: (feature) => this.tools.deleteFeature(feature),
+            onFeatureSolid: (feature, action, shown) => {
+                if (action === "carry") this.tools.carryThroughPlanes(feature);
+                else if (action === "ellipsoid") this.tools.makeEllipsoid(feature, shown);
+                else if (action === "flat-here") this.tools.makeFlat(feature, shown[0]);
+                else if (action === "flat-all") this.tools.makeFlat(feature, null);
+            },
             onSelect: () => this.renderer.schedule(),
+            view: ctx.view,
         });
         this._messageTimer = null;
         this._unsubscribe = null;
@@ -375,6 +384,12 @@ class RoiSidebarController {
 
         this.el("roi_save_to_source")?.addEventListener("click", () => this.saveToSource());
         this.el("roi_map_to_cells")?.addEventListener("click", () => this.mapToCells());
+        const fromCells = this.el("roi_from_cells");
+        if (fromCells) {
+            // Only where there are whole cells in depth to make a region of.
+            fromCells.hidden = !this.ctx.view?.labelsAre3d?.();
+            fromCells.addEventListener("click", () => this.regionFromCells());
+        }
         this.el("roi_destination_close")?.addEventListener("click", () => this.closeDestination());
 
         this.el("roi_map_info")?.addEventListener("click", () => this.openMapInfo());
@@ -646,7 +661,11 @@ class RoiSidebarController {
             // `visible` is absent from anything drawn before the flag existed,
             // and `undefined` does not survive JSON -- so an undo of the first
             // hide would arrive at the server with no change in it at all.
-            before[key] = key === "visible" ? feature.visible !== false : feature[key];
+            // `extent` likewise: absent means every plane, and the undo has to
+            // say so out loud.
+            before[key] = key === "visible" ? feature.visible !== false
+                : key === "extent" ? (feature.extent || { kind: "all" })
+                    : feature[key];
         }
         this.store.commit({
             label: "Edit ROI",
@@ -1096,6 +1115,26 @@ class RoiSidebarController {
      * Branching on `needs` rather than on the message. The wording is for the
      * user; a client that greps it breaks the moment it is improved.
      */
+    /** The cells selected in the viewer, as one region of the 3-D mask. */
+    async regionFromCells() {
+        const selection = this.ctx.dataLayer?.getCurrentSelection?.();
+        const ids = selection ? [...selection.keys()].map(Number).filter((v) => v > 0) : [];
+        if (!ids.length) {
+            this.notify("Select cells in the viewer first (click a cell; Shift-click adds more), "
+                + "then make them a region.");
+            return;
+        }
+        const result = await window.PlexoraStatus.track(
+            "Outlining the cells", this.api.fromCells(ids, this.ctx.view?.frame?.() || 0));
+        const data = result.data || {};
+        if (!result.ok || !data.success) {
+            this.notify(data.error || "The cells could not be made a region.");
+            return;
+        }
+        await this.store.load();
+        if (data.roi?.id) this.store.select?.(data.roi.id);
+    }
+
     async mapToCells(replace = false) {
         const button = this.el("roi_map_to_cells");
         if (!button || button.hidden) return;

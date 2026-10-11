@@ -46,11 +46,15 @@ function clearOrBlack(rendered, alphaMode, w, h) {
  * @param labelGpuMode         - () => whether label tiles are drawn by labelGpu
  *                               now (ImageViewer.labelGpuMode)
  * @param segmentationMode     - () => the datasource's segmentationMode
+ * @param itemRange            - (channel, source) => the channel's range in the
+ *                               units of THIS item's pixels (ImageViewer.itemRange);
+ *                               the channel's own range when absent
  */
 function createTileDrawing({
     renderer,
     floatRange,
     findCurrentChannel,
+    itemRange = null,
     selectCenterProps,
     labelOutlinesEnabled,
     modeFlags,
@@ -143,7 +147,10 @@ function createTileDrawing({
                 }
                 channel = findCurrentChannel(sub_url);
             }
-            const range = _.get(channel, "range", floatRange);
+            // In the units this item's pixels were fetched in: an item still
+            // on screen while its replacement loads at another quality or
+            // window keeps drawing correctly with the range already moved.
+            const range = (itemRange && itemRange(channel, source)) || _.get(channel, "range", floatRange);
             const color = _.get(channel, "color", d3.color("white"));
             const floatColor = toFloatColor(color);
             // The fast/default tile path quantizes 16-bit -> 8-bit
@@ -361,9 +368,26 @@ function createTileDrawing({
 }
 
 
+/**
+ * A channel range (0..1 of its domain) carried from the units it is in
+ * (`from`) to the units an item's pixels are in (`to`), through raw values.
+ * A domain is `{hd, window}`: HD pixels are raw / `intMax`; 8-bit pixels are
+ * bytes over `window` = {qmin, qmax}. Null when a window is unknown (the
+ * caller then draws the range as it is).
+ */
+function rangeInUnits(range, from, to, intMax = 65535) {
+    if (!range) return null;
+    if ((!from.hd && !from.window) || (!to.hd && !to.window)) return null;
+    const span = (w) => Math.max(1, Number(w.qmax) - Number(w.qmin));
+    const toRaw = (v) => (from.hd ? v * intMax : Number(from.window.qmin) + v * span(from.window));
+    const fromRaw = (raw) => (to.hd ? raw / intMax : (raw - Number(to.window.qmin)) / span(to.window));
+    return [fromRaw(toRaw(range[0])), fromRaw(toRaw(range[1]))];
+}
+
+
 if (typeof window !== "undefined") {
-    window.PlexoraTileColorize = { createTileDrawing };
+    window.PlexoraTileColorize = { createTileDrawing, rangeInUnits };
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraTileColorize) {
-    globalThis.PlexoraTileColorize = { createTileDrawing };
+    globalThis.PlexoraTileColorize = { createTileDrawing, rangeInUnits };
 }

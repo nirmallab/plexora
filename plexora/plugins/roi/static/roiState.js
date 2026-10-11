@@ -303,7 +303,32 @@ class RoiStore {
             }
             case "roi.update_properties": {
                 const feature = this.feature(op.id);
-                if (feature) Object.assign(feature, op.changes);
+                if (feature) {
+                    Object.assign(feature, op.changes);
+                    // "Every plane" is stored as no extent at all, as the
+                    // server stores it (schema.normalize_extent).
+                    const extent = op.changes?.extent;
+                    if (op.changes && "extent" in op.changes
+                            && (!extent || extent.kind === "all")) delete feature.extent;
+                }
+                break;
+            }
+            case "roi.set_solid": {
+                // The server's _roi_set_solid: a solid brings its own planes
+                // (the extent follows from it); a flat region is left on the
+                // op's extent, "every plane" stored as none.
+                const feature = this.feature(op.id);
+                if (!feature) break;
+                if (op.geometry) feature.geometry = op.geometry;
+                if (op.flags) feature.flags = op.flags;
+                if (op.solid) {
+                    feature.solid = op.solid;
+                    feature.extent = RoiStore.solidExtent(op.solid);
+                } else {
+                    delete feature.solid;
+                    if (op.extent && op.extent.kind !== "all") feature.extent = op.extent;
+                    else delete feature.extent;
+                }
                 break;
             }
             case "roi.delete":
@@ -514,6 +539,21 @@ class RoiStore {
         if (this._retryTimer) clearTimeout(this._retryTimer);
         this._flushTimer = this._retryTimer = null;
         this._listeners.clear();
+    }
+
+    /** The planes a solid covers (the server's schema.solid_extent). */
+    static solidExtent(solid) {
+        const t = solid.t || 0;
+        let z0;
+        let z1;
+        if (solid.kind === "contours" || solid.kind === "labels") {
+            const zs = Object.keys(solid.planes || {}).map(Number).sort((a, b) => a - b);
+            [z0, z1] = [zs[0], zs[zs.length - 1]];
+        } else {
+            z0 = Math.max(0, Math.floor(solid.z - solid.rz) + 1);
+            z1 = Math.max(z0, Math.ceil(solid.z + solid.rz) - 1);
+        }
+        return z0 === z1 ? { kind: "plane", z: z0, t } : { kind: "slab", z0, z1, t };
     }
 
     /** A short, unique-enough id. Generated on the client so a shape exists the

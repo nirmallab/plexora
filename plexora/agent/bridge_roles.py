@@ -57,6 +57,7 @@ TOOL_ROLES = {
     "delete_roi": ("roi.edit",),
     "count_cells_in_roi": ("spatial.region",),
     "segment_qc_roi": ("roi.magic_select",),
+    "carry_roi_through_planes": ("roi.magic_select",),
     # Gates.
     "get_gate": ("gate.manual",),
     "set_gate": ("gate.manual",),
@@ -92,6 +93,7 @@ TOOL_PRODUCES = {
     "set_gate": ("gates",), "adjust_gate": ("gates",), "apply_gate_to_dataset": ("gates",),
     "export_gates": ("gates",), "get_all_gates": ("gates",),
     "create_roi": ("regions",), "update_roi": ("regions",), "segment_qc_roi": ("regions",),
+    "carry_roi_through_planes": ("regions",),
     "list_rois": ("regions",),
     "qc_session_start": ("qc", "regions"), "run_blur_check": ("qc",),
     "run_artifact_check": ("qc",), "run_segmentation_qc": ("qc",),

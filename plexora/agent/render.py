@@ -504,6 +504,83 @@ def _draw_shapes(image, shapes, fullres, out_size):
     return manifest
 
 
+def _view_token(spec, record):
+    """The view `spec` asks for, checked for form, or "" for the default.
+
+    Only planes and projections: a section's frame is not the image's (its
+    rows are z), so every other field of a render -- bounds, the mask, the
+    cells -- would be in the wrong coordinates. Sections are drawn by
+    render_sections.
+    """
+    raw = getattr(spec, "view", None)
+    if raw is None or not str(raw).strip():
+        return ""
+    from plexora.api.representation import BadView, to_spec
+
+    try:
+        view = to_spec(str(raw).strip())
+    except BadView as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    if view.kind == "section":
+        raise AgentError("invalid_input", "render_region draws planes and projections; "
+                         "a section's rows are z, so use render_sections for one")
+    if not view.served:
+        raise AgentError("invalid_input", "a sum projection is not a picture; use mean")
+    if not record.image.is_volumetric:
+        raise AgentError("invalid_input", f"{record.name}'s image has a single plane, so "
+                         "it has no views; leave `view` out",
+                         detail={"view": view.token()})
+    return view.token()
+
+
+def _mask_plane(view_token):
+    """The plane of a 3-D mask to outline under a view: the view's own plane,
+    a projection's middle one; None for the default (the mask's own default
+    is the middle plane, as the image's is)."""
+    if not view_token:
+        return None
+    from plexora.api.representation import to_spec
+
+    view = to_spec(view_token)
+    if view.kind == "plane" and view.z is not None and view.z >= 0:
+        return int(view.z)
+    if view.kind == "slab" and view.z0 is not None and view.z1 is not None:
+        return (int(view.z0) + int(view.z1)) // 2
+    return None
+
+
+def _read_mask(mask, level, box, *, max_pixels, z):
+    """`mask.read_region` at plane `z` when the reader takes one (a local
+    mask does; a data node's answers for its middle plane)."""
+    import inspect
+
+    if z is not None and "z" in inspect.signature(mask.read_region).parameters:
+        return mask.read_region(level, box, max_pixels=max_pixels, z=z)
+    return mask.read_region(level, box, max_pixels=max_pixels)
+
+
+def _view_manifest(spec, provenance):
+    """The manifest's account of WHICH picture of a volume this is.
+
+    Absent entirely for a planar image, so its manifests are what they were.
+    `view_source` is `explicit` when the caller named the view and `default`
+    when the render used the plane the image opens on -- a default plane is
+    still one plane of many, and a reader of the manifest has to know that.
+    """
+    if provenance is None:
+        return {}
+    given = bool(getattr(spec, "view", None))
+    out = {
+        "view": provenance.view,
+        "view_source": "explicit" if given else "default",
+        "z_label": provenance.label,
+        "representation": provenance.to_dict(),
+    }
+    if provenance.warnings:
+        out["warnings"] = list(provenance.warnings)
+    return out
+
+
 def render_region(session, spec, *, store=True, pixel_size=None):
     """Render `spec` (a `RenderInput`). Returns `{png, manifest, artifact}`.
 
@@ -542,7 +619,16 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         raise AgentError("precondition_missing", "highlighting cells needs a cell table",
                          detail={"missing": [{"key": "table", "label": "Cell table"}]})
 
-    with source_image.SHELF.reader(image_data) as source:
+    # A plane or projection of a volume reads through its own view
+    # (SourceImage(view=)); everything else -- every planar image, and a
+    # volume's default plane -- through the shelf, exactly as before.
+    view_token = _view_token(spec, record)
+    reader = (source_image.SourceImage(image_data, view=view_token)
+              if view_token else source_image.SHELF.reader(image_data))
+    with reader as source:
+        view_provenance = None
+        if getattr(source, "spec", None) is not None:
+            view_provenance = source.provenance(0, [])
         levels = max(1, int(source.levels))
         if spec.level == "auto":
             level = source_image.choose_level(source, box[2] - box[0], out_w)
@@ -605,6 +691,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         pixels, rendered, _background = source_image.composite(source, scene_channels,
                                                                level, lbox)
         brightfield = bool(source.is_brightfield)
+        if getattr(source, "spec", None) is not None:
+            view_provenance = source.provenance(
+                level, [c["name"] for c in resolved_channels])
 
     image = Image.fromarray(np.ascontiguousarray(pixels), "RGB")
     if image.size != (out_w, out_h):
@@ -634,10 +723,15 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         positive -= qc_left
     segmentation_mode = spec.segmentation or "none"
     mask_level = None
+    mask_plane = None
     labels = None
     if mask is not None and (segmentation_mode != "none" or highlight_info):
         mask_level = level + record.segmentation.extra_levels
-        labels = mask.read_region(mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT)
+        # A 3-D mask is cut at the plane drawn, so the outlines are the cells
+        # in the picture and not the ones on the default plane.
+        mask_plane = _mask_plane(view_token)
+        labels = _read_mask(mask, mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT,
+                            z=mask_plane)
         labels = resize_labels_nearest(labels, out_w, out_h)
         cells = spec.cells
         outline = cells.outline_color if cells else "#e6e6e6"
@@ -755,7 +849,8 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "channels_rendered": rendered,
         "segmentation": {"requested": segmentation_mode, "status": mask_status,
                          "reason": mask_reason, "mask_level": mask_level,
-                         "mask_scale": record.segmentation.scale},
+                         "mask_scale": record.segmentation.scale,
+                         **({"mask_plane": mask_plane} if mask_plane is not None else {})},
         "highlight": highlight_info,
         "cells": cells_manifest,
         "overlays": [o for o in (
@@ -770,6 +865,7 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "not_rendered": not_rendered,
         "scale_bar": scale_bar,
         "egress": "rendered_pixels",
+        **_view_manifest(spec, view_provenance),
         "provenance": {
             "image": api.ImageHandle(record).locator.to_dict(),
             "mask_path": (record.segmentation.derived

@@ -47,6 +47,10 @@ CHECKS = [
     "muted cells on the GPU clear the tile once and cache that",
     "a label tile with no ids yet clears and is retried next frame",
     "a layer the GPU could not draw is not cached as drawn",
+    "an 8-bit item still on screen after HD went on keeps its window",
+    "and the conversion is exact both ways",
+    "a plane item still drawn while a std projection loads draws raw 500..1500 of its window",
+    "an unknown window is not guessed",
 ]
 
 

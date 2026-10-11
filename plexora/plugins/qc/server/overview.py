@@ -44,6 +44,7 @@ import math
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 from plexora.plugins.qc.server import class_rules, schemas
 
 VISUAL = schemas.VISUAL
@@ -533,7 +534,7 @@ def build_sheet(session, project, *, region=None, panels=None, size="standard", 
         zoomed = True
     else:
         box, zoomed = full_box, False
-    with source_image.SHELF.reader(session.image_data(project)) as source:
+    with qc_plane.reader(session.image_data(project)) as source:
         _refuse_brightfield(source)
         level, factor = _choose_level(source, image_size, box, slot * DETAIL,
                                       VISUAL["overview_max_pixels"])
@@ -625,7 +626,7 @@ def rank_channels(session, project, box, *, top=None, exclude_nuclear=False,
                        image_size)
     ring_box = _ring_box(inner_box, image_size)
     found = tissue.for_project(session, project)
-    with source_image.SHELF.reader(session.image_data(project)) as source:
+    with qc_plane.reader(session.image_data(project)) as source:
         _refuse_brightfield(source)
         level, factor = _choose_level(source, image_size, ring_box, 3 * CHANNEL_TILE_PX,
                                       1_500_000)

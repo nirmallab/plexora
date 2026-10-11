@@ -149,7 +149,10 @@ def test_the_probe_builds_the_panel_the_template_ships():
     # there is no second panel for a second tool to open.
     quick = panel[panel.index('class="view-transform-quick"'):panel.index('class="slider-auto-row"')]
     assert "data-rotate-to" in quick and "data-flip" in quick
-    assert sorted(path.name for path in TEMPLATES.glob("*.html")) == ["rotate_panel.html"]
+    # depth_panel.html is the Depth tool's card (core_tools.DEPTH, z-stacks
+    # only), not a second card for this tool.
+    assert sorted(path.name for path in TEMPLATES.glob("*.html")) == [
+        "depth_panel.html", "rotate_panel.html"]
     # No heading, close or extras of its own: the card core builds has them.
     body = re.sub(r"\{#.*?#\}", "", panel, flags=re.S)
     assert "section-heading" not in body

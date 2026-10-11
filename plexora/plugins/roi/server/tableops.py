@@ -66,9 +66,21 @@ def map_to_cells(dataset, payload):
     # the array shapely wants anyway. A cell with no coordinates arrives as NaN,
     # which is never inside anything -- so it is simply left unassigned rather
     # than needing a case of its own.
+    # The z role, when the table has one: a region limited to some planes of
+    # a z-stack then holds only the cells on them (mapping.planes_mask).
+    z_column = payload.get("z_column")
+    zs = frame[z_column].to_numpy() if z_column and z_column in frame.columns else None
+    # And the frame role, for a time series' table: a region drawn on one
+    # frame holds only that frame's rows (mapping.frames_mask).
+    t_column = payload.get("t_column")
+    ts = frame[t_column].to_numpy() if t_column and t_column in frame.columns else None
+    # And the cell ids, for a region that IS some cells of a 3-D mask.
+    id_column = payload.get("id_column")
+    cell_ids = (frame[id_column].to_numpy() if id_column and id_column in frame.columns
+                else None)
     labels, names = mapping.assign(
         payload.get("features") or [], payload.get("categories") or [],
-        frame[x_column].to_numpy(), frame[y_column].to_numpy())
+        frame[x_column].to_numpy(), frame[y_column].to_numpy(), zs, ts, cell_ids)
 
     try:
         result = adapters.write_cell_columns(

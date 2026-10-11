@@ -398,6 +398,44 @@ class NodeSegmentationProvider(_NodeBacked):
         return array
 
 
+class NodeVolume:
+    """A volume whose planes are on a data node: what it is, never its pixels.
+
+    What `data_model.volume_source` holds for a node-backed volume. Everything
+    the primary does with a volume it does with `.volume` -- parse a view token
+    against its extent, pick a window class, size a section's tile source,
+    answer `/volume/<ds>/info` -- while every pixel is read over there. So the
+    read methods refuse in a sentence rather than pretend: reaching one means
+    the local read path was taken for an image that is not local.
+    """
+
+    is_local = False
+
+    def __init__(self, volume, node_name=""):
+        self.volume = volume
+        self._node_name = node_name
+
+    def _not_here(self, *_args, **_kwargs):
+        raise ResourceNotLocal(
+            f"this volume's planes are on data node {self._node_name!r}; they are "
+            f"read through the node, never from a pyramid on this machine")
+
+    plane_pyramid = level_array = read_plane = read_block = _not_here
+
+    def level_shape(self, level):
+        info = self.volume.levels[min(level, len(self.volume.levels) - 1)]
+        return info.height, info.width
+
+    def close(self) -> None:
+        pass
+
+
+def _query(params, lead="&") -> str:
+    from urllib.parse import urlencode
+
+    return f"{lead}{urlencode(params)}" if params else ""
+
+
 class NodeImageProvider(_NodeBacked):
     """A channel image on another machine.
 
@@ -406,6 +444,14 @@ class NodeImageProvider(_NodeBacked):
     the node knows only what position a plane sits at, which is exactly the
     split that lets `upload_channels` rename a panel without telling the node
     anything at all.
+
+    **Volumes.** A node has no project, so it cannot know whether a stack's z
+    axis is depth or imaging cycles (volume/sources/tiff.py says why that is a
+    decision). `with_volume` hands it the project's answer, and every request
+    about a volumetric project then carries `view` -- the default plane spelled
+    as its own token -- plus `zs`/`ts`, which is what makes the node read the
+    same planes, with the same per-volume windows, as a local read. A planar
+    project carries none of it: its URLs are the ones it has always sent.
     """
 
     _kind_path = "image"
@@ -415,11 +461,37 @@ class NodeImageProvider(_NodeBacked):
         self._channel_names = list(channel_names)
         self._tile_size = tile_size
         self._geometry = None
+        self._z_semantics = None
+        self._t_semantics = None
+        self._volumetric = False
+        self._spacing = {}
+        self._volume_asked = False
+        #: A `NodeVolume` once the node has described this image as a volume.
+        #: Read by data_model right after `open()`, like the local provider's.
+        self.volume_source = None
+        #: For a volumetric project whose node could not describe the image as
+        #: a volume: the sentence a view is refused with (`views.resolve`).
+        self.views_refused = None
 
     def with_channels(self, names, tile_width=None, tile_height=None):
         self._channel_names = list(names or ())
         if tile_width and tile_height:
             self._tile_size = (int(tile_width), int(tile_height))
+        return self
+
+    def with_volume(self, image):
+        """Read the node's file the way the project reads it.
+
+        `image` is the project's `ImageSpec`: its z/t reading, whether it is a
+        volume at all, and any spacing somebody typed (a section's row height
+        follows the z step, so the node has to draw it with the same one).
+        """
+        self._z_semantics = getattr(image, "z_semantics", None) or None
+        self._t_semantics = getattr(image, "t_semantics", None) or None
+        self._volumetric = bool(getattr(image, "is_volumetric", False))
+        self._spacing = {"pixel_size": getattr(image, "pixel_size", None),
+                         "pixel_size_z": getattr(image, "pixel_size_z", None),
+                         "frame_interval": getattr(image, "frame_interval", None)}
         return self
 
     def _index(self, channel_name):
@@ -442,6 +514,10 @@ class NodeImageProvider(_NodeBacked):
         guard that routes to this provider instead. The OME header does come
         back: it is kilobytes, the viewer shows it, and a request per lookup
         would be a round trip for a constant.
+
+        A volumetric project also asks the node what the volume is (one
+        geometry round trip, cached), so `volume_source` is set by the time
+        data_model reads it.
         """
         try:
             metadata = http.json_request(
@@ -461,7 +537,123 @@ class NodeImageProvider(_NodeBacked):
             # Anything else is the node answering something unhelpful about
             # this one file. The header is optional; the project is not.
             metadata = {}
+        if self._volumetric:
+            self._attach_volume()
         return None, None, metadata
+
+    def _attach_volume(self):
+        """Ask the node what this image is as a volume.
+
+        No volume in the answer leaves the project on its default plane, the
+        way it was served before volumes, with `views_refused` saying why --
+        the commonest cause being a node whose Plexora predates them, which
+        answers geometry without the keys rather than with an error.
+        """
+        from dataclasses import replace
+
+        from plexora.server.volume.model import Volume
+
+        self._volume_asked = True
+        self.volume_source = None
+        self.views_refused = None
+        node = self._binding.node
+        try:
+            geometry = self.geometry()
+        except ResourceUnavailable:
+            raise
+        except ResourceError as exc:
+            self.views_refused = (f"data node {node!r} could not describe this image "
+                                  f"as a volume: {exc}")
+            return
+        described = geometry.get("volume")
+        volume = None
+        if isinstance(described, Mapping):
+            try:
+                volume = Volume.from_dict(described)
+            except (KeyError, TypeError, ValueError):
+                volume = None
+        if volume is None or volume.is_planar:
+            self.views_refused = (
+                f"data node {node!r} does not serve this image as a volume, so only "
+                f"its default plane can be shown. The Plexora installed there may "
+                f"predate volumes: upgrade it there (pip install --upgrade plexora) "
+                f"and reopen this project.")
+            return
+        spacing = volume.spacing.overlaid(**self._spacing, frames=volume.frames)
+        if spacing is not volume.spacing:
+            volume = replace(volume, spacing=spacing)
+        self.volume_source = NodeVolume(volume, node)
+
+    def volume(self):
+        """The `NodeVolume` this image is, asked of the node once; None for a
+        planar project, or one whose node could not describe it as a volume
+        (`views_refused` says why). The local provider's `volume()`, over a
+        network."""
+        if self._volumetric and self.volume_source is None and not self._volume_asked:
+            self._attach_volume()
+        return self.volume_source
+
+    def _view_params(self, view=None) -> dict:
+        """The parameters a request about this image carries.
+
+        `{}` for a planar image -- its requests are byte for byte what they
+        always were. For a volume: the view's canonical token (the default
+        plane spelled as itself, so the node never has to guess what "default"
+        means), the project's z/t reading, and for a section the anisotropy
+        its rows are drawn at.
+        """
+        from plexora.server.volume.viewspec import BadView, ViewSpec
+
+        text = "" if view is None else str(view).strip()
+        source = self.volume()
+        if source is None:
+            if text:
+                raise BadView(self.views_refused
+                              or "this image has a single plane, so it has no views "
+                                 "to choose from")
+            return {}
+        spec = ViewSpec.parse(text, source.volume)
+        params = {"view": spec.token()}
+        if self._z_semantics:
+            params["zs"] = self._z_semantics
+        if self._t_semantics:
+            params["ts"] = self._t_semantics
+        if spec.kind == "section":
+            params["az"] = repr(float(source.volume.spacing.anisotropy()))
+        return params
+
+    def _served(self, response, params):
+        """Refuse an answer that is not of the view that was asked for.
+
+        A node that predates volumes ignores `view=` and answers with its
+        default plane -- a perfectly good picture of the wrong planes, which is
+        exactly what must never be captioned as the right ones.
+        """
+        from plexora.server.volume.viewspec import BadView
+
+        if not params:
+            return
+        served = response.headers.get(http.VIEW_HEADER)
+        if served != params["view"]:
+            raise BadView(
+                f"data node {self._binding.node!r} did not serve view "
+                f"{params['view']!r} of this image"
+                + (f" (it served {served!r})" if served else
+                   ": the Plexora installed there predates volumes. Upgrade it "
+                   "there (pip install --upgrade plexora) to see this image's "
+                   "planes, projections and sections"))
+
+    def _image_json(self, suffix, params, timeout=None):
+        """One JSON answer about this image, checked against the view asked for."""
+        path = (f"/node/v1/image/{self._binding.resource_id}/{suffix}"
+                f"{_query(params, '&' if '?' in suffix else '?')}")
+        if not params:
+            return http.json_request(self.node, "GET", path, expected_api=API_VERSION,
+                                     timeout=timeout)
+        response = http.request(self.node, "GET", path, expected_api=API_VERSION,
+                                timeout=timeout)
+        self._served(response, params)
+        return http.json_of(self.node, path, response)
 
     def geometry(self, timeout=None) -> dict:
         """The image's shape, including every level's own dimensions.
@@ -474,26 +666,45 @@ class NodeImageProvider(_NodeBacked):
         answering somebody -- see `data_model._node_thumbnail_plane`, which
         would otherwise hold a request thread for the default two minutes per
         card in a grid of them.
+
+        A volumetric project asks with its z/t reading, so the shape is the
+        one the node will serve its planes in (a stack read as depth has C
+        channels; read as cycles, C x Z).
         """
         if self._geometry is None:
+            reading = {}
+            if self._volumetric:
+                if self._z_semantics:
+                    reading["zs"] = self._z_semantics
+                if self._t_semantics:
+                    reading["ts"] = self._t_semantics
             self._geometry = http.json_request(
                 self.node, "GET",
-                f"/node/v1/image/{self._binding.resource_id}/geometry",
+                f"/node/v1/image/{self._binding.resource_id}/geometry"
+                f"{_query(reading, '?')}",
                 expected_api=API_VERSION, timeout=timeout)
         return self._geometry
 
-    def tile(self, channel, level, tile, quality):
+    def tile(self, channel, level, tile, quality, view="", window=None):
         """One tile, forwarded exactly as the node encoded it.
 
         `channel` is the viewer's own `<file>_<N>` key, so the index travels in
         the string the client already built and nothing has to be looked up.
+        `view` names a plane, projection or section of a volume ("" = the
+        default plane); see the class docstring. `window` is the (qmin, qmax)
+        the viewer named for a volume's 8-bit tile (`w=`), which the node
+        quantizes with, so the bytes are the ones the address promises.
         """
         width, height = self._tile_size
+        params = self._view_params(view)
+        if params and window is not None:
+            params["w"] = f"{float(window[0]):g},{float(window[1]):g}"
         data, response = http.bytes_request(
             self.node, "GET",
             f"/node/v1/image/{self._binding.resource_id}/tile/{channel}/{level}/{tile}"
-            f"?q={quality}&tw={width}&th={height}",
+            f"?q={quality}&tw={width}&th={height}{_query(params)}",
             expected_api=API_VERSION)
+        self._served(response, params)
         return data, response.headers.get("Content-Type") or "image/webp"
 
     def overview(self, channel_name):
@@ -505,43 +716,92 @@ class NodeImageProvider(_NodeBacked):
             # No image rather than an error, matching the local path: the
             # mini-map is decoration and a missing thumbnail beats a failure.
             return None
-        data, _ = http.bytes_request(
+        params = self._view_params()
+        data, response = http.bytes_request(
             self.node, "GET",
             f"/node/v1/image/{self._binding.resource_id}/overview"
-            f"?channel_index={index}",
+            f"?channel_index={index}{_query(params)}",
             expected_api=API_VERSION)
+        self._served(response, params)
         return data
 
-    def channel_stats(self, channel_name) -> dict:
-        return http.json_request(
-            self.node, "GET",
-            f"/node/v1/image/{self._binding.resource_id}/stats"
-            f"?channel_index={self._index(channel_name)}",
-            expected_api=API_VERSION)
+    def channel_stats(self, channel_name, view="", provisional=False) -> dict:
+        """The stats packet; `view` matters only for a slab projection, whose
+        distribution is its own (data_model._slab_view). `provisional`: a
+        volume's packet answered now, made with the provisional window while
+        the node scans for the exact one (`window_exact` says which; a node
+        too old to know answers exactly, and says nothing)."""
+        params = self._view_params(view)
+        if provisional and params:
+            params["provisional"] = "1"
+        return self._image_json(f"stats?channel_index={self._index(channel_name)}", params)
 
-    def gmm(self, channel_name) -> dict:
-        return http.json_request(
-            self.node, "GET",
-            f"/node/v1/image/{self._binding.resource_id}/gmm"
-            f"?channel_index={self._index(channel_name)}",
-            expected_api=API_VERSION,
+    def gmm(self, channel_name, view="") -> dict:
+        return self._image_json(
+            f"gmm?channel_index={self._index(channel_name)}", self._view_params(view),
             # A cold fit is ~1 s of compute on the node, and it runs behind a
             # single-flight lock there as well as here.
             timeout=180.0)
 
-    def quantization_window(self, channel_name) -> tuple:
-        answer = http.json_request(
-            self.node, "GET",
-            f"/node/v1/image/{self._binding.resource_id}/quantization"
-            f"?channel_index={self._index(channel_name)}",
-            expected_api=API_VERSION, timeout=180.0)
+    def quantization_window(self, channel_name, window_class=None) -> tuple:
+        """(qmin, qmax) for one channel; `window_class` ("volume"/"std") for a
+        volume, whose one window spans every plane (volume/windows.py)."""
+        params = self._view_params() if window_class else {}
+        if params:
+            params["wc"] = window_class
+        answer = self._image_json(
+            f"quantization?channel_index={self._index(channel_name)}", params,
+            timeout=180.0)
         return (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+
+    def level(self, channel_name, ask, covered, pool, window):
+        """`(bytes, shape, hint)`: one channel's 3-D level, built on the node.
+
+        Every choice is the primary's and goes out explicitly -- the level,
+        the area it `covered`, the planes, `pool` (from the project's z step,
+        which the node may not hold) and the window -- so the node reads,
+        pools and quantizes exactly what a local read would
+        (server/volume/serve.py builds both)."""
+        params = self._view_params()
+        if not params:
+            from plexora.server.volume.viewspec import BadView
+
+            raise BadView(self.views_refused or "this image has a single plane")
+        x0, y0, x1, y1 = (int(v) for v in covered)
+        params.update({"t": ask.t, "level": ask.level, "format": ask.voxel_format,
+                       "box": f"{x0},{y0},{x1 - x0},{y1 - y0}", "z": f"{ask.z0},{ask.z1}",
+                       "pool": int(pool),
+                       "w": f"{float(window[0]):g},{float(window[1]):g}"})
+        path = (f"/node/v1/image/{self._binding.resource_id}/level"
+                f"?channel_index={self._index(channel_name)}{_query(params)}")
+        data, response = http.bytes_request(self.node, "GET", path,
+                                            expected_api=API_VERSION, timeout=600.0)
+        self._served(response, params)
+        shape = tuple(int(v) for v in (response.headers.get("X-Plexora-Shape") or "").split(",")
+                      if v)
+        if len(shape) != 3:
+            raise ResourceError(f"data node {self._binding.node!r} sent a level without "
+                                f"its shape")
+        raw_hint = response.headers.get("X-Plexora-Hint")
+        hint = tuple(float(v) for v in raw_hint.split(",")) if raw_hint else None
+        return data, shape, hint
+
+    def volume_window_state(self, channel_name) -> tuple:
+        """`((qmin, qmax), exact)`: a volume channel's window, answered now --
+        the provisional one while the node scans for the exact one
+        (data_model.volume_window_state, over a network)."""
+        params = self._view_params()
+        params.update({"wc": "volume", "provisional": "1"})
+        answer = self._image_json(
+            f"quantization?channel_index={self._index(channel_name)}", params, timeout=180.0)
+        window = (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+        return window, bool(answer.get("exact", True))
 
     def ome_metadata(self):
         return self.open()[2]
 
     def read_region(self, level, box, channel_indices, max_pixels=0,
-                    timeout=600.0):
+                    timeout=600.0, view=None):
         """(pixels, clipped_box) for a rectangle of one or more channels.
 
         The box goes out unclipped and comes back clipped: only the node knows
@@ -557,14 +817,19 @@ class NodeImageProvider(_NodeBacked):
         The default `timeout` is ten minutes because an export reads real
         rectangles of a real image and somebody is waiting for the figure.
         A thumbnail is not that, and passes a short one.
+
+        `view` reads a plane, projection or section of a volume, in that
+        view's own pixels (a section's rows are z); None is the default plane.
         """
-        data, _ = http.bytes_request(
+        params = self._view_params(view)
+        data, response = http.bytes_request(
             self.node, "POST",
             f"/node/v1/image/{self._binding.resource_id}/region",
             body={"level": int(level), "box": [int(v) for v in box],
                   "channels": [int(i) for i in channel_indices],
-                  "max_pixels": int(max_pixels or 0)},
+                  "max_pixels": int(max_pixels or 0), **params},
             expected_api=API_VERSION, timeout=timeout)
+        self._served(response, params)
         array, meta = wire.unpack_array(data)
         return array, tuple(meta.get("box") or box)
 

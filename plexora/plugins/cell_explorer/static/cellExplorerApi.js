@@ -70,7 +70,13 @@ class CellExplorerApi {
     }
 
     cacheKey(column, kind) {
-        return `${this.datasource}:${column}:${kind || "auto"}`;
+        return `${this.datasource}:${column}:${kind || "auto"}:${this.frame() ?? ""}`;
+    }
+
+    /** The frame a time series' table is read at (ctx.view.tableFrame), or null. */
+    frame() {
+        const t = this.ctx?.view?.tableFrame?.();
+        return Number.isFinite(t) ? t : null;
     }
 
     /**
@@ -94,6 +100,9 @@ class CellExplorerApi {
         }
 
         const params = kind ? { column, kind } : { column };
+        // A time series' table: this frame's rows, so each cell id is once.
+        const frame = this.frame();
+        if (frame !== null) params.t = String(frame);
         const response = await fetch(this.url("values", params), { signal });
         if (!response.ok) {
             const detail = await response.json().catch(() => ({}));

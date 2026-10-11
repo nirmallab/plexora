@@ -133,3 +133,18 @@ def test_it_is_refused_without_rendered_pixels_egress(session):
     refused = invoke(session, "render_cell_gallery", {"project": "synth", "cell_ids": [1]},
                      policy=policy)
     assert refused["error"]["code"] == "permission_required"
+
+
+@pytest.mark.paid
+def test_on_a_z_stack_each_cell_is_cropped_at_its_own_plane(tmp_path):
+    from tests.test_agent_gate_panel import _deep_cells
+
+    _deep_cells(tmp_path)                       # every cell on planes 6-8 of ten
+    registry.discover(["gating"])
+    result = _ok(invoke(AgentSession(), "render_cell_gallery", {
+        "project": "deep", "cell_ids": [1, 2, 3], "tile_px": 96}))
+    tiles = result["manifest"]["tiles"]
+    # Drawn at plane 7; the middle plane (5) holds no cell. That render_region
+    # cuts the mask at the plane it draws is tests/test_agent_volume.py's job.
+    assert [t["z"] for t in tiles] == [7, 7, 7]
+    assert "planes" in result["manifest"]

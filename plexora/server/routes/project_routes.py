@@ -135,6 +135,31 @@ def project_thumbnail(name):
 # merges. There is no code path here that can drop a key it did not name.
 # --------------------------------------------------------------------------
 
+def _z_axis(project):
+    """`{planes, reading}` for an image file storing planes on Z, else None."""
+    src = project.image.src
+    if not src or project.image.is_blank:
+        return None
+    try:
+        import tifffile
+
+        from plexora.server.volume.sources import tiff as tiff_volume
+
+        if not str(src).lower().endswith((".tif", ".tiff", ".qptiff")):
+            return None
+        with tifffile.TiffFile(str(src), is_ome=False) as handle:
+            found = tiff_volume.page_layout(handle, handle.series[0])
+        if found is None:
+            return None
+        planes = tiff_volume.sizes_of(found[0])["z"]
+    except Exception:
+        return None
+    if planes < 2:
+        return None
+    reading = project.image.z_semantics or ("depth" if project.image.depth > 1 else "cycle")
+    return {"planes": int(planes), "reading": reading}
+
+
 @app.route('/edit_config/<string:name>')
 @app.route('/edit_config', methods=['GET'])
 def edit_project_page(name=None):
@@ -224,6 +249,10 @@ def _describe(project):
         "imageTypeChoice": project.image.image_type_choice,
         "imageTypeDetected": project.image.image_type_detected,
         "imageTypeReason": project.image.image_type_reason,
+        # A stack's Z axis: how many planes the file stores on it and whether
+        # they are read as depth (a z-stack to move through) or as imaging
+        # cycles folded into channels. None when the file stores no Z axis.
+        "zAxis": _z_axis(project),
         "segmentation": {
             # The node address when the mask is on one, because this is the
             # value the field posts back: showing a blank here would make
@@ -422,8 +451,13 @@ def project_remove_layer(name, layer_id):
     The synthesized ids are refused rather than silently ignored: the way to
     remove the mask is to clear the mask field, and an X that quietly did
     nothing would be worse than no X.
+
+    A pinned projection (plexora/server/volume/pin.py) is the one layer whose
+    file IS Plexora's: computed from the stack, in the project's derived
+    folder, reachable from nowhere else. Its file goes with it.
     """
     from plexora.server.models.project import RESERVED_LAYER_IDS
+    from plexora.server.volume import pin
 
     if layer_id in RESERVED_LAYER_IDS:
         return jsonify(error=f"{layer_id} is drawn from the project itself. "
@@ -431,9 +465,12 @@ def project_remove_layer(name, layer_id):
     project = Project.find(name)
     if project is None:
         return jsonify(error=f"Unknown project: {name!r}"), 404
-    if project.layer(layer_id) is None:
+    layer = project.layer(layer_id)
+    if layer is None:
         return jsonify(error=f"{name} has no layer {layer_id!r}"), 404
     Project.mutate(name, lambda current: current.without_layer(layer_id))
+    if layer.modality == pin.MODALITY:
+        pin.forget(project, layer)
     return jsonify(success=True, layer=layer_id)
 
 
@@ -784,6 +821,19 @@ def _apply_edit(project, payload):
             import_routes.replace_project_data(project.name, wanted, payload)
             changed = True
             swapped = True
+
+    # How a stack's Z axis is read (plexora/server/volume/sources/tiff.py):
+    # depth or imaging cycles. The two readings disagree about the channel
+    # list, so the image is re-read, exactly as for the image type below.
+    if payload.get("zSemantics") in ("depth", "cycle"):
+        wanted = payload["zSemantics"]
+        axis = _z_axis(project)
+        if axis is not None and wanted != axis["reading"]:
+            Project.mutate(project.name,
+                           lambda current: current.patch(image=replace(
+                               current.image, z_semantics=wanted)))
+            reregister_image(project.name)
+            changed = True
 
     # Presence, not truth, for the same reason cellLayer is read that way below:
     # "" means Automatic, which is a change worth applying.

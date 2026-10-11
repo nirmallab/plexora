@@ -51,6 +51,14 @@
  * index.html for a single plugin would put a plugin-shaped hole in a template
  * every build renders. What a plugin creates it may also style, so the classes
  * are all `fb-` and tests/test_plugin_css_boundary.py stays satisfied.
+ *
+ * WHERE CORE HAS A CANVAS LAYOUT (services/canvasLayout.js) the dock asks to
+ * be docked in it -- `data-canvas-dock="top-right"` -- and core places it:
+ * below the dataset chip, clear of the depth strip and the section panes, the
+ * legend's room kept below it, and a 3-D control in the same corner stacked
+ * under it rather than drawn over it. `layout()` then stands back; its own
+ * measuring (topFor / roomFor) is what the dock falls back on where there is
+ * no such layout.
  */
 class FigureCaptureDock {
 
@@ -184,6 +192,18 @@ class FigureCaptureDock {
         // Core's canvas popups (the dataset thumbnail grid) read this to keep
         // off the dock without core naming a plugin class.
         root.setAttribute("data-viewer-furniture", "");
+        // Docked by core's canvas layout, where there is one: the top-right
+        // corner, just after core's own dataset chip (order 0).
+        root.setAttribute("data-canvas-dock", "top-right");
+        root.setAttribute("data-canvas-order", "5");
+        // Folded to its head when the corner runs out of room (a short
+        // window, a tall section pane), opened again when the room returns;
+        // the user's own open/closed choice is kept apart from this.
+        root.setAttribute("data-canvas-collapsible", "");
+        root.addEventListener("plexora:canvas-collapse", (event) => {
+            this.folded = Boolean(event.detail?.collapsed);
+            this.applyOpen();
+        });
         root.innerHTML = `
             <div class="fb-dock-head">
                 <div class="fb-dock-caption" data-role="caption"></div>
@@ -304,6 +324,11 @@ class FigureCaptureDock {
         return document.getElementById(FigureCaptureDock.OBSTACLE_ID);
     }
 
+    /** Whether core's canvas layout has taken the dock into one of its docks. */
+    docked() {
+        return Boolean(this.root?.parentElement?.classList?.contains("plx-canvas-dock"));
+    }
+
     /**
      * Give the dock the height that is actually free above the legend.
      *
@@ -313,6 +338,12 @@ class FigureCaptureDock {
     layout() {
         const host = this.host();
         if (!this.root || !host?.getBoundingClientRect) return;
+        // Placed by core's canvas layout: its dock decides where and how tall.
+        if (this.docked()) {
+            this.root.style.top = "";
+            this.root.style.maxHeight = "";
+            return;
+        }
         const bounds = host.getBoundingClientRect();
 
         const legend = this.obstacle();
@@ -369,7 +400,14 @@ class FigureCaptureDock {
         } else if (role === "close") {
             this.handlers.onClose?.();
         } else if (role === "collapse") {
-            this.setOpen(!this.open);
+            // Folded by the layout, the button opens it: what the user sees
+            // is closed, whatever their saved choice says.
+            if (this.folded) {
+                this.folded = false;
+                this.setOpen(true);
+            } else {
+                this.setOpen(!this.open);
+            }
         } else if (role === "remove") {
             // Nested inside the item, so `closest` finds this one first --
             // which is what stops discarding a capture from also selecting it
@@ -423,8 +461,9 @@ class FigureCaptureDock {
 
     applyOpen() {
         if (!this.root) return;
-        this.root.classList.toggle("is-collapsed", !this.open);
-        this.el("collapse")?.setAttribute("aria-expanded", String(this.open));
+        const shown = this.open && !this.folded;
+        this.root.classList.toggle("is-collapsed", !shown);
+        this.el("collapse")?.setAttribute("aria-expanded", String(shown));
     }
 
     // -- rendering -------------------------------------------------------

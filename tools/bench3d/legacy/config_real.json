@@ -1,0 +1,93 @@
+{
+ "ims_f8iic": {
+  "channelFile": "${PLEXORA_BENCH_IMS}",
+  "image_kind": "ims",
+  "imageData": [
+   {
+    "name": "Channel 1",
+    "fullname": "Channel 1",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_0/"
+   },
+   {
+    "name": "Channel 2",
+    "fullname": "Channel 2",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_1/"
+   },
+   {
+    "name": "Channel 3",
+    "fullname": "Channel 3",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_2/"
+   },
+   {
+    "name": "Channel 4",
+    "fullname": "Channel 4",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_3/"
+   },
+   {
+    "name": "Channel 5",
+    "fullname": "Channel 5",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_4/"
+   },
+   {
+    "name": "Channel 6",
+    "fullname": "Channel 6",
+    "src": "/generated/data/ims_f8iic/F8IIc-smallchunk.ims_5/"
+   }
+  ],
+  "width": 1538,
+  "height": 763,
+  "maxLevel": 4,
+  "tileWidth": 1024,
+  "tileHeight": 1024,
+  "num_channels": 6,
+  "imageTypeDetected": "fluorescence",
+  "imageTypeReason": "an Imaris file stores fluorescence channels",
+  "imageAxes": "czyx",
+  "imageShape": {
+   "t": 1,
+   "c": 6,
+   "z": 190,
+   "y": 763,
+   "x": 1538
+  },
+  "imageDefaultView": "z95",
+  "imageZSemantics": "depth",
+  "segmentation": null,
+  "segmentation_status": "ready",
+  "createdAt": "2026-10-10T02:16:18.618797",
+  "dataset": null,
+  "lastOpenedAt": "2026-10-10T02:16:26.652929"
+ },
+ "mesospim": {
+  "channelFile": "${PLEXORA_BENCH_MESO}",
+  "image_kind": "ome_zarr",
+  "imageData": [
+   {
+    "name": "tdTomato",
+    "fullname": "tdTomato",
+    "src": "/generated/data/mesospim/ExpA_VIP_ASLM_on_0/"
+   }
+  ],
+  "width": 2048,
+  "height": 2048,
+  "maxLevel": 6,
+  "tileWidth": 1024,
+  "tileHeight": 1024,
+  "num_channels": 1,
+  "imageAxes": "czyx",
+  "imageShape": {
+   "t": 1,
+   "c": 1,
+   "z": 1937,
+   "y": 2048,
+   "x": 2048
+  },
+  "imageDefaultView": "z968",
+  "imageZSemantics": "depth",
+  "segmentation": null,
+  "segmentation_status": "ready",
+  "createdAt": "2026-10-10T02:16:18.627753",
+  "dataset": null,
+  "lastOpenedAt": "2026-10-10T02:17:21.586945"
+ }
+}

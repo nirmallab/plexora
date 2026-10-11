@@ -478,10 +478,12 @@ class RoiInteraction {
             this.pending = null;
             if (hit && hit.vertex) {
                 this.state = "editing.vertex";
-                this.drag = { id: hit.feature.id, vertex: hit.vertex, before: hit.feature.geometry };
+                this.drag = { id: hit.feature.id, vertex: hit.vertex, before: hit.feature.geometry,
+                              plane: hit.plane ?? null, solidBefore: hit.feature.solid || null };
             } else if (hit) {
                 this.state = "editing.move";
-                this.drag = { id: hit.feature.id, origin, before: hit.feature.geometry };
+                this.drag = { id: hit.feature.id, origin, before: hit.feature.geometry,
+                              solidBefore: hit.feature.solid || null };
             }
             // Nothing under the pointer: left alone, so the viewer pans and
             // navigation keeps working without leaving the Select tool.
@@ -504,12 +506,20 @@ class RoiInteraction {
                 event.preventDefaultAction = true;
                 const feature = this.store.feature(this.drag.id);
                 if (!feature) return;
-                const rings = feature.geometry.coordinates.map((ring) => ring.slice());
+                const plane = this.drag.plane ?? null;
+                const source = plane !== null ? RoiGeometry.sectionAt(feature, plane) : feature.geometry;
+                if (!source) return;
+                const rings = source.coordinates.map((ring) => ring.slice());
                 const points = RoiGeometry.openRing(rings[this.drag.vertex.ring]);
                 points[this.drag.vertex.index] = this.clamp(point);
                 rings[this.drag.vertex.ring] = RoiGeometry.closeRing(points);
+                const reshaped = { type: source.type, coordinates: rings };
                 // Local only: the server hears about this once, at drag end.
-                feature.geometry = { type: feature.geometry.type, coordinates: rings };
+                if (plane !== null) {
+                    feature.solid = RoiInteraction.withPlane(feature.solid, plane, reshaped);
+                } else {
+                    feature.geometry = reshaped;
+                }
                 this.renderer.invalidate(feature.id);
                 this.renderer.schedule();
                 return;
@@ -518,8 +528,14 @@ class RoiInteraction {
                 event.preventDefaultAction = true;
                 const feature = this.store.feature(this.drag.id);
                 if (!feature) return;
-                feature.geometry = RoiGeometry.translate(
-                    this.drag.before, point[0] - this.drag.origin[0], point[1] - this.drag.origin[1]);
+                const dx = point[0] - this.drag.origin[0];
+                const dy = point[1] - this.drag.origin[1];
+                feature.geometry = RoiGeometry.translate(this.drag.before, dx, dy);
+                // A shape through the planes moves as a whole: every plane's outline.
+                if (this.drag.solidBefore?.kind === "contours"
+                        || this.drag.solidBefore?.kind === "labels") {
+                    feature.solid = RoiInteraction.movedSolid(this.drag.solidBefore, dx, dy);
+                }
                 this.renderer.invalidate(feature.id);
                 this.renderer.schedule();
                 return;
@@ -569,9 +585,26 @@ class RoiInteraction {
                 event.preventDefaultAction = true;   // no flick-momentum pan
                 const feature = this.store.feature(this.drag?.id);
                 const before = this.drag?.before;
+                const solidBefore = this.drag?.solidBefore;
+                const plane = this.drag?.plane ?? null;
+                const moving = this.state === "editing.move";
                 this.drag = null;
                 this.state = "idle.select";
                 if (!feature || !before) return;
+                if (plane !== null && solidBefore) {
+                    // One plane's outline reshaped: the server derives the
+                    // footprint again from every plane's (no geometry sent).
+                    this.commitSolid(feature, { solid: solidBefore, geometry: before },
+                                     { solid: feature.solid },
+                                     { label: `Reshape ROI on z ${plane}` });
+                    return;
+                }
+                if (moving && (solidBefore?.kind === "contours" || solidBefore?.kind === "labels")) {
+                    this.commitSolid(feature, { solid: solidBefore, geometry: before },
+                                     { solid: feature.solid, geometry: feature.geometry },
+                                     { label: "Move ROI" });
+                    return;
+                }
                 // One operation, and so one undo step, for a drag of any length.
                 this.commitGeometry(feature, before, feature.geometry);
                 return;
@@ -687,11 +720,18 @@ class RoiInteraction {
         const tolerance = this.imageDistance(RoiInteraction.GRAB_RADIUS);
         const selected = this.store.selected;
 
-        if (selected && this.store.isVisible(selected) && !this.store.isLocked(selected)
-            && RoiGeometry.isVertexEditable(selected.geometry)) {
-            const vertex = RoiGeometry.nearestVertex(
-                selected.geometry, point[0], point[1], tolerance);
-            if (vertex) return { feature: selected, vertex };
+        if (selected && this.store.isVisible(selected) && !this.store.isLocked(selected)) {
+            // A shape through the planes: the outline on the plane on screen
+            // (RoiGeometry.editableGeometry), reshaped on that plane alone.
+            const planes = this.ctx.view?.planes?.();
+            const geometry = RoiGeometry.editableGeometry(selected, planes);
+            if (geometry && RoiGeometry.isVertexEditable(geometry)) {
+                const vertex = RoiGeometry.nearestVertex(geometry, point[0], point[1], tolerance);
+                if (vertex) {
+                    return { feature: selected, vertex,
+                             plane: selected.solid ? planes[0] : null };
+                }
+            }
         }
 
         const candidates = this.store.visibleFeatures();
@@ -1085,6 +1125,30 @@ class RoiInteraction {
         return `${base} ${highest + 1}`;
     }
 
+    /**
+     * A region's shape through the planes, its footprint and its planes, as
+     * one undo step (`roi.set_solid`). `before` / `after` are `{solid,
+     * geometry, extent}`: `solid: null` is a flat region on `extent`'s planes.
+     */
+    commitSolid(feature, before, after, { label = "Edit ROI", method = null } = {}) {
+        const image = this.store.image;
+        const op = (state) => {
+            const out = { op: "roi.set_solid", image, id: feature.id,
+                          solid: state.solid || null, geometry: state.geometry };
+            if (!state.solid) out.extent = state.extent || { kind: "all" };
+            if (method) out.flags = { ...(feature.flags || {}), method };
+            return out;
+        };
+        // Applied locally already (a drag) or not at all (a carry): put the
+        // old state back first, so commit()'s own applyLocal draws the change.
+        feature.geometry = before.geometry;
+        if (before.solid) feature.solid = before.solid;
+        else delete feature.solid;
+        this.store.commit({ label, redo: [op(after)], undo: [op(before)] });
+        this.renderer.invalidate(feature.id);
+        this.renderer.schedule();
+    }
+
     commitGeometry(feature, before, after, { label = "Edit ROI", method = null } = {}) {
         if (JSON.stringify(before) === JSON.stringify(after)) return;
         const image = this.store.image;
@@ -1152,6 +1216,58 @@ class RoiInteraction {
     }
 
     /** A box around `bbox`, grown by `fraction` of its size on every side. */
+    /** What `commitSolid` needs to put a region back as it is now. */
+    static solidState(feature) {
+        return { solid: feature.solid || null, geometry: feature.geometry,
+                 extent: feature.extent || { kind: "all" } };
+    }
+
+    /** "Outlined on z 8–19 (12 planes); stopped where the object ends both ways." */
+    static carriedText(zs, stopped = {}) {
+        const why = {
+            object_ended: "where the object ends", faded: "where the object fades out",
+            lost: "where it lost the object",
+            grew: "where the outline began to spill", shrank: "where the outline fell apart",
+            drifted: "where the object moved too far", stack_end: "at the end of the stack",
+            range_end: "at the end of the range", limit: "at the 64-plane limit",
+        };
+        const up = why[stopped.increasing_z] || "";
+        const down = why[stopped.decreasing_z] || "";
+        const span = zs.length > 1 ? `z ${zs[0]}–${zs[zs.length - 1]}` : `z ${zs[0]}`;
+        const where = up === down ? (up ? ` Stopped ${up} both ways.` : "")
+            : ` Stopped ${[down && `below: ${down}`, up && `above: ${up}`].filter(Boolean).join("; ")}.`;
+        return `Outlined on ${span} (${zs.length} plane${zs.length === 1 ? "" : "s"}).${where}`;
+    }
+
+    /** A contours solid with every plane's outline moved by (dx, dy). A
+     *  region of mask cells moved off them is no longer those cells: it
+     *  becomes contours. */
+    static movedSolid(solid, dx, dy) {
+        const planes = {};
+        for (const [z, geometry] of Object.entries(solid.planes || {})) {
+            planes[z] = RoiGeometry.translate(geometry, dx, dy);
+        }
+        return RoiInteraction.asContours({ ...solid, planes });
+    }
+
+    /** `solid` with plane `z`'s outline replaced by `geometry`, that plane now
+     *  set by hand (`keys`); a region of mask cells becomes contours. */
+    static withPlane(solid, z, geometry) {
+        const planes = { ...(solid.planes || {}), [String(z)]: geometry };
+        const keys = [...new Set([...(solid.keys || []), Number(z)])].sort((a, b) => a - b);
+        return RoiInteraction.asContours({ ...solid, planes, keys });
+    }
+
+    static asContours(solid) {
+        if (solid.kind !== "labels") return solid;
+        const { ids, ...rest } = solid;
+        // Contours cover consecutive planes: a plane between two cells' that
+        // neither reached would be a gap, so such a region keeps its kind.
+        const zs = Object.keys(rest.planes || {}).map(Number).sort((a, b) => a - b);
+        if (zs.length && zs[zs.length - 1] - zs[0] + 1 !== zs.length) return solid;
+        return { ...rest, kind: "contours" };
+    }
+
     static padded(bbox, fraction) {
         const pad = Math.max(bbox.width, bbox.height) * fraction;
         return { x: bbox.x - pad, y: bbox.y - pad, width: bbox.width + 2 * pad,
@@ -1255,7 +1371,114 @@ class RoiInteraction {
             owner: this, mode: this.magicMode,
             onMode: (mode) => this.setMagicMode(mode),
             onClose: () => this.setTool(this.previousTool || "freehand"),
+            onCarry: () => this.carryMagic(),
         });
+        this.magicBar?.setCanCarry?.(true);
+    }
+
+    /** The region Through planes would carry: the outline being made, else
+     *  the selected region. */
+    magicTarget() {
+        const id = this.magic?.session?.roiId || this.store.selectionId;
+        return id ? this.store.feature(id) : null;
+    }
+
+    carryMagic() {
+        const feature = this.magicTarget();
+        if (!feature) {
+            this.notify("Outline something on this plane first (or select a region), "
+                + "then carry it through the planes.");
+            return;
+        }
+        this.carryThroughPlanes(feature);
+    }
+
+    // -- shapes through the planes of a z-stack ---------------------------
+
+    /** The plane a carry starts from: the one on screen (a projection's middle). */
+    planeOnScreen() {
+        const shown = this.ctx.view?.planes?.();
+        if (!shown) return null;
+        return Math.round((shown[0] + shown[1]) / 2);
+    }
+
+    /**
+     * Follow a region's outline on the plane on screen up and down the stack
+     * (plexora/vision/propagate.py) and keep one outline per plane as its
+     * shape: one undo step, which puts back exactly what it had.
+     */
+    async carryThroughPlanes(feature) {
+        if (!feature || this.carrying) return;
+        if (this.store.isLocked(feature)) {
+            this.notify("That ROI is locked. Unlock it to reshape it.");
+            return;
+        }
+        const z = this.planeOnScreen();
+        if (z === null) return;
+        const outline = RoiGeometry.sectionAt(feature, z);
+        if (!outline) {
+            this.notify(`It has no outline on z ${z}: move to a plane it reaches.`);
+            return;
+        }
+        this.carrying = true;
+        this.setMagicBusy(true);
+        this.notify(`Carrying the outline up and down from z ${z}...`);
+        let result;
+        try {
+            result = await window.PlexoraSegment.carry({
+                datasource: this.ctx.datasource, geometry: outline, z,
+                t: this.ctx.view?.frame?.() || 0,
+                retry: () => { this.carryThroughPlanes(this.store.feature(feature.id)); },
+            });
+        } finally {
+            this.carrying = false;
+            this.setMagicBusy(false);
+        }
+        if (!result || result.ok === false) {
+            if (result && result.kind === "setup") return;
+            if (result && result.kind === "busy") {
+                this.notify("One moment -- still outlining the last click.");
+            } else if (result && result.message) {
+                this.notify(result.message);
+            }
+            return;
+        }
+        const live = this.store.feature(feature.id);
+        const zs = Object.keys(result.planes || {}).map(Number).sort((a, b) => a - b);
+        if (!live || !zs.length || !result.footprint) {
+            this.notify("Nothing to keep: the outline did not carry onto any plane.");
+            return;
+        }
+        this.commitSolid(live, RoiInteraction.solidState(live),
+                         { solid: { kind: "contours", planes: result.planes, keys: [z],
+                                    t: this.ctx.view?.frame?.() || 0 },
+                           geometry: result.footprint },
+                         { label: "Carry through planes" });
+        this.store.select(live.id);
+        this.notify(RoiInteraction.carriedText(zs, result.stopped));
+    }
+
+    /** A flat region made an ellipsoid through planes `first`..`last`: its
+     *  outline is the middle plane's, tapering to nothing past either end. */
+    makeEllipsoid(feature, [first, last]) {
+        if (!feature || this.store.isLocked(feature)) return;
+        const solid = { kind: "ellipsoid", z: (first + last) / 2, rz: (last - first) / 2 + 0.5,
+                        t: this.ctx.view?.frame?.() || 0 };
+        this.commitSolid(feature, RoiInteraction.solidState(feature),
+                         { solid, geometry: feature.geometry }, { label: "Make ellipsoid" });
+    }
+
+    /** Flat again: the outline on plane `z` on that plane alone, or (`z`
+     *  null) the footprint on every plane. */
+    makeFlat(feature, z = null) {
+        if (!feature || this.store.isLocked(feature) || !feature.solid) return;
+        const t = this.ctx.view?.frame?.() || 0;
+        const section = z === null ? feature.geometry : RoiGeometry.sectionAt(feature, z);
+        if (!section) return;
+        this.commitSolid(feature, RoiInteraction.solidState(feature),
+                         { solid: null, geometry: section,
+                           extent: z === null ? { kind: "all" } : { kind: "plane", z, t } },
+                         { label: "Make flat" });
     }
 
     hideMagicBar() {
@@ -1325,6 +1548,12 @@ class RoiInteraction {
         }
         const geometry = this.tidyMagic(result.geometry);
         const feature = session.roiId ? this.store.feature(session.roiId) : null;
+        if (feature?.solid) {
+            // A 3-D region is redrawn by carrying it again, not on one plane.
+            this.notify("That region has an outline on every plane it covers: make it flat "
+                + "first, or carry it through the planes again.");
+            return drop();
+        }
         if (feature) {
             if (this.store.isLocked(feature)) {
                 this.notify("That ROI is locked. Unlock it to reshape it.");

@@ -1,10 +1,10 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261004_tool_skeleton">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
 {% endblock %}
 
 {% block content %}
@@ -411,7 +411,10 @@
         </aside>
 
         <div id="openseadragon_wrapper">
-            <button id="sidebar_expand_button" class="sidebar-expand-button" title="Show controls" type="button">
+            {# Docked by the canvas layout above the caption (top-left), so the
+               two stack instead of overlapping when the sidebar is closed. #}
+            <button id="sidebar_expand_button" class="sidebar-expand-button" title="Show controls" type="button"
+                    data-canvas-dock="top-left" data-canvas-order="-10">
                 <span class="fas fa-chevron-right"></span>
             </button>
             {# The one place the viewer's ground colour is not the app's. A
@@ -470,8 +473,8 @@
    select's client (click an artifact, get its outline; sets itself up once).
    Core services the ROI and QC panels share; they call only /segment/v1. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewSnapshot.js?v=20261004_magic_select" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261004_scribble" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261004_scribble_b" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261010_carry" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261010_solids" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/canvasHint.js?v=20261004_defaults" defer></script>
 {# Grab/grabbing on the OSD canvas. Deferred and unconditional within this
    branch: it installs three document-level listeners that cost nothing until
@@ -508,7 +511,7 @@
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
 <script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260924_dataset_strip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260927_docs" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -516,6 +519,22 @@
 {# Core's Rotate and Flip tools. Before main.js, which activates a `lazy`
    definition at boot only when `?tool=` staged its panel. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card" defer></script>
+{# Volumes: where the viewer is in a z-stack (the state), the Z strip and
+   badge on the canvas, and core's Depth card. Before main.js, which reads
+   the state beside /config and mounts the strip. All three do nothing for a
+   planar image. #}
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261011_colour_z" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261010_motion" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261011_colour_z" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261011_stack_qc" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261011_atlas" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261011_atlas" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_windows" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261010_standby" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -525,16 +544,16 @@
    agent session's phase, evidence and controls. Before agentBridge.js, which
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261005_answered_closed" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261011_fold" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
-<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261005_bridge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261011_fold" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261009_depth" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260929_ai_qc" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261011_stack_qc" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

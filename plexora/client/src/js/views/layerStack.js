@@ -557,6 +557,23 @@ class LayerStack {
         return true;
     }
 
+    /**
+     * A layer's build finished (or failed): record it on the spec and tell
+     * every listener, so a card that said "Preparing…" stops saying it.
+     * Writing `spec.status` directly changes the fact and tells nobody.
+     *
+     * Announces even when the spec already says `status`: the spec is the
+     * entry in `config.layers` by reference, and main.js writes that list
+     * first, so "unchanged" here usually means "changed, unannounced".
+     */
+    setStatus(id, status) {
+        const layer = this._layers.get(id);
+        if (!layer?.spec) return false;
+        layer.spec.status = status;
+        this._changed();
+        return true;
+    }
+
     setOpacity(id, value) {
         const layer = this._layers.get(id);
         if (!layer) return false;

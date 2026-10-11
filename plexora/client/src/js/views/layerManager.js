@@ -385,6 +385,11 @@ window.PlexoraLayerManager = (function () {
                 tone: "bad",
             };
         }
+        if (!layer.transform && layer.spec?.modality === "projection") {
+            // A pinned projection (server/volume/pin.py) is computed from the
+            // reference image's own pixels: aligned by construction.
+            return { text: "Computed from this image", tone: "ok" };
+        }
         if (!layer.transform) {
             return { text: "Aligned by assumption", tone: "warn" };
         }
@@ -1599,6 +1604,23 @@ window.PlexoraLayerManager = (function () {
         return card;
     }
 
+    /**
+     * Just the build line, on a card whose body is not refreshed whole: a
+     * layer with a channel panel whose build has finished must stop saying
+     * "Preparing…". The line is this module's own markup, so replacing it
+     * touches nothing anybody else holds.
+     */
+    function refreshState(card, layer) {
+        const wrapper = Array.from(card.children)
+            .find((child) => child.className?.includes?.("layer-card-body"));
+        if (!wrapper) return;
+        const old = wrapper.querySelector(".layer-card-state");
+        const next = buildState(layer);
+        if (old && next) old.replaceWith(next);
+        else if (old) old.remove();
+        else if (next) (wrapper.firstElementChild || wrapper).appendChild(next);
+    }
+
     function refreshBody(card, layer) {
         const wrapper = Array.from(card.children)
             .find((child) => child.className?.includes?.("layer-card-body"));
@@ -1702,6 +1724,13 @@ window.PlexoraLayerManager = (function () {
             if (!id) return;
             const layer = stack.get(id);
             if (!layer) return;
+            // A build that finished (LayerStack.setStatus) changes one line
+            // of the card, and only when the status actually moved.
+            const status = layer.spec?.status || "ready";
+            if (card.dataset.buildStatus !== status) {
+                if (card.dataset.buildStatus !== undefined) refreshState(card, layer);
+                card.dataset.buildStatus = status;
+            }
             card.classList.toggle("is-collapsed", collapsed.has(id));
             card.classList.toggle("is-layer-off", !layer.visible);
             // A number on a button cannot be read off the DOM the way a

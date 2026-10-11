@@ -15,6 +15,15 @@ skills:
     tier: routine
     tools: [server_info, list_datasets, get_dataset, list_projects, inspect_project,
             get_resource_status, list_channels, list_markers, validate_scope]
+  - name: volume-triage
+    title: Settle what a z-stack is before looking at it in depth
+    description: Is it a volume, is the z step known, which planes are sharp, and which picture -- a plane or a projection -- answers the question.
+    when: The project is a z-stack or time series, or the user asks about planes, focus or depth.
+    tier: judgement
+    tools: [inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_region,
+            render_projection, render_sections, render_object_views, check_volume_quality,
+            measure_objects, track_objects, segment_3d, pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab,
+            carry_roi_through_planes, update_roi]
   - name: analysis-handoff
     title: Hand a question to the analysis application, and show the answer
     description: Route cohort and spatial statistics to the analysis side of the bridge (SCIMAP Pro) on the same table, run them there, and show the result on the image.
@@ -67,6 +76,13 @@ skills:
     when: A brief names a QC session, this skill and its tasks.
     tier: judgement
     tools: [read_skill, qc_session_status, qc_next, qc_answer]
+  - name: review-objects
+    title: Judge a 3-D mask's suspicious cells from their views
+    description: The worker's loop of an object review -- the next cell's XY, XZ and YZ views, a verdict (ok, merged, split, clipped, debris, unsure) and one line per cell.
+    when: A brief names an object review and this skill, or the user asks to check a 3-D segmentation cell by cell.
+    tier: judgement
+    tools: [read_skill, object_review_start, object_review_status, object_review_next,
+            object_review_answer, object_review_finish]
   - name: gate-dataset
     prompt: gate_dataset
     title: Gate every image of a dataset from a reference image

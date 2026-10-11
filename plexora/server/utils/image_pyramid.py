@@ -110,25 +110,40 @@ def pyramid_gaps(shape, levels: int, dtype, threshold: Optional[int] = None) -> 
     return [f"{width} x {height} px with no reduced-resolution levels"]
 
 
-def _open_series(path):
-    """`(tiff, series)` for a local channel stack, read the way registration reads it."""
+def _open_series(path, all_pages: bool = False):
+    """`(tiff, series)` for a local channel stack, read the way registration reads it.
+
+    `all_pages` is for a VOLUME: every page of `series[0]` in file order, as one
+    flat (pages, Y, X) stack -- not `channel_series`, which keeps only the
+    middle plane of a single-channel z-stack. The copy then holds every plane
+    and records how they are laid out (`volume_description`).
+    """
     from plexora.server.utils import tiff_series
 
     tiff = tf.TiffFile(str(path), is_ome=False)
     try:
+        if all_pages:
+            series = tiff.series[0]
+            pages = list(series.pages)
+            plane = tuple(int(size) for size in pages[0].shape[-2:])
+            return tiff, tf.TiffPageSeries(pages, shape=(len(pages),) + plane,
+                                           dtype=series.dtype, axes="CYX",
+                                           parent=tiff, name=series.name)
         return tiff, tiff_series.channel_series(tiff)
     except Exception:
         tiff.close()
         raise
 
 
-def flat_image_report(path, threshold: Optional[int] = None) -> Optional[dict]:
+def flat_image_report(path, threshold: Optional[int] = None,
+                      all_pages: bool = False) -> Optional[dict]:
     """What the import dialog says about a flat image, or None when it is fine.
 
-    Header-only: no pixel is decoded.
+    Header-only: no pixel is decoded. `all_pages` counts every plane of a
+    volume (see `_open_series`).
     """
     try:
-        tiff, series = _open_series(path)
+        tiff, series = _open_series(path, all_pages=all_pages)
     except Exception:
         return None
     try:
@@ -455,15 +470,22 @@ class _Scratch:
             self.directory = None
 
 
-def _ome_metadata(channels, channel_names, physical, source, fingerprint) -> dict:
+def _ome_metadata(channels, channel_names, physical, source, fingerprint,
+                  volume_description=None) -> dict:
+    description = {
+        "plexora": "image-pyramid",
+        "source": str(source),
+        "source_key": fingerprint,
+    }
+    if volume_description:
+        # A volume's pages, flattened in file order: how they are laid out
+        # (`page_axes`, slowest first) and the z/t steps the original stated,
+        # read back by plexora/server/volume/sources/tiff.py.
+        description.update(volume_description)
     metadata = {
         "axes": "CYX",
         "Name": IMAGE_MARKER,
-        "Description": json.dumps({
-            "plexora": "image-pyramid",
-            "source": str(source),
-            "source_key": fingerprint,
-        }),
+        "Description": json.dumps(description),
     }
     if channel_names and len(channel_names) == channels:
         metadata["Channel"] = {"Name": [str(name) for name in channel_names]}
@@ -494,8 +516,13 @@ def pyramidize_image(
     max_workers: Optional[int] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     stage_callback: Optional[Callable[..., None]] = None,
+    volume_description: Optional[dict] = None,
 ) -> str:
     """Write a tiled pyramid OME-TIFF copy of the channel stack at `source`.
+
+    `volume_description` (`{page_axes, physical}`) makes the copy hold EVERY
+    page of a z-stack or time series, laid out as recorded there, rather than
+    the channel stack `tiff_series.channel_series` reads.
 
     `source` is never written to. `destination` appears only once complete.
     `compression_args` defaults to zlib level 1: against the default level 6
@@ -515,7 +542,7 @@ def pyramidize_image(
     stage("inspecting")
     fingerprint = segmentation_pyramid.source_fingerprint(source)
     try:
-        tiff, series = _open_series(source)
+        tiff, series = _open_series(source, all_pages=bool(volume_description))
     except Exception as error:
         raise PyramidError(
             f"{source.name} could not be opened as a TIFF channel stack "
@@ -624,7 +651,8 @@ def pyramidize_image(
                 dtype=dtype,
                 block=block,
                 channels=channels,
-                metadata=_ome_metadata(channels, channel_names, physical, source, fingerprint),
+                metadata=_ome_metadata(channels, channel_names, physical, source, fingerprint,
+                                       volume_description),
                 tile_size=tile_size,
                 compression=compression,
                 compression_args=compression_args,

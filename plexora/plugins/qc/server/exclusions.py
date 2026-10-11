@@ -15,6 +15,14 @@ same sync and derivation `refresh_qc` runs, QC's own reversible derived state,
 never a source write. Staleness is the ROI document's hash against the one
 stamped on the result's cells when they were derived (`calls.write_for_active`).
 
+On a z-stack whose cells were measured in 3-D, `strict` also leaves out the
+cells the stack's first or last plane cuts off (`touches_z_bounds` in the
+object table): their values are means over the part of the cell the stack
+holds, the way a warn call's are doubtful, and they are counted as reason
+`clipped_z`. `exclude` keeps them, and so does a stack where most cells are
+cut off (`CLIPPED_MAX_SHARE`): one thinner than its cells cuts every cell
+alike, and leaving them out would leave nothing to estimate from.
+
 Nothing here removes a cell from anything: the gate that comes out still
 applies to every cell.
 """
@@ -146,10 +154,22 @@ _BUSY = threading.local()
 
 
 def provider(ds, mode):
-    """`provider(ds, mode)` for `cell_exclusions`: None when QC was never run.
+    """`provider(ds, mode)` for `cell_exclusions`: None when QC was never run
+    and no measured 3-D cell is cut off by the stack's ends.
 
     Asked by every estimate gating makes, so the common answer -- nothing was
     written to the project since the last ask -- is a stat and a lookup."""
+    record = _qc_provider(ds, mode)
+    if mode != "strict" or getattr(_BUSY, "on", False) \
+            or (record is not None and record.source.get("error")):
+        return record
+    clipped = clipped_z(ds)
+    if clipped is None or not clipped[0].size:
+        return record
+    return _with_clipped(record, *clipped, mode)
+
+
+def _qc_provider(ds, mode):
     if not getattr(ds.table, "available", False) or getattr(_BUSY, "on", False):
         # Asked from inside QC's own derivation (a render it draws, say): the
         # calls are being made, so there is nothing to leave out yet.
@@ -212,6 +232,79 @@ def _provide(ds, mode):
     return record
 
 
+# -- cells cut off by a z-stack's ends -----------------------------------------
+
+_CLIPPED: dict = {}
+
+#: Above this share of the measured cells cut off by the stack's ends, none is
+#: left out: the stack is thinner than its cells, so all are cut alike.
+CLIPPED_MAX_SHARE = 0.5
+
+
+def clipped_z(ds):
+    """`(ids, fingerprint)` of the cells a z-stack's first or last plane cuts
+    off, from the project's measured 3-D cells -- no id when more than
+    `CLIPPED_MAX_SHARE` of them are; None when there are none to read -- a
+    flat image, a 2-D mask, cells never measured, or a table measured from a
+    mask the project no longer uses.
+
+    By id: in a time series whose frames reuse ids, a cell cut off in one
+    frame is left out in every frame."""
+    import json
+
+    from plexora import paths
+    from plexora.server.volume import objects
+
+    folder = paths.project_state_dir(ds.name)
+    table, manifest = folder / objects.TABLE_NAME, folder / objects.MANIFEST_NAME
+    try:
+        st = table.stat()
+    except OSError:
+        return None
+    seg = getattr(ds.project, "segmentation", None)
+    derived = str(getattr(seg, "derived", "") or "")
+    key = (ds.name, st.st_mtime_ns, st.st_size, derived)
+    with _CACHE_LOCK:
+        if key in _CLIPPED:
+            return _CLIPPED[key]
+    found = None
+    try:
+        measured = json.loads(manifest.read_text(encoding="utf-8")).get("labels")
+        if derived and measured == derived:
+            import polars as pl
+
+            frame = pl.read_parquet(table, columns=["label", "touches_z_bounds"])
+            ids = np.unique(frame.filter(pl.col("touches_z_bounds"))["label"]
+                            .to_numpy().astype(np.int64))
+            cells = np.unique(frame["label"].to_numpy()).size
+            if ids.size > CLIPPED_MAX_SHARE * cells:
+                ids = np.empty(0, np.int64)
+            found = (ids, f"{st.st_mtime_ns}:{st.st_size}")
+    except (OSError, ValueError, KeyError) as exc:
+        # An object table that cannot be read leaves nothing out; the QC
+        # half of the record is unaffected.
+        print(f"WARNING: QC could not read {table} for clipped cells: {exc}")
+    with _CACHE_LOCK:
+        if len(_CLIPPED) > _CACHE_MAX:
+            _CLIPPED.clear()
+        _CLIPPED[key] = found
+    return found
+
+
+def _with_clipped(record, ids, stamp, mode):
+    from plexora.agent import cell_exclusions
+
+    if record is None:
+        whole, by_marker, base, source = ids, {}, "", {"origin": "object_table"}
+    else:
+        whole, by_marker = np.union1d(record.whole, ids), record.by_marker
+        base, source = record.fingerprint, dict(record.source)
+    source["n_clipped_z"] = int(ids.size)
+    fp = hashlib.sha1(f"{base}|clipped:{stamp}".encode()).hexdigest()[:16]
+    return cell_exclusions.make_record(whole, by_marker, fingerprint=fp, mode=mode,
+                                       source=source)
+
+
 def summary(ds, mode="strict") -> dict:
     """What `get_qc_exclusions` reports: counts by reason and marker, never ids."""
     from plexora.agent import cell_exclusions
@@ -233,6 +326,8 @@ def summary(ds, mode="strict") -> dict:
             for reason in reasons or ():
                 if reason not in (notes or ()):  # a note leaves no cell out
                     by_reason[reason] = by_reason.get(reason, 0) + 1
+    if record.source.get("n_clipped_z"):
+        by_reason["clipped_z"] = record.source["n_clipped_z"]
     block["by_reason"] = dict(sorted(by_reason.items(), key=lambda kv: -kv[1]))
     block["by_marker"] = {m: int(v.size) for m, v in sorted(record.by_marker.items())}
     return block

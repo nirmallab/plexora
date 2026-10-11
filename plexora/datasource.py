@@ -122,7 +122,25 @@ def _image_spec(name, image_path, channel_info, channel_names, segmentation_path
         image_type_choice=image_type or None,
         image_type_detected=channel_info.get("imageTypeDetected"),
         image_type_reason=channel_info.get("imageTypeReason"),
+        **_volume_spec_fields(channel_info),
     )
+
+
+def _volume_spec_fields(channel_info) -> dict:
+    """ImageSpec's volume fields out of what the conversion recorded.
+
+    Empty for a planar image, which is what keeps every 2-D project's
+    config.json the shape it has always been.
+    """
+    from plexora.server.models.project import _volume_shape
+
+    return {
+        "axes": channel_info.get("imageAxes") or None,
+        "shape": _volume_shape(channel_info.get("imageShape")),
+        "default_view": channel_info.get("imageDefaultView") or None,
+        "z_semantics": channel_info.get("imageZSemantics") or None,
+        "t_semantics": channel_info.get("imageTSemantics") or None,
+    }
 
 
 def _segmentation_spec(fields):
@@ -375,6 +393,10 @@ def _sniff_quick_view_kind(path):
             "folder only when it is an OME-Zarr (.zarr) store or a folder of "
             "DICOM whole-slide images.")
     suffix = Path(path).suffix.lower()
+    if suffix == ".ims":
+        # An Imaris file: fluorescence channels, read by the volume layer
+        # (plexora/server/volume/sources/ims.py) through the same pipeline.
+        return "ome_tiff"
     if dicom_wsi.is_dicom_path(path):
         # One instance of a slide selects that slide; its siblings are gathered
         # from the metadata. Probed here, like the OpenSlide formats below, so
@@ -520,7 +542,7 @@ def rename_layer_channels(name, layer_id, channel_names, data_dir=None):
     return Project.mutate(name, renamed, data_root)
 
 
-def set_pixel_size(name, value, unit=None, data_dir=None):
+def set_pixel_size(name, value, unit=None, data_dir=None, axis="xy"):
     """Record what one pixel is worth for an already-registered datasource.
 
     The viewer's calibration control, and the only way a project that arrived
@@ -537,6 +559,10 @@ def set_pixel_size(name, value, unit=None, data_dir=None):
 
     Caller reloads the runtime datasource afterwards, the same contract
     `rename_channels` has.
+
+    `axis="z"` records the step between planes of a volume instead
+    (`ImageSpec.pixel_size_z`), the one number every 3-D measurement needs
+    and many stacks never state; `axis="t"` the interval between frames.
     """
     from plexora import paths
     from plexora.server.models.project import (DEFAULT_PIXEL_SIZE_UNIT,
@@ -548,15 +574,18 @@ def set_pixel_size(name, value, unit=None, data_dir=None):
     except KeyError:
         raise ValueError(f"No datasource named {name!r}.") from None
 
+    if axis not in ("xy", "z", "t"):
+        raise ValueError("axis is xy, z or t")
     pixel_size = normalize_pixel_size({
         "value": value,
-        "unit": unit or DEFAULT_PIXEL_SIZE_UNIT,
+        "unit": unit or ("s" if axis == "t" else DEFAULT_PIXEL_SIZE_UNIT),
         "source": "manual",
     })
     # A value that cannot be a length is a clear, not an error: the control
     # that sends it has an X on it, and "0" typed into the box means the same
     # thing as pressing that.
-    updated = project.patch(image=replace(project.image, pixel_size=pixel_size))
+    field_name = {"xy": "pixel_size", "z": "pixel_size_z", "t": "frame_interval"}[axis]
+    updated = project.patch(image=replace(project.image, **{field_name: pixel_size}))
     updated.save(data_root)
     return pixel_size
 
@@ -591,6 +620,27 @@ def _channel_names_from_ome_xml(image_path, n_channels):
     except Exception:
         pass
     return None
+
+
+def _is_ims(image_path) -> bool:
+    from plexora.server.volume.sources.ims import is_ims_path
+
+    return is_ims_path(image_path)
+
+
+def _channel_names_from_ims(image_path, n_channels):
+    """An Imaris file's `DataSetInfo/Channel N` names, when every channel has one."""
+    from plexora.server.volume.sources.ims import open_ims_volume
+
+    try:
+        source = open_ims_volume(image_path)
+    except Exception:
+        return None
+    try:
+        names = source.volume.channel_names
+    finally:
+        source.close()
+    return list(names) if names and len(names) == n_channels else None
 
 
 def _channel_names_from_zarr_attrs(image_path, n_channels):
@@ -693,6 +743,8 @@ def _channel_names_from_image_metadata(image_path, n_channels):
         # and nobody has to upload a channel-names CSV to find CD45 again.
         names = dicom_wsi.channel_names(image_path)
         names = names if names and len(names) == n_channels else None
+    elif _is_ims(image_path):
+        names = _channel_names_from_ims(image_path, n_channels)
     else:
         names = _channel_names_from_ome_xml(image_path, n_channels)
     if names is not None:
@@ -1719,7 +1771,8 @@ def reregister_image(name, data_dir=None):
     # which is the copy when one was made, and nobody is watching a rail.
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=project.image.image_type_choice, pyramidize=False)
+        image_type=project.image.image_type_choice, pyramidize=False,
+        z_semantics=project.image.z_semantics, t_semantics=project.image.t_semantics)
 
     channel_names = _brightfield_channel_names(channel_info)
     if channel_names is None:
@@ -1737,6 +1790,10 @@ def reregister_image(name, data_dir=None):
             image_type_choice=current.image.image_type_choice,
             source=current.image.source,
             source_key=current.image.source_key,
+            # Typed calibrations are facts about the project, not the reading.
+            pixel_size=current.image.pixel_size,
+            pixel_size_z=current.image.pixel_size_z,
+            frame_interval=current.image.frame_interval,
         ))
 
     return Project.mutate(name, _swap, data_root)

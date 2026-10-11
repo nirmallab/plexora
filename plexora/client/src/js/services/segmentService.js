@@ -376,7 +376,12 @@
         const snap = snapshot || global.PlexoraViewSnapshot?.capture({ sample: datasource });
         let { view, channels } = describeView(snap);
         let token;
+        // A z-stack: the plane (or projection) on screen is what gets outlined,
+        // and an embedding of another plane is never reused for it.
+        const stack = global.__plexora?.viewState;
+        const imageView = stack?.enabled?.() ? (stack.spec() || "") : "";
         const reuse = cached && cached.sample === datasource
+            && (cached.imageView || "") === imageView
             && global.PlexoraViewSnapshot?.sameView(cached.snapshot, snap)
             && insideCrop(cached.crop, prompts, box);
         if (reuse) {
@@ -396,7 +401,7 @@
         }
         const answer = await request("POST", "segment/v1/segment", {
             datasource, view, channels, points: prompts, box: box || undefined, token,
-            options,
+            options, image_view: imageView || undefined,
         });
         if (answer.status === 409 && answer.data?.error?.code === "not_ready") {
             // Only this click is remembered: an older caller's is dropped.
@@ -410,12 +415,86 @@
                      message: answer.data?.error?.message || "Magic select failed." };
         }
         cached = { token: answer.data.token, prevKey: answer.data.prev_key, sample: datasource,
-                   view, channels, crop: answer.data.crop, snapshot: snap };
+                   view, channels, crop: answer.data.crop, snapshot: snap, imageView };
         return answer.data;
     }
 
     function forget() {
         cached = null;
+    }
+
+    // -- through the planes of a z-stack -----------------------------------------
+
+    let throughWaiter = null;
+
+    /** Poll until the through-planes model is fetched, then run `retry`. */
+    function waitForThroughPlanes(error, retry) {
+        throughWaiter = typeof retry === "function" ? retry : null;
+        const say = (text) => global.PlexoraToast?.show?.({ title: text });
+        if (error.state === "not_installed_runtime" || error.state === "disabled") {
+            say(error.message || "Carrying an outline through planes is not available here.");
+            return;
+        }
+        say(`Fetching the 3-D model (${error.size_mb || 150} MB) -- once. `
+            + "The outline is carried when it is ready.");
+        const tick = async () => {
+            const answer = await request("GET", "segment/v1/status");
+            const through = answer.data?.through_planes || {};
+            if (through.ready) {
+                const run = throughWaiter;
+                throughWaiter = null;
+                if (run) run();
+                return;
+            }
+            if (through.state === "error") {
+                say(through.message || "The 3-D model could not be fetched.");
+                return;
+            }
+            global.setTimeout(tick, POLL_MS);
+        };
+        global.setTimeout(tick, POLL_MS);
+    }
+
+    /**
+     * Carry an outline on the plane on screen up and down a z-stack
+     * (`POST /segment/v1/carry`). `geometry` is the region's outline on
+     * plane `z`. Resolves to the server's answer -- `planes` ({z: outline}),
+     * `footprint`, `range`, `stopped`, `engine` -- or `{ok: false, kind,
+     * message}`; kind "setup" means a model is being fetched and `retry` (if
+     * given) runs when it is ready.
+     */
+    async function carry({ datasource, geometry, z, t = 0, snapshot, zRange, engine,
+                           retry } = {}) {
+        if (stubbed()) {
+            const planes = {};
+            for (let dz = -2; dz <= 2; dz += 1) planes[String(z + dz)] = geometry;
+            return { ok: true, planes, footprint: geometry, range: [z - 2, z + 2],
+                     stopped: { increasing_z: "object_ended", decreasing_z: "object_ended" },
+                     engine: "stub" };
+        }
+        const snap = snapshot || global.PlexoraViewSnapshot?.capture({ sample: datasource });
+        const { view, channels } = describeView(snap);
+        if (!view) return { ok: false, kind: "error", message: "The viewer is not open yet." };
+        const answer = await request("POST", "segment/v1/carry", {
+            datasource, z, t, view, channels, geometry,
+            z_range: zRange || undefined, engine: engine || undefined,
+        });
+        if (answer.status === 409 && answer.data?.error?.code === "not_ready") {
+            const error = answer.data.error;
+            if (error.engine === "sam2" || error.size_mb > 100) {
+                waitForThroughPlanes(error, retry);
+            } else {
+                readyWaiters = typeof retry === "function" ? [retry] : [];
+                await install(error);
+            }
+            return { ok: false, kind: "setup" };
+        }
+        if (answer.status === 429) return { ok: false, kind: "busy" };
+        if (!answer.ok) {
+            return { ok: false, kind: "error",
+                     message: answer.data?.error?.message || "Carrying the outline failed." };
+        }
+        return answer.data;
     }
 
     // -- what a click means ------------------------------------------------------
@@ -547,7 +626,7 @@
         }
     }
 
-    const api = { KEY, status, ensureReady, install, point, describeView, plan, Session,
+    const api = { KEY, status, ensureReady, install, point, carry, describeView, plan, Session,
                   strokePoints, MAX_POINTS, forget, stubbed };
     global.PlexoraSegment = api;
     if (typeof globalThis !== "undefined" && globalThis !== global) {

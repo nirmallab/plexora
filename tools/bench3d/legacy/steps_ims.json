@@ -1,0 +1,132 @@
+[
+ {
+  "waitFor": "!!(window.__plexora && __plexora.viewState && __plexora.seaDragonViewer && __plexora.seaDragonViewer.viewer.world.getItemCount() > 0)",
+  "timeout": 120000
+ },
+ {
+  "wait": 1500
+ },
+ {
+  "eval": "(() => { __plexora.viewerSidebar.setSlotEnabled(1, true); __plexora.viewerSidebar.setSlotEnabled(2, true); return true; })()",
+  "label": "channels on"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "waitFor": "(() => { const w = __plexora.seaDragonViewer.viewer.world; if (!w.getItemCount()) return false; for (let i=0;i<w.getItemCount();i++){ if(!w.getItemAt(i).getFullyLoaded()) return false;} return true; })()",
+  "timeout": 120000
+ },
+ {
+  "wait": 3000
+ },
+ {
+  "waitFor": "(() => { const w = __plexora.seaDragonViewer.viewer.world; if (!w.getItemCount()) return false; for (let i=0;i<w.getItemCount();i++){ if(!w.getItemAt(i).getFullyLoaded()) return false;} return true; })()",
+  "timeout": 120000
+ },
+ {
+  "label": "toasts",
+  "eval": "Array.from(document.querySelectorAll('.plx-toast')).map(t => t.textContent.trim().replace(/\\s+/g,' '))"
+ },
+ {
+  "label": "state",
+  "eval": "JSON.stringify({hd: __plexora.seaDragonViewer.viewerManagerVMain.isHdMode(), label: __plexora.viewState.label(), slots: __plexora.viewerSidebar.channelSlots.filter(s=>s.enabled).map(s=>[s.name, s.range])})"
+ },
+ {
+  "eval": "(() => { document.querySelectorAll('.plx-toast-dismiss').forEach(b => b.click()); return true; })()"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "shot": "ims_1_plane.png"
+ },
+ {
+  "eval": "(() => { window.__t0 = performance.now(); __plexora.viewState.set({z: 40}); return true; })()"
+ },
+ {
+  "waitFor": "(() => { const w = __plexora.seaDragonViewer.viewer.world; if (!w.getItemCount()) return false; for (let i=0;i<w.getItemCount();i++){ const it=w.getItemAt(i); if(!it.getFullyLoaded()) return false; if(!String(it.source.getTileUrl(0,0,0)).includes('view=z40')) return false;} window.__dt = performance.now()-window.__t0; return true; })()",
+  "timeout": 60000
+ },
+ {
+  "label": "z swap ms",
+  "eval": "Math.round(window.__dt)"
+ },
+ {
+  "wait": 500
+ },
+ {
+  "shot": "ims_2_z40.png"
+ },
+ {
+  "eval": "(() => { window.__t0 = performance.now(); __plexora.viewState.set({mode: 'slab', slab: {z0: 0, z1: 189, op: 'max', follow: false}}); return true; })()"
+ },
+ {
+  "wait": 400
+ },
+ {
+  "eval": "(() => { document.querySelectorAll('.plx-toast-dismiss').forEach(b => b.click()); return true; })()"
+ },
+ {
+  "waitFor": "(() => { const w = __plexora.seaDragonViewer.viewer.world; if (!w.getItemCount()) return false; for (let i=0;i<w.getItemCount();i++){ const it=w.getItemAt(i); if(!it.getFullyLoaded()) return false; if(!String(it.source.getTileUrl(0,0,0)).includes('max')) return false;} window.__dt = performance.now()-window.__t0; return true; })()",
+  "timeout": 180000
+ },
+ {
+  "label": "mip ms",
+  "eval": "Math.round(window.__dt)"
+ },
+ {
+  "wait": 800
+ },
+ {
+  "label": "state",
+  "eval": "JSON.stringify({hd: __plexora.seaDragonViewer.viewerManagerVMain.isHdMode(), label: __plexora.viewState.label(), slots: __plexora.viewerSidebar.channelSlots.filter(s=>s.enabled).map(s=>[s.name, s.range])})"
+ },
+ {
+  "wait": 4000
+ },
+ {
+  "label": "mip ranges",
+  "eval": "JSON.stringify(__plexora.viewerSidebar.channelSlots.filter(s=>s.enabled).map(s=>[s.name, s.range]))"
+ },
+ {
+  "shot": "ims_3_mip.png"
+ },
+ {
+  "eval": "(() => { __plexora.viewState.set({mode: 'plane', z: 95, layout: 'sections'}); return true; })()"
+ },
+ {
+  "wait": 25000
+ },
+ {
+  "label": "sections",
+  "eval": "JSON.stringify(['xz','yz'].map(k => { const p = __plexora.sectionPanes.panes[k]; const w = p.osd.world; const items = []; for (let i=0;i<w.getItemCount();i++){ const it = w.getItemAt(i); items.push({loaded: it.getFullyLoaded(), op: it.getOpacity()}); } return [k, p.token, items]; }))"
+ },
+ {
+  "shot": "ims_4_sections.png"
+ },
+ {
+  "eval": "(() => { window.__t0 = performance.now(); __plexora.viewState.set({mode: 'volume', layout: 'single'}); return true; })()"
+ },
+ {
+  "waitFor": "__plexora.volumeView && __plexora.volumeView.renderer && ['ready','error','lost'].includes(__plexora.volumeView.renderer.status)",
+  "timeout": 180000
+ },
+ {
+  "label": "volume",
+  "eval": "JSON.stringify({status: __plexora.volumeView.renderer.status, level: __plexora.volumeView.renderer.level, shape: __plexora.volumeView.renderer.shape, formats: Array.from(__plexora.volumeView.renderer.textures.values()).map(t => t.format), ms: Math.round(performance.now()-window.__t0)})"
+ },
+ {
+  "wait": 2500
+ },
+ {
+  "wait": 3000
+ },
+ {
+  "label": "3d ranges",
+  "eval": "JSON.stringify(__plexora.viewerSidebar.channelSlots.filter(s=>s.enabled).map(s=>[s.name, s.range]))"
+ },
+ {
+  "shot": "ims_5_volume.png"
+ }
+]

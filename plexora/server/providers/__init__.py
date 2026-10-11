@@ -171,8 +171,10 @@ def resolve_providers(project) -> ProviderSet:
         # was never registered.
         image = BlankImageProvider(project.image.width, project.image.height)
     elif image_binding:
+        # With the project's z/t reading: a node has no project to read it
+        # from, and a stack read the wrong way is a different channel list.
         image = NodeImageProvider(image_binding).with_channels(
-            project.image.channel_names, *tile_size)
+            project.image.channel_names, *tile_size).with_volume(project.image)
     elif is_remote_locator(project.image.src):
         # A web address. Still local in the sense that matters here -- this
         # process computes, only the bytes travel -- so `has_remote` stays
@@ -181,7 +183,9 @@ def resolve_providers(project) -> ProviderSet:
 
         image = RemoteImageProvider(
             project.image.src, project.image.pyramid,
-            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD,
+            z_semantics=project.image.z_semantics,
+            t_semantics=project.image.t_semantics)
     else:
         # The kind is passed rather than re-derived: a file whose three planes
         # are `minisblack` is a legal way to write both RGB and a 3-plex panel,
@@ -191,7 +195,9 @@ def resolve_providers(project) -> ProviderSet:
         # found by `is_rgb_layout` inside the provider, with or without this.
         image = LocalImageProvider(
             project.image.src, project.image.pyramid,
-            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD,
+            z_semantics=project.image.z_semantics,
+            t_semantics=project.image.t_semantics)
 
     if seg_binding:
         segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)

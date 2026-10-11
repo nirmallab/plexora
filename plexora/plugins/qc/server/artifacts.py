@@ -62,6 +62,7 @@ from time import perf_counter
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 
 VERSION = "2"
 CATEGORIES = ("fold", "tear", "debris", "saturation")
@@ -294,7 +295,7 @@ def availability(session, project) -> dict:
         return {"available": False, "reason": "no_image",
                 "message": "this sample has no image to check"}
     try:
-        with source_image.SHELF.reader(session.image_data(project)) as source:
+        with qc_plane.reader(session.image_data(project)) as source:
             if source.is_brightfield:
                 return {"available": False, "reason": "brightfield",
                         "message": "brightfield slides are not supported yet"}
@@ -352,7 +353,7 @@ def plan(session, project, *, params=None) -> tuple:
     if not (0.01 <= pixel_um <= 100.0):
         raise AgentError("invalid_input", f"pixel_um {pixel_um} is not a plausible pixel size")
     image_data = session.image_data(project)
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "the Artifact Detector reads fluorescence channels; brightfield "
@@ -361,7 +362,7 @@ def plan(session, project, *, params=None) -> tuple:
     keys = [source_image.channel_key(c) for c in record.image.real_channels]
     level1 = _stage1_level(shapes, params)
     pan = pan_subset(names, params["pan_channels"])
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     image_stamp = None if str(identity or "").startswith("node://") else _stamp(identity)
     blob = json.dumps({"v": VERSION, "image": identity, "image_stamp": image_stamp,
                        "keys": keys, "shapes": shapes, "level1": level1, "pan": pan,
@@ -1522,7 +1523,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     # boxes (known later: counted as they are found), scoring.
     job = _Job(progress, check_cancelled, total=2 * len(names) + 4)
     job.say(PHASES[0], advance=0)
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         context["indices"] = _indices(source, context)
         stage = _stage1(source, context, job)
     timing["stage1_s"] = round(perf_counter() - started, 3)
@@ -1542,7 +1543,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     seeds = _seeds(stage, regions, context)
     timing["seeds_s"] = round(perf_counter() - t0, 3)
     t0 = perf_counter()
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         evidence = _attribute(source, context, stage, seeds, job)
     timing["attribution_s"] = round(perf_counter() - t0, 3)
     keep, dropped = fold_gate(seeds["seeds"], evidence, names, context["nuclear"], params)
@@ -1570,7 +1571,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     budget = {"used": 0}
     refined_seeds = {c: 0 for c in CATEGORIES}
     raw_objects = []
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         for k, (group, box) in enumerate(work):
             job.stop_if_asked()
             job.say(f"{PHASES[4]} ({k + 1}/{len(work)})")

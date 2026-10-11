@@ -43,6 +43,8 @@ TO_BRIDGE = {
     "invalid_input": "invalid_input",
     "unknown_capability": "capability_unavailable",
     "capability_unavailable": "capability_unavailable",
+    "representation_unsupported": "precondition_missing",
+    "inference_forbidden": "invalid_input",
 }
 
 #: The protocol's code -> the nearest of Plexora's, for a `BridgeError` raised

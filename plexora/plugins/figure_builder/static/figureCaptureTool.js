@@ -152,11 +152,13 @@ class FigureCaptureTool {
     static defaultBox(bounds) {
         const width = Math.max(0, (bounds && bounds.width) || 0);
         const height = Math.max(0, (bounds && bounds.height) || 0);
+        const x0 = (bounds && bounds.x) || 0;
+        const y0 = (bounds && bounds.y) || 0;
         const w = Math.round(Math.min(width, height) * FigureCaptureTool.DEFAULT_FRACTION);
         const h = Math.round(w * FigureCaptureTool.DEFAULT_RATIO);
         return FigureCaptureTool.clampBox({
-            x: Math.round((width - w) / 2),
-            y: Math.round((height - h) / 2),
+            x: Math.round(x0 + (width - w) / 2),
+            y: Math.round(y0 + (height - h) / 2),
             width: w,
             height: h,
         }, bounds);
@@ -167,16 +169,19 @@ class FigureCaptureTool {
      *
      * Fully inside rather than merely overlapping: the shutter and the corner
      * handles live on the frame, and a frame half off the edge is one the user
-     * can see and cannot reach.
+     * can see and cannot reach. `bounds` may start away from the canvas's
+     * corner (`x`, `y`): the part of it no strip or section pane covers.
      */
     static clampBox(box, bounds) {
+        const x0 = (bounds && bounds.x) || 0;
+        const y0 = (bounds && bounds.y) || 0;
         const limitW = Math.max(FigureCaptureTool.MIN_SCREEN_SIZE, (bounds && bounds.width) || 0);
         const limitH = Math.max(FigureCaptureTool.MIN_SCREEN_SIZE, (bounds && bounds.height) || 0);
         const width = Math.min(Math.max(FigureCaptureTool.MIN_SCREEN_SIZE, box.width), limitW);
         const height = Math.min(Math.max(FigureCaptureTool.MIN_SCREEN_SIZE, box.height), limitH);
         return {
-            x: Math.round(Math.min(Math.max(0, box.x), limitW - width)),
-            y: Math.round(Math.min(Math.max(0, box.y), limitH - height)),
+            x: Math.round(Math.min(Math.max(x0, box.x), x0 + limitW - width)),
+            y: Math.round(Math.min(Math.max(y0, box.y), y0 + limitH - height)),
             width: Math.round(width),
             height: Math.round(height),
         };
@@ -302,6 +307,8 @@ class FigureCaptureTool {
         document.addEventListener("keyup", this._onKeyUp);
         window.addEventListener("blur", this._onBlur);
         window.addEventListener("resize", this._onResize);
+        // A strip or section pane opening takes room from the frame too.
+        window.addEventListener("plexora:canvas-layout", this._onResize);
 
         if (!this.box) this.box = FigureCaptureTool.defaultBox(this.bounds());
         this.attachFrame();
@@ -338,6 +345,7 @@ class FigureCaptureTool {
         document.removeEventListener("keyup", this._onKeyUp);
         window.removeEventListener("blur", this._onBlur);
         window.removeEventListener("resize", this._onResize);
+        window.removeEventListener("plexora:canvas-layout", this._onResize);
 
         this.detachFrame();
         this.setCursor("");
@@ -363,9 +371,20 @@ class FigureCaptureTool {
     }
 
     /** The viewer's own drawing area, in CSS pixels. */
+    /** Where the frame may be, in canvas pixels: the canvas less the bands
+     *  core's canvas layout takes along its edges (the depth strip, the
+     *  section panes), so the frame and its handles are never under them. */
     bounds() {
         const rect = this.viewer?.canvas?.getBoundingClientRect?.();
-        return rect ? { width: rect.width, height: rect.height } : { width: 0, height: 0 };
+        if (!rect) return { x: 0, y: 0, width: 0, height: 0 };
+        const inset = window.PlexoraCanvasLayout?.insets?.() || { top: 0, right: 0, bottom: 0, left: 0 };
+        const x = Math.min(rect.width, inset.left || 0);
+        const y = Math.min(rect.height, inset.top || 0);
+        return {
+            x, y,
+            width: Math.max(0, rect.width - x - (inset.right || 0)),
+            height: Math.max(0, rect.height - y - (inset.bottom || 0)),
+        };
     }
 
     /** The canvas's top-left corner within the host, so a box in canvas

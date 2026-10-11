@@ -1,0 +1,20 @@
+[
+ {"waitFor": "window.__plexora && __plexora.volumeView && __plexora.viewState && __plexora.viewState.appliedSpec() === __plexora.viewState.spec()", "timeout": 40000},
+ {"eval": "(async () => { const vs = __plexora.viewState; vs.set({layout: 'single'}); __plexora.depthStrip.chooseMode('volume'); await new Promise(r => setTimeout(r, 300)); return vs.get().mode; })()", "label": "3-D on"},
+ {"waitFor": "__plexora.volumeView.renderer && __plexora.volumeView.renderer.status === 'ready' && __plexora.volumeView.renderer.textures.size > 0", "timeout": 60000},
+ {"wait": 1500},
+ {"shot": "motion/volume_rest.png"},
+ {"label": "arm a recorder", "eval": "(() => { const r = __plexora.volumeView.renderer; window.__rec = []; const t0 = performance.now(); const tick = () => { window.__rec.push([Math.round(performance.now() - t0), +r.camera.yaw.toFixed(4), r.spin ? +Math.hypot(r.spin.yaw, r.spin.pitch).toFixed(5) : 0, r.canvas.width]); if (performance.now() - t0 < 6000) requestAnimationFrame(tick); }; requestAnimationFrame(tick); window.__t0 = t0; return {yaw: r.camera.yaw, fastScale: r.fastScale}; })()"},
+ {"mouseFrom": "(() => { const b = __plexora.volumeView.renderer.canvas.getBoundingClientRect(); const x = b.left + b.width/2, y = b.top + b.height/2; const out = [['hover', x, y, 50], ['press', x, y, 16]]; for (let i = 1; i <= 8; i++) out.push(['move', x + 22 * i, y + 4 * i, 16]); out.push(['release', x + 176, y + 32, 0]); return out; })()", "label": "flick right"},
+ {"label": "release moment", "eval": "(() => { const r = __plexora.volumeView.renderer; window.__released = Math.round(performance.now() - window.__t0); return {at: window.__released, spin: r.spin, interacting: r.interacting}; })()"},
+ {"wait": 350},
+ {"shot": "motion/volume_coasting.png"},
+ {"wait": 2500},
+ {"label": "coast trace", "eval": "(() => { const rec = window.__rec; const rel = window.__released; const after = rec.filter(e => e[0] >= rel); const pick = (ms) => after.find(e => e[0] >= rel + ms) || after.at(-1); const end = after.find(e => e[2] === 0); return {atRelease: pick(0), at100: pick(100), at300: pick(300), at600: pick(600), at1000: pick(1000), stoppedAt: end ? end[0] - rel : null, finalYaw: after.at(-1)[1], widths: [...new Set(rec.map(e => e[3]))]}; })()"},
+ {"label": "second flick then press to stop", "eval": "window.__rec = []; window.__t0 = performance.now(); 1"},
+ {"mouseFrom": "(() => { const b = __plexora.volumeView.renderer.canvas.getBoundingClientRect(); const x = b.left + b.width/2, y = b.top + b.height/2; const out = [['press', x, y, 16]]; for (let i = 1; i <= 8; i++) out.push(['move', x - 25 * i, y, 16]); out.push(['release', x - 200, y, 150]); out.push(['press', x - 200, y, 200]); out.push(['release', x - 200, y, 50]); return out; })()", "label": "flick left, then press after 150ms"},
+ {"label": "after press", "eval": "(() => { const r = __plexora.volumeView.renderer; return {spin: r.spin, tween: !!r.tween}; })()"},
+ {"label": "preset xz (animated)", "eval": "(async () => { const r = __plexora.volumeView.renderer; const t0 = performance.now(); r.preset('xz'); const trace = []; await new Promise(res => { const f = () => { trace.push([Math.round(performance.now()-t0), +r.camera.yaw.toFixed(3), +r.camera.pitch.toFixed(3)]); if (r.tween) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); }); return {ms: Math.round(performance.now()-t0), first: trace[1], mid: trace[Math.floor(trace.length/2)], last: trace.at(-1), frames: trace.length}; })()"},
+ {"wait": 400},
+ {"shot": "motion/volume_xz.png"}
+]

@@ -14,6 +14,14 @@ list of those borderline cells by id, so a judgement can name them.
 The cells QC failed (plexora/agent/cell_exclusions.py) are counted nowhere
 but in `qc_left_out`, are left out of C, and are drawn grey in B, so a field
 that looks emptier than its tissue says why.
+
+On a z-stack whose table places each cell in depth (a `z` role), a field's
+cells sit at every depth of its column of tissue, and the default plane shows
+only those near it. A and B are then drawn at the field's own plane -- the
+median plane of its borderline cells, or of all its cells when none is
+borderline -- and a row under them adds D: B's channels in XY at that plane
+beside XZ and YZ through the field's centre, the outlines cut where the panes
+cross, so a call can be checked in depth and not on one plane alone.
 """
 
 from __future__ import annotations
@@ -26,7 +34,8 @@ from plexora.agent.limits import MAX_BORDERLINE_ROWS, MAX_PANEL_WIDTH
 from plexora.agent.presets import CONTEXT_COLOR, NUCLEAR_COLOR, TARGET_COLOR, nuclear_channel
 
 
-def _panel(session, project, bounds, channels, *, segmentation, highlight, width):
+def _panel(session, project, bounds, channels, *, segmentation, highlight, width,
+           view=None):
     from plexora.agent import render
     from plexora.agent.render_spec import (Bounds, CellsSpec, ChannelSpec, OutputSpec,
                                            RenderInput)
@@ -39,8 +48,56 @@ def _panel(session, project, bounds, channels, *, segmentation, highlight, width
         cells=CellsSpec(highlight=highlight) if highlight is not None else None,
         output=OutputSpec(width=width, height=width),
         scale_bar=True,
+        **({"view": view} if view else {}),
     )
     return render.render_region(session, spec, store=False)
+
+
+def _field_plane(zs, depth, inside, near):
+    """`(plane, why)`: the median plane of the field's borderline cells, else
+    of all its cells; `(None, None)` when it has none placed in depth."""
+    for pick, why in ((near, "borderline cells"), (inside, "field cells")):
+        picked = zs[pick]
+        picked = picked[np.isfinite(picked)]
+        if picked.size:
+            from plexora.agent.sections import plane_of
+
+            return plane_of(float(np.median(picked)), depth), why
+    return None, None
+
+
+def _depth_panel(session, project, bounds, plane, channels, *, width, outlines):
+    """D: XY at the field's plane beside XZ and YZ through its centre."""
+    from plexora.agent import sections
+    from plexora.agent.core.volume import SectionsInput
+    from plexora.agent.render_spec import ChannelSpec
+
+    side = int(max(bounds["width"], bounds["height"]))
+    return sections.render_sections(session, SectionsInput(
+        project=project, x=int(bounds["x"] + bounds["width"] // 2),
+        y=int(bounds["y"] + bounds["height"] // 2), z=plane, size_px=max(16, side),
+        output_px=max(128, width), crosshair=True,
+        channels=[ChannelSpec(name=name, color=color) for name, color in channels],
+        segmentation="outlines" if outlines else "none"), store=False)
+
+
+def _with_depth_row(top, depth_image, plane, depth, gap=6):
+    """`top` (A | B | C) over D with its caption, D scaled down to fit when
+    a deep stack's YZ pane makes it wider than the row above."""
+    from PIL import Image
+
+    from plexora.agent import plots
+
+    if depth_image.width > top.width:
+        ratio = top.width / depth_image.width
+        depth_image = depth_image.resize((top.width, max(1, round(depth_image.height * ratio))),
+                                         Image.BILINEAR)
+    depth_image = plots.header(depth_image, f"D  z {plane}/{depth}: XY, XZ below, YZ right",
+                               height=22)
+    out = Image.new("RGB", (top.width, top.height + gap + depth_image.height), plots.BG)
+    out.paste(top, (0, 0))
+    out.paste(depth_image, (0, top.height + gap))
+    return out
 
 
 def render_gate_validation(session, data, marker, low, high, fields, *, band,
@@ -95,17 +152,27 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
     if context_marker and context_marker != marker:
         b_channels.append((context_marker, CONTEXT_COLOR))
 
+    from plexora.agent.sections import table_planes
+
+    zs, depth, solid = table_planes(data, keep)
+
     out = []
     for field in fields:
         bounds = field["bounds"]
         box = (bounds["x"], bounds["y"], bounds["x"] + bounds["width"],
                bounds["y"] + bounds["height"])
-        a = _panel(session, record.name, bounds, [(marker, "#ffffff")],
-                   segmentation="none", highlight=None, width=panel_px)
-        b = _panel(session, record.name, bounds, b_channels, segmentation="outlines",
-                   highlight=highlight, width=panel_px)
         inside, stats = field_stats(xs, ys, values, ids, box, low, high, band[0], band[1],
                                     left)
+        near = inside & finite & (values >= band[0]) & (values <= band[1])
+        plane, plane_from = (_field_plane(zs, depth, inside, near) if zs is not None
+                             else (None, None))
+        view = f"z{plane}" if plane is not None else None
+        a = _panel(session, record.name, bounds, [(marker, "#ffffff")],
+                   segmentation="none", highlight=None, width=panel_px, view=view)
+        b = _panel(session, record.name, bounds, b_channels, segmentation="outlines",
+                   highlight=highlight, width=panel_px, view=view)
+        d = (_depth_panel(session, record.name, bounds, plane, b_channels, width=panel_px,
+                          outlines=solid) if plane is not None else None)
         counted = inside & finite
         field_values = values[counted]
         field_positive = positive_all[counted]
@@ -118,16 +185,19 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
 
         panels = [Image.open(io.BytesIO(p["png"])).convert("RGB") for p in (a, b)] + [c]
         composite = plots.montage(panels)
+        if d is not None:
+            composite = _with_depth_row(composite, Image.open(io.BytesIO(d["png"]))
+                                        .convert("RGB"), plane, depth)
         text = (f"{field.get('field_id', '')} {field.get('class', '')}: "
                 f"{stats['cells']} cells, {stats['positives']} called positive "
                 f"({(stats['positive_fraction'] or 0):.0%})"
                 + (f", {stats['qc_left_out']} QC-excluded (grey)"
                    if stats.get("qc_left_out") else "")
-                + f"; gate {low:.4g}   A raw {marker} | B gate overlay | C distribution")
+                + f"; gate {low:.4g}   A raw {marker} | B gate overlay | C distribution"
+                + (f" | D depth; A, B at plane z {plane}/{depth}" if d is not None else ""))
         composite = plots.header(composite, text)
         png = fast_png.encode_rgb8_png(np.asarray(composite))
 
-        near = inside & finite & (values >= band[0]) & (values <= band[1])
         rows = []
         for index in np.flatnonzero(near):
             value = float(values[index])
@@ -151,7 +221,12 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
                       "segmentation": b["manifest"]["segmentation"],
                       "cells": b["manifest"]["cells"]},
                 "C": {"kind": "histogram", "log_axis": bool(values.size
-                                                            and np.nanmin(values) >= 0)}},
+                                                            and np.nanmin(values) >= 0)},
+                **({"D": {"kind": "sections", "center": d["manifest"]["center"],
+                          "panes": d["manifest"]["panes"],
+                          "outlines": bool(d["manifest"].get("outlines"))}}
+                   if d is not None else {})},
+            **({"view": view, "plane_from": plane_from} if view else {}),
             "bounds_fullres": a["manifest"]["bounds_fullres"],
             "channels": b["manifest"]["channels"],
             "egress": "rendered_pixels",
@@ -174,6 +249,7 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
             "segmentation": b["manifest"]["segmentation"]["status"],
             "artifact": artifact,
             **({"qc_left_out": stats["qc_left_out"]} if "qc_left_out" in stats else {}),
+            **({"view": view, "plane": plane, "plane_from": plane_from} if view else {}),
         }))
     return out, {"nuclear_channel": nuclear, "context_marker": context_marker,
                  "panel_px": panel_px, "dataset_positive_fraction": dataset_fraction,

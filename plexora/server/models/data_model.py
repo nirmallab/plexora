@@ -28,6 +28,9 @@ import pickle
 import tifffile as tf
 import re
 import collections
+import heapq
+import itertools
+import sys
 import threading
 import zarr
 from sklearn.mixture import GaussianMixture
@@ -40,6 +43,11 @@ seg = None
 zarray = None
 channels = None
 metadata = None
+#: The loaded image's `VolumeSource` (plexora/server/volume) when it is a
+#: z-stack or time series, else None. `channels` is then its default plane;
+#: every other plane, projection and section is reached through
+#: server/models/views.py.
+volume_source = None
 load_lock = threading.RLock()
 # Name of the datasource whose load_datasource() body has run to completion.
 # This is the ONLY correct "is it loaded?" signal: `datasource` and `seg` are
@@ -161,6 +169,13 @@ def _gmm_compute_lock(cache_key):
 
 
 _image_stats_cache = {}
+# A slab projection's mean-pooled overview, keyed (datasource, stats_key) --
+# the `zarray` of a view, which the slab's histogram and mixture fit are
+# computed over (see _view_overview). Bounded, oldest first: each entry is
+# every channel of an overview, and scrubbing a slab's range mints a new key
+# per range.
+_view_overview_cache = collections.OrderedDict()
+_VIEW_OVERVIEW_CACHE_MAX = 8
 _description_cache = {}
 _gate_filter_cache = {}
 _consistency_cache = {}
@@ -273,6 +288,12 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
     # over a network share is real time spent with nothing said.
     if stage_callback is not None:
         stage_callback("inspecting")
+    # A 3-D label volume: stored as one, plane by plane, whatever the mode --
+    # outlines are derived per tile from the filled labels (renderLabelTile).
+    label_volume = _resolve_label_volume(segmentation_path, dataDirectory,
+                                         progress_callback, stage_callback)
+    if label_volume is not None:
+        return label_volume
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
     location = segmentation_pyramid.resolve_derived_mask(
@@ -288,6 +309,47 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         progress_callback=progress_callback,
         stage_callback=stage_callback,
     )
+
+
+def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callback=None,
+                          stage_callback=None):
+    """The label-volume store for a (Z, Y, X) mask, built or adopted; None for
+    anything else (every 2-D mask takes the path below, unchanged).
+
+    Written beside the project's other derived files (or beside the mask when
+    there is no project directory), named after the mask, and adopted when
+    one built from the same file -- same fingerprint -- is already there.
+    """
+    if providers.is_remote_locator(segmentation_path):
+        return None
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.is_label_volume(segmentation_path):
+        return str(segmentation_path)
+    if volume_labels.label_volume_shape(segmentation_path) is None:
+        return None
+    source = Path(segmentation_path)
+    folder = Path(dataDirectory) if dataDirectory else source.parent
+    stem = source.name.split(".")[0]
+    target = folder / f"{stem}_labels_v1.zarr"
+    key = segmentation_pyramid.source_fingerprint(source)
+    if volume_labels.is_label_volume(target):
+        try:
+            import zarr as _zarr
+
+            attrs = dict(_zarr.open_group(str(target), mode="r").attrs)
+            if attrs.get("source_key") == key and attrs.get("source") == str(source):
+                return str(target)
+        except Exception:
+            pass
+    if stage_callback is not None:
+        stage_callback("building")
+    folder.mkdir(parents=True, exist_ok=True)
+    built = volume_labels.build_label_volume(source, target, progress=progress_callback)
+    import zarr as _zarr
+
+    _zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
+    return built
 
 
 def segmentation_mode(entry):
@@ -628,6 +690,7 @@ def load_datasource(datasource_name, reload=False):
     global _loaded_source
     global _providers
     global _remote
+    global volume_source
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
@@ -739,9 +802,15 @@ def load_datasource(datasource_name, reload=False):
             else:
                 _clear_image_failure(datasource_name)
 
+            loaded_volume = getattr(resolved.image, "volume_source", None)
+            if loaded_volume is not None:
+                _apply_project_spacing(loaded_volume, project)
+                loaded_volume = _with_bricks(datasource_name, loaded_volume)
+
             datasource = loaded_datasource
             seg = loaded_seg
             channels = loaded_channels
+            volume_source = loaded_volume
             zarray = loaded_zarray
             metadata = loaded_metadata
             source = datasource_name
@@ -775,6 +844,7 @@ def load_datasource(datasource_name, reload=False):
             _quantization_store_cache.clear()
             _description_cache.clear()
             _image_stats_cache.clear()
+            _view_overview_cache.clear()
             _consistency_cache.clear()
             _gate_filter_cache.clear()
             _feature_column_cache.clear()
@@ -798,6 +868,65 @@ def load_datasource(datasource_name, reload=False):
         target=_warm_datasource_caches, args=(datasource_name,), daemon=True
     ).start()
     _warm_remote_image(datasource_name)
+
+
+#: Stages of the background copy of a stack into bricks (volume/bricks.py).
+BRICK_STAGES = {"copying": (0, 100, "Copying the stack in 3-D")}
+BRICK_TASK = "volume-bricks"
+
+
+def _with_bricks(datasource_name, source):
+    """The loaded stack, reading across planes from its z-chunked copy where
+    that holds the part asked for (plexora/server/volume/bricks.py). A large
+    stack read plane by plane gets the copy's coarse levels built in the
+    background the first time it is opened; until then, and for anything the
+    copy lacks, reads go to the stack itself."""
+    from pathlib import Path
+
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume import bricks
+
+    try:
+        path = getattr(source, "path", None)
+        if not bricks.worth_it(source) or not path or not Path(str(path)).exists():
+            return source
+        store = bricks.store_for(datasource_name, source)
+        if store.key is None:
+            return source
+        store.reset_if_stale()
+        if not store.coarse_complete():
+            def work(stage, report, cancel):
+                stage("copying")
+                bricks.build_coarse(store, source,
+                                    report=lambda percent, _text: report(percent, 100),
+                                    cancel=cancel)
+
+            layer_jobs.start_task(datasource_name, BRICK_TASK, work, stages=BRICK_STAGES,
+                                  message="Copying the stack in 3-D")
+        return bricks.adopt(source, store)
+    except Exception as exc:  # the copy is an optimisation, never a reason to fail a load
+        print(f"Could not set up the 3-D copy of {datasource_name}: {exc}")
+        return source
+
+
+def _apply_project_spacing(source, project):
+    """Lay the project's typed calibrations over what the file states.
+
+    The same rule `_with_pixel_size` applies for the scale bar -- typing a
+    value is what overriding means -- applied to the volume, so a section
+    pane's proportions and every 3-D measurement use the number the user gave.
+    """
+    from dataclasses import replace
+
+    image = project.image
+    spacing = source.volume.spacing
+    overlaid = spacing.overlaid(pixel_size=image.pixel_size,
+                                pixel_size_z=image.pixel_size_z,
+                                frame_interval=image.frame_interval,
+                                frames=source.volume.frames)
+    if overlaid is spacing:
+        return
+    source.volume = replace(source.volume, spacing=overlaid)
 
 
 def _warm_remote_image(datasource_name):
@@ -1342,6 +1471,12 @@ def _warm_datasource_caches(datasource_name):
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
                 warm(get_image_channel_stats, fullname)
+            # A volume's exact windows, in the same order, on their own
+            # worker (a channel the viewer asks for jumps the line).
+            if volume_source is not None and not volume_source.volume.is_planar \
+                    and not _WINDOW_SCANS_INLINE:
+                for fullname in to_warm:
+                    queue_exact_window(fullname, datasource_name)
             # Pass 2 -- the expensive refinement nothing blocks on.
             for fullname in to_warm:
                 warm(get_channel_gmm, fullname)
@@ -1358,14 +1493,40 @@ def _warm_datasource_caches(datasource_name):
         lock.release()
 
 
-def query_for_closest_cell(x, y, datasource_name):
+def _frame_rows(datasource_name, t):
+    """For a time series' object table (a `t` role) and a frame: a boolean
+    row mask over the loaded table, True on that frame's rows. None when
+    there is no frame to keep to."""
+    if t is None or datasource is None:
+        return None
+    column = _project(datasource_name).roles.get("t")
+    if not column or column not in datasource.columns:
+        return None
+    return datasource[column].to_numpy() == int(t)
+
+
+def query_for_closest_cell(x, y, datasource_name, t=None):
     global datasource
     global source
     global ball_tree
     _ensure_loaded(datasource_name)
     if ball_tree is None:
         return {}
-    distance, index = ball_tree.query([[x, y]], k=1)
+    keep = _frame_rows(datasource_name, t)
+    if keep is not None:
+        # The tree holds every frame's cells; the nearest of THIS frame's is
+        # among the nearest few of all (every frame's copy of a still cell
+        # sits on the same spot), asked for widely enough to find one.
+        frames = max(1, int(np.unique(datasource[_project(datasource_name).roles.get("t")]
+                                      .to_numpy()).size))
+        k = min(len(keep), max(8, 4 * frames))
+        distances, indices = ball_tree.query([[x, y]], k=k)
+        picked = [(d, i) for d, i in zip(distances[0], indices[0]) if keep[int(i)]]
+        if not picked:
+            return {}
+        distance, index = np.array([[picked[0][0]]]), np.array([[picked[0][1]]])
+    else:
+        distance, index = ball_tree.query([[x, y]], k=1)
     if distance == np.inf:
         return {}
     #         Nothing found
@@ -1690,7 +1851,7 @@ def _all_cells_from_frame(frame, start_keys, data_type, read_missing=None):
     return query.astype(np.float32)
 
 
-def get_all_cells(datasource_name, start_keys, data_type=float):
+def get_all_cells(datasource_name, start_keys, data_type=float, t=None):
     global datasource
     global source
 
@@ -1702,8 +1863,13 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
     remote = _remote_table()
     if remote is not None:
         return remote.all_cells(start_keys, data_type)
-    return _all_cells_from_frame(datasource, start_keys, data_type,
-                                 _feature_reader())
+    values = _all_cells_from_frame(datasource, start_keys, data_type, _feature_reader())
+    keep = _frame_rows(datasource_name, t)
+    if keep is not None:
+        # One frame's rows of a time series' table, in table order: the ids
+        # in them are unique, which is what the viewer's id-keyed tables need.
+        values = values.reshape(-1, len(start_keys))[keep].reshape(-1)
+    return values
 
 
 def get_centroid_manifest(datasource_name):
@@ -1936,9 +2102,18 @@ def get_consistency_report(datasource_name):
     return report
 
 
-def get_channel_gmm(channel_name, datasource_name):
+def get_channel_gmm(channel_name, datasource_name, view=""):
+    """The contrast mixture fit for one channel.
+
+    `view` names a view of a volume; only a slab projection has a fit of its
+    own (see `_slab_view`), cached beside the channel's under its stats key.
+    Every other request -- a planar image, a plane, a section, no view -- is
+    the unchanged path with the unchanged cache key.
+    """
     _ensure_loaded(datasource_name)
-    cache_key = (datasource_name, channel_name)
+    slab = _slab_view(datasource_name, view)
+    cache_key = ((datasource_name, channel_name) if slab is None
+                 else (datasource_name, channel_name, slab.stats_key()))
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -1959,10 +2134,65 @@ def get_channel_gmm(channel_name, datasource_name):
             # lock above is worth just as much against a network call as
             # against a local one -- more, since a burst of tile requests would
             # otherwise open a burst of connections for the same answer.
-            packet_gmm = remote.gmm(channel_name)
+            packet_gmm = (remote.gmm(channel_name) if slab is None
+                          else remote.gmm(channel_name, view=slab.token()))
             _gmm_cache[cache_key] = packet_gmm
             return packet_gmm
-        return _compute_channel_gmm(channel_name, datasource_name, cache_key)
+        return _compute_channel_gmm(channel_name, datasource_name, cache_key, slab)
+
+
+def _slab_view(datasource_name, view):
+    """The slab projection `view` names, or None when the request is answered
+    exactly as it was before views existed.
+
+    Only a slab has display statistics of its own (`ViewSpec.stats_key`):
+    every plane of a volume shares one contrast default per channel, and a
+    section borrows the planes'. So an empty token, a plane, a section, and
+    every request for a planar image fall through to the unchanged path --
+    same cache keys, same payload. A token that does not parse, names planes
+    the image does not have, or names a view of a single-plane image raises
+    BadView, which the routes answer with a 400.
+    """
+    if not view:
+        return None
+    from plexora.server.models import views
+    from plexora.server.volume.viewspec import BadView
+
+    spec = views.resolve(datasource_name, view)
+    if spec is None or spec.kind != "slab":
+        return None
+    if not spec.served:
+        raise BadView("a sum projection is exported, not displayed, so it has no "
+                      "display statistics")
+    return spec
+
+
+def _view_overview(datasource_name, spec):
+    """The mean-pooled overview of a slab projection -- `zarray` for a view.
+
+    The same heuristic `zarray` is built with (`providers.local.
+    volume_overview`), over the projection's own pyramid, so a slab's
+    histogram and mixture fit are of the picture the slab shows rather than of
+    the default plane. Cached per (datasource, stats key), single-flight like
+    the fits that read it: a cold overview reads the slab's planes at the
+    coarsest level of at least 200 px.
+    """
+    from plexora.server.models import views
+    from plexora.server.providers.local import volume_overview
+
+    key = (datasource_name, spec.stats_key())
+    cached = _view_overview_cache.get(key)
+    if cached is not None:
+        return cached
+    with _gmm_compute_lock(("overview",) + key):
+        cached = _view_overview_cache.get(key)
+        if cached is not None:
+            return cached
+        overview = volume_overview(views.plane_pyramid_for(datasource_name, spec.token()))
+        _view_overview_cache[key] = overview
+        while len(_view_overview_cache) > _VIEW_OVERVIEW_CACHE_MAX:
+            _view_overview_cache.popitem(last=False)
+        return overview
 
 
 # Quantization windows survive a restart, unlike everything else in
@@ -2126,7 +2356,16 @@ def save_view_transform(datasource_name, value):
     return stored
 
 
-def get_channel_quantization_window(channel_name, datasource_name):
+def _window_class(requested):
+    """The window class a request resolves to: None for a planar image (its
+    one per-channel window, unchanged), else `volume` or `std` -- see
+    plexora/server/volume/windows.py."""
+    if volume_source is None or volume_source.volume.is_planar:
+        return None
+    return requested if requested in ("volume", "std") else "volume"
+
+
+def get_channel_quantization_window(channel_name, datasource_name, window_class=None):
     """(qmin, qmax) for the default (non-HD) WebP tile path.
 
     Deliberately separate from the GMM's vmin/vmax (the display/contrast-slider
@@ -2152,6 +2391,14 @@ def get_channel_quantization_window(channel_name, datasource_name):
     true max requires reading full-resolution data at least once.
     """
     _ensure_loaded(datasource_name)
+    window_class = _window_class(window_class)
+    if window_class == "std":
+        from plexora.server.volume.windows import std_window
+
+        return std_window(get_channel_quantization_window(
+            channel_name, datasource_name, "volume"))
+    if window_class is not None:
+        return _volume_quantization_window(channel_name, datasource_name)
     cache_key = ('qwindow', datasource_name, channel_name)
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
@@ -2187,6 +2434,139 @@ def get_channel_quantization_window(channel_name, datasource_name):
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, channel_name, window)
         return window
+
+
+def _volume_quantization_window(channel_name, datasource_name):
+    """`get_channel_quantization_window` for a volume: one window per channel
+    over every plane and frame, persisted as `"<channel>|volume"` beside the
+    planar windows under the same image fingerprint."""
+    from plexora.server.volume.windows import volume_window
+
+    cache_key = ('qwindow', datasource_name, channel_name, 'volume')
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    with _gmm_compute_lock(cache_key):
+        cached = _gmm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        stored_name = f"{channel_name}|volume"
+        stored = _quantization_windows(datasource_name).get(stored_name)
+        if stored is not None:
+            _gmm_cache[cache_key] = stored
+            return stored
+        remote = _remote_image()
+        if remote is not None:
+            # A volume on a data node: every plane is read over there, for the
+            # same reason the planar window is -- and the node answers with
+            # the identical function, so its tiles and this window agree.
+            window = remote.quantization_window(channel_name, window_class="volume")
+            _gmm_cache[cache_key] = window
+            return window
+        idx = real_channel_index(channel_name, datasource_name)
+        window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        _gmm_cache[cache_key] = window
+        _remember_quantization_window(datasource_name, stored_name, window)
+        return window
+
+
+# -- provisional windows (server/volume/windows.py) --------------------------
+
+#: Exact volume windows are computed inline, as they always were, under pytest
+#: (whose fixtures read a window right after registering) and with
+#: PLEXORA_WINDOW_SCAN=inline; otherwise the viewer gets a provisional window at
+#: once and the exact one is computed in the background.
+_WINDOW_SCANS_INLINE = ("pytest" in sys.modules
+                        or os.environ.get("PLEXORA_WINDOW_SCAN", "") == "inline")
+
+#: (scope, channel) -> provisional window, until the exact one lands.
+_provisional_windows: dict = {}
+_exact_window_queue: list = []
+_exact_window_cv = threading.Condition()
+_exact_window_seq = itertools.count()
+_exact_window_worker = None
+
+
+def volume_window_state(channel_name, datasource_name):
+    """`((qmin, qmax), exact)` for a volume's channel, never waiting for a scan.
+
+    The exact window (stored or computed) when there is one; otherwise the
+    provisional one (windows.provisional_window), with the exact scan queued
+    at the front of the background worker's line. Only the viewer's routes
+    ask this -- the tile, level and window routes and the stats packet, every
+    one of which says which window its answer was made with. Everything else
+    keeps `get_channel_quantization_window`, which waits for the exact one.
+    """
+    _ensure_loaded(datasource_name)
+    cache_key = ('qwindow', datasource_name, channel_name, 'volume')
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached, True
+    stored = _quantization_windows(datasource_name).get(f"{channel_name}|volume")
+    if stored is not None:
+        _gmm_cache[cache_key] = stored
+        return stored, True
+    remote = _remote_image()
+    if remote is not None and not _WINDOW_SCANS_INLINE:
+        # A volume on a data node: the node answers at once the same way --
+        # provisional while it scans -- and only an exact answer is kept.
+        window, exact = remote.volume_window_state(channel_name)
+        if exact:
+            _gmm_cache[cache_key] = window
+        return window, exact
+    if _WINDOW_SCANS_INLINE or remote is not None or volume_source is None:
+        return _volume_quantization_window(channel_name, datasource_name), True
+    scope = (loaded_scope(datasource_name), channel_name)
+    window = _provisional_windows.get(scope)
+    if window is None:
+        from plexora.server.volume.windows import provisional_window
+
+        index = real_channel_index(channel_name, datasource_name)
+        window, _how = provisional_window(volume_source, index)
+        _provisional_windows[scope] = window
+    queue_exact_window(channel_name, datasource_name, urgent=True)
+    return window, False
+
+
+def queue_exact_window(channel_name, datasource_name, urgent=False):
+    """Compute this channel's exact volume window in the background, soon
+    (`urgent`: next) -- once, and only while its project is still loaded."""
+    global _exact_window_worker
+    with _exact_window_cv:
+        for entry in _exact_window_queue:
+            if entry[2] == datasource_name and entry[3] == channel_name:
+                if urgent and entry[0] > 0:
+                    entry[0] = 0
+                    heapq.heapify(_exact_window_queue)
+                return
+        heapq.heappush(_exact_window_queue,
+                       [0 if urgent else 1, next(_exact_window_seq), datasource_name,
+                        channel_name])
+        if _exact_window_worker is None or not _exact_window_worker.is_alive():
+            _exact_window_worker = threading.Thread(target=_exact_window_loop, daemon=True,
+                                                    name="plexora-exact-windows")
+            _exact_window_worker.start()
+        _exact_window_cv.notify()
+
+
+def _exact_window_loop():
+    while True:
+        with _exact_window_cv:
+            if not _exact_window_queue:
+                _exact_window_cv.wait(timeout=30)
+                if not _exact_window_queue:
+                    return
+            _, _, datasource_name, channel_name = heapq.heappop(_exact_window_queue)
+        # Never load a project for it: the job is for the project on screen,
+        # and a different one loaded since has its own queue.
+        if not is_loaded(datasource_name):
+            continue
+        try:
+            _volume_quantization_window(channel_name, datasource_name)
+        except Exception as exc:  # noqa: BLE001 -- the provisional window stands
+            print(f"{datasource_name}: the exact window of {channel_name} failed -- {exc}")
+        finally:
+            _provisional_windows.pop((loaded_scope(datasource_name), channel_name), None)
 
 
 #: How much of a plane one slab of the window scan materializes. The scan
@@ -2237,16 +2617,21 @@ def quantization_window_of(channel_pyramid, index):
     return (0.0, max(ceiling, 1.0))
 
 
-def _compute_channel_gmm(channel_name, datasource_name, cache_key):
+def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
     global datasource
     global source
     global ball_tree
     global config
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    packet_gmm = channel_gmm_of(
-        _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
+    if slab is None:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+        overview = _require_overview(datasource_name)
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     slab.window_class())
+        overview = _view_overview(datasource_name, slab)
+    packet_gmm = channel_gmm_of(overview[image_channelIdx], qmin, qmax)
     _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
 
@@ -2340,7 +2725,7 @@ def channel_gmm_of(image_data, qmin, qmax):
 _HINT_PERCENTILES = (50.0, 99.5)
 
 
-def get_image_channel_stats(channel_name, datasource_name):
+def get_image_channel_stats(channel_name, datasource_name, view=""):
     """Per-channel image_min/image_max/image_histogram, split out of
     get_datasource_description so a page load only pays for the channels the
     user actually activates instead of every channel up front.
@@ -2370,11 +2755,20 @@ def get_image_channel_stats(channel_name, datasource_name):
     true ceiling -- the HD slider's domain, for one -- must use qmax, which is
     computed from full-resolution data. Do not "fix" image_max to be the real
     max: that silently desynchronizes it from image_histogram.
+
+    VIEWS: `view` names a view of a volume. A slab projection is its own
+    distribution, so its packet is computed over the slab's overview with the
+    slab's window class (a standard deviation's is half the planes'); a plane
+    or a section shares the channel's packet, which is this function with no
+    view at all -- see `_slab_view`.
     """
     global zarray
     global config
 
     _ensure_loaded(datasource_name)
+    slab = _slab_view(datasource_name, view)
+    if slab is not None:
+        return _slab_channel_stats(channel_name, datasource_name, slab)
 
     cache_key = (datasource_name, channel_name)
     if cache_key in _image_stats_cache:
@@ -2382,14 +2776,51 @@ def get_image_channel_stats(channel_name, datasource_name):
 
     remote = _remote_image()
     if remote is not None:
-        stats = remote.channel_stats(channel_name)
-        _image_stats_cache[cache_key] = stats
+        # A volume's packet comes back at once, made with the provisional
+        # window while the node scans (window_exact False): not kept, so the
+        # next ask after the exact window lands gets the exact packet.
+        is_volume = remote.volume() is not None and not _WINDOW_SCANS_INLINE
+        stats = remote.channel_stats(channel_name, provisional=is_volume)
+        if stats.get("window_exact", True):
+            _image_stats_cache[cache_key] = stats
         return stats
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    exact = True
+    if volume_source is not None and not volume_source.volume.is_planar:
+        # A volume answers at once, with the provisional window while the
+        # exact one is being computed -- and says which it is (window_exact):
+        # the client levels with it now and again when the exact one lands.
+        (qmin, qmax), exact = volume_window_state(channel_name, datasource_name)
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     stats = channel_stats_of(
         _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
+    if volume_source is not None and not volume_source.volume.is_planar:
+        stats = {**stats, "window_exact": bool(exact)}
+    if exact:
+        _image_stats_cache[cache_key] = stats
+    return stats
+
+
+def _slab_channel_stats(channel_name, datasource_name, slab):
+    """`get_image_channel_stats` for a slab projection (see its VIEWS note).
+
+    The histogram and the hints are of the slab's overview; qmin/qmax are the
+    window its tiles are encoded with, so the client's byte-domain slider
+    lines up with the projection's own pixels.
+    """
+    cache_key = (datasource_name, channel_name, slab.stats_key())
+    if cache_key in _image_stats_cache:
+        return _image_stats_cache[cache_key]
+    remote = _remote_image()
+    if remote is not None:
+        stats = remote.channel_stats(channel_name, view=slab.token())
+    else:
+        index = real_channel_index(channel_name, datasource_name)
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     slab.window_class())
+        stats = channel_stats_of(_view_overview(datasource_name, slab)[index], qmin, qmax)
     _image_stats_cache[cache_key] = stats
     return stats
 
@@ -2458,13 +2889,34 @@ def ensure_loaded(datasource_name):
     return load_generation
 
 
-def generate_zarr_png(datasource_name, channel, level, tile):
+def generate_zarr_png(datasource_name, channel, level, tile, view=""):
     global channels
     global seg
     ensure_loaded(datasource_name)
     channel_num, segmentation = _parse_channel(channel)
+    pyramid = seg if segmentation else channels
+    if view and not segmentation:
+        # A plane, projection or section of a volume (server/models/views.py).
+        from plexora.server.models import views
+
+        pyramid = views.plane_pyramid_for(datasource_name, view)
+    elif view and segmentation and hasattr(seg, "plane"):
+        # A 3-D label volume: the labels of the plane the view names (a slab's
+        # middle plane). A 2-D mask is one plane drawn on every view and
+        # ignores the view entirely.
+        from plexora.server.models import views
+
+        spec = views.resolve(datasource_name, view)
+        if spec is not None:
+            # A label volume per frame: the view's frame's (frame(t) is the
+            # one volume when the mask has a single frame).
+            labels = seg.frame(spec.t) if hasattr(seg, "frame") else seg
+            if spec.kind == "plane":
+                pyramid = labels.plane(spec.z)
+            elif spec.kind == "slab":
+                pyramid = labels.plane((spec.z0 + spec.z1) // 2)
     return read_tile(
-        seg if segmentation else channels, channel_num, level, tile,
+        pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],
         config[datasource_name]['tileHeight'],
     )
@@ -2556,7 +3008,7 @@ def _quantize_to_uint8(array, qmin, span):
 
 
 
-def encode_tile(datasource_name, channel, level, tile, quality):
+def encode_tile(datasource_name, channel, level, tile, quality, view="", window=None):
     """Returns (encoded_bytes, mimetype) for one tile request. `quality` is
     'hd' for full-precision 16-bit, 'legacy' for the original uncompressed
     PNG behavior, anything else selects the fast/default 8-bit-quantized
@@ -2578,14 +3030,19 @@ def encode_tile(datasource_name, channel, level, tile, quality):
         # The caller's tile LRU caches what comes back either way.
         node = _remote_segmentation() if is_segmentation else _remote_image()
         if node is not None:
+            # The view travels with the request for a volume -- the provider
+            # spells the default as its own plane and adds the project's z/t
+            # reading -- and not at all for a planar image, whose URL is the
+            # one it has always been.
             forwarded = (node.tile(level, tile) if is_segmentation
-                         else node.tile(channel, level, tile, quality))
+                         else node.tile(channel, level, tile, quality, view=view,
+                                        window=window))
             _perf.mark("node")
             return forwarded
 
     # Loading, when this request had to, is not a phase of the tile.
     _perf.skip()
-    array = generate_zarr_png(datasource_name, channel, level, tile)
+    array = generate_zarr_png(datasource_name, channel, level, tile, view)
     _perf.mark("read")
 
     if (is_segmentation or quality in ('hd', 'legacy')
@@ -2608,7 +3065,20 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     # the GaussianMixture fit in there costs ~1 s per channel and nothing on
     # the tile path needs its output.
     channel_name = _channel_num_to_name(datasource_name, channel_num)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    window_class = None
+    if volume_source is not None:
+        from plexora.server.models import views
+
+        window_class = views.window_class_for(datasource_name, view)
+    if window is not None and volume_source is not None and window_class is not None:
+        # The window the request names (`w=`, a volume's): the bytes are then
+        # fixed by the address, whatever the server's window is meanwhile.
+        from plexora.server.volume.windows import std_window
+
+        qmin, qmax = std_window(window) if window_class == "std" else window
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     window_class)
     encoded = encode_tile_array(array, is_segmentation, quality, qmin, qmax)
     _perf.mark("enc")
     return encoded
@@ -3212,6 +3682,14 @@ def _with_pixel_size(raw, datasource_name):
 
     payload = _as_plain_metadata(raw)
     entry = (config or {}).get(datasource_name) or {}
+    manual_z = normalize_pixel_size(entry.get("pixelSizeZ"))
+    if manual_z:
+        # The z twin, for a volume: what somebody typed over what the file says.
+        payload["physical_size_z"] = manual_z["value"]
+        payload["physical_size_z_unit"] = manual_z["unit"]
+        payload["pixel_size_z_source"] = manual_z.get("source") or "manual"
+    elif payload.get("physical_size_z"):
+        payload["pixel_size_z_source"] = "metadata"
     manual = normalize_pixel_size(entry.get("pixelSize"))
     if manual:
         payload["physical_size_x"] = manual["value"]
@@ -3315,6 +3793,19 @@ def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
     if extension:
         channel_info['imagePyramid'] = str(extension)
         channel_info['imagePyramidKey'] = ome_zarr._source_key(filePath)
+    # A store with a z or t axis records it, as a TIFF, DICOM or Imaris stack
+    # does: the edit page and the agent read a project's shape from here.
+    from plexora.server.volume.sources.ngff import open_ngff_volume
+
+    try:
+        source = open_ngff_volume(filePath)
+    except Exception:
+        source = None
+    if source is not None:
+        try:
+            channel_info.update(_volume_fields(source.volume))
+        finally:
+            source.close()
     return channel_info
 
 
@@ -3446,6 +3937,20 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
     # detection reason, which the edit page shows. Z is pinned there (see
     # dicom_wsi.open_image) and never becomes channels.
     channel_info['focalPlanes'] = int(pyramid.focal_plane_count)
+    if pyramid.focal_plane_count > 1:
+        # A slide's focal planes are a z-stack: recorded as one
+        # (plexora/server/volume/sources/dicom.py), its default plane the
+        # middle one this pyramid already reads. A colour slide's too, whose
+        # planes are then shown one at a time (`Volume.color`).
+        from plexora.server.volume.sources.dicom import describe_volume
+
+        try:
+            volume = describe_volume(
+                pyramid, color=channel_info['image_kind'] == brightfield.BRIGHTFIELD)
+        except Exception:
+            volume = None
+        if volume is not None:
+            channel_info.update(_volume_fields(volume))
     if detection is not None:
         channel_info['imageTypeDetected'] = detection.verdict
         channel_info['imageTypeReason'] = detection.reason
@@ -3458,7 +3963,8 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
 
 
 def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=None,
-                               detection=None, effective=None):
+                               detection=None, effective=None, z_semantics=None,
+                               t_semantics=None):
     """`convertOmeTiff`'s channel-stack branch for a TIFF at a web address.
 
     The same record the local branch writes, with the one difference every
@@ -3470,6 +3976,30 @@ def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=N
     `_convert_brightfield_image`, exactly as locally.
     """
     from plexora.server.utils import tiff_region
+
+    # A z-stack or time series read as one (volume/sources/tiff.py), its
+    # planes served by rectangle over the same halving chain -- recorded the
+    # way the local branch records one. None for a planar file and for a
+    # stack whose z holds imaging cycles, which keep the reading below.
+    if effective != brightfield.BRIGHTFIELD:
+        from plexora.server.volume.sources import tiff as tiff_volume
+
+        try:
+            source = tiff_volume.open_tiff_volume(
+                filePath, z_choice=z_semantics, t_choice=t_semantics, new_import=True)
+        except Exception:
+            source = None
+        if source is not None:
+            try:
+                channel_info = _describe_volume_plane(source, filePath)
+            finally:
+                source.close()
+            channel_info['image_kind'] = 'ome_tiff'
+            if detection is not None:
+                channel_info['imageTypeDetected'] = detection.verdict
+                channel_info['imageTypeReason'] = detection.reason
+                channel_info['imageTypeConfidence'] = detection.confidence
+            return channel_info
 
     pyramid = tiff_region.open_image(filePath)
     try:
@@ -3577,7 +4107,7 @@ def _image_pyramid_reporter(stage_callback=None, progress_callback=None):
     return staged, report
 
 
-def _pyramidized_copy(filePath, dataDirectory, stage, report):
+def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None):
     """The pyramidized copy of the flat image at `filePath`: adopted, or built.
 
     Raises `PyramidError` (a ValueError, which the import routes turn into a
@@ -3586,7 +4116,8 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
     """
     from plexora.datasource import _channel_names_from_image_metadata
 
-    report_ = image_pyramid.flat_image_report(filePath, threshold=0) or {}
+    report_ = image_pyramid.flat_image_report(
+        filePath, threshold=0, all_pages=bool(volume_description)) or {}
     needed = int(report_.get("output_bytes_estimate", 0)) \
         + int(report_.get("scratch_bytes_estimate", 0))
     where = image_pyramid.resolve_derived_image(
@@ -3598,7 +4129,7 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
     print(f"Building a pyramid for {Path(filePath).name} (one-time) -> {where.target}")
     channels = int(report_.get("channels") or 0)
     names = None
-    if channels:
+    if channels and not volume_description:
         try:
             names = _channel_names_from_image_metadata(filePath, channels)
         except Exception:
@@ -3609,14 +4140,73 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
         physical=brightfield.physical_metadata(filePath),
         progress_callback=report,
         stage_callback=stage,
+        volume_description=volume_description,
     )
     return where.target
+
+
+def _volume_fields(volume) -> dict:
+    """What registering a volume records about it (ImageSpec's volume fields)."""
+    return {
+        'imageAxes': volume.axes.spelled,
+        'imageShape': dict(volume.shape),
+        'imageDefaultView': volume.default_view.token(),
+        'imageZSemantics': volume.z_semantics if volume.depth > 1
+        or 'z' in volume.stored_axes else None,
+        'imageTSemantics': volume.t_semantics if volume.frames > 1
+        or 't' in volume.stored_axes else None,
+    }
+
+
+def _describe_volume_plane(source, stem_source):
+    """`_describe_local_tiff`'s fields for a volume, read off its default plane."""
+    default = source.volume.default_view
+    pyramid = source.plane_pyramid(default.t, default.z)
+    if isinstance(pyramid, zarr.Array):
+        max_level = 1
+        chunks = pyramid.chunks
+    else:
+        max_level = len(list(pyramid))
+        chunks = (1, 1024, 1024)
+    stem = _image_channel_stem(stem_source)
+    volume = source.volume
+    info = {
+        'maxLevel': max_level,
+        'tileHeight': chunks[-2],
+        'tileWidth': chunks[-1],
+        'height': volume.height,
+        'width': volume.width,
+        'num_channels': volume.channels,
+        'channel_names': [f"{stem}_{i}" for i in range(volume.channels)],
+        'image_kind': 'ome_tiff' if volume.source_kind == 'ome_tiff' else volume.source_kind,
+    }
+    info.update(_volume_fields(volume))
+    return info
+
+
+def _convert_ims_image(filePath):
+    """What registering an Imaris .ims file records (plexora/server/volume/sources/ims.py)."""
+    from plexora.server.volume.sources.ims import open_ims_volume
+
+    source = open_ims_volume(filePath)
+    try:
+        info = _describe_volume_plane(source, filePath)
+        info['image_kind'] = 'ims'
+        info['imageTypeDetected'] = brightfield.FLUORESCENCE
+        info['imageTypeReason'] = "an Imaris file stores fluorescence channels"
+        if source.volume.is_planar:
+            for key in ('imageAxes', 'imageShape', 'imageDefaultView',
+                        'imageZSemantics', 'imageTSemantics'):
+                info.pop(key, None)
+        return info
+    finally:
+        source.close()
 
 
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
-                   pyramidize=None):
+                   pyramidize=None, z_semantics=None, t_semantics=None):
     """What registering an image records about it.
 
     `pyramidize` is for a large multiplex TIFF written with one resolution
@@ -3636,6 +4226,12 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     needed only when the mask source is a table of boundary polygons, which
     states where its cells are but not how big the picture they sit in is.
     `start_segmentation_job` resolves it from the project.
+
+    `z_semantics`/`t_semantics` answer whether a TIFF's stored z/t axis is a
+    depth stack / time series (`depth`/`time`) or imaging cycles to fold into
+    channels (`cycle`); None applies the import rule in
+    plexora/server/volume/sources/tiff.py. A volume records `imageAxes`,
+    `imageShape`, `imageDefaultView` and the two semantics.
     """
     channel_info = {}
     channelNames = []
@@ -3659,6 +4255,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         # detection here is a metadata read rather than the ladder of guesses
         # a TIFF needs -- but it produces the same Detection, flows through the
         # same override, and records the same three fields.
+        from plexora.server.volume.sources import ims as _ims
+
+        if _ims.is_ims_path(filePath):
+            return _convert_ims_image(filePath)
+
         if dicom_wsi.is_dicom_path(filePath):
             detection = dicom_wsi.detect_image_type(filePath)
             effective = image_type or detection.verdict
@@ -3686,7 +4287,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             # (tifffile's zarr view below cannot read a streamed file).
             return _convert_remote_tiff_image(
                 filePath, dataDirectory, progress_callback, detection=detection,
-                effective=effective)
+                effective=effective, z_semantics=z_semantics, t_semantics=t_semantics)
 
         stage, report = _image_pyramid_reporter(stage_callback, progress_callback)
         stage("opening")
@@ -3716,19 +4317,63 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             # `channel_series` above. Read off the ORIGINAL either way: a
             # pyramidized copy holds the plane that was kept, not the stack.
             depth, middle = tiff_series.focal_planes(channel_io)
-            channel_info = _describe_local_tiff(series, filePath)
-            gaps = image_pyramid.pyramid_gaps(
-                (channel_info['num_channels'], channel_info['height'],
-                 channel_info['width']),
-                channel_info['maxLevel'], series.dtype)
+            # A z-stack or time series read as one (plexora/server/volume):
+            # channels are the panel, not panel x planes, and every plane is
+            # kept. None for a planar file and for a stack whose z/t holds
+            # imaging cycles, which keep the flattened reading below.
+            from plexora.server.volume.sources import tiff as tiff_volume
+
+            described = tiff_volume.describe(
+                channel_io, channel_io.series[0], path=filePath,
+                z_choice=z_semantics, t_choice=t_semantics, new_import=True)
+            volume_description = None
+            if described is not None:
+                volume, layout = described
+                source = tiff_volume.TiffVolumeSource(
+                    filePath, channel_io, channel_io.series[0], layout, volume)
+                channel_info = _describe_volume_plane(source, filePath)
+                volume_description = {
+                    "page_axes": [[name, size] for name, size in layout],
+                    "physical": {k: v for k, v in tiff_volume.page_layout(
+                        channel_io, channel_io.series[0])[2].items()},
+                }
+                gaps = image_pyramid.pyramid_gaps(
+                    (len(channel_io.series[0].pages), volume.height, volume.width),
+                    channel_info['maxLevel'], channel_io.series[0].dtype)
+            else:
+                channel_info = _describe_local_tiff(series, filePath)
+                gaps = image_pyramid.pyramid_gaps(
+                    (channel_info['num_channels'], channel_info['height'],
+                     channel_info['width']),
+                    channel_info['maxLevel'], series.dtype)
+                # A stack folded into channels: say so, so the project
+                # remembers it was read as cycles and not as depth.
+                found = tiff_volume.page_layout(channel_io, channel_io.series[0])
+                if found is not None:
+                    sizes = tiff_volume.sizes_of(found[0])
+                    if sizes["z"] > 1:
+                        channel_info['imageZSemantics'] = 'cycle'
+                    if sizes["t"] > 1:
+                        channel_info['imageTSemantics'] = 'cycle'
         finally:
             channel_io.close()
 
         if gaps and pyramidize is not False:
-            copy = _pyramidized_copy(filePath, dataDirectory, stage, report)
-            with tf.TiffFile(str(copy), is_ome=False) as copy_io:
-                channel_info = _describe_local_tiff(
-                    tiff_series.channel_series(copy_io), filePath)
+            copy = _pyramidized_copy(filePath, dataDirectory, stage, report,
+                                     volume_description=volume_description)
+            if volume_description:
+                from plexora.server.volume.sources.tiff import open_tiff_volume
+
+                copied = open_tiff_volume(copy, z_choice=z_semantics, t_choice=t_semantics,
+                                          new_import=True)
+                try:
+                    channel_info = _describe_volume_plane(copied, filePath)
+                finally:
+                    copied.close()
+            else:
+                with tf.TiffFile(str(copy), is_ome=False) as copy_io:
+                    channel_info = _describe_local_tiff(
+                        tiff_series.channel_series(copy_io), filePath)
             channel_info['imageCopy'] = str(copy)
             channel_info['imageSourceKey'] = \
                 segmentation_pyramid.source_fingerprint(filePath)

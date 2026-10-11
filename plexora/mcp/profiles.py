@@ -47,6 +47,7 @@ PROFILES: dict[str, tuple | None] = {
         "apply_gate_to_dataset", "export_gates", "write_gates_to_source",
         "render_region", "render_gate_validation", "render_gating_collage", "render_cell_gallery",
         "sample_gating_cells", "sample_gate_validation_regions", "explain_cell", "get_qc_exclusions",
+        "object_z_profile",
     ),
     # QC an image: the session loop, the checks, regions and the QC pictures
     # (skills qc-image, qc-packets, qc-checks, review-qc).
@@ -63,8 +64,27 @@ PROFILES: dict[str, tuple | None] = {
         "write_segmentation_flags", "compute_registration_mismatch", "step_registration_comparison",
         "get_registration_check", "set_registration_check", "write_registration_regions",
         "write_qc_background_roi", "run_dna_retention", "get_dna_retention", "clear_dna_retention",
+        "run_qc_3d", "get_qc_3d", "write_qc_3d_regions", "set_qc_plane",
+        "object_review_start", "object_review_next", "object_review_answer",
+        "object_review_status", "object_review_finish",
         "list_rois", "get_roi", "create_roi", "update_roi", "delete_roi", "count_cells_in_roi",
         "render_region", "render_cell_gallery", "explain_cell",
+    ),
+    # Look at a z-stack or time series: what it is, which planes, which
+    # picture -- and the viewer commands that show them (skill volume-triage).
+    "volume": _COMMON + (
+        "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
+        "track_objects", "segment_3d", "run_qc_3d", "get_qc_3d", "colocalize_3d",
+        "find_regions_of_interest_3d", "object_review_start", "object_review_next",
+        "object_review_answer", "object_review_status", "object_review_finish",
+        "check_volume_quality", "pin_projection",
+        "render_region", "render_projection", "render_sections", "render_object_views",
+        "object_z_profile", "get_artifact",
+        "list_artifacts",
+        "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
+        "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
+        "list_rois", "get_roi", "create_roi", "update_roi", "carry_roi_through_planes",
+        "count_cells_in_roi",
     ),
 }
 

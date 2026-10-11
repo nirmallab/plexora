@@ -75,7 +75,13 @@ def end() -> Phases | None:
     return phases
 
 
-_HEADER_NAMES = {"read": "read", "node": "node", "lut": "lut", "enc": "enc"}
+_HEADER_NAMES = {"read": "read", "node": "node", "lut": "lut", "enc": "enc",
+                 # the volume routes' phases (server/routes/volume_routes.py):
+                 # chunk decode outside the reader's lock, time waiting for a
+                 # gate or a lock, z max-pooling, quantization, the contrast
+                 # hint, a brick manifest
+                 "dec": "dec", "wait": "wait", "pool": "pool", "quant": "quant",
+                 "hint": "hint", "manifest": "manifest"}
 
 
 def server_timing_header(phases: Phases | None, total_ms: float | None = None) -> str:

@@ -138,6 +138,95 @@ const RoiGeometry = (function () {
         return { type: "Polygon", coordinates: geometry.coordinates.map(move) };
     }
 
+    /** Area-weighted centre, holes taken out -- shapely's `centroid`, which
+     *  is what the server shrinks an ellipsoid's footprint about. */
+    function centroid(geometry) {
+        let total = 0, cx = 0, cy = 0;
+        for (const polygon of polygons(geometry)) {
+            polygon.forEach((ring, index) => {
+                const points = closeRing(ring);
+                let twice = 0, x = 0, y = 0;
+                for (let i = 0; i + 1 < points.length; i++) {
+                    const [x0, y0] = points[i];
+                    const [x1, y1] = points[i + 1];
+                    const cross = x0 * y1 - x1 * y0;
+                    twice += cross;
+                    x += (x0 + x1) * cross;
+                    y += (y0 + y1) * cross;
+                }
+                if (!twice) return;
+                const weight = (index === 0 ? 1 : -1) * Math.abs(twice / 2);
+                total += weight;
+                cx += weight * (x / (3 * twice));
+                cy += weight * (y / (3 * twice));
+            });
+        }
+        return total ? [cx / total, cy / total] : null;
+    }
+
+    /** `geometry` scaled by `factor` about `origin` ([x, y]). */
+    function scale(geometry, factor, origin) {
+        const [ox, oy] = origin;
+        const move = (ring) => ring.map(([x, y]) => [ox + (x - ox) * factor, oy + (y - oy) * factor]);
+        if (geometry.type === "MultiPolygon") {
+            return { type: "MultiPolygon",
+                     coordinates: geometry.coordinates.map((polygon) => polygon.map(move)) };
+        }
+        return { type: "Polygon", coordinates: geometry.coordinates.map(move) };
+    }
+
+    /**
+     * A region's outline on plane `z` of a z-stack.
+     *
+     * A flat region is its geometry everywhere. A region with a shape through
+     * the planes (`solid`, plugins/roi/server/schema.py) is its outline there:
+     * contours keep one per plane; an ellipsoid's footprint shrinks about its
+     * centre by sqrt(1 - ((z - mid) / rz)^2). Null where the shape does not
+     * reach.
+     */
+    function sectionAt(feature, z) {
+        const solid = feature && feature.solid;
+        if (!solid) return feature ? feature.geometry : null;
+        // Contours, and a region of mask cells (`labels`), keep one outline
+        // per plane they reach.
+        if (solid.kind === "contours" || solid.kind === "labels") {
+            return (solid.planes || {})[String(z)] || null;
+        }
+        if (solid.kind === "ellipsoid") {
+            const offset = (z - solid.z) / solid.rz;
+            const left = 1 - offset * offset;
+            if (!(left > 0)) return null;
+            const centre = centroid(feature.geometry);
+            return centre ? scale(feature.geometry, Math.sqrt(left), centre) : null;
+        }
+        return feature.geometry;
+    }
+
+    /**
+     * Where the line y = `at` (axis "xz") or x = `at` (axis "yz") crosses a
+     * shape: `[[from, to], ...]` along the line, inside by even-odd (holes
+     * leave gaps). What a section pane draws of a region on one plane.
+     */
+    function lineCuts(geometry, axis, at) {
+        const across = axis === "xz" ? 1 : 0;
+        const along = 1 - across;
+        const hits = [];
+        for (const ring of rings(geometry)) {
+            const points = closeRing(ring);
+            for (let i = 0; i + 1 < points.length; i++) {
+                const a = points[i];
+                const b = points[i + 1];
+                if ((a[across] <= at) === (b[across] <= at)) continue;
+                const f = (at - a[across]) / (b[across] - a[across]);
+                hits.push(a[along] + f * (b[along] - a[along]));
+            }
+        }
+        hits.sort((p, q) => p - q);
+        const out = [];
+        for (let i = 0; i + 1 < hits.length; i += 2) out.push([hits[i], hits[i + 1]]);
+        return out;
+    }
+
     // -- hit testing -----------------------------------------------------
 
     /**
@@ -330,6 +419,26 @@ const RoiGeometry = (function () {
         return false;
     }
 
+    /**
+     * What a vertex drag on `feature` reshapes, with `planes` the planes on
+     * screen ([z0, z1]): a flat shape's geometry; a shape through the planes'
+     * outline on the one plane shown -- reshaped there alone. Null under a
+     * projection, on a plane it does not reach, for an ellipsoid (one
+     * footprint, scaled), and for a region of mask cells whose planes have a
+     * gap (it could not become contours, which cover consecutive planes).
+     */
+    function editableGeometry(feature, planes) {
+        const solid = feature && feature.solid;
+        if (!solid) return feature ? feature.geometry : null;
+        if (solid.kind !== "contours" && solid.kind !== "labels") return null;
+        if (!planes || planes[0] !== planes[1]) return null;
+        if (solid.kind === "labels") {
+            const zs = Object.keys(solid.planes || {}).map(Number).sort((a, b) => a - b);
+            if (zs.length && zs[zs.length - 1] - zs[0] + 1 !== zs.length) return null;
+        }
+        return sectionAt(feature, planes[0]);
+    }
+
     /** Keep a point inside the image. Drawing tools clamp as the pointer moves,
      *  so a shape cannot be given coordinates that name no pixel; imported
      *  geometry is never clamped, because a region that genuinely continues off
@@ -343,6 +452,7 @@ const RoiGeometry = (function () {
     return Object.freeze({
         dedupe, distinctCount, closeRing, openRing, signedArea, area,
         polygonFrom, rings, polygons, vertexCount, isVertexEditable, bounds, translate,
+        centroid, scale, sectionAt, editableGeometry, lineCuts,
         containsPoint, distanceToSegment, distanceToBoundary, nearestVertex,
         simplify, selfIntersects, segmentsCross, clamp,
         MAX_INTERSECTION_CHECK,

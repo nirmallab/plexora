@@ -79,6 +79,21 @@ ROLES = {
         "answer": "qc.answer",
         "first_task": "qc.planning",
     },
+    "object_review_worker": {
+        "tier": "judgement",
+        "skill": "review-objects",
+        "description": ("Judges the cells of a Plexora object review from their XY, XZ and YZ "
+                        "views, then returns one line per cell."),
+        "tools": ("read_skill", "qc.object_review_status", "qc.object_review_next",
+                  "qc.object_review_answer"),
+        "quota": ("OBJECT_REVIEW", "objects_per_worker"),
+        "units": "objects",
+        # No task groups in the models file: one tier, one kind of packet.
+        "module": "objects",
+        "next": "qc.object_review_next",
+        "answer": "qc.object_review_answer",
+        "first_task": None,
+    },
 }
 
 #: How a coordinator waits for a worker: each wake-up, message or status poll

@@ -93,6 +93,9 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
     per_roi = {}
     spent = 0
     known = np.unique(ids)  # sorted: `isin` against it, once, not a list per region
+    # A 3-D label volume's pixels are one plane's: a cell on other planes is
+    # not in them, so its regions are mapped by centroid (and by plane, below).
+    in_depth = _labels_in_depth(ds)
     for region in regions:
         shape = _shape(region["geometry"])
         if shape.is_empty:
@@ -107,7 +110,10 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
         while area / (4 ** level) > MAX_ROI_PIXELS:
             level += 1
         cost = area / (4 ** level)
-        method = "mask" if provider is not None and spent + cost <= budget else "centroid"
+        method = ("mask" if provider is not None and spent + cost <= budget
+                  and not in_depth and not region.get("extent") else "centroid")
+        if in_depth and why is None:
+            why = "the mask is a 3-D label volume: mapped by centroid and plane"
         if method == "mask":
             try:
                 inside, total = _overlap(provider, shape, (x0, y0, x1, y1), level, extra)
@@ -140,7 +146,54 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
                           "method": pl.Series(rows_method, dtype=pl.Utf8)})
     if pairs.height:
         pairs = pairs.unique(subset=["cell_id", "roi_id"], keep="first", maintain_order=True)
+        pairs = _within_extents(ds, regions, pairs)
     return pairs, per_roi
+
+
+def _labels_in_depth(ds):
+    try:
+        return ds.segmentation.label_volume() is not None
+    except Exception:
+        return False
+
+
+def _within_extents(ds, regions, pairs):
+    """Keep, for a region on some planes of a z-stack (or on one frame), only
+    the cells on them: the table's z role, rounded to the nearest plane, and
+    its t role. A table without a z role keeps every pair -- the planes cannot
+    be told apart there (the ROI plugin's rule, `cells_in_roi`)."""
+    limited = {r["roi_id"]: r["extent"] for r in regions if r.get("extent")}
+    if not limited or ds.schema is None:
+        return pairs
+    z_role, t_role = ds.schema.get("z"), ds.schema.get("t")
+    frame = ds.table.geometry()
+    if frame is None or not z_role or z_role not in frame.columns:
+        return pairs
+    from plexora.plugins.roi.server import schema as roi_schema
+    from plexora.server.utils.label_overlay import cell_ids
+
+    ids, keep = cell_ids(frame, ds.schema.cell_id)
+    plane = np.floor(frame[z_role].to_numpy().astype(np.float64)[keep] + 0.5)
+    lookup = pl.DataFrame({"cell_id": ids.astype(np.int64), "_z": plane,
+                           "_t": (frame[t_role].to_numpy()[keep].astype(np.float64)
+                                  if t_role and t_role in frame.columns
+                                  else np.full(ids.size, np.nan))})
+    joined = pairs.with_row_index("_row").join(lookup, on="cell_id", how="left")
+    drop = np.zeros(joined.height, dtype=bool)
+    roi = joined["roi_id"].to_numpy()
+    z = joined["_z"].to_numpy()
+    t = joined["_t"].to_numpy()
+    for roi_id, extent in limited.items():
+        bounds = roi_schema.extent_planes(extent)
+        rows = roi == roi_id
+        if bounds is not None:
+            with np.errstate(invalid="ignore"):
+                drop |= rows & ~((z >= bounds[0]) & (z <= bounds[1]))
+        frame_of = extent.get("t") if isinstance(extent, dict) else None
+        if frame_of is not None and not np.all(np.isnan(t)):
+            drop |= rows & (t != float(frame_of))
+    kept = joined.filter(pl.Series(~drop)).sort("_row")
+    return kept.select(pairs.columns)
 
 
 #: Labels up to this are counted with one `bincount` over the label range (no

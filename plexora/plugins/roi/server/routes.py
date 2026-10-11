@@ -344,6 +344,38 @@ def save_to_spatialdata():
     return jsonify(success=True, **{k: v for k, v in result.items() if k != "ok"})
 
 
+@roi_bp.route('/api/from_cells', methods=['POST'])
+def from_cells():
+    """A region that IS some cells of the project's 3-D mask.
+
+    `{datasource, ids: [label ids], t?, category?, name?}`. Outlined plane by
+    plane from the mask, and holding exactly those cells (schema `labels`).
+    400 with the reason when the mask is not a 3-D label volume or none of
+    the cells is in it.
+    """
+    from plexora.plugins.roi.server import service
+
+    try:
+        body = _payload()
+        dataset = api.project_data(body.get('datasource'))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except KeyError:
+        return jsonify(success=False, error="Unknown datasource"), 400
+    try:
+        ids = [int(v) for v in body.get('ids') or []]
+        t = int(body.get('t') or 0)
+        solid = service.labels_solid(dataset, ids, t=t)
+        name = body.get('name') or (f"Cell {ids[0]}" if len(ids) == 1
+                                    else f"{len(solid['ids'])} cells")
+        _, revision, roi = service.create_roi(
+            dataset, category=body.get('category') or "Cells",
+            geometry=service.footprint_of(solid["planes"]), name=name, solid=solid)
+    except (LookupError, ValueError, TypeError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True, revision=revision, roi=roi)
+
+
 @roi_bp.route('/api/map_to_cells', methods=['POST'])
 def map_to_cells():
     """Annotate this project's cells with the regions they fall inside.
@@ -402,6 +434,9 @@ def map_to_cells():
         "categories": state["categories"],
         "x_column": schema_.x,
         "y_column": schema_.y,
+        "z_column": schema_.get("z"),
+        "t_column": schema_.get("t"),
+        "id_column": schema_.cell_id,
         "prefix": body.get('name'),
         "replace": bool(body.get('replace')),
     })

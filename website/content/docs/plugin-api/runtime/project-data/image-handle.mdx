@@ -6,7 +6,7 @@ symbol: "plexora.api.ImageHandle"
 signature: "ImageHandle(project: Project)"
 badge: "class"
 source:
-  end: 401
+  end: 502
   path: "plexora/api/dataset.py"
   start: 183
 ---
@@ -181,6 +181,21 @@ True when the image is a local file.
 
 </Returns>
 
+### is_volumetric
+
+```python
+is_volumetric: bool
+```
+
+Whether this image is a z-stack or time series (see `volume`).
+
+<Returns type={"bool"}>
+
+True when the image has more than one plane or frame to
+choose between.
+
+</Returns>
+
 ## Methods
 
 ### stats
@@ -264,7 +279,7 @@ instead of asking for its geometry.
 ### read_region
 
 ```python
-read_region(level, box, channel_indices, max_pixels=0)
+read_region(level, box, channel_indices, max_pixels=0, view=None)
 ```
 
 Read a rectangle of pixels from one or more channels.
@@ -302,6 +317,17 @@ at most this many pixels. 0 (the default) means no limit.
 
 </Param>
 
+<Param name={"view"} type={"str"} default={"None"}>
+
+For a z-stack or time series, which view to
+read -- a plane (`"z12"`), a slab projection (`"z4-19max"`,
+`"zmean"`) or a section (`"xzy1200"`), in that view's own
+pixels (a section's rows are z). Given, it reads a local image
+too. None reads the default plane of a node-backed volume and
+keeps every other call exactly as it was.
+
+</Param>
+
 </ParamTable>
 
 <Returns type={"tuple"}>
@@ -317,9 +343,40 @@ than `box`.
 
 <Raise type={"ResourceNotLocal"}>
 
-If the image is a local file; open it directly
-instead of reading it through this API.
+If the image is a local file and no `view` was
+given; open it directly instead of reading it through this
+API.
+
+</Raise>
+
+<Raise type={"RenderError"}>
+
+If `view` names a view this image does not have --
+any view of a planar image, or a plane past the stack's end.
 
 </Raise>
 
 </Raises>
+
+### volume
+
+```python
+volume() -> dict | None
+```
+
+What this image is as a volume, or None for a planar image.
+
+A z-stack or time series is one object of which every plane, slab
+projection and section is a view; this is its description -- extent,
+spacing (with where each step came from), pyramid levels, the default
+view -- the same payload the viewer reads from `/volume/<name>/info`.
+Read from the image file (or asked of the data node holding it) once
+per handle, without loading the project into the viewer.
+
+<Returns type={"dict | None"}>
+
+The volume's description, or None for a planar
+image. A node-backed volume whose node cannot describe it as one
+is also None; its default plane still reads.
+
+</Returns>

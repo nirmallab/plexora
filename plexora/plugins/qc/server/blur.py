@@ -54,6 +54,7 @@ from time import perf_counter
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 
 VERSION = "4"
 PARAMS_DEFAULT = {
@@ -261,7 +262,7 @@ def plan(session, project, *, channel=None, params=None) -> tuple:
     image_data = session.image_data(project)
     pixel = pixel_scale.pixel_size(record)
     pixel_um = float(pixel["value"]) if pixel else None
-    with source_image.SHELF.reader(image_data) as source:
+    with qc_plane.reader(image_data) as source:
         brightfield = bool(source.is_brightfield)
         level, factor = _choose_level(source, pixel_um, params)
         grid = _grid(source, level, factor, pixel_um, params)
@@ -276,7 +277,7 @@ def plan(session, project, *, channel=None, params=None) -> tuple:
             raise AgentError("precondition_missing", "the image has no channel to check")
         _index, found = resolve_channel(chosen, list(record.image.real_channels))
         key = source_image.channel_key(found)
-    identity = source_image.ReaderShelf.identity_of(image_data)
+    identity = qc_plane.identity(image_data)
     image_stamp = None if str(identity or "").startswith("node://") else _stamp(identity)
     blob = json.dumps({"v": VERSION, "image": identity, "image_stamp": image_stamp,
                        "key": key, "brightfield": brightfield, "level": level,
@@ -442,7 +443,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     sum_i2 = np.zeros((ny, nx))
     n_valid = np.zeros((ny, nx))
     n_fg = np.zeros((ny, nx))
-    with source_image.SHELF.reader(context["image_data"]) as source:
+    with qc_plane.reader(context["image_data"]) as source:
         say(0, total, PHASES[0])
         if brightfield:
             index = 0
@@ -813,7 +814,7 @@ def shown(session, project, names=None) -> list:
     from plexora.server.utils import source_image
 
     try:
-        with source_image.SHELF.reader(image_data) as source:
+        with qc_plane.reader(image_data) as source:
             if source.is_brightfield:
                 return [BRIGHTFIELD]
     except Exception:

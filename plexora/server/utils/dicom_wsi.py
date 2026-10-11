@@ -1272,6 +1272,14 @@ class DicomPyramid:
 # -- opening -------------------------------------------------------------
 
 
+def focal_planes_of(wsi) -> list[float]:
+    """Every focal plane of the finest level, in µm, nearest the slide first."""
+    try:
+        return sorted(float(value) for value in wsi.levels[0].focal_planes)
+    except Exception:
+        return []
+
+
 def _focal_plane_of(wsi) -> tuple[Optional[float], int]:
     """The plane to read, and how many there are.
 
@@ -1280,10 +1288,7 @@ def _focal_plane_of(wsi) -> tuple[Optional[float], int]:
     left to the default, so the plane a tile came from is a fact about the
     pyramid and not about which instance wsidicom happened to reach first.
     """
-    try:
-        planes = sorted(float(value) for value in wsi.levels[0].focal_planes)
-    except Exception:
-        return None, 1
+    planes = focal_planes_of(wsi)
     if not planes:
         return None, 1
     return planes[len(planes) // 2], len(planes)
@@ -1384,6 +1389,12 @@ def open_image(path, extension=None, rgb: bool = False) -> DicomPyramid:
                 levels.append(_MonoLevel(sources, height, width, dtype))
 
         base_levels = len(levels)
+        #: What `at_focal_plane` needs to build the same levels at another
+        #: plane on this handle: the native level behind each base level.
+        recipe = {"natives": [brightfield._pick_source(usable, height, width)
+                              for height, width in shapes[:base_levels]],
+                  "shapes": shapes[:base_levels], "color": color, "path_id": path_id,
+                  "identifiers": identifiers, "dtype": dtype}
         if extension and Path(extension).exists():
             import zarr
 
@@ -1403,7 +1414,7 @@ def open_image(path, extension=None, rgb: bool = False) -> DicomPyramid:
                         height, width, dtype))
                 index += 1
 
-        return DicomPyramid(
+        pyramid = DicomPyramid(
             levels, path=path, extension=extension, base_levels=base_levels,
             handle=wsi, source=source, optical_paths=identifiers,
             channel_names=names, focal_plane=focal_plane,
@@ -1412,12 +1423,95 @@ def open_image(path, extension=None, rgb: bool = False) -> DicomPyramid:
             has_label=bool(getattr(wsi, "labels", None)),
             has_overview=bool(getattr(wsi, "overviews", None)),
             is_color=color, mpp=_mpp_of(wsi))
+        pyramid.focal_planes = tuple(focal_planes_of(wsi))
+        pyramid._recipe = recipe
+        return pyramid
     except Exception:
         try:
             wsi.close()
         except Exception:
             pass
         raise
+
+
+class _LevelSource:
+    """One channel of an already-built level, as a `_MonoSource` would read it.
+
+    How a focal plane that is not the default one gets the coarse levels the
+    default plane reads from its extension store: resampled from the plane's
+    own coarsest native-backed level, the same resampling every other level
+    does from a native one.
+    """
+
+    __slots__ = ("_level", "_channel", "height", "width")
+
+    def __init__(self, level, channel: int):
+        self._level = level
+        self._channel = int(channel)
+        self.height, self.width = int(level.shape[1]), int(level.shape[2])
+
+    def read(self, y0, y1, x0, x1) -> np.ndarray:
+        return self._level.read_plane(self._channel, slice(y0, y1), slice(x0, x1))
+
+
+class _LevelRgbSource:
+    __slots__ = ("_level", "height", "width")
+
+    def __init__(self, level):
+        self._level = level
+        self.height, self.width = int(level.shape[1]), int(level.shape[2])
+
+    def read(self, y0, y1, x0, x1) -> np.ndarray:
+        return self._level.read_rgb(slice(y0, y1), slice(x0, x1))
+
+
+def at_focal_plane(pyramid: DicomPyramid, focal_plane: float) -> DicomPyramid:
+    """The same slide read at another focal plane, on the same open handle.
+
+    Same levels, same sizes, same channel order; only the `z` every read
+    passes to wsidicom differs. The handle stays the default pyramid's (this
+    one's `close` leaves it open). Levels the default plane reads from its
+    extension store -- a slide whose own pyramid stops early -- are resampled
+    from this plane's coarsest native-backed level instead: slower for the
+    first zoomed-out view of that plane, never the wrong plane's pixels.
+    """
+    if focal_plane == pyramid.focal_plane:
+        return pyramid
+    recipe = getattr(pyramid, "_recipe", None)
+    wsi = pyramid._handle
+    if recipe is None or wsi is None:
+        raise ValueError("this pyramid cannot be re-read at another focal plane")
+    color, dtype = recipe["color"], recipe["dtype"]
+    levels: list[Any] = []
+    for (height, width), native in zip(recipe["shapes"], recipe["natives"]):
+        size = (native.width, native.height)
+        if color:
+            levels.append(_ColorLevel(_ColorSource(wsi, native.index, size, recipe["path_id"],
+                                                   focal_plane), height, width))
+        else:
+            levels.append(_MonoLevel([_MonoSource(wsi, native.index, size, identifier,
+                                                  focal_plane, dtype)
+                                      for identifier in recipe["identifiers"]],
+                                     height, width, dtype))
+    last = levels[-1]
+    for height, width in pyramid.level_shapes[len(levels):]:
+        if color:
+            levels.append(_ColorLevel(_LevelRgbSource(last), height, width))
+        else:
+            levels.append(_MonoLevel([_LevelSource(last, channel)
+                                      for channel in range(last.shape[0])],
+                                     height, width, dtype))
+    other = DicomPyramid(
+        levels, path=pyramid.path, extension=None, base_levels=len(recipe["shapes"]),
+        handle=None, source=pyramid.source, optical_paths=pyramid.optical_paths,
+        channel_names=pyramid.channel_names, focal_plane=focal_plane,
+        focal_plane_count=pyramid.focal_plane_count, pyramid_count=pyramid.pyramid_count,
+        has_label=pyramid.has_label, has_overview=pyramid.has_overview,
+        is_color=pyramid.is_color, mpp=pyramid.mpp)
+    other.focal_planes = getattr(pyramid, "focal_planes", ())
+    other._recipe = recipe
+    other._shared_handle = wsi
+    return other
 
 
 def _mpp_of(wsi) -> Optional[tuple[float, float]]:

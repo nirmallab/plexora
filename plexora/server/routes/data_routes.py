@@ -60,7 +60,10 @@ def get_nearest_cell():
     x = float(request.args.get('point_x'))
     y = float(request.args.get('point_y'))
     datasource = request.args.get('datasource')
-    resp = data_model.query_for_closest_cell(x, y, datasource)
+    # The frame on screen, for a time series' object table: its cells only.
+    t = request.args.get('t')
+    resp = data_model.query_for_closest_cell(x, y, datasource,
+                                             t=int(t) if t not in (None, "") else None)
     return serialize_and_submit_json(resp)
 
 
@@ -77,7 +80,9 @@ def get_all_cells(dtype):
     datasource = request.args.get('datasource')
     data_type = int if 'integer' == dtype else float
     start_keys = list(request.args.get('start_keys').split(','))
-    resp = data_model.get_all_cells(datasource, start_keys, data_type)
+    t = request.args.get('t')
+    resp = data_model.get_all_cells(datasource, start_keys, data_type,
+                                    t=int(t) if t not in (None, "") else None)
     content = gzip.compress(resp.tobytes('C'))
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
@@ -153,25 +158,39 @@ def _unknown_channel(channel, exc):
                    error=str(exc)), 404
 
 
+#: Both routes below take `view=` (a slab projection has statistics of its own;
+#: see data_model._slab_view). Absent is exactly the call it always was.
 @app.route('/get_channel_gmm', methods=['GET'])
 def get_channel_gmm():
+    from plexora.server.volume.viewspec import BadView
+
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
+    view = request.args.get('view') or ''
     try:
-        resp = data_model.get_channel_gmm(channel, datasource)
+        resp = (data_model.get_channel_gmm(channel, datasource, view) if view
+                else data_model.get_channel_gmm(channel, datasource))
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
+    except BadView as exc:
+        return jsonify({'error': str(exc)}), 400
     return serialize_and_submit_json(resp)
 
 
 @app.route('/get_image_channel_stats', methods=['GET'])
 def get_image_channel_stats():
+    from plexora.server.volume.viewspec import BadView
+
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
+    view = request.args.get('view') or ''
     try:
-        resp = data_model.get_image_channel_stats(channel, datasource)
+        resp = (data_model.get_image_channel_stats(channel, datasource, view) if view
+                else data_model.get_image_channel_stats(channel, datasource))
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
+    except BadView as exc:
+        return jsonify({'error': str(exc)}), 400
     return serialize_and_submit_json(resp)
 
 
@@ -280,6 +299,19 @@ def resource_routing():
                           f"/{binding.resource_id}/tile/"),
             "append_key": kind != "segmentation",
         }
+        if kind == "image" and project.image.is_volumetric:
+            # A node has no project, so a volume's tiles carry the project's
+            # z/t reading as well as their view. Fetched direct, the viewer
+            # appends `view=<token>` (the default plane spelled as itself, never
+            # empty), this, and `az=<anisotropy>` for a section -- the
+            # parameters the proxy sends (providers/node.py `_view_params`).
+            # Only for a volume: a planar image's route is unchanged.
+            from urllib.parse import urlencode
+
+            routes[kind]["volume_query"] = urlencode(
+                {key: value for key, value in (("zs", project.image.z_semantics),
+                                               ("ts", project.image.t_semantics))
+                 if value})
     return jsonify(routes=routes)
 
 
@@ -859,10 +891,13 @@ def set_pixel_size():
         return jsonify(success=False,
                        error="Microns per pixel has to be a positive number."), 400
 
+    axis = str(payload.get('axis') or 'xy')
+    if axis not in ('xy', 'z', 't'):
+        return jsonify(success=False, error="axis is xy, z or t"), 400
     pixel_size = _set_pixel_size(
-        datasource, value or None, unit=payload.get('unit'))
+        datasource, value or None, unit=payload.get('unit'), axis=axis)
     data_model.load_datasource(datasource, reload=True)
-    return jsonify(success=True, pixel_size=pixel_size)
+    return jsonify(success=True, pixel_size=pixel_size, axis=axis)
 
 
 @app.route('/save_channel_list', methods=['POST'])
@@ -920,7 +955,7 @@ _tile_png_cache_lock = threading.Lock()
 _TILE_PNG_CACHE_MAX = 1500
 
 
-def _get_tile_png_bytes(datasource, channel, level, tile, quality):
+def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", window=None):
     # ensure_loaded() must run BEFORE sampling load_generation: loading is what
     # bumps the generation, so sampling first would file the encoded bytes under
     # the pre-load generation and every later request would miss. Keying on the
@@ -929,7 +964,10 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
     # without cross-module cache access. `quality` is part of the key so
     # default/hd/legacy variants of the same tile don't collide.
     generation = data_model.ensure_loaded(datasource)
-    key = (generation, datasource, channel, level, tile, quality)
+    # The view only when there is one, so a planar project's key is the tuple
+    # it has always been.
+    key = ((generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
+           + ((window,) if window else ()))
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
         if cached is not None:
@@ -938,7 +976,17 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
             return cached
 
     _perf.note("cache", "miss")
-    encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality)
+    from plexora.server.volume.plane_view import served_steps
+
+    served_steps()   # this thread's previous tile is not this one's
+    encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
+                                               view, window=window)
+    # A section drawn up from a coarser level (its read was over budget):
+    # neither kept here nor by the browser -- the sharp one replaces it once
+    # the area is prepared in 3-D.
+    if served_steps(reset=False):
+        _perf.note("served", str(served_steps(reset=False)))
+        return encoded, mimetype
 
     with _tile_png_cache_lock:
         _tile_png_cache[key] = (encoded, mimetype)
@@ -946,6 +994,17 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
         while len(_tile_png_cache) > _TILE_PNG_CACHE_MAX:
             _tile_png_cache.popitem(last=False)
     return encoded, mimetype
+
+
+def _tile_etag(generation, datasource, channel, level, tile, quality, view="", window=None):
+    etag = f'"{generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
+    if view:
+        # Unchanged for the default view, so a planar project's browser cache
+        # survives; a view's tiles are different pixels under their own tag.
+        etag = etag[:-1] + f'-{view}"'
+    if window:
+        etag = etag[:-1] + f'-w{window[0]:g},{window[1]:g}"'
+    return etag
 
 
 # E.G /generated/data/melanoma/channel_00_files/13/16_18.png
@@ -959,7 +1018,51 @@ def generate_png(datasource, channel, level, tile):
     # WebP. `q=legacy` is kept as an explicit escape hatch back to the
     # original uncompressed PNG behavior if ever needed.
     quality = request.args.get('q', 'webp')
-    encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality)
+    # `view=` picks a plane, projection or section of a volume (`z12`,
+    # `z4-19max`, `xzy1200` -- plexora/server/volume/viewspec.py). Absent is
+    # the image's default view, which is the path every planar project takes.
+    view = request.args.get('view') or ''
+    from plexora.server.volume.viewspec import BadView
+
+    if view:
+        from plexora.server.models import views
+        from plexora.server.volume.viewspec import ViewSpec
+
+        try:
+            view = views.canonical(datasource, view)
+            if view and not ViewSpec.parse(view).served:
+                raise BadView("a sum projection is exported, not served as tiles: "
+                              "summed planes overflow a 16-bit tile")
+        except BadView as error:
+            return jsonify({'error': str(error)}), 400
+    # `w=qmin,qmax`: the window a volume's 8-bit tile is to be quantized with
+    # (server/volume/windows.py -- the viewer starts with a provisional one).
+    # The bytes are then fixed by the address. HD tiles are raw values, and a
+    # planar image has one window: neither takes one.
+    window = None
+    if view and quality not in ('hd', 'legacy') and request.args.get('w'):
+        from plexora.server.volume.windows import parse_stamp
+
+        window = parse_stamp(request.args.get('w'))
+    # A browser that already has these bytes is told so before a pixel is
+    # read: the tag is known from the request alone (the bytes depend only on
+    # the generation, the address, the view and the window it names).
+    if view and request.headers.get('If-None-Match'):
+        early = _tile_etag(data_model.ensure_loaded(datasource),
+                           datasource, channel, level, tile, quality, view, window)
+        if request.headers.get('If-None-Match') == early:
+            response = app.response_class(status=304)
+            response.headers['ETag'] = early
+            response.headers['Cache-Control'] = 'private, max-age=31536000'
+            return response
+    try:
+        encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality,
+                                                view, window)
+    except BadView as error:
+        # A volume on a data node whose Plexora cannot serve its planes (see
+        # providers/node.py): refused in its own words rather than served as
+        # the default plane under this view's URL.
+        return jsonify({'error': str(error)}), 400
 
     # Tile bytes are immutable for a given load_generation, so let the browser
     # keep them: without this Flask's send_file() emits `Cache-Control:
@@ -968,7 +1071,17 @@ def generate_png(datasource, channel, level, tile):
     # in the ETag rather than the URL so a reload invalidates without the
     # frontend having to rewrite tile URLs -- a stale conditional request gets
     # a 200 with fresh bytes instead of a wrong 304.
-    etag = f'"{data_model.load_generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
+    etag = _tile_etag(data_model.load_generation, datasource, channel, level, tile, quality,
+                      view, window)
+    from plexora.server.volume.plane_view import served_steps
+
+    steps = served_steps()
+    if steps:
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Plexora-Served-Steps'] = str(steps)
+        response.headers['Access-Control-Expose-Headers'] = 'X-Plexora-Served-Steps'
+        return response
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:
@@ -1084,6 +1197,17 @@ def generate_layer_channel_gmm(datasource, layer, channel):
 # branch inside `generate_png`: that function is the hot path of the entire
 # viewer -- one call per tile per pan -- and a sample with a real image must
 # not pay a comparison per tile for a case it can never be in. The bytes are
+@app.route('/generated/batch', methods=['POST'])
+def generate_batch():
+    """Several of this server's tiles in one request: the viewer's scheduler
+    batches when the link to it is slow (server/tile_batch.py). Body
+    `{"tiles": ["/generated/data/...png?...", ...]}`; each tile is its own
+    GET's answer, bytes and headers alike."""
+    from plexora.server import tile_batch
+
+    return tile_batch.respond(app, request, tile_batch.PRIMARY)
+
+
 # the same for every level and every tile, so this is a dictionary lookup and a
 # send_file, and the browser is told it can keep them for a year.
 @app.route('/generated/blank/<string:datasource>/<string:level>/<string:tile>')

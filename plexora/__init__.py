@@ -238,6 +238,9 @@ def create_app(plugins=None):
     # Optional, anonymous usage telemetry (plexora/telemetry). Its routes answer
     # whatever the mode, and nothing in the app depends on them.
     from plexora.server.routes import telemetry_routes
+    # Volumes (plexora/server/volume): what a z-stack is and where the viewer
+    # was in it. Pixels come down the ordinary tile route with `view=`.
+    from plexora.server.routes import volume_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 
@@ -316,6 +319,7 @@ _DATA_ARGUMENTS = frozenset({
     "feature_source", "layer", "feature_obs_columns", "obs_id_field",
     "celltype_column", "subset_by", "subset_value", "apply_log_transform",
     "pixel_size", "image_type", "segmentation_mode",
+    "axes", "z_step", "frame_interval",
 })
 
 
@@ -341,7 +345,8 @@ def view(datasource, **kwargs):
       `coordinate_source`, `obsm_key`, `x`, `y`, `feature_source`, `layer`,
       `feature_obs_columns`, `obs_id_field`, `celltype_column`,
       `subset_by`, `subset_value`, `apply_log_transform`, `pixel_size`,
-      `image_type`, `segmentation_mode` -- are what
+      `image_type`, `segmentation_mode`, `axes`, `z_step`, `frame_interval`
+      -- are what
       `plexora.register_memory_datasource` accepts, and documents.
       `to_disk=True` writes a live AnnData to an `.h5ad` and registers that
       file instead of serving the object from memory -- worth asking for

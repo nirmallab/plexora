@@ -6,9 +6,9 @@ symbol: "plexora.api.TableHandle"
 signature: "TableHandle(project: Project, provider=None)"
 badge: "class"
 source:
-  end: 927
+  end: 1118
   path: "plexora/api/dataset.py"
-  start: 558
+  start: 686
 ---
 
 {/* GENERATED from plexora.api.dataset.TableHandle. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -258,6 +258,39 @@ None if this project has no feature
 table.
 
 </Returns>
+
+### physical_coordinates
+
+```python
+physical_coordinates()
+```
+
+Each cell's position in micrometres, for analysis that measures distance (neighbourhoods, contact, density) in the tissue's own units.
+
+A polars DataFrame of the cell id (`cell_id`), `X_um`, `Y_um` and,
+for a table with a z role (3-D objects), `Z_um`; with a frame role (a
+time series), `t` too. An object table measured in µm (`x_um`,
+`y_um`, `z_um`) is read as measured; any other table's pixel columns
+are scaled by the image's pixel size and z step
+(`pixel_scale.spacing`). Nothing is written to the table.
+
+<Returns type={"polars.DataFrame | None"}>
+
+None if this project has no feature table.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"CoordinatesUnavailable"}>
+
+The pixel size is unknown (no µm at all), or
+the table has a z role and the z step is unknown -- say which,
+rather than substituting a default.
+
+</Raise>
+
+</Raises>
 
 ### run
 

@@ -2355,6 +2355,13 @@
     z-index: 106;
 }
 
+/* Docked above the caption by the canvas layout: a button of its own, not a
+   tab on the edge, and on the furniture tier so the 3-D view cannot cover it. */
+#openseadragon_wrapper .plx-canvas-dock > .sidebar-expand-button {
+    border-radius: 6px;
+    z-index: 220;
+}
+
 .sidebar-expand-button:hover {
     background: rgba(31, 41, 55, 0.98);
 }
@@ -2524,7 +2531,8 @@
    shadow light -- the inversion `.dataset-nav` takes in the other corner. The
    tokens are redefined rather than each rule restyled, so what a plugin adds
    to the caption (the contrast slider's numbers and rail) flips with it. */
-#openseadragon.brightfield-ground ~ .viewer-canvas-caption {
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption {
     --text-primary: rgba(18, 24, 32, 0.92);
     --text-secondary: rgba(18, 24, 32, 0.72);
     --text-muted: rgba(18, 24, 32, 0.56);
@@ -2533,7 +2541,8 @@
     text-shadow: 0 0 3px rgba(255, 255, 255, 0.85);
 }
 
-#openseadragon.brightfield-ground ~ .viewer-canvas-caption .viewer-project-label {
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption .viewer-project-label,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption .viewer-project-label {
     color: var(--text-primary);
 }
 
@@ -2632,7 +2641,7 @@
    Text on the image like the caption's, with the caption's shadow, and the
    caption's inversion over a brightfield slide. */
 .plx-canvas-hint {
-    bottom: 2px;
+    bottom: calc(var(--plx-inset-bottom, 0px) + 2px);
     /* A step up from the caption's: alone at the bottom edge, with no name
        beside it, the caption's size read as smaller than it is. */
     font-size: 11px;
@@ -2734,6 +2743,16 @@
     position: absolute;
     width: min(220px, 30vh);
     z-index: 220;
+}
+
+/* Docked and closed, it takes only the lens's room in its corner, so the
+   corner (and the chat's lane beside it) is not held for a map nobody
+   opened. Opening grows it at once (the stage then scales up from the lens);
+   closing keeps the room until the stage has shrunk. */
+#openseadragon_wrapper .plx-canvas-dock > .viewer-mini-map.plx-docked:not(.is-expanded) {
+    height: 34px;
+    transition: width 0s linear var(--duration-base), height 0s linear var(--duration-base);
+    width: 34px;
 }
 
 /* The circle. Scaled down into the lens button while collapsed rather than
@@ -3154,26 +3173,31 @@ body.sidebar-collapsed .viewer-shell,
    pale text on it reads as a hole punched in the tissue. Same inversion the
    centre spinner takes over the same pixels. */
 #openseadragon.brightfield-ground ~ .dataset-nav,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav,
 .brightfield-ground .dataset-nav {
     background: rgba(255, 255, 255, 0.88);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav:hover,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav:hover,
 .brightfield-ground .dataset-nav:hover {
     background: rgba(255, 255, 255, 0.97);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-button,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-button,
 .brightfield-ground .dataset-nav .dataset-nav-button {
     color: rgba(18, 24, 32, 0.75);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-count,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-count,
 .brightfield-ground .dataset-nav .dataset-nav-count {
     color: rgba(18, 24, 32, 0.6);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-key,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-key,
 .brightfield-ground .dataset-nav .dataset-nav-key {
     background: rgba(18, 24, 32, 0.06);
     border-color: rgba(18, 24, 32, 0.25);
@@ -3202,7 +3226,7 @@ body.sidebar-collapsed .viewer-shell,
     box-sizing: border-box;
     padding: 4px;
     position: absolute;
-    right: 12px;
+    right: calc(var(--plx-inset-right, 0px) + 12px);
     top: 44px;
     width: 150px;
     z-index: 250;
@@ -3535,7 +3559,7 @@ body.sidebar-collapsed .viewer-shell,
     padding: 4px 4px 4px 10px;
     pointer-events: auto;
     position: absolute;
-    top: 12px;
+    top: calc(var(--plx-inset-top, 0px) + 12px);
     transform: translateX(-50%);
     z-index: 262;
 }
@@ -3619,6 +3643,26 @@ body.sidebar-collapsed .viewer-shell,
     margin-left: 2px;
 }
 
+/* Through planes: an action, not a mode -- set apart from the modes, and dim
+   until there is an outline to carry. `display` above would defeat [hidden]. */
+.plx-magic-bar-carry {
+    margin-left: 4px;
+}
+
+.plx-magic-bar-carry[hidden] {
+    display: none;
+}
+
+.plx-magic-bar-carry:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.plx-magic-bar-carry:disabled:hover {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.78);
+}
+
 @media (prefers-reduced-motion: reduce) {
     .plx-magic-bar,
     .plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
@@ -3679,4 +3723,908 @@ body.sidebar-collapsed .viewer-shell,
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     justify-content: space-between;
+}
+
+/* ------------------------------------------------------------------------
+   Depth: the Z strip on the canvas's right edge, the caption's badge, and
+   the Depth card (views/depthStrip.js, views/depthTools.js). Only ever built
+   for a volume; a planar image carries none of it.
+
+   The strip is a card over the image (the Rail Rule): it never narrows the
+   canvas. It holds a band along the right edge in the canvas layout
+   (services/canvasLayout.js), so nothing docked -- the legend, the dataset
+   arrows, a plugin's panel -- is ever placed under it.
+   ------------------------------------------------------------------------ */
+
+.viewer-depth-strip {
+    align-items: center;
+    background: rgba(11, 15, 21, 0.86);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    height: min(420px, calc(100% - 168px));
+    min-height: 180px;
+    padding: var(--space-1);
+    position: absolute;
+    right: calc(var(--plx-band-depth-strip, 0px) + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 36px;
+    z-index: 230;
+}
+
+.depth-strip-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.depth-strip-button {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+    width: 26px;
+}
+
+.depth-strip-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.depth-strip-button.is-active,
+.depth-strip-button[aria-pressed="true"] {
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.14));
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.depth-strip-button:focus-visible,
+.depth-strip-readout:focus-visible,
+.depth-strip-rail:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* z 0 at the top, as a section's rows are. The track is a pill, like every
+   other slider track in the app; the thumb is the plane on screen. */
+.depth-strip-rail {
+    border-radius: var(--radius-sm);
+    cursor: ns-resize;
+    flex: 1 1 auto;
+    min-height: 80px;
+    position: relative;
+    touch-action: none;
+    width: 100%;
+}
+
+.depth-strip-track {
+    background: var(--border-subtle);
+    border-radius: 999px;
+    bottom: 10px;
+    left: 50%;
+    position: absolute;
+    top: 10px;
+    transform: translateX(-50%);
+    width: 4px;
+}
+
+.depth-strip-tick {
+    background: var(--border-strong);
+    height: 1px;
+    left: -4px;
+    position: absolute;
+    width: 12px;
+}
+
+.depth-strip-thumb {
+    background: var(--text-primary);
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(5, 7, 10, 0.85);
+    height: 4px;
+    left: 50%;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    /* A step from the keys or the wheel glides; under the hand it is the
+       hand's (depthStrip.followThumb), and on release it settles onto the
+       plane on screen. --duration-fast is 0ms under reduced motion. */
+    transition: top var(--duration-fast) var(--ease-standard);
+    width: 18px;
+}
+
+.depth-strip-rail.is-dragging .depth-strip-thumb {
+    transition: none;
+}
+
+/* The slab: the planes the projection combines, ends draggable. */
+.depth-strip-band {
+    background: var(--accent-channel-soft);
+    border: 1px solid var(--accent-channel);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    left: -7px;
+    min-height: 4px;
+    position: absolute;
+    right: -7px;
+}
+
+.depth-strip-handle {
+    cursor: ns-resize;
+    height: 10px;
+    left: -2px;
+    position: absolute;
+    right: -2px;
+}
+
+.depth-strip-handle.is-top { top: -6px; }
+.depth-strip-handle.is-bottom { bottom: -6px; }
+
+.viewer-depth-strip.is-slab .depth-strip-thumb {
+    opacity: 0.58;
+}
+
+/* A time series' frame: a step back, the frame, a step on. */
+.depth-strip-frame {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 4px;
+    width: 100%;
+}
+
+.depth-strip-frame-text {
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.depth-strip-button.is-small {
+    font-size: 10px;
+    height: 20px;
+}
+
+.depth-strip-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.depth-strip-readout {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1.15;
+    padding: 2px 0;
+    width: 100%;
+}
+
+.depth-strip-readout:hover {
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.depth-strip-readout-top {
+    color: var(--text-primary);
+    font-size: 11px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.depth-strip-readout-bottom {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* A range ("12–135") is wider than the strip's 26px of text at the readout's
+   own size; it steps down rather than wrapping onto a third line. */
+.depth-strip-readout-bottom.is-long {
+    font-size: 8px;
+    letter-spacing: -0.02em;
+}
+
+/* The badge: what the picture is, in words, under the sample's name. Amber
+   whenever it is not a plane the image holds -- a projection reads as a
+   plane, and this is the line that says it is not. */
+.viewer-depth-badge {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    padding: 0 10px;
+}
+
+.viewer-depth-badge.is-derived {
+    color: var(--accent-warning);
+}
+
+.viewer-depth-badge-spin {
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    border-top-color: var(--text-secondary);
+    display: none;
+    height: 10px;
+    width: 10px;
+}
+
+.viewer-depth-badge.is-loading .viewer-depth-badge-spin {
+    animation: depth-badge-spin 0.9s linear infinite;
+    display: inline-block;
+}
+
+@keyframes depth-badge-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .viewer-depth-badge.is-loading .viewer-depth-badge-spin {
+        animation: none;
+    }
+}
+
+/* The Depth card. Labels left, fields right, one baseline per row. */
+.depth-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.depth-panel-grid {
+    align-items: center;
+    display: grid;
+    gap: var(--space-2) var(--space-3);
+    grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.depth-panel-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.depth-panel-field {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.depth-panel-number {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    height: 28px;
+    padding: 0 8px;
+    width: 72px;
+}
+
+.depth-panel-number.is-short {
+    width: 56px;
+}
+
+.depth-panel-number:focus,
+.depth-panel-select:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.depth-panel-select {
+    font-size: 12px;
+    height: 28px;
+}
+
+.depth-panel-unit {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.depth-panel-toggle {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+}
+
+/* Motion and section sizes: the user's, for every image. */
+.depth-panel-viewer {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-3);
+}
+
+.depth-panel-viewer [hidden] {
+    display: none !important;
+}
+
+.depth-panel-toggle:has(input:disabled) {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.depth-panel-spacing {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: 76px minmax(0, 1fr) auto;
+    padding-top: var(--space-3);
+}
+
+.depth-panel-spacing-value {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.depth-panel-spacing-value.is-missing {
+    color: var(--accent-warning);
+}
+
+.depth-panel-spacing-edit {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.depth-panel-pin {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+}
+
+.depth-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.depth-panel-pin .layer-card-action {
+    align-self: flex-start;
+    flex: 0 0 auto;
+    padding: 0 var(--space-3);
+}
+
+.depth-panel-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+/* Several rules above set `display`, which beats the `hidden` attribute's
+   user-agent `display: none` -- a hidden play button or frame row would stay
+   on screen. Scoped to these two surfaces rather than global. */
+.viewer-depth-strip [hidden],
+.viewer-depth-badge [hidden],
+.depth-panel [hidden] {
+    display: none !important;
+}
+
+/* ------------------------------------------------------------------------
+   The canvas layout (services/canvasLayout.js). Bands along the edges are
+   taken out of the canvas (--plx-inset-*); what is left is the SAFE AREA,
+   and small controls live in its corner docks, stacked, so they cannot land
+   on each other or under a band. A dock positions; the control styles itself.
+   ------------------------------------------------------------------------ */
+.plx-canvas-safe {
+    bottom: var(--plx-inset-bottom, 0px);
+    box-sizing: border-box;
+    container-type: size;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content);
+    left: var(--plx-inset-left, 0px);
+    padding: 12px;
+    pointer-events: none;
+    position: absolute;
+    right: var(--plx-inset-right, 0px);
+    top: var(--plx-inset-top, 0px);
+    transition: top var(--duration-fast) var(--ease-standard),
+                right var(--duration-fast) var(--ease-standard),
+                bottom var(--duration-fast) var(--ease-standard),
+                left var(--duration-fast) var(--ease-standard);
+}
+
+/* A pane edge under the hand follows it exactly. */
+#openseadragon_wrapper[class*="is-resizing"] .plx-canvas-safe,
+.plx-reduced-motion .plx-canvas-safe {
+    transition: none;
+}
+
+.plx-canvas-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    justify-content: space-between;
+    min-height: 0;
+    min-width: 0;
+    pointer-events: none;
+}
+
+.plx-canvas-column.is-left {
+    align-items: flex-start;
+}
+
+.plx-canvas-column.is-center {
+    align-items: center;
+}
+
+.plx-canvas-column.is-right {
+    align-items: flex-end;
+}
+
+.plx-canvas-dock {
+    align-items: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 100%;
+    min-height: 0;
+    pointer-events: none;
+}
+
+/* The top dock gives way first: a tall panel there scrolls inside itself
+   rather than running into the legend below. */
+.plx-canvas-dock[data-corner^="top"] {
+    flex: 0 1 auto;
+}
+
+.plx-canvas-dock[data-corner^="bottom"] {
+    flex: 0 0 auto;
+}
+
+/* Folding measures what a column's docks would take unsqueezed
+   (canvasLayout.js `crowded`): for one synchronous layout nothing shrinks. */
+.plx-canvas-column.plx-measuring > .plx-canvas-dock,
+#openseadragon_wrapper .plx-canvas-column.plx-measuring > .plx-canvas-dock > .plx-docked {
+    flex-shrink: 0 !important;
+    max-height: none !important;
+}
+
+/* The bottom-right corner keeps the scale bar's room under the legend. */
+.plx-canvas-dock.is-bottom-right {
+    padding-bottom: 36px;
+}
+
+/* A docked control is placed by its dock, whatever its own rules say about
+   where it goes; what it looks like is still its own. */
+#openseadragon_wrapper .plx-canvas-dock > .plx-docked {
+    bottom: auto;
+    flex: 0 0 auto;
+    left: auto;
+    margin: 0;
+    max-height: 100%;
+    min-height: 0;
+    position: relative;
+    right: auto;
+    top: auto;
+}
+
+/* Let a docked panel that scrolls (a plugin's) shrink with its dock. */
+#openseadragon_wrapper .plx-canvas-dock[data-corner^="top"] > .plx-docked {
+    flex-shrink: 1;
+}
+
+/* Docked controls share the furniture tier (220): over the tiles and the 3-D
+   view's canvas (200), under the strip and the popovers. Zero specificity, so
+   a control that sets its own tier (a plugin's panel) keeps it. */
+:where(.plx-canvas-dock) > * {
+    pointer-events: auto;
+    z-index: 220;
+}
+
+/* The caption's measure, against the safe area rather than the column. */
+#openseadragon_wrapper .plx-canvas-dock > .viewer-canvas-caption {
+    max-width: 40cqw;
+}
+
+/* The 3-D view (views/volumeRenderer.js): its own canvas over the tiles,
+   under every piece of furniture (they sit at 220 and up), so the caption,
+   the legend and the strip stay where they are. The tiles keep drawing the
+   current plane underneath, which is why leaving 3-D is instant. */
+.viewer-volume-canvas {
+    background: #000;
+    cursor: grab;
+    height: 100%;
+    inset: 0;
+    outline: none;
+    position: absolute;
+    touch-action: none;
+    width: 100%;
+    z-index: 200;
+}
+
+.viewer-volume-canvas:active {
+    cursor: grabbing;
+}
+
+/* The plane just left, fading over the new one (views/planeMotion.js): a copy
+   of the picture laid directly over the tiles and under every overlay. It
+   never takes a click and is never in a capture. */
+.viewer-plane-ghost {
+    height: 100%;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    width: 100%;
+}
+
+.viewer-plane-ghost[hidden] {
+    display: none;
+}
+
+/* Motion turned off in the Depth card (services/viewerPrefs.js): the same
+   stillness the system's reduced-motion setting gives. */
+.plx-reduced-motion .depth-strip-thumb {
+    transition: none;
+}
+
+.viewer-volume-canvas[hidden] {
+    display: none;
+}
+
+/* Which way the stack faces (views/orientationGizmo.js), docked top-right by
+   the canvas layout: no background, a third opaque at rest, solid under the
+   pointer, while the view moves, or while an axis is locked. */
+.viewer-orientation-gizmo {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    opacity: 0.32;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    user-select: none;
+}
+
+.viewer-orientation-gizmo:hover,
+.viewer-orientation-gizmo:focus-within,
+.viewer-orientation-gizmo.is-active,
+.viewer-orientation-gizmo.is-locked {
+    opacity: 0.95;
+}
+
+.viewer-orientation-gizmo[hidden],
+.viewer-orientation-hint[hidden] {
+    display: none;
+}
+
+.viewer-orientation-gizmo svg {
+    display: block;
+    overflow: visible;
+}
+
+.viewer-orientation-gizmo .gizmo-end,
+.viewer-orientation-gizmo .gizmo-back {
+    cursor: pointer;
+    outline: none;
+}
+
+.viewer-orientation-gizmo .gizmo-label {
+    fill: #0b0d12;
+    font-size: 9px;
+    font-weight: 700;
+    pointer-events: none;
+}
+
+.viewer-orientation-gizmo .gizmo-ring {
+    stroke: transparent;
+    stroke-width: 1.5;
+    transition: stroke var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-orientation-gizmo .gizmo-end:hover .gizmo-ring,
+.viewer-orientation-gizmo .gizmo-end:focus-visible .gizmo-ring {
+    stroke: rgba(248, 250, 252, 0.6);
+}
+
+/* The locked axis wears a ring; the others step back. */
+.viewer-orientation-gizmo .gizmo-axis.is-locked .gizmo-ring {
+    stroke: var(--text-primary);
+}
+
+.viewer-orientation-gizmo .gizmo-axis.is-behind {
+    opacity: 0.55;
+}
+
+.viewer-orientation-gizmo.is-locked .gizmo-axis:not(.is-locked) {
+    opacity: 0.35;
+}
+
+.viewer-orientation-hint {
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+}
+
+.plx-reduced-motion .viewer-orientation-gizmo,
+.plx-reduced-motion .viewer-orientation-gizmo .gizmo-ring {
+    transition: none;
+}
+
+.viewer-depth-strip.is-volume .depth-strip-thumb {
+    display: none;
+}
+
+/* Orthogonal sections (views/sectionPanes.js): XZ along the bottom of the
+   image, YZ along its right edge beside the strip, each scaled and placed to
+   line up with the plane above or beside it. Cards over the image, never a
+   column of their own; the legend and mini-map step clear of the XZ strip. */
+.viewer-section-pane {
+    background: #000;
+    box-shadow: 0 0 0 1px var(--border-strong);
+    overflow: hidden;
+    position: absolute;
+    z-index: 210;
+}
+
+.viewer-section-pane.is-xz {
+    bottom: var(--plx-band-sections-xz, 0px);
+    height: 64px;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane.is-yz {
+    bottom: 0;
+    right: var(--plx-band-sections-yz, 56px);
+    top: 0;
+    width: 64px;
+    z-index: 212;
+}
+
+.viewer-section-pane-osd {
+    cursor: crosshair;
+    height: 100%;
+    inset: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.viewer-section-pane-label {
+    background: rgba(5, 7, 10, 0.72);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    left: 6px;
+    padding: 2px 6px;
+    pointer-events: none;
+    position: absolute;
+    top: 4px;
+    white-space: nowrap;
+}
+
+.viewer-section-pane.is-yz .viewer-section-pane-label {
+    left: 4px;
+    max-width: calc(100% - 8px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* What plugins draw where the cut crosses their shapes (a region through
+   the planes, say): over the tiles, under the plane marker and the label. */
+.viewer-section-pane-overlay {
+    height: 100%;
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
+}
+
+/* The plane on screen, marked in each section. */
+.viewer-section-pane-zline {
+    background: var(--accent-channel);
+    opacity: 0.85;
+    pointer-events: none;
+    position: absolute;
+}
+
+.viewer-section-pane.is-xz .viewer-section-pane-zline {
+    height: 1px;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane.is-yz .viewer-section-pane-zline {
+    bottom: 0;
+    top: 0;
+    width: 1px;
+}
+
+/* Where the sections cut the plane: the centre of the view. */
+.viewer-section-crosshair {
+    pointer-events: none;
+    position: absolute;
+    z-index: 205;
+}
+
+.viewer-section-crosshair.is-vertical {
+    border-left: 1px dashed rgba(248, 250, 252, 0.45);
+    bottom: 0;
+    top: 0;
+    width: 0;
+}
+
+.viewer-section-crosshair.is-horizontal {
+    border-top: 1px dashed rgba(248, 250, 252, 0.45);
+    height: 0;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane[hidden],
+.viewer-section-crosshair[hidden] {
+    display: none;
+}
+
+/* A pane's inner edge, for resizing it (sectionPanes.bindDivider): a strip
+   9px wide centred on the edge, invisible until the pointer or focus finds
+   it, then a 2px line in the accent with a small grip at its middle. Over the
+   panes, under the depth strip. */
+.viewer-section-divider {
+    position: absolute;
+    touch-action: none;
+    z-index: 214;
+}
+
+.viewer-section-divider.is-xz {
+    bottom: calc(var(--plx-band-sections-xz, 0px) + var(--plx-section-xz-h, 64px));
+    cursor: row-resize;
+    height: 9px;
+    left: 0;
+    right: var(--plx-inset-right, 120px);
+    transform: translateY(50%);
+}
+
+.viewer-section-divider.is-yz {
+    bottom: 0;
+    cursor: col-resize;
+    right: calc(var(--plx-band-sections-yz, 56px) + var(--plx-section-yz-w, 64px));
+    top: 0;
+    transform: translateX(50%);
+    width: 9px;
+}
+
+.viewer-section-divider::before {
+    background: var(--accent-channel);
+    content: "";
+    opacity: 0;
+    position: absolute;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-section-divider.is-xz::before {
+    height: 2px;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.viewer-section-divider.is-yz::before {
+    bottom: 0;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 2px;
+}
+
+.viewer-section-divider-grip {
+    background: var(--text-primary);
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(5, 7, 10, 0.85);
+    left: 50%;
+    opacity: 0;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-section-divider.is-xz .viewer-section-divider-grip {
+    height: 4px;
+    width: 28px;
+}
+
+.viewer-section-divider.is-yz .viewer-section-divider-grip {
+    height: 28px;
+    width: 4px;
+}
+
+.viewer-section-divider:hover::before,
+.viewer-section-divider:focus-visible::before,
+.viewer-section-divider.is-dragging::before {
+    opacity: 0.9;
+}
+
+.viewer-section-divider:hover .viewer-section-divider-grip,
+.viewer-section-divider:focus-visible .viewer-section-divider-grip,
+.viewer-section-divider.is-dragging .viewer-section-divider-grip {
+    opacity: 1;
+}
+
+.viewer-section-divider:focus-visible {
+    outline: none;
+}
+
+.viewer-section-divider[hidden] {
+    display: none;
+}
+
+/* While a divider is dragged its cursor holds over everything the pointer
+   crosses, and nothing underneath reacts to the drag. */
+#openseadragon_wrapper.is-resizing-xz,
+#openseadragon_wrapper.is-resizing-xz * {
+    cursor: row-resize !important;
+}
+
+#openseadragon_wrapper.is-resizing-yz,
+#openseadragon_wrapper.is-resizing-yz * {
+    cursor: col-resize !important;
+}
+
+/* The zoom buttons sit halfway down the part of the plane no band covers, so
+   a tall XZ pane never hides them. They live inside #openseadragon, which the
+   layout's docks cannot reach; imageViewer.js places them with inline
+   styles, hence the weight. */
+#openseadragon_wrapper .viewer-nav-anchor {
+    left: calc(var(--plx-inset-left, 0px) + 12px) !important;
+    top: calc(var(--plx-inset-top, 0px)
+              + (100% - var(--plx-inset-top, 0px) - var(--plx-inset-bottom, 0px)) / 2) !important;
+}
+
+#openseadragon_wrapper.has-sections .viewer-depth-strip {
+    z-index: 231;
+}
+
+/* The strip's gutter beside the YZ pane. Without a ground of its own it shows
+   a sliver of the plane (and of XZ) that no longer lines up with anything. */
+#openseadragon_wrapper.has-sections::after {
+    background: #000;
+    bottom: 0;
+    box-shadow: inset 1px 0 0 var(--border-strong);
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: var(--plx-band-sections-yz, 56px);
+    z-index: 211;
 }

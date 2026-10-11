@@ -10,6 +10,11 @@ class DataLayer {
         this.imageChannels = imageChannels;
 
         this.imageBitRange = [0, 65536];
+        //: A time series' object table (one row per cell per frame): the
+        //: frame on screen, `{column, t}`, which every request for rows below
+        //: carries -- the cells, centroids, nearest cell and gated ids of that
+        //: frame only. Null for every other table (set by ImageViewer.setTableFrame).
+        this.tableFrame = null;
         //selections
         this.currentSelection = new Map();
         // Roles, not literal column names -- see services/datasetContext.js.
@@ -93,6 +98,19 @@ class DataLayer {
     // views/channelNamesUpload.js. Nothing about it needed the data layer's
     // cached state; it only wanted the datasource name.
 
+    /** `{t}` for a request of rows while a frame is on screen (tableFrame). */
+    frameQuery() {
+        return this.tableFrame ? { t: String(this.tableFrame.t) } : {};
+    }
+
+    /** `filter` (column -> [low, high], low < value <= high) narrowed to the
+     *  frame on screen, for the routes that take a range filter. */
+    withFrame(filter) {
+        if (!this.tableFrame) return filter || {};
+        const t = Number(this.tableFrame.t);
+        return { ...(filter || {}), [this.tableFrame.column]: [t - 0.5, t + 0.5] };
+    }
+
     async getAllCells(start_keys, use_integer) {
         const dtype = use_integer ? 'integer' : 'float'
         const base_url = plexoraUrl(`get_all_cells/${dtype}/`) + '?'
@@ -102,7 +120,8 @@ class DataLayer {
             headers.append("Content-Encoding","gzip");
             const response = await fetch(base_url + new URLSearchParams({
                 start_keys: start_keys,
-                datasource: datasource
+                datasource: datasource,
+                ...this.frameQuery(),
             }), {
                 headers: headers
             })
@@ -144,7 +163,7 @@ class DataLayer {
                         datasource: datasource,
                         level: level,
                         tiles: tiles,
-                        filter: filter || {},
+                        filter: this.withFrame(filter),
                         max_points: maxPoints
                     }
                 )
@@ -247,12 +266,12 @@ class DataLayer {
         }
     }
 
-    async getImageChannelStats(channel) {
+    async getImageChannelStats(channel, view = "") {
         try {
-            let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams({
-                channel: channel,
-                datasource: datasource
-            }))
+            const query = { channel: channel, datasource: datasource };
+            // A projection's own brightness (a z-stack's `view=` token).
+            if (view) query.view = view;
+            let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams(query))
             return await response.json();
         } catch (e) {
             console.log("Error Getting Image Channel Stats", e);
@@ -262,7 +281,7 @@ class DataLayer {
     async getChannelCellIds(sels) {
         try {
             let response = await fetch(plexoraUrl('get_channel_cell_ids') + '?' + new URLSearchParams({
-                filter: JSON.stringify(sels),
+                filter: JSON.stringify(this.withFrame(sels)),
                 datasource: datasource
             }))
             let cellIds = await response.json();
@@ -290,7 +309,8 @@ class DataLayer {
             let response = await fetch(plexoraUrl('get_nearest_cell') + '?' + new URLSearchParams({
                 point_x: point_x,
                 point_y: point_y,
-                datasource: datasource
+                datasource: datasource,
+                ...this.frameQuery(),
             }))
             let cell = await response.json();
             return cell;

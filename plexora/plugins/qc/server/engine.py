@@ -38,6 +38,7 @@ from __future__ import annotations
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.plugins.qc.server import plane as qc_plane
 from plexora.agent.sessions import budget as budgets
 from plexora.agent.sessions.engine import BaseEngine, EngineContext
 from plexora.agent.sessions.store import SessionStore
@@ -563,7 +564,7 @@ class QCEngine(BaseEngine):
         try:
             from plexora.server.utils import source_image
 
-            with source_image.SHELF.reader(self.call.session.image_data(unit["project"])) \
+            with qc_plane.reader(self.call.session.image_data(unit["project"])) \
                     as source:
                 geometry, record = nuclei_trace.trace(
                     self.call.session, unit["project"], unit, envelope, scan, source,

@@ -257,7 +257,8 @@
             const row = button.closest(".config-layer");
             const editor = row?.querySelector(".config-layer-editor");
             if (!editor) return;
-            const fields = () => [...editor.querySelectorAll("[data-field], #edit_image_type")];
+            const fields = () => [...editor.querySelectorAll(
+                "[data-field], #edit_image_type, #edit_z_semantics")];
             const reset = () => fields().forEach((field) => {
                 field.value = field.dataset.stored ?? "";
             });
@@ -277,11 +278,21 @@
                 let request;
                 const imageType = editor.querySelector("#edit_image_type");
                 if (imageType) {
-                    if (imageType.value === (imageType.dataset.stored || "")) {
+                    // The reference image's two readings: its type, and how a
+                    // stack's Z axis is read. Sent together, applied together.
+                    const zSemantics = editor.querySelector("#edit_z_semantics");
+                    const body = {};
+                    if (imageType.value !== (imageType.dataset.stored || "")) {
+                        body.imageType = imageType.value;
+                    }
+                    if (zSemantics && zSemantics.value !== (zSemantics.dataset.stored || "")) {
+                        body.zSemantics = zSemantics.value;
+                    }
+                    if (!Object.keys(body).length) {
                         toggle(false);
                         return;
                     }
-                    request = [base, "POST", {imageType: imageType.value}];
+                    request = [base, "POST", body];
                 } else {
                     const body = {};
                     editor.querySelectorAll("[data-field]").forEach((field) => {

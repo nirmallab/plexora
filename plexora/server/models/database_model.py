@@ -40,6 +40,17 @@ class ViewTransform:
     __tablename__ = 'viewTransform'
 
 
+class ViewState:
+    """Where the viewer was in a volume: `{t, z, mode, slab, section, layout,
+    aux, volume}` as JSON (server/routes/volume_routes.py).
+
+    Viewer state like `ViewTransform`, kept here for the same reason: a
+    shared, read-only project still has to reopen on the plane this user left.
+    """
+
+    __tablename__ = 'viewState'
+
+
 class _Row:
     __slots__ = ("id", "datasource", "cells", "is_deleted")
 
