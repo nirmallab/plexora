@@ -158,7 +158,9 @@ def inspect_project(call, inp):
                            "confirmed": "features" in set(record.confirmed),
                            "options": [o["value"] for o in _feature_options(record)]},
             "roles": {"cell_id": schema.cell_id, "x": schema.x, "y": schema.y,
-                      "celltype": schema.celltype, "image_id": schema.image_id},
+                      "celltype": schema.celltype, "image_id": schema.image_id,
+                      # 3-D objects and time series: a cell's plane and frame.
+                      **{role: schema.get(role) for role in ("z", "t") if schema.get(role)}},
             "markers": markers[:MAX_LIST],
             "markers_truncated": len(markers) > MAX_LIST,
             "markers_classified": record.columns.classified,
@@ -478,14 +480,15 @@ class BindInput(AgentModel):
     name: str | None = Field(None, description="The new project's name; default from the "
                              "image's filename.")
     roles: dict[str, str | None] | None = Field(
-        None, description="Which column is which: cell_id, x, y, image_id, celltype.")
+        None, description="Which column is which: cell_id, x, y, image_id, celltype; and z "
+                          "(a cell's plane) and t (its frame) for 3-D objects or a time series.")
     table_name: str | None = Field(None, description="Which table inside a SpatialData store.")
     dataset: str | None = Field(None, description="Put the new project in this dataset.")
     exist_ok: bool = Field(True, description="Answer with the project that already shows "
                            "this table instead of making a second one.")
 
 
-_ROLE_KEYS = ("cell_id", "x", "y", "image_id", "celltype")
+_ROLE_KEYS = ("cell_id", "x", "y", "image_id", "celltype", "z", "t")
 
 
 def _register_bound(inp, roles, subset):
@@ -594,6 +597,8 @@ def bind_project(call, inp):
         name = _register_bound(inp, roles, subset)
     except ValueError as exc:
         raise AgentError("invalid_input", str(exc)) from None
+    if roles.get("z") or roles.get("t"):
+        _record_depth_roles(name, roles)
     call.project_name = name
     receipt = make_receipt(
         call, changed=True, before=None,
@@ -601,6 +606,22 @@ def bind_project(call, inp):
                "roles": roles},
         persistent_state="config", reversible=False)
     return {"project": name, "created": True, "receipt": receipt.model_dump(mode="json")}
+
+
+def _record_depth_roles(name, roles):
+    """A cell's plane (`z`) and frame (`t`) columns, recorded once the project
+    exists -- registration asks no question about them -- and confirmed,
+    because the caller named them."""
+    from dataclasses import replace
+
+    from plexora.server.models.project import Project
+
+    record = Project.load(name)
+    if record.dataset is None:
+        return
+    named = {key: roles[key] for key in ("z", "t") if roles.get(key)}
+    spec = replace(record.dataset, roles=replace(record.dataset.roles, **named))
+    record.patch(dataset=spec).with_confirmed(tuple(f"role:{key}" for key in named)).save()
 
 
 def capabilities():

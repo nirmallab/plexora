@@ -126,3 +126,41 @@ def describe(size: Mapping[str, Any] | None) -> str:
     if not size:
         return "uncalibrated (no physical pixel size is known)"
     return f"{size['value']:.4g} µm/px ({size['source']})"
+
+
+def spacing(project) -> dict:
+    """Micrometres per pixel along x and y and per plane along z.
+
+    `{x, y, z}`, each `{value, unit: "µm", source}` or None: x and y are
+    `pixel_size`; z is the step somebody typed (`pixel_size_z`) or, for a
+    z-stack, the one its file states -- None for a flat image or a stack whose
+    step nobody knows. Never guesses: a physical z from a default would put
+    every cell at a made-up depth.
+    """
+    from plexora.server.models.project import normalize_pixel_size
+
+    xy = pixel_size(project)
+    out = {"x": xy, "y": xy, "z": None}
+    manual = normalize_pixel_size(project.image.pixel_size_z)
+    if manual is not None:
+        value = to_microns(manual["value"], manual["unit"])
+        if value is not None:
+            out["z"] = {"value": value, "unit": "µm", "source": "manual"}
+            return out
+    if not project.image.is_volumetric:
+        return out
+    try:
+        from plexora.server.utils.source_image import open_project_volume
+
+        source = open_project_volume(project)
+    except Exception:
+        return out
+    if source is None:
+        return out
+    try:
+        step = source.volume.spacing.z
+        if step.known and step.microns():
+            out["z"] = {"value": step.microns(), "unit": "µm", "source": step.source}
+    finally:
+        source.close()
+    return out

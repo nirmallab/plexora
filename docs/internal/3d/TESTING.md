@@ -163,6 +163,13 @@ In the viewer, outlines, centroids, Cell Explorer's colours, gates and a click o
 the frame on screen's rows; step frames and they follow. A region drawn on one frame counts and
 maps only that frame's cells.
 
+**Hand-off to SCIMAP Pro in µm.** A hand-off from Plexora now says where the cells are and in
+what units: an object table measured in µm hands over its `x_um`/`y_um`/`z_um` columns; any
+other table hands over its pixel columns with the µm per pixel (and per plane, for 3-D objects)
+and where each step came from. A step nobody knows is named as missing, never defaulted, and
+nothing is written into your table. Binding a table from SCIMAP Pro can name its z and frame
+columns too. (SCIMAP Pro has to read the new fields on its side.)
+
 **Magic select on a stack.** It outlines the plane (or projection) on screen; move to another
 plane and the next click is outlined from that plane's pixels.
 
@@ -234,7 +241,6 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.
-- Hand-off to SCIMAP Pro with µm coordinates.
 - Full resolution everywhere in 3-D at once (a GPU brick atlas): the 3-D view refines the part
   you rest on, not the whole stack. 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).

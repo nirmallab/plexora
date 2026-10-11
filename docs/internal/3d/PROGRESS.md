@@ -90,7 +90,14 @@ causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/b
 
 ## Phase 4 / 5
 
-Gating 3D evidence waits for feature/spatial-gating; SCIMAP hand-off in µm not started.
+Gating 3D evidence waits for feature/spatial-gating.
+
+SCIMAP hand-off in µm (2026-10-11): `pixel_scale.spacing(project)` (x/y pixel size, z step typed
+or from the file, never defaulted); `TableHandle.physical_coordinates()` (X_um/Y_um/Z_um, read
+from an object table's µm columns or scaled from pixels; `CoordinatesUnavailable` names the
+missing step); a hand-off's `table_for` carries `roles` and `coordinates` (`agent/coordinates.py`)
+instead of writing µm columns into the user's table; `bind_project`/`bridge_bind` accept and
+record `z` and `t` roles; `inspect_project` reports them. SCIMAP Pro must read `coordinates`.
 
 Time series (first slice): a T×Z OME-TIFF with a stated time increment registers with
 `imageTSemantics: time`; the viewer steps frames (`.`/`,`, the Depth card's Frame field), the

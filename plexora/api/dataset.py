@@ -656,6 +656,15 @@ class TableSource:
         return self.locator.is_local
 
 
+class CoordinatesUnavailable(ValueError):
+    """Positions cannot be given in µm: `missing` names what would let them
+    (`pixel_size`, or `spacing:z` for depth)."""
+
+    def __init__(self, message: str, *, missing: str):
+        super().__init__(message)
+        self.missing = missing
+
+
 class TableHandle:
     """The feature table, whatever format it was imported from.
 
@@ -827,6 +836,69 @@ class TableHandle:
             return self._provider.frame
         data_model._ensure_loaded(self._project.name)
         return data_model.get_datasource_df()
+
+    def physical_coordinates(self):
+        """Each cell's position in micrometres, for analysis that measures
+        distance (neighbourhoods, contact, density) in the tissue's own units.
+
+        A polars DataFrame of the cell id (`cell_id`), `X_um`, `Y_um` and,
+        for a table with a z role (3-D objects), `Z_um`; with a frame role (a
+        time series), `t` too. An object table measured in µm (`x_um`,
+        `y_um`, `z_um`) is read as measured; any other table's pixel columns
+        are scaled by the image's pixel size and z step
+        (`pixel_scale.spacing`). Nothing is written to the table.
+
+        Returns:
+            polars.DataFrame | None: None if this project has no feature table.
+
+        Raises:
+            CoordinatesUnavailable: The pixel size is unknown (no µm at all), or
+                the table has a z role and the z step is unknown -- say which,
+                rather than substituting a default.
+        """
+        import polars as pl
+
+        from plexora.server.utils import pixel_scale
+
+        frame = self.geometry()
+        if frame is None:
+            return None
+        roles = self._project.roles
+        id_column = roles.get("cell_id") if roles.get("cell_id") in frame.columns else "id"
+        z_role = roles.get("z")
+        t_role = roles.get("t")
+        names = set(frame.columns)
+        measured = {"x_um", "y_um"} <= names and (not z_role or "z_um" in names)
+        out = {"cell_id": frame[id_column]}
+        if measured:
+            out["X_um"] = frame["x_um"]
+            out["Y_um"] = frame["y_um"]
+            if z_role:
+                out["Z_um"] = frame["z_um"]
+        else:
+            steps = pixel_scale.spacing(self._project)
+            if steps["x"] is None:
+                raise CoordinatesUnavailable(
+                    "the image's pixel size is unknown, so positions cannot be given in µm; "
+                    "set it (set_pixel_size) first", missing="pixel_size")
+            if z_role and steps["z"] is None:
+                raise CoordinatesUnavailable(
+                    "the table places cells in depth but the distance between planes is "
+                    "unknown; set it (set_z_spacing) first", missing="spacing:z")
+            x_um, y_um = float(steps["x"]["value"]), float(steps["y"]["value"])
+            out["X_um"] = frame[roles.get("x")].cast(pl.Float64) * x_um
+            out["Y_um"] = frame[roles.get("y")].cast(pl.Float64) * y_um
+            if z_role:
+                z_values = frame[z_role] if z_role in names else self._column(z_role)
+                out["Z_um"] = z_values.cast(pl.Float64) * float(steps["z"]["value"])
+        if t_role:
+            out["t"] = frame[t_role] if t_role in names else self._column(t_role)
+        return pl.DataFrame(out)
+
+    def _column(self, name):
+        import polars as pl
+
+        return pl.Series(name, self.columns([name])[name])
 
     def run(self, operation: str, payload: Mapping[str, Any] | None = None) -> Any:
         """Run a registered table operation wherever this table's file is.
