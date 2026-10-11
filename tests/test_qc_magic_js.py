@@ -48,6 +48,9 @@ CHECKS = (
     "QcMagic: in Scribble a drag is a line, sent as points along it, drawn as it goes",
     "QcMagic: Remove inside the selected region carves it, seeded with its outline",
     "QcMagic: a plain click inside it refines it, with no seed",
+    "QcMagic: a second scribble beside the first is a new region; the first's dots go when it lands",
+    "QcMagic: a loop drawn round something sends its box",
+    "QcMagic: an outline whose region is gone ends with it, dots and all",
 )
 
 node = shutil.which("node")

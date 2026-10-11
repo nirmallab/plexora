@@ -277,10 +277,11 @@ window.QcFreehand = QcFreehand;
  * A floating bar on the image switches what a click does -- Add (include; a
  * drag pans), Remove (take away; Shift-click in Add too), Box (drag round a
  * large or textured object) and Scribble (a line drawn over the object, sent
- * as points along it; Shift for a line over what to leave out) -- and all
- * four refine the same outline. A click
- * inside the selected QC region refines that region, starting from its own
- * outline; × on the bar puts magic select away. The ROI tool's magic select, at QC's size: the
+ * as points along it, or a loop round it, sent as its box; Shift for a line
+ * over what to leave out). Clicks build up the outline being made; a box or a
+ * scribble outlines a whole object by itself, so each starts its own. Begun
+ * inside the selected QC region, any of them redraws that region instead;
+ * × on the bar puts magic select away. The ROI tool's magic select, at QC's size: the
  * same planner and prompt bookkeeping (services/segmentService.js), QC's own
  * routes to store the result (`/regions/draw` with a geometry, and
  * `/regions/reshape`), through callbacks the controller supplies.
@@ -441,9 +442,12 @@ class QcMagic {
         this.dragOrigin = null;
         this.cancelBox();
         if (stroke) {
-            const points = window.PlexoraSegment?.strokePoints?.(stroke.points, {
-                spacing: QcMagic.STROKE_SPACING * this.pen.imagePerScreen() }) || [];
-            if (points.length) this.prompt({ stroke: points, shift: stroke.remove });
+            // A line over the object is points along it; a loop round it is its box.
+            const prompt = window.PlexoraSegment?.strokePrompt?.(stroke.points, {
+                spacing: QcMagic.STROKE_SPACING * this.pen.imagePerScreen(),
+                minDepth: QcMagic.LOOP_DEPTH * this.pen.imagePerScreen(),
+                remove: stroke.remove });
+            if (prompt) this.prompt({ ...prompt, shift: stroke.remove });
             return;
         }
         if (!corners) return;
@@ -483,6 +487,10 @@ class QcMagic {
     /** Screen pixels between the points a scribble becomes. */
     static get STROKE_SPACING() { return 24; }
 
+    /** Screen pixels deep (its radius, if round) a loop must be to have been
+     *  drawn round something rather than dabbed on it. */
+    static get LOOP_DEPTH() { return 8; }
+
     static padded(bbox, fraction) {
         const pad = Math.max(bbox.width, bbox.height) * fraction;
         return { x: bbox.x - pad, y: bbox.y - pad, width: bbox.width + 2 * pad,
@@ -493,7 +501,8 @@ class QcMagic {
         const segment = window.PlexoraSegment;
         if (!segment || this.busy) return;
         // A scribble is decided by where it starts (inside the selected region
-        // it reshapes it); its points go in as one step, undone together.
+        // it reshapes it, elsewhere it is a new one, never more of the last);
+        // its points go in as one step, undone together.
         if (stroke && !stroke.length) return;
         const prompts = stroke || (point ? [point] : []);
         const where = prompts[0] || { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -508,7 +517,9 @@ class QcMagic {
             session: this.session ? { roiId: this.session.session.roiId,
                                       bbox: this.session.session.bbox } : null,
             canCreate: this.canCreate(),
+            standalone: Boolean(box || stroke),
         });
+        const marks = { stroke: Boolean(stroke) };
         switch (plan.kind) {
             case "locked":
                 return this.onMessage?.("That region is locked. Unlock it in the ROI panel to reshape it.");
@@ -519,7 +530,7 @@ class QcMagic {
                     + "or select a region and click inside it");
             case "new":
                 this.session = { session: new segment.Session({ box }), snapshot };
-                this.session.session.addMany(prompts, 1);
+                this.session.session.addMany(prompts, 1, marks);
                 break;
             case "grow":
             case "carve":
@@ -531,7 +542,7 @@ class QcMagic {
                         seed: selected.geometry || null }), snapshot };
                 }
                 if (box) this.session.session.box = box;
-                else this.session.session.addMany(prompts, plan.kind === "grow" ? 1 : 0);
+                else this.session.session.addMany(prompts, plan.kind === "grow" ? 1 : 0, marks);
                 break;
             case "refine":
                 // No seed from a loose outline here (it is drawn back as
@@ -539,19 +550,29 @@ class QcMagic {
                 this.session = { session: new segment.Session({
                     roiId: selected.id, bbox: selected.bbox,
                     box: box || QcMagic.padded(selected.bbox, 0.10) }), snapshot };
-                this.session.session.addMany(prompts, 1);
+                this.session.session.addMany(prompts, 1, marks);
                 break;
             default:
                 return;
         }
-        this.showPrompts();
+        this.showPrompts(prompts.length > 0);
         this.run(this.session);
     }
 
-    showPrompts() {
-        this.overlay.prompts = this.session ? this.session.session.points.slice() : null;
+    /** The outline's dots; `pending` while the latest prompt is on its way. */
+    showPrompts(pending = false) {
+        const points = this.session ? this.session.session.shown(pending) : [];
+        this.overlay.prompts = points.length ? points : null;
         this.overlay.promptColor = this.color;
         this.overlay.schedule();
+    }
+
+    /** The outline being made lost its region (deleted from the list, by an
+     *  agent, from the ROI panel): its dots go with it, and the next prompt
+     *  starts a new outline. `exists(roiId)` says what is still there. */
+    forgetGone(exists) {
+        const id = this.session?.session.roiId;
+        if (id && !exists(id)) this.endSession();
     }
 
     setBusy(busy) {

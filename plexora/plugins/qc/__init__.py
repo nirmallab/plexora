@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261007_qc_gating_overlay"
+VERSION = "20261010_magic_select_qc"
 
 
 def _blueprint():

@@ -11,8 +11,8 @@
  *   Box      a drag boxes the object to outline (large or textured things)
  *   Scribble a line drawn over the object becomes points along it -- the
  *            way to say "all of this" for a long, patchy or uneven thing a
- *            single click reads as only its nearest part; Shift draws a line
- *            over what to leave out
+ *            single click reads as only its nearest part; a loop drawn round
+ *            it is its box; Shift draws a line over what to leave out
  *   ×        magic select off; the bar goes with it
  *
  * In Add and Remove a drag still pans, so navigating never needs a mode
@@ -39,8 +39,8 @@
         { id: "box", icon: "expand", label: "Box",
           title: "Box -- drag a box round the object to outline it" },
         { id: "scribble", icon: "paintbrush", label: "Scribble",
-          title: "Scribble -- draw a line over the object to outline it "
-               + "(Shift: a line over what to leave out)" },
+          title: "Scribble -- draw a line over the object, or a loop round it, to outline "
+               + "it (Shift: a line over what to leave out)" },
     ];
 
     let bar = null;      // {root, buttons, owner, onMode, onClose}

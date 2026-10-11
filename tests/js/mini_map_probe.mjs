@@ -3,7 +3,7 @@
  *
  * Three things live here that nothing else in the suite can see: the colour
  * arithmetic (which has to agree with frag.glsl, in a second language), the
- * circle geometry (wrong geometry still draws a map, it just points at the
+ * frame geometry (wrong geometry still draws a map, it just points at the
  * wrong place), and the lifecycle (a handler that outlives a collapse costs
  * per-frame work forever and is invisible until someone profiles).
  *
@@ -107,7 +107,10 @@ class FakeImageData {
 function makeHarness(options = {}) {
     const width = options.width ?? 1000;
     const height = options.height ?? 500;
-    const size = options.size ?? 220;
+    // The viewer's box. The map copies its shape at MiniMap.SIZE_RATIO, so
+    // the default 1000x500 viewer gets a 240x120 frame.
+    const viewerWidth = options.viewerWidth ?? 1000;
+    const viewerHeight = options.viewerHeight ?? 500;
 
     const wrapper = new FakeElement("div");
     const created = [];
@@ -120,6 +123,7 @@ function makeHarness(options = {}) {
     let bounds = { x: 0, y: 0, width: 1, height: height / width };
 
     const viewer = {
+        element: { clientWidth: viewerWidth, clientHeight: viewerHeight },
         addHandler(name, fn) { (viewerHandlers[name] ||= []).push(fn); },
         removeHandler(name, fn) {
             viewerHandlers[name] = (viewerHandlers[name] || []).filter((f) => f !== fn);
@@ -224,11 +228,18 @@ function makeHarness(options = {}) {
     runInContext("globalThis.__MiniMap = MiniMap;", context);
 
     const map = new sandbox.__MiniMap(imageViewer);
-    // The stage's layout box is constant in both states by design, so the
-    // harness can set it once.
-    map.stage.offsetWidth = size;
-    map.stage.offsetHeight = size;
-    map.stage._rect = { left: 0, top: 0, width: size, height: size };
+    // The stage is 100% of the root (viewer.css) and the root is sized by
+    // _fitRoot from the viewer's box, as inline width/height. The stage's
+    // layout box is constant across open/close by design, so deriving it from
+    // that inline style is all the layout engine the harness needs.
+    const rootPx = (prop) => parseFloat(map.root.style[prop]) || 0;
+    Object.defineProperty(map.stage, "offsetWidth", { get: () => rootPx("width") });
+    Object.defineProperty(map.stage, "offsetHeight", { get: () => rootPx("height") });
+    map.stage._rect = {
+        left: 0, top: 0,
+        get width() { return rootPx("width"); },
+        get height() { return rootPx("height"); },
+    };
 
     return {
         map, viewer, viewerHandlers, panCalls, zoomCalls, fetchCalls, sandbox,
@@ -248,33 +259,71 @@ const RED = { r: 255, g: 0, b: 0 };
 // -- geometry -----------------------------------------------------------
 
 {
-    // A landscape image: the long side spans the full diameter, and the short
-    // side is centred, so the corners -- background on any slide -- are what
-    // border-radius clips.
-    const h = makeHarness({ width: 1000, height: 500, size: 220 });
+    // The frame is the viewer's shape at SIZE_RATIO of its size: a 1000x500
+    // viewer gets a 240x120 map. An image of the viewer's own aspect fills
+    // it; any other is contained -- centred, letterboxed, never clipped,
+    // because a rectangle has no background corners to hide an overhang in.
+    const h = makeHarness({ width: 1000, height: 500 });
     h.map.expand();
     const g = h.map.geom;
-    check("landscape: long side spans the diameter", near(g.drawWidth, 220));
-    check("landscape: short side keeps the aspect", near(g.drawHeight, 110));
-    check("landscape: image is centred vertically", near(g.offsetY, 55));
-    check("landscape: no horizontal offset", near(g.offsetX, 0));
+    check("the frame has the viewer's aspect ratio",
+        h.map.root.style.width === "240px" && h.map.root.style.height === "120px",
+        { ...h.map.root.style });
+    check("landscape image in a landscape frame: fills the width", near(g.drawWidth, 240));
+    check("landscape: short side keeps the aspect", near(g.drawHeight, 120));
+    check("landscape: no offset either way", near(g.offsetX, 0) && near(g.offsetY, 0));
 
-    const p = makeHarness({ width: 500, height: 1000, size: 220 });
+    const p = makeHarness({ width: 500, height: 1000 });
     p.map.expand();
-    check("portrait: long side spans the diameter", near(p.map.geom.drawHeight, 220));
-    check("portrait: image is centred horizontally", near(p.map.geom.offsetX, 55));
+    check("portrait image: contained by the frame's height", near(p.map.geom.drawHeight, 120));
+    check("portrait image: nothing overhangs the frame",
+        p.map.geom.drawWidth <= p.map.stage.offsetWidth + 1e-9
+        && p.map.geom.drawHeight <= p.map.stage.offsetHeight + 1e-9, p.map.geom);
+    check("portrait image: letterboxed, centred horizontally", near(p.map.geom.offsetX, 90));
 
-    const sq = makeHarness({ width: 800, height: 800, size: 220 });
+    const sq = makeHarness({ width: 800, height: 800 });
     sq.map.expand();
-    check("square: fills the diameter both ways",
-        near(sq.map.geom.drawWidth, 220) && near(sq.map.geom.drawHeight, 220));
+    check("square image: a square inside the frame, centred",
+        near(sq.map.geom.drawWidth, 120) && near(sq.map.geom.drawHeight, 120)
+        && near(sq.map.geom.offsetX, 60) && near(sq.map.geom.offsetY, 0), sq.map.geom);
+
+    // A tall viewer gets a tall frame -- here the MAX_HEIGHT cap, not the
+    // ratio, sets the size (0.22 of 500x1000) -- and the same landscape image
+    // now hangs off its width instead.
+    const tall = makeHarness({ width: 1000, height: 500, viewerWidth: 500, viewerHeight: 1000 });
+    tall.map.expand();
+    check("a tall viewer gets a tall frame",
+        tall.map.root.style.width === "110px" && tall.map.root.style.height === "220px",
+        { ...tall.map.root.style });
+    check("...and the landscape image is contained by its width",
+        near(tall.map.geom.drawWidth, 110) && near(tall.map.geom.drawHeight, 55)
+        && near(tall.map.geom.offsetY, 82.5), tall.map.geom);
+
+    // The caps clamp by ONE factor, so a big monitor's map is smaller, not a
+    // different shape; the floor does the same for a small window.
+    const big = makeHarness({ viewerWidth: 4000, viewerHeight: 2000 });
+    big.map.expand();
+    check("a large viewer is capped without losing the aspect",
+        big.map.root.style.width === "340px" && big.map.root.style.height === "170px",
+        { ...big.map.root.style });
+    const small = makeHarness({ viewerWidth: 500, viewerHeight: 300 });
+    small.map.expand();
+    check("a small viewer is floored without losing the aspect",
+        small.map.root.style.width === "180px" && small.map.root.style.height === "108px",
+        { ...small.map.root.style });
+
+    // A viewer that has not been laid out yet has no shape to copy; the map
+    // waits rather than guessing one.
+    const unsized = makeHarness({ viewerWidth: 0, viewerHeight: 0 });
+    unsized.map.expand();
+    check("no viewer size yet: no geometry, and no crash", unsized.map.geom === null);
 }
 
 {
     // The indicator has to be the viewport rectangle, and it has to be right
     // with ZERO channels on -- there is no world item to ask in that state,
     // which is why this does not go through viewportToImageRectangle.
-    const h = makeHarness({ width: 1000, height: 500, size: 220, slots: [] });
+    const h = makeHarness({ width: 1000, height: 500, slots: [] });
     h.map.expand();
     const g = h.map.geom;
 
@@ -307,7 +356,7 @@ const RED = { r: 255, g: 0, b: 0 };
 {
     // A drag maps back through the same transform it drew with: grab the
     // rectangle, move it n px, and the viewport centre moves n/drawWidth.
-    const h = makeHarness({ width: 1000, height: 500, size: 220 });
+    const h = makeHarness({ width: 1000, height: 500 });
     h.map.expand();
     h.setBounds({ x: 0.25, y: 0.125, width: 0.5, height: 0.25 });
     h.map._syncIndicator();
@@ -354,7 +403,7 @@ const RED = { r: 255, g: 0, b: 0 };
 {
     // The wheel is the one gesture that may change zoom, and it zooms about
     // the point under the cursor.
-    const h = makeHarness({ width: 1000, height: 500, size: 220 });
+    const h = makeHarness({ width: 1000, height: 500 });
     h.map.expand();
     const g = h.map.geom;
     h.map.stage.dispatch("wheel", {
@@ -615,7 +664,7 @@ async function composite(options) {
     }
     check("a failing overview does not reject the rebuild", threw === false);
     check("a failing overview is not cached as if it worked", h.map._gray.size === 0);
-    // A black circle reads as dark tissue. Nothing but this note distinguishes
+    // A black map reads as dark tissue. Nothing but this note distinguishes
     // "the overview failed" from "this slide is dim" for the person looking.
     check("a total failure says so instead of drawing nothing",
         h.map.note.textContent.length > 0 && h.map.root.classList.contains("has-note"),
@@ -742,7 +791,7 @@ async function composite(options) {
 // -- orientation: core's Rotate and Flip ----------------------------------
 
 {
-    const h = makeHarness({ width: 1000, height: 500, size: 220, slots: [] });
+    const h = makeHarness({ width: 1000, height: 500, slots: [] });
     const map = h.map;
     const lens = map.lens;
     check("the lens button carries both glyphs, and CSS picks one",
@@ -774,11 +823,21 @@ async function composite(options) {
         getCenter: () => ({ x: 0.5, y: 0.25 }),
     };
     h.setBounds(turned);
+    const fillsBefore = map.canvas.getContext().fills.length;
     (h.viewerHandlers.rotate || []).forEach((fn) => fn());
     check("turned and mirrored, the layer is mirrored after it is turned",
         map.orient.style.transform === "scaleX(-1) rotate(90deg)", map.orient.style.transform);
 
+    // The frame is not round: turned a quarter, the landscape image stands
+    // up, so it is refitted to the footprint it now has -- 500x1000 inside
+    // 240x120 -- and redrawn, once, at that size.
     const g = map.geom;
+    check("turned a quarter, the image is refitted to its turned footprint",
+        g.turn === 90 && near(g.drawWidth, 120) && near(g.drawHeight, 60)
+        && near(g.offsetX, 60) && near(g.offsetY, 30), g);
+    check("...and the canvas is redrawn at the new size",
+        map.canvas.width === 120 && map.canvas.getContext().fills.length > fillsBefore,
+        { width: map.canvas.width, fills: map.canvas.getContext().fills.length, fillsBefore });
     const style = map.indicator.style;
     check("the indicator is OSD's turned rectangle, placed at its turned corner",
         near(parseFloat(style.left), g.offsetX + 0.45 * g.drawWidth)
@@ -796,14 +855,17 @@ async function composite(options) {
     // must pan to that same image point.
     const u = 0.7;
     const v = 0.3;
-    const c = 110;
-    let qx = g.offsetX + u * g.drawWidth - c;
-    let qy = g.offsetY + v * g.drawHeight - c;
+    // The layer turns about the stage's centre, which on a frame in the
+    // viewer's proportions is two numbers, not one.
+    const cx = map.stage.offsetWidth / 2;
+    const cy = map.stage.offsetHeight / 2;
+    let qx = g.offsetX + u * g.drawWidth - cx;
+    let qy = g.offsetY + v * g.drawHeight - cy;
     [qx, qy] = [-qy, qx];          // rotate(90deg), y down
     qx = -qx;                       // then scaleX(-1)
     h.panCalls.length = 0;
     map.stage.dispatch("pointerdown", {
-        button: 0, pointerId: 11, clientX: c + qx, clientY: c + qy,
+        button: 0, pointerId: 11, clientX: cx + qx, clientY: cy + qy,
         target: map.canvas, preventDefault() {},
     });
     const panned = h.panCalls.at(-1);
@@ -815,7 +877,7 @@ async function composite(options) {
     // And grabbing the turned indicator keeps its centre where it was.
     h.panCalls.length = 0;
     map.stage.dispatch("pointerdown", {
-        button: 0, pointerId: 12, clientX: c, clientY: c, target: map.indicator, preventDefault() {},
+        button: 0, pointerId: 12, clientX: cx, clientY: cy, target: map.indicator, preventDefault() {},
     });
     check("grabbing the turned indicator does not pan", h.panCalls.length === 0);
     map.stage.dispatch("pointerup", { pointerId: 12 });
@@ -827,6 +889,9 @@ async function composite(options) {
     map._syncIndicator();
     check("upright again, the layer and the indicator lose their transforms",
         map.orient.style.transform === "" && map.indicator.style.transform === "");
+    check("...and the image is fitted upright again",
+        map.geom.turn === 0 && near(map.geom.drawWidth, 240) && near(map.geom.drawHeight, 120),
+        map.geom);
 }
 
 // -- report -------------------------------------------------------------
