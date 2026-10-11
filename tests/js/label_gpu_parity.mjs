@@ -18,6 +18,11 @@
 //   * over opaque black: RGB, which is then the premultiplied colour, within 1
 //     (the two paths premultiply through different 8-bit roundings).
 //
+// A gate mask holding QC's third state (2, not called) is drawn grey on both
+// paths, whatever the colour table says: in those cases every well-covered
+// pixel of a not-called cell is also checked to BE the grey (#7a7a7a), so the
+// two paths cannot agree on something else.
+//
 // After the GPU draws, a draw through the "channel" program checks the context
 // was handed back intact (program, viewport, unpack flip).
 //
@@ -161,6 +166,32 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
         for (const id of new Set(tile.ids)) if (id && keep(id)) mask[id] = 1;
         return mask;
     }
+    /** The same with QC's third state: a quarter of the cells not called
+     *  (2), whether the gate kept them or not. */
+    function notCalledOf(tile, keep) {
+        const mask = gateOf(tile, keep);
+        for (const id of new Set(tile.ids)) if (id && id % 4 === 1) mask[id] = 2;
+        return mask;
+    }
+
+    /** A plugin's uncertain positives (3): a quarter of the kept cells. */
+    function uncertainOf(tile, keep) {
+        const mask = gateOf(tile, keep);
+        for (const id of new Set(tile.ids)) if (id && mask[id] === 1 && id % 4 === 3) mask[id] = 3;
+        return mask;
+    }
+
+    /** The cell model's marks: a quarter of the kept cells not its own (5),
+     *  a quarter of the rest its own below the gate (4). */
+    function modelOf(tile, keep) {
+        const mask = gateOf(tile, keep);
+        for (const id of new Set(tile.ids)) {
+            if (!id) continue;
+            if (mask[id] === 1 && id % 4 === 3) mask[id] = 5;
+            else if (mask[id] === 0 && id % 4 === 1) mask[id] = 4;
+        }
+        return mask;
+    }
 
     function canvas2d(w, h) {
         const c = document.createElement("canvas");
@@ -197,6 +228,26 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
         return { a, b, cpuMs, gpuMs };
     }
 
+    /** Pixels of not-called cells (mask 2) that each path drew, and how many
+     *  of them are not the grey. Over transparent, the canvas hands colour
+     *  back un-premultiplied, and the round trip through an 8-bit
+     *  premultiplied value can move it by up to 0.5 + 127.5 / alpha -- one
+     *  step at the plain 220, a few at a small cell's tint. Pixels under
+     *  alpha 16 are not read: there the grey and white are steps apart. */
+    function greyOf(tile, mask, pixels) {
+        let checked = 0; let wrong = 0;
+        for (let p = 0; p < tile.ids.length; p += 1) {
+            const id = tile.ids[p];
+            const o = p * 4;
+            const alpha = pixels[o + 3];
+            if (!id || mask[id] !== 2 || alpha < 16) continue;
+            checked += 1;
+            const tolerance = Math.ceil(0.5 + 127.5 / alpha);
+            if ([0, 1, 2].some((k) => Math.abs(pixels[o + k] - T.NOT_CALLED_RGB[k]) > tolerance)) wrong += 1;
+        }
+        return { checked, wrong };
+    }
+
     function compare(tile, layers, segmentationMode) {
         const over = renderBoth(tile, layers, segmentationMode, false);
         let alphaDiff = 0; let alphaMax = 0; let drawn = 0;
@@ -206,6 +257,8 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
             if (d > alphaMax) alphaMax = d;
             if (over.a[i]) drawn += 1;
         }
+        const notCalled = layers.length === 1 && layers[0].gateMask?.includes(2) ? layers[0].gateMask : null;
+        const grey = notCalled ? { cpu: greyOf(tile, notCalled, over.a), gpu: greyOf(tile, notCalled, over.b) } : null;
         const black = renderBoth(tile, layers, segmentationMode, true);
         let rgbDiff = 0; let rgbMax = 0;
         for (let i = 0; i < black.a.length; i += 4) {
@@ -216,7 +269,7 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
             }
         }
         return { alphaDiff, alphaMax, rgbDiff, rgbMax, drawn, pixels: tile._labelWidth * tile._labelHeight,
-                 fill: tile._fillWeight ?? null, cpuMs: over.cpuMs, gpuMs: over.gpuMs };
+                 fill: tile._fillWeight ?? null, grey, cpuMs: over.cpuMs, gpuMs: over.gpuMs };
     }
 
     // --- the matrix ----------------------------------------------------------
@@ -243,6 +296,16 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
                 { name: "under", mode: "filled", lut, opacity: 0.45 },
                 { name: "over", mode: "outlines", lut: null, opacity: 0.8,
                   gateMask: gateOf(tile, (id) => id % 3 === 1) }]],
+            ["gate mask, not called grey", [{ name: "n", mode: "outlines", lut: null, opacity: 1,
+                                             gateMask: notCalledOf(tile, (id) => id % 2 === 0) }]],
+            ["not called over colours, alpha-0 category", [{ name: "nc", mode: "outlines", lut, opacity: 1,
+                gateMask: notCalledOf(tile, (id) => id % 3 !== 0) }]],
+            ["filled mode, not called", [{ name: "nf", mode: "filled", lut, opacity: 1,
+                                          gateMask: notCalledOf(tile, (id) => id % 2 === 1) }]],
+            ["gate mask, uncertain amber", [{ name: "u", mode: "outlines", lut, opacity: 1,
+                                             gateMask: uncertainOf(tile, (id) => id % 2 === 0) }]],
+            ["gate mask, the cell model's colours", [{ name: "m", mode: "outlines", lut, opacity: 1,
+                gateMask: modelOf(tile, (id) => id % 2 === 0) }]],
         ];
         for (const segmentationMode of ["filled", "outlines"]) {
             for (const [name, layers] of cases) {
@@ -327,11 +390,17 @@ if (report.error) {
 console.log(`renderer ${report.rendererName}`);
 let failed = 0;
 for (const r of report.results) {
-    const ok = (r.fractionalOpacity ? r.alphaMax <= 1 : r.alphaDiff === 0) && r.rgbDiff === 0;
+    // Where a case has not-called cells, both paths must also have drawn some,
+    // and every one of them grey.
+    const grey = !r.grey || [r.grey.cpu, r.grey.gpu].every((g) => g.checked > 0 && g.wrong === 0);
+    const ok = (r.fractionalOpacity ? r.alphaMax <= 1 : r.alphaDiff === 0) && r.rgbDiff === 0 && grey;
     if (!ok) failed += 1;
     console.log(`${ok ? "PASS" : "FAIL"} ${r.geometry} | ${r.segmentationMode} | ${r.case}`
         + `  (drawn ${r.drawn}/${r.pixels}, fill ${r.fill === null ? "-" : r.fill.toFixed(3)},`
-        + ` alpha diffs ${r.alphaDiff} max ${r.alphaMax}, rgb>1 ${r.rgbDiff} max ${r.rgbMax})`);
+        + ` alpha diffs ${r.alphaDiff} max ${r.alphaMax}, rgb>1 ${r.rgbDiff} max ${r.rgbMax}`
+        + (r.grey ? `, grey cpu ${r.grey.cpu.checked - r.grey.cpu.wrong}/${r.grey.cpu.checked}`
+            + ` gpu ${r.grey.gpu.checked - r.grey.gpu.wrong}/${r.grey.gpu.checked}` : "")
+        + ")");
 }
 const hb = report.handedBack;
 const handed = hb.program && hb.viewport && hb.flipY && hb.channelDraws && hb.glError === 0;

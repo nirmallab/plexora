@@ -1175,6 +1175,50 @@ class ProjectData:
         """
         return self.table.source_kind if self.table.available else None
 
+    def not_called(self, markers=()):
+        """Rows QC says cannot be called for any of `markers` -- a cell inside
+        a QC region, or one QC flagged that marker unreliable in -- under the
+        current call mode (`plexora.agent.cell_exclusions`).
+
+        Args:
+            markers (list, optional): Marker columns; empty means the cells
+                not called for every marker.
+
+        Returns:
+            A boolean numpy array, one entry per row of `table.geometry()`,
+            True where the cell is not called; None when every row is called
+            (no QC, or nothing failed).
+        """
+        from plexora.agent import cell_exclusions
+
+        out = None
+        for marker in (list(markers) or [None]):
+            mask = cell_exclusions.not_called_mask(self, marker)
+            if mask is not None:
+                out = mask.copy() if out is None else (out | mask)
+        return out
+
+    def calls(self, gates: Mapping[str, tuple], mode: str = "and"):
+        """A gate's call per row, with QC's third state.
+
+        Args:
+            gates (dict): `{column: (low, high)}` ranges.
+            mode (str, optional): `"and"` or `"or"`, as `table.range_mask`.
+
+        Returns:
+            An int8 numpy array, one entry per row: 1 positive, 0 negative,
+            -1 not called (QC failed the cell for one of the gated markers;
+            `not_called`). The gate's thresholds are unchanged by QC.
+        """
+        import numpy as np
+
+        positive = self.table.range_mask(gates, mode)
+        out = np.where(positive, 1, 0).astype(np.int8)
+        skip = self.not_called(list(gates))
+        if skip is not None and skip.shape == out.shape:
+            out[skip] = -1
+        return out
+
     def cached(self, key, compute):
         """Memoize an expensive derived value against this datasource.
 

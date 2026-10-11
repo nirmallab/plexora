@@ -34,14 +34,11 @@ def channel_names(ds):
 
 
 def image_channel(ds, marker):
-    """The image channel a marker column is drawn from, or None."""
+    """The image channel a marker column is drawn from, or None
+    (`vocabulary.match_name`: `CD45` is drawn from `03_CD45_ArgoFluor520`)."""
     from plexora.ai import vocabulary
 
-    names = channel_names(ds)
-    if marker in names:
-        return marker
-    folded = {vocabulary.fold(n): n for n in names}
-    return folded.get(vocabulary.fold(marker))
+    return vocabulary.match_name(marker, channel_names(ds))
 
 
 def image_qc_for(session, ds, marker):

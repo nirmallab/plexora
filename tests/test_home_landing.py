@@ -1,10 +1,11 @@
 """The home page: its own controls, somebody else's importer.
 
-`GET /` with nothing registered renders the landing card -- a Local/Remote
-switch, a Select File / Select Folder pair, a path box and Load. That is the
-page's design and it is deliberate: the one thing somebody does on an empty
-install is open an image, and a modal covering an otherwise empty page is a
-step rather than a shortcut.
+`GET /` with no datasource named renders the landing card -- a File / Folder
+pair, a path box led by the machine it is on, and one button that is Browse
+until there is a path and Load after. That is the page's design and it is
+deliberate: the one thing somebody does on an empty install is open an image,
+and a modal covering an otherwise empty page is a step rather than a shortcut.
+Under the card, the three projects opened last.
 
 What it is NOT is a second importer. Load POSTs to `/import/sample`, the route
 the Import Sample dialog submits to, so every rule about what the files are,
@@ -64,31 +65,81 @@ def test_the_home_page_is_the_landing_card_and_not_a_button_that_opens_a_dialog(
     it opens asks the same first question this card already asks.
     """
     assert 'id="quick_view_landing"' in landing
-    assert 'id="quick_view_open"' in landing           # the File/Folder pair
+    assert 'id="quick_view_kind"' in landing           # the File/Folder pair
     assert 'id="quick_view_path_input"' in landing     # the typed way in
-    assert 'id="quick_view_path_load"' in landing      # and Load
+    assert 'id="quick_view_go"' in landing             # Browse, then Load
 
     # The dialog is not this page's primary action. Its button is in the
-    # footer, after the status line -- checked by position, because "it is
-    # present" is true of the design this replaces too.
+    # footer, after the card -- checked by position, because "it is present"
+    # is true of the design this replaces too.
     card = landing[landing.index('id="quick_view_landing"'):]
-    assert card.index('id="quick_view_path_load"') < card.index("sample-import-home")
+    assert card.index('id="quick_view_go"') < card.index("sample-import-home")
     assert 'class="quick-view-footer"' in card
     assert card.index('class="quick-view-footer"') < card.index("sample-import-home")
 
 
-def test_the_way_back_to_the_library_survived_the_reversion(landing):
+def test_the_way_back_to_the_library_is_the_recent_list(empty, tmp_path):
     """`/` renders this card whenever the URL names no datasource, not only on
-    an empty install -- so somebody with twenty samples lands here too.
-
-    The pre-redesign page had no link to them at all and left it to the File
-    menu. The redesign added one, and it is kept: it costs a clause in the
-    footer that already existed, so the layout is the old one either way.
+    an empty install -- so somebody with twenty samples lands here too, and
+    the way back to them is on the page: the three opened last, each a link
+    straight into its viewer, and the whole library one link further.
     """
-    assert "/open_project" in landing
+    image = tmp_path / "slide.ome.tif"
+    rng = np.random.default_rng(0)
+    tifffile.imwrite(image, rng.integers(0, 3000, (2, 64, 64)).astype(np.uint16))
+    assert empty.post("/import/sample", json={"paths": [str(image)]}).status_code == 200
+
+    landing = empty.get("/").get_data(as_text=True)
     card = landing[landing.index('id="quick_view_landing"'):]
-    footer = card[card.index('class="quick-view-footer"'):]
-    assert "/open_project" in footer, "the link drifted out of the footer line"
+    recent = card[card.index('class="quick-view-recent"'):]
+    assert "/open_project" in recent, "the library link left the recent list"
+    assert 'href="/slide"' in recent
+    assert "OME-TIFF" in recent, "the row lost the words a library card uses"
+
+
+def test_an_install_with_nothing_to_reopen_has_no_recent_list(landing):
+    """An empty heading over an empty list is a section that says nothing --
+    and the library it would link to is empty too."""
+    assert 'class="quick-view-recent"' not in landing
+
+
+def test_recent_is_the_three_opened_last_newest_first(empty, tmp_path):
+    """Ordered by `lastOpenedAt`, which opening a project stamps -- the same
+    key the library's "Recently Opened" sort reads -- and cut to three before
+    any project is loaded, so a large install does not pay for the rest."""
+    from plexora.server.routes.project_routes import recent_projects
+
+    rng = np.random.default_rng(0)
+    names = []
+    for index in range(4):
+        image = tmp_path / f"slide{index}.ome.tif"
+        tifffile.imwrite(image, rng.integers(0, 3000, (2, 32, 32)).astype(np.uint16))
+        body = empty.post("/import/sample", json={"paths": [str(image)]}).get_json()
+        names.append(body["name"])
+
+    config_file = tmp_path / "config.json"
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+    for day, name in zip((3, 9, 1, 7), names):
+        config[name]["lastOpenedAt"] = f"2026-10-0{day}T12:00:00"
+    config_file.write_text(json.dumps(config), encoding="utf-8")
+
+    assert [card["name"] for card in recent_projects(3)] == [names[1], names[3], names[0]]
+
+
+def test_the_opened_phrase_is_the_librarys():
+    """openProjectPage.js's `timeAgo`, worked out server-side against this
+    machine's clock -- `lastOpenedAt` is this machine's local time."""
+    import datetime
+
+    from plexora.server.routes.page_routes import _opened_phrase
+
+    now = datetime.datetime(2026, 10, 10, 12, 0, 0)
+    assert _opened_phrase("2026-10-10T11:59:30", now) == "just now"
+    assert _opened_phrase("2026-10-10T11:15:00", now) == "45 minutes ago"
+    assert _opened_phrase("2026-10-10T11:00:00", now) == "1 hour ago"
+    assert _opened_phrase("2026-10-08T12:00:00", now) == "2 days ago"
+    assert _opened_phrase("2026-08-01T12:00:00", now) == "Aug 1, 2026"
+    assert _opened_phrase("not a date", now) == ""
 
 
 def test_the_landing_brings_its_own_stylesheet_and_controller(landing):
@@ -205,16 +256,23 @@ def test_a_pick_with_more_than_an_image_in_it_is_no_longer_refused(empty,
 
 
 def test_the_switch_still_lets_the_image_be_on_another_machine(landing):
-    """The landing page's Local/Remote switch, mounted once above both
-    controls. It is `submitValue()` that turns Remote into the
-    `node://<node>/<resource>` the route reads, and `/import/sample` handles
-    that address itself -- so a slide on a cluster is the same one gesture."""
-    assert 'id="quick_view_where_control"' in landing
+    """The landing page's machine chip, at the start of the path box. It is
+    the shared Local/Remote state underneath (attached `bare`, moved with
+    `setWhere`), and it is `submitValue()` that turns Remote into the
+    `node://<node>/<resource>` the route reads -- so a slide on a cluster is
+    the same one gesture."""
+    assert 'id="quick_view_where"' in landing
+    assert 'id="quick_view_where_menu"' in landing
     assert 'id="quick_view_where_status"' in landing
 
     controller = source("src", "js", "views", "quickViewLanding.js")
     assert "PlexoraDataLocation" in controller
+    assert "bare: true," in controller
+    assert "location.setWhere(where, place)" in controller
     assert "location.submitValue()" in controller
+    # The menu adds and connects machines where it stands, through the modal
+    # that owns connecting -- never a trip to Settings first.
+    assert "PlexoraConnectionModal.open(" in controller
 
 
 # -- the dialog is still everywhere it was -----------------------------------

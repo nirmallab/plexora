@@ -60,6 +60,9 @@ class RoiStore {
         this._flushing = false;
         this._listeners = new Set();
         this._suspended = false;
+        //: The operations that touched one of QC's regions, marked as they
+        //: are applied (touchesQc) and announced once saved (announceQc).
+        this._qcOps = new WeakSet();
     }
 
     //: How long after the last committed edit the batch goes out. Long enough
@@ -263,6 +266,7 @@ class RoiStore {
     applyLocal(op) {
         const image = op.image || this.image;
         if (image !== this.image && op.op.startsWith("roi.")) return;
+        if (this.touchesQc(op)) this._qcOps.add(op);
 
         switch (op.op) {
             case "category.create":
@@ -354,6 +358,46 @@ class RoiStore {
         }
     }
 
+    /**
+     * Whether an operation touches one of QC's regions. QC keeps them as
+     * ordinary ROIs in categories of its own, `qc_*` (plugins/qc), and works
+     * out which cells it calls from them -- so an edit to one here moves
+     * those calls. Asked before the operation is applied, while a region
+     * being deleted still says which category it was in.
+     */
+    touchesQc(op) {
+        const qc = (id) => String(id || "").startsWith("qc_");
+        const inQc = (id) => qc(this.feature(id)?.category_id);
+        switch (op.op) {
+            case "category.update":
+            case "category.delete":
+                return qc(op.id) || qc(op.reassign_to);
+            case "roi.create":
+                return qc(op.feature?.category_id);
+            case "roi.update_geometry":
+            case "roi.delete":
+                return inQc(op.id);
+            case "roi.update_properties":
+                return inQc(op.id) || qc(op.changes?.category_id);
+            case "roi.bulk_delete":
+                return (op.ids || []).some(inQc);
+            case "roi.bulk_create":
+                return (op.features || []).some((feature) => qc(feature.category_id));
+            default:
+                return false;
+        }
+    }
+
+    /** Saved `ops` that touched a QC region (touchesQc) tell the page QC's
+     *  calls may have moved (`plexora:qc-changed`, core's numericData.js).
+     *  After the save, never before: the server derives the calls from what
+     *  it has stored. */
+    announceQc(ops) {
+        if (ops.some((op) => this._qcOps.has(op))) {
+            window.PlexoraQcChanged?.announce(this.ctx.datasource);
+        }
+    }
+
     // -- saving ----------------------------------------------------------
 
     enqueue(ops) {
@@ -409,6 +453,7 @@ class RoiStore {
             this.revision = result.data.revision;
             this._retryDelay = 0;
             task?.done();
+            this.announceQc(batch);
             this.setStatus(this.queue.length ? "dirty" : "saved", "");
             if (this.queue.length) this.scheduleFlush(0);
             return;

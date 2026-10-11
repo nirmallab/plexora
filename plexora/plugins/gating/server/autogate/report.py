@@ -44,6 +44,39 @@ CONFIDENCE_COLOURS = {"high": "#2f9e44", "moderate": "#e0a800", "low": "#e8590c"
 REPORT_LAYOUT = "report"
 REPORT_TILE_PX = 96
 
+def model_line(unit) -> str | None:
+    """One line on what the cell model did for a marker (hybrid gating), or
+    None when it never ran."""
+    state = unit.get("model") or {}
+    if not state:
+        return None
+    if state.get("unavailable"):
+        return f"Cell model: not used -- {state['unavailable']}"
+    correction = state.get("correction") or {}
+    status = correction.get("status")
+    parts = ["Cell model"]
+    if status in ("accepted", "rejected", "applied", "applied_review"):
+        verb = "corrected" if status in ("accepted", "applied", "applied_review") else \
+            "proposed a correction (kept the approved gate)"
+        parts.append(f"{verb}: {_n(correction.get('g_v'))} -> {_n(correction.get('g_star'))}, "
+                     f"{correction.get('flagged_before', 0) - correction.get('flagged_after', 0)} "
+                     f"fewer cells it reads against the gate, {correction.get('changed', 0)} "
+                     f"calls changed"
+                     + (f", confirmed {correction.get('agree', 0)} of "
+                        f"{correction.get('answered', 0)}" if status in ("accepted", "rejected")
+                        else ""))
+    elif status == "none":
+        parts.append("agrees with the approved gate (no move worth asking)")
+    elif status:
+        parts.append(f"correction {status}")
+    if "model_disagrees" in (unit.get("look_flags") or ()) and correction.get("model_cut"):
+        parts.append(f"its own cut lies at {_n(correction['model_cut'])}")
+    layer = (state.get("runs") or {}).get("layer") or {}
+    if layer.get("status") == "ready":
+        parts.append(f"per-cell layer: {layer.get('n_promoted', 0)} own below the gate, "
+                     f"{layer.get('n_demoted', 0)} not own above it")
+    return " · ".join(parts) if len(parts) > 1 else None
+
 
 def _root():
     from plexora import paths
@@ -274,6 +307,9 @@ def to_html(call, report) -> str:
                      f"{_n(unit.get('final'))}, GMM {_n(unit.get('gmm'))}"
                      f"{', class ' + esc(str(unit.get('class'))) if unit.get('class') else ''}"
                      f". {esc(str(unit.get('reason') or ''))}</p>")
+        line = model_line(unit)
+        if line:
+            parts.append(f"<p class='muted'>{esc(line)}</p>")
         if embedded < 40:
             for png in (_safe_render(_histogram_png, call, unit),
                         _safe_render(_cells_png, call, unit)):
@@ -385,6 +421,9 @@ def to_pdf(call, report, path, *, compress=True):
             story.append(Paragraph(esc(str(unit["reason"])), body))
         if unit.get("flags"):
             story.append(Paragraph(esc("flags: " + ", ".join(unit["flags"])), muted))
+        line = model_line(unit)
+        if line:
+            story.append(Paragraph(esc(line), muted))
         story.append(Spacer(1, 3 * mm))
         histogram = _safe_render(_histogram_png, call, unit)
         trail = [Paragraph(esc(
@@ -437,11 +476,25 @@ def write_report(call, session_id, *, fmt="both") -> dict:
 def _gate_rows(call, project):
     from plexora.plugins.gating.server.autogate import provenance
 
+    from plexora.agent import cell_exclusions
+
     ds = call.session.data(project)
     rows = provenance.read(ds.name)
+    try:
+        qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
+    except Exception:  # no QC to read: the gates export as they are
+        qc_fp = ""
     out = []
     for gate in model.all_gates(ds):
         prov = rows.get(gate["marker"]) or {}
+        counts = {}
+        if gate["thresholded"] and gate["low"] is not None:
+            try:
+                summary = model.gated_summary(ds, gate["marker"])
+                counts = {k: summary.get(k) for k in ("n_positive", "n_not_called",
+                                                      "call_mode")}
+            except Exception:  # a count; the gate exports without it
+                counts = {}
         out.append({"image": project, "channel": gate["marker"], "gate_start": gate["low"],
                     "gate_end": gate["high"], "thresholded": gate["thresholded"],
                     "method": prov.get("method"), "status": prov.get("status"),
@@ -449,7 +502,8 @@ def _gate_rows(call, project):
                     "gmm_proposal": prov.get("gmm_proposal"),
                     "session_id": prov.get("session_id"),
                     "operation_id": prov.get("operation_id"),
-                    "timestamp": prov.get("timestamp")})
+                    "timestamp": prov.get("timestamp"), **counts,
+                    "qc_fingerprint": qc_fp})
     return out
 
 
@@ -493,7 +547,8 @@ def export_gates(call, *, project=None, dataset=None, include_provenance=True) -
             path = folder / f"{safe}_gates_provenance.csv"
             _write_csv(path, rows, ["channel", "gate_start", "gate_end", "method", "status",
                                     "confidence", "state", "gmm_proposal", "session_id",
-                                    "operation_id", "timestamp"])
+                                    "operation_id", "timestamp", "n_positive",
+                                    "n_not_called", "call_mode", "qc_fingerprint"])
             written.append(str(path))
     if dataset:
         path = folder / "dataset_gates_long.csv"

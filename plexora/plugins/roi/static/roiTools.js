@@ -13,9 +13,11 @@
  * floating bar on the image (services/magicToolbar.js) says what a click
  * does: Add (include; a drag pans), Remove (exclude; Shift-click in Add does
  * the same), Box (a drag boxes the object) or Scribble (a drag is a line over
- * the object, sent as points along it; Shift for a line over what to leave
- * out). All four refine the same outline; a click inside a selected region
- * refines that region, starting from its own outline. Taken
+ * the object, sent as points along it, or a loop round it, sent as its box;
+ * Shift for a line over what to leave out). Clicks build up the outline being
+ * made; a box or a scribble outlines a whole object by itself, so each starts
+ * its own. Begun inside the selected region, any of them redraws that region
+ * instead. Taken
  * letters, for anyone adding a shortcut: V P F R E here, plus core's and
  * other tools' (viewerControls.js lists them).
  *
@@ -129,6 +131,11 @@ class RoiInteraction {
     //: becomes (at most PlexoraSegment's eight per line).
     static get STROKE_SPACING() { return 24; }
 
+    //: Magic select's scribble: how deep, in screen pixels, a loop must be
+    //: (its radius, if round) to have been drawn round something rather
+    //: than dabbed on it.
+    static get LOOP_DEPTH() { return 8; }
+
     // -- lifecycle -------------------------------------------------------
 
     /** Start listening. Called when the panel is shown, not when the plugin
@@ -176,7 +183,11 @@ class RoiInteraction {
 
         // A hovered ROI can be deleted, hidden or reshaped from the panel while
         // the pointer sits perfectly still, and no pointer event will say so.
-        this._unsubscribeStore = this.store.onChange?.(() => this.revalidateHover());
+        // Nor will one say the outline being made just lost its region.
+        this._unsubscribeStore = this.store.onChange?.(() => {
+            this.revalidateHover();
+            this.magicLost();
+        });
 
         document.addEventListener("keydown", this._onKeyDown);
         document.addEventListener("keyup", this._onKeyUp);
@@ -631,11 +642,14 @@ class RoiInteraction {
                 this.hideDraft();
                 if (gesture && gesture.stroke) {
                     event.preventDefaultAction = true;
-                    // Spaced by what reads as distinct on screen, so a short
-                    // dab is one point and a long line a handful.
-                    const stroke = window.PlexoraSegment?.strokePoints?.(points, {
-                        spacing: this.imageDistance(RoiInteraction.STROKE_SPACING) }) || [];
-                    if (stroke.length) this.magicPrompt({ stroke, shift: gesture.remove });
+                    // A line over the object is points along it, spaced by
+                    // what reads as distinct on screen (a short dab is one
+                    // point, a long line a handful); a loop round it is its box.
+                    const prompt = window.PlexoraSegment?.strokePrompt?.(points, {
+                        spacing: this.imageDistance(RoiInteraction.STROKE_SPACING),
+                        minDepth: this.imageDistance(RoiInteraction.LOOP_DEPTH),
+                        remove: gesture.remove });
+                    if (prompt) this.magicPrompt({ ...prompt, shift: gesture.remove });
                     return;
                 }
                 // Add and Remove: the drag was a pan -- leave its momentum alone.
@@ -1211,6 +1225,7 @@ class RoiInteraction {
         const box = RoiGeometry.bounds(feature.geometry);
         if (!box) return null;
         return { id: feature.id, locked: this.store.isLocked(feature),
+                 geometry: feature.geometry,
                  bbox: { x: box.minX, y: box.minY, width: box.maxX - box.minX,
                          height: box.maxY - box.minY } };
     }
@@ -1275,14 +1290,16 @@ class RoiInteraction {
     }
 
     /**
-     * A click (`point`) or a drag (`box`) with magic select: decide what it
-     * means, add it to the outline being made, and ask for the outline.
+     * A click (`point`), a box or a scribble (`stroke`) with magic select:
+     * decide what it means, add it to the outline being made, and ask for
+     * the outline.
      */
     magicPrompt({ point = null, box = null, stroke = null, shift = false } = {}) {
         const segment = window.PlexoraSegment;
         if (!segment || this.magicBusy) return;
         // A scribble is decided by where it starts: begun inside the selected
-        // region it reshapes that region, begun elsewhere it is a new one.
+        // region it reshapes that region, begun elsewhere it is a new one --
+        // never more of the last, however near (`standalone`).
         if (stroke && !stroke.length) return;
         const prompts = stroke || (point ? [point] : []);
         const where = prompts[0] || { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -1303,7 +1320,9 @@ class RoiInteraction {
             session: this.magic ? { roiId: this.magic.session.roiId, bbox: this.magic.session.bbox }
                 : null,
             canCreate: this.canDraw,
+            standalone: Boolean(box || stroke),
         });
+        const marks = { stroke: Boolean(stroke) };
         switch (plan.kind) {
             case "locked":
                 return this.notify("That ROI is locked. Unlock it to reshape it.");
@@ -1314,7 +1333,7 @@ class RoiInteraction {
                     + "or select a region and click inside it.");
             case "new":
                 this.magic = { session: new segment.Session({ box }), snapshot };
-                this.magic.session.addMany(prompts, 1);
+                this.magic.session.addMany(prompts, 1, marks);
                 break;
             case "grow":
             case "carve": {
@@ -1329,7 +1348,7 @@ class RoiInteraction {
                         seed: this.store.feature(target.id)?.geometry || null }), snapshot };
                 }
                 if (box) this.magic.session.box = box;
-                else this.magic.session.addMany(prompts, plan.kind === "grow" ? 1 : 0);
+                else this.magic.session.addMany(prompts, plan.kind === "grow" ? 1 : 0, marks);
                 break;
             }
             case "refine": {
@@ -1341,19 +1360,29 @@ class RoiInteraction {
                 this.magic = { session: new segment.Session({
                     roiId: selected.id, bbox: selected.bbox,
                     box: box || RoiInteraction.padded(selected.bbox, 0.10) }), snapshot };
-                this.magic.session.addMany(prompts, 1);
+                this.magic.session.addMany(prompts, 1, marks);
                 break;
             }
             default:
                 return;
         }
-        this.showPrompts();
+        this.showPrompts(prompts.length > 0);
         this.runMagic(this.magic);
     }
 
-    showPrompts() {
-        this.renderer.prompts = this.magic ? this.magic.session.points.slice() : null;
+    /** The outline's dots; `pending` while the latest prompt is on its way. */
+    showPrompts(pending = false) {
+        const points = this.magic ? this.magic.session.shown(pending) : [];
+        this.renderer.prompts = points.length ? points : null;
         this.renderer.schedule();
+    }
+
+    /** The outline being made lost its region -- deleted (the Delete key, a
+     *  row's menu, an agent) or undone: its dots go with it, and the next
+     *  prompt starts a new outline. */
+    magicLost() {
+        const id = this.magic?.session.roiId;
+        if (id && !this.store.feature(id)) this.endMagic();
     }
 
     setMagicBusy(busy) {
@@ -1486,8 +1515,8 @@ class RoiInteraction {
         this.magicBar = null;
     }
 
-    /** A mode change keeps the outline being made: Add, Remove, Box and
-     *  Scribble refine the same one, in any order. */
+    /** A mode change keeps the outline being made, for the next click (or
+     *  Shift-scribble) to go on refining. */
     setMagicMode(mode) {
         if (!["add", "remove", "box", "scribble"].includes(mode)) return;
         this.magicMode = mode;

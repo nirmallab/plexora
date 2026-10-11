@@ -456,7 +456,88 @@ def _parse_launch(raw, project=None):
 
 @app.route("/")
 def my_index():
-    return render_template("index.html", data=template_data())
+    return render_template("index.html",
+                           data=template_data(recent_projects=_recent_rows()))
+
+
+#: The words a library card puts on each image kind. openProjectPage.js's
+#: IMAGE_KINDS is the list -- change that one first, then this. Anything
+#: unlisted is "Image", which is true of every kind and misleads about none.
+_IMAGE_KIND_WORDS = {
+    "ome_tiff": "OME-TIFF", "tiff": "TIFF", "ome_zarr": "OME-Zarr",
+    "brightfield": "H&E", "rgb": "Image", "dicom": "DICOM", "blank": "No image",
+}
+
+
+def _opened_phrase(iso, now=None):
+    """openProjectPage.js's `timeAgo`, worked out here: "3 hours ago", "2 days
+    ago", then the date.
+
+    Here rather than in the browser because `lastOpenedAt` is this machine's
+    local time with no zone on it, and a browser on another machine would be
+    measuring it against its own clock.
+    """
+    try:
+        then = datetime.datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return ""
+    now = now or datetime.datetime.now(then.tzinfo)
+    seconds = (now - then).total_seconds()
+    if seconds < 60:
+        return "just now"
+    for size, unit, limit in ((60, "minute", 60), (3600, "hour", 24), (86400, "day", 30)):
+        count = round(seconds / size)
+        if count < limit:
+            return f"{count} {unit}{'' if count == 1 else 's'} ago"
+    return f"{then:%b} {then.day}, {then.year}"
+
+
+def _recent_rows(limit=3):
+    """The home page's Recent list: the projects opened last, each as the line
+    a library card would say about it.
+
+    Rendered into the page rather than fetched after it, so the three rows are
+    there on the first paint -- the landing column is centred, and a list that
+    arrived late would push the card up under the pointer.
+    """
+    # Imported here: project_routes imports this module for template_data.
+    from plexora.server.routes.project_routes import recent_projects
+
+    rows = []
+    for card in recent_projects(limit):
+        kind = card.get("imageKind")
+        layers = (card.get("layers") or {}).get("count") or 0
+        facts = []
+        if card.get("dataset"):
+            facts.append(card["dataset"]["name"])
+        if kind:
+            facts.append(_IMAGE_KIND_WORDS.get(kind, "Image"))
+        if card.get("segmentation") == "present":
+            facts.append("Mask")
+        if card.get("table") == "present":
+            facts.append("Data")
+        if layers:
+            facts.append(f"{layers} layer{'' if layers == 1 else 's'}")
+        if card.get("needsSetup"):
+            facts.append("Needs setup")
+        # The tile is a hint at what opens, not a badge: a slide, a sample
+        # whose picture is mostly its layers, or channels.
+        if kind in ("brightfield", "rgb"):
+            tone, icon = "slide", "fa-image"
+        elif layers or kind == "blank":
+            tone, icon = "spatial", "fa-table-cells"
+        else:
+            tone, icon = "channels", "fa-layer-group"
+        rows.append({
+            "name": card["name"],
+            "meta": " · ".join(facts),
+            "opened": card.get("lastOpenedAt") or "",
+            "when": _opened_phrase(card.get("lastOpenedAt")),
+            "remote": ", ".join(card.get("remote") or []),
+            "tone": tone,
+            "icon": icon,
+        })
+    return rows
 
 
 @app.route("/favicon.ico")

@@ -243,8 +243,22 @@ class PlexoraProvider(Adapter):
                               session_id=row.get("session_id") or None,
                               operation_id=row.get("operation_id") or None,
                               source=f"plexora://project/{project}"))
+        # The third state: how many cells QC says cannot be called per gated
+        # marker, and under which rule (`cell_exclusions.calls`); the ids
+        # travel with the QC collection (`_collect_qc`).
+        from plexora.agent import cell_exclusions
+
+        params = {"project": project, "call_mode": cell_exclusions.current_call_mode()}
+        try:
+            record = cell_exclusions.call_record(ds)
+        except Exception:  # an annotation; the gates stand without it
+            record = None
+        if record is not None and not record.empty:
+            params["qc_fingerprint"] = cell_exclusions.fingerprint(record)
+            params["not_called"] = {
+                gate.marker: int(record.ids_for(gate.marker).size) for gate in gates}
         return Gates(gates=gates, provenance=self._provenance(
-            "gating.export", operation_id, params={"project": project})
+            "gating.export", operation_id, params=params)
         ).model_dump(exclude_none=True)
 
     def _collect_regions(self, project, *, image_id, operation_id, arguments):
@@ -288,10 +302,23 @@ class PlexoraProvider(Adapter):
         summary = dict(results.summary(result))
         summary["n_excluded"] = len(excluded)
         summary["cell_id"] = _cell_id_rule(project)
+        # Beyond the excluded cells: per marker, the cells QC flagged that
+        # marker unreliable in -- not called for it, under the call mode.
+        from plexora.agent import cell_exclusions
+
+        summary["call_mode"] = cell_exclusions.current_call_mode()
+        not_called = {}
+        try:
+            record = cell_exclusions.call_record(self.session.data(project))
+        except Exception:  # no table to read: the excluded cells stand alone
+            record = None
+        if record is not None:
+            not_called = {marker: [str(i) for i in ids.tolist()]
+                          for marker, ids in sorted(record.by_marker.items()) if ids.size}
         out = {"result_id": str(result.get("result_id")),
                "image_id": self._image_id(project, image_id),
                "excluded": excluded, "reasons": reasons, "regions": regions,
-               "summary": summary,
+               "not_called": not_called, "summary": summary,
                "provenance": self._provenance("qc.export", operation_id).model_dump(
                    exclude_none=True)}
         return out

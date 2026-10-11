@@ -5,8 +5,13 @@
  * so this is where a regression costs the most. What is pinned:
  *
  *   - `plan`, which decides what a click means (a new region, grow, carve,
- *     refine, or a refusal), for every kind it can answer;
- *   - the prompt bookkeeping of `Session`, its `seed` included;
+ *     refine, or a refusal), for every kind it can answer -- a box or a
+ *     scribble never growing the outline being made, and "in the selected
+ *     region" meaning inside its outline, not its box;
+ *   - reading a scribble: a line is points along it, a loop round something
+ *     its box (a C, a U, an out-and-back and a dab are not loops);
+ *   - the prompt bookkeeping of `Session`, its `seed` included, and its
+ *     scribble dots shown only while their outline is on the way;
  *   - the token: a second click on the same view sends the server's token
  *     AND the view and channels the first click used (sending the token with
  *     a nudged view would ask the server to decode against a picture it did
@@ -212,6 +217,43 @@ await check("...a Shift-click inside the selection carves it; far from the sessi
                  "needSelection");
 });
 
+await check("plan: a box or a scribble never grows the outline being made; Shift still carves it", () => {
+    const { Segment } = realm();
+    const session = { roiId: "r1", bbox: { x: 0, y: 0, width: 100, height: 100 } };
+    const selected = { id: "s1", bbox: { x: 500, y: 500, width: 100, height: 100 }, locked: false };
+    assert.equal(Segment.plan({ point: { x: 150, y: 50 }, session }).kind, "grow");
+    assert.equal(Segment.plan({ point: { x: 150, y: 50 }, session, standalone: true }).kind, "new");
+    same(Segment.plan({ point: { x: 150, y: 50 }, session, shift: true, standalone: true }),
+         { kind: "carve", roiId: "r1" });
+    same(Segment.plan({ point: { x: 550, y: 550 }, session, selected, standalone: true }),
+         { kind: "refine", roiId: "s1" });
+});
+
+await check("plan: 'in the selected region' is inside its outline when it comes with one", () => {
+    const { Segment } = realm();
+    // An L: its box takes in the empty corner at (150, 50), its outline does not.
+    const ell = { type: "Polygon", coordinates: [[[0, 0], [100, 0], [100, 100], [200, 100],
+                                                  [200, 200], [0, 200], [0, 0]]] };
+    const selected = { id: "s1", bbox: { x: 0, y: 0, width: 200, height: 200 }, locked: false,
+                       geometry: ell };
+    assert.equal(Segment.plan({ point: { x: 150, y: 50 }, selected }).kind, "new");
+    assert.equal(Segment.plan({ point: { x: 50, y: 150 }, selected }).kind, "refine");
+    assert.equal(Segment.plan({ point: { x: 150, y: 50 }, selected, shift: true }).kind,
+                 "needSelection");
+    const boxOnly = { ...selected, geometry: undefined };
+    assert.equal(Segment.plan({ point: { x: 150, y: 50 }, selected: boxOnly }).kind, "refine");
+    // A hole is outside; every part of a MultiPolygon is inside.
+    const holed = { type: "Polygon", coordinates: [
+        [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]],
+        [[40, 40], [60, 40], [60, 60], [40, 60], [40, 40]]] };
+    assert.equal(Segment.contains(holed, { x: 50, y: 50 }), false);
+    assert.equal(Segment.contains(holed, { x: 10, y: 10 }), true);
+    const two = { type: "MultiPolygon", coordinates: [holed.coordinates,
+        [[[300, 300], [400, 300], [400, 400], [300, 400], [300, 300]]]] };
+    assert.equal(Segment.contains(two, { x: 350, y: 350 }), true);
+    assert.equal(Segment.contains({ type: "Point", coordinates: [0, 0] }, { x: 0, y: 0 }), null);
+});
+
 // -- Session --------------------------------------------------------------------
 
 await check("strokePoints: a dab is one point, a long line at most eight, evenly along it", () => {
@@ -231,6 +273,65 @@ await check("strokePoints: a dab is one point, a long line at most eight, evenly
     const ell = S.strokePoints([[0, 0], [0, 50], [0, 100], [100, 100]], { spacing: 50 });
     same(ell, [{ x: 0, y: 0 }, { x: 0, y: 50 }, { x: 0, y: 100 }, { x: 50, y: 100 }, { x: 100, y: 100 }]);
     same(S.strokePoints([], { spacing: 5 }), []);
+});
+
+/** A circle of radius `r` round (cx, cy), drawn from angle 0 for `turns` of a turn. */
+function circle(cx, cy, r, turns = 1, steps = 72) {
+    const out = [];
+    for (let i = 0; i <= steps * turns; i++) {
+        const a = (i / steps) * 2 * Math.PI;
+        out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    return out;
+}
+
+const rounded = (box) => box && Object.fromEntries(
+    Object.entries(box).map(([k, v]) => [k, Math.round(v)]));
+
+await check("strokeLoop: a loop round something is its box; a line, a C, a U and an out-and-back are not", () => {
+    const S = realm().Segment;
+    const deep = { minDepth: 8 };
+    same(rounded(S.strokeLoop(circle(500, 500, 100), deep)?.box),
+         { x: 400, y: 400, width: 200, height: 200 });
+    // Stopped a tenth short, or overshooting the start: still round it.
+    assert.ok(S.strokeLoop(circle(500, 500, 100, 0.9), deep));
+    assert.ok(S.strokeLoop(circle(500, 500, 100, 1.2), deep));
+    // Hand-drawn: a wobble on every sample does not change the answer.
+    const shaky = circle(500, 500, 100).map(([x, y], i) => [x + (i % 2) * 2, y - (i % 3)]);
+    assert.ok(S.strokeLoop(shaky, deep));
+    const line = [];
+    for (let x = 0; x <= 400; x += 10) line.push([x, 50]);
+    assert.equal(S.strokeLoop(line, deep), null);
+    assert.equal(S.strokeLoop(circle(500, 500, 100, 0.6), deep), null);
+    // A deep U comes back near its start but turns only half a turn.
+    const u = [];
+    for (let y = 0; y <= 300; y += 10) u.push([0, y]);
+    for (let x = 10; x <= 100; x += 10) u.push([x, 300]);
+    for (let y = 290; y >= 0; y -= 10) u.push([100, y]);
+    assert.equal(S.strokeLoop(u, deep), null);
+    // Out and back over the same place.
+    const back = line.concat(line.slice().reverse().map(([x, y]) => [x, y + 4]));
+    assert.equal(S.strokeLoop(back, deep), null);
+    // A small circle dabbed on the object.
+    assert.equal(S.strokeLoop(circle(500, 500, 6), deep), null);
+});
+
+await check("strokePrompt: a line is points along it, a loop its box, a Shift-loop points inside it", () => {
+    const S = realm().Segment;
+    const line = [];
+    for (let x = 0; x <= 400; x += 10) line.push([x, 50]);
+    const over = S.strokePrompt(line, { spacing: 24, minDepth: 8 });
+    assert.equal(over.stroke.length, 8);
+    assert.equal(over.box, undefined);
+    const round = S.strokePrompt(circle(500, 500, 100), { spacing: 24, minDepth: 8 });
+    same(rounded(round.box), { x: 400, y: 400, width: 200, height: 200 });
+    assert.equal(round.stroke, undefined);
+    const out = S.strokePrompt(circle(500, 500, 100), { spacing: 24, minDepth: 8, remove: true });
+    assert.equal(out.stroke.length, 8);
+    assert.ok(out.stroke.every((p) => Math.hypot(p.x - 500, p.y - 500) < 100),
+              JSON.stringify(out.stroke));
+    same(rounded(out.stroke[0]), { x: 500, y: 500 });
+    assert.equal(S.strokePrompt([], { spacing: 24 }), null);
 });
 
 await check("Session.addMany is one step: an undo takes back the whole scribble", () => {
@@ -254,6 +355,18 @@ await check("Session keeps at most MAX_POINTS, dropping the oldest prompts whole
     assert.equal(s.points[0].x, 1);   // the first scribble went, whole
     assert.equal(s.undo().length, 8);
     assert.equal(s.points.length, 24);
+});
+
+await check("Session.shown: a scribble's dots only while it is on its way; a click's always", () => {
+    const S = realm().Segment;
+    const s = new S.Session();
+    s.add({ x: 1, y: 1 }, 1);
+    s.addMany([{ x: 2, y: 2 }, { x: 3, y: 3 }], 1, { stroke: true });
+    assert.equal(s.shown(true).length, 3);
+    same(s.shown(), [{ x: 1, y: 1, label: 1 }]);
+    s.add({ x: 4, y: 4 }, 0);
+    same(s.shown(true).map((p) => p.x), [1, 4]);
+    assert.equal(s.points.length, 4, "every point still prompts the model");
 });
 
 await check("Session adds labelled points, undoes them, knows when it refines, absorbs a box", () => {

@@ -63,26 +63,56 @@ function labelGpuPreference() {
  * every key must pass, a pass is low < value <= high compared in FLOAT32, NaN
  * never passes, and a key the table does not have is skipped.
  *
- * @param ids     - Uint32Array, the table's cell ids (numericData.loadCells order)
- * @param columns - {key: Float32Array aligned with ids}; keys absent are skipped
- * @param gates   - {key: [low, high]}
- * @returns {{mask: Uint8Array, count: number, maxId: number}} mask is indexed by
- *   cell id; count is the number of distinct ids that pass (the size the
- *   server's id list makes as a Set).
+ * And QC's third state (data_model's ProjectData.calls): a row QC says cannot
+ * be called for ANY gated key -- inside a QC region, or the marker flagged
+ * unreliable there -- is neither positive nor negative, whatever its value.
+ * Its id is 2 in the mask, drawn grey (labelTile.NOT_CALLED_RGB), and it wins
+ * over a row of the same id that passes.
+ *
+ * @param ids       - Uint32Array, the table's cell ids (numericData.loadCells order)
+ * @param columns   - {key: Float32Array aligned with ids}; keys absent are skipped
+ * @param gates     - {key: [low, high]}
+ * And what a plugin says about single cells (`flagged`, the gating plugin's
+ * evidence), shown and never applied -- `count` stays the gate's:
+ * 1 uncertain, a positive the cell model leans against but is not sure of
+ * (3 in the mask, amber); 2 not its own by the cell model, a positive the model confidently
+ * reads as lit by something else (5); 3 its own by the cell model, a cell
+ * below the gate the model confidently reads as stained (4), when every
+ * other gated key passes. Never over a not-called cell.
+ *
+ * @param ids       - Uint32Array, the table's cell ids (numericData.loadCells order)
+ * @param columns   - {key: Float32Array aligned with ids}; keys absent are skipped
+ * @param gates     - {key: [low, high]}
+ * @param notCalled - optional {key: Uint8Array aligned with ids, 1 = not called}
+ *                    (numericData.getNotCalled); a key that is not gated is
+ *                    ignored, and so is a gated key it does not name
+ * @param flagged   - optional {key: Uint8Array aligned with ids, the codes
+ *                    above}; a key that is not gated is ignored
+ * @returns {{mask: Uint8Array, count: number, notCalledCount: number,
+ *            uncertainCount: number, modelOwnCount: number,
+ *            modelNotOwnCount: number, maxId: number}}
+ *   mask is indexed by cell id: 0 negative, 1 positive, 2 not called,
+ *   3 uncertain, 4 own by the model, 5 not own by the model; count is the
+ *   number of distinct ids that pass (the size the server's id list makes as
+ *   a Set) and notCalledCount the number of distinct ids not called.
  */
-function evaluateGateMask(ids, columns, gates) {
+function evaluateGateMask(ids, columns, gates, notCalled = null, flagged = null) {
     let maxId = 0;
     for (let i = 0; i < ids.length; i += 1) {
         if (ids[i] > maxId) maxId = ids[i];
     }
     const tests = [];
+    const skips = [];
     for (const key of Object.keys(gates || {})) {
+        // Whether or not the table has the column: the server asks QC about
+        // every gated marker (ProjectData.not_called(list(gates))).
+        if (notCalled && notCalled[key]) skips.push(notCalled[key]);
         const column = columns[key];
         if (!column) continue;
         const range = gates[key];
         // numpy compares a float32 column against a Python float in float32:
         // the bound is rounded to float32 first. Math.fround is that rounding.
-        tests.push([column, Math.fround(Number(range[0])), Math.fround(Number(range[1]))]);
+        tests.push([column, Math.fround(Number(range[0])), Math.fround(Number(range[1])), key]);
     }
     const mask = new Uint8Array(maxId + 1);
     let count = 0;
@@ -110,7 +140,65 @@ function evaluateGateMask(ids, columns, gates) {
             }
         }
     }
-    return { mask, count, maxId };
+    // A pass of its own, after the gate's, so the gate's loops stay as they
+    // were -- and so a not-called row overrides a passing row of the same id
+    // whichever came first.
+    let notCalledCount = 0;
+    for (let i = 0; skips.length && i < n; i += 1) {
+        let skip = false;
+        for (let k = 0; k < skips.length; k += 1) {
+            if (skips[k][i]) { skip = true; break; }
+        }
+        if (!skip) continue;
+        const id = ids[i];
+        if (mask[id] === 2) continue;
+        if (mask[id] === 1) count -= 1;
+        mask[id] = 2;
+        notCalledCount += 1;
+    }
+    // Last: what a plugin marked (gating's evidence), drawn apart and never
+    // counted differently. The highest code over the gated keys wins.
+    let uncertainCount = 0;
+    let modelOwnCount = 0;
+    let modelNotOwnCount = 0;
+    const flags = flagged ? Object.keys(gates || {}).filter((key) => flagged[key])
+        .map((key) => [key, flagged[key]]) : [];
+    const passesOthers = (i, key) => {
+        for (let k = 0; k < tests.length; k += 1) {
+            const t = tests[k];
+            if (t[3] === key) continue;
+            const v = t[0][i];
+            if (!(v > t[1] && v <= t[2])) return false;
+        }
+        return true;
+    };
+    for (let i = 0; flags.length && i < n; i += 1) {
+        let code = 0;
+        let codeKey = null;
+        for (let k = 0; k < flags.length; k += 1) {
+            const c = flags[k][1][i];
+            if (c > code) { code = c; codeKey = flags[k][0]; }
+        }
+        if (!code) continue;
+        const id = ids[i];
+        if (code === 3) {
+            // Own by the cell model, below the gate: drawn when the cell
+            // passes every other gated key (it is the one key's call).
+            if (mask[id] !== 0 || !passesOthers(i, codeKey)) continue;
+            mask[id] = 4;
+            modelOwnCount += 1;
+            continue;
+        }
+        if (mask[id] !== 1) continue;
+        if (code === 2) {
+            mask[id] = 5;
+            modelNotOwnCount += 1;
+        } else {
+            mask[id] = 3;
+            uncertainCount += 1;
+        }
+    }
+    return { mask, count, notCalledCount, uncertainCount, modelOwnCount, modelNotOwnCount, maxId };
 }
 
 /** A Set of passing ids (the server path's answer) as the same mask. */
@@ -296,6 +384,8 @@ function createLabelGpu({ renderer, vShaderUrl, fShaderUrl, labelTile, onChange 
                 const mask = gateSrc instanceof Uint8Array ? gateSrc : maskFromSet(gateSrc);
                 if (mask.length > LABEL_GPU_MAX_IDS) { disable("cell ids reach 2^24"); return null; }
                 s.gateTex = s.gateTex || newTexture();
+                // R8UI, an integer texture: the bytes arrive as they are, so a
+                // not-called 2 reaches the shader as 2, not clamped to 1.
                 uploadTable(s.gateTex, mask, 1, mask.length);
                 s.gateMax = mask.length - 1;
             }

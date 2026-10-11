@@ -3318,6 +3318,18 @@ def prime_hot_code(log=None):
                 continue
     step("the image codecs", codecs)
 
+    def geometry():
+        # shapely, which QC imports lazily in some thirty places. Its first
+        # import, met by two threads at once (a QC session's bulk job and a
+        # qc_next call), left the MCP server holding a partially initialized
+        # module: every later geometry call failed with "partially
+        # initialized module 'shapely' has no attribute 'lib'" until the
+        # process restarted. These are the submodules the lazy imports name.
+        import shapely  # noqa: F401
+        import shapely.geometry  # noqa: F401
+        import shapely.ops  # noqa: F401
+    step("the geometry library", geometry)
+
     def kernels():
         # Compiled analysis kernels (plexora/server/utils/jit.py): an LLVM run
         # and a round of dlopen()s on first call, which is exactly the work

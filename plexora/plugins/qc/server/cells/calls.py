@@ -333,12 +333,18 @@ def _dna_flags(ids, dna, table, markers):
     return (status, no_nucleus), evidence, lost
 
 
-def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None):
+def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None,
+           hints=None, tissue=None):
     """(cells DataFrame, pairs DataFrame, summary). `geometries` {roi_id:
     GeoJSON} are the regions as the ROI document holds them now (the user's
     edits, the traced outline); a region missing there is read from its
     candidate. `seg` is Segmentation QC's `calls` (summary, frame,
-    thresholds), `dna` DNA retention's (summary, frame), or None."""
+    thresholds), `dna` DNA retention's (summary, frame), or None. `hints` are
+    the result's unconfirmed staining detections (`results.scan_hints`),
+    `tissue` the project's tissue mask (`tissue.for_project`): the cells
+    under a detection, and the tissue's rim, are tested like a region's
+    (`DETECTED_REASONS`, `RIM_REASON`); the panel's backgrounds are compared
+    (`channel_findings`)."""
     ids, keep = _rows(ds)
     n = int(ids.size)
     cycles = result.get("cycles") or []
@@ -515,6 +521,11 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             marker_evidence.append({**record, **test, "reference": basis, "ring_px": ring_px,
                                     "n_flagged": int(mask.sum())})
 
+    # -- unconfirmed staining detections, the tissue's rim, the background ----
+    findings = _detections_and_rim(ds, keep, markers, values_of, xs, ys, hints, tissue,
+                                   float(table["cells.marker_quantile"]), flag,
+                                   marker_evidence)
+
     # -- channel-level verdicts ----------------------------------------------
     # A cycle out of register everywhere has no region: its channels'
     # markers are unreliable in every cell.
@@ -556,6 +567,9 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             for ev in marker_evidence:
                 if ev.get("marker") == entry.get("marker") and ev.get("reason") == reason:
                     ev["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
+            rim = (findings.get(entry.get("marker")) or {}).get("rim")
+            if reason == schemas.RIM_REASON and rim is not None:
+                rim["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
 
     # -- the calls ------------------------------------------------------------
     no_nucleus = exclude["no_nucleus"] | warn["no_nucleus"] | note["no_nucleus"]
@@ -585,8 +599,93 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
                "marker_quantile": float(table["cells.marker_quantile"]),
                "roi_method": sorted({m for m in roi_method.tolist() if m}),
                "dismissed": [{k: v for k, v in d.items()} for d in dismissed],
+               "channel_findings": findings,
                "cells_version": schemas.CELLS_VERSION}
     return frame, pairs, summary
+
+
+def _detections_and_rim(ds, keep, markers, values_of, xs, ys, hints, tissue, quantile, flag,
+                        marker_evidence) -> dict:
+    """Flags (warn) and evidence from the result's unconfirmed staining
+    detections and from the tissue's rim; returns {marker: {rim?,
+    background?}} -- the channel findings the digest reads. Reads the
+    columns it needs into `values_of` (log units, as the regions' test)."""
+    from plexora.plugins.qc.server.cells import channel_findings as found
+
+    if not hints and tissue is None:
+        return {}
+    wanted = {class_rules.table_column(h["channel"], markers) for h in hints or ()}
+    if tissue is not None:
+        wanted |= set(markers)
+    missing = sorted(m for m in wanted if m and m not in values_of)
+    if missing:
+        read = ds.table.columns(missing)
+        for m in missing:
+            if m in read:
+                values_of[m] = _to_log(np.asarray(read[m], dtype=np.float64),
+                                       ds.table.log_transformed)[keep]
+    if xs is None:
+        xs, ys = _positions(ds, keep)
+    rules = schemas.MARKER_EVIDENCE
+    out = {}
+    for hint in hints or ():
+        klass, channel = hint["class"], hint["channel"]
+        marker = class_rules.table_column(channel, markers)
+        reason = f"detected:{klass}"
+        record = {"class": klass, "reason": reason, "channel": channel, "marker": marker,
+                  "status": "warn", "channels": [marker or channel], "test": "signal",
+                  "detected": True}
+        values = values_of.get(marker) if marker else None
+        if values is None or xs is None:
+            marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
+                                    "why": "the table does not measure this channel"
+                                    if marker is None else "no cell positions to place it"})
+            continue
+        size = float(hint["cell_full_px"])
+        nx, ny = int(hint["grid_nx"]), int(hint["grid_ny"])
+        ok = np.isfinite(xs) & np.isfinite(ys)
+        gx = np.clip(np.floor(np.where(ok, xs, 0) / size).astype(np.int64), 0, nx - 1)
+        gy = np.clip(np.floor(np.where(ok, ys, 0) / size).astype(np.int64), 0, ny - 1)
+        under = ok & np.isin(gy * nx + gx, np.asarray(hint["cells"], dtype=np.int64))
+        finite = np.isfinite(values)
+        inside = np.flatnonzero(under & finite)
+        reference = finite & ~under
+        if not inside.size or int(reference.sum()) < rules["min_reference"]:
+            marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
+                                    "n_inside": int(inside.size),
+                                    "why": "too few cells under the detection to test"})
+            continue
+        test = signal_test(values[inside], values[reference], marker, quantile)
+        chosen = inside[test.pop("_flag")]
+        mask = np.zeros(values.shape[0], dtype=bool)
+        mask[chosen] = True
+        if test["borne_out"]:
+            flag(marker, reason, "warn", mask)
+        marker_evidence.append({**record, **test, "n_flagged": int(mask.sum()),
+                                "reference": "every cell outside the detection"})
+    if tissue is not None and xs is not None:
+        inside_tissue, rim = found.tissue_rows(tissue, xs, ys)
+        if rim is not None:
+            for marker in markers:
+                values = values_of.get(marker)
+                if values is None:
+                    continue
+                finding, flagged = found.rim_finding(values, inside_tissue, rim, marker,
+                                                     quantile)
+                if finding is None:
+                    continue
+                out.setdefault(marker, {})["rim"] = finding
+                if finding["borne_out"]:
+                    flag(marker, schemas.RIM_REASON, "warn", flagged)
+                    marker_evidence.append({"class": "rim", "reason": schemas.RIM_REASON,
+                                            "marker": marker, "status": "warn",
+                                            "channels": [marker], "test": "rim",
+                                            "borne_out": True,
+                                            "n_flagged": finding["n_flagged"]})
+        for marker, finding in found.background_findings(
+                {m: values_of[m] for m in markers if m in values_of}, inside_tissue).items():
+            out.setdefault(marker, {})["background"] = finding
+    return out
 
 
 def _list_column(n, rows, values):
@@ -759,6 +858,29 @@ def dna_calls(session, project):
     return found, {"state": "current", "fingerprint": fingerprint}
 
 
+def _tissue(session, project):
+    """The project's tissue mask (`tissue.for_project`: the stored scan's, else
+    one nuclear overview read), or None when it cannot be had -- the rim
+    finding is then skipped, never guessed."""
+    from plexora.plugins.qc.server import tissue
+
+    try:
+        return tissue.for_project(session, project)
+    except Exception:  # an image that cannot be read: no rim finding
+        return None
+
+
+def reviewed_hints(result, hints):
+    """The stored staining hints the channel audit left open
+    (`digest.open_hints`): a hint on a channel the audit called clean is
+    settled, never a cell flag."""
+    from plexora.plugins.qc.server.digest import open_hints
+
+    entries = {c.get("name"): c for c in (result or {}).get("channels") or []}
+    return [h for h in hints or ()
+            if h["class"] in open_hints(entries.get(h["channel"], {"scan_hints": {h["class"]: {}}}))]
+
+
 def write_for_active(call, project, *, refresh_regions=True):
     """Derive and store the active result's cells (after the regions are
     propagated again, unless `refresh_regions=False`)."""
@@ -788,8 +910,10 @@ def write_for_active(call, project, *, refresh_regions=True):
         geometries = {r["roi_id"]: r.get("geometry") for r in regions}
         seg, seg_state = segmentation_calls(session, project)
         dna, dna_state = dna_calls(session, project)
+        hints = reviewed_hints(result, results.scan_hints(project, result.get("result_id")))
         frame, pairs, summary = derive(ds, result, table, pairs=pairs, geometries=geometries,
-                                       seg=seg, dna=dna)
+                                       seg=seg, dna=dna, hints=hints,
+                                       tissue=_tissue(session, project))
         summary["seg_flags"] = seg_state
         summary["dna_flags"] = dna_state
         summary["warnings"] = [
@@ -800,6 +924,18 @@ def write_for_active(call, project, *, refresh_regions=True):
             summary["warnings"].append(
                 "dna_flags_stale: DNA retention was measured on another mask or image; its "
                 "calls are left out until it is run again")
+        # What the per-marker digest reads (`digest.marker_digest`): the mask
+        # notice and each cycle's nucleus retention, kept with the calls so
+        # the digest is a function of the stored result alone.
+        seg_summary = (seg[0] if seg else None) or {}
+        summary["seg_notice"] = ({"notice": seg_summary["notice"],
+                                  "peaks_on_labels_pct": seg_summary.get("peaks_on_labels_pct")}
+                                 if seg_summary.get("notice") else None)
+        dna_summary = (dna[0] if dna else None) or {}
+        summary["dna_cycles"] = [
+            {"position": position + 1, "markers": list(cycle.get("markers") or ()),
+             "cumulative_retained": cycle.get("cumulative_retained")}
+            for position, cycle in enumerate(dna_summary.get("cycles") or ())]
         results.put_cells(project, frame, pairs)
         result.setdefault("cells", {}).update(summary)
         if per_roi is not None:

@@ -150,6 +150,17 @@ def _gates_at(ds, payload):
     return {"lows": lows, "n_positive": counts.tolist(), "n_finite": col.n_finite}
 
 
+def _cellcall_select(ds, payload):
+    """What the cell model reads for a marker at a gate (`cellcall.select`)."""
+    from plexora.plugins.gating.server.autogate import cellcall
+
+    return cellcall.select(ds, payload["marker"], float(payload["low"]), payload.get("high"),
+                           gates=payload.get("gates") or {}, pixel_um=payload.get("pixel_um"),
+                           seed=int(payload.get("seed") or 0),
+                           band_halves=payload.get("band_halves"),
+                           max_cells=payload.get("max_cells"))
+
+
 OPERATIONS = {
     "gating.autogate.profile": _profile,
     "gating.autogate.profile_all": _profile_all,
@@ -162,6 +173,7 @@ OPERATIONS = {
     "gating.autogate.within": _within,
     "gating.autogate.regression": _regression,
     "gating.autogate.gates_at": _gates_at,
+    "gating.autogate.cellcall_select": _cellcall_select,
 }
 
 

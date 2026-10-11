@@ -24,6 +24,15 @@ from plexora.agent.errors import AgentError
 #: Largest block one group may read, per side, at the chosen level.
 MAX_GROUP_SIDE = 2048
 
+#: [cal] a typical cell's diameter, in microns: the disc a cell's own pixels
+#: are read in, centred on its table centroid (`in_disc`). A mask is never
+#: the cell: some projects have none, and a mask may be a bare nucleus, a
+#: feathered one or a Voronoi fill.
+CELL_DIAMETER_UM = 9.0
+#: What a pixel is assumed to be worth when nothing says (the same default
+#: `crop_side_px` draws at: 24 um across 48 px).
+DEFAULT_UM_PER_PX = 0.5
+
 
 class Crop:
     """One cell's square crop: raw planes by channel name, labels, geometry."""
@@ -51,6 +60,39 @@ def crop_side_px(record, crop_um=None, crop_px=None, default_um=24.0, default_px
     if pixel:
         return default_um / pixel["value"], "default_um"
     return default_px, "default_px"
+
+
+def cell_radius_px(record, pixel=None):
+    """(radius of a typical cell in full-resolution px, how): from the
+    image's calibration, `pixel` (`{value, source}`) standing in for one it
+    lacks, else `DEFAULT_UM_PER_PX`."""
+    from plexora.server.utils import pixel_scale
+
+    pixel = pixel if pixel is not None else pixel_scale.pixel_size(record)
+    if pixel and pixel.get("value"):
+        return CELL_DIAMETER_UM / 2.0 / float(pixel["value"]), "um"
+    return CELL_DIAMETER_UM / 2.0 / DEFAULT_UM_PER_PX, "default_um_per_px"
+
+
+def disc_mask(crop, radius_px):
+    """bool (side, side): the crop's pixels within `radius_px` (full-resolution
+    px) of the cell's table centroid -- the cell's own pixels, mask or no mask."""
+    plane = next(iter(crop.planes.values()))
+    side = plane.shape[0]
+    div = 2 ** int(crop.level)
+    cx = crop.x / div - crop.box[0]
+    cy = crop.y / div - crop.box[1]
+    r = float(radius_px) / div
+    yy, xx = np.mgrid[:side, :side]
+    return (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r
+
+
+def in_disc(crop, name, radius_px):
+    """The pixels of channel `name` in the cell's disc (`disc_mask`), or None."""
+    plane = crop.planes.get(name)
+    if plane is None or not plane.size:
+        return None
+    return plane[disc_mask(crop, radius_px)]
 
 
 def read_cell_crops(session, record, cells, *, channels, crop_px, tile_px, mask=True,
@@ -208,13 +250,82 @@ def log_window_panel(crop, name, gate, size, *, to_log=True, half_width=None):
     return np.array(image)
 
 
-#: The judged cell's outline in every panel (and in the packet's legend).
+#: [cal] the morphology panel's floor: a cell is never drawn brighter than
+#: this share of its context window's span would draw it, so a cell with no
+#: stain of its own stays dark instead of having its noise stretched to white.
+MORPHOLOGY_FLOOR = 0.5
+
+
+def self_window_panel(crop, nuclear, marker, *, nuclear_window, window, radius_px, size,
+                      nuclear_color, marker_color):
+    """(panel, info): the marker windowed on the judged cell's OWN pixels.
+
+    Black is the context window's black (`window[0]`, the negatives' median);
+    white the p99 of the cell's pixels in its disc (`disc_mask`) -- but never
+    below `MORPHOLOGY_FLOOR` of the context span, so a negative stays flat.
+    The whole crop is drawn with it: a dim ring around this nucleus becomes
+    visible, and a brighter neighbour saturates -- visibly somewhere else.
+    No mask outline (a mask may be a nucleus, a Voronoi cell or absent);
+    `mark_centre` marks the judged nucleus. `info` = {own_p99, white,
+    floored} for the manifest."""
+    from PIL import Image
+
+    from plexora.server.utils import source_image
+
+    low, high = float(window[0]), float(window[1])
+    floor = low + MORPHOLOGY_FLOOR * (high - low)
+    own = in_disc(crop, marker, radius_px)
+    own_p99 = float(np.percentile(own, 99)) if own is not None and own.size else floor
+    white = max(own_p99, floor)
+    side = next(iter(crop.planes.values())).shape[0]
+    accumulator = np.zeros((side, side, 3), dtype=np.float32)
+    for name, win, colour in ((nuclear, nuclear_window, nuclear_color),
+                              (marker, [low, white], marker_color)):
+        plane = crop.planes.get(name) if name else None
+        if plane is None or (name == nuclear and nuclear == marker):
+            continue
+        hexed = colour.lstrip("#")
+        source_image.blend_plane(accumulator, plane, win,
+                                 {"r": int(hexed[0:2], 16), "g": int(hexed[2:4], 16),
+                                  "b": int(hexed[4:6], 16)})
+    image = Image.fromarray(source_image.finish(accumulator), "RGB")
+    if image.size != (size, size):
+        image = image.resize((size, size), Image.LANCZOS)
+    return np.array(image), {"own_p99": round(own_p99, 2), "white": round(white, 2),
+                             "floored": bool(own_p99 < floor)}
+
+
+#: The judged cell's centre ticks and outline (and the packet's legend).
 OUTLINE_COLOR = "#ff3df2"
 NEIGHBOUR_OUTLINE_COLOR = "#8a8f99"
+#: The ticks' span, in typical-cell radii from the centroid: outside the
+#: cell's edge, so they never cover the ring they help find.
+TICK_SPAN = (1.3, 1.75)
+
+
+def mark_centre(panel, crop, radius_px, *, color=OUTLINE_COLOR):
+    """Four short ticks around the judged cell's table centroid, in place:
+    which nucleus a panel is about, with no claim about where the cell ends."""
+    from PIL import Image, ImageDraw
+
+    plane = next(iter(crop.planes.values()))
+    side = plane.shape[0]
+    div = 2 ** int(crop.level)
+    k = panel.shape[1] / side
+    x = (crop.x / div - crop.box[0]) * k
+    y = (crop.y / div - crop.box[1]) * k
+    r = float(radius_px) / div * k
+    image = Image.fromarray(panel, "RGB")
+    draw = ImageDraw.Draw(image)
+    r0, r1 = TICK_SPAN[0] * r, TICK_SPAN[1] * r
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        draw.line((x + dx * r0, y + dy * r0, x + dx * r1, y + dy * r1), fill=color, width=1)
+    panel[...] = np.asarray(image)
+    return panel
 
 
 def outline(panel, crop, *, target=OUTLINE_COLOR, neighbours=NEIGHBOUR_OUTLINE_COLOR,
-            thickness=1):
+            thickness=1, alpha=1.0):
     """The target cell's outline (and dim neighbours) over a panel, in place."""
     from plexora.server.utils.label_overlay import paint_labels, resize_labels_nearest
 
@@ -225,6 +336,6 @@ def outline(panel, crop, *, target=OUTLINE_COLOR, neighbours=NEIGHBOUR_OUTLINE_C
     def colour_for(label):
         return target if label == crop.cell_id else neighbours
 
-    paint_labels(panel, labels, mode="outlines", colour_for=colour_for, alpha=1.0,
+    paint_labels(panel, labels, mode="outlines", colour_for=colour_for, alpha=alpha,
                  thickness=thickness)
     return panel

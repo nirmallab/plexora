@@ -1,6 +1,6 @@
 import json
 
-from flask import Blueprint, Response, abort, jsonify, request
+from flask import Blueprint, Response, abort, jsonify, make_response, request
 import polars as pl
 
 from plexora import api
@@ -131,6 +131,124 @@ def _detail_brief(row):
     return {"reason": detail.get("reason"), "flags": detail.get("flags"),
             "condition": ({k: condition.get(k) for k in ("within", "n_positive_outside")}
                           if condition else None)}
+
+
+_ROUTE_SESSION = {}
+
+
+def _agent_session():
+    """One data session for the routes that read pixels (the cell model's
+    calls, its job), made on first use and kept."""
+    import threading
+
+    from plexora.agent import AgentSession
+
+    lock = _ROUTE_SESSION.setdefault("lock", threading.Lock())
+    with lock:
+        if "session" not in _ROUTE_SESSION:
+            _ROUTE_SESSION["session"] = AgentSession(table_limit=2)
+        return _ROUTE_SESSION["session"]
+
+
+@gating_bp.route('/get_cell_model', methods=['GET'])
+def get_cell_model():
+    """One byte per table row (the order /get_all_cells sends ids in): where
+    the cell model disagrees with the gate as it stands (`cellcall.codes`: 1 a
+    positive it leaves uncertain, 2 a positive it confidently reads as not its
+    own, 3 a cell below the gate it confidently reads as its own); all zeros
+    when it has not been run at this gate. Shown, never applied.
+    `X-Cell-Model-State` (ready, not_run, not_gated) and the three counts."""
+    import gzip
+
+    import numpy as np
+
+    from plexora.plugins.gating.server.autogate import cellcall
+
+    datasource = request.args.get('datasource')
+    marker = request.args.get('marker')
+    if not datasource or not marker:
+        abort(400)
+    session = _agent_session()
+    try:
+        ds = session.data(datasource)
+        frame = ds.table.geometry()
+        n = int(frame.height) if frame is not None else 0
+        found, state, _gate = cellcall.current(ds, marker)
+    except KeyError:
+        abort(404)
+    out = np.zeros(n, dtype=np.uint8)
+    counts = {"own": 0, "not_own": 0, "uncertain": 0}
+    if found is not None and int(found["info"].get("n") or 0) == n:
+        out, counts = cellcall.codes(n, found)
+    content = gzip.compress(out.tobytes('C'))
+    response = make_response(content)
+    response.headers.set('Content-Type', 'application/octet-stream')
+    response.headers['Content-length'] = len(content)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['X-Cell-Model-State'] = state
+    response.headers['X-Cell-Model-Own'] = counts["own"]
+    response.headers['X-Cell-Model-Not-Own'] = counts["not_own"]
+    response.headers['X-Cell-Model-Uncertain'] = counts["uncertain"]
+    return response
+
+
+def _invoke(tool, arguments):
+    """A gating capability on the viewer's behalf (a job answers `{job_id}`)."""
+    import dataclasses
+
+    from plexora.agent import registry
+    from plexora.agent.policy import Policy
+
+    try:
+        registry.get("gating.cell_model_run")
+    except Exception:
+        registry.discover(["gating"])
+    policy = dataclasses.replace(Policy.from_flags(), principal="viewer")
+    answer = registry.invoke(_agent_session(), tool, arguments, policy=policy,
+                             notify=lambda project, plugin, kind, body:
+                             api.notify_viewers(project, plugin, kind, body))
+    if not answer["ok"]:
+        return api.json_response({"ok": False, "error": answer["error"]}), 400
+    return api.json_response({"ok": True, **(answer["result"] or {})})
+
+
+@gating_bp.route('/run_cell_model', methods=['POST'])
+def run_cell_model():
+    """Start the cell model over a marker's cells (`run_cell_model`, a job)."""
+    try:
+        body = json.loads(request.data or b"{}")
+    except ValueError:
+        abort(400)
+    datasource = body.get('datasource')
+    if not datasource:
+        abort(400)
+    arguments = {"project": datasource, "refresh": bool(body.get("refresh"))}
+    if body.get("markers"):
+        arguments["markers"] = list(body["markers"])
+    return _invoke("run_cell_model", arguments)
+
+
+def _gating_job(job_id):
+    """A job record, only when it is one of gating's (the panel reads nothing else)."""
+    from plexora.agent import jobs
+
+    record = jobs.store().get(job_id)
+    if record is None or not str(record.get("capability") or "").startswith("gating."):
+        abort(404)
+    return record
+
+
+@gating_bp.route('/jobs/<job_id>', methods=['GET'])
+def job_state(job_id):
+    record = _gating_job(job_id)
+    return api.json_response({"ok": True, "job": {k: record.get(k) for k in (
+        "job_id", "status", "progress", "project", "capability", "error", "result")}})
+
+
+@gating_bp.route('/jobs/<job_id>/cancel', methods=['POST'])
+def job_cancel(job_id):
+    _gating_job(job_id)
+    return _invoke("job_cancel", {"job_id": job_id})
 
 
 @gating_bp.route('/get_gate_provenance', methods=['GET'])

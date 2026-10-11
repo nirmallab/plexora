@@ -2,6 +2,9 @@ class NumericData {
   //: Columns kept by getColumn: enough for a multi-marker gate plus the
   //: marker being switched to, at ~5 MB each for a million cells.
   static COLUMN_CACHE_SIZE = 8;
+  //: Markers kept by getNotCalled: the same depth as the columns, at a
+  //: quarter of the size (one byte a cell).
+  static NOT_CALLED_CACHE_SIZE = 8;
 
   /**
    * Constructor for NumericDataLayer.
@@ -16,6 +19,8 @@ class NumericData {
       this.cellsPromise = null;
       // Whole float32 columns by key, most recently used last. See getColumn.
       this.columns = new Map();
+      // QC's not-called bytes by marker, kept the same way. See getNotCalled.
+      this.notCalled = new Map();
   }
 
   /**
@@ -52,9 +57,61 @@ class NumericData {
       return promise;
   }
 
-  /** Forget every cached column (the table's values changed). */
+  /** Forget every cached column (the table's values changed). The not-called
+   *  bytes go too: they are per row, and a table that changed may have
+   *  changed its rows. */
   invalidateColumns() {
       this.columns = new Map();
+      this.invalidateNotCalled();
+  }
+
+  /**
+   * @function getNotCalled - which cells QC says cannot be called for
+   * `marker`: one byte per table row, aligned with loadCells()' ids like a
+   * column (1 = not called -- inside a QC region, or the marker flagged
+   * unreliable there; 0 = called). All zeros without QC.
+   *
+   * Cached beside the columns and for the same reason (getColumn): a drag
+   * asks for the gated markers on every tick. Concurrent callers share one
+   * request. Unlike a column, a failure is not an exception: it resolves to
+   * null -- nothing known to be not called -- so the gate still draws, and
+   * it is not cached, so the next tick asks again.
+   *
+   * Stale whenever QC's calls move: invalidateNotCalled() is called on
+   * `plexora:qc-changed` (ImageViewer.onQcChanged).
+   *
+   * @returns {Promise<Uint8Array|null>}
+   */
+  getNotCalled(marker) {
+      const hit = this.notCalled.get(marker);
+      if (hit) {
+          this.notCalled.delete(marker);
+          this.notCalled.set(marker, hit);
+          return hit;
+      }
+      const promise = this.fetchNotCalled(marker).catch(() => null).then((bytes) => {
+          if (!bytes && this.notCalled.get(marker) === promise) this.notCalled.delete(marker);
+          return bytes;
+      });
+      this.notCalled.set(marker, promise);
+      while (this.notCalled.size > NumericData.NOT_CALLED_CACHE_SIZE) {
+          this.notCalled.delete(this.notCalled.keys().next().value);
+      }
+      return promise;
+  }
+
+  async fetchNotCalled(marker) {
+      const response = await fetch(plexoraUrl('get_not_called') + '?' + new URLSearchParams({
+          datasource: datasource,
+          marker: marker
+      }));
+      if (!response.ok) throw new Error(`get_not_called answered ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /** Forget every marker's not-called bytes (QC's calls moved). */
+  invalidateNotCalled() {
+      this.notCalled = new Map();
   }
 
   /*
@@ -170,4 +227,23 @@ class NumericData {
       }
       return new Float32Array(arr);
   }
+}
+
+/**
+ * `plexora:qc-changed`, raised on window whenever QC's calls may have moved: a
+ * QC region drawn, traced, approved or deleted (in QC's panel or as an ROI), a
+ * finding set aside, the strictness changed, or an agent doing any of that.
+ * The not-called bytes above are stale from then on, and ImageViewer drops
+ * them and evaluates its gates again. One helper, so every writer -- QC's
+ * client (qcApi.js), the ROI store's saves, the agent bridge -- raises the
+ * same event with the same detail, `{datasource}`.
+ */
+const PLEXORA_QC_CHANGED = {
+    EVENT: "plexora:qc-changed",
+    announce(datasource) {
+        window.dispatchEvent(new CustomEvent(PLEXORA_QC_CHANGED.EVENT, { detail: { datasource } }));
+    },
+};
+if (typeof window !== "undefined") {
+    window.PlexoraQcChanged = PLEXORA_QC_CHANGED;
 }

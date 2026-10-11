@@ -1434,6 +1434,12 @@ def _build_mcp_parser():
                             "server. Not for typing into a client config.")
     serve.add_argument("--bridge-nonce", default=None, metavar="N", help=argparse.SUPPRESS)
     _gating_limit_arguments(serve, "--gating-on-limit", "--gating-max-extensions")
+    serve.add_argument("--gating-hybrid", dest="gating_hybrid", choices=GATING_HYBRID_OPTIONS,
+                       default=None,
+                       help="Automatic gating's default hybrid level: tiles (each cell drawn "
+                            "with its outline and partner channels), model (a per-cell image "
+                            "model shapes the gate), full (both), or off (the default). A "
+                            "session can still choose its own.")
     smoke = subs.add_parser("smoke", help="Check the server works against this data "
                                           "directory (read-only).")
     smoke.add_argument("--project", help="Inspect this project (default: the first).")
@@ -1533,12 +1539,14 @@ def _build_ai_parser():
                        help="Print the raw lines as JSON, one per line.")
     bench = subs.add_parser("bench", help="Benchmark automatic gating or QC against known "
                                           "truth.")
-    bench.add_argument("bench_target", choices=("gating", "qc"))
+    bench.add_argument("bench_target", choices=("gating", "qc", "cellcall"))
     from plexora.ai import bench as bench_module, bench_data
 
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
                        help="Comma-separated synthetic scenarios ("
-                            + ", ".join(bench_data.SCENARIOS) + "), or 'all'. Built in a "
+                            + ", ".join(bench_data.SCENARIOS) + "; with per-cell causes: "
+                            + ", ".join(bench_data.SPATIAL_SCENARIOS) + "), 'spatial' for "
+                            "the ones with causes, or 'all' for the others. Built in a "
                             "temporary data directory; your projects are not touched.")
     bench.add_argument("--project", dest="bench_projects", action="append", default=None,
                        help="A project whose AnnData carries an expert's gates (repeatable).")
@@ -1546,8 +1554,9 @@ def _build_ai_parser():
                        help="Every project of a dataset.")
     bench.add_argument("--truth", default=bench_module.TRUTH_DEFAULT,
                        help="Where the expert gates are: uns:<table> (default "
-                            f"{bench_module.TRUTH_DEFAULT}), or json:<path>, a reference "
-                            "run's gates (its accepted markers are the truth).")
+                            f"{bench_module.TRUTH_DEFAULT}), json:<path>, a reference "
+                            "run's gates (its accepted markers are the truth), or "
+                            "csv:<path>, hand-written marker,value lines.")
     bench.add_argument("--agent", default=bench_module.AGENT_STYLES[0],
                        help="The scripted agent: " + ", ".join(bench_module.AGENT_STYLES)
                             + ":P (default " + bench_module.AGENT_STYLES[0] + ").")
@@ -1558,12 +1567,33 @@ def _build_ai_parser():
     bench.add_argument("--score-session", dest="score_session", default=None, metavar="ID",
                        help="Score an existing gating session (a real agent's) against the "
                             "expert gates instead of running one.")
+    bench.add_argument("--replay-session", dest="replay_session", default=None, metavar="ID",
+                       help="Ask the scripted agent every packet an existing gating session "
+                            "issued, and report how often the session's answers agree.")
+    bench.add_argument("--rerender", action="store_true",
+                       help="With --replay-session: draw each collage again from its manifest "
+                            "and report whether the bytes match the stored picture.")
     bench.add_argument("--out", default=None, help="Where results.json and summary.md go.")
     bench.add_argument("--seed", type=int, default=0)
     bench.add_argument("--stability", type=int, default=None, metavar="RUNS",
                        help="With --synthetic: gate each scenario RUNS times with differently "
                             "seeded agents, then replay the first run's answers, and report "
                             "how far each marker's gate moves.")
+    bench.add_argument("--variants", default="baseline",
+                       help="Gating: the ablation's variants, comma-separated -- "
+                            "baseline, tiles, model, hybrid (the hybrid levels); each runs "
+                            "its own session (default baseline).")
+    bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
+                       help="With --truth csv:<path>: the header column holding the gates "
+                            "(\"Human gate\"); the markers are the first column.")
+    bench.add_argument("--workers", default="0",
+                       help="Cellcall: comma-separated numbers of model workers to time "
+                            "(0: the default split of the cores).")
+    bench.add_argument("--halves", type=float, default=None,
+                       help="Cellcall: how far from each gate cells are read, in band "
+                            "halves (default the model's own reach).")
+    bench.add_argument("--cells", type=int, default=None,
+                       help="Cellcall: at most this many cells a marker, nearest the gate.")
     _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
 
     # Plexora's own harness: AI features with no external agent, billed in
@@ -1660,7 +1690,10 @@ def _mcp_missing():
 #: without importing the plugin; a test keeps the two the same.
 GATING_LIMIT_POLICIES = ("ask", "extend", "stop")
 GATING_LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
-                    "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS"}
+                    "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS",
+                    "hybrid": "PLEXORA_GATING_HYBRID"}
+#: Automatic gating's hybrid levels (autogate `schemas.HYBRID_OPTIONS`).
+GATING_HYBRID_OPTIONS = ("off", "tiles", "model", "full")
 
 
 def _gating_limit_arguments(parser, policy_flag, extensions_flag):
@@ -1683,6 +1716,8 @@ def _apply_gating_limits(args):
         os.environ[GATING_LIMIT_ENV["on_limit"]] = args.gating_on_limit
     if getattr(args, "gating_max_extensions", None) is not None:
         os.environ[GATING_LIMIT_ENV["max_extensions"]] = str(args.gating_max_extensions)
+    if getattr(args, "gating_hybrid", None):
+        os.environ[GATING_LIMIT_ENV["hybrid"]] = args.gating_hybrid
 
 
 def _run_mcp(args):
@@ -1812,17 +1847,30 @@ def _run_ai(args):
             else "oracle"
         return bench_qc.bench_command(synthetic=scenarios, agent=agent, arms=arms,
                                       out=args.out, seed=args.seed)
+    if command == "bench" and args.bench_target == "cellcall":
+        from plexora.ai import bench_cellcall
+
+        if not args.bench_projects:
+            print("bench cellcall needs --project", file=sys.stderr)
+            return 2
+        return bench_cellcall.bench_command(
+            project=args.bench_projects[0],
+            markers=[m.strip() for m in args.markers.split(",") if m.strip()]
+            if args.markers else None,
+            workers=args.workers, band_halves=args.halves, max_cells=args.cells, out=args.out)
     if command == "bench":
         from plexora.ai import bench, bench_data
 
         scenarios = None
+        known = tuple(bench_data.SCENARIOS) + tuple(bench_data.SPATIAL_SCENARIOS)
         if args.synthetic:
             scenarios = (list(bench_data.SCENARIOS) if args.synthetic == "all"
+                         else list(bench_data.SPATIAL_SCENARIOS) if args.synthetic == "spatial"
                          else [s.strip() for s in args.synthetic.split(",") if s.strip()])
-            unknown = [s for s in scenarios if s not in bench_data.SCENARIOS]
+            unknown = [s for s in scenarios if s not in known]
             if unknown:
                 print(f"Unknown scenarios: {', '.join(unknown)} "
-                      f"(known: {', '.join(bench_data.SCENARIOS)})", file=sys.stderr)
+                      f"(known: {', '.join(known)})", file=sys.stderr)
                 return 2
         # A benchmark has nobody to ask: it keeps going unless told otherwise.
         if not getattr(args, "gating_on_limit", None):
@@ -1833,7 +1881,10 @@ def _run_ai(args):
             truth=args.truth, agent=args.agent,
             arms=tuple(a.strip() for a in args.arms.split(",") if a.strip()),
             out=args.out, markers=_plugin_list(args.markers), seed=args.seed,
-            score=args.score_session, stability=args.stability)
+            score=args.score_session, stability=args.stability,
+            replay=args.replay_session, rerender=args.rerender,
+            variants=tuple(v.strip() for v in args.variants.split(",") if v.strip()),
+            truth_column=args.truth_column)
     if command == "audit":
         from plexora.ai.audit import audit_command
 

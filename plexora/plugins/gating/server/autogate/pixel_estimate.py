@@ -23,10 +23,12 @@ import io
 
 import numpy as np
 
+from plexora.agent.evidence.crops import CELL_DIAMETER_UM
+
 #: [cal] how wide a segmented cell is, in microns: its typical value and the
 #: range a real tissue's median falls in (a nuclear mask near the bottom, a
 #: whole-cell mask of large cells near the top).
-PRIOR = {"cell_diameter_um": 9.0, "range_um": (6.0, 14.0)}
+PRIOR = {"cell_diameter_um": CELL_DIAMETER_UM, "range_um": (6.0, 14.0)}
 
 #: [cal] how the cells are measured: a seeded sample, each cell's own mask read
 #: in a crop wide enough for a large cell at a fine scale.

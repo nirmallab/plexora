@@ -76,7 +76,7 @@ def test_extend_keeps_going_without_asking(tmp_path):
     assert _unit(sid)["extensions"] == 1
     # The one extension is spent too: the next want is flagged, not granted.
     answer(session, sid, t4, {"kind": "t4_candidates", "confidence": "sure",
-                              "intervals": _all_rows(t4, "mostly_negative")})
+                              "intervals": _all_rows(t4, "unstained")})
     following, result = next_packet(session, sid)
     unit = _unit(sid)
     if following is None:
@@ -198,6 +198,9 @@ class _T4Engine:
     def settle(self, unit):
         self.settled.append(unit["candidate"])
 
+    def rounds_left(self, unit):
+        return True
+
 
 def _point(pid, low):
     return {"id": pid, "low": low, "sources": [pid], "n_positive": 0, "fraction": 0.0}
@@ -225,7 +228,7 @@ def test_a_look_that_runs_out_of_rows_goes_on_from_where_it_stopped():
     at that point."""
     points = [_point("gmm", 1.0), _point("within:CD45", 1.05), _point("ctrl:CD45", 1.6),
               _point("up:1sd", 2.0)]
-    unit, engine, outcome = _apply_t4({"i1": "mostly_negative"}, points)
+    unit, engine, outcome = _apply_t4({"i1": "unstained"}, points)
     assert outcome["continues"] is True and unit["state"] == "awaiting_t4"
     assert unit["candidate"] == 1.05 and unit["direction"] == "up"
     assert unit["t4_continued"] == ["within:CD45"] and not engine.settled
@@ -249,8 +252,28 @@ def test_a_mixed_row_after_a_continued_round_keeps_the_gate_reached():
 
 def test_a_look_that_reaches_the_end_of_the_lattice_settles():
     points = [_point("gmm", 1.0), _point("edge:high", 1.4)]
-    unit, engine, outcome = _apply_t4({"i1": "mostly_negative"}, points)
+    unit, engine, outcome = _apply_t4({"i1": "neighbour_only"}, points)
     assert not outcome.get("continues") and engine.settled == [1.4]
+
+
+def test_a_first_row_that_says_the_opposite_turns_the_look_back_once():
+    """lsp11385_2's CD4: a first look sent the gate up, and the cells just
+    above it were clearly positive. The look turns back once -- the gate may
+    have been too high all along -- and a second "opposite" first row keeps
+    the gate where it is rather than swinging again."""
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import T4Answer
+
+    points = [_point("down:1sd", 0.8), _point("gmm", 1.0), _point("up:1sd", 1.2)]
+    unit, engine, outcome = _apply_t4({"i1": "own_stain"}, points)
+    assert outcome["chosen"] == "reverse" and unit["direction"] == "down"
+    assert unit["state"] == "awaiting_t4" and unit["t4_reversed"]["from"] == "up"
+    assert not engine.settled
+    unit["candidates"], unit["candidate_steps"] = {"c1": 0.8}, {"c1": "down:1sd"}
+    outcome = transitions.apply_t4(
+        engine, {"units": [{"project": "p", "marker": "M"}]},
+        T4Answer(kind="t4_candidates", intervals={"i1": "unstained"}, confidence="sure"))
+    assert outcome["chosen"] == "keep" and engine.settled == [1.0]
 
 
 def test_a_look_stopped_by_a_row_does_not_go_on(tmp_path):
@@ -260,8 +283,8 @@ def test_a_look_stopped_by_a_row_does_not_go_on(tmp_path):
     packet = first_packet_for(session, sid, "CD4", info)
     answer(session, sid, packet, look("too_low"))
     t4, _ = next_packet(session, sid)
-    rows = _all_rows(t4, "mostly_negative")
-    rows["i1"] = "mostly_positive"
+    rows = _all_rows(t4, "unstained")
+    rows["i1"] = "cannot_tell"
     outcome = answer(session, sid, t4, {"kind": "t4_candidates", "confidence": "sure",
                                         "intervals": rows})["outcome"]
     assert not outcome.get("continues") and outcome["chosen"] == "keep"
@@ -409,3 +432,31 @@ def test_each_candidate_gets_its_own_field(tmp_path):
                                     second[0]["bounds"]["x"] + second[0]["bounds"]["width"],
                                     second[0]["bounds"]["y"] + second[0]["bounds"]["height"])
                               ) <= gate_sampling.MAX_IOU
+
+
+def test_an_impure_gate_is_pushed_up_once_by_code():
+    """A gate whose positives are less pure against a partner than its own
+    brightest ones (`regression`'s `partners` check) goes up the lattice once
+    -- code's move, not a look's, so the oscillation guard does not count it --
+    and a second failure goes to the whole-image look as before. Anything but
+    purity (and the spatial checks it drags along) is never pushed."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    logged = []
+    fake = SimpleNamespace(options={"max_tier": 4}, rounds_left=lambda unit: True,
+                           log=lambda **event: logged.append(event))
+    unit = {"project": "p", "marker": "M", "candidate": 1.0, "state": "awaiting_regression",
+            "directions": ["down"]}
+    impure = {"failed": ["partners", "edge_ratio"], "checks": [{"name": "partners",
+                                                                 "value": [{"partner": "CD3"}]}]}
+    assert Engine.purity_push(fake, unit, impure)
+    assert unit["state"] == "awaiting_t4" and unit["direction"] == "up"
+    assert unit["code_moves"] == ["up:purity"] and unit["directions"] == ["down"]
+    assert logged and logged[0]["event"] == "purity_push"
+    unit["state"] = "awaiting_regression"
+    assert not Engine.purity_push(fake, unit, impure)          # once only
+    other = {"project": "p", "marker": "N", "candidate": 1.0}
+    assert not Engine.purity_push(fake, other, {"failed": ["partners", "flip_share"]})
+    assert not Engine.purity_push(fake, other, {"failed": ["edge_ratio"]})

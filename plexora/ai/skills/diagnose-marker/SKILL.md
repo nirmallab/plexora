@@ -52,9 +52,9 @@ The marker's column; its image channel and a mask for the pictures.
    specific band needs a closer look.
 5. Say plainly: what is wrong, which evidence shows it, and the remedy (re-stain,
    re-segment, a user-set gate, start from a scored candidate, exclude from phenotyping,
-   or a gate conditional on a subset partner -- in a gating session, a
-   `within_partner` answer -- when the stain is real only inside that
-   partner's cells).
+   or a gate conditional on a subset partner -- in a gating session, a look's
+   `within` answer -- when the stain is real only inside that partner's
+   cells).
    A membrane or cytoplasmic marker that follows the nucleus is the
    nucleus-based mask, not bleed-through: the profile records the DNA
    correlation (`cell_qc` `nuclear`) without the `nuclear_bleed` flag.

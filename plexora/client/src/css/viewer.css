@@ -2733,10 +2733,11 @@
    viewer and the two children opt back in. */
 .viewer-mini-map {
     bottom: 12px;
-    /* min() rather than a flat 220px so the open lens stays under OSD's own
-       toolbar, which imageViewer.js stands in a column on the left edge at
-       half the viewer's height: on a short window a flat 220px would reach
-       up into it. */
+    /* A fallback for the moment before miniMap.js's _fitRoot() has run. That
+       sizes the root to a fraction of the viewer -- which is what gives the
+       open map the canvas's own aspect ratio -- and caps it so it stays under
+       OSD's toolbar, which imageViewer.js stands in a column on the left edge
+       at half the viewer's height. */
     height: min(220px, 30vh);
     left: 12px;
     pointer-events: none;
@@ -2748,19 +2749,25 @@
 /* Docked and closed, it takes only the lens's room in its corner, so the
    corner (and the chat's lane beside it) is not held for a map nobody
    opened. Opening grows it at once (the stage then scales up from the lens);
-   closing keeps the room until the stage has shrunk. */
+   closing keeps the room until the stage has shrunk. !important because
+   miniMap.js's _fitRoot() writes the open size inline, and that inline size
+   stays on the root after it closes. */
 #openseadragon_wrapper .plx-canvas-dock > .viewer-mini-map.plx-docked:not(.is-expanded) {
-    height: 34px;
+    height: 34px !important;
     transition: width 0s linear var(--duration-base), height 0s linear var(--duration-base);
-    width: 34px;
+    width: 34px !important;
 }
 
-/* The circle. Scaled down into the lens button while collapsed rather than
-   hidden, so opening reads as the button expanding into the map. */
+/* The map's frame, in the viewer's proportions. Scaled down into the lens
+   button while collapsed rather than hidden, so opening reads as the button
+   expanding into the map. Black, not the panels' blue-black: an image of a
+   different shape than the viewer is letterboxed inside the frame, and the
+   bands either side of it have to be the same ground the picture is composited
+   on (miniMap._draw) or they read as a strip of a different colour. */
 .viewer-mini-map-stage {
-    background: rgba(8, 12, 18, 0.92);
+    background: rgba(0, 0, 0, 0.92);
     border: 1px solid rgba(148, 163, 184, 0.34);
-    border-radius: 50%;
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow-md);
     height: 100%;
     left: 0;
@@ -2793,7 +2800,7 @@
 }
 
 /* Positioned and sized entirely from JS (_layout), because where the image
-   sits inside the circle depends on its aspect ratio. */
+   sits inside the frame depends on its aspect ratio against the viewer's. */
 .viewer-mini-map-canvas {
     position: absolute;
 }
@@ -2812,16 +2819,16 @@
     cursor: grabbing;
 }
 
-/* Why the circle is empty, on the rare occasion it is empty for a reason (see
-   MiniMap._updateNote). Inset well inside the diameter so the text does not run
-   under the border-radius clip, and pointer-events: none so it never steals a
+/* Why the map is empty, on the rare occasion it is empty for a reason (see
+   MiniMap._updateNote). Inset from the sides so the text keeps clear of the
+   frame and its rounded corners, and pointer-events: none so it never steals a
    click meant for the map underneath. */
 .viewer-mini-map-note {
     align-items: center;
     color: var(--text-secondary);
     display: flex;
     font-size: 11px;
-    inset: 0 14%;
+    inset: 0 10%;
     justify-content: center;
     line-height: 1.35;
     pointer-events: none;
@@ -2839,9 +2846,9 @@
    the stage's transform-origin is, so the map appears to grow out of it, and
    the button that opened it is still under the pointer to close it again. It
    used to jump to the top-right on opening, which put the one control a user
-   had just pressed somewhere else. Open, it overlaps the circle's rim by a few
-   pixels, and reads as a tab on the lens. Only the glyph changes: the lens
-   while closed, a cross while open (miniMap.js draws both). */
+   had just pressed somewhere else. Open, it overlaps the frame's corner by a
+   few pixels, and reads as a tab on the map. Only the glyph changes: the
+   frame-and-box while closed, a cross while open (miniMap.js draws both). */
 .viewer-mini-map-lens {
     align-items: center;
     background: rgba(18, 24, 32, 0.82);

@@ -32,6 +32,10 @@ def test_priming_leaves_nothing_lazy(capsys):
     assert Image._initialized == 2
     assert "sklearn.mixture" in sys.modules
     assert "scipy.stats" in sys.modules
+    # QC's geometry, imported whole: a half-initialized shapely is what two
+    # threads' first imports left behind in a live MCP server.
+    assert "shapely.ops" in sys.modules
+    assert sys.modules["shapely"].lib is not None
     # Magic select's runtime is a native library like any other: dlopened
     # here, never first inside a request (it is a core dependency).
     import importlib.util
@@ -84,6 +88,32 @@ def test_the_node_primes_before_it_announces(monkeypatch, tmp_path):
                     if line.startswith("[plexora-node]"))
     assert lines.index("PRIMED") < announce
     assert announce < lines.index("WARMED") < lines.index("SERVED")
+
+
+def test_the_mcp_server_primes_before_it_is_built(monkeypatch):
+    """`plexora mcp serve` runs QC and gating jobs in its own process, beside
+    the threads that answer tool calls, so it primes like the node does:
+    before anything that could take a call exists."""
+    from plexora.mcp import server as mcp_server
+    from plexora.server.models import data_model
+
+    lines = []
+
+    class FakeServer:
+        def run(self, *args, **kwargs):
+            lines.append("SERVED")
+
+    def fake_build(*args, **kwargs):
+        lines.append("BUILT")
+        return FakeServer()
+
+    monkeypatch.setattr(data_model, "prime_hot_code",
+                        lambda log=None: lines.append("PRIMED"))
+    monkeypatch.setattr(mcp_server, "build_server", fake_build)
+
+    mcp_server.serve(transport="stdio")
+
+    assert lines == ["PRIMED", "BUILT", "SERVED"]
 
 
 def test_the_announce_says_which_operating_system_answered(monkeypatch,

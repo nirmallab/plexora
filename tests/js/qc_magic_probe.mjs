@@ -17,7 +17,9 @@
  *     commit, and yielding while the ROI tool is on screen;
  *   - QcMagic's floating bar and modes: in Add a drag pans, only Box draws
  *     a box, Remove carves; carving the selected region starts from its
- *     outline (`maskGeometry`), a plain refine click carries none.
+ *     outline (`maskGeometry`), a plain refine click carries none; a second
+ *     scribble beside the first is a new region, a loop round something is
+ *     sent as its box, and an outline whose region is gone ends with it.
  *
  * The real QcTree, QcFreehand, QcMagic and QcSidebarController (prototypes,
  * no constructor: it builds the whole panel) in a vm with a hand-built
@@ -361,7 +363,7 @@ await check("startDrawing puts magic select in hand by default; the pen only whe
         const c = drawingController({ state: "ready" });
         assert.equal(await c.startDrawing({ category: "blur_focus" }), true);
         same(c.modes, ["magic"]);
-        assert.ok(/line over/.test(c.said.at(-1)), c.said.at(-1));
+        assert.ok(/Drag round/.test(c.said.at(-1)), c.said.at(-1));
         const pen = drawingController({ state: "ready" });
         await pen.startDrawing({ category: "blur_focus" }, { mode: "draw" });
         same(pen.modes, []);
@@ -700,6 +702,80 @@ await check("QcMagic: a plain click inside it refines it, with no seed", async (
         assert.equal(segment.calls[0].maskGeometry ?? null, null);
         assert.ok(segment.calls[0].box);
         assert.equal(commits[0].roiId, "qcroi_1");
+    } finally {
+        window.PlexoraSegment = RealSegment;
+    }
+});
+
+/** A drag through `points` ([x, y] pairs) with the brush. */
+function brush(magic, points, shift = false) {
+    magic.press({ ...at(...points[0]), originalEvent: { shiftKey: shift } });
+    for (const p of points.slice(1)) magic.dragging(at(...p));
+    magic.dragEnd(at(...points.at(-1)));
+}
+const across = (from, to, y = 500) => {
+    const out = [];
+    for (let x = from; x <= to; x += 10) out.push([x, y]);
+    return out;
+};
+
+await check("QcMagic: a second scribble beside the first is a new region; the first's dots go when it lands", async () => {
+    const { magic, segment, commits, overlay } = magicHarness(square);
+    try {
+        magic.start();
+        magic.setMode("scribble");
+        brush(magic, across(300, 400));
+        assert.ok(overlay.prompts && overlay.prompts.length > 1, "shown while on the way");
+        await settled();
+        assert.equal(overlay.prompts, null, "gone once it lands");
+        brush(magic, across(430, 530));
+        await settled();
+        assert.equal(segment.calls.length, 2);
+        assert.ok(segment.calls[1].points.every((p) => p.x >= 430),
+                  JSON.stringify(segment.calls[1].points));
+        same(commits.map((c) => c.roiId), [null, null]);
+    } finally {
+        window.PlexoraSegment = RealSegment;
+    }
+});
+
+await check("QcMagic: a loop drawn round something sends its box", async () => {
+    const { magic, segment, commits } = magicHarness(square);
+    try {
+        magic.start();
+        magic.setMode("scribble");
+        const ring = [];
+        for (let i = 0; i <= 72; i++) {
+            const a = (i / 72) * 2 * Math.PI;
+            ring.push([600 + 60 * Math.cos(a), 600 + 60 * Math.sin(a)]);
+        }
+        brush(magic, ring);
+        await settled();
+        assert.equal(segment.calls.length, 1);
+        same(segment.calls[0].points, []);
+        same(Object.fromEntries(Object.entries(segment.calls[0].box)
+            .map(([k, v]) => [k, Math.round(v)])), { x: 540, y: 540, width: 120, height: 120 });
+        assert.equal(commits.length, 1);
+    } finally {
+        window.PlexoraSegment = RealSegment;
+    }
+});
+
+await check("QcMagic: an outline whose region is gone ends with it, dots and all", async () => {
+    const { magic, segment, overlay } = magicHarness(square);
+    try {
+        magic.start();
+        magic.setMode("add");
+        magic.click(qcClick(500, 500));
+        await settled();
+        magic.forgetGone(() => true);
+        assert.ok(magic.session, "still there: kept");
+        magic.forgetGone((id) => id !== "qcroi_new");
+        assert.equal(magic.session, null);
+        assert.equal(overlay.prompts, null);
+        magic.click(qcClick(510, 500));
+        await settled();
+        same(segment.calls[1].points, [{ x: 510, y: 500, label: 1 }]);
     } finally {
         window.PlexoraSegment = RealSegment;
     }

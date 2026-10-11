@@ -254,7 +254,7 @@ class RoiSidebarController {
             ["Add: click something to outline it, again to grow it", ""],
             ["Remove: click an area to take it out", "\u21e7 Click"],
             ["Box: drag round a large object", ""],
-            ["Scribble: draw a line over a long or patchy one", ""],
+            ["Scribble: draw a line over a long or patchy one, or a loop round it", ""],
             ["Scribble out what it should leave out", "\u21e7 Drag"],
             ["Refine a region: select it, click inside", ""],
             ["Finish the outline", "Esc"],
@@ -746,6 +746,8 @@ class RoiSidebarController {
         const operation = result.data.operation;
         this.store.revision = result.data.revision;
         this.store.applyLocal(operation);
+        // Already saved: a QC export brought back in moves QC's calls.
+        this.store.announceQc([operation]);
         this.store.undoStack.push({
             label: `Import ${result.data.imported} ROIs`,
             redo: [operation],

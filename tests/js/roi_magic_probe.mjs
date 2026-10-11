@@ -23,7 +23,11 @@
  *   - the seed: carving an existing region starts from its own outline
  *     (`maskGeometry`), and a plain refine click carries none;
  *   - the bar shown with the tool, hidden with any other or on disarm, and
- *     its close going back to the tool in hand.
+ *     its close going back to the tool in hand;
+ *   - a second scribble or box beside the first making a second region (it
+ *     used to reshape the first), a loop drawn round something sent as its
+ *     box, and the outline being made ending -- dots and all -- when its
+ *     region is deleted.
  *
  * Built on roi_interaction_probe.mjs's harness (its store, viewer and
  * renderer stand-ins), with the REAL segmentService.js's planner and Session
@@ -61,6 +65,11 @@ function makeStore() {
         ],
         categories: [{ id: "c", label: "Tumor", color: "#fff", visible: true, locked: false }],
         committed: [],
+        listeners: [],
+        onChange(fn) {
+            this.listeners.push(fn);
+            return () => { this.listeners = this.listeners.filter((f) => f !== fn); };
+        },
         category(id) { return this.categories.find((c) => c.id === id) || null; },
         feature(id) { return this.features.find((f) => f.id === id) || null; },
         get selected() { return this.feature(this.selectionId); },
@@ -71,7 +80,12 @@ function makeStore() {
         visibleFeatures() { return this.features; },
         select(id) { this.selectionId = id; },
         changed() {},
-        commit(entry) { this.committed.push(entry); for (const op of entry.redo) this.applyLocal(op); return true; },
+        commit(entry) {
+            this.committed.push(entry);
+            for (const op of entry.redo) this.applyLocal(op);
+            for (const fn of this.listeners) fn();
+            return true;
+        },
         applyLocal(op) {
             if (op.op === "roi.create") this.features.push(op.feature);
             if (op.op === "roi.update_geometry") {
@@ -622,6 +636,99 @@ await check("...and a tap with the brush is one point", async () => {
     await settled();
     assert.equal(segment.calls.length, 1);
     same(segment.calls[0].points, [{ x: 700, y: 700, label: 1 }]);
+});
+
+await check("a second scribble beside the first is a second region; the first's dots go when it lands", async () => {
+    const store = makeStore();
+    store.features = [];
+    const { tools, renderer, segment } = makeTools(store);
+    tools.setTool("magic");
+    tools.setMagicMode("scribble");
+    scribble(tools, 300, 400);
+    assert.equal(renderer.prompts.length, segment.calls[0].points.length,
+                 "the scribble's dots show while its outline is on the way");
+    await settled();
+    assert.equal(renderer.prompts, null, "and go once it lands");
+    const first = store.committed[0].redo[0].feature;
+    const before = JSON.stringify(first.geometry);
+    // Begun within a region's width of the first: near enough that it used
+    // to be taken as more of the first, reshaping it.
+    scribble(tools, 450, 550);
+    await settled();
+    assert.equal(segment.calls.length, 2);
+    assert.ok(segment.calls[1].points.every((p) => p.x >= 450),
+              JSON.stringify(segment.calls[1].points));
+    same(store.committed.map((e) => e.label), ["Magic select", "Magic select"]);
+    assert.equal(JSON.stringify(first.geometry), before);
+});
+
+await check("a box beside the last one is a second region, not a redraw of the first", async () => {
+    const store = makeStore();
+    store.features = [];
+    const { tools, segment } = makeTools(store);
+    tools.setTool("magic");
+    tools.setMagicMode("box");
+    tools.press(at(300, 300));
+    tools.dragging(at(400, 380));
+    tools.dragEnd(at(400, 380));
+    await settled();
+    const first = store.committed[0].redo[0].feature;
+    const before = JSON.stringify(first.geometry);
+    tools.press(at(380, 300));
+    tools.dragging(at(460, 380));
+    tools.dragEnd(at(460, 380));
+    await settled();
+    assert.equal(segment.calls.length, 2);
+    same(store.committed.map((e) => e.label), ["Magic select", "Magic select"]);
+    assert.equal(JSON.stringify(first.geometry), before);
+});
+
+/** A loop of radius `r` drawn round (cx, cy) with the brush. */
+function loop(tools, cx, cy, r, { shift = false } = {}) {
+    const ring = [];
+    for (let i = 0; i <= 72; i++) {
+        const a = (i / 72) * 2 * Math.PI;
+        ring.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    tools.press({ ...at(...ring[0]), originalEvent: { shiftKey: shift } });
+    for (const p of ring.slice(1)) tools.dragging(at(...p));
+    tools.dragEnd(at(...ring.at(-1)));
+}
+
+await check("a loop drawn round something outlines it from the loop's box", async () => {
+    const store = makeStore();
+    const { tools, segment } = makeTools(store);
+    tools.setTool("magic");
+    tools.setMagicMode("scribble");
+    loop(tools, 600, 600, 60);
+    await settled();
+    assert.equal(segment.calls.length, 1);
+    same(segment.calls[0].points, []);
+    const box = segment.calls[0].box;
+    same(Object.fromEntries(Object.entries(box).map(([k, v]) => [k, Math.round(v)])),
+         { x: 540, y: 540, width: 120, height: 120 });
+    assert.equal(store.committed.at(-1).label, "Magic select");
+});
+
+await check("deleting the region being made ends its outline: its dots go, the next click is new", async () => {
+    const store = makeStore();
+    const { tools, renderer, segment } = makeTools(store);
+    tools.armed = false;
+    tools.arm();   // subscribes to the store
+    tools.setTool("magic");
+    tools.setMagicMode("add");
+    tools.click(click(500, 500));
+    await settled();
+    assert.ok(renderer.prompts && renderer.prompts.length === 1);
+    assert.ok(tools.deleteSelected());
+    assert.equal(tools.magic, null);
+    assert.equal(renderer.prompts, null);
+    tools.click(click(510, 500));
+    await settled();
+    assert.equal(segment.calls.length, 2);
+    same(segment.calls[1].points, [{ x: 510, y: 500, label: 1 }]);
+    assert.equal(store.committed.at(-1).label, "Magic select");
+    tools.disarm();
 });
 
 // -- the bar ---------------------------------------------------------------------

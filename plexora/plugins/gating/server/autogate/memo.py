@@ -1,10 +1,13 @@
 """Judgments reused on identical evidence: the same packet gets the same answer.
 
 Gating's binding of the shared memo (`plexora.agent.sessions.memo`): answers
-kept per project and per `SessionOptions.agent`, the key covering the profile
-and lattice versions that drew a packet's numbers. A changed partner gate, a
-new profile version or a different expression matrix changes the evidence,
-hence the key, and the question is asked afresh.
+kept per project and per `SessionOptions.agent`, the key covering the
+versions of everything that drew a packet's numbers and pictures -- the
+profile, the lattice, the scoring, the display calibration and the collage
+renderer. A changed partner gate, a new version of any of them or a
+different expression matrix changes the evidence, hence the key, and the
+question is asked afresh; an unchanged packet is answered from memory, so a
+rerun reaches the same gates with no model call.
 """
 
 from __future__ import annotations
@@ -17,9 +20,11 @@ VOLATILE = _memo.VOLATILE
 
 
 def versions() -> tuple:
-    from plexora.plugins.gating.server.autogate import lattice, schemas
+    from plexora.agent.evidence import calibration, collage
+    from plexora.plugins.gating.server.autogate import lattice, schemas, scoring
 
-    return (schemas.PROFILE_VERSION, lattice.VERSION)
+    return (schemas.PROFILE_VERSION, lattice.VERSION, scoring.VERSION, calibration.VERSION,
+            collage.RENDERER)
 
 
 def key(packet, images, *, versions=()) -> str:

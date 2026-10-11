@@ -129,7 +129,9 @@ window.PlexoraDataLocation = (function () {
      * @param options `kind` (image | segmentation | table), `filter`/`mode`
      *   for the browse dialog, and `onChange` called whenever the value the
      *   form would submit changes. `mount`/`statusMount` override where the
-     *   two rendered pieces land -- see below, where they are used.
+     *   two rendered pieces land -- see below, where they are used. `bare`
+     *   renders no switch at all, for a caller that draws its own and moves
+     *   this one with `setWhere()`.
      * @returns {{where, submitValue, blocking, release, element}} or null when
      *   the field is not shaped to render into.
      */
@@ -240,9 +242,15 @@ window.PlexoraDataLocation = (function () {
         // File / Select Folder pair, which is not in the row at all. Sharing
         // one switch between the two controls is the point: the alternative is
         // asking which machine twice on a page whose whole job is one image.
+        //
+        // `bare` is the home page again, since it stopped using the toggle at
+        // all: it asks "which machine?" with a chip inside its path field and
+        // a menu of the actual machines, and drives this state with setWhere().
+        // The state stays HERE -- it is still the one thing that knows what to
+        // submit for a path on another machine -- only its two letters go.
         const status = el("div", "data-location-status");
         if (options.mount) options.mount.appendChild(root);
-        else row.insertBefore(root, row.children[0]);
+        else if (!options.bare) row.insertBefore(root, row.children[0]);
         if (uploadButton) row.appendChild(uploadButton);
         (options.statusMount || field).appendChild(status);
 

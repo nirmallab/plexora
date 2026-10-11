@@ -20,7 +20,12 @@
  *
  *   **Deciding what a click means** (`plan`): a new region, growing or
  *   carving the one being made, refining a selected region, or a refusal (a
- *   locked region, no category to put it in).
+ *   locked region, no category to put it in). Clicks build up one outline;
+ *   a box or a scribble outlines a whole object by itself, so each starts
+ *   its own.
+ *
+ *   **Reading a scribble** (`strokePrompt`): a line drawn over the object
+ *   is points along it; a loop drawn round it is the loop's box.
  *
  * `?segment=stub` in the page URL answers every request with a 24-sided
  * polygon after 300 ms and never downloads anything -- for working on the UI,
@@ -512,24 +517,59 @@
             && p.y >= box.y && p.y <= box.y + (box.height ?? box.h);
     }
 
+    /** Even-odd: whether `p` ({x, y}) is inside a ring of [x, y] pairs. */
+    function inRing(ring, p) {
+        let hit = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const [xi, yi] = ring[i];
+            const [xj, yj] = ring[j];
+            if ((yi > p.y) !== (yj > p.y)
+                    && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) hit = !hit;
+        }
+        return hit;
+    }
+
+    /** Whether `p` is inside a GeoJSON Polygon or MultiPolygon (holes are
+     *  outside); null for anything else. */
+    function contains(geometry, p) {
+        const parts = geometry?.type === "Polygon" ? [geometry.coordinates]
+            : geometry?.type === "MultiPolygon" ? geometry.coordinates : null;
+        if (!parts) return null;
+        return parts.some((rings) => rings.reduce((hit, ring) => hit !== inRing(ring, p), false));
+    }
+
+    /** Whether `p` is in the selected region: inside its outline when it
+     *  came with one -- its box also takes in the neighbours round it, and
+     *  a box drawn round one of those must not redraw the selected region --
+     *  else inside its box. */
+    function inSelected(selected, p) {
+        const hit = contains(selected.geometry, p);
+        return hit === null ? inside(grow(selected.bbox, 0.02), p) : hit;
+    }
+
     /**
      * What a click at `point` (image pixels) means.
      *   session  -- the outline being made right now ({roiId, bbox}), or null
-     *   selected -- the selected region ({id, bbox, locked}), or null
+     *   selected -- the selected region ({id, bbox, locked, geometry?}), or null
      *   shift    -- Shift held: carve (exclude) instead of grow
      *   canCreate -- a category exists to put a new region in
+     *   standalone -- the prompt outlines a whole object by itself (a box, a
+     *                scribble): it never grows the outline being made, because
+     *                one drawn next to it is the next object, not more of the
+     *                last. Begun inside the selected region it still redraws
+     *                that one, and with Shift it still carves.
      * Returns {kind: "new" | "grow" | "carve" | "refine" | "locked" |
      * "needCategory" | "needSelection", roiId?}.
      */
     function plan({ point: p, shift = false, selected = null, session = null,
-                    canCreate = true } = {}) {
-        if (session && session.roiId) {
+                    canCreate = true, standalone = false } = {}) {
+        if (session && session.roiId && (shift || !standalone)) {
             const near = inside(grow(session.bbox, NEAR), p);
             if (shift) return near ? { kind: "carve", roiId: session.roiId }
                 : { kind: "needSelection" };
             if (near) return { kind: "grow", roiId: session.roiId };
         }
-        if (selected && selected.id && inside(grow(selected.bbox, 0.02), p)) {
+        if (selected && selected.id && inSelected(selected, p)) {
             if (selected.locked) return { kind: "locked", roiId: selected.id };
             return { kind: shift ? "carve" : "refine", roiId: selected.id };
         }
@@ -538,12 +578,44 @@
         return { kind: "new" };
     }
 
-    /** The prompts of one outline being made (points and an optional box). */
     /** The server takes at most this many points per request. */
     const MAX_POINTS = 32;
     /** A scribble becomes at most this many points: more adds nothing the
      *  model uses, and leaves room for later clicks in the same outline. */
     const STROKE_POINTS = 8;
+    /** A scribble that comes back within this fraction of its own size of
+     *  where it began, turning at least LOOP_TURN on the way, was drawn
+     *  round something, not over it. 0.35 lets a loop stop a tenth short. */
+    const LOOP_CLOSE = 0.35;
+    /** Five-eighths of a turn. A loop turns a whole one less the corner
+     *  where it closes, which is not drawn: a rectangle three-quarters, a
+     *  triangle two-thirds. A U or a line out and back turns half, a zigzag
+     *  next to none. */
+    const LOOP_TURN = 1.25 * Math.PI;
+
+    /** The usable [x, y] pairs of a scribble, in drawing order. */
+    function cleanLine(stroke) {
+        return (stroke || []).filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    }
+
+    /** Distance along the line to each of its points. */
+    function alongLine(line) {
+        const along = [0];
+        for (let i = 1; i < line.length; i++) {
+            along.push(along[i - 1] + Math.hypot(line[i][0] - line[i - 1][0],
+                                                 line[i][1] - line[i - 1][1]));
+        }
+        return along;
+    }
+
+    function lineBox(line) {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [x, y] of line) {
+            x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+            x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+        return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
 
     /**
      * A scribble (image-pixel [x, y] pairs, in drawing order) as the points
@@ -551,13 +623,9 @@
      * closer than `spacing` (a short dab is one point), at most `max`.
      */
     function strokePoints(stroke, { spacing = 1, max = STROKE_POINTS } = {}) {
-        const line = (stroke || []).filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+        const line = cleanLine(stroke);
         if (!line.length) return [];
-        const along = [0];
-        for (let i = 1; i < line.length; i++) {
-            along.push(along[i - 1] + Math.hypot(line[i][0] - line[i - 1][0],
-                                                 line[i][1] - line[i - 1][1]));
-        }
+        const along = alongLine(line);
         const length = along[along.length - 1];
         const count = Math.max(1, Math.min(max, Math.floor(length / Math.max(spacing, 1e-9)) + 1));
         if (count === 1) {
@@ -577,6 +645,105 @@
         return out;
     }
 
+    /** How far, in radians, a line's heading turns from its start to its
+     *  end, signed. Measured on the line resampled evenly along its length,
+     *  so a pixel of pointer jitter cannot read as a reversal. */
+    function turning(line, length) {
+        const even = strokePoints(line, { spacing: length / 64, max: 65 });
+        let total = 0;
+        let previous = null;
+        for (let i = 1; i < even.length; i++) {
+            const heading = Math.atan2(even[i].y - even[i - 1].y, even[i].x - even[i - 1].x);
+            if (previous !== null) {
+                let step = heading - previous;
+                if (step > Math.PI) step -= 2 * Math.PI;
+                if (step < -Math.PI) step += 2 * Math.PI;
+                total += step;
+            }
+            previous = heading;
+        }
+        return total;
+    }
+
+    /**
+     * A scribble drawn ROUND something rather than over it: one whose end
+     * comes back to its beginning (an overshoot past the start counts),
+     * that turns most of a full turn on the way (a U comes back too, but
+     * turns only half), and that encloses an area at least `minDepth` deep
+     * -- twice its area over its length, the radius of a round loop. A small
+     * circle dabbed on the object is still a line. Returns {box, ring}, or
+     * null for a line.
+     */
+    function strokeLoop(stroke, { minDepth = 0 } = {}) {
+        const line = cleanLine(stroke);
+        if (line.length < 4) return null;
+        const along = alongLine(line);
+        const length = along[along.length - 1];
+        const box = lineBox(line);
+        const size = Math.max(box.width, box.height);
+        if (!(length > 0) || !(size > 0)) return null;
+        const first = line[0];
+        const last = line[line.length - 1];
+        let gap = Infinity;
+        for (let i = 0; i < line.length; i++) {
+            if (along[i] <= length / 4) {
+                gap = Math.min(gap, Math.hypot(line[i][0] - last[0], line[i][1] - last[1]));
+            }
+            if (along[i] >= (3 * length) / 4) {
+                gap = Math.min(gap, Math.hypot(line[i][0] - first[0], line[i][1] - first[1]));
+            }
+        }
+        if (gap > LOOP_CLOSE * size) return null;
+        if (Math.abs(turning(line, length)) < LOOP_TURN) return null;
+        let twice = 0;   // shoelace, closed back to the start
+        for (let i = 0, j = line.length - 1; i < line.length; j = i++) {
+            twice += line[j][0] * line[i][1] - line[i][0] * line[j][1];
+        }
+        const depth = Math.abs(twice) / (length + gap);
+        if (!(depth > 0) || depth < minDepth) return null;
+        return { box, ring: line };
+    }
+
+    /** Up to `max` points spread inside a closed line, the middlemost
+     *  first: what a loop drawn round what to leave out prompts with. */
+    function insidePoints(ring, { max = STROKE_POINTS } = {}) {
+        const line = cleanLine(ring);
+        if (line.length < 3) return [];
+        const box = lineBox(line);
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        const out = [];
+        const n = 5;
+        for (let i = 0; i < n; i++) {
+            for (let j = 0; j < n; j++) {
+                const p = { x: box.x + ((i + 0.5) / n) * box.width,
+                            y: box.y + ((j + 0.5) / n) * box.height };
+                if (inRing(line, p)) out.push(p);
+            }
+        }
+        out.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
+        return out.slice(0, max);
+    }
+
+    /**
+     * What a scribble prompts with. Drawn over the object: points along the
+     * line. Drawn round it (`strokeLoop`): the loop's box, the prompt that
+     * outlines best -- or, with `remove`, points inside the loop, since what
+     * was drawn round is what to leave out. Returns {stroke: [{x, y}]} or
+     * {box}, or null when there is nothing to send.
+     */
+    function strokePrompt(stroke, { spacing = 1, minDepth = 0, remove = false } = {}) {
+        const loop = strokeLoop(stroke, { minDepth });
+        if (loop && !remove) return { box: loop.box };
+        if (loop) {
+            const inner = insidePoints(loop.ring);
+            if (inner.length) return { stroke: inner };
+        }
+        const points = strokePoints(stroke, { spacing });
+        return points.length ? { stroke: points } : null;
+    }
+
+    /** The prompts of one outline being made (points and an optional box). */
     class Session {
         constructor({ roiId = null, bbox = null, box = null, seed = null } = {}) {
             this.roiId = roiId;
@@ -594,11 +761,15 @@
             return this.addMany([p], label);
         }
 
-        /** One prompt of several points (a scribble). Past MAX_POINTS the
-         *  oldest prompts go: the latest strokes are the ones that say what
-         *  is still wrong. */
-        addMany(points, label) {
-            const fresh = (points || []).map((p) => ({ x: p.x, y: p.y, label: label ? 1 : 0 }));
+        /** One prompt of several points (a scribble: `stroke` marks them as
+         *  its, see `shown`). Past MAX_POINTS the oldest prompts go: the
+         *  latest strokes are the ones that say what is still wrong. */
+        addMany(points, label, { stroke = false } = {}) {
+            const fresh = (points || []).map((p) => {
+                const point = { x: p.x, y: p.y, label: label ? 1 : 0 };
+                if (stroke) point.stroke = true;
+                return point;
+            });
             if (!fresh.length) return this;
             this.points.push(...fresh.slice(-MAX_POINTS));
             this.steps.push(Math.min(fresh.length, MAX_POINTS));
@@ -615,6 +786,16 @@
             return this.points.splice(this.points.length - n, n);
         }
 
+        /** The points to draw: every click's, and a scribble's only while
+         *  its outline is on the way (`pending`: the latest prompt). Once it
+         *  lands they have done their job, and dots left along a line the
+         *  user drew read as part of the next outline. */
+        shown(pending = false) {
+            const latest = pending ? (this.steps[this.steps.length - 1] || 0) : 0;
+            const from = this.points.length - latest;
+            return this.points.filter((p, i) => !p.stroke || i >= from);
+        }
+
         /** Whether the next request may start from the previous mask. */
         get refining() {
             return this.points.length > 1 || Boolean(this.box && this.points.length > 0);
@@ -627,7 +808,8 @@
     }
 
     const api = { KEY, status, ensureReady, install, point, carry, describeView, plan, Session,
-                  strokePoints, MAX_POINTS, forget, stubbed };
+                  strokePoints, strokeLoop, strokePrompt, contains, MAX_POINTS, forget,
+                  stubbed };
     global.PlexoraSegment = api;
     if (typeof globalThis !== "undefined" && globalThis !== global) {
         globalThis.PlexoraSegment = api;

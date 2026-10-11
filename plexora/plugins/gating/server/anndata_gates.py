@@ -327,7 +327,8 @@ def save_gates_to_anndata(
 #: file (SCIMAP Pro, through the bridge) can find the operation in Plexora's
 #: audit log; empty for a gate set by hand in the sidebar, which leaves none.
 PROVENANCE_COLUMNS = ("marker", "image_id", "value", "method", "status", "confidence",
-                      "session_id", "timestamp", "operation_id")
+                      "session_id", "timestamp", "operation_id", "call_mode",
+                      "qc_fingerprint", "n_not_called")
 
 
 def save_gate_provenance(source, datasource_name, rows, table_name="gates_provenance",
@@ -367,6 +368,86 @@ def save_gate_provenance(source, datasource_name, rows, table_name="gates_proven
             del uns[table_name]
         write_elem(uns, table_name, frame)
     return {"provenance_table": table_name, "n_provenance_rows": len(fresh)}
+
+
+def save_not_called(source, datasource_name, not_called, n_rows, table_name="gates",
+                    imageid_column="imageid") -> dict:
+    """Write which cells QC says cannot be called, beside the gates.
+
+    `obsm["<table_name>_not_called"]`: a boolean frame, one column per gated
+    marker, True where the cell is neither positive nor negative for it (a
+    QC region, a marker QC flagged unreliable there). A reader applies the
+    gate from `uns[table_name]` and masks with this. `not_called` is
+    `{marker: row indices}` within this image's rows (the project table's
+    order); only this image's rows are rewritten, other images' kept. The
+    same in-place group write as `save_gates_to_anndata`.
+    """
+    key = f"{table_name}_not_called"
+    counts = _save_marker_rows(source, datasource_name, not_called, n_rows, key,
+                               imageid_column)
+    return {"not_called_layer": f"obsm/{key}", "n_not_called": counts}
+
+
+def save_model_calls(source, datasource_name, own, not_own, n_rows, table_name="gates",
+                     imageid_column="imageid") -> dict:
+    """Write where the cell model disagrees with the gates, beside them:
+    `obsm["<table_name>_model_own"]` -- cells below a gate it confidently
+    reads as stained by their own marker -- and `obsm["<table_name>
+    _model_not_own"]` -- positives it confidently reads as lit by a
+    neighbour or background -- each the shape of `save_not_called`
+    (`{marker: row indices}` within this image's rows). The model's calls
+    are the gate's with these applied: (positive and not `model_not_own`)
+    or `model_own`. A layer beside the calls; the gate in `uns[table_name]`
+    is unchanged."""
+    out = {}
+    for suffix, rows in (("model_own", own), ("model_not_own", not_own)):
+        key = f"{table_name}_{suffix}"
+        out[f"{suffix}_layer"] = f"obsm/{key}"
+        out[f"n_{suffix}"] = _save_marker_rows(source, datasource_name, rows, n_rows, key,
+                                               imageid_column)
+    return out
+
+
+def _save_marker_rows(source, datasource_name, rows_by_marker, n_rows, key, imageid_column):
+    """{marker: count} after writing `obsm[key]`: a boolean frame, one column
+    per marker, True at the given rows of this image; other images' rows
+    kept."""
+    path = _resolve_path(source)
+    current_image_id = resolve_current_image_id(path, source, datasource_name, imageid_column)
+    with _open_group(path, writable=True) as f:
+        obs = _read_frame(f, "obs")
+        if imageid_column in obs.columns:
+            image_rows = np.flatnonzero(obs[imageid_column].astype(str).to_numpy()
+                                        == str(current_image_id))
+        else:
+            image_rows = np.arange(len(obs))
+        if image_rows.size != int(n_rows):
+            raise ValueError(f"this project's table has {n_rows} cells but the file has "
+                             f"{image_rows.size} rows for {current_image_id!r}; reopen the "
+                             "project and try again")
+        index = obs.index.astype(str)
+        obsm = f.require_group("obsm")
+        frame = None
+        if key in obsm:
+            existing = read_elem(obsm[key])
+            if isinstance(existing, pd.DataFrame) and len(existing) == len(obs):
+                frame = existing.copy()
+                frame.index = index
+        if frame is None:
+            frame = pd.DataFrame(index=index)
+        counts = {}
+        for marker, rows in sorted(rows_by_marker.items()):
+            column = frame[marker].to_numpy(dtype=bool, copy=True) if marker in frame.columns \
+                else np.zeros(len(obs), dtype=bool)
+            column[image_rows] = False
+            picked = np.asarray(rows, dtype=np.int64)
+            column[image_rows[picked]] = True
+            frame[marker] = column
+            counts[marker] = int(picked.size)
+        if key in obsm:
+            del obsm[key]
+        write_elem(obsm, key, frame)
+    return counts
 
 
 def load_gates_from_anndata(

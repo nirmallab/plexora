@@ -302,6 +302,9 @@ class QcSidebarController {
             this.cellData = cells && cells.ok ? cells.data : null;
             if (this.selectedRegion && !this.regionData.regions.some(
                 (r) => r.roi_id === this.selectedRegion)) this.selectedRegion = null;
+            if (regions && regions.ok) {
+                this.magic.forgetGone((id) => this.regionData.regions.some((r) => r.roi_id === id));
+            }
             this.overlay.selectedId = this.selectedRegion;
             this.overlay.setRegions(this.regionData.regions || []);
             this.setCellGroups();
@@ -616,7 +619,7 @@ class QcSidebarController {
                 return false;
             }
             this.setDrawMode("magic");
-            this.message(`Draw a line over the ${words.toLowerCase()} to outline it. The bar on `
+            this.message(`Drag round the ${words.toLowerCase()} to outline it. The bar on `
                 + "the image switches between Add, Remove, Box and Scribble");
             return true;
         }
@@ -2191,8 +2194,8 @@ if (window.Plexora) {
                 + "outline becomes a region. The bar that floats on the image switches "
                 + "between Add (click to include), Remove (click to take away), Box "
                 + "(drag round a large object) and Scribble (draw a line over a long or "
-                + "patchy one; Shift-drag over what to leave out); all four refine the "
-                + "same outline, Esc "
+                + "patchy one, or a loop round it; Shift-drag over what to leave out). "
+                + "Clicks build up one outline; each box or scribble starts its own. Esc "
                 + "finishes it and × puts magic select away. It sets itself up the first "
                 + "time you use it (a short one-time download).",
                 "Click a category's or a reason's dot to change its colour.",

@@ -334,7 +334,14 @@ def _update_result(engine, result, built, skipped):
                       cycles=(result.meta.get("cycles") or {}).get("cycles") or [],
                       tissue=result.meta.get("tissue"), residual=built["residual"],
                       grid=result.grid, image_identity=result.meta.get("identity"))
-        hints = (engine.record.get("staining_hints") or {}).get(project) or {}
+        # Every staining detection on the channel's row (`candidates.
+        # staining_hints`: before any cap), with how much of the grid it
+        # covers; where it lies goes to the scan-hints table.
+        found = built.get("hints") or {}
+        hints = {channel: {klass: {"n": entry["n"], "max_score": entry["max_score"],
+                                   "n_grid_cells": int(len(entry["cells"]))}
+                           for klass, entry in classes.items()}
+                 for channel, classes in found.items()}
         stored["channels"] = [{"name": c["name"], "cycle": c.get("cycle"),
                                "nuclear": c.get("nuclear"), "flags": c.get("flags"),
                                "status": "not_reviewed",
@@ -346,6 +353,7 @@ def _update_result(engine, result, built, skipped):
                               for c in result.channels]
         results.put_result(document, stored)
         results.save(project, document)
+    results.put_scan_hints(project, engine.record["result_id"], result.grid, found)
 
 
 def _note(engine, check, status, reason):

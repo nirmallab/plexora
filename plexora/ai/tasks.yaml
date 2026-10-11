@@ -75,7 +75,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: high
-        kinds: [regression_confirm, transfer_check]
+        kinds: [regression_confirm, transfer_check, correction_check]
   qc:
     label: QC
     tasks:

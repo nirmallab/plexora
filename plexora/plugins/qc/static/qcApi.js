@@ -31,6 +31,17 @@ class QcApi {
         return this._read(response);
     }
 
+    /** A write that can change which cells QC calls -- a region drawn,
+     *  reshaped, traced, approved or deleted, a finding set aside, the
+     *  strictness -- as `_post`, and once it lands the page is told
+     *  (`plexora:qc-changed`), so a gate drawing the cells QC does not call
+     *  in grey reads them again (core's numericData.js). */
+    async _change(path, body) {
+        const answer = await this._post(path, body);
+        if (answer.ok) window.PlexoraQcChanged?.announce(this.datasource);
+        return answer;
+    }
+
     async state() {
         const response = await fetch(this.url("plugins/qc/state") + "?"
             + new URLSearchParams({ datasource: this.datasource }));
@@ -62,13 +73,13 @@ class QcApi {
     }
 
     deleteRegion(roiId) {
-        return this._post("plugins/qc/regions/delete", { roi_id: roiId });
+        return this._change("plugins/qc/regions/delete", { roi_id: roiId });
     }
 
     /** Many at once: `{roi_ids}`. The response may carry `not_deleted:
      *  [{roi_id, error}]` for any that were refused (a locked one, say). */
     deleteRegions(roiIds) {
-        return this._post("plugins/qc/regions/delete", { roi_ids: roiIds });
+        return this._change("plugins/qc/regions/delete", { roi_ids: roiIds });
     }
 
     /** The ROI's own name, through the ROI plugin's update_roi. */
@@ -84,23 +95,23 @@ class QcApi {
     }
 
     setStrictness(preset) {
-        return this._post("plugins/qc/strictness", { preset });
+        return this._change("plugins/qc/strictness", { preset });
     }
 
     /** Take in the ROI panel's edits; `views` is {roi_id: [{name, color,
      *  range}]}, the channels on screen when each new region was drawn. */
     refresh(views) {
-        return this._post("plugins/qc/refresh", views ? { views } : {});
+        return this._change("plugins/qc/refresh", views ? { views } : {});
     }
 
     /** Trace one region (`{roi_id, force}`) or every one (`{all: true}`) at
      *  pixel level inside its outline. */
     refineRegion(body) {
-        return this._post("plugins/qc/regions/refine", body);
+        return this._change("plugins/qc/regions/refine", body);
     }
 
     approve(roiId, action) {
-        return this._post("plugins/qc/approve", { roi_id: roiId, action, lock: true });
+        return this._change("plugins/qc/approve", { roi_id: roiId, action, lock: true });
     }
 
     /** `{class}` or `{reason}`, and a hex colour or null for the default. */
@@ -111,13 +122,13 @@ class QcApi {
     /** A region drawn by hand in the QC panel: `{class | label, points,
      *  views}`, stored as an ROI and taken into QC in one request. */
     drawRegion(body) {
-        return this._post("plugins/qc/regions/draw", body);
+        return this._change("plugins/qc/regions/draw", body);
     }
 
     /** A QC region's new outline (magic select's refine): `method` says how
      *  it was made. A locked region is refused by the ROI plugin. */
     reshapeRegion(roiId, geometry, method) {
-        return this._post("plugins/qc/regions/reshape", { roi_id: roiId, geometry, method });
+        return this._change("plugins/qc/regions/reshape", { roi_id: roiId, geometry, method });
     }
 
     /** `{class}` an artifact class's QC category, or `{label}` one the user
@@ -131,7 +142,7 @@ class QcApi {
      *  needs -- or, `{restore: true}`, put it back. Re-derives the cells it
      *  touches. */
     dismissFinding(body) {
-        return this._post("plugins/qc/findings/dismiss", body);
+        return this._change("plugins/qc/findings/dismiss", body);
     }
 
     async _get(path, params) {
@@ -274,7 +285,7 @@ class QcApi {
     }
 
     blurWriteRegions(body) {
-        return this._post("plugins/qc/blur/regions/write", body || {});
+        return this._change("plugins/qc/blur/regions/write", body || {});
     }
 
     // -- Artifact Detector (qc.artifacts_*) ----------------------------------
@@ -306,7 +317,7 @@ class QcApi {
 
     /** `{categories, channel, action}`: the retained objects as QC ROIs. */
     artifactsWriteRegions(body) {
-        return this._post("plugins/qc/artifacts/regions/write", body || {});
+        return this._change("plugins/qc/artifacts/regions/write", body || {});
     }
 
     job(jobId) {

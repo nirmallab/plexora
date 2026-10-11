@@ -51,13 +51,23 @@ AUTOFLUORESCENCE_PATTERN = re.compile(
     r"^(?:af|auto[\s_.-]?fluo\w*|autofluor\w*|blank|background|bkg|bg|empty|unstained"
     r"|no[\s_.-]?antibody)(?:[\s_.-]?\d+)?$", re.I)
 
+#: A fluorophore named after a dye family: `_AlexaFluor488`, `_ArgoFluor555L`,
+#: `-iFluor647` (letters, `fluor`, the wavelength, an optional letter).
+_FLUOR = r"[_\-\s.][a-z]*fluor\d+[a-z]?"
 #: Suffixes that name a fluorophore, a cycle or a replicate, not the marker.
 _SUFFIX = re.compile(
     r"([_\-\s.](af|alexa|alexafluor|cy|opal|atto|fitc|pe|apc|bv|dylight|cf|ef)\d*"
+    rf"|{_FLUOR}"
     r"|[_\-\s.](c|cycle|r|round|ch|channel)\d+"
     r"|[_\-\s.]\d+"
     r"|\(\d+\))+$", re.I)
+#: The fluorophore alone, so a marker whose name ends in digits (`Ki-67`)
+#: survives where `_SUFFIX` would take its number for a replicate.
+_FLUOR_SUFFIX = re.compile(rf"({_FLUOR})+$", re.I)
 _PREFIX = re.compile(r"^(anti[_\-\s]?|a[_\-])", re.I)
+#: A channel's position in the acquisition, ahead of its name: `03_CD45`,
+#: `12-PD-L1` (an OME channel list exported in order).
+_POSITION = re.compile(r"^\d{1,3}[_\-\s.]+(?=[A-Za-z])")
 
 #: A trailing capital `L` some panels append to an antibody's name (`CD20L`,
 #: `PCNAL`, `HLADRL`: a lab's clone or long-exposure tag, live run lsp11385),
@@ -83,6 +93,13 @@ def _variants(name):
     unprefixed = _PREFIX.sub("", stripped or text)
     if unprefixed and unprefixed != text:
         yield unprefixed
+    # Last, so a name the spellings above already resolve never changes: a
+    # leading acquisition position (`03_CD45_ArgoFluor520`), and the
+    # fluorophore alone before every other suffix (`04_Ki-67_ArgoFluor555L`).
+    for base in (_POSITION.sub("", text), text):
+        for variant in (_FLUOR_SUFFIX.sub("", base), base, _SUFFIX.sub("", base)):
+            if variant and variant != text:
+                yield variant
 
 
 @functools.lru_cache(maxsize=1)
@@ -185,6 +202,26 @@ def entry(name) -> dict | None:
 def synonyms(name) -> list:
     found = entry(name)
     return [found["canonical"], *found["synonyms"]] if found else []
+
+
+def match_name(name, candidates) -> str | None:
+    """The one of `candidates` that names the same marker as `name` -- a table
+    column for an image channel, or the reverse: the same name, else the same
+    name folded, else the same vocabulary entry (`03_CD45_ArgoFluor520` and
+    `CD45`) when exactly one candidate has it. None when none does, or when
+    several do (two `Nucleus` cycles): never a guess."""
+    candidates = [c for c in candidates if c is not None]
+    if name in candidates:
+        return name
+    key = fold(name)
+    same = [c for c in candidates if fold(c) == key]
+    if same:
+        return same[0]
+    target = canonical(name)
+    if target is None:
+        return None
+    hits = [c for c in candidates if canonical(c) == target]
+    return hits[0] if len(hits) == 1 else None
 
 
 def resolve_panel(markers) -> dict:

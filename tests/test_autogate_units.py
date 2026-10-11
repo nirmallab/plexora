@@ -188,7 +188,7 @@ def test_weak_signal_is_a_caveat_not_a_verdict():
 
     values, _ = populations(60_000, 0.25, bg=(4.0, 0.25), pos=(4.55, 0.25))
     p = _profile(values)
-    assert p["version"] == schemas.PROFILE_VERSION == "5"
+    assert p["version"] == schemas.PROFILE_VERSION == "6"
     assert "weak_signal" in p["flags"]
     assert schemas.hard(p["flags"]) == []
     assert p["t1"]["recommended_tier"] != "QC"
@@ -241,11 +241,11 @@ def test_estimator_disagreement_reads_as_a_multiple_past_100_percent():
 
 def test_answer_schemas_spell_out_nested_fields():
     """An agent cannot follow a `$ref`: every nested model is inlined."""
-    from plexora.plugins.gating.server.autogate import answers
+    from plexora.plugins.gating.server.autogate import answers, schemas
 
     t2 = answers.schema_for("t2_confirm")["properties"]
-    assert set(t2["plausibility"]["properties"]) == {"compartment", "pattern",
-                                                     "positives_look_real"}
+    assert t2["rows"]["values"]["enum"] == list(schemas.ROW_VERDICTS)
+    assert "none" in t2["pattern"]["enum"] and "direction" not in t2
     entry = answers.schema_for("panel_context")["properties"]["entries"]["items"]
     assert {"marker", "role", "partners"} <= set(entry["properties"])
     assert "enum" in entry["properties"]["role"]
@@ -408,6 +408,47 @@ def test_the_regression_check_allows_a_step_in_a_wide_population():
                                                               gmm)["checks"]}
     assert abs(first["delta_bg_sd"]) > regression.THRESHOLDS["max_delta_bg_sd"]  # not vacuous
     assert checks["delta_from_gmm"]["ok"], checks["delta_from_gmm"]
+
+
+def test_purity_is_judged_against_the_markers_own_brightest_cells():
+    """The partners check is self-calibrated: a gate fails only for the
+    impurity it ADDS over the marker's brightest positives, so a low gate
+    that admits a partner-negative spill fails, a clean gate passes, and a
+    partner whose own gate misses some real positives (CD45 against CD163's
+    dim-CD45 macrophages in lsp11385_2) costs the gate nothing."""
+    from plexora.plugins.gating.server.autogate import bivariate, profile, regression
+
+    rng = np.random.default_rng(0)
+    n = 20_000
+    t_cell = rng.random(n) < 0.3
+    cd8_pos = t_cell & (rng.random(n) < 0.5)
+    cd3 = np.where(t_cell, 7.0, 4.0) + rng.normal(0, 0.25, n)
+    cd8 = np.where(cd8_pos, 7.5, 4.0) + rng.normal(0, 0.3, n)
+    spill = ~t_cell & (rng.random(n) < 0.08)        # CD3- cells with CD8 spill
+    cd8[spill] = 5.6 + rng.normal(0, 0.3, int(spill.sum()))
+    ds = FakeData({"CD3": np.expm1(cd3), "CD8": np.expm1(cd8)})
+    cd3_gate = float(np.expm1(5.5))
+    low, clean = float(np.expm1(5.2)), float(np.expm1(6.6))
+    contaminated = bivariate.purity_excess(ds, "CD8", low, "CD3", cd3_gate, relation="subset")
+    assert contaminated["excess"] > regression.THRESHOLDS["partner_tolerance"], contaminated
+    fine = bivariate.purity_excess(ds, "CD8", clean, "CD3", cd3_gate, relation="subset")
+    assert fine["excess"] <= regression.THRESHOLDS["partner_tolerance"], fine
+    # A CD3 gate past half the T cells: the CD8+ cells it misses are missing
+    # among the brightest CD8+ cells too.
+    off = bivariate.purity_excess(ds, "CD8", clean, "CD3", float(np.expm1(7.0)),
+                                  relation="subset")
+    assert off["at_top"] > 0.3 and off["excess"] <= regression.THRESHOLDS["partner_tolerance"]
+    gmm = profile.profile_marker(ds, "CD8")["fit"]["gate_raw"]
+    partners = [{"partner": "CD3", "gate": cd3_gate, "relation": "subset"}]
+    checks = {c["name"]: c for c in
+              regression.numeric_checks(ds, "CD8", low, gmm, partners=partners)["checks"]}
+    assert checks["partners"]["ok"] is False
+    checks = {c["name"]: c for c in
+              regression.numeric_checks(ds, "CD8", clean, gmm, partners=partners)["checks"]}
+    assert checks["partners"]["ok"] is True
+    # Too few positives to calibrate on: no verdict, not a failure.
+    assert bivariate.purity_excess(ds, "CD8", float(np.expm1(9.5)), "CD3", cd3_gate,
+                                   relation="subset") is None
 
 
 def test_bivariate_quadrants_match_a_brute_force_count():
@@ -635,7 +676,7 @@ def test_the_gate_relative_panel_reads_a_log1p_table(tmp_path):
     negative = next(c for c in info["cells"] if c["kind"] == "cd4_t")
     rows = [{"label": "above", "cells": [dict(positive, cell_id=positive["id"])]},
             {"label": "below", "cells": [dict(negative, cell_id=negative["id"])]}]
-    rendered = collage.render_collage(session, ds, layout="t2", rows=rows, marker="CD8",
+    rendered = collage.render_collage(session, ds, layout="report", rows=rows, marker="CD8",
                                       gate=6.0, fmt="png", store=False, to_log=False)
     manifest = rendered["manifest"]
     tile = manifest["tile_px"]
@@ -655,6 +696,57 @@ def test_the_gate_relative_panel_reads_a_log1p_table(tmp_path):
     centre = slice(tile // 2 - 2, tile // 2 + 3)
     assert above[centre, centre].mean() > 128
     assert below[centre, centre].mean() < 128
+
+
+def test_the_morphology_panel_shows_a_cells_own_stain_without_a_mask(tmp_path, monkeypatch):
+    """The first panel of a look: the marker windowed on the judged cell's own
+    disc. A CD8 T cell draws its stain bright around the ticked centre; a CD4
+    T cell (no CD8) stays dark -- the floor keeps its noise from being
+    stretched to white; and nothing in the panel depends on the mask."""
+    import io
+
+    from PIL import Image
+
+    from plexora.agent import AgentSession, render
+    from plexora.agent.evidence import collage
+
+    info = make_gating_project(tmp_path, log_transformed=True)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    positive = next(c for c in info["cells"] if c["kind"] == "cd8_t")
+    negative = next(c for c in info["cells"] if c["kind"] == "cd4_t")
+    rows = [{"label": "positive", "cells": [dict(positive, cell_id=positive["id"])]},
+            {"label": "negative", "cells": [dict(negative, cell_id=negative["id"])]}]
+
+    def draw():
+        rendered = collage.render_collage(session, ds, layout="t2", rows=rows, marker="CD8",
+                                          gate=6.0, fmt="png", store=False)
+        image = np.asarray(Image.open(io.BytesIO(rendered["png"])).convert("RGB"),
+                           dtype=np.float64)
+        return rendered["manifest"], image
+
+    manifest, image = draw()
+    assert manifest["panels"] == ["morphology", "merge"]
+    tile = manifest["tile_px"]
+    header, row_header, caption, gap = 14, 12, 11, 2
+
+    def morphology(row, picture):
+        top = header + row * (row_header + tile + caption + gap) + row_header
+        return picture[top:top + tile, 0:tile]
+
+    def yellow(panel):
+        centre = panel[tile // 2 - 8:tile // 2 + 8, tile // 2 - 8:tile // 2 + 8]
+        return float((np.minimum(centre[..., 0], centre[..., 1]) - centre[..., 2]).mean())
+
+    assert yellow(morphology(0, image)) > 60
+    assert yellow(morphology(1, image)) < 20
+    cells = [c for row in manifest["rows"] for c in row["cells"]]
+    assert not cells[0]["morphology"]["floored"] and cells[1]["morphology"]["floored"]
+    # The same cells without a mask: the morphology panel is the same picture.
+    monkeypatch.setattr(render, "_mask_for", lambda record: (None, "none", None, None))
+    _manifest, bare = draw()
+    for row in (0, 1):
+        assert np.array_equal(morphology(row, image), morphology(row, bare))
 
 
 def test_a_collage_keeps_its_budget_and_its_bytes(tmp_path):
@@ -826,8 +918,9 @@ def test_every_vocabulary_has_one_source():
     assert defaults["max_tier"] == schemas.ENGINE["max_tier_default"]
     assert capabilities_session.SessionOptions.model_fields["max_tier"].metadata[-1].le \
         == len(schemas.TIERS)
-    assert packets._allowed(answers.T2Answer, "direction") == list(
-        get_args(answers.T2Answer.model_fields["direction"].annotation))
+    assert packets._allowed(answers.T2Answer, "pattern") == list(schemas.PATTERNS)
+    assert set(answers.T4Answer.model_fields) - set(answers.T2Answer.model_fields) \
+        == {"intervals"}
 
 
 def test_the_row_builders_draw_as_many_cells_as_their_layouts():
@@ -910,7 +1003,8 @@ def test_session_vocabularies_are_partitioned_and_derived():
     assert get_args(answers.Request.model_fields["kind"].annotation) == (
         "reference_channel", "bivariate")
     assert "no_positive_population" in packets._allowed(answers.QCAnswer, "verdict")
-    assert "no_positives" in packets._allowed(answers.T2Answer, "direction")
+    for policy in schemas.COMPARTMENT_POLICY.values():
+        assert set(policy["patterns"]) <= set(schemas.PATTERNS)
     assert collage.LAYOUTS["t2"]["per_row"] == collage.LAYOUTS["t3"]["per_row"]
 
 
@@ -977,12 +1071,45 @@ def test_anchor_cells_are_seeded_and_banded():
     assert a == b
     spec = cell_window.CELL_WINDOW
     lo_neg, hi_neg = np.percentile(values, spec["negative_pct"])
-    lo_pos = np.percentile(values, spec["positive_pct"][0])
     assert all(lo_neg - 1e-9 <= c["value"] <= hi_neg + 1e-9 for c in a["negatives"])
-    assert all(c["value"] >= lo_pos - 1e-9 for c in a["positives"])
-    assert len(a["negatives"]) == len(a["positives"]) == spec["n_each"]
+    assert set(a) == {"negatives"} and len(a["negatives"]) == spec["n_each"]
     none, _ = cell_window.select_anchor_cells(values[:50], ids[:50], xs[:50], ys[:50])
     assert none is None
+    # QC's left-out rows arrive as NaN and are never anchor cells.
+    left_out = values.copy()
+    left_out[::2] = np.nan
+    c, _ = cell_window.select_anchor_cells(left_out, ids, xs, ys, seed=3)
+    assert all(int(cell["cell_id"]) % 2 == 1 for cell in c["negatives"])
+
+
+def test_the_window_is_measured_in_background_spreads_on_a_disc():
+    """Black is the negatives' median pixel, white `spans` background spreads
+    above it -- read in a disc around the centroid, so a mask (or none) does
+    not change it, and a bright neighbour inside the crop but outside the
+    disc does not either."""
+    from types import SimpleNamespace
+
+    from plexora.agent.evidence import cell_window, crops
+
+    rng = np.random.default_rng(0)
+    made, negatives = {}, []
+    for cell_id in range(24):
+        plane = rng.normal(100.0, 30.0, (32, 32)).astype(np.float32)
+        plane[:4, :4] = 5000.0                 # a neighbour in the corner
+        crop = crops.Crop(cell_id, 16.0, 16.0, (0, 0, 32, 32), 0)
+        crop.planes["M"] = plane
+        made[cell_id] = crop
+        negatives.append({"cell_id": cell_id})
+    window = cell_window.window_from_crops(made, "M", negatives, radius_px=9.0)
+    assert window["low"] == pytest.approx(100.0, abs=3.0)
+    spread = window["noise_p99"] - window["low"]
+    assert spread == pytest.approx(70.0, rel=0.15)        # 2.33 sds of the noise
+    assert window["high"] == pytest.approx(window["low"] + window["spans"] * spread)
+    for crop in made.values():
+        crop.labels = np.zeros((32, 32), dtype=np.int32)   # a mask says nothing here
+    assert cell_window.window_from_crops(made, "M", negatives, radius_px=9.0) == window
+    assert crops.cell_radius_px(SimpleNamespace(image=SimpleNamespace(pixel_size=None)),
+                                pixel={"value": 0.5})[0] == pytest.approx(9.0)
 
 
 def test_phase_and_summary_follow_the_record():
@@ -1318,6 +1445,21 @@ def test_t4_confidence_is_measured_in_the_steps_the_candidates_took():
         == "high"
 
 
+def test_remarks_cap_confidence_but_their_number_never_lowers_it():
+    """Two technical remarks on a confident look are a moderate gate, not a
+    low one: a low gate is no reference, so counting remarks would decide
+    which partner the next markers lean on (lsp11385_2: CD3e went low on two
+    flags and CD8a moved to CD45's evidence)."""
+    from plexora.plugins.gating.server.autogate import engine
+
+    for path, extra in (("t2", {}), ("t4", {"delta_step_sd": 1.0})):
+        base = {"path": path, "ai_confidence": 0.8, "metrics": {"d": 2.0}, "flags": [],
+                **extra}
+        one = engine.confidence_for({**base, "artifact_flags": ["segmentation"]})
+        two = engine.confidence_for({**base, "artifact_flags": ["segmentation", "edge"]})
+        assert one == two == "moderate", (path, one, two)
+
+
 def test_packets_are_sent_lean():
     from plexora.plugins.gating.server.autogate import packets
 
@@ -1392,20 +1534,67 @@ def test_a_trailing_capital_l_folds_but_never_a_ligand():
     assert vocabulary.canonical("CD40L") is None
 
 
+def test_an_ome_channel_name_matches_its_table_column():
+    """lsp11385_2 re-imported with the OME names: `03_CD45_ArgoFluor520` is the
+    image channel of column `CD45`. A spelling the old rules resolved never
+    changes, and two channels naming one marker match neither."""
+    from plexora.ai import vocabulary
+
+    channels = ["01_Nucleus_Hoechst", "02_AF1", "03_CD45_ArgoFluor520",
+                "04_Ki-67_ArgoFluor555L", "07_CD20_ArgoFluor660L", "09_CD163_ArgoFluor602",
+                "01_Nucleus_Hoechst"]
+    assert vocabulary.match_name("CD45", channels) == "03_CD45_ArgoFluor520"
+    assert vocabulary.match_name("Ki67", channels) == "04_Ki-67_ArgoFluor555L"
+    assert vocabulary.match_name("CD20L", channels) == "07_CD20_ArgoFluor660L"
+    assert vocabulary.match_name("09_CD163_ArgoFluor602", ["CD163", "CD68"]) == "CD163"
+    assert vocabulary.match_name("Nucleus", channels) is None
+    assert vocabulary.match_name("CD8a", channels) is None
+    assert vocabulary.canonical("02_AF1") == vocabulary.AUTOFLUORESCENCE
+    assert vocabulary.canonical("CD3_1_AF488") == "CD3"
+
+
 def test_rows_place_the_gate_deterministically():
     from plexora.plugins.gating.server.autogate import lattice
 
     chain = [{"id": "c1", "low": 1.0}, {"id": "c2", "low": 2.0}, {"id": "c3", "low": 3.0}]
     place = lattice.place
-    assert place(chain, {"i1": "mostly_negative", "i2": "mostly_negative",
-                         "i3": "mostly_positive"}, "up")[0]["id"] == "c2"
-    assert place(chain, {"i1": "mostly_positive", "i2": "mostly_positive",
+    # Up: past cells that are not positive themselves, unstained or a
+    # neighbour's light alike.
+    assert place(chain, {"i1": "unstained", "i2": "neighbour_only",
+                         "i3": "own_stain"}, "up")[0]["id"] == "c2"
+    assert place(chain, {"i1": "own_stain", "i2": "own_stain",
                          "i3": "mixed"}, "down")[0]["id"] == "c2"
-    assert place(chain, {"i1": "mostly_positive"}, "up")[:3:2] == (None, "keep")
+    # The first row says the opposite of moving: turn back (once, the engine's
+    # rule); a mixed first row is the boundary; anything else keeps.
+    assert place(chain, {"i1": "own_stain"}, "up")[:3:2] == (None, "reverse")
+    assert place(chain, {"i1": "neighbour_only"}, "down")[:3:2] == (None, "reverse")
     assert place(chain, {"i1": "mixed"}, "up")[:3:2] == (None, "mixed")
+    assert place(chain, {"i1": "cannot_tell"}, "up")[:3:2] == (None, "keep")
     # A later row cannot pull the gate past an earlier one that said stop.
-    assert place(chain, {"i1": "mostly_positive", "i2": "mostly_negative",
-                         "i3": "mostly_negative"}, "up")[0] is None
+    assert place(chain, {"i1": "own_stain", "i2": "unstained",
+                         "i3": "unstained"}, "up")[0] is None
+
+
+def test_the_rows_decide_the_direction_never_the_agent():
+    """`verdicts.direction_from_rows`, rule by rule (lsp11385_2's pilot: rows
+    near the gate never show the clear positives, so all-negative rows say
+    raise, and only a look that saw no stain anywhere says no positives)."""
+    from plexora.plugins.gating.server.autogate.verdicts import direction_from_rows
+
+    def d(below, near, above, pattern="cytoplasmic"):
+        rows = {k: v for k, v in (("below", below), ("near", near), ("above", above)) if v}
+        return direction_from_rows(rows, pattern)[0]
+
+    assert d("unstained", "neighbour_only", "neighbour_only") == "up"         # CD68
+    assert d("unstained", "unstained", "unstained", pattern="none") == "no_positives"
+    assert d("own_stain", "neighbour_only", "neighbour_only") == "cannot_tell"
+    assert d("unstained", "unstained", "mixed") == "up"
+    assert d("own_stain", "own_stain", "own_stain") == "down"
+    assert d("mixed", "own_stain", "own_stain") == "down"                     # CD4
+    assert d("neighbour_only", "neighbour_only", "own_stain") == "about_right"   # CD3e
+    assert d("unstained", "unstained", "own_stain") == "up"
+    assert d("unstained", None, "own_stain") == "about_right"
+    assert d("cannot_tell", "cannot_tell", "cannot_tell") == "cannot_tell"
 
 
 def test_a_lattice_is_a_function_of_its_inputs(tmp_path):
@@ -1456,9 +1645,8 @@ def test_confidence_is_three_words_with_fixed_numbers():
 
     from plexora.plugins.gating.server.autogate import answers, schemas
 
-    fields = {"kind": "t2_confirm", "direction": "about_right",
-              "plausibility": {"compartment": "matches", "pattern": "membrane",
-                               "positives_look_real": True}}
+    fields = {"kind": "t2_confirm", "pattern": "membrane",
+              "rows": {"below": "unstained", "above": "own_stain"}}
     assert answers.T2Answer(**fields, confidence="sure").confidence == "sure"
     with pytest.raises(ValidationError):
         answers.T2Answer(**fields, confidence=0.9)

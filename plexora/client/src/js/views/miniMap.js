@@ -1,18 +1,21 @@
 /**
  * miniMap.js -- the viewer's overview lens.
  *
- * A subtle circular button in the bottom-left corner of the viewer that
- * expands into a circular overview of the whole tissue, drawn from the same
- * channels, colours and contrast ranges as the main view, with a rectangle
- * showing what is currently on screen. Dragging the rectangle pans; clicking
- * elsewhere on the map recentres; the wheel zooms.
+ * A subtle round button in the bottom-left corner of the viewer that expands
+ * into an overview of the whole tissue: a frame in the viewer's own aspect
+ * ratio, drawn from the same channels, colours and contrast ranges as the
+ * main view, with a rectangle showing what is currently on screen. Dragging
+ * the rectangle pans; clicking elsewhere on the map recentres; the wheel
+ * zooms.
  *
  * The whole design is shaped by one constraint: the main viewer's frame budget
  * is ~8.3 ms at 15 channels and SKILL.md records three plausible-looking ideas
  * that were built, measured and reverted for making frames worse. So:
  *
  *   - Nothing here runs per frame except _syncIndicator(), which reads one
- *     rectangle and writes four style properties on one element.
+ *     rectangle and the view's angle, and writes four style properties on
+ *     one element. (A change of angle refits the picture -- once per change,
+ *     not per frame; see _syncOrientation.)
  *   - Nothing here runs AT ALL until the user first opens the lens: the
  *     constructor builds DOM and registers guarded handlers, and that is it.
  *   - Colour and contrast changes recomposite from a cached greyscale array.
@@ -35,12 +38,25 @@ class MiniMap {
      *  connection pool while the user is panning. */
     static FETCH_CONCURRENCY = 3;
 
-    /** A ring with a viewport box inside it -- the same two things the
+    /** The open map's size as a fraction of the viewer's -- which is also what
+     *  gives it the viewer's aspect ratio: a wide canvas gets a wide map. 0.2
+     *  is OpenSeadragon's own navigatorSizeRatio; a touch more here because the
+     *  sidebar already takes a slice of most windows. Capped so a large monitor
+     *  does not get a poster and so the open map stays under OSD's toolbar,
+     *  which imageViewer.js stands in a column on the left edge at half the
+     *  viewer's height; floored so a small window still gets a map worth
+     *  opening. See _fitRoot. */
+    static SIZE_RATIO = 0.24;
+    static MAX_WIDTH = 340;
+    static MAX_HEIGHT = 220;
+    static MIN_LONG_SIDE = 180;
+
+    /** A frame with a viewport box inside it -- the same two things the
      *  expanded map shows, which is the whole hint the collapsed state gets. */
     static LENS_ICON =
         '<svg class="viewer-mini-map-glyph-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
-        '<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
-        '<rect x="8.4" y="9.3" width="7.2" height="5.4" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+        '<rect x="3.2" y="5.6" width="17.6" height="12.8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+        '<rect x="8.8" y="9.7" width="6.4" height="4.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
         "</svg>";
 
     /** What the same button shows while the map is open: a small cross. The
@@ -121,7 +137,7 @@ class MiniMap {
         const orient = document.createElement("div");
         orient.className = "viewer-mini-map-orient";
 
-        // Empty until something goes wrong. A black circle is indistinguishable
+        // Empty until something goes wrong. A black map is indistinguishable
         // from dark tissue, so a failed overview has to say so somewhere the
         // user actually looks -- a console.warn is not that place.
         const note = document.createElement("div");
@@ -284,7 +300,41 @@ class MiniMap {
     // -- geometry --------------------------------------------------------
 
     /**
-     * Works out how the image sits inside the circle. Returns false when
+     * Sizes the root -- and so the open map -- to SIZE_RATIO of the viewer,
+     * which hands it the viewer's aspect ratio for free, then clamps it to the
+     * caps and floor above with ONE factor so the proportions survive the
+     * clamp. Returns false when the viewer has no size yet.
+     *
+     * Written as inline width/height rather than a CSS aspect-ratio: with a
+     * max-height in play the browser clamps the one axis and leaves the other,
+     * which is exactly the distortion this exists to avoid. Runs only from
+     * _layout, so on expand and on a viewer resize while open -- never per
+     * frame.
+     */
+    _fitRoot() {
+        const host = this.viewer.element || this.root.parentElement;
+        const viewerWidth = host ? host.clientWidth : 0;
+        const viewerHeight = host ? host.clientHeight : 0;
+        if (!viewerWidth || !viewerHeight) {
+            return false;
+        }
+        let ratio = Math.min(
+            MiniMap.SIZE_RATIO,
+            MiniMap.MAX_WIDTH / viewerWidth,
+            MiniMap.MAX_HEIGHT / viewerHeight
+        );
+        ratio = Math.max(
+            ratio,
+            Math.min(1, MiniMap.MIN_LONG_SIDE / Math.max(viewerWidth, viewerHeight))
+        );
+        const style = this.root.style;
+        style.width = `${Math.round(viewerWidth * ratio)}px`;
+        style.height = `${Math.round(viewerHeight * ratio)}px`;
+        return true;
+    }
+
+    /**
+     * Works out how the image sits inside the frame. Returns false when
      * there is nothing sensible to lay out yet.
      *
      * Uses offsetWidth/offsetHeight, NOT getBoundingClientRect: the collapsed
@@ -296,28 +346,45 @@ class MiniMap {
     _layout() {
         const width = Number(this.config.width) || 0;
         const height = Number(this.config.height) || 0;
-        const size = Math.min(this.stage.offsetWidth, this.stage.offsetHeight);
-        if (!width || !height || !size) {
+        if (!width || !height || !this._fitRoot()) {
+            return false;
+        }
+        // Read after _fitRoot has written the root's size: the read forces the
+        // reflow, so the stage is already the new size.
+        const stageWidth = this.stage.offsetWidth;
+        const stageHeight = this.stage.offsetHeight;
+        if (!stageWidth || !stageHeight) {
             return false;
         }
 
-        // Fit the LONG side across the full diameter, letting the image's four
-        // corners fall outside the circle to be clipped by border-radius. The
-        // strict "no clipping" fit is size/hypot(width, height), which on a
-        // square image spends 29% of the diameter on empty space to protect
-        // corners that are background in every whole-slide image.
-        const scale = size / Math.max(width, height);
+        // Contain: the whole image inside the frame, centred, with the spare
+        // room on whichever axis the image is shorter than the viewer. A
+        // rectangle has no corners to hide behind, so unlike the old circle
+        // nothing is let overhang to be clipped -- and because the frame is
+        // not round, that has to hold for the TURNED image too. What is fitted
+        // is the image's footprint at the view's current angle; the orient
+        // layer then turns the upright picture about the stage's centre, and
+        // a footprint that fits centred stays inside the frame when it does.
+        const { degrees: turn } = this._orientation();
+        const radians = (turn * Math.PI) / 180;
+        const cos = Math.abs(Math.cos(radians));
+        const sin = Math.abs(Math.sin(radians));
+        const boxWidth = width * cos + height * sin;
+        const boxHeight = width * sin + height * cos;
+        const scale = Math.min(stageWidth / boxWidth, stageHeight / boxHeight);
         const drawWidth = width * scale;
         const drawHeight = height * scale;
         this.geom = {
-            size,
+            stageWidth,
+            stageHeight,
+            turn,
             scale,
             width,
             height,
             drawWidth,
             drawHeight,
-            offsetX: (size - drawWidth) / 2,
-            offsetY: (size - drawHeight) / 2,
+            offsetX: (stageWidth - drawWidth) / 2,
+            offsetY: (stageHeight - drawHeight) / 2,
             // OSD viewport coordinates put the image at x in [0, 1] and y in
             // [0, height/width]. Everything below normalises through this so
             // both axes are [0, 1].
@@ -325,7 +392,7 @@ class MiniMap {
         };
 
         // Capped at 2: past that the display canvas grows quadratically for
-        // detail nobody can see in a 220 px circle.
+        // detail nobody can see in a map a few hundred pixels across.
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const style = this.canvas.style;
         style.left = `${this.geom.offsetX}px`;
@@ -402,6 +469,13 @@ class MiniMap {
     _syncOrientation() {
         if (!this.orient) return;
         const { degrees, flipped } = this._orientation();
+        // A round frame did not care which way the tissue faced; this one
+        // does. A turn the geometry was not fitted for refits and redraws from
+        // the cached greyscale -- once per change of angle. While the view is
+        // not turning, this comparison is the whole of the per-frame cost.
+        if (this.expanded && this.geom && degrees !== this.geom.turn && this._layout()) {
+            this._draw();
+        }
         const value = degrees || flipped
             ? `scaleX(${flipped ? -1 : 1}) rotate(${degrees}deg)` : "";
         if (value !== this._orientValue) {
@@ -448,8 +522,10 @@ class MiniMap {
         if (!this.geom) {
             return;
         }
-        const geom = this.geom;
+        // Orientation first: a turn the frame was not laid out for replaces
+        // the geometry, and the indicator belongs in the new one.
         this._syncOrientation();
+        const geom = this.geom;
         const bounds = this.viewer.viewport.getBounds(true);
         const style = this.indicator.style;
         const turn = ((Number(bounds.degrees) || 0) % 360 + 360) % 360;
@@ -460,7 +536,7 @@ class MiniMap {
             // axis-aligned on screen. Viewport units map to layer pixels by the
             // one factor drawWidth (drawHeight is drawWidth * aspect), so the
             // angle survives the scaling. Not clamped: a clamped corner would
-            // bend the rectangle, and the circle clips whatever overhangs.
+            // bend the rectangle, and the frame clips whatever overhangs.
             style.left = `${geom.offsetX + bounds.x * geom.drawWidth}px`;
             style.top = `${geom.offsetY + bounds.y * geom.drawWidth}px`;
             style.width = `${Math.max(bounds.width, 0) * geom.drawWidth}px`;
@@ -727,7 +803,7 @@ class MiniMap {
     }
 
     /**
-     * Says why the circle is empty, when it is empty for a reason.
+     * Says why the map is empty, when it is empty for a reason.
      *
      * Only speaks up once every active channel has been tried and none of them
      * produced any greyscale -- a partial load is a map with a colour missing,
@@ -772,7 +848,7 @@ class MiniMap {
      * to the display canvas, rather than at the display canvas's device-pixel
      * resolution. That keeps the cost of this loop independent of both the
      * lens's size and the device pixel ratio -- at dpr 3 the direct version
-     * would be doing seven times the work for detail a 220 px circle cannot
+     * would be doing seven times the work for detail a map this size cannot
      * show.
      */
     _draw() {
@@ -898,7 +974,7 @@ class MiniMap {
             this._drag = { u: 0, v: 0 };
             this._panToNormalized(point.u, point.v, false);
         }
-        // Capture keeps the gesture alive when the cursor leaves the circle,
+        // Capture keeps the gesture alive when the cursor leaves the map,
         // which on a 220 px target is most drags. It is an improvement, not a
         // requirement -- the move and up handlers are on the stage either way
         // -- so a browser that refuses the capture must not take the drag down

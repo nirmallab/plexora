@@ -94,8 +94,62 @@ def _stale(ds, result, roi_rev) -> bool:
     return cells.get("roi_revision") != roi_rev
 
 
+def _marker_flags(frame, statuses):
+    """{marker: (cell ids, reasons)} of the per-marker flags with a status in
+    `statuses` -- one explode over the column, not a Python loop over 200k
+    cells."""
+    import polars as pl
+
+    if "marker_flags" not in frame.columns or not frame.height:
+        return {}
+    flat = frame.select(pl.col("cell_id").cast(pl.Int64), pl.col("marker_flags")) \
+        .explode("marker_flags").drop_nulls("marker_flags")
+    if not flat.height:
+        return {}
+    parts = flat.with_columns(pl.col("marker_flags").str.split_exact("|", 2).alias("p")) \
+        .unnest("p")
+    kept = parts.filter(pl.col("field_2").is_in(list(statuses))
+                        & pl.col("field_0").is_not_null() & (pl.col("field_0") != ""))
+    if not kept.height:
+        return {}
+    markers = kept["field_0"].to_numpy()
+    ids = kept["cell_id"].to_numpy().astype(np.int64)
+    reasons = kept["field_1"].fill_null("").to_numpy()
+    out = {}
+    for marker in sorted(set(markers.tolist())):
+        here = markers == marker
+        out[str(marker)] = (ids[here], reasons[here])
+    return out
+
+
+def _reason_counts(frame, mask):
+    """{reason: n} over the cells `mask` selects (a reason a cell was only
+    noted for leaves no cell out, `summary`)."""
+    out = {}
+    if not mask.any():
+        return out
+    left = frame.filter(pl_mask(mask))
+    noted = left["noted_by"].to_list() if "noted_by" in left.columns else [()] * left.height
+    for reasons, notes in zip(left["reasons"].to_list(), noted):
+        for reason in reasons or ():
+            if reason not in (notes or ()):
+                out[reason] = out.get(reason, 0) + 1
+    return out
+
+
+def pl_mask(mask):
+    import polars as pl
+
+    return pl.Series(np.asarray(mask, dtype=bool))
+
+
+def _top(counts, n=2):
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+
+
 def _record(ds, mode, document, result):
     from plexora.agent import cell_exclusions
+    from plexora.plugins.qc.server import digest
 
     frame = results.cells(ds.name)
     if frame is None or not frame.height:
@@ -109,13 +163,8 @@ def _record(ds, mode, document, result):
     warned = action == "warn"
     whole_mask = excluded | warned if mode == "strict" else excluded
     statuses = ("exclude", "warn") if mode == "strict" else ("exclude",)
-    by_marker: dict = {}
-    if "marker_flags" in frame.columns:
-        for cell_id, entries in zip(ids.tolist(), frame["marker_flags"].to_list()):
-            for entry in entries or ():
-                marker, _reason, status = (entry.split("|") + ["", ""])[:3]
-                if status in statuses and marker:
-                    by_marker.setdefault(marker, []).append(cell_id)
+    flagged = _marker_flags(frame, statuses)
+    by_marker = {marker: found[0] for marker, found in flagged.items()}
     regions = []
     for candidate in (result.get("candidates") or {}).values():
         user = candidate.get("user_state") or {}
@@ -123,16 +172,37 @@ def _record(ds, mode, document, result):
                 and not user.get("removed_from_qc") \
                 and (candidate.get("action") or "exclude") in ("exclude", "warn"):
             regions.append(candidate["roi_id"])
+    # What QC says of each marker, for whoever gates it: the channel's verdict
+    # and a fixed-order line (`digest`) -- the same stored result, the same
+    # bytes.
+    whole_reasons = _reason_counts(frame, whole_mask)
+    n_whole = int(whole_mask.sum())
+    notes, verdict = {}, {}
+    for marker in list(getattr(ds.table, "markers", ()) or ()):
+        extra_ids, extra_reasons = flagged.get(marker, (np.empty(0, np.int64), np.empty(0)))
+        counts = dict(whole_reasons)
+        extra = 0
+        if extra_ids.size:
+            outside = ~np.isin(extra_ids, ids[whole_mask])
+            extra = int(np.unique(extra_ids[outside]).size)
+            for reason in extra_reasons[outside].tolist():
+                counts[reason] = counts.get(reason, 0) + 1
+        left_out = {"n": n_whole + extra, "top": _top(counts)} if n_whole + extra else None
+        line = digest.marker_digest(result, marker, left_out=left_out)
+        if line:
+            notes[marker] = line
+        verdict[marker] = digest.channel_verdict(result, marker)
     source = {"result_id": result.get("result_id"),
               "origin": result.get("origin") or ("session" if result.get("session_id")
                                                  else "manual"),
               "n_exclude": int(excluded.sum()), "n_warn": int(warned.sum()),
-              "n_marker": int(sum(len(set(v)) for v in by_marker.values())),
+              "n_marker": int(sum(np.unique(v).size for v in by_marker.values())),
               "regions": len(regions)}
     fp = hashlib.sha1(f"{result.get('result_id')}|{results.revision(ds.name, document)}"
                       .encode()).hexdigest()[:16]
     return cell_exclusions.make_record(ids[whole_mask], by_marker, fingerprint=fp,
-                                       mode=mode, source=source)
+                                       mode=mode, source=source, notes=notes,
+                                       verdict=verdict)
 
 
 def _file_token(project):

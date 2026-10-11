@@ -221,6 +221,13 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
             draw_channels.append(ChannelSpec(name=channel_names[0], color="#ffffff"))
 
     finite_sorted = np.sort(values[np.isfinite(values)]) if values is not None else None
+    # Cells QC says cannot be called for this marker are captioned so, never
+    # positive or negative (`cell_exclusions.calls`).
+    from plexora.agent import cell_exclusions
+
+    call_record = cell_exclusions.call_record(data) if values is not None else None
+    not_called = set(call_record.ids_for(marker).tolist()) \
+        if call_record is not None and not call_record.empty else set()
     tiles, captions, rows = [], [], []
     for index in chosen.tolist():
         cid = int(ids[index])
@@ -247,12 +254,13 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
         caption = f"#{cid}"
         if values is not None:
             value = float(values[index])
-            call = ("pos" if gate_rule.passes(np.array([value]), gate["low"],
+            call = ("n/c" if cid in not_called else
+                    "pos" if gate_rule.passes(np.array([value]), gate["low"],
                                               gate["high"])[0] else "neg")
             row.update(value=value if np.isfinite(value) else None,
                        percentile=(float(percentiles_of(value, finite_sorted))
                                    if np.isfinite(value) else None),
-                       call="positive" if call == "pos" else "negative",
+                       call={"pos": "positive", "neg": "negative"}.get(call, "not_called"),
                        distance_from_gate=(value - gate["low"]) if np.isfinite(value) else None)
             caption += f"  {value:.4g}  {call}" if np.isfinite(value) else "  n/a"
         rows.append(row)

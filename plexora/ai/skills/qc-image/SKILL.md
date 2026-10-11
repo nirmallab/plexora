@@ -315,8 +315,10 @@ Source files are written only by `write_qc_to_source`, only when asked.
 
 Automatic gating reads these calls: every fit, sample and picture it makes
 leaves out the cells QC excluded or warned about (`get_qc_exclusions` counts
-them); a noted reason -- outside the tissue, a merged or split cell -- leaves
-nothing out. So a QC change -- a region drawn, an action changed, strictness moved
+them), and those cells are not called for the marker -- neither positive nor
+negative; a noted reason -- outside the tissue, a merged or split cell --
+leaves nothing out. Each marker's QC line (`digest`) and channel verdict
+reach gating's looks, so say there what the channel showed. So a QC change -- a region drawn, an action changed, strictness moved
 -- makes gates decided before it stale (`gating_qc` `stale_qc`). Say so when
 the image is already gated.
 

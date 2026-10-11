@@ -36,43 +36,48 @@ A session that exists (`gating_session_status` finds it).
    A value `{as_in: packet_id}` is unchanged since that packet (`as_in`).
 3. Stop, without answering the packet in hand, when `units_done` reached your
    quota, or the state is `decided`, `waiting_for_user`, `paused`, `stopped`
-   or `other_tasks` (what is ready is another worker's). `bulk_running` or
-   `busy`: call `gating_next` again.
+   or `other_tasks` (what is ready is another worker's). `bulk_running`,
+   `model_running` or `busy`: call `gating_next` again.
 
 How to judge (the guide says how to read each picture):
 
-- Read `evidence.partners` first: a partner gated at good confidence is the
-  strongest evidence a look has.
+- A look asks ONE question per collage row, about the cells around the
+  nucleus the four magenta ticks mark (the cell centred between them; an
+  outline may disagree -- the ticks win). Answer each row with one word:
+  `own_stain` -- stain touching that nucleus with no other nucleus inside it
+  (a ring or halo around it, a fill inside it, cytoplasm hugging it on one or
+  more sides; a spindle cell's stain runs along its long nucleus);
+  `neighbour_only` -- stain in the tile, but around ANOTHER nucleus, or apart
+  from this one by a dark gap; `unstained` -- nothing touches the nucleus;
+  `mixed` -- the row holds both kinds about evenly; `cannot_tell`. A row is
+  what most of its cells are.
+- Judge the shape, not the brightness: the morphology panel (left) brightens
+  each cell's own stain on purpose; the context panel (right) is one window
+  for the whole marker. Plexora turns your words into the gate; you never say
+  which way it should go.
 - `t1_strip`: per row, {{strip.cells_each_side}} cells just below the gate
   (left) and as many just above (right). `ok` when the right ones are stained
   and the left ones are not, else `suspicious` (it only earns a proper look).
-- `t2_confirm`: the rows nearest the gate first. `plausibility`: the expected
-  compartment, real cell-shaped stain above the gate. `direction`: `too_low`
-  means negatives are called positive, `too_high` that real positives are
-  missed, `about_right` only when every row is right. A continuous marker
-  (`continuous`) is judged at the point expression rises out of background.
-  `no_positives` when no cell anywhere is really positive; `within_partner`
+- `t2_confirm` / `t3_biological`: `rows` (every key of `evidence.rows`),
+  `pattern` (what the stained cells look like, in the collage or the sheet's
+  fields; `none` only when no cell anywhere carries the stain), `within`
   only when the stain is real inside a subset partner's positives and noise
-  outside them.
-- Undecided (`cannot_tell`, `not_binary`, `unsure`): say so, give your best
-  `direction`, and ask with `request` for the evidence that would settle it.
-- `t3_biological`: as `t2_confirm`, beside a reference channel; set
-  `coexpression_consistent` or `exclusion_consistent`.
-- `t4_candidates`: judge EVERY row of `intervals` on its own
-  (`mostly_positive`, `mostly_negative`, `mixed`); the server places the gate
-  from the rows, so judge the cells, not the destination. A round with a
-  single short row is a real step. A row of zero cells: answer in the
-  direction of travel and say so in `notes`.
+  outside them (one of `allowed.within`). In a `t3_biological` look the
+  third panel of each cell is the reference channel.
+- `t4_candidates`: the same word for EVERY row of `intervals`, about the
+  cells that change call there. A row of zero cells: `cannot_tell`, and say
+  so in `notes`.
 - `qc_confirm`: `real_signal`, `technical_failure`, `no_positive_population`
-  or `cannot_tell`. After your own `no_positives` it may show the sheet you
+  or `cannot_tell`. After a look that saw no stain it may show the sheet you
   just judged (or none, `as_in`): answer from that look.
 - `regression_confirm`: `holds` unless a region is clearly wrong; the failing
   `checks` say what to look at.
-- Every look: answer `biology` (`consistent`, `conflicts`, `ambiguous`,
-  `not_judged`), and set `artifact_flags` when segmentation, focus,
-  saturation, bleed-through, autofluorescence, folds or edges affect the
-  cells shown. `confidence` is `sure`, `fairly_sure` or `unsure`; say
-  `unsure` rather than guess.
+- `correction_check`: one word per numbered cell (`own`, `not_own`,
+  `cannot_tell`), each on its own pixels; r-cells are clear positives.
+- Every look: set `artifact_flags` when segmentation, focus, saturation,
+  bleed-through, autofluorescence, folds or edges affect the cells shown.
+  `confidence` is `sure`, `fairly_sure` or `unsure`; say `unsure` rather than
+  guess, and ask with `request` for the evidence that would settle it.
 
 ## Tools
 
@@ -85,9 +90,9 @@ pictures a judgment rested on.
 
 ## Uncertainty
 
-`cannot_tell` sends a marker to a reference look or to review; a guessed
-direction costs the user more than an honest one. A marker is never accepted
-because it ran out of looks.
+`cannot_tell` sends a marker to a reference look or to review; a guessed word
+costs the user more than an honest one. A marker is never accepted because it
+ran out of looks.
 
 ## Mutation policy
 

@@ -5,7 +5,7 @@
 Three things it covers that nothing else can. The colour arithmetic is a second
 implementation of frag.glsl's u8_r_range, in a different language, and a drift
 between them looks like "the mini-map is a bit dark" rather than like a bug.
-The circle geometry still draws a perfectly plausible map when it is wrong --
+The frame geometry still draws a perfectly plausible map when it is wrong --
 it just points somewhere else. And the lifecycle failures are all invisible:
 a handler that outlives a collapse costs work on every animation frame for the
 rest of the session, and a request fired while the lens is shut costs the user
@@ -69,13 +69,42 @@ def test_the_probe_is_actually_checking_something(report):
 
 # -- geometry ------------------------------------------------------------
 
-def test_the_probe_catches_the_wrong_fit_inside_the_circle(tmp_path):
-    """max() spans the long side across the diameter and lets the corners be
-    clipped; hypot() is the strict no-clip fit, which on a square image spends
-    29% of the diameter protecting corners that are background. Either is a
-    defensible choice and both draw a map -- so only a test can hold the one
-    the geometry is actually written against."""
-    mutated = _mutate(tmp_path, "size / Math.max(width, height)", "size / Math.hypot(width, height)")
+def test_the_probe_catches_the_wrong_fit_inside_the_frame(tmp_path):
+    """min() contains the image: the whole tissue inside the frame, letterboxed
+    where its shape and the viewer's disagree. max() is the cover fit, which
+    fills the frame and clips whatever overhangs -- and a rectangle has no
+    background corners to hide that in. Both draw a map, so only a test can
+    hold the geometry to the one it is written against."""
+    mutated = _mutate(
+        tmp_path,
+        "Math.min(stageWidth / boxWidth, stageHeight / boxHeight)",
+        "Math.max(stageWidth / boxWidth, stageHeight / boxHeight)",
+    )
+    returncode, result = _run(mutated)
+    assert returncode != 0
+    assert result["failures"]
+
+
+def test_the_probe_catches_a_frame_that_forgets_the_viewers_shape(tmp_path):
+    """The caps clamp by one factor so the map keeps the viewer's shape.
+    Clamping the two axes apart hands a large monitor a map of some other
+    aspect -- still a map, just not the canvas's."""
+    mutated = _mutate(
+        tmp_path,
+        "style.height = `${Math.round(viewerHeight * ratio)}px`;",
+        "style.height = `${Math.round(viewerHeight * MiniMap.SIZE_RATIO)}px`;",
+    )
+    returncode, result = _run(mutated)
+    assert returncode != 0
+    assert result["failures"]
+
+
+def test_the_probe_catches_a_turned_image_left_in_its_upright_fit(tmp_path):
+    """A round frame did not care which way the tissue faced. This one does: a
+    landscape image turned a quarter stands up, and fitted for upright it hangs
+    out of the frame top and bottom. The refit on a change of angle is what
+    keeps it inside."""
+    mutated = _mutate(tmp_path, "degrees !== this.geom.turn", "false")
     returncode, result = _run(mutated)
     assert returncode != 0
     assert result["failures"]
@@ -233,7 +262,7 @@ def test_the_channel_mutators_tell_the_mini_map():
 # -- the empty state -----------------------------------------------------
 
 def test_the_probe_catches_a_silent_failure(tmp_path):
-    """The bug this exists for: a black circle is indistinguishable from dark
+    """The bug this exists for: a black map is indistinguishable from dark
     tissue, so a mini-map that fails to load anything and says nothing reads as
     working. That is exactly what a Plexora updated underneath a live waitress
     process does -- server_cli has no reloader and Flask binds routes at import,
@@ -319,7 +348,7 @@ def _rules(css, selector):
 
 
 def test_the_lens_button_does_not_move_when_the_map_opens():
-    """It used to jump to the top-right corner of the circle on opening, so
+    """It used to jump to the top-right corner of the map on opening, so
     the control the user had just pressed was somewhere else when they
     reached for it again. Only its glyph may change."""
     css = VIEWER_CSS.read_text(encoding="utf-8")

@@ -91,6 +91,25 @@
        (a fold, a blurred field) are left out of the fit; the gate still
        applies to every cell. Painted by paintQcNote; hidden otherwise. #}
     <div id="gate_qc_note" class="gate-qc-note" hidden></div>
+    {# THE CELL MODEL'S READING of the gate on screen: per cell, whether the
+       stain is the cell's own. Before a run, one button checks the cells near
+       the gate (about a minute); while it runs, its progress and Cancel;
+       after, how many cells it reads as stained below the gate and as lit by
+       something else above it, and a toggle that draws them (sky blue,
+       magenta) with the positives it leaves uncertain (amber). Never
+       applied: the gate, its counts and exports are unchanged. Painted by
+       paintCellModel; hidden for a marker with no gate. #}
+    <div id="gate_cell_model" class="gate-cell-model" hidden>
+        <div id="gate_cell_model_note" class="gate-cell-model-note" hidden></div>
+        <div class="gate-cell-model-actions">
+            <button id="gate_cell_model_run" type="button"
+                    class="gate-provenance-action">Check cells with the model</button>
+            <button id="gate_cell_model_toggle" type="button" class="gate-provenance-action"
+                    aria-pressed="false" hidden>Show model calls</button>
+            <button id="gate_cell_model_cancel" type="button" class="gate-provenance-action"
+                    hidden>Cancel</button>
+        </div>
+    </div>
     {# WHERE THIS GATE CAME FROM, when anybody but a hand on the slider set it:
        "Set automatically . high confidence", "Refined by an agent . needs
        review", "Locked" -- and the user's say over it (Approve, Lock). One

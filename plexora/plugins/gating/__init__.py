@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261002_agent"
+VERSION = "20261010_drop_uncertain"
 
 
 def _blueprint():

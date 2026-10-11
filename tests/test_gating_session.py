@@ -97,24 +97,21 @@ class Oracle:
                 verdicts[row["marker"]] = "ok" if good or self.style == "lazy" else "suspicious"
             return {"kind": kind, "verdicts": verdicts}
         if kind in ("t2_confirm", "t3_biological"):
+            from plexora.ai.bench import rows_for
+
             direction = self.direction(marker, ev["candidate"]["low"])
             if self.style == "lazy":
                 direction = "about_right"
             elif self.style == "noisy" and self.rng.random() < 0.3:
                 direction = {"too_low": "too_high", "too_high": "too_low",
                              "about_right": "too_low"}[direction]
-            return {"kind": kind, "confidence": "sure", "direction": direction,
-                    "plausibility": {"compartment": "matches", "pattern": "membrane",
-                                     "positives_look_real": True},
-                    "rows": {"below": "plausible", "near": "plausible",
-                             "above": "plausible"}}
+            return {"kind": kind, "confidence": "sure", **rows_for(direction, ev)}
         if kind == "t4_candidates":
             from plexora.ai.bench import interval_verdicts
 
             rows = ev["intervals"]
             if self.style == "lazy":
-                keep = "mostly_positive" if ev["direction"] == "up" else "mostly_negative"
-                return {"kind": kind, "intervals": {r["row"]: keep for r in rows},
+                return {"kind": kind, "intervals": {r["row"]: "cannot_tell" for r in rows},
                         "confidence": "sure"}
             return {"kind": kind, "confidence": "fairly_sure",
                     "intervals": interval_verdicts(self.values[marker], self.truth[marker],
@@ -478,11 +475,17 @@ def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
 
 
 def look(direction="about_right", *, kind="t2_confirm", confidence="sure", **extra):
-    """A T2/T3 answer: plausible staining unless `extra` says otherwise."""
-    plausibility = {"compartment": "matches", "pattern": "membrane",
-                    "positives_look_real": True, **extra.pop("plausibility", {})}
-    return {"kind": kind, "direction": direction, "confidence": confidence,
-            "plausibility": plausibility, **extra}
+    """A T2/T3 answer whose rows say `direction` (`bench.ROWS_FOR`: too_low,
+    too_high, about_right; `cannot_tell` judges no row; `no_positives` sees
+    no stain anywhere). `extra` adds fields (`within`, `request`, ...)."""
+    from plexora.ai.bench import ROWS_FOR
+
+    pattern = extra.pop("pattern", "none" if direction == "no_positives" else "membrane")
+    rows = extra.pop("rows", None) or dict(
+        ROWS_FOR["too_low"] if direction == "no_positives" else
+        ROWS_FOR.get(direction, {"below": "cannot_tell", "near": "cannot_tell",
+                                 "above": "cannot_tell"}))
+    return {"kind": kind, "rows": rows, "pattern": pattern, "confidence": confidence, **extra}
 
 
 def next_packet(session, sid):
@@ -541,6 +544,36 @@ def test_a_pending_regression_confirm_is_always_issued(tmp_path, monkeypatch):
     assert units(session, sid)["CD4"]["state"] in ("accepted", "accepted_low_confidence")
 
 
+def test_a_spatial_only_regression_never_moves_the_gate(tmp_path, monkeypatch):
+    """Where the positives sit (an enriched edge, one odd region) says nothing
+    about which way the threshold is off: the whole-image look may keep or
+    reject the gate, and an answer that would chase the artifact is refused
+    (lsp11385_2: SMA was raised 6.05 -> 6.36 after an edge check)."""
+    from plexora.plugins.gating.server.autogate import regression
+
+    make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"], budget={"packets": 1})["session_id"]
+    packet, _ = next_packet(session, sid)
+    real = regression.numeric_checks
+
+    def failing(*args, **kwargs):
+        result = real(*args, **kwargs)
+        return {**result, "ok": False, "failed": ["edge_ratio"]}
+
+    monkeypatch.setattr(regression, "numeric_checks", failing)
+    answer(session, sid, packet, look("about_right"))
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "regression_confirm"
+    assert set(packet["allowed"]) == {"holds", "artifact", "cannot_tell"}
+    refused = invoke(session, "gating_answer", {
+        "session_id": sid, "packet_id": packet["packet_id"],
+        "answer": {"kind": "regression_confirm", "verdict": "too_low"}})
+    assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
+    answer(session, sid, packet, {"kind": "regression_confirm", "verdict": "holds"})
+    assert units(session, sid)["CD4"]["state"] in ("accepted", "accepted_low_confidence")
+
+
 @pytest.mark.parametrize("manual", [False, True])
 def test_partner_numbers_are_in_the_first_look(tmp_path, manual):
     """CD4's first look already carries its partners -- gated by this run, or
@@ -559,10 +592,13 @@ def test_partner_numbers_are_in_the_first_look(tmp_path, manual):
     partners = {p["partner"]: p for p in packet["evidence"]["partners"]}
     assert "CD3" in partners, packet["evidence"]["partners"]
     assert partners["CD3"]["relation"] in ("subset", "coexpressed")
-    assert 0 <= partners["CD3"]["frac_marker_in_partner"] <= 1
+    assert 0 <= partners["CD3"]["orphan_fraction"] <= 1
+    # One line per partner: the rest is code's (the plot, the purity check).
+    assert set(partners["CD3"]) <= {"partner", "relation", "grade", "orphan_fraction",
+                                    "double_positive_fraction"}
     if manual:
         assert units(session, sid)["CD3"]["state"] == "skipped_manual"
-        assert partners["CD3"]["partner_confidence"] == "high"
+        assert partners["CD3"]["grade"] == "high"
 
 
 def test_a_reference_request_is_served_when_the_look_is_undecided(tmp_path):
@@ -572,26 +608,12 @@ def test_a_reference_request_is_served_when_the_look_is_undecided(tmp_path):
     packet = first_packet_for(session, sid, "CD4", info)
     outcome = answer(session, sid, packet, look(
         "cannot_tell", confidence="unsure", artifact_flags=["image_quality"],
-        plausibility={"compartment": "cannot_tell"},
         request={"kind": "reference_channel", "marker": "CD3", "reason": "is it on T cells"}))
     assert outcome["outcome"].get("request_honoured"), outcome
     packet, _ = next_packet(session, sid)
     assert packet["kind"] == "t3_biological"
     assert packet["evidence"]["references"][0] == "CD3"
     assert packet["evidence"]["sheet"]["plot"]["partner"] == "CD3"
-
-
-def test_qc_reason_names_the_trigger(tmp_path):
-    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
-    session = AgentSession()
-    sid = start(session, markers=["CD4"])["session_id"]
-    packet = first_packet_for(session, sid, "CD4", info)
-    answer(session, sid, packet, look("about_right",
-                                      plausibility={"positives_look_real": False}))
-    packet, _ = next_packet(session, sid)
-    assert packet["kind"] == "qc_confirm"
-    assert "positives did not look real" in packet["question"]
-    assert "compartment" not in packet["question"]
 
 
 def test_an_artifact_flag_lowers_confidence_but_never_reroutes(tmp_path):
@@ -618,13 +640,16 @@ def test_an_artifact_flag_lowers_confidence_but_never_reroutes(tmp_path):
 
 
 def test_real_signal_after_a_look_gets_a_second_look(tmp_path):
+    """A look that saw no stain anywhere is checked on the whole image; when
+    the channel is real after all, the next look is beside a reference."""
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
     sid = start(session, markers=["CD3", "CD20", "CD4"])["session_id"]
     packet = first_packet_for(session, sid, "CD4", info)
-    answer(session, sid, packet, look("too_low", plausibility={"positives_look_real": False}))
+    answer(session, sid, packet, look("no_positives"))
     packet, _ = next_packet(session, sid)
     assert packet["kind"] == "qc_confirm"
+    assert "no cell is positive" in packet["question"]
     answer(session, sid, packet, {"kind": "qc_confirm", "verdict": "real_signal"})
     packet, _ = next_packet(session, sid)
     # A reference is gated, so the second look is beside it.
@@ -685,7 +710,11 @@ def test_a_low_separation_marker_is_refined_not_reviewed(tmp_path):
     assert packet["kind"] == "t4_candidates"
 
 
-def test_none_separates_at_the_band_edge_ends_without_a_second_round(tmp_path):
+def test_a_mixed_first_row_keeps_the_gate_at_a_capped_confidence(tmp_path):
+    """Overlapping populations: the cells at the boundary are honestly mixed.
+    The gate stays where the look found it -- never closed for that alone --
+    at no more than moderate confidence, and the whole-image checks still have
+    their say."""
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
     sid = start(session, markers=["CD4"])["session_id"]
@@ -698,11 +727,16 @@ def test_none_separates_at_the_band_edge_ends_without_a_second_round(tmp_path):
     unit = engine.store().load(sid)["units"][engine.unit_key("gsynth", "CD4")]
     assert unit["candidates_reach_edge"], unit.get("candidates")
     rows = {r["row"]: "mixed" for r in packet["evidence"]["intervals"]}
-    answer(session, sid, packet, {"kind": "t4_candidates", "intervals": rows,
-                                  "confidence": "fairly_sure"})
-    following, result = next_packet(session, sid)
-    assert following is None, following and following["kind"]
-    assert units(session, sid)["CD4"]["state"] == "manual_review_recommended"
+    outcome = answer(session, sid, packet, {"kind": "t4_candidates", "intervals": rows,
+                                            "confidence": "fairly_sure"})["outcome"]
+    assert outcome["chosen"] == "keep" and outcome["why"] == "mixed", outcome
+    following, _ = next_packet(session, sid)
+    if following is not None:
+        assert following["kind"] == "regression_confirm", following["kind"]
+        answer(session, sid, following, {"kind": "regression_confirm", "verdict": "holds"})
+    final = units(session, sid)["CD4"]
+    assert final["state"] in ("accepted", "accepted_low_confidence"), final
+    assert final["confidence"] in ("moderate", "low")
 
 
 def test_an_outstanding_packet_can_be_drawn_again(tmp_path):
@@ -777,9 +811,7 @@ class NoPositives(Oracle):
     def answer(self, packet):
         marker = packet["units"][0]["marker"] if packet["units"] else None
         if marker == self.marker and packet["kind"] in ("t2_confirm", "t3_biological"):
-            return {"kind": packet["kind"], "confidence": "sure", "direction": "no_positives",
-                    "plausibility": {"compartment": "matches", "pattern": "membrane",
-                                     "positives_look_real": False}}
+            return look("no_positives", kind=packet["kind"])
         if marker == self.marker and packet["kind"] == "qc_confirm":
             assert "no cell is positive" in packet["question"] or \
                 "no cell is positive" in " ".join(packet["evidence"].get("flags") or []) \
@@ -823,7 +855,9 @@ def test_every_look_carries_the_context_sheet(tmp_path):
         # pointer to that packet (`sheets: trim`).
         assert ("context_sheet" in roles or "sheet" in packet.get("_as_in", ())) \
             and len(roles) <= 2
-        assert "fields" in packet["evidence"]
+        # A whole-image check draws the slide row only when the reader was
+        # shown the fields already (`sheets: trim`).
+        assert "fields" in packet["evidence"] or packet["kind"] == "regression_confirm"
         guide = packet["evidence"]["guide"]
         assert "sheet" in guide and any(k.startswith("compartment:") for k in guide)
         assert packet["answer_schema"]["see"].endswith(packet["kind"])
@@ -1162,23 +1196,21 @@ def test_the_rows_place_the_gate_on_a_lattice_point(tmp_path):
         [f"c{i + 1}" for i in range(len(rows))]
     lows = [c["low"] for c in ev["candidates"]]
     assert lows == sorted(lows)                     # nearest the current gate first, going up
-    verdicts = {r: "mostly_negative" for r in rows}
+    verdicts = {r: "unstained" for r in rows}
     if len(rows) > 1:
-        verdicts[rows[1]] = "mostly_positive"      # stop after the first row
+        verdicts[rows[1]] = "own_stain"            # stop after the first row
     missing = invoke(session, "gating_answer", {
         "session_id": sid, "packet_id": packet["packet_id"], "include_next": False,
-        "answer": {"kind": "t4_candidates", "intervals": {rows[0]: "mostly_negative"} if
+        "answer": {"kind": "t4_candidates", "intervals": {rows[0]: "unstained"} if
                    len(rows) > 1 else {}, "confidence": "sure"}})
     assert not missing["ok"] and missing["error"]["code"] == "invalid_input"
+    # The agent never names a threshold: only the rows' words are taken.
+    assert "chosen_candidate" not in packet["allowed"]
     outcome = answer(session, sid, packet, {"kind": "t4_candidates", "intervals": verdicts,
-                                            "chosen_candidate": ev["candidates"][-1]["id"]
-                                            if len(rows) > 1 else None,
                                             "confidence": "sure"})["outcome"]
     unit = engine.store().load(sid)["units"][engine.unit_key("gsynth", "CD4")]
     points = {p["low"] for p in unit["lattice"]["points"]}
     assert outcome["chosen"] == "c1" and unit["candidate"] in points
-    if len(rows) > 1:
-        assert unit["t4_disagreed"]["rows_say"] == "c1"
 
 
 def test_the_lattice_is_the_same_whatever_the_path(tmp_path):
@@ -1245,3 +1277,26 @@ def test_a_changed_partner_gate_flags_its_dependants(tmp_path):
     qc = ok(invoke(session, "gating_qc", {"project": "gsynth"}))
     stale = {(s["marker"], s["partner"]) for s in qc["stale_dependencies"]}
     assert ("CD4", "CD3") in stale and "CD4" in qc["needs_review"]
+
+
+def test_a_stored_session_replays_and_its_pictures_draw_again_byte_for_byte(tmp_path):
+    """The bench's replay (plexora/ai/bench.py): every packet a session issued,
+    asked again from disk. Its pictures are a function of their manifests and
+    the code, so drawing each collage again gives the stored bytes -- the
+    guard every change to the renderer or the calibration is checked against,
+    since an identical packet is what lets a rerun replay a remembered answer
+    instead of asking a model."""
+    from plexora.ai import bench
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    agent = Oracle(info)
+    sid = start(session, mode="propose")["session_id"]
+    asked = drive(session, sid, agent)
+    assert {"t1_strip", "t2_confirm"} <= {p["kind"] for p in asked}
+    rows = bench.replay_session(sid, agent, rerender=True, session=session)
+    assert [r["packet_id"] for r in rows] == [p["packet_id"] for p in asked]
+    compared = [r["agreement"] for r in rows if r["agreement"] is not None]
+    assert compared and all(a == 1.0 for a in compared)
+    drawn = [i for r in rows for i in r["images"] if i["rerendered"]]
+    assert drawn and all(i["identical"] for i in drawn), drawn

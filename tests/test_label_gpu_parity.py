@@ -5,10 +5,13 @@ both shaders into Chromium and draws synthetic label tiles through each path:
 four cell sizes (so the small-cell fill weight is 0, partial, and 1), ids past 2^16 and
 2^23, a gate as a mask and as an id Set, dense and sparse colour tables with a
 hidden category, filled mode, a stored-outlines datasource, a layer at partial
-opacity and two layers stacked. Alpha must match exactly and the premultiplied
-colour within one step (a stacked layer's alpha within one step: the 2D
-canvas's own blend of a WebGL source rounds differently). It also checks the
-GL context is handed back to the channel program intact.
+opacity, two layers stacked, and a gate mask with cells QC does not call (2:
+grey over any colour, a hidden category's included). Alpha must match exactly
+and the premultiplied colour within one step (a stacked layer's alpha within
+one step: the 2D canvas's own blend of a WebGL source rounds differently).
+Where cells are not called, each path's pixels for them must also BE the grey
+(#7a7a7a). It also checks the GL context is handed back to the channel program
+intact.
 
 Headless Chromium draws WebGL with SwiftShader, which is also what a machine
 with no usable GPU gets -- so the default run is the no-GPU case. Set
@@ -50,12 +53,33 @@ def test_every_case_matches_the_cpu_path(parity):
 
 def test_the_matrix_actually_ran(parity):
     lines = [line for line in parity.stdout.splitlines() if line.startswith("PASS ")]
-    # 4 geometries x 2 segmentation modes x 8 cases, plus the hand-back check.
-    assert len(lines) == 4 * 2 * 8 + 1, parity.stdout
+    # 4 geometries x 2 segmentation modes x 13 cases, plus the hand-back check.
+    assert len(lines) == 4 * 2 * 13 + 1, parity.stdout
     for needle in ("| filled | gate mask", "| outlines | sparse colours",
                    "3 px cells 300x200 edge tile | filled | two layers stacked",
+                   "| filled | gate mask, not called grey",
+                   "| outlines | not called over colours, alpha-0 category",
+                   "| filled | filled mode, not called",
+                   "| outlines | gate mask, uncertain amber",
+                   "| outlines | gate mask, the cell model's colours",
                    "the context is handed back to the channel program"):
         assert needle in parity.stdout, needle
+
+
+def test_not_called_cells_are_the_grey(parity):
+    """A gate mask's 2 is QC's "not called": both paths draw those cells grey,
+    whatever the colour table says. Parity alone would pass two paths that
+    agreed on the wrong colour, so every case with not-called cells counts the
+    grey pixels each path drew -- some, and all of them grey."""
+    import re
+
+    found = re.findall(r"\| (not called|gate mask, not called grey|filled mode, not called"
+                       r"|not called over colours, alpha-0 category) .*"
+                       r"grey cpu (\d+)/(\d+) gpu (\d+)/(\d+)", parity.stdout)
+    assert len(found) == 4 * 2 * 3, parity.stdout
+    for _, cpu_ok, cpu_all, gpu_ok, gpu_all in found:
+        assert int(cpu_all) > 0 and cpu_ok == cpu_all, (cpu_ok, cpu_all)
+        assert int(gpu_all) > 0 and gpu_ok == gpu_all, (gpu_ok, gpu_all)
 
 
 def test_the_small_cell_fill_was_exercised(parity):

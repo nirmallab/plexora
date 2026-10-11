@@ -1562,6 +1562,9 @@ html.is-native-dragging body::after {
     /* The list inside can be six channel names; past this it is a wall rather
        than a glance, and toast.js summarises the rest instead. */
     max-width: 340px;
+    /* A note can be a file path or a host name with nothing to break at; it
+       wraps inside the box rather than running past its edge. */
+    overflow-wrap: anywhere;
     padding: 10px 12px;
     pointer-events: auto;
     transition: opacity var(--duration-fast) var(--ease-standard),
@@ -1624,7 +1627,6 @@ html.is-native-dragging body::after {
 }
 
 .plx-toast-lines li {
-    overflow-wrap: anywhere;
     padding-left: 10px;
     position: relative;
 }

@@ -109,6 +109,11 @@ def settle_unit(engine, unit, prepared):
     decide_first(engine, unit)
 
 
+#: The hard flags a QC verdict of `usable` settles (`decide_first`): read off
+#: the image overview, they are what QC's channel review looks at.
+QC_SETTLED_FLAGS = ("saturated", "empty_channel", "illumination_gradient")
+
+
 def fill_unit(unit, prepared):
     profile = prepared["profile"]
     fit = profile.get("fit") or {}
@@ -119,6 +124,8 @@ def fill_unit(unit, prepared):
         "gmm": fit.get("gate_raw"), "candidate": fit.get("gate_raw"),
         "high": prepared["gate"]["high"], "source": "gmm",
         "qc_exclusion": profile.get("qc_exclusion"),
+        # QC's word on the channel (`cell_exclusions.VERDICTS`), when QC ran.
+        "qc_verdict": (profile.get("qc_exclusion") or {}).get("channel_verdict"),
         "context": prepared["context"], "no_image_channel": prepared["no_image_channel"],
         "image_qc": {k: (prepared.get("image_qc") or {}).get(k)
                      for k in ("saturation_fraction", "tissue_ratio",
@@ -135,6 +142,12 @@ def decide_first(engine, unit):
     t1 = unit.get("t1") or {}
     max_tier = int(options["max_tier"])
     tier = t1.get("recommended_tier")
+    if unit.get("qc_verdict") == "usable":
+        # QC looked at this channel and found a working stain: a flag read off
+        # the overview (a gradient, a saturated corner) is QC's to judge, and
+        # it has; the marker takes the ordinary path, the flag kept as a note.
+        unit["flags"] = [f for f in unit["flags"] if f not in QC_SETTLED_FLAGS] + \
+            [f"{f}_downgraded" for f in unit["flags"] if f in QC_SETTLED_FLAGS]
     hard = schemas.hard(unit["flags"])
     # False only when the vocabulary (or the panel's context) says so; an
     # unknown marker's None is not a statement.

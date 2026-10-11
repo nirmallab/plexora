@@ -108,9 +108,12 @@ Regions sent to manual review are warnings: say so, and let the user decide.
 Every change is receipted and undoable except deleting an ROI and writing a
 source file, which need the user's explicit request.
 
-Automatic gating leaves QC failures out of its estimates (`get_qc_exclusions`
-says which cells), so a change made here makes the image's existing automatic
-gates stale (`gating_qc` `stale_qc`): tell the user, and offer to re-gate.
+Automatic gating leaves QC failures out of its estimates and does not call
+them (`get_qc_exclusions` says which cells: neither positive nor negative, grey
+in the viewer), so a change made here makes the image's existing automatic
+gates stale (`gating_qc` `stale_qc`): tell the user, and offer to re-gate. An
+unconfirmed staining detection (`detected:<class>`) and an enriched tissue rim
+(`rim`) warn a marker's cells; dismiss the finding when it is real biology.
 
 ## Provenance
 

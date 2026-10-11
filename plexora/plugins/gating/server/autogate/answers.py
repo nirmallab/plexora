@@ -1,8 +1,9 @@
 """What an agent may say back to a gating packet: typed, bounded, closed.
 
-The agent never types a threshold. It judges plausibility, says which way a
-gate is wrong, picks among thresholds the server proposed, or names an
-artifact -- and every one of those is a closed vocabulary here, so an answer
+The agent never types a threshold, and never says which way a gate should
+move: it answers one closed question per collage row about the cells around
+the marked nucleus (`schemas.ROW_VERDICTS`), and code turns the words into a
+direction (`verdicts`). Every field is a closed vocabulary here, so an answer
 the engine cannot act on is refused at validation rather than half-applied.
 One model per packet kind, discriminated by `kind`.
 """
@@ -22,9 +23,16 @@ Artifact = Literal[schemas.ARTIFACTS]
 _PARTNERS = (f"[{{marker: a marker of this panel, relation: {' | '.join(vocabulary.RELATIONS)}, "
              f"confidence: {' | '.join(vocabulary.CONFIDENCE)}}}]")
 _CONFIDENCE = ("How sure the judgment is: " + ", ".join(f"`{w}`" for w in schemas.AI_CONFIDENCE)
-               + ". Say `unsure` rather than guess a direction.")
+               + ". Say `unsure` rather than guess.")
 Confidence = Literal[tuple(schemas.AI_CONFIDENCE)]
-RowVerdict = Literal["plausible", "implausible", "mixed", "cannot_tell"]
+RowVerdict = Literal[schemas.ROW_VERDICTS]
+Pattern = Literal[schemas.PATTERNS]
+_ROWS = ("One word per row about the cells around the marked nucleus (the four magenta "
+         "ticks): `own_stain` (stain touching the nucleus with no other nucleus in it: a ring "
+         "or halo around it, a fill inside it, cytoplasm hugging it), `neighbour_only` "
+         "(stain in the tile, but around another nucleus or apart from this one), "
+         "`unstained` (nothing touches the nucleus), `mixed` (both kinds, about evenly), "
+         "`cannot_tell`. A row is what most of its cells are.")
 
 
 class Request(AgentModel):
@@ -46,26 +54,9 @@ class _Base(AgentModel):
     artifact_flags: list[Artifact] = Field(default_factory=list, description="Anything "
                                            "technical that affects the cells shown.")
     request: Request | None = None
-    biology: Literal[schemas.BIOLOGY_FIT] = Field(
-        "not_judged", description="Does what the pictures show fit the sample's biology "
-        "(`evidence.biology`: its tissue, disease, structures)? consistent: the positives "
-        "sit where and in the cells this tissue and disease lead one to expect; conflicts: "
-        "they do not; ambiguous: more than one structure here could explain them (SOX9 in "
-        "hair follicles or in tumour); not_judged: no biology given, or it does not bear on "
-        "this look. A prior, never a reason to move the gate on its own.")
     ask_user: AskUser | None = Field(None, description="Only for what the data and the "
                                      "panel cannot settle: binary vs continuous, expected "
                                      "prevalence, which partner to trust.")
-
-
-class Plausibility(AgentModel):
-    compartment: Literal["matches", "mismatch", "cannot_tell"] = Field(
-        description="Is the stain where the panel context says it belongs?")
-    pattern: Literal["membrane", "cytoplasmic", "nuclear", "diffuse", "punctate",
-                     "cannot_tell"]
-    positives_look_real: bool = Field(description="Do the cells above the gate carry real, "
-                                      "cell-shaped staining (not background, bleed or "
-                                      "autofluorescence)?")
 
 
 class T1StripAnswer(_Base):
@@ -86,55 +77,47 @@ class QCAnswer(_Base):
 
 class T2Answer(_Base):
     kind: Literal["t2_confirm"] = "t2_confirm"
-    plausibility: Plausibility
     rows: dict[Literal["below", "near", "above"], RowVerdict] = Field(
-        default_factory=dict, description="Per row of the collage: are these cells called "
-                                          "correctly? (`near` may be empty.)")
-    direction: Literal["about_right", "too_low", "too_high", "cannot_tell", "not_binary",
-                       "no_positives", "within_partner"] = \
-        Field(description="too_low: negatives are called positive (raise the gate); "
-                          "too_high: real positives are missed (lower it); no_positives: no "
-                          "cell here is really positive (checked on the whole image next); "
-                          "not_binary: expressed on a continuum with no boundary at this gate "
-                          "-- the marker is then re-centred on where expression rises out of "
-                          "background and shown again (said about that onset look too, the "
-                          "onset is written for manual review); "
-                          "within_partner: the stain is real only inside the positives of a "
-                          "`subset` partner in `evidence.partners` (name it in `within`); "
-                          "the gate is then fitted among that partner's positives and shown "
+        description=_ROWS + " Rows: just below, at and just above the gate (`near` may be "
+                            "empty).")
+    pattern: Pattern = Field(
+        description="What the stained cells look like, in the collage or the sheet's "
+                    "fields; `none` only when no cell anywhere carries the stain.")
+    within: str | None = Field(
+        None, description="Only when the stain is real inside the positives of a subset "
+                          "partner (one of `allowed.within`) and noise outside them: that "
+                          "partner. The gate is then fitted among its positives and shown "
                           "again.")
-    within: str | None = Field(None, description="With within_partner: the partner marker, "
-                                                 "from `evidence.partners`.")
-    magnitude: Literal["small", "medium", "large"] | None = None
     confidence: Confidence = Field(description=_CONFIDENCE)
 
 
 class T3Answer(T2Answer):
     kind: Literal["t3_biological"] = "t3_biological"
-    coexpression_consistent: bool | None = None
-    exclusion_consistent: bool | None = None
-    background_pattern: Literal["none", "diffuse", "edge", "nuclear_bleed",
-                                "segmentation_boundary", "unknown"] = "none"
 
 
 class T4Answer(_Base):
     kind: Literal["t4_candidates"] = "t4_candidates"
-    intervals: dict[str, Literal[schemas.INTERVAL_VERDICTS]] = Field(
-        description="EVERY interval row (i1 nearest the current gate, i2, ...): are the "
-                    "cells that flip there really positive? The gate is placed from these: "
-                    "it moves past each row that says it should, and stops at the first "
-                    "that does not.")
-    chosen_candidate: str | None = Field(
-        None, description="Optional cross-check: the candidate id you would pick, or "
-                          + ", ".join(f"`{c}`" for c in schemas.T4_CHOICES)
-                          + ". When it disagrees with the rows, the rows win and the "
-                            "confidence is capped.")
+    intervals: dict[str, RowVerdict] = Field(
+        description="EVERY interval row (i1 nearest the current gate, i2, ...), about the "
+                    "cells that change call there. " + _ROWS + " The gate is placed from "
+                    "these words.")
     confidence: Confidence = Field(description=_CONFIDENCE)
 
 
 class ConfirmAnswer(_Base):
     kind: Literal["regression_confirm"] = "regression_confirm"
     verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"]
+
+
+class CorrectionAnswer(_Base):
+    kind: Literal["correction_check"] = "correction_check"
+    cells: dict[str, Literal["own", "not_own", "cannot_tell"]] = Field(
+        description="EVERY numbered cell (c1, c2, ...): `own` -- the marker's stain on this "
+                    "cell is its own (where the marker sits: a ring, the cytoplasm, the "
+                    "nucleus), even dim; `not_own` -- unstained, or the light on it is a "
+                    "neighbour's or the background's; `cannot_tell`. Judge each cell on its "
+                    "own pixels; the reference cells (r1, ...) are clear positives, to compare "
+                    "with, and are not answered.")
 
 
 class TransferAnswer(_Base):
@@ -178,7 +161,8 @@ class PanelContextAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer)
+          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
+          CorrectionAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

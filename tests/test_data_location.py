@@ -397,7 +397,8 @@ def test_the_image_is_offered_the_choice_only_where_it_can_still_move():
 
     landing = source("src", "js", "views", "quickViewLanding.js")
     assert 'kind: "image",' in landing
-    assert "mount: whereMount," in landing
+    # Drawn by the page itself, as a chip in its one path box.
+    assert "bare: true," in landing
 
     edit = source("src", "js", "views", "projectEdit.js")
     assert "kind: \"segmentation\"" in edit
