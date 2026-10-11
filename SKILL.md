@@ -125,6 +125,16 @@ Entry points:
   access, tile extraction and encoding, GMM/contrast statistics, segmentation,
   spatial queries. Holds mutable module-level globals (`source`, `config`,
   `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
+  **A cell with no position is ignored, never a reason to refuse the table.**
+  `load_ball_tree` fits the BallTree on rows with finite x AND y only (it used
+  to fail the whole table with sklearn's "Input contains NaN"); such a row
+  keeps its place in the row-aligned arrays but is not in the tree, so the
+  module global `ball_tree_rows` holds the table row of each tree point (None
+  when the tree holds every row), `_tree_rows(indices)` maps a query's tree
+  positions back to rows in `query_for_closest_cell`, and the pickle cache
+  stores `'rows'` (absent in an older cache = every row). `_unplaced_cells`
+  counts them for `consistency.report`. A marker NaN is never gated positive
+  and is left out of the statistics and the GMM fit.
   `generate_thumbnail(name)` is the Open Project grid's card and is the one
   image path that deliberately does NOT load the datasource -- a page of
   projects must not be a data load per card. It reads one coarse level and
@@ -992,7 +1002,10 @@ Entry points:
   `NormalizedDatasource` and `TablePlan`; `csv_adapter.py` /
   `anndata_adapter.py` / `spatialdata_adapter.py` take a `DataSpec`;
   `get_adapter(type)` is the factory and `detect_data_type(path)` routes a
-  dropped path to one of them. `classify.py` is the single marker-vs-metadata
+  dropped path to one of them. `anndata_adapter.plan()` refuses a table only
+  when NO cell has a finite x/y ("no cell has a position"); a NaN position is
+  tolerated (see `data_model`'s ball tree), and a NaN in a categorical
+  celltype column becomes `""` rather than crashing polars. `classify.py` is the single marker-vs-metadata
   predictor (it replaced three drifting denylists); `inspection.py` reads a
   not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
   `load_table` is split into `_read_frame()` + `_normalize()`, the same
@@ -1130,7 +1143,10 @@ Entry points:
   ever asks — the viewer serves mask tiles in the IMAGE's coordinate system
   (`Project.all_layers` gives the mask layer the image's width and height), so
   a mask of another size is stretched over the wrong pixels rather than
-  refused. Core's and not gating's for the reason cell opacity is: every plugin
+  refused. `report(..., *, unplaced=0, rows=0)` also emits
+  `cells_without_position` ("N of M cells have no x/y position ...", from
+  `_unplaced_findings`) — silent for none and for all, because all is
+  `no_cells`. Core's and not gating's for the reason cell opacity is: every plugin
   that draws per-cell results has the question.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state,
   now also `ViewTransform` (`{degrees, flipH, flipV}` as JSON, one row per
@@ -1157,6 +1173,8 @@ Entry points:
   (see the adapters row's WIDE mode) and so are read through the provider,
   cached there, the same way `plugins/gating/server/tableops.gmm` reads a
   channel through `dataset.table.columns` rather than `frame()[channel]`.
+  `get_tiles` returns an empty `RESPONSE_DTYPE` array, not `[]`, for a project
+  without a table or roles, because the route calls `.tobytes()` on it.
 - `models/bin_tiles.py` — the store for a counted grid (Visium HD's 2 micron
   squares, and anything shaped like it): a sibling of `transcript_tiles.py`
   copied rather than subclassed, because a bin is already a count and needs no
@@ -1552,7 +1570,8 @@ One authoritative database; nodes are data services with no project state.
   written into a project's config.json, the same way `node://` never leaves
   `resources.py`'s bookkeeping. Pyramids for a kernel array come from
   `server/utils/memory_pyramid.py`: `image_pyramid()` (mean-pooled via
-  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour)
+  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour;
+  `_as_2d` refuses a non-integer mask, which cannot hold ids)
   both return an `ome_zarr.NgffPyramid`, so the tile route needs no third
   pathway; `_NumpyLevel` materializes slices of a lazy level-0 (dask/zarr) on
   demand, and `level_bytes()` sizes them.
@@ -7076,6 +7095,52 @@ in **5.6 s**.
   branches that skip conversion because the user's own mask is already fine (a
   servable label pyramid; a mask that already looks like outlines) leave no OME
   marker for `generated_mask_kind` to read. `load_config` backfills node-backed
+- **A mask is any format that can hold an integer id, and everything else is
+  refused up front with a sentence.** `segmentation_pyramid.mask_format_refusal(path)`
+  returns that sentence or None: JPEG (lossy, so ids are not preserved), slide
+  scanners (`.svs/.ndpi/.scn/.mrxs/.svslide/.bif`), `.qptiff`, `.dcm/.dicom`,
+  and a colour PNG (`_NOT_A_MASK` says why, `_SAVE_AS` what to export
+  instead). PNG is read by `read_png_labels` (greyscale via imagecodecs; palette
+  via Pillow so the indices are the ids), and its size comes off the IHDR with
+  no decode (`png_header`, which `plane_size`, `label_pyramid_gaps` and
+  `import_proposal._geometry_of` use). `can_serve_in_place(path)` is true only
+  for a local TIFF or zarr — a PNG is always converted, even one that looks
+  like outlines — and both `data_model._servable_as_is` and `node/app.py` ask it
+  before serving a mask unconverted; a local zarr label group is served as-is
+  only when its levels are 2-D arrays named 0, 1, 2…, else converted
+  (`_zarr_level_gaps`). `_zarr_level_zero` is the one reader of a zarr's level 0
+  for local and remote (bare array, NGFF multiscale by first dataset path,
+  bioformats2raw series 0), leading axes pinned by `_Plane2D`. A remote TIFF is
+  read by tile ranges through `tiff_region` (`_TiffPlane`), never tifffile's
+  zarr view, which deadlocks on streamed reads; `_remote_level_zero(url)`
+  returns `(plane, closer)`. `import_proposal.looks_like_label_image` reads PNGs
+  too, `_detect_image` warns with the refusal when a file added as a mask cannot
+  be one, `_remote_image_layer` proposes a remote TIFF/PNG as a mask when
+  answered so, or when declared or named so AND `_remote_label_plane`
+  (header-only) says it is one integer plane, and
+  `import_routes.attach_segmentation` raises `ValueError` with the refusal
+  before recording anything. **An Imaris `.ims` is a mask too**, always converted
+  (`is_ims`; `can_serve_in_place` is False; `label_pyramid_gaps` answers "it is
+  an Imaris file"), and refused when remote (`_REMOTE_IMS`: HDF5 can only be
+  read from a disk). `volume/sources/ims.py`'s `ImsLabels(path, channel=None)`
+  reads one channel as (Z,Y,X) or (T,Z,Y,X) at the real extent; Imaris stores
+  32-bit data as float, so a mask of more than 65,535 cells arrives as float32
+  and is read as uint32 only after every value is checked whole (`FLOAT_ID_LIMIT`
+  2**24). Planes come from one chunk-deep slab read (`SLAB_LIMIT` 1 GiB)
+  because Imaris chunks run 64 planes deep. `label_channel()` takes the only
+  channel, else the single one whose middle window passes `looks_like_labels`
+  (whole numbers, zero background, short runs: confocal stains measured 13-41
+  repeats per id and row, masks 1.0-1.5, so it is size-independent; a binary
+  mask fails), preferring one named as a mask; ambiguity raises a sentence
+  naming the channels. `mask_verdict()` feeds `looks_like_label_image`: one id
+  channel is True, stains plus one id channel is None (asked) unless a name
+  says mask, no id channel is False. A single-plane `.ims` takes the 2-D
+  pyramid path (`ims.ImsPlane`, the middle plane of frame 0); a 3-D or
+  time-series one becomes a label volume like a 3-D TIFF, through
+  `volume/labels.py` (`label_volume_shape`, `build_label_volume`). A data node
+  still serves a 3-D mask as its middle plane. `tests/test_ims_masks.py` and
+  `tests/test_mask_formats.py` pin it;
+  `tests/test_nan_tables.py` pins the NaN-position rules above.
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
 - **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_source`

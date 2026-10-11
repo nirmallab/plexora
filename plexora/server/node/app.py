@@ -269,7 +269,8 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
     generated = sp.generated_mask_kind(source)
     if generated is not None:
         return generated
-    if sp.looks_like_outline_mask(source):
+    # A PNG is converted whatever it looks like: the tile route cannot open one.
+    if sp.can_serve_in_place(source) and sp.looks_like_outline_mask(source):
         return sp.MODE_OUTLINES
 
     gaps = sp.label_pyramid_gaps(source)

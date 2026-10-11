@@ -56,9 +56,14 @@ def _level_shapes(height: int, width: int, target: int = TARGET):
 
 def label_volume_shape(path) -> Optional[tuple]:
     """`(Z, Y, X)` when `path` is a TIFF holding one integer label volume, or
-    `(T, Z, Y, X)` for one label volume per frame; else None. Header only."""
+    `(T, Z, Y, X)` for one label volume per frame; else None. Header only --
+    for an .ims, the header and one window per channel, to find the ids."""
     import tifffile as tf
 
+    if str(path).lower().endswith(".ims"):
+        from plexora.server.volume.sources import ims
+
+        return ims.label_shape(path)
     try:
         with tf.TiffFile(str(path), is_ome=False) as handle:
             series = handle.series[0]
@@ -99,8 +104,8 @@ def _write_frame(group, array, shapes, progress, done, total):
 
 def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
                        target: int = TARGET) -> str:
-    """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF or
-    array) to `dest`.
+    """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF,
+    .ims or array) to `dest`.
 
     Written to a sibling temp directory and renamed into place, so a reader
     never finds a half-built store under the final name.
@@ -119,6 +124,13 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
     if in_memory:
         array = source
         close = None
+    elif str(source).lower().endswith(".ims"):
+        # One channel of an Imaris file (sources/ims.ImsLabels), read a
+        # plane at a time like everything else here.
+        from plexora.server.volume.sources import ims
+
+        array = ims.ImsLabels(source)
+        close = array.close
     else:
         handle = tf.TiffFile(str(source), is_ome=False)
         array = zarr.open(handle.series[0].aszarr(), mode="r")

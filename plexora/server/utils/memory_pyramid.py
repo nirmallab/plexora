@@ -168,6 +168,14 @@ def _as_2d(array):
         raise ValueError(
             f"a label mask must be 2-D (rows, cols); this one is {ndim}-D"
             + (" with more than one leading plane" if ndim == 3 else ""))
+    # The same rule a mask on disk meets (pyramidize_segmentation_mask): ids
+    # are whole numbers. A float array was served as it came, and the tile
+    # route's uint32 cast truncated 41.7 into cell 41 without a word.
+    dtype = np.dtype(getattr(array, "dtype", np.uint32))
+    if dtype.kind not in "ui":
+        raise ValueError(
+            f"a label mask holds integer cell ids; this one is {dtype}. If its "
+            "values are whole numbers, pass mask.astype('uint32').")
     return array
 
 

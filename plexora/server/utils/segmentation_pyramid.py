@@ -21,8 +21,10 @@ one indexed read of the source.
 from __future__ import annotations
 
 import errno
+import io
 import os
 import re
+import struct
 import tempfile
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
@@ -110,7 +112,7 @@ def derived_output_path(segmentation_path, data_directory=None, *,
     # a table of boundary polygons is one too, and its derived pyramid has to
     # land on the same name every other source's does.
     for extension in (".ome.tiff", ".ome.tif", ".tiff", ".tif", ".png",
-                      ".zarr", ".parquet"):
+                      ".ims", ".zarr", ".parquet"):
         if stem.lower().endswith(extension):
             stem = stem[: -len(extension)]
             break
@@ -236,8 +238,185 @@ def _remote_derived_path(url, data_directory, mode) -> Path:
     parts = [remote_store.display_name(root)] + [
         p for p in sub.split("/") if p and p != "labels"]
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) or "mask"
+    if remote_store.is_file_url(url):
+        # One file (`mask.tif`, `cells.png`): named the way the same file on
+        # disk would be, extension dropped. A store keeps the name it has
+        # always had, or every remote mask converted before would be rebuilt.
+        return derived_output_path(Path(stem), data_directory, mode=mode)
     suffix = FILLED_SUFFIX if mode == MODE_FILLED else OUTLINE_SUFFIX
     return Path(data_directory) / f"{stem}{suffix}"
+
+
+# -- formats ----------------------------------------------------------------
+#
+# A mask is one plane of whole-number cell ids. Any file that can store such a
+# plane exactly is read as one: TIFF, OME-Zarr labels, PNG -- on disk or at a
+# web address -- and an Imaris file on disk (a volume of ids, or one plane;
+# volume/sources/ims.ImsLabels). Some formats an IMAGE can be in cannot: they change pixel values
+# when they store them, or only ever hold colour. Those are refused up front,
+# with the reason, rather than failing halfway through a conversion with a
+# reader's error about a file it was never going to understand.
+
+_SLIDE_FORMAT = ("{name} is a slide scanner's format: it holds a colour "
+                 "picture, usually JPEG-compressed, and never cell ids.")
+
+#: Formats an image can be in and a mask cannot, by suffix, each with why.
+_NOT_A_MASK = {
+    ".jpg": "{name} is a JPEG, and JPEG compression changes pixel values, so "
+            "it cannot hold cell ids exactly.",
+    ".jpeg": "{name} is a JPEG, and JPEG compression changes pixel values, so "
+             "it cannot hold cell ids exactly.",
+    ".svs": _SLIDE_FORMAT, ".ndpi": _SLIDE_FORMAT, ".scn": _SLIDE_FORMAT,
+    ".mrxs": _SLIDE_FORMAT, ".svslide": _SLIDE_FORMAT, ".bif": _SLIDE_FORMAT,
+    ".qptiff": "{name} is an Akoya scanner's image, not a label mask.",
+    ".dcm": "{name} is a DICOM slide. Plexora reads DICOM images, not DICOM "
+            "segmentation objects.",
+    ".dicom": "{name} is a DICOM slide. Plexora reads DICOM images, not DICOM "
+              "segmentation objects.",
+}
+
+#: An Imaris file is HDF5, which is read by path: there is no streaming it.
+_REMOTE_IMS = ("{name} is an Imaris file at a web address, and an Imaris file "
+               "can only be read from a disk. Download it, or open it through a "
+               "data node next to the data.")
+
+#: What every refusal goes on to say: the formats that do work.
+_SAVE_AS = (" Save the mask as a TIFF (.tif, .ome.tif) or a PNG of integer "
+            "labels, or point at OME-Zarr labels.")
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+#: PNG colour types (IHDR byte 25) that hold one value per pixel: greyscale
+#: (0) and palette (3), whose indices ARE the ids -- palette PNGs are how
+#: several annotation tools save labels. 2 (RGB), 4 (grey + alpha) and 6
+#: (RGBA) are pictures of a mask, coloured for looking at, with the ids gone.
+_PNG_LABEL_COLOUR_TYPES = (0, 3)
+
+
+class PngHeader(NamedTuple):
+    width: int
+    height: int
+    bit_depth: int
+    colour_type: int
+
+
+def _suffix(path) -> str:
+    from plexora.server.utils import remote_image
+
+    return remote_image.suffix_of(path)
+
+
+def is_png(path) -> bool:
+    """Whether `path` names a PNG, here or at a web address. Name only."""
+    return _suffix(path) == ".png"
+
+
+def is_ims(path) -> bool:
+    """Whether `path` names an Imaris file. Name only."""
+    return _suffix(path) == ".ims"
+
+
+def _png_bytes(path) -> bytes:
+    if _is_remote(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.read_bytes(path)
+    return Path(path).read_bytes()
+
+
+def _png_header_of(data: bytes) -> Optional[PngHeader]:
+    if data[:8] != _PNG_SIGNATURE or data[12:16] != b"IHDR" or len(data) < 26:
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return PngHeader(int(width), int(height), data[24], data[25])
+
+
+def png_header(path) -> Optional[PngHeader]:
+    """A PNG's size and pixel layout, from its first 26 bytes, or None.
+
+    No pixel is decoded, so this is what answers "how big is this mask?" and
+    "is it one channel?" for a PNG. A web address is read whole -- through the
+    cache, so the decode that follows does not fetch it again.
+    """
+    try:
+        if _is_remote(path):
+            return _png_header_of(_png_bytes(path))
+        with open(path, "rb") as handle:
+            return _png_header_of(handle.read(26))
+    except (OSError, ValueError):
+        return None
+
+
+def _colour_png(name) -> str:
+    return (f"{name} is a colour PNG: a picture of a mask, with the cell ids "
+            "turned into colours. A mask PNG is one channel of integer ids "
+            "(greyscale, or palette).")
+
+
+def read_png_labels(path) -> np.ndarray:
+    """A PNG mask's ids as a 2-D integer array.
+
+    Decoded whole, because a PNG has no tiles to read a window of. Greyscale
+    goes through imagecodecs (no pixel-count ceiling, 16-bit kept as 16-bit --
+    Cellpose's `_cp_masks.png`). Palette goes through Pillow, which hands back
+    the indices, where imagecodecs expands them to the colours.
+    """
+    data = _png_bytes(path)
+    header = _png_header_of(data)
+    name = _display_name(path)
+    if header is None:
+        raise ValueError(f"{name} is not a PNG file.")
+    if header.colour_type not in _PNG_LABEL_COLOUR_TYPES:
+        raise ValueError(_colour_png(name) + _SAVE_AS)
+    if header.colour_type == 3:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as picture:
+            return np.asarray(picture)
+    import imagecodecs
+
+    return np.asarray(imagecodecs.png_decode(data))
+
+
+def _display_name(path) -> str:
+    if _is_remote(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.url_name(path)
+    return Path(path).name
+
+
+def mask_format_refusal(path) -> Optional[str]:
+    """Why `path` cannot be a segmentation mask, or None when it can be.
+
+    By name for the formats that can never hold ids, and by the PNG header for
+    a colour PNG. Says nothing about the pixels of a format that CAN hold ids
+    -- whether a particular TIFF is a mask is `looks_like_label_image`'s
+    question, and a float TIFF is refused by the conversion with its dtype.
+    """
+    name = _display_name(path)
+    reason = _NOT_A_MASK.get(_suffix(path))
+    if reason is None and is_ims(path) and _is_remote(path):
+        reason = _REMOTE_IMS
+    if reason is not None:
+        return reason.format(name=name) + _SAVE_AS
+    if is_png(path):
+        header = png_header(path)
+        if header is not None and header.colour_type not in _PNG_LABEL_COLOUR_TYPES:
+            return _colour_png(name) + _SAVE_AS
+    return None
+
+
+def can_serve_in_place(path) -> bool:
+    """Whether the mask tile route can read `path` itself, unconverted.
+
+    Only a TIFF or a zarr store on this machine. The tile route opens masks
+    with tifffile or zarr, so a PNG or an Imaris file is always converted --
+    even one that already looks like outlines, which would otherwise be handed
+    to the viewer as it is. A web address is never served tile by tile (see
+    data_model._servable_as_is).
+    """
+    return not _is_remote(path) and not is_png(path) and not is_ims(path)
 
 
 class _Plane2D:
@@ -268,12 +447,42 @@ class _Plane2D:
         plane = np.asarray(self[:, :])
         return plane.astype(dtype) if dtype is not None else plane
 
+    @property
+    def oindex(self):
+        """Orthogonal reads, `plane.oindex[rows, cols]`, as the streaming
+        pyramidizer takes them from a zarr array."""
+        return _OIndex(lambda rows, cols: self._array.oindex[self._leading + (rows, cols)])
 
-def _remote_level_zero(url):
-    """The full-resolution plane of a remote label image, through the cache."""
-    group = ome_zarr._open_group(url)
-    multiscale = ome_zarr._multiscale_of(group)
-    array = group[ome_zarr._dataset_paths(multiscale)[0]] if multiscale else group["0"]
+
+class _OIndex:
+    __slots__ = ("_read",)
+
+    def __init__(self, read):
+        self._read = read
+
+    def __getitem__(self, index):
+        rows, cols = index
+        return self._read(rows, cols)
+
+
+def _zarr_level_zero(node):
+    """The full-resolution 2-D plane of a zarr label image, here or remote.
+
+    Three layouts: a bare array; an NGFF multiscale group (level 0 is the
+    first dataset its metadata lists, whatever it is called); and a
+    bioformats2raw store, whose series `0` is itself the multiscale group.
+    Leading axes are pinned by `_Plane2D`.
+    """
+    if isinstance(node, zarr.Array):
+        array, multiscale = node, None
+    else:
+        multiscale = ome_zarr._multiscale_of(node)
+        if multiscale:
+            array = node[ome_zarr._dataset_paths(multiscale)[0]]
+        else:
+            array = node["0"]
+            if not isinstance(array, zarr.Array):
+                return _zarr_level_zero(array)
     if array.ndim == 2:
         return array
     axes = ome_zarr._axes_of(multiscale or {}, array.ndim)
@@ -282,6 +491,78 @@ def _remote_level_zero(url):
         depth = int(array.shape[position])
         leading.append(depth // 2 if name == "z" else 0)
     return _Plane2D(array, leading)
+
+
+class _TiffPlane:
+    """A TIFF's full-resolution label plane at a web address, read by tiles.
+
+    Never through tifffile's zarr view: that reads inside zarr's IO loop, and a
+    streamed read waits on the same loop for its bytes (see tiff_region). Each
+    read here fetches only the tiles or strips it touches, on the calling
+    thread. `shape` is the level's own, so a stack or a colour TIFF is refused
+    by the conversion's "one 2-D label plane" check like a local one.
+    """
+
+    def __init__(self, tiff):
+        from plexora.server.utils import tiff_region
+
+        series = tiff.series[0]
+        level = series.levels[0] if getattr(series, "levels", None) else series
+        self._page = level.pages[0]
+        self._fetch = tiff_region._fetcher(tiff)
+        self._read_region = tiff_region.read_region
+        self.shape = tuple(int(size) for size in level.shape)
+        self.ndim = len(self.shape)
+        self.dtype = np.dtype(level.dtype)
+
+    def _read(self, rows: slice, cols: slice) -> np.ndarray:
+        height, width = self.shape[-2], self.shape[-1]
+        y0, y1, _ = rows.indices(height)
+        x0, x1, _ = cols.indices(width)
+        return self._read_region(self._page, y0, y1, x0, x1, fetch=self._fetch)
+
+    def __getitem__(self, index):
+        rows, cols = index if isinstance(index, tuple) else (index, slice(None))
+        return self._read(rows, cols)
+
+    def __array__(self, dtype=None, copy=None):
+        plane = self._read(slice(None), slice(None))
+        return plane.astype(dtype) if dtype is not None else plane
+
+    @property
+    def oindex(self):
+        def read(rows, cols):
+            rows, cols = np.asarray(rows), np.asarray(cols)
+            if not rows.size or not cols.size:
+                return np.zeros((rows.size, cols.size), dtype=self.dtype)
+            top, left = int(rows.min()), int(cols.min())
+            block = self._read(slice(top, int(rows.max()) + 1),
+                               slice(left, int(cols.max()) + 1))
+            return block[np.ix_(rows - top, cols - left)]
+
+        return _OIndex(read)
+
+
+def _remote_level_zero(url):
+    """(plane, closer) for a label image at a web address, through the cache.
+
+    OME-Zarr labels as a zarr group; a TIFF read tile by tile (`_TiffPlane`);
+    a PNG fetched once and decoded whole.
+    """
+    if is_png(url):
+        return read_png_labels(url), lambda: None
+    from plexora.server.utils import remote_image
+
+    if remote_image.kind_or_none(url, probe=False) == remote_image.TIFF:
+        from plexora.server.utils import tiff_region
+
+        tiff = tiff_region.open_tiff(url)
+        try:
+            return _TiffPlane(tiff), lambda: tiff_region.close_tiff(tiff)
+        except Exception:
+            tiff_region.close_tiff(tiff)
+            raise
+    return _zarr_level_zero(ome_zarr._open_group(url)), lambda: None
 
 
 def resolve_derived_mask(segmentation_path, data_directory=None, *,
@@ -405,12 +686,16 @@ def _open_level_zero(path):
     # with an ordinary name -- the suffix test sent it to tifffile, which
     # cannot open a directory, so a store's own segmentation never imported.
     if _is_remote(path):
-        return _remote_level_zero(path), lambda: None
+        return _remote_level_zero(path)
+    if is_png(path):
+        return read_png_labels(path), lambda: None
+    if is_ims(path):
+        from plexora.server.volume.sources import ims
+
+        plane = ims.ImsPlane(path)
+        return plane, plane.close
     if ome_zarr.is_zarr_image_path(path):
-        group = zarr.open(str(path), mode="r")
-        if isinstance(group, zarr.Array):
-            return group, lambda: None
-        return group["0"], lambda: None
+        return _zarr_level_zero(zarr.open(str(path), mode="r")), lambda: None
     reader = tf.TiffFile(str(path), is_ome=False)
     store = reader.series[0].aszarr(level=0)
     array = zarr.open(store, mode="r")
@@ -438,7 +723,7 @@ def _memmap_plane(path, expected_shape=None):
     hence `expected_shape`, which callers pass from the reader whose geometry
     they actually trust.
     """
-    if ome_zarr.is_zarr_image_path(path):
+    if not can_serve_in_place(path) or ome_zarr.is_zarr_image_path(path):
         return None
     try:
         candidate = tf.memmap(str(path))
@@ -466,6 +751,11 @@ def plane_size(path) -> Optional[tuple]:
     here -- all three are "cannot say", which is what a caller comparing two
     sizes needs to be able to tell apart from "they differ".
     """
+    if is_png(path):
+        # Off the header: decoding a whole PNG to learn its size is the cost
+        # this function exists to avoid.
+        header = png_header(path)
+        return (header.width, header.height) if header is not None else None
     if _is_remote(path):
         candidate = path
     else:
@@ -558,13 +848,19 @@ def label_pyramid_gaps(path) -> Optional[list]:
     untiled mask makes every tile request decode whole strips -- masks are
     routinely written as one strip spanning the entire image.
     """
+    if is_png(path):
+        # Never tiled and never pyramidal: a PNG is one compressed stream.
+        return ["it has only one resolution level (no pyramid)", "it is not tiled"]
+    if is_ims(path):
+        # Tiled and pyramidal, but HDF5, which the tile route does not read.
+        return ["it is an Imaris file"]
     candidate = Path(path)
     try:
         if ome_zarr.is_zarr_image_path(path):
             group = zarr.open(str(path), mode="r")
             if isinstance(group, zarr.Array) or len(group) <= 1:
                 return ["it has only one resolution level (no pyramid)"]
-            return []
+            return _zarr_level_gaps(group)
         if not candidate.is_file():
             return None
         with tf.TiffFile(str(candidate), is_ome=False) as reader:
@@ -578,6 +874,28 @@ def label_pyramid_gaps(path) -> Optional[list]:
             return gaps
     except Exception:
         return None
+
+
+def _zarr_level_gaps(group) -> list:
+    """What keeps a multi-level zarr label group from being served as it is.
+
+    The tile route reads a zarr mask as `group[str(level)][rows, cols]`
+    (label_overlay.label_region), so it serves a group untouched only when its
+    levels are 2-D arrays named 0, 1, 2... -- what SpatialData writes. A
+    (t, c, z, y, x) NGFF label image, or one whose datasets are named
+    otherwise, used to pass as servable on its level count alone and drew
+    nothing; it is converted instead, like any other mask.
+    """
+    multiscale = ome_zarr._multiscale_of(group)
+    names = (ome_zarr._dataset_paths(multiscale) if multiscale
+             else sorted((str(k) for k in group.array_keys() if str(k).isdigit()), key=int))
+    if [str(n) for n in names[:1]] != ["0"] or not all(
+            str(n) == str(i) for i, n in enumerate(names)):
+        return ["its levels are not named 0, 1, 2..."]
+    first = group[str(names[0])]
+    if getattr(first, "ndim", 2) != 2:
+        return [f"its levels are {first.ndim}-D arrays, not single planes"]
+    return []
 
 
 def is_servable_label_pyramid(path) -> bool:
@@ -879,7 +1197,8 @@ def pyramidize_segmentation_mask(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     stage_callback: Optional[Callable[..., None]] = None,
 ) -> str:
-    """Convert a 2-D label TIFF/Zarr to a tiled, pyramidal OME-TIFF.
+    """Convert a 2-D label TIFF/Zarr/PNG -- here or at a web address -- to a
+    tiled, pyramidal OME-TIFF.
 
     Parameters
     ----------
@@ -916,6 +1235,9 @@ def pyramidize_segmentation_mask(
     source_path = str(input_path) if remote else Path(input_path).expanduser()
     if not remote and not source_path.exists():
         raise FileNotFoundError(source_path)
+    refusal = mask_format_refusal(source_path)
+    if refusal is not None:
+        raise ValueError(refusal)
     if remote and output_path is None:
         raise ValueError("A mask at a web address needs an output path.")
     if not isinstance(tile_size, int) or tile_size < 16 or tile_size % 16:
@@ -952,14 +1274,22 @@ def pyramidize_segmentation_mask(
         # Metadata-only probe first: shape and dtype decide the read strategy,
         # so they must be known before anything is pulled into memory.
         announce("inspecting")
-        if ome_zarr.is_zarr_image_path(source_path):
-            probe, probe_close = _open_level_zero(source_path)
-            shape, dtype = probe.shape, np.dtype(probe.dtype)
-            probe_close()
-        else:
+        # A TIFF on this disk keeps its own fast paths (tifffile's sequential
+        # whole-plane read, a memory map). Everything else -- a zarr store, a
+        # PNG, an Imaris file, anything at a web address -- is opened once through
+        # `_open_level_zero` and read from what that returns.
+        local_tiff = (not remote and not is_png(source_path) and not is_ims(source_path)
+                      and not ome_zarr.is_zarr_image_path(source_path))
+        if local_tiff:
             with tf.TiffFile(str(source_path), is_ome=False) as reader:
                 series = reader.series[0]
                 shape, dtype = series.shape, np.dtype(series.dtype)
+        else:
+            labels, close_source = _open_level_zero(source_path)
+            shape, dtype = labels.shape, np.dtype(labels.dtype)
+            if isinstance(labels, np.ndarray):
+                # Already in memory (a decoded PNG): nothing to stream.
+                memmap = labels
         if len(shape) != 2:
             raise ValueError(
                 "input_path must contain one 2-D label plane; "
@@ -990,19 +1320,20 @@ def pyramidize_segmentation_mask(
         # so this stage moves the bar to the foot of its band and names itself,
         # which is the difference between "working" and "hung".
         announce("preparing")
-        if use_full_read:
+        if memmap is not None:
+            pass
+        elif use_full_read:
             # One sequential read, then every tile is served from RAM. Routed
             # through `memmap` so the direct-indexing branches below (which
             # already special-case a real ndarray) pick it up unchanged.
-            if ome_zarr.is_zarr_image_path(source_path):
-                array, close_source = _open_level_zero(source_path)
-                memmap = np.asarray(array)
+            if not local_tiff:
+                memmap = np.asarray(labels)
                 close_source()
                 close_source = None
             else:
                 memmap = np.asarray(tf.imread(str(source_path), is_ome=False, series=0, level=0))
             labels = memmap
-        else:
+        elif local_tiff:
             # Streaming per tile: map the source where possible, so each tile is
             # a handful of page faults rather than a strip decode.
             memmap = _memmap_plane(source_path, (height, width))

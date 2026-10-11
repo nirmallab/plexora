@@ -483,8 +483,10 @@ def test_the_chooser_says_which_formats_are_which():
     assert ('data: { file: ".csv · .parquet · .h5ad", '
             'directory: "SpatialData (.zarr)" }') in browse
     # And the mask, which shares filter "image" with the image field and must
-    # NOT share its examples: nobody has a segmentation mask in .svs.
-    assert 'mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · DICOM" }' in browse
+    # NOT share its examples: nobody has a segmentation mask in .svs, and a
+    # DICOM folder is a slide (segmentation_pyramid.mask_format_refusal). A
+    # .png is Cellpose's own mask format.
+    assert 'mask: { file: ".ome.tiff · .png", directory: ".ome.zarr · SpatialData" }' in browse
     # Chosen at open time, by a name of its own rather than by the filter.
     assert "chooseKind(anchorEl, examples || filter)" in browse
     assert "KIND_EXAMPLES[examples] || {}" in browse
