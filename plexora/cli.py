@@ -1434,12 +1434,12 @@ def _build_mcp_parser():
                             "server. Not for typing into a client config.")
     serve.add_argument("--bridge-nonce", default=None, metavar="N", help=argparse.SUPPRESS)
     _gating_limit_arguments(serve, "--gating-on-limit", "--gating-max-extensions")
-    serve.add_argument("--gating-spatial", dest="gating_spatial", choices=GATING_SPATIAL_OPTIONS,
+    serve.add_argument("--gating-hybrid", dest="gating_hybrid", choices=GATING_HYBRID_OPTIONS,
                        default=None,
-                       help="Automatic gating's default use of spatial evidence (where cells "
-                            "sit, how crowded, how bright their neighbours and background): "
-                            "off (the default), diagnose, stratify, decide. A session can "
-                            "still choose its own.")
+                       help="Automatic gating's default hybrid level: tiles (each cell drawn "
+                            "with its outline and partner channels), model (a per-cell image "
+                            "model shapes the gate), full (both), or off (the default). A "
+                            "session can still choose its own.")
     smoke = subs.add_parser("smoke", help="Check the server works against this data "
                                           "directory (read-only).")
     smoke.add_argument("--project", help="Inspect this project (default: the first).")
@@ -1539,15 +1539,15 @@ def _build_ai_parser():
                        help="Print the raw lines as JSON, one per line.")
     bench = subs.add_parser("bench", help="Benchmark automatic gating or QC against known "
                                           "truth.")
-    bench.add_argument("bench_target", choices=("gating", "qc", "spatial"))
+    bench.add_argument("bench_target", choices=("gating", "qc", "cellcall"))
     from plexora.ai import bench as bench_module, bench_data
 
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
                        help="Comma-separated synthetic scenarios ("
-                            + ", ".join(bench_data.SCENARIOS) + "; spatial: "
+                            + ", ".join(bench_data.SCENARIOS) + "; with per-cell causes: "
                             + ", ".join(bench_data.SPATIAL_SCENARIOS) + "), 'spatial' for "
-                            "the spatial ones, or 'all' for the others. Built in a temporary "
-                            "data directory; your projects are not touched.")
+                            "the ones with causes, or 'all' for the others. Built in a "
+                            "temporary data directory; your projects are not touched.")
     bench.add_argument("--project", dest="bench_projects", action="append", default=None,
                        help="A project whose AnnData carries an expert's gates (repeatable).")
     bench.add_argument("--dataset", dest="bench_dataset", default=None,
@@ -1580,20 +1580,20 @@ def _build_ai_parser():
                             "seeded agents, then replay the first run's answers, and report "
                             "how far each marker's gate moves.")
     bench.add_argument("--variants", default="baseline",
-                       help="Gating: the spatial ablation's variants, comma-separated -- "
-                            "baseline (spatial off), stratified, spatial (decide); each runs "
+                       help="Gating: the ablation's variants, comma-separated -- "
+                            "baseline, tiles, model, hybrid (the hybrid levels); each runs "
                             "its own session (default baseline).")
     bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
                        help="With --truth csv:<path>: the header column holding the gates "
                             "(\"Human gate\"); the markers are the first column.")
-    bench.add_argument("--cell-truth", dest="cell_truth", default=None, metavar="SOURCE",
-                       help="With --score-session: per-cell expert calls, "
-                            "column-prefix:<prefix> (columns <prefix><marker> holding "
-                            "agree_pos / agree_neg / human_only / auto_only).")
-    bench.add_argument("--sizes", default="200000,1000000",
-                       help="Spatial: cell counts to time the feature layer at.")
-    bench.add_argument("--targeted", default="50,200",
-                       help="Spatial: cell counts to time the targeted pass at.")
+    bench.add_argument("--workers", default="0",
+                       help="Cellcall: comma-separated numbers of model workers to time "
+                            "(0: the default split of the cores).")
+    bench.add_argument("--halves", type=float, default=None,
+                       help="Cellcall: how far from each gate cells are read, in band "
+                            "halves (default the model's own reach).")
+    bench.add_argument("--cells", type=int, default=None,
+                       help="Cellcall: at most this many cells a marker, nearest the gate.")
     _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
 
     # Plexora's own harness: AI features with no external agent, billed in
@@ -1691,9 +1691,9 @@ def _mcp_missing():
 GATING_LIMIT_POLICIES = ("ask", "extend", "stop")
 GATING_LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
                     "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS",
-                    "spatial": "PLEXORA_GATING_SPATIAL"}
-#: Automatic gating's spatial-evidence levels (autogate `schemas.SPATIAL_OPTIONS`).
-GATING_SPATIAL_OPTIONS = ("off", "diagnose", "stratify", "decide")
+                    "hybrid": "PLEXORA_GATING_HYBRID"}
+#: Automatic gating's hybrid levels (autogate `schemas.HYBRID_OPTIONS`).
+GATING_HYBRID_OPTIONS = ("off", "tiles", "model", "full")
 
 
 def _gating_limit_arguments(parser, policy_flag, extensions_flag):
@@ -1716,8 +1716,8 @@ def _apply_gating_limits(args):
         os.environ[GATING_LIMIT_ENV["on_limit"]] = args.gating_on_limit
     if getattr(args, "gating_max_extensions", None) is not None:
         os.environ[GATING_LIMIT_ENV["max_extensions"]] = str(args.gating_max_extensions)
-    if getattr(args, "gating_spatial", None):
-        os.environ[GATING_LIMIT_ENV["spatial"]] = args.gating_spatial
+    if getattr(args, "gating_hybrid", None):
+        os.environ[GATING_LIMIT_ENV["hybrid"]] = args.gating_hybrid
 
 
 def _run_mcp(args):
@@ -1847,14 +1847,17 @@ def _run_ai(args):
             else "oracle"
         return bench_qc.bench_command(synthetic=scenarios, agent=agent, arms=arms,
                                       out=args.out, seed=args.seed)
-    if command == "bench" and args.bench_target == "spatial":
-        from plexora.ai import bench_spatial
+    if command == "bench" and args.bench_target == "cellcall":
+        from plexora.ai import bench_cellcall
 
-        return bench_spatial.bench_command(
-            sizes=[int(n) for n in args.sizes.split(",") if n.strip()],
-            markers=int(args.markers) if args.markers and args.markers.isdigit() else 4,
-            targeted=[int(n) for n in args.targeted.split(",") if n.strip()],
-            out=args.out, seed=args.seed)
+        if not args.bench_projects:
+            print("bench cellcall needs --project", file=sys.stderr)
+            return 2
+        return bench_cellcall.bench_command(
+            project=args.bench_projects[0],
+            markers=[m.strip() for m in args.markers.split(",") if m.strip()]
+            if args.markers else None,
+            workers=args.workers, band_halves=args.halves, max_cells=args.cells, out=args.out)
     if command == "bench":
         from plexora.ai import bench, bench_data
 
@@ -1881,7 +1884,7 @@ def _run_ai(args):
             score=args.score_session, stability=args.stability,
             replay=args.replay_session, rerender=args.rerender,
             variants=tuple(v.strip() for v in args.variants.split(",") if v.strip()),
-            truth_column=args.truth_column, cell_truth=args.cell_truth)
+            truth_column=args.truth_column)
     if command == "audit":
         from plexora.ai.audit import audit_command
 

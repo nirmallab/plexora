@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261008_spatial_evidence"
+VERSION = "20261010_drop_uncertain"
 
 
 def _blueprint():
@@ -26,12 +26,6 @@ def _capabilities():
     from plexora.plugins.gating.capabilities import capabilities
 
     return capabilities()
-
-
-def _cell_features():
-    from plexora.plugins.gating.capabilities_autogate import cell_features
-
-    return cell_features
 
 
 PLUGIN = Plugin(
@@ -95,7 +89,4 @@ PLUGIN = Plugin(
     owns_cell_layer=True,
     # What an external agent may ask of this plugin -- see capabilities.py.
     capabilities_factory=_capabilities,
-    # One cell's surroundings for a marker (explain_cell): the spatial
-    # evidence's density, local background and bright neighbour.
-    cell_features_factory=_cell_features,
 )

@@ -127,14 +127,6 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
                            "distance": "centroid to centroid"},
         "log_transformed": data.table.log_transformed,
     }
-    if marker:
-        from plexora.agent import cell_features
-
-        # What plugins know of the cell's surroundings for this marker
-        # (gating's spatial evidence); absent when none says anything.
-        found = cell_features.describe(session, data, int(cell_id), marker)
-        if found:
-            out["surroundings"] = found
     png = None
     if include_crop:
         from plexora.agent.render_spec import (CellsSpec, CenterBounds, ChannelSpec,

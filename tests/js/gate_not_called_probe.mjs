@@ -283,11 +283,9 @@ runInContext(`${read("plexora/plugins/gating/static/gatingSidebarController.js")
 ;globalThis.__Controller = GatingSidebarController;`, gating);
 const Controller = gating.__Controller;
 
-function panel({ fitted = false, notCalled = null, uncertain = null } = {}) {
+function panel({ fitted = false, notCalled = null } = {}) {
     const self = Object.create(Controller.prototype);
     self.gateMarker = "CD3";
-    self.provenance = uncertain == null ? {} : { CD3: { spatial: { n_uncertain: uncertain } } };
-    self.dataLayer = { getFullChannelName: (name) => name };
     self.gatingList = {
         pluginName: "gating",
         hasGatingGMM: fitted ? { CD3: { qc_exclusion: { applied: true, n_cells: 100, n_left_out: 5,
@@ -309,9 +307,6 @@ panel({ notCalled: 12 }).paintQcNote();
 check("without a fit, the not-called count alone", [note.hidden, note.textContent], [false, "12 not called"]);
 panel({ notCalled: null }).paintQcNote();
 check("with neither, the note is hidden, as it was", [note.hidden, note.textContent], [true, ""]);
-panel({ notCalled: 12, uncertain: 7 }).paintQcNote();
-check("with uncertain cells the note ends \", N uncertain\"",
-    [note.textContent, note.title.includes("keep their call")], ["12 not called, 7 uncertain", true]);
 
 const painted = [];
 const controller = new Controller({ sidebar: null, moduleInstance: { pluginName: "gating" }, dataLayer: {},
@@ -321,6 +316,81 @@ controller._onCellGate({ detail: { layer: "gating" } });
 controller._onCellGate({ detail: { layer: "cell_explorer" } });
 check("the viewer's word that this layer's gate moved repaints it; another layer's does not",
     painted, ["gating"]);
+
+// ---------------------------------------------------------------------------
+// E. the gating panel's cell-model block
+// ---------------------------------------------------------------------------
+
+function element(id) {
+    return {
+        id, hidden: false, textContent: "", title: "", disabled: false, dataset: {}, attrs: {},
+        children: [], listeners: {}, className: "",
+        setAttribute(key, value) { this.attrs[key] = value; },
+        addEventListener(type, fn) { this.listeners[type] = fn; },
+        replaceChildren() { this.children = []; this.textContent = ""; },
+        append(...items) { this.children.push(...items); },
+    };
+}
+const nodes = Object.fromEntries(["gate_cell_model", "gate_cell_model_note", "gate_cell_model_run",
+    "gate_cell_model_toggle", "gate_cell_model_cancel"].map((id) => [id, element(id)]));
+const modelContext = createContext({
+    ...BASICS,
+    document: { getElementById: (id) => nodes[id] || null, createElement: () => element(null) },
+    GatingApi: class GatingApi {},
+});
+runInContext("globalThis.window = globalThis;", modelContext);
+runInContext(`${read("plexora/plugins/gating/static/gatingSidebarController.js")}
+;globalThis.__Controller = GatingSidebarController;`, modelContext);
+const ModelController = modelContext.__Controller;
+const flagCalls = [];
+
+function modelPanel(cellModel, job = null) {
+    const self = Object.create(ModelController.prototype);
+    self.gateMarker = "CD3";
+    self.cellModel = cellModel ? { marker: "CD3", ...cellModel } : null;
+    self.cellModelJob = job ? { marker: "CD3", jobId: "j1", ...job } : null;
+    self.cellModelError = null;
+    self.cellModelShown = null;
+    self.provenance = {};
+    self.dataLayer = { getFullChannelName: (name) => `${name}_full` };
+    self.gatingList = { pluginName: "gating", hasGatingGMM: {} };
+    self.ctx = { viewer: { setCellFlagMask: (marker, bytes) => flagCalls.push([marker, bytes]),
+                           getCellLayer: () => null } };
+    self.paintQcNote = () => {};
+    return self;
+}
+const partsText = () => nodes.gate_cell_model_note.children.map((part) => [part.children[0].dataset.kind,
+    part.children[1]]);
+
+modelPanel({ state: "not_gated" }).paintCellModel();
+check("the cell model's block is hidden for a marker with no gate",
+    nodes.gate_cell_model.hidden, true);
+modelPanel({ state: "not_run" }).paintCellModel();
+check("before a run: one button to check the cells, no note, no toggle",
+    [nodes.gate_cell_model.hidden, nodes.gate_cell_model_run.hidden,
+     nodes.gate_cell_model_toggle.hidden, nodes.gate_cell_model_note.hidden],
+    [false, false, true, true]);
+modelPanel(null, { message: "CD3: 1,000 of 4,000 cells read" }).paintCellModel();
+check("while it runs: its progress and Cancel",
+    [nodes.gate_cell_model_note.children[1], nodes.gate_cell_model_cancel.hidden,
+     nodes.gate_cell_model_run.hidden], ["CD3: 1,000 of 4,000 cells read", false, true]);
+const ready = modelPanel({ state: "ready", own: 1200, notOwn: 3, uncertain: 0,
+                           bytes: new Uint8Array([0, 3, 2]) });
+ready.paintCellModel();
+check("after a run: what it would move, in its colours, and the toggle",
+    [partsText(), nodes.gate_cell_model_toggle.hidden, nodes.gate_cell_model_toggle.textContent,
+     nodes.gate_cell_model_note.title.includes("nothing here changes the gate")],
+    [[["own", "1,200 own below the gate"], ["not-own", "3 not own above"]], false,
+     "Show model calls", true]);
+ready.toggleCellModel();
+ready.toggleCellModel();
+check("the toggle draws the model's codes, and again stops",
+    flagCalls.map(([marker, bytes]) => [marker, bytes ? Array.from(bytes).join("") : null]),
+    [["CD3_full", "032"], ["CD3_full", null]]);
+modelPanel({ state: "ready", own: 0, notOwn: 0, uncertain: 0, bytes: new Uint8Array(3) }).paintCellModel();
+check("a model that agrees with the gate says so, with nothing to draw",
+    [nodes.gate_cell_model_note.textContent, nodes.gate_cell_model_toggle.hidden],
+    ["The cell model agrees with the gate", true]);
 
 for (const name of checks) {
     if (!failures.some((f) => f.check === name)) console.log(`ok  ${name}`);

@@ -28,6 +28,7 @@ then scoring its session: `--score-session <id>`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -148,12 +149,10 @@ def rows_for(direction, evidence) -> dict:
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring).
 
-    With `cell_truth` (a spatial scene's causes, by marker) and `ids` (cell
-    id per row), the rows a spatial look adds -- a first look's
-    `near_bright`, a like-for-like look's rows -- are answered from the
-    cells shown (`shown_cells`), and `explanations` from the causes painted
-    there (`explanations_from_truth`); `lazy` gives none, `noisy:P` a wrong
-    word with probability P."""
+    With `cell_truth` (a scene's per-cell causes, by marker) and `ids` (cell
+    id per row), the oracle cell model reads the causes (`oracle_cell_model`)
+    and a correction check is answered cell by cell (`shown_captions`);
+    `noisy:P` turns a word with probability P."""
 
     def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, *, cell_truth=None,
                  ids=None):
@@ -167,32 +166,12 @@ class TruthAgent:
         self.cell_truth = cell_truth or {}
         self.index = {int(i): k for k, i in enumerate(ids)} if ids is not None else {}
 
-    def _rows_cells(self, packet):
-        return {row: [self.index[i] for i in cells if i in self.index]
-                for row, cells in shown_cells(packet).items()}
+    def truth_by_row(self):
+        """{marker: bool per table row}: the truth the oracle cell model reads."""
+        return self.truth
 
-    def _spatial_words(self, marker, packet, direction, base):
-        """`base` (a look's answer) with its spatial rows and explanations
-        answered from the per-cell truth of the cells shown."""
-        allowed = packet.get("allowed") or {}
-        extra = [k for k in (allowed.get("rows") or ()) if k not in ROWS_FOR["about_right"]]
-        truth = self.cell_truth.get(marker)
-        if not truth or (not extra and not allowed.get("explanations")):
-            return base
-        rows_cells = self._rows_cells(packet)
-        words = dict(base.get("rows") or {})
-        for key in extra:
-            word = row_word_from_truth(rows_cells.get(key) or [], truth)
-            if self.style == "noisy" and word != "cannot_tell" and self.rng.random() < self.p:
-                word = {"own_stain": "unstained", "unstained": "own_stain",
-                        "neighbour_only": "own_stain"}.get(word, word)
-            words[key] = word
-        out = {**base, "rows": words}
-        if allowed.get("explanations") and self.style != "lazy":
-            out["explanations"] = [w for w in explanations_from_truth(rows_cells, truth,
-                                                                      direction)
-                                   if w in allowed["explanations"]]
-        return out
+    def cell_truth_by_row(self):
+        return self.cell_truth
 
     def _errors(self, marker, low):
         called = self.values[marker] > np.float32(low)
@@ -225,17 +204,14 @@ class TruthAgent:
                 r["marker"]: ("ok" if self.style == "lazy"
                               or self.direction(r["marker"], r["gate"]) == "about_right"
                               else "suspicious") for r in ev.get("markers") or []}}
-        if kind in ("t2_confirm", "t3_biological", "t3_contrast"):
+        if kind in ("t2_confirm", "t3_biological"):
             direction = self.direction(marker, ev["candidate"]["low"])
             if self.style == "lazy":
                 direction = "about_right"
             elif self.style == "noisy" and self.rng.random() < self.p:
                 direction = {"too_low": "too_high", "too_high": "too_low",
                              "about_right": "too_low"}[direction]
-            base = {"kind": kind, "confidence": _oracle_confidence(), **rows_for(direction, ev)}
-            if kind == "t3_contrast":
-                base["rows"] = {}
-            return self._spatial_words(marker, packet, direction, base)
+            return {"kind": kind, "confidence": _oracle_confidence(), **rows_for(direction, ev)}
         if kind == "t4_candidates":
             rows = ev.get("intervals") or []
             if self.style == "lazy":
@@ -252,6 +228,21 @@ class TruthAgent:
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
         if kind == "regression_confirm":
             return {"kind": kind, "verdict": "holds"}
+        if kind == "correction_check":
+            # Each numbered cell from its truth (own when it is a true
+            # positive); `noisy:P` turns a word with probability P.
+            captions = shown_captions(packet)
+            words = {}
+            for key in ev.get("cells") or []:
+                row = self.index.get(captions.get(key, -1))
+                if row is None:
+                    words[key] = "cannot_tell"
+                    continue
+                word = "own" if self.truth[marker][row] else "not_own"
+                if self.style == "noisy" and self.rng.random() < self.p:
+                    word = "not_own" if word == "own" else "own"
+                words[key] = word
+            return {"kind": kind, "cells": words}
         if kind == "pixel_setup":
             # An uncalibrated image's size check: the scenes paint nuclei at
             # the size the estimate assumes.
@@ -266,13 +257,13 @@ class TruthAgent:
 
 
 
-# -- the spatial ablation ----------------------------------------------------------------
+# -- variants -------------------------------------------------------------------------
 
-#: The ablation's variants: what each sets of the session's `spatial` switch
-#: (`schemas.SPATIAL_OPTIONS`). `corrected` would gate on corrected values
-#: (`spatial.CORRECTIONS`), and is refused while no correction is validated.
-VARIANTS = {"baseline": {"spatial": "off"}, "stratified": {"spatial": "stratify"},
-            "spatial": {"spatial": "decide"}, "corrected": None}
+#: The ablation's variants: what each sets of a session's options. The hybrid
+#: levels (`schemas.HYBRID_OPTIONS`): the multi-view looks, the cell model's
+#: correction, both.
+VARIANTS = {"baseline": {}, "tiles": {"hybrid": "tiles"}, "model": {"hybrid": "model"},
+            "hybrid": {"hybrid": "full"}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -287,21 +278,14 @@ def check_variants(variants):
     unknown = [v for v in variants if v not in VARIANTS]
     if unknown:
         raise ValueError(f"unknown variants {unknown}; choose from {sorted(VARIANTS)}")
-    if "corrected" in variants:
-        from plexora.plugins.gating.server.autogate import spatial
-
-        if not spatial.CORRECTIONS:
-            raise ValueError("the `corrected` variant needs a validated correction "
-                             "(spatial.CORRECTIONS is empty)")
     for name, options in VARIANTS.items():
-        if options is not None:
-            assert options["spatial"] in schemas.SPATIAL_OPTIONS, name
+        assert options.get("hybrid", "off") in schemas.HYBRID_OPTIONS, name
     return tuple(variants)
 
 
-def shown_cells(packet) -> dict:
-    """{row key: [cell ids]} of a packet's first collage, from its stored
-    manifest (`artifacts.get`); {} when it cannot be read."""
+def shown_captions(packet) -> dict:
+    """{caption: cell id} of a packet's first collage, for packets that
+    number their cells (`correction_check`)."""
     from plexora.agent import artifacts
 
     for image in packet.get("images") or []:
@@ -312,64 +296,18 @@ def shown_cells(packet) -> dict:
             _png, sidecar = artifacts.get(art)
         except KeyError:
             continue
-        manifest = sidecar.get("manifest") or {}
-        rows = manifest.get("rows") or []
-        if rows and any(r.get("key") for r in rows):
-            return {r.get("key"): [int(c["cell_id"]) for c in r.get("cells") or []]
-                    for r in rows if r.get("key")}
+        rows = (sidecar.get("manifest") or {}).get("rows") or []
+        return {c["caption"]: int(c["cell_id"]) for r in rows for c in r.get("cells") or []
+                if c.get("caption")}
     return {}
 
 
-def row_word_from_truth(cells, truth):
-    """The word a row's cells earn from their per-cell truth: own_stain when
-    most are positive, neighbour_only when most are lit by a neighbour,
-    unstained otherwise; cannot_tell for an empty row."""
-    if not cells:
-        return "cannot_tell"
-    positive = np.mean([truth["positive"][i] for i in cells])
-    contaminated = np.mean([truth["contaminated"][i] for i in cells])
-    if positive >= 0.5:
-        return "own_stain"
-    if contaminated >= 0.5:
-        return "neighbour_only"
-    return "unstained"
-
-
-def explanations_from_truth(rows_cells, truth, direction) -> list:
-    """The explanation words the painted causes support among the cells shown
-    (`schemas.EXPLANATIONS`): spill-over when most of the bright row (or of
-    every cell shown) is contaminated, background when most shown negatives
-    sit in a raised background, weak expression when most shown positives
-    are dim; `threshold_error` when the direction is a move and none of
-    those holds; `insufficient_evidence` when nothing was shown."""
-    every = [i for cells in rows_cells.values() for i in cells]
-    if not every:
-        return ["insufficient_evidence"]
-    words = []
-    bright = rows_cells.get("bright") or rows_cells.get("near_bright") or every
-    if np.mean([truth["contaminated"][i] for i in bright]) >= 0.5:
-        words.append("possible_neighbor_spillover")
-    negatives = [i for i in every if not truth["positive"][i]]
-    if negatives and np.mean([truth["background_region"][i] != "flat"
-                              for i in negatives]) >= 0.5:
-        words.append("possible_local_background")
-    positives = [i for i in every if truth["positive"][i]]
-    if positives and np.mean([truth["dim"][i] for i in positives]) >= 0.5:
-        words.append("genuine_weak_expression")
-    if not words and direction in ("too_low", "too_high"):
-        words.append("threshold_error")
-    return words[:3]
-
-
-def spatial_classification(values, truth, low, cell_truth, *, uncertain=None, unit=None,
-                           high=None) -> dict:
-    """Per marker, where a gate's errors fall against the painted (or the
-    expert's) per-cell truth: false-positive rates in dense and sparse
-    tissue and in raised and flat background, the recall of dim positives,
-    the false-positive rate among contaminated negatives against clean ones
-    (the no-regression guard), and how the uncertain layer covers the
-    contaminated cells; with the session's unit, its spatial mode, risk,
-    flags and case, and whether the case is the scenario's."""
+def cause_scores(values, truth, low, cell_truth, *, high=None) -> dict:
+    """Per marker, where a gate's errors fall against a scene's painted
+    per-cell causes: false-positive rates in dense and sparse tissue and in
+    raised and flat background, the recall of dim positives, and the
+    false-positive rate among neighbour-lit (contaminated) negatives against
+    clean ones."""
     from plexora.agent import gate_rule
 
     values = np.asarray(values, dtype=np.float32)
@@ -385,47 +323,20 @@ def spatial_classification(values, truth, low, cell_truth, *, uncertain=None, un
         return (float(called[mask].mean()) if n else None), n
 
     out = {}
-    region = np.asarray(ct.get("density_region")) if ct.get("density_region") is not None \
-        else None
-    if region is not None:
+    if ct.get("density_region") is not None:
+        region = np.asarray(ct["density_region"])
         out["fp_rate_dense"], out["n_neg_dense"] = rate(~positive & (region == "dense"))
         out["fp_rate_sparse"], out["n_neg_sparse"] = rate(~positive & (region == "sparse"))
-    background = np.asarray(ct.get("background_region")).astype(str) \
-        if ct.get("background_region") is not None else None
-    if background is not None:
+    if ct.get("background_region") is not None:
+        background = np.asarray(ct["background_region"]).astype(str)
         out["fp_rate_low_snr"], _ = rate(~positive & (background != "flat"))
         out["fp_rate_high_snr"], _ = rate(~positive & (background == "flat"))
     if ct.get("dim") is not None:
-        dim = np.asarray(ct["dim"], dtype=bool)
-        out["dim_recall"], out["n_dim"] = rate(positive & dim)
+        out["dim_recall"], out["n_dim"] = rate(positive & np.asarray(ct["dim"], dtype=bool))
     if ct.get("contaminated") is not None:
         contaminated = np.asarray(ct["contaminated"], dtype=bool)
         out["contaminated_fp_rate"], out["n_contaminated"] = rate(contaminated)
         out["clean_fp_rate"], _ = rate(~positive & ~contaminated)
-        if uncertain is not None:
-            uncertain = np.asarray(uncertain, dtype=bool)
-            flagged_bad = uncertain & contaminated & called
-            out["uncertain_share_contaminated"] = (
-                float(flagged_bad.sum() / max(1, (contaminated & called).sum()))
-                if (contaminated & called).any() else None)
-            out["uncertain_share_true_positive"] = (
-                float((uncertain & positive & called).sum() / max(1, (positive & called).sum())))
-            out["uncertain_share_all"] = float(uncertain.mean())
-            out["uncertain_precision"] = (float((uncertain & ~positive).sum() / uncertain.sum())
-                                          if uncertain.any() else None)
-            out["uncertain_recall"] = out["uncertain_share_contaminated"]
-            out["n_uncertain"] = int(uncertain.sum())
-    if unit is not None:
-        spatial = unit.get("spatial") or {}
-        out.update(spatial_mode=spatial.get("mode"),
-                   spatial_risk=(spatial.get("risk") or {}).get("level"),
-                   spatial_flags=unit.get("spatial_flags") or [],
-                   case=unit.get("spatial_case"),
-                   explanations=(unit.get("contrast") or {}).get("explanations"))
-        expected = ct.get("expected_case")
-        out["case_expected"] = expected
-        if expected is not None:
-            out["case_correct"] = unit.get("spatial_case") == expected
     return out
 
 
@@ -453,6 +364,11 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
     held, sent = {}, {"packets": 0, "chars": 0, "images": 0, "pixels": 0}
     result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
     for _ in range(limit):
+        if result["state"] == "model_running":
+            # A hybrid session's cell model is reading a marker: let it.
+            jobs.drain(600)
+            result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
+            continue
         if result["state"] != "decision":
             break
         packet = result["packet"]
@@ -492,6 +408,70 @@ def _session_units(session_id):
         return []
 
 
+def _drain_model_runs(session_id, timeout_s=120.0):
+    """Wait until a session's queued cell-model runs (its per-cell layers)
+    are done, so none outlives the bench's stand-in model."""
+    from plexora.plugins.gating.server.autogate import engine
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            queued = (engine.store().load(session_id).get("cellcall") or {}).get("queue")
+        except Exception:
+            return
+        if not queued:
+            return
+        time.sleep(0.2)
+
+
+class _OracleModel:
+    """The bench's stand-in for the cell model's weights (never called: the
+    oracle's `predict` answers from truth)."""
+
+    identity = "oracle"
+    workers = 1
+
+    def __call__(self, x):
+        return np.full(len(x), 0.5, dtype=np.float32)
+
+
+@contextlib.contextmanager
+def oracle_cell_model(truth, *, cell_truth=None, seed=0, unsure=0.15):
+    """Run the cell model as an oracle (`hybrid` variants of the synthetic
+    bench): a cell's p_own is high when it is truly positive and not lit by a
+    neighbour (`cell_truth`'s `contaminated`), low otherwise, and 0.5 (no
+    confident word) for a seeded share `unsure` of cells -- what the real
+    model's confident calls are, without an image model on synthetic tiles."""
+    import zlib
+
+    from plexora.plugins.gating.server.autogate import cellcall
+
+    saved = cellcall.predict, cellcall.predictor
+
+    def predict(session, ds, selection, *, model=None, progress=None, cancelled=None):
+        marker = selection["marker"]
+        rows = np.asarray(selection["run"], dtype=np.int64)
+        own = np.asarray(truth[marker], dtype=bool)[rows]
+        spill = (cell_truth or {}).get(marker) or {}
+        if spill.get("contaminated") is not None:
+            own &= ~np.asarray(spill["contaminated"], dtype=bool)[rows]
+        rng = np.random.default_rng([int(seed), zlib.crc32(marker.encode())])
+        p = np.where(own, 0.97, 0.03).astype(np.float32)
+        p[rng.random(rows.size) < unsure] = 0.5
+        if progress:
+            progress(rows.size, rows.size)
+        return {"rows": rows.tolist(), "p": p.tolist(), "pixel_gate": 1.0,
+                "pixel_gate_agreement": 1.0, "n_calibration": 0, "levels": {}, "plan": [],
+                "channels": [], "crop_px": 0.0}
+
+    cellcall.predict = predict
+    cellcall.predictor = _OracleModel
+    try:
+        yield
+    finally:
+        cellcall.predict, cellcall.predictor = saved
+
+
 def gates_for_arms(session, project, markers, agent, arms, *, variants=("baseline",)):
     """({arm: {marker: gate}}, {arm: the session's units and costs}). Each
     of `variants` (`VARIANTS`) runs its own session, scored as arm
@@ -511,8 +491,12 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
             arm = variant_arm(variant, variants)
             options = {**VARIANTS[variant], "agent": f"bench:{variant}",
                        "reuse_answers": False}
-            units, status, seconds, sid = run_session(session, project, markers, agent,
-                                                      mode="propose", options=options)
+            oracle = oracle_cell_model(agent.truth_by_row(), cell_truth=agent.cell_truth_by_row()) \
+                if options.get("hybrid") in ("model", "full") else contextlib.nullcontext()
+            with oracle:
+                units, status, seconds, sid = run_session(session, project, markers, agent,
+                                                          mode="propose", options=options)
+                _drain_model_runs(sid)
             out[arm] = {m: units.get(m, {}).get("final") for m in markers}
             stored = _session_units(sid)
             extras[arm] = {"units": units, "used": status["used"], "seconds": seconds,
@@ -524,13 +508,11 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
     return out, extras
 
 
-def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None,
-                uncertain=None) -> list:
+def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None) -> list:
     """Rows per (arm, marker), a `*code*` row per arm and a `*cost*` row per
     session arm. `extras` is {arm: a session's units and costs} (a lone
     session's dict is taken as the `session` arm's); `cell_truth` (by
-    marker) adds the spatial scores (`spatial_classification`), with each
-    session arm's uncertain cells from `uncertain` ({arm: {marker: mask}})."""
+    marker) adds where the errors fall (`cause_scores`)."""
     if extras and "units" in extras:
         extras = {"session": extras}
     extras = extras or {}
@@ -541,17 +523,13 @@ def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None
             row = {"image": project, "arm": arm, "marker": marker, "gate": low}
             if low is not None:
                 row.update(classification(values[marker], truth[marker], low))
-            unit = None
             if extra is not None:
                 unit = (extra.get("stored") or {}).get(marker) or \
                     (extra["units"].get(marker) or {})
                 row.update(state=unit.get("state"), confidence=unit.get("confidence"),
                            tier=unit.get("tier"))
             if cell_truth and marker in cell_truth and low is not None:
-                mask = ((uncertain or {}).get(arm) or {}).get(marker)
-                row.update(spatial_classification(values[marker], truth[marker], low,
-                                                  cell_truth[marker], uncertain=mask,
-                                                  unit=unit if extra is not None else None))
+                row.update(cause_scores(values[marker], truth[marker], low, cell_truth[marker]))
             rows.append(row)
         rows.append({"image": project, "arm": arm, "marker": "*code*",
                      "code_agreement": code_agreement(values, truth, gates)})
@@ -567,15 +545,13 @@ def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None
                      "cache_hits": extra.get("replayed"),
                      "review_fraction": (float(np.mean([u.get("state") in (
                          "manual_review_recommended", "insufficient_information")
-                         for u in units])) if units else None),
-                     "feature_ms": float(np.sum([((u.get("spatial") or {}).get("cost_ms")
-                                                  or 0.0) for u in units]))})
+                         for u in units])) if units else None)})
     return rows
 
 
 def _register_scenario(root, name, scenario, *, grid, size, seed, markers):
-    """A scene's files, project and truth: a spatial scenario
-    (`bench_data.SPATIAL_SCENARIOS`, with per-cell causes) or a plain one."""
+    """A scene's files, project and truth: a scene with per-cell causes
+    (`bench_data.SPATIAL_SCENARIOS`) or a plain one."""
     from plexora.ai import bench_data
 
     if scenario in bench_data.SPATIAL_SCENARIOS:
@@ -583,36 +559,6 @@ def _register_scenario(root, name, scenario, *, grid, size, seed, markers):
                                            seed=seed, markers=markers)
     return bench_data.register(root, name, scenario=scenario, grid=grid, size=size,
                                seed=seed, markers=markers)
-
-
-def uncertain_masks(session, project, extras) -> dict:
-    """{arm: {marker: row mask}} of the uncertain positives each session arm
-    that decided with spatial evidence ended with, at its final gate
-    (`calls.uncertain_mask` through its table operation)."""
-    from plexora.plugins.gating.server.autogate import spatial, tableops
-    from plexora.plugins.gating.server.autogate.engine import Engine
-
-    ds = session.data(project)
-    out = {}
-    for arm, extra in (extras or {}).items():
-        if extra.get("variant") != "spatial":
-            continue
-        masks = {}
-        for marker, unit in (extra.get("stored") or {}).items():
-            record = unit.get("spatial") or {}
-            low = unit.get("final") if unit.get("final") is not None else unit.get("proposed")
-            if not record.get("mode") or low is None:
-                continue
-            payload = spatial.payload_for(session, ds, marker, record["mode"],
-                                          record.get("pixel_um"))
-            found = tableops.local_or_node(ds, "gating.autogate.uncertain", {
-                **payload, "marker": marker, "low": float(low), "high": unit.get("high"),
-                "confirmed": Engine.confirmed_ids(unit), "rows": True})
-            mask = np.zeros(ds.table.geometry().height, dtype=bool)
-            mask[np.asarray(found.get("rows") or [], dtype=np.int64)] = True
-            masks[marker] = mask
-        out[arm] = masks
-    return out
 
 
 def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, grid=24,
@@ -639,11 +585,8 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                                    ids=made.get("ids"))
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
                                                variants=variants)
-                uncertain = uncertain_masks(session, name, extras) \
-                    if made.get("cell_truth") else None
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
-                                       cell_truth=made.get("cell_truth"),
-                                       uncertain=uncertain):
+                                       cell_truth=made.get("cell_truth")):
                     row["scenario"] = scenario
                     rows.append(row)
             session.close()
@@ -800,44 +743,6 @@ def reference_csv(path, column=None) -> dict:
     return out
 
 
-#: The per-cell agreement columns a table may carry (`gatediff_<marker>`):
-#: which cells an expert's gate calls positive.
-HUMAN_POSITIVE = ("agree_pos", "human_only")
-
-
-def cell_truth_from_columns(ds, prefix, markers) -> dict:
-    """{marker: {positive}} from a table's per-cell agreement columns
-    (`<prefix><marker>`: agree_pos / agree_neg / human_only / auto_only), read
-    from the project's CSV by cell id: positive = the expert's call
-    (`HUMAN_POSITIVE`). The auto side is an older run's and is not used."""
-    import polars as pl
-
-    from plexora.plugins.gating.server.autogate import cells as cellmod
-
-    src = getattr(getattr(ds.project, "dataset", None), "src", None)
-    if not src or not str(src).lower().endswith((".csv", ".csv.gz")):
-        raise ValueError("per-cell truth from columns needs a CSV table")
-    wanted = [f"{prefix}{m}" for m in markers]
-    id_column = ds.schema.cell_id
-    header = pl.read_csv(src, n_rows=0).columns
-    present = [w for w in wanted if w in header]
-    frame = pl.read_csv(src, columns=[id_column] + present, infer_schema_length=0)
-    c = cellmod.cells(ds)
-    ids = frame[id_column].cast(pl.Int64).to_numpy()
-    order = {int(i): k for k, i in enumerate(ids)}
-    rows = np.array([order.get(int(i), -1) for i in c.ids])
-    out = {}
-    for marker in markers:
-        name = f"{prefix}{marker}"
-        if name not in present:
-            continue
-        labels = frame[name].to_numpy().astype(str)
-        positive = np.isin(labels, HUMAN_POSITIVE)
-        out[marker] = {"positive": np.where(rows >= 0, positive[np.maximum(rows, 0)], False),
-                       "known": rows >= 0}
-    return out
-
-
 def expert_truth(session, project, table=TRUTH_TABLE, column=None):
     """({marker: per-cell truth}, {marker: values}, {marker: expert gate}) from an
     expert's gates stored in the project's AnnData `uns[table]`, from a
@@ -913,63 +818,9 @@ def against_expert(row, expert_gate):
     return row
 
 
-def real_spatial_scores(session, ds, marker, low, positive, unit=None, high=None) -> dict:
-    """On a real image, where a gate's disagreements with an expert's per-cell
-    calls fall, by the feature layer's own strata (`spatial.per_cell`): false
-    positives and recall in dense and sparse tissue and in low- and high-SNR
-    surroundings, and how many of the gate's positives the expert calls
-    negative sit beside a strong neighbour (a proxy for spill-over: real data
-    has no contamination truth). With the session's unit, its uncertain
-    cells' precision and recall against the expert's negatives."""
-    from plexora.agent import gate_rule
-    from plexora.plugins.gating.server.autogate import cells as cellmod
-    from plexora.plugins.gating.server.autogate import spatial, tableops
-    from plexora.plugins.gating.server.autogate.engine import Engine
-
-    record = (unit or {}).get("spatial") or {}
-    mode = record.get("mode") or spatial.detect_mode(session, ds, marker)["mode"]
-    payload = spatial.payload_for(session, ds, marker, mode, record.get("pixel_um"))
-    bgmap = spatial.decode_map(payload.get("map"))
-    feats = spatial.per_cell(ds, marker, bgmap=bgmap, pixel_um=payload.get("pixel_um"))
-    gate = spatial.at_gate(ds, marker, feats, low, high, mode=mode, bgmap=bgmap)
-    values = cellmod.values(ds, marker)
-    top = float(np.nanmax(values)) if high is None else float(high)
-    called = gate_rule.passes(values, low, top) & feats.eligible
-    positive = np.asarray(positive, dtype=bool) & feats.eligible
-    negative = ~positive & feats.eligible
-    out = {"spatial_mode": mode}
-
-    def share(mask, of):
-        n = int(of.sum())
-        return (float((mask & of).sum() / n) if n else None), n
-
-    for name, where in (("dense", feats.dense_env), ("sparse", ~feats.dense_env),
-                        ("low_snr", gate.snr_class == spatial.SNR_LOW),
-                        ("high_snr", gate.snr_class == spatial.SNR_HIGH)):
-        out[f"fp_rate_{name}"], out[f"n_neg_{name}"] = share(called, negative & where)
-        out[f"recall_{name}"], _n = share(called, positive & where)
-    false_pos = called & negative
-    out["spill_suspect_human_negative_share"] = share(gate.spill_suspect, false_pos)[0]
-    out["spill_suspect_human_positive_share"] = share(gate.spill_suspect, called & positive)[0]
-    if unit is not None and record.get("mode"):
-        found = tableops.local_or_node(ds, "gating.autogate.uncertain", {
-            **payload, "marker": marker, "low": float(low), "high": high,
-            "confirmed": Engine.confirmed_ids(unit), "rows": True})
-        mask = np.zeros(feats.n, dtype=bool)
-        mask[np.asarray(found.get("rows") or [], dtype=np.int64)] = True
-        out["n_uncertain"] = int(mask.sum())
-        out["uncertain_precision"] = share(negative, mask)[0]
-        out["uncertain_recall"] = share(mask, false_pos)[0]
-    return out
-
-
-def score_session(session_id, *, truth_table=TRUTH_TABLE, truth_column=None,
-                  cell_truth=None) -> list:
+def score_session(session_id, *, truth_table=TRUTH_TABLE, truth_column=None) -> list:
     """Score a session a real agent ran against the expert gates in its images:
-    every stage of `SESSION_ARMS`, so a miss can be put where it happened.
-    `cell_truth` (`column-prefix:<prefix>`) adds, per marker of the final
-    arm, where the gate disagrees with the expert's per-cell calls
-    (`real_spatial_scores`)."""
+    every stage of `SESSION_ARMS`, so a miss can be put where it happened."""
     from plexora.agent import AgentSession, registry
     from plexora.plugins.gating.server.autogate import engine
 
@@ -990,22 +841,10 @@ def score_session(session_id, *, truth_table=TRUTH_TABLE, truth_column=None,
                      "pixels", 0)),
                  **request_counts([u for u in record["units"].values()
                                    if u["project"] == project])}
-        per_cell = {}
-        if cell_truth and str(cell_truth).startswith("column-prefix:"):
-            ds = session.data(project)
-            per_cell = cell_truth_from_columns(ds, str(cell_truth).split(":", 1)[1],
-                                               list(units))
         for row in score_image(project, values, truth,
                                {**arms, "expert": {m: expert[m] for m in units}}, extra):
             if row["arm"] != "expert" and not row["marker"].startswith("*"):
                 against_expert(row, expert.get(row["marker"]))
-            if row["arm"] == "final" and row["marker"] in per_cell \
-                    and row.get("gate") is not None:
-                unit = units[row["marker"]]
-                row.update(real_spatial_scores(session, session.data(project), row["marker"],
-                                               float(row["gate"]),
-                                               per_cell[row["marker"]]["positive"],
-                                               unit=unit, high=unit.get("high")))
             rows.append(row)
     return rows
 
@@ -1205,11 +1044,9 @@ def summarise(rows) -> dict:
         summary["cost"]["images"] = len(costs)
         by_arm_cost = {}
         for cost in costs:
-            entry = by_arm_cost.setdefault(cost["arm"], {"packets": 0.0, "feature_ms": 0.0,
-                                                         "cache_hits": 0.0, "images": 0,
-                                                         "review_fraction": []})
+            entry = by_arm_cost.setdefault(cost["arm"], {"packets": 0.0, "cache_hits": 0.0,
+                                                         "images": 0, "review_fraction": []})
             entry["packets"] += cost.get("packets") or 0
-            entry["feature_ms"] += cost.get("feature_ms") or 0
             entry["cache_hits"] += cost.get("cache_hits") or 0
             entry["images"] += 1
             if cost.get("review_fraction") is not None:
@@ -1218,33 +1055,25 @@ def summarise(rows) -> dict:
             entry["review_fraction"] = (float(np.mean(entry["review_fraction"]))
                                         if entry["review_fraction"] else None)
         summary["cost"]["by_arm"] = by_arm_cost
-    spatial = {}
+    causes = {}
     for row in rows:
         if row["marker"].startswith("*"):
             continue
-        entry = spatial.setdefault(row["arm"], {k: [] for k in SPATIAL_METRICS})
-        for key in SPATIAL_METRICS:
-            value = row.get(key)
-            if isinstance(value, bool):
-                value = float(value)
-            if value is not None:
-                entry[key].append(float(value))
-    spatial = {arm: {k: (float(np.mean(v)) if v else None) for k, v in entry.items()}
-               for arm, entry in spatial.items()
-               if any(entry[k] for k in SPATIAL_METRICS)}
-    if spatial:
-        summary["spatial"] = spatial
+        entry = causes.setdefault(row["arm"], {k: [] for k in CAUSE_METRICS})
+        for key in CAUSE_METRICS:
+            if row.get(key) is not None:
+                entry[key].append(float(row[key]))
+    causes = {arm: {k: (float(np.mean(v)) if v else None) for k, v in entry.items()}
+              for arm, entry in causes.items() if any(entry[k] for k in CAUSE_METRICS)}
+    if causes:
+        summary["causes"] = causes
     return summary
 
 
-#: The spatial scores averaged per arm (`spatial_classification`,
-#: `real_spatial_scores`): the error rates by environment, the dim
-#: positives' recall, the clean-negative guard and the uncertain layer.
-SPATIAL_METRICS = ("fp_rate_dense", "fp_rate_sparse", "fp_rate_low_snr", "fp_rate_high_snr",
-                   "dim_recall", "contaminated_fp_rate", "clean_fp_rate",
-                   "uncertain_share_contaminated", "uncertain_share_true_positive",
-                   "uncertain_precision", "uncertain_recall", "case_correct",
-                   "spill_suspect_human_negative_share")
+#: Where the errors fall, averaged per arm (`cause_scores`): the error rates
+#: by environment, the dim positives' recall and the clean-negative guard.
+CAUSE_METRICS = ("fp_rate_dense", "fp_rate_sparse", "fp_rate_low_snr", "fp_rate_high_snr",
+                 "dim_recall", "contaminated_fp_rate", "clean_fp_rate")
 
 
 def to_markdown(summary, rows, *, title) -> str:
@@ -1257,13 +1086,13 @@ def to_markdown(summary, rows, *, title) -> str:
         return "-" if value is None else f"{value:.3f}"
 
     for arm, entry in summary.items():
-        if arm in ("cost", "spatial"):
+        if arm in ("cost", "causes"):
             continue
         lines.append(f"| {arm} | {entry['n_markers']} | {fmt(entry['code_agreement'])} | "
                      f"{fmt(entry['f1'])} | {fmt(entry['kappa'])} | "
                      f"{fmt(entry['fraction_error'])} | {fmt(entry['delta_log1p'])} |")
     against = [arm for arm, entry in summary.items()
-               if arm not in ("cost", "spatial") and entry.get("n")]
+               if arm not in ("cost", "causes") and entry.get("n")]
     if against:
         lines += ["", f"Against the expert's gates (mean absolute miss in table units; "
                       f"share within {WITHIN}):", "",
@@ -1292,14 +1121,13 @@ def to_markdown(summary, rows, *, title) -> str:
                     else:
                         shown.append(f"{row['gate']:.2f} ({row['delta']:+.2f})")
                 lines.append(f"| {image} | {marker} | " + " | ".join(shown) + " |")
-    if "spatial" in summary:
-        spatial = summary["spatial"]
-        shown = [k for k in SPATIAL_METRICS if any(e.get(k) is not None
-                                                    for e in spatial.values())]
-        lines += ["", "Spatial (mean over markers with the measure; rates are shares of "
-                      "cells):", "",
+    if "causes" in summary:
+        causes = summary["causes"]
+        shown = [k for k in CAUSE_METRICS if any(e.get(k) is not None for e in causes.values())]
+        lines += ["", "Where the errors fall (scenes with per-cell causes; mean over markers "
+                      "with the measure; rates are shares of cells):", "",
                   "| arm | " + " | ".join(shown) + " |", "|---|" + "---|" * len(shown)]
-        for arm, entry in spatial.items():
+        for arm, entry in causes.items():
             lines.append(f"| {arm} | " + " | ".join(fmt(entry.get(k)) for k in shown) + " |")
     if "cost" in summary:
         cost = summary["cost"]
@@ -1309,9 +1137,9 @@ def to_markdown(summary, rows, *, title) -> str:
                       f"{cost['seconds']:.0f} s; {int(cost['requests_made'])} evidence "
                       f"request(s), {int(cost['requests_served'])} served."]
         for arm, entry in (cost.get("by_arm") or {}).items():
-            lines.append(f"- {arm}: {int(entry['packets'])} packets, feature layer "
-                         f"{entry['feature_ms'] / 1000.0:.2f} s, {int(entry['cache_hits'])} "
-                         f"replayed, review fraction {fmt(entry['review_fraction'])}")
+            lines.append(f"- {arm}: {int(entry['packets'])} packets, "
+                         f"{int(entry['cache_hits'])} replayed, review fraction "
+                         f"{fmt(entry['review_fraction'])}")
     lines += ["", "## Per marker", "",
               "| image | arm | marker | gate | F1 | state | confidence |", "|---|---|---|---|---|---|---|"]
     for row in rows:
@@ -1345,14 +1173,14 @@ def _meta(variants):
     from plexora.plugins.gating.server.autogate import schemas
 
     return {"variants": list(variants), "code": code_state(),
-            "spatial_version": schemas.SPATIAL_VERSION}
+            "hybrid_version": schemas.HYBRID_VERSION}
 
 
 def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DEFAULT,
                   agent=AGENT_STYLES[0], arms=ARMS, out=None, markers=None, seed=0,
                   score=None, grid=24, size=1024, stability=None, replay=None,
                   rerender=False, variants=("baseline",), truth_column=None,
-                  cell_truth=None, emit=print) -> int:
+                  emit=print) -> int:
     started = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
     try:
         variants = check_variants(variants)
@@ -1403,8 +1231,7 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
     if truth_column:
         against += f" ({truth_column!r})"
     if score:
-        rows = score_session(score, truth_table=table, truth_column=truth_column,
-                             cell_truth=cell_truth)
+        rows = score_session(score, truth_table=table, truth_column=truth_column)
         title = f"Gating session {score} against {against}"
     elif synthetic:
         rows = run_synthetic(synthetic, agent, arms=arms, seed=seed, markers=markers,

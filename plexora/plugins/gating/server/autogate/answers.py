@@ -75,23 +75,11 @@ class QCAnswer(_Base):
                     "positive (the gate is put at the maximum).")
 
 
-Explanation = Literal[schemas.EXPLANATIONS]
-_EXPLANATIONS = (
-    "Only when `allowed.explanations` offers them: up to three words for what the pictures "
-    "support -- `threshold_error` (cells look alike wherever they sit: the gate is off), "
-    "`possible_neighbor_spillover` (the stain belongs to a bright neighbour), "
-    "`possible_local_background` (the whole area is raised, not the cells), "
-    "`possible_segmentation_error` (the outline takes in part of another cell), "
-    "`genuine_weak_expression` (a dim stain that is the cell's own), "
-    "`insufficient_evidence` (nothing here settles it). Evidence for a case; never a "
-    "direction.")
-
-
 class T2Answer(_Base):
     kind: Literal["t2_confirm"] = "t2_confirm"
-    rows: dict[Literal[schemas.CORE_ROWS + schemas.ENV_ROWS], RowVerdict] = Field(
+    rows: dict[Literal["below", "near", "above"], RowVerdict] = Field(
         description=_ROWS + " Rows: just below, at and just above the gate (`near` may be "
-                            "empty), and any further row `allowed.rows` lists.")
+                            "empty).")
     pattern: Pattern = Field(
         description="What the stained cells look like, in the collage or the sheet's "
                     "fields; `none` only when no cell anywhere carries the stain.")
@@ -101,18 +89,10 @@ class T2Answer(_Base):
                           "partner. The gate is then fitted among its positives and shown "
                           "again.")
     confidence: Confidence = Field(description=_CONFIDENCE)
-    explanations: list[Explanation] = Field(default_factory=list, max_length=3,
-                                            description=_EXPLANATIONS)
 
 
 class T3Answer(T2Answer):
     kind: Literal["t3_biological"] = "t3_biological"
-
-
-class ContrastAnswer(T2Answer):
-    """A like-for-like look (`t3_contrast`): the rows are cells of one
-    intensity in different surroundings, judged with the same words."""
-    kind: Literal["t3_contrast"] = "t3_contrast"
 
 
 class T4Answer(_Base):
@@ -127,6 +107,17 @@ class T4Answer(_Base):
 class ConfirmAnswer(_Base):
     kind: Literal["regression_confirm"] = "regression_confirm"
     verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"]
+
+
+class CorrectionAnswer(_Base):
+    kind: Literal["correction_check"] = "correction_check"
+    cells: dict[str, Literal["own", "not_own", "cannot_tell"]] = Field(
+        description="EVERY numbered cell (c1, c2, ...): `own` -- the marker's stain on this "
+                    "cell is its own (where the marker sits: a ring, the cytoplasm, the "
+                    "nucleus), even dim; `not_own` -- unstained, or the light on it is a "
+                    "neighbour's or the background's; `cannot_tell`. Judge each cell on its "
+                    "own pixels; the reference cells (r1, ...) are clear positives, to compare "
+                    "with, and are not answered.")
 
 
 class TransferAnswer(_Base):
@@ -171,7 +162,7 @@ class PanelContextAnswer(_Base):
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          ContrastAnswer)
+          CorrectionAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

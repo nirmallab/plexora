@@ -359,7 +359,7 @@ KNOWN_COUPLINGS = {
     "plexora/mcp/resources_gating.py",             # gating session resources
     "plexora/ai/skills.py",                        # skills read autogate's schemas
     "plexora/ai/bench.py",                         # the autogate benchmark
-    "plexora/ai/bench_spatial.py",                 # what autogate's spatial evidence costs
+    "plexora/ai/bench_cellcall.py",                # how fast autogate's cell model reads
     # Plexora's own harness drives autogate sessions like any agent: their
     # answer models, reading guide and events.
     "plexora/ai/harness/decision.py",
@@ -375,7 +375,8 @@ def test_the_remaining_couplings_are_the_documented_ones():
     for path in (REPO / "plexora").rglob("*.py"):
         rel = path.relative_to(REPO).as_posix()
         if "/autogate/" in rel or "/tests/" in rel or rel.endswith(("capabilities_session.py",
-                                                                    "capabilities_autogate.py")):
+                                                                    "capabilities_autogate.py",
+                                                                    "capabilities_cellcall.py")):
             continue
         if any("gating.server.autogate" in name for name in _imports(path)):
             found.add(rel)

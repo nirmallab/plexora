@@ -36,8 +36,8 @@ A session that exists (`gating_session_status` finds it).
    A value `{as_in: packet_id}` is unchanged since that packet (`as_in`).
 3. Stop, without answering the packet in hand, when `units_done` reached your
    quota, or the state is `decided`, `waiting_for_user`, `paused`, `stopped`
-   or `other_tasks` (what is ready is another worker's). `bulk_running` or
-   `busy`: call `gating_next` again.
+   or `other_tasks` (what is ready is another worker's). `bulk_running`,
+   `model_running` or `busy`: call `gating_next` again.
 
 How to judge (the guide says how to read each picture):
 
@@ -67,19 +67,13 @@ How to judge (the guide says how to read each picture):
 - `t4_candidates`: the same word for EVERY row of `intervals`, about the
   cells that change call there. A row of zero cells: `cannot_tell`, and say
   so in `notes`.
-- `t3_contrast` (spatial evidence on): every row but `reference` holds cells
-  of ONE intensity in different surroundings -- beside a bright neighbour,
-  clean in sparse or dense tissue, in high background. Judge each row by its
-  cells' own stain; Plexora compares the rows. A first look's `near_bright`
-  row asks the same at the gate.
-- `explanations`, only where `allowed.explanations` offers them: up to three
-  words for what the pictures support; `insufficient_evidence` when nothing
-  does. Evidence, never a direction.
 - `qc_confirm`: `real_signal`, `technical_failure`, `no_positive_population`
   or `cannot_tell`. After a look that saw no stain it may show the sheet you
   just judged (or none, `as_in`): answer from that look.
 - `regression_confirm`: `holds` unless a region is clearly wrong; the failing
   `checks` say what to look at.
+- `correction_check`: one word per numbered cell (`own`, `not_own`,
+  `cannot_tell`), each on its own pixels; r-cells are clear positives.
 - Every look: set `artifact_flags` when segmentation, focus, saturation,
   bleed-through, autofluorescence, folds or edges affect the cells shown.
   `confidence` is `sure`, `fairly_sure` or `unsure`; say `unsure` rather than

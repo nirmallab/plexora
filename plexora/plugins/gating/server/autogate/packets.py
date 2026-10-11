@@ -79,28 +79,34 @@ READING_GUIDE = {
                    "alone (white); a subset or co-expressed marker's positives should be "
                    "reference-bright, an exclusive one's reference-dark; the fields add the "
                    "reference in cyan"),
+    "collage_t2m": ("each cell is a 2 x 2 block. Top left, morphology: blue nuclei, the marker "
+                    "in yellow windowed on this cell's own brightest pixels (a cell with no stain "
+                    "stays dark), four magenta ticks around its nucleus. Top right, context: the "
+                    "marker at one fixed window for the whole marker, the judged cell's outline "
+                    "white, its neighbours' thin grey. Bottom left, the expected partner "
+                    "(`partner_panels.expected`) alone in grey, bottom right the not-expected one "
+                    "(`partner_panels.not_expected`): each at its own gate's 40 % grey, the judged "
+                    "cell outlined in magenta, black when there is none. An expected partner lit "
+                    "inside the outline supports the cell's own stain; a not-expected partner lit "
+                    "inside it says the cell is another type, so marker light on it is likely a "
+                    "neighbour's. Partners glow too: read them inside the outline. Caption = "
+                    "value and the current call (+/-). Rows: just below, at and just above the "
+                    "gate; judge the rows nearest the gate most"),
+    "collage_flips_m": ("each cell is the 2 x 2 block of `collage_t2m`. Rows run from the "
+                        "current gate outward: row i1 is the cells between the current gate and "
+                        "candidate c1, row i2 between c1 and c2, and so on. Judge every row on "
+                        "its own"),
+    "correction_check": ("a check of single cells: each numbered cell (c1, c2, ...) is one "
+                         "the threshold as it stands calls as the question says; judge each "
+                         "on its own pixels, one word -- `own` (the marker's stain on it is "
+                         "its own, even dim), `not_own` (unstained, or the light on it is a "
+                         "neighbour's or the background's), `cannot_tell`. The reference "
+                         "cells (r1, ...) are clear positives, to compare with"),
     "collage_flips": ("each cell is two panels, morphology | context, as in the first look, "
                       "the judged nucleus between four magenta ticks. Rows run from the "
                       "current gate outward: row i1 is the cells between the current gate "
                       "and candidate c1, row i2 between c1 and c2, and so on. Judge every row "
                       "on its own"),
-    "collage_contrast": ("each cell is two panels, morphology | context, as in the first look. "
-                         "Every row but the reference holds cells of the SAME intensity on one "
-                         "side of the gate, in different surroundings: beside a bright "
-                         "neighbour, with none in sparse and in dense tissue, in high local "
-                         "background; the reference row is strong positives, clear negatives "
-                         "in high background close it. Judge each row on its own, by its cells' "
-                         "own stain; Plexora reads the rows against each other"),
-    "explanations": ("`explanations` (when `allowed.explanations` offers them): up to three "
-                     "words for what the pictures support -- the stain belongs to a bright "
-                     "neighbour, the whole area is raised, a weak stain is the cell's own, an "
-                     "outline takes in another cell, the cells look alike wherever they sit "
-                     "(`threshold_error`), or `insufficient_evidence`. Evidence for a reading "
-                     "of the rows; never which way the gate goes"),
-    "captions": ("a caption ending `·n` marks a cell with a bright neighbour touching it, `·b` "
-                 "one in high local background; `rows_env` says which surroundings each row's "
-                 "cells come from; `spatial` gives the image's numbers (`segmentation`: "
-                 "`mask` outlines are the table's, `centroid` means no usable mask)"),
     "sheet": SCALES_READING,
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
@@ -111,10 +117,8 @@ READING_GUIDE = {
                  "far: `grade` how reliable its gate is; `orphan_fraction` the share of this "
                  "marker's positives that a subset or co-expressed partner calls negative; "
                  "`double_positive_fraction` the share an exclusive partner also calls "
-                 "positive; with spatial evidence, `imperfection` the same share among the "
-                 "marker's brightest positives (what the partner itself misses) and `excess` "
-                 "what this gate adds to it. The sheet plots the partner that contradicts this "
-                 "gate most; a request naming a partner plots that one"),
+                 "positive. The sheet plots the partner that contradicts this gate most; a "
+                 "request naming a partner plots that one"),
     "within_partner": ("a subset marker whose stain is real inside a partner's positives and "
                        "noise outside them (another lineage's spill, an off-target stain) is "
                        "answered with `within` = that partner (one of `allowed.within`): the "
@@ -415,11 +419,8 @@ def _context_brief(unit):
 def _partner_numbers(engine, unit, ds, low, *, full=False):
     """Bivariate numbers against every partner gated so far -- by this run, or
     by the user in a gate the run kept (`Engine.references_ready`) -- with the
-    FACS negative control each one gives (`bivariate.negative_control`), and
-    with spatial evidence the purity calibration (`bivariate.purity_excess`):
-    how imperfect the partner is among the marker's brightest cells."""
+    FACS negative control each one gives (`bivariate.negative_control`)."""
     out = []
-    spatial = engine.spatial_on()
     for ref in engine.references_ready(unit):
         try:
             result = tableops.local_or_node(ds, "gating.autogate.bivariate", {
@@ -447,27 +448,15 @@ def _partner_numbers(engine, unit, ds, low, *, full=False):
         if control:
             entry["control"] = control if full else {k: control.get(k) for k in (
                 "population", "n", "p99", "fraction_above_current")}
-        if spatial:
-            try:
-                purity = tableops.local_or_node(ds, "gating.autogate.purity", {
-                    "marker": unit["marker"], "low": low, "partner": ref["marker"],
-                    "partner_gate": ref["gate"], "relation": ref["relation"]}).get("purity")
-            except Exception:
-                purity = None
-            if purity:
-                entry["purity"] = {k: purity.get(k) for k in ("at_gate", "at_top", "excess")}
         out.append(entry)
     return out
 
 
-def _partner_line(numbers, spatial=False) -> list:
+def _partner_line(numbers) -> list:
     """What a look is told of each partner: one line -- the relation, how
     reliable the partner's gate is, and the one share that says whether this
-    gate keeps to the relation; with spatial evidence also how imperfect the
-    partner is among the marker's brightest positives (`imperfection`) and
-    what this gate adds to that (`excess`) -- a partner that misses real
-    positives is no proof against a gate. The rest of `_partner_numbers` is
-    code's (the sheet's plot, `regression`'s purity check)."""
+    gate keeps to the relation. The rest of `_partner_numbers` is code's (the
+    sheet's plot, `regression`'s purity check)."""
     out = []
     for n in numbers or ():
         entry = {"partner": n["partner"], "relation": n["relation"],
@@ -475,12 +464,6 @@ def _partner_line(numbers, spatial=False) -> list:
         for key in ("orphan_fraction", "double_positive_fraction"):
             if n.get(key) is not None:
                 entry[key] = round(float(n[key]), 3)
-        purity = n.get("purity") if spatial else None
-        if purity:
-            if purity.get("at_top") is not None:
-                entry["imperfection"] = round(float(purity["at_top"]), 3)
-            if purity.get("excess") is not None:
-                entry["excess"] = round(float(purity["excess"]), 3)
         out.append(entry)
     return out
 
@@ -635,13 +618,6 @@ def _sample(engine, ds, unit, low):
                "seed": _seed(engine)}
     if condition:
         payload["within"] = {"marker": condition["within"], "gate": condition["partner_gate"]}
-    spatial = engine.spatial_payload(unit)
-    if spatial is not None:
-        # Only with the session's switch on: the payload is today's otherwise.
-        payload["spatial"] = {**spatial, "select": engine.spatial_on("stratify")}
-        payload["partners"] = [{"partner": r["marker"], "gate": r["gate"],
-                                "relation": r["relation"]}
-                               for r in engine.references_ready(unit)]
     return tableops.local_or_node(ds, "gating.autogate.sample", payload)
 
 
@@ -675,6 +651,37 @@ def _images(packet, pairs):
     return images
 
 
+def _multiview(engine, unit, ds, reference=None):
+    """(layout, partners, evidence) for a look's collage with hybrid tiles
+    (`SessionOptions.hybrid`): the 2 x 2 multi-view layout `t2m` and the
+    partner channels its `co` / `anti` panels show -- the reference, when a
+    look asked for one, in the panel its relation belongs to. (None, None,
+    {}) without tiles: the look is today's."""
+    if not engine.hybrid_has("tiles"):
+        return None, None, {}
+    partners = dict(engine.partner_panels(unit) or {})
+    partners.setdefault("markers", {})
+    partners.setdefault("gates", {})
+    if reference:
+        kind = "anti" if reference["relation"] == "exclusive" else "co"
+        channel = views.image_channel(ds, reference["marker"])
+        if channel:
+            partners[kind] = channel
+            partners["markers"][kind] = reference["marker"]
+            partners["gates"][channel] = float(reference["gate"])
+    names = partners["markers"]
+    return "t2m", partners, {"partner_panels": {"expected": names.get("co"),
+                                                "not_expected": names.get("anti")}}
+
+
+def _panel_words(layout, partners):
+    if layout != "t2m":
+        return None
+    names = (partners or {}).get("markers") or {}
+    return (f"morphology | outlined context / expected {names.get('co') or 'none'} | "
+            f"not expected {names.get('anti') or 'none'}")
+
+
 def _condition_brief(unit):
     condition = unit.get("condition")
     if not condition:
@@ -692,20 +699,21 @@ def t2_confirm(engine, units):
     low = unit["candidate"]
     condition = unit.get("condition")
     sample = _sample(engine, ds, unit, low)
-    rows = views.t2_rows(sample, low, unit.get("high"), spatial=engine.spatial_on("stratify"))
+    rows = views.t2_rows(sample, low, unit.get("high"))
     to_log = sample.get("fit_space") == "log1p"
     within_note = f" · only {condition['within']}+ cells" if condition else ""
+    layout, partner_panels, multiview = _multiview(engine, unit, ds)
     main = collage.render_collage(
-        engine.call.session, ds, layout="t2", rows=rows, marker=channel, gate=low,
+        engine.call.session, ds, layout=layout or "t2", rows=rows, marker=channel, gate=low,
         high=unit.get("high"), fmt=_fmt(engine), to_log=to_log,
-        pixel=engine.pixel_for(ds.name), crop_hook=_targeted_hook(engine, unit, ds, channel),
+        pixel=engine.pixel_for(ds.name), partners=partner_panels,
         title=f"{unit['marker']} · gate {collage.compact_number(low)}{within_note} · rows "
-              "below/at/above (each cell: morphology | context)")
+              f"below/at/above (each cell: "
+              f"{_panel_words(layout, partner_panels) or 'morphology | context'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
-    _keep_targeted(unit, main)
     numbers = _partner_numbers(engine, unit, ds, low)
     context_sheet = _sheet(engine, unit, ds, channel, low, numbers=numbers)
-    partners = _partner_line(numbers, spatial=engine.spatial_on())
+    partners = _partner_line(numbers)
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     if condition:
@@ -719,8 +727,8 @@ def t2_confirm(engine, units):
                     f"carry their OWN {stain} stain, around the nucleus the ticks mark? One "
                     "word per row, and the pattern of the stained cells.")
     within = within_eligible(partners) if not condition else []
-    guide = ["rows", "collage_t2", "sheet", "partners", "requests"] + \
-        (["within_partner"] if within else []) + _spatial_guide(engine)
+    guide = ["rows", "collage_t2m" if layout else "collage_t2", "sheet", "partners",
+             "requests"] + (["within_partner"] if within else [])
     packet = {
         "question": question,
         "evidence": {
@@ -731,14 +739,13 @@ def t2_confirm(engine, units):
             "within_allowed": within,
             "profile": {"class": (unit.get("summary") or {}).get("class")},
             "rows": {r["key"]: r["label"] for r in rows},
+            **multiview,
             "context": {"compartment": compartment}, "flags": _flags(unit),
-            **_spatial_evidence(engine, unit, low, rows),
             **_sheet_evidence(context_sheet),
             **_reading(engine, guide + _sheet_keys(context_sheet, unit)),
         },
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
-                    "patterns": list(schemas.PATTERNS), "within": within,
-                    **_explanations_allowed(engine)},
+                    "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
     }
     images = _images(packet, (
@@ -765,32 +772,36 @@ def t3_biological(engine, units):
     ref_channels = [views.image_channel(ds, r["marker"]) for r in refs]
     ref_channels = [c for c in ref_channels if c]
     sample = _sample(engine, ds, unit, low)
-    rows = views.t2_rows(sample, low, unit.get("high"), spatial=engine.spatial_on("stratify"))
+    rows = views.t2_rows(sample, low, unit.get("high"))
     to_log = sample.get("fit_space") == "log1p"
+    layout, partner_panels, multiview = _multiview(engine, unit, ds,
+                                                   reference=refs[0] if refs else None)
     main = collage.render_collage(
-        engine.call.session, ds, layout="t3", rows=rows, marker=channel, gate=low,
-        high=unit.get("high"), references=ref_channels, fmt=_fmt(engine), to_log=to_log,
-        pixel=engine.pixel_for(ds.name), crop_hook=_targeted_hook(engine, unit, ds, channel),
+        engine.call.session, ds, layout=layout or "t3", rows=rows, marker=channel, gate=low,
+        high=unit.get("high"), references=() if layout else ref_channels, fmt=_fmt(engine),
+        to_log=to_log, pixel=engine.pixel_for(ds.name),
+        partners=partner_panels,
         title=f"{unit['marker']} with {', '.join(r['marker'] for r in refs) or 'no reference'}"
-              f" · gate {collage.compact_number(low)} (each cell: morphology | context | "
-              "reference)")
+              f" · gate {collage.compact_number(low)} (each cell: "
+              f"{_panel_words(layout, partner_panels) or 'morphology | context | reference'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
-    _keep_targeted(unit, main)
     second = _sheet(engine, unit, ds, channel, low, references=ref_channels[:1],
                     numbers=numbers)
-    partners = _partner_line(numbers, spatial=engine.spatial_on())
+    partners = _partner_line(numbers)
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     condition = unit.get("condition")
     within = within_eligible(partners) if not condition else []
-    guide = ["rows", "collage_t2", "collage_t3", "sheet", "partners"] + \
-        (["within_partner"] if within else []) + _spatial_guide(engine)
+    guide = ["rows"] + (["collage_t2m"] if layout else ["collage_t2", "collage_t3"]) + \
+        ["sheet", "partners"] + (["within_partner"] if within else [])
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: for each "
                      f"row, do the cells carry their OWN {stain} stain, around the nucleus the "
-                     "ticks mark? The third panel of each cell is the reference. One word per "
-                     "row, and the pattern of the stained cells."),
+                     "ticks mark? "
+                     + ("The partner panels hold the reference. " if layout else
+                        "The third panel of each cell is the reference. ")
+                     + "One word per row, and the pattern of the stained cells."),
         "evidence": {
             "partners": partners,
             "marker": unit["marker"], "project": ds.name,
@@ -801,13 +812,12 @@ def t3_biological(engine, units):
             "rows": {r["key"]: r["label"] for r in rows},
             "context": {"compartment": compartment},
             "references": [r["marker"] for r in refs],
-            **_spatial_evidence(engine, unit, low, rows),
+            **multiview,
             **_sheet_evidence(second),
             **_reading(engine, guide + _sheet_keys(second, unit)),
         },
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
-                    "patterns": list(schemas.PATTERNS), "within": within,
-                    **_explanations_allowed(engine)},
+                    "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
     }
     images = _images(packet, (
@@ -862,9 +872,6 @@ def t4_candidates(engine, units):
                "seed": _seed(engine)}
     if condition:
         payload["within"] = {"marker": condition["within"], "gate": condition["partner_gate"]}
-    spatial = engine.spatial_payload(unit)
-    if spatial is not None:
-        payload["spatial"] = spatial
     delta = tableops.local_or_node(ds, "gating.autogate.delta", payload)
     at = dict(zip(delta["candidates"], delta.get("n_positive_at") or []))
     # Rows nearest the current gate first, whichever way the gate moves.
@@ -875,13 +882,15 @@ def t4_candidates(engine, units):
     names = {index: (f"{collage.compact_number(iv['from'])} to "
                      f"{collage.compact_number(iv['to'])}")
              for index, iv in enumerate(intervals)}
-    rows = views.flip_rows(ordered, labels=names, spread=engine.spatial_on("stratify"))
+    rows = views.flip_rows(ordered, labels=names)
+    layout, partner_panels, multiview = _multiview(engine, unit, ds)
     main = collage.render_collage(
-        engine.call.session, ds, layout="flips", rows=rows, marker=channel,
+        engine.call.session, ds, layout=layout or "flips", rows=rows, marker=channel,
         gate=current, high=unit.get("high"), fmt=_fmt(engine),
-        pixel=engine.pixel_for(ds.name),
+        pixel=engine.pixel_for(ds.name), partners=partner_panels,
         title=f"{unit['marker']} · rows nearest the gate first: the cells that change call "
-              "between neighbouring thresholds (each cell: morphology | context)")
+              "between neighbouring thresholds (each cell: "
+              f"{_panel_words(layout, partner_panels) or 'morphology | context'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
     listing = [{"id": cid, "low": p["low"],
                 "n_positive": at.get(p["low"], p["n_positive"]) if condition
@@ -893,21 +902,23 @@ def t4_candidates(engine, units):
                            candidates=[{"id": c["id"], "low": c["low"]} for c in listing],
                            candidate_fields=chain_view, numbers=numbers)
     rows_ev = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
-                "n_flip": iv["n_flip"],
-                **{k: iv[k] for k in ("n_flip_dense", "n_flip_sparse", "n_flip_low_snr")
-                   if k in iv}}
+                "n_flip": iv["n_flip"]}
                for index, iv in enumerate(intervals)]
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
-    t4_guide = ["rows", "collage_flips", "sheet_candidates", "sheet", "partners"]
+    t4_guide = ["rows", "collage_t2m", "collage_flips_m" if layout else "collage_flips",
+                "sheet_candidates", "sheet", "partners"]
+    if not layout:
+        t4_guide.remove("collage_t2m")
     packet = {
         "question": (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
                      "call between neighbouring thresholds, nearest the current gate first. "
                      f"For EVERY row, do those cells carry their OWN {stain} stain, around "
                      "the nucleus the ticks mark? One word per row."),
-        "evidence": {"partners": _partner_line(numbers, spatial=engine.spatial_on()),
+        "evidence": {"partners": _partner_line(numbers),
                      "marker": unit["marker"], "project": ds.name, "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
+                     **multiview,
                      **({"condition": _condition_brief(unit)} if condition else {}),
                      "round": int(unit.get("rounds", 0)) + 1,
                      **_sheet_evidence(context_sheet),
@@ -1198,145 +1209,59 @@ def transfer_check(engine, units):
 
 
 
-# -- spatial evidence (`SessionOptions.spatial`) ----------------------------------------
 
-
-def _targeted_hook(engine, unit, ds, channel):
-    """The collage's `crop_hook`: the targeted pass on the crops it read
-    (`spatial.targeted_from_crops`), for an image with one; None otherwise."""
-    from plexora.agent.evidence import crops as cropmod
-    from plexora.plugins.gating.server.autogate import spatial as spatialmod
-
-    mode = (unit.get("spatial") or {}).get("mode")
-    if not engine.spatial_on("stratify") or mode not in ("A", "B"):
-        return None
-    radius, _how = cropmod.cell_radius_px(ds.project, pixel=engine.pixel_for(ds.name))
-    compartment = (unit.get("context") or {}).get("compartment")
-
-    def hook(crops, cells):
-        return spatialmod.targeted_from_crops(crops, channel, cells, mode=mode,
-                                              compartment=compartment, radius_px=radius)
-
-    return hook
-
-
-def _keep_targeted(unit, rendered):
-    """The targeted pass's spill states for the cells drawn, on the unit
-    (bounded): the uncertain layer leaves out what the pixels cleared."""
-    found = rendered.get("per_cell") or {}
-    if not found:
-        return
-    kept = dict(unit.get("targeted") or {})
-    for cid, record in found.items():
-        kept[str(cid)] = record.get("spill")
-    unit["targeted"] = dict(list(kept.items())[-64:])
-
-
-def _spatial_evidence(engine, unit, low, rows=None):
-    """`evidence.spatial` (and `rows_env`) for a look, when the session's
-    `spatial` switch is on; {} when off (the packet is then today's)."""
-    from plexora.plugins.gating.server.autogate import spatial as spatialmod
-
-    if not engine.spatial_on():
-        return {}
-    summary = engine.spatial_summary(unit, low)
-    out = {}
-    brief = spatialmod.brief(summary)
-    if brief:
-        out["spatial"] = brief
-    if rows is not None and engine.spatial_on("stratify"):
-        envs = views.rows_env(rows)
-        if envs:
-            out["rows_env"] = envs
-    return out
-
-
-def _explanations_allowed(engine):
-    """`allowed.explanations` with `decide`; nothing otherwise (the packet
-    is then today's)."""
-    return {"explanations": list(schemas.EXPLANATIONS)} if engine.spatial_on("decide") else {}
-
-
-def _spatial_guide(engine):
-    """The guide entries spatial evidence adds to a first look."""
-    return (["captions"] if engine.spatial_on("stratify") else []) + \
-        (["explanations"] if engine.spatial_on("decide") else [])
-
-
-def t3_contrast(engine, units):
-    """A like-for-like look: cells of the same intensity, on the side of the
-    gate the first look moved it toward, in different surroundings -- beside
-    a bright neighbour, clean in sparse and in dense tissue, in high local
-    background -- with strong positives as the reference
-    (`sampler.contrast_cells`). The rows decide (`verdicts.spatial_case`):
-    an error seen in every environment moves the gate, one concentrated
-    beside bright neighbours or in background holds it. Without two rows to
-    compare, the held direction goes on as a first look's would."""
+def correction_check(engine, units):
+    """The cells a corrected gate would call differently from the gate a look
+    approved (`hybrid.plan_correction`), and a few clear positives to compare
+    with: one word per cell. Names no model and no direction of a move --
+    only what the gate as it stands calls them."""
     from plexora.agent.evidence import collage
-    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate import cells as cellmod
 
     unit = units[0]
     ds, channel = _unit_channel(engine, unit)
-    low = unit["candidate"]
-    side = unit.get("contrast_side") or "above"
-    condition = unit.get("condition")
-    numbers = _partner_numbers(engine, unit, ds, low)
-    payload = {"marker": unit["marker"], "low": low, "high": unit.get("high"), "side": side,
-               "seed": _seed(engine), "spatial": engine.spatial_payload(unit),
-               "partners": [{"partner": r["marker"], "gate": r["gate"],
-                             "relation": r["relation"]} for r in engine.references_ready(unit)]}
-    if condition:
-        payload["within"] = {"marker": condition["within"], "gate": condition["partner_gate"]}
-    contrast = tableops.local_or_node(ds, "gating.autogate.contrast", payload)
-    rows = views.contrast_rows(contrast, low, unit.get("high"))
-    keys = [r["key"] for r in rows]
-    if len(rows) < 2 or "reference" not in keys or not set(keys) & {"clear", "dense_clear"}:
-        transitions.resume_pending(engine, unit, "too few like-for-like cells to compare ("
-                                   + ", ".join(f"{k}: {v}" for k, v in
-                                               (contrast.get("counts") or {}).items()) + ")")
-        return None
-    to_log = contrast.get("fit_space") == "log1p"
+    record = (unit.get("model") or {}).get("correction") or {}
+    c = cellmod.cells(ds)
+    row_of = {int(i): k for k, i in enumerate(c.ids)}
+
+    def drawn(ids, prefix):
+        return [{"cell_id": int(i), "x": float(c.xs[row_of[int(i)]]),
+                 "y": float(c.ys[row_of[int(i)]]), "caption": f"{prefix}{n + 1}"}
+                for n, i in enumerate(ids) if int(i) in row_of]
+
+    asked = drawn(record.get("cells") or [], "c")
+    refs = drawn(record.get("references") or [], "r")
+    rows = [{"label": f"cells {asked[i]['caption']}-{asked[min(i + 5, len(asked) - 1)]['caption']}",
+             "key": "check", "cells": asked[i:i + 6]} for i in range(0, len(asked), 6)]
+    if refs:
+        rows.append({"label": "reference: clear positives", "key": "reference", "cells": refs})
+    layout, partner_panels, multiview = _multiview(engine, unit, ds)
+    calls = "positive" if record.get("direction") == "up" else "negative"
     main = collage.render_collage(
-        engine.call.session, ds, layout="t2", rows=rows, marker=channel, gate=low,
-        high=unit.get("high"), fmt=_fmt(engine), to_log=to_log,
-        pixel=engine.pixel_for(ds.name), crop_hook=_targeted_hook(engine, unit, ds, channel),
-        title=f"{unit['marker']} · gate {collage.compact_number(low)} · same intensity, "
-              "different surroundings (each cell: morphology | context)")
+        engine.call.session, ds, layout=layout or "t2", rows=rows, marker=channel,
+        gate=record.get("g_v"), high=unit.get("high"), fmt=_fmt(engine),
+        pixel=engine.pixel_for(ds.name), partners=partner_panels,
+        title=f"{unit['marker']} · c-cells: is the stain each one's own? · r-cells: clear "
+              f"positives (each cell: "
+              f"{_panel_words(layout, partner_panels) or 'morphology | context'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
-    _keep_targeted(unit, main)
-    unit["contrast_shown"] = {r["key"]: [c["cell_id"] for c in r["cells"]] for r in rows}
-    context_sheet = _sheet(engine, unit, ds, channel, low, numbers=numbers)
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
-    where = "just above" if side == "above" else "just below"
+    keys = [cell["caption"] for cell in asked]
+    guide = ["correction_check", "collage_t2m" if layout else "collage_t2"]
     packet = {
-        "question": (f"{unit['marker']} ({ds.name}): every row but the reference holds cells "
-                     f"of the same intensity, {where} the gate, in different surroundings. "
-                     f"For each row, do the cells carry their OWN {stain} stain, around the "
-                     "nucleus the ticks mark? One word per row; `explanations` names what the "
-                     "pictures support."),
-        "evidence": {
-            "partners": _partner_line(numbers, spatial=True),
-            "marker": unit["marker"], "project": ds.name,
-            "candidate": {"low": low, "high": unit.get("high")}, "side": side,
-            **({"condition": _condition_brief(unit)} if condition else {}),
-            "rows": {r["key"]: r["label"] for r in rows},
-            "limits": contrast.get("limits") or None,
-            "profile": {"class": (unit.get("summary") or {}).get("class")},
-            "context": {"compartment": compartment}, "flags": _flags(unit),
-            **_spatial_evidence(engine, unit, low, rows),
-            **_sheet_evidence(context_sheet),
-            **_reading(engine, ["rows", "collage_contrast", "explanations", "captions",
-                                "sheet", "partners"] + _sheet_keys(context_sheet, unit)),
-        },
-        "allowed": {"rows": keys, "verdicts": list(schemas.ROW_VERDICTS),
-                    "patterns": list(schemas.PATTERNS),
-                    "explanations": list(schemas.EXPLANATIONS), "within": []},
+        "question": (f"{unit['marker']} ({ds.name}): the threshold as it stands calls each of "
+                     f"the cells {keys[0]}-{keys[-1]} {calls}. For each of them, is the "
+                     f"{stain} stain its OWN? One word per cell; r-cells are clear positives "
+                     "to compare with."),
+        "evidence": {"marker": unit["marker"], "project": ds.name, "calls": calls,
+                     "cells": keys, "references": [cell["caption"] for cell in refs],
+                     **multiview, **_reading(engine, guide)},
+        "allowed": {"cells": keys, "words": ["own", "not_own", "cannot_tell"]},
         "_image_meta": [],
     }
-    images = _images(packet, (
-        (main, "contrast_collage", "same intensity, different surroundings"),
-        (context_sheet, "context_sheet", "the tissue at three scales, and the partner plot")))
+    images = _images(packet, ((main, "correction_collage", "the cells a corrected threshold "
+                                                            "would change"),))
     unit["last_manifest"] = main["manifest"]
     return packet, images
 
@@ -1346,7 +1271,7 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
-            "t3_contrast": t3_contrast}
+            "correction_check": correction_check}
 
 
 def narrate(packet) -> str:

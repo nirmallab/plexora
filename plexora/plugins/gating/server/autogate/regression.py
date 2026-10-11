@@ -22,9 +22,6 @@ picture of the whole image asked for (limits in `THRESHOLDS`, all [cal]):
    self-calibrated, so a partner that misses some real positives does not
    fail every gate;
 7. `guard_band`: the gate is inside the guard band.
-
-With spatial evidence two more (`spatial_checks`), both of where positives
-are, never how many: `density_agreement` and `snr_agreement`.
 """
 
 from __future__ import annotations
@@ -43,11 +40,8 @@ THRESHOLDS = {"max_delta_bg_sd": 1.5, "max_flip_share": 0.10, "tile_outlier_mad"
               "partner_tolerance": 0.10, "min_tile_cells": 20}
 
 
-def _tile_regression(ds, marker, low, high=None):
-    """(tile per row (-1 off), occupied tiles, residual per tile, n tiles,
-    positive, valid): each occupied tile's positive fraction minus what its
-    mean intensity predicts (one least-squares line over the tiles); NaN
-    residuals where a tile has too few cells or the tiles are too few."""
+def tile_residuals(ds, marker, low, high=None):
+    """(outlier tiles, occupied tiles, edge ratio) for a gate."""
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
@@ -62,23 +56,13 @@ def _tile_regression(ds, marker, low, high=None):
     pos = np.bincount(tile[rows], weights=positive[rows].astype(np.float64), minlength=n_tiles)
     mean = np.bincount(tile[rows], weights=col.to_fit(v[rows]), minlength=n_tiles)
     ok = counts >= THRESHOLDS["min_tile_cells"]
-    residual = np.full(n_tiles, np.nan)
+    outliers = 0
     if ok.sum() >= 6:
         p = pos[ok] / counts[ok]
         x = mean[ok] / counts[ok]
         design = np.stack([np.ones_like(x), x], axis=1)
         coef, *_ = np.linalg.lstsq(design, p, rcond=None)
-        residual[ok] = p - design @ coef
-    return tile, ok, residual, n_tiles, positive, valid
-
-
-def tile_residuals(ds, marker, low, high=None):
-    """(outlier tiles, occupied tiles, edge ratio) for a gate."""
-    c = cellmod.cells(ds)
-    _tile, ok, residuals, _n, positive, valid = _tile_regression(ds, marker, low, high)
-    outliers = 0
-    if ok.sum() >= 6:
-        residual = residuals[ok]
+        residual = p - design @ coef
         mad = np.median(np.abs(residual - np.median(residual))) * 1.4826
         if mad > 0:
             outliers = int((np.abs(residual) > THRESHOLDS["tile_outlier_mad"] * mad).sum())
@@ -92,10 +76,8 @@ def tile_residuals(ds, marker, low, high=None):
     return outliers, int(ok.sum()), ratio
 
 
-def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), spatial=None) -> dict:
-    """The seven checks for `final` against the GMM gate `gmm` -- nine with
-    `spatial` (`{mode, map, pixel_um}`, the session deciding with spatial
-    evidence): `density_agreement` and `snr_agreement` (`spatial_checks`)."""
+def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
+    """The seven checks for `final` against the GMM gate `gmm`."""
     from plexora.plugins.gating.server.autogate import bivariate, candidates
 
     t = THRESHOLDS
@@ -169,73 +151,7 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), spatial=None
           "impure share among the gate's positives minus among their brightest tenth")
     inside = candidates.inside_guard(ds, marker, final)
     check("guard_band", inside, None, None)
-    if spatial:
-        checks.extend(spatial_checks(ds, marker, final, spatial))
     failed = [c["name"] for c in checks if c["ok"] is False]
     return {"marker": marker, "final": float(final), "gmm": float(gmm),
             "n_positive": n_final, "fraction": pf, "checks": checks,
             "ok": not failed, "failed": failed}
-
-
-def _tercile_gap(tile_value, residual, ok):
-    """Mean residual of the top tercile of tiles by `tile_value` minus the
-    bottom tercile's, over tiles `ok` with a finite value; (gap, n per side)
-    or (None, n) with fewer than `min_agreement_tiles` a side."""
-    from plexora.plugins.gating.server.autogate.schemas import SPATIAL_RULES
-
-    usable = ok & np.isfinite(tile_value) & np.isfinite(residual)
-    values, res = tile_value[usable], residual[usable]
-    n = int(values.size // 3)
-    if n < SPATIAL_RULES["min_agreement_tiles"]:
-        return None, n
-    order = np.argsort(values, kind="stable")
-    low, high = res[order[:n]], res[order[-n:]]
-    return float(high.mean() - low.mean()), n
-
-
-def spatial_checks(ds, marker, final, spatial) -> list:
-    """Two checks of WHERE the gate's positives are, beside the
-    intensity-adjusted tile residuals (`_tile_regression`):
-
-    - `density_agreement`: dense tiles hold no more positives than their
-      intensity explains, compared with sparse ones (top minus bottom
-      density tercile of tiles, at most `density_residual_max`);
-    - `snr_agreement`: likewise low-SNR tiles against high-SNR ones
-      (`snr_residual_max`); not run without the image's background.
-
-    Spatial checks: they may hold or reject a gate, never move it
-    (`engine.SPATIAL_CHECKS`)."""
-    from plexora.plugins.gating.server.autogate import sampler
-    from plexora.plugins.gating.server.autogate.schemas import SPATIAL_RULES
-
-    feats, gate = sampler._spatial_features(ds, marker, final, None, spatial)
-    tile, ok, residual, n_tiles, _positive, _valid = _tile_regression(ds, marker, final)
-    out = []
-    rows = np.flatnonzero(feats.eligible & (tile >= 0))
-    counts = np.bincount(tile[rows], minlength=n_tiles).astype(np.float64)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        density = np.bincount(tile[rows], weights=feats.density_count[rows].astype(np.float64),
-                              minlength=n_tiles) / counts
-    gap, n = _tercile_gap(density, residual, ok)
-    out.append({"name": "density_agreement",
-                "ok": None if gap is None else bool(gap <= SPATIAL_RULES["density_residual_max"]),
-                "value": gap, "limit": SPATIAL_RULES["density_residual_max"],
-                "note": f"dense minus sparse tiles' residual positive fraction ({n} tiles a "
-                        "side)" if gap is not None else "too few tiles"})
-    if not gate.snr.get("available"):
-        out.append({"name": "snr_agreement", "ok": None, "value": None,
-                    "limit": SPATIAL_RULES["snr_residual_max"],
-                    "note": gate.snr.get("reason") or "no background map"})
-        return out
-    known = rows[np.isfinite(gate.env_snr[rows])]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        snr = np.bincount(tile[known], weights=gate.env_snr[known], minlength=n_tiles) / \
-            np.bincount(tile[known], minlength=n_tiles)
-    # Low SNR on top: the gap is low-SNR tiles' residual minus high-SNR ones'.
-    gap, n = _tercile_gap(-snr, residual, ok)
-    out.append({"name": "snr_agreement",
-                "ok": None if gap is None else bool(gap <= SPATIAL_RULES["snr_residual_max"]),
-                "value": gap, "limit": SPATIAL_RULES["snr_residual_max"],
-                "note": f"low- minus high-SNR tiles' residual positive fraction ({n} tiles a "
-                        "side)" if gap is not None else "too few tiles"})
-    return out

@@ -6,9 +6,9 @@ density strata), what fraction of a cell's neighbours a gate calls positive
 there is), and whether a cell has a positive neighbour of ANOTHER marker close
 by (a co-expression orphan that is really spill-over, not a wrong gate). Each
 is "for these query points, count the table's points within r, and how many of
-those carry a flag". The spatial evidence layer (`spatial.py`) asks one more
-in the same walk (`neighbour_values`): how bright the brightest neighbour is,
-which one it is, and how close the nearest strong one sits.
+those carry a flag". The cell model's selection (`neighbourhood.py`) asks one
+more in the same walk (`neighbour_values`): how bright the brightest neighbour
+is, which one it is, and how close the nearest strong one sits.
 
 A grid hash does it in one pass. Points are bucketed by a square grid whose
 side is at least `r`, so every neighbour within `r` sits in the 3x3 buckets

@@ -227,14 +227,18 @@ class ImageViewer {
                 filterRequest: 0,
                 //: The same gate evaluated in the browser: one byte per cell id
                 //: (1 = passes, 2 = not called by QC, drawn grey, 3 = passes but
-                //: a plugin marked it uncertain, drawn amber -- setCellFlagMask),
-                //: how many ids pass, how many are not called and how many are
-                //: uncertain. Set instead of filterIds when the provider's gate
-                //: can be evaluated here -- see updateSegmentationFilter.
+                //: a plugin marked it uncertain, drawn amber, 4 / 5 = the cell
+                //: model's own below the gate / not own above it --
+                //: setCellFlagMask), how many ids pass, how many are not
+                //: called, uncertain, and moved either way by the cell model.
+                //: Set instead of filterIds when the provider's gate can be
+                //: evaluated here -- see updateSegmentationFilter.
                 gateMask: null,
                 gateCount: null,
                 gateNotCalled: null,
                 gateUncertain: null,
+                gateModelOwn: null,
+                gateModelNotOwn: null,
                 //: Bumped whenever this layer's label pixels change (gate,
                 //: colours, visibility): the GPU cell layer redraws a tile when
                 //: it moves. lutVersion moves with the colour table alone.
@@ -273,6 +277,8 @@ class ImageViewer {
             gateCount: null,
             gateNotCalled: null,
             gateUncertain: null,
+            gateModelOwn: null,
+            gateModelNotOwn: null,
             renderVersion: 0,
             lutVersion: 0,
             styleCache: new Map(),
@@ -534,7 +540,7 @@ class ImageViewer {
                 // Versioned with the gate mask's meaning (2 = not called,
                 // drawn grey): a cached older shader would draw those cells
                 // as positives.
-                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261008_spatial_evidence"),
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261010_cell_model"),
                 labelTile: PlexoraLabelTile,
                 onChange: () => this.applyLabelRenderer(),
             })
@@ -1114,6 +1120,8 @@ class ImageViewer {
         view.gateCount = this.segmentationGateCount ?? null;
         view.gateNotCalled = this.segmentationGateNotCalled ?? null;
         view.gateUncertain = this.segmentationGateUncertain ?? null;
+        view.gateModelOwn = this.segmentationGateModelOwn ?? null;
+        view.gateModelNotOwn = this.segmentationGateModelNotOwn ?? null;
         return view;
     }
 
@@ -2554,12 +2562,16 @@ class ImageViewer {
                 layer.gateCount = gate ? gate.count : null;
                 layer.gateNotCalled = gate ? gate.notCalledCount : null;
                 layer.gateUncertain = gate ? gate.uncertainCount : null;
+                layer.gateModelOwn = gate ? gate.modelOwnCount : null;
+                layer.gateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
                 this.segmentationGateNotCalled = gate ? gate.notCalledCount : null;
                 this.segmentationGateUncertain = gate ? gate.uncertainCount : null;
+                this.segmentationGateModelOwn = gate ? gate.modelOwnCount : null;
+                this.segmentationGateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2764,11 +2776,13 @@ class ImageViewer {
      * reads them once.
      */
     /**
-     * Mark some of a gated marker's positive cells apart -- one byte per
-     * table row, as /get_all_cells sends ids (1 = marked) -- or clear the
-     * mark with null. A plugin's to give (the gating plugin's uncertain
-     * cells, from its own route): the cells stay positive in every count and
-     * are drawn amber (a gate mask's 3). Each gated layer is evaluated again.
+     * Mark some of a gated marker's cells apart -- one byte per table row, as
+     * /get_all_cells sends ids -- or clear the mark with null. A plugin's to
+     * give (the gating plugin's evidence, from its own routes): 1 uncertain
+     * (a positive, drawn amber), 2 not its own by the cell model (a positive,
+     * magenta), 3 its own by the cell model (a cell below the gate,
+     * sky blue). Shown, never applied: every count stays the gate's
+     * (PlexoraLabelGpu.evaluateGateMask). Each gated layer is evaluated again.
      */
     setCellFlagMask(marker, bytes) {
         this.cellFlags = this.cellFlags || {};

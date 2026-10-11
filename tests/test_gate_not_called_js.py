@@ -64,8 +64,13 @@ CHECKS = (
     "...and the tooltip says why they are grey",
     "without a fit, the not-called count alone",
     "with neither, the note is hidden, as it was",
-    "with uncertain cells the note ends \", N uncertain\"",
     "the viewer's word that this layer's gate moved repaints it; another layer's does not",
+    "the cell model's block is hidden for a marker with no gate",
+    "before a run: one button to check the cells, no note, no toggle",
+    "while it runs: its progress and Cancel",
+    "after a run: what it would move, in its colours, and the toggle",
+    "the toggle draws the model's codes, and again stops",
+    "a model that agrees with the gate says so, with nothing to draw",
 )
 
 node = shutil.which("node")

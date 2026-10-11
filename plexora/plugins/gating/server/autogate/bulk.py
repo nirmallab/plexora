@@ -52,12 +52,8 @@ def calibrate_image(call, project, session_id):
             "changed": changed}
 
 
-def prepare_unit(call, session_id, project, marker, panel, options, pixel=None):
-    """Everything about one unit that can be computed without the lock --
-    with the session's `spatial` switch on, the spatial record too (the
-    evidence mode and, at the Auto gate, the feature layer's summary:
-    `spatial.bulk_record`). `pixel` is the session's pixel size for the
-    image (`Engine.pixel_for`)."""
+def prepare_unit(call, session_id, project, marker, panel, options):
+    """Everything about one unit that can be computed without the lock."""
     from plexora.plugins.gating.server.autogate import provenance
 
     ds = call.session.data(project)
@@ -89,27 +85,10 @@ def prepare_unit(call, session_id, project, marker, panel, options, pixel=None):
                                              "is off); the GMM proposal is recorded")}
     profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]),
                                  compartment=_context_of(panel, marker)["compartment"])
-    out = {**kept, "profile": profile, "gate": gate,
-           "context": _context_of(panel, marker),
-           "no_image_channel": views.image_channel(ds, marker) is None,
-           "image_qc": profile.get("image_qc")}
-    if options["spatial"] != "off":
-        out["spatial"] = _spatial_record(call, ds, marker, profile, gate, pixel, options)
-    return out
-
-
-def _spatial_record(call, ds, marker, profile, gate, pixel, options):
-    """The unit's spatial record, or one that says why there is none: the
-    feature layer is evidence, never a reason a marker cannot be gated."""
-    from plexora.plugins.gating.server.autogate import spatial
-
-    try:
-        return spatial.bulk_record(call.session, ds, marker,
-                                   (profile.get("fit") or {}).get("gate_raw"), gate["high"],
-                                   pixel=pixel, seed=int(options["seed"]))
-    except Exception as exc:
-        return {"mode": "C", "why": f"the spatial evidence could not be measured: {exc}"[:240],
-                "error": True}
+    return {**kept, "profile": profile, "gate": gate,
+            "context": _context_of(panel, marker),
+            "no_image_channel": views.image_channel(ds, marker) is None,
+            "image_qc": profile.get("image_qc")}
 
 
 def settle_unit(engine, unit, prepared):
@@ -153,8 +132,6 @@ def fill_unit(unit, prepared):
                                "dynamic_range_decades", "flags")}
         if prepared.get("image_qc") else None,
     })
-    if prepared.get("spatial"):
-        unit["spatial"] = prepared["spatial"]
 
 
 def decide_first(engine, unit):
@@ -199,8 +176,6 @@ def decide_first(engine, unit):
             unit["qc_reason"] = hard or [unit["class"]]
             unit["state"] = "qc_confirm"
         return
-    if t1.get("accept") and _spatial_audit(engine, unit):
-        return
     if t1.get("accept"):
         unit["path"] = "t1"
         unit["method"] = "gmm"
@@ -225,27 +200,6 @@ def decide_first(engine, unit):
         engine.settle(unit)
         return
     unit["state"] = "awaiting_t2"
-
-
-def _spatial_audit(engine, unit) -> bool:
-    """A T1 acceptance the spatial numbers argue against (`spatial.t1_audit`:
-    high risk, positivity that tracks density or background, concentrated
-    spill-over) gets a first look instead -- numbers only, no model call for
-    a clean marker. With `decide` only; True when the unit was demoted."""
-    from plexora.plugins.gating.server.autogate import spatial
-
-    if not engine.spatial_on("decide") or unit.get("no_image_channel") \
-            or int(engine.options["max_tier"]) < 2:
-        return False
-    reasons = spatial.t1_audit(unit.get("spatial") or {})
-    if not reasons:
-        return False
-    unit["t1"] = {**(unit.get("t1") or {}), "accept_overridden": True}
-    unit["spatial_flags"] = sorted(set(unit.get("spatial_flags") or [])
-                                   | {"t1_spatial_demoted"})
-    unit["reason"] = "spatial audit: " + "; ".join(reasons)
-    unit["state"] = "awaiting_t2"
-    return True
 
 
 def _check_stopped(session_id):
@@ -290,13 +244,8 @@ def run(call, inp):
                 unit = engine.record["units"].get(key)
                 pending = unit is not None and unit["state"] == "pending"
             if pending:
-                pixel = None
-                if options["spatial"] != "off":
-                    with engine_for(call, session_id, save=False) as engine:
-                        pixel = engine.pixel_for(project)
                 try:
-                    prepared = prepare_unit(call, session_id, project, marker, panel, options,
-                                            pixel=pixel)
+                    prepared = prepare_unit(call, session_id, project, marker, panel, options)
                 except AgentError as exc:
                     prepared = {"close": ("manual_review_recommended",
                                           f"could not be profiled: {exc.message}")}

@@ -181,6 +181,18 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
         return mask;
     }
 
+    /** The cell model's marks: a quarter of the kept cells not its own (5),
+     *  a quarter of the rest its own below the gate (4). */
+    function modelOf(tile, keep) {
+        const mask = gateOf(tile, keep);
+        for (const id of new Set(tile.ids)) {
+            if (!id) continue;
+            if (mask[id] === 1 && id % 4 === 3) mask[id] = 5;
+            else if (mask[id] === 0 && id % 4 === 1) mask[id] = 4;
+        }
+        return mask;
+    }
+
     function canvas2d(w, h) {
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
@@ -292,6 +304,8 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
                                           gateMask: notCalledOf(tile, (id) => id % 2 === 1) }]],
             ["gate mask, uncertain amber", [{ name: "u", mode: "outlines", lut, opacity: 1,
                                              gateMask: uncertainOf(tile, (id) => id % 2 === 0) }]],
+            ["gate mask, the cell model's colours", [{ name: "m", mode: "outlines", lut, opacity: 1,
+                gateMask: modelOf(tile, (id) => id % 2 === 0) }]],
         ];
         for (const segmentationMode of ["filled", "outlines"]) {
             for (const [name, layers] of cases) {

@@ -61,13 +61,13 @@ TERMINAL = schemas.TERMINAL_STATES
 #: The packets a unit's budget pays for: looks. Confirmations -- a technical
 #: check, a whole-image check of a chosen gate, a carried gate -- are bounded
 #: by the state machine itself and never stop a unit short of its answer.
-BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates", "t3_contrast")
+BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
 
 #: The packet kind each waiting state asks for.
 ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
         "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check",
-        "awaiting_contrast": "t3_contrast"}
+        "awaiting_correction": "correction_check"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
 #: answer models can describe them without importing the engine).
@@ -87,26 +87,12 @@ SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nucle
 
 #: The regression failures a purity push answers (`Engine.purity_push`):
 #: the partners check, with the spatial checks an over-low gate drags along.
-PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles", "density_agreement",
-                             "snr_agreement"))
+PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles"))
 
 #: The regression checks that say where positives are, not how many: when
 #: only these fail, the whole-image look may hold or reject the gate, never
-#: move it (`regression_confirm`). The last two run only with spatial
-#: evidence (`regression.spatial_checks`).
-SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles", "density_agreement",
-                            "snr_agreement"))
-
-#: The spatial flags that cap a gate's confidence at moderate: the evidence
-#: found its errors concentrated somewhere, or could not check that it was
-#: not (`spill_unverified`). A cap, never a route; nothing spatial lifts one.
-SPATIAL_CAPPING = ("spill_concentrated", "background_concentrated", "density_disagreement",
-                   "spill_unverified", "reference_unreadable", "segmentation_suspected")
-
-#: The flags under which the gate is HELD: a look or a whole-image check
-#: may not raise it past the concentrated error (`apply_regression`,
-#: `Engine.purity_push`).
-HOLD_FLAGS = ("spill_concentrated", "background_concentrated")
+#: move it (`regression_confirm`).
+SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles"))
 
 
 def store() -> SessionStore:
@@ -258,6 +244,10 @@ def confidence_for(unit) -> str:
         # Most of the image failed QC: what remains may not be representative.
         # A cap, never a route -- the evidence is judged as usual.
         cap = "moderate" if cap == "high" else cap
+    if "model_disagrees" in (unit.get("look_flags") or ()):
+        # The cell model reads the gate elsewhere, and the looks did not take
+        # its correction (or it lies too far to propose): a doubt, never a route.
+        cap = "moderate" if cap == "high" else cap
     if "pattern_mismatch" in (unit.get("look_flags") or ()) or unit.get("t4_stopped_mixed"):
         # The stain was not the compartment's pattern, or the gate stopped at
         # a row that held both kinds of cell: a doubt, never a route.
@@ -270,16 +260,6 @@ def confidence_for(unit) -> str:
         # A conditional gate ("positive only within CD45+") is written as the
         # plain gate at its threshold: it stands on the partner's gate too.
         cap = "moderate" if cap == "high" else cap
-    capping = sorted(set(unit.get("spatial_flags") or ()) & set(SPATIAL_CAPPING))
-    if capping:
-        # The spatial evidence found the gate's errors concentrated in one
-        # environment (held there), or could not check: a doubt, never a route.
-        if cap == "high":
-            cap = "moderate"
-        note = f"{', '.join(capping)}: capped at moderate by the spatial evidence"
-        notes = list(unit.get("confidence_notes") or [])
-        if note not in notes:
-            unit["confidence_notes"] = notes + [note]
     if order.index(level) > order.index(cap):
         level = cap
     return level
@@ -393,97 +373,74 @@ class Engine(BaseEngine):
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])
 
-    # -- spatial evidence (`SessionOptions.spatial`) --
+    # -- hybrid gating (`SessionOptions.hybrid`) --
 
-    def spatial_option(self) -> str:
-        option = self.options["spatial"]
-        return option if option in schemas.SPATIAL_OPTIONS else "off"
+    def hybrid_option(self) -> str:
+        option = self.options["hybrid"]
+        return option if option in schemas.HYBRID_OPTIONS else "off"
 
-    def spatial_on(self, level="diagnose") -> bool:
-        """Whether the session's `spatial` switch is at `level` or beyond
-        (`schemas.SPATIAL_OPTIONS`: off < diagnose < stratify < decide)."""
-        order = schemas.SPATIAL_OPTIONS
-        return order.index(self.spatial_option()) >= order.index(level)
+    def hybrid_has(self, feature) -> bool:
+        """Whether the session's `hybrid` level includes `feature` (`tiles`
+        or `model`: `schemas.HYBRID_FEATURES`)."""
+        return feature in schemas.HYBRID_FEATURES[self.hybrid_option()]
 
-    def spatial_payload(self, unit):
-        """`{mode, map, pixel_um}`: what the table operations read the feature
-        layer with (`spatial.payload_for`); None when the switch is off or
-        the unit has no mode."""
-        from plexora.plugins.gating.server.autogate import spatial
+    def partner_panels(self, unit):
+        """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
+        `anti` panels): one expected and one not-expected partner of the
+        marker, as the cell model picks them (`cellcall.partner_plan`: gated
+        partners first), by image channel, with the gates this run holds for
+        them; {} when the marker has none."""
+        from plexora.plugins.gating.server.autogate import cellcall, views
 
-        record = unit.get("spatial") or {}
-        if not self.spatial_on() or not record.get("mode"):
-            return None
         ds = _data(self.call, unit["project"])
-        return spatial.payload_for(self.call.session, ds, unit["marker"], record["mode"],
-                                   record.get("pixel_um"))
+        entries = self.panel_for(unit["project"]).get("entries") or {}
+        channels = {m: views.image_channel(ds, m) for m in ds.table.markers}
+        present = {m for m, c in channels.items() if c and m != unit["marker"]}
+        book = self.ledger(unit["project"], without=unit)
+        gated = {m: e["gate"] for m, e in book.items()
+                 if e["grade"] not in ("failed", "pending") and e.get("gate") is not None}
+        plan = cellcall.partner_plan(entries, unit["marker"], present, {}, 1, set(gated))
+        out = {"markers": {}, "gates": {}}
+        for p in plan:
+            if p["kind"] in out["markers"]:
+                continue
+            out["markers"][p["kind"]] = p["marker"]
+            out[p["kind"]] = channels[p["marker"]]
+            if p["marker"] in gated:
+                out["gates"][channels[p["marker"]]] = float(gated[p["marker"]])
+        return out if out["markers"] else {}
 
-    def spatial_summary(self, unit, low):
-        """The feature layer at `low` (`spatial.spatial_summary`, as a table
-        operation, cached per gate where the table is), compacted onto the
-        unit; None when off."""
-        from plexora.plugins.gating.server.autogate import spatial
+    def model_waiting(self, unit) -> bool:
+        """Whether the unit's next decision waits on a run of the cell model
+        (`hybrid.waiting`); never with the model off."""
+        from plexora.plugins.gating.server.autogate import hybrid
 
-        payload = self.spatial_payload(unit)
-        if payload is None or low is None:
-            return None
-        ds = _data(self.call, unit["project"])
-        summary = tableops.local_or_node(ds, "gating.autogate.spatial", {
-            **payload, "marker": unit["marker"], "low": float(low), "high": unit.get("high"),
-            "seed": int(self.options["seed"])})
-        unit["spatial"] = {**(unit.get("spatial") or {}), **spatial.compact(summary)}
-        return summary
+        return self.hybrid_has("model") and hybrid.waiting(unit)
 
-    def spatial_detail(self, unit):
-        """`detail["spatial"]` of a gate's provenance row: what the feature
-        layer said and whether it changed the path; None when off."""
-        record = unit.get("spatial") or {}
-        if not self.spatial_on() or not record:
-            return None
-        influenced = bool(unit.get("spatial_flags") or unit.get("contrast_done")
-                          or unit.get("spatial_case"))
-        return {"version": schemas.SPATIAL_VERSION, "option": self.spatial_option(),
-                "mode": record.get("mode"), "mode_why": record.get("why"),
-                "risk": record.get("risk"), "flags": list(unit.get("spatial_flags") or []),
-                "case": unit.get("spatial_case"),
-                "density_stratified_pf": record.get("density_pf"),
-                "snr_stratified_pf": record.get("snr_pf"),
-                "bg_heterogeneity": record.get("bg_heterogeneity"),
-                "spill_suspect_share_near_gate": record.get("spill_share_near_gate"),
-                "spill_excess": record.get("spill_excess"),
-                "density_excess": record.get("density_excess"),
-                "snr_excess": record.get("snr_excess"),
-                "n_uncertain": unit.get("n_uncertain"),
-                "confirmed": self.confirmed_ids(unit),
-                "influenced": influenced}
+    def model_ahead(self, unit):
+        """Read the marker's cells near its start while its first look is out
+        (`hybrid`, purpose `decide`, nothing waits): a gate the looks keep, or
+        move less than `HYBRID["rerun_halves"]`, is then corrected at once."""
+        from plexora.plugins.gating.server.autogate import hybrid
 
-    def count_uncertain(self, unit, low):
-        """How many positives at `low` the spatial evidence does not vouch for
-        (`calls.uncertain_mask`, with `decide` only); None otherwise."""
-        if not self.spatial_on("decide") or low is None:
+        state = unit.get("model") or {}
+        if not self.hybrid_has("model") or not hybrid.HYBRID["correct"] \
+                or unit.get("no_image_channel") or unit.get("condition") \
+                or state.get("runs") or state.get("ahead") or unit.get("candidate") is None:
             return None
-        payload = self.spatial_payload(unit)
-        if payload is None:
-            return None
-        ds = _data(self.call, unit["project"])
-        try:
-            found = tableops.local_or_node(ds, "gating.autogate.uncertain", {
-                **payload, "marker": unit["marker"], "low": float(low),
-                "high": unit.get("high"), "confirmed": self.confirmed_ids(unit)})
-        except Exception:  # a count beside the gate, never a reason to fail the write
-            return None
-        unit["n_uncertain"] = int(found.get("n_uncertain") or 0)
-        return unit["n_uncertain"]
+        unit.setdefault("model", {})["ahead"] = float(unit["candidate"])
+        return hybrid.request(self, unit, unit["candidate"], purpose="decide")
 
-    @staticmethod
-    def confirmed_ids(unit):
-        """Cells a look or the targeted pass cleared: a bright row judged
-        `own_stain`, or a targeted read the pixels did not support (at most
-        64; the uncertain layer leaves them out)."""
-        ids = {int(i) for i in unit.get("confirmed_own") or []}
-        ids |= {int(cid) for cid, state in (unit.get("targeted") or {}).items()
-                if state == "unsupported"}
-        return sorted(ids)[:64]
+    def model_layer(self, unit, low):
+        """Queue the per-cell layer at the gate a looked-at marker was given
+        (`hybrid`, purpose `layer`): only markers that needed a look, only
+        with the model on. Nothing waits for it."""
+        from plexora.plugins.gating.server.autogate import hybrid
+
+        if low is None or not self.hybrid_has("model") or not hybrid.HYBRID["layer"] \
+                or unit.get("no_image_channel") or not (unit.get("used") or {}).get("packets"):
+            return None
+        return hybrid.request(self, unit, low, purpose="layer")
 
     def unit_ref(self, unit):
         return {"project": unit["project"], "marker": unit["marker"]}
@@ -515,11 +472,10 @@ class Engine(BaseEngine):
         # an answer given before it is not replayed after it.
         qc = (packet.get("evidence") or {}).get("qc_exclusion") or {}
         extra = (f"qc:{qc.get('mode')}:{qc.get('fingerprint')}",) if qc.get("applied") else ()
-        if self.spatial_on():
-            # The feature layer chose the cells and wrote the captions; off,
+        if self.hybrid_option() != "off":
+            # The pictures and the cells they hold are the hybrid's; off,
             # the key is today's.
-            extra += (f"spatial:{schemas.SPATIAL_VERSION}:{schemas.TARGETED_VERSION}:"
-                      f"{self.spatial_option()}",)
+            extra += (f"hybrid:{schemas.HYBRID_VERSION}:{self.hybrid_option()}",)
         return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
@@ -669,12 +625,12 @@ class Engine(BaseEngine):
                   "confidence_notes": unit.get("confidence_notes")}
         if unit.get("condition"):
             detail["condition"] = unit["condition"]
-        if self.spatial_on() and unit.get("spatial"):
-            # What the spatial evidence said and whether it changed the path;
-            # absent with the switch off, so a row is today's.
-            if not empty:
-                self.count_uncertain(unit, low)
-            detail["spatial"] = self.spatial_detail(unit)
+        if self.hybrid_has("model") and unit.get("model"):
+            # What the cell model said and did; absent with it off, so a row
+            # is today's.
+            from plexora.plugins.gating.server.autogate import hybrid
+
+            detail["cellcall"] = hybrid.detail(unit)
         depends = unit.get("depends_on") or {r["marker"]: r["gate"]
                                              for r in unit.get("reference_gates") or []}
         if depends:
@@ -688,6 +644,8 @@ class Engine(BaseEngine):
                "delta_fit": unit.get("delta_fit"), "delta_fraction": unit.get("delta_fraction"),
                "refinement_rounds": int(unit.get("rounds") or 0), "session_id": self.id,
                "principal": getattr(self.call.policy, "principal", None) or "agent"}
+        if not empty:
+            self.model_layer(unit, snapped_low)
         if self.options["mode"] != "apply":
             unit["proposed"] = snapped_low
             provenance.record(ds.name, marker, **{**row, "status": "proposed",
@@ -744,6 +702,16 @@ class Engine(BaseEngine):
         is written there anyway, tagged `needs_review` with confidence
         `manual_review` (`_review_gate`): every gated marker ends with a value."""
         unit["reason"] = reason
+        if state in schemas.REVIEW_WRITE_STATES and self.hybrid_has("model") \
+                and not unit.get("user_edited") and (proposed is None or unit.get("candidate") is None
+                     or abs(float(proposed) - float(unit["candidate"])) <= 1e-9):
+            # The gate written for review, corrected by the cell model first
+            # when a run near it is stored (`hybrid.correct_for_review`).
+            from plexora.plugins.gating.server.autogate import hybrid
+
+            corrected = hybrid.correct_for_review(self, unit)
+            if corrected is not None and proposed is not None:
+                proposed = corrected
         if proposed is not None:
             unit["proposed"] = float(proposed)
         if state in schemas.EMPTY_GATE_STATES and unit.get("seen") is not None:
@@ -884,6 +852,13 @@ class Engine(BaseEngine):
 
     def settle(self, unit):
         """Advance a unit through every deterministic step it is waiting on."""
+        if unit["state"] == "awaiting_regression" and self.hybrid_has("model"):
+            from plexora.plugins.gating.server.autogate import hybrid
+
+            if hybrid.plan_correction(self, unit):
+                # The cell model reads the approved gate first, or its move
+                # is put to one question (`correction_check`).
+                return
         if unit["state"] == "awaiting_regression":
             result = self.run_regression(unit)
             if result["ok"] or unit.get("regression_confirmed") \
@@ -907,10 +882,6 @@ class Engine(BaseEngine):
                 or unit.get("purity_pushed") or unit.get("condition") \
                 or int(self.options["max_tier"]) < 4 or not self.rounds_left(unit):
             return False
-        if set(unit.get("spatial_flags") or ()) & set(HOLD_FLAGS):
-            # The spatial evidence held this gate: impurity that sits beside
-            # bright neighbours or in background is not the threshold's.
-            return False
         unit["purity_pushed"] = True
         unit.setdefault("code_moves", []).append("up:purity")
         unit["direction"] = "up"
@@ -926,11 +897,8 @@ class Engine(BaseEngine):
     # -- budget --
 
     def rounds_left(self, unit) -> bool:
-        """Whether the unit may have another round of candidates. A
-        like-for-like look (`t3_contrast`) takes the place of the first."""
+        """Whether the unit may have another round of candidates."""
         limit = ENGINE["t4_rounds"] * (1 + int(unit.get("extensions") or 0))
-        if unit.get("contrast_done"):
-            limit -= 1
         return int(unit.get("rounds", 0)) < limit
 
     def close_at_limit(self, unit, why, because):
@@ -1222,6 +1190,7 @@ class Engine(BaseEngine):
                 return ([], "busy") if held else ([(kind, [])], None)
         bulk_running = record.get("state") == "bulk_running"
         picks = []
+        model_wait = False
 
         def blocked(why):
             if picks:
@@ -1253,6 +1222,11 @@ class Engine(BaseEngine):
                     continue
                 if unit["state"] != "accepted_t1" and not self._settled(unit, links):
                     continue
+                if self.model_waiting(unit):
+                    # The cell model is reading this marker (`hybrid`): the
+                    # rest goes on; nothing is "done" while it reads.
+                    model_wait = True
+                    continue
                 kind = self._decision(unit)
                 if kind:
                     picks.append((kind, [unit]))
@@ -1274,6 +1248,8 @@ class Engine(BaseEngine):
             return picks, None
         if held:
             return [], "busy"
+        if model_wait:
+            return [], "wait"
         if self.waiting_for_user():
             return [], "wait_user"
         return [], None
@@ -1316,6 +1292,8 @@ class Engine(BaseEngine):
         settled, closed or waits on the audit sheet."""
         if self.check_user_edit(unit):
             return None
+        if self.model_waiting(unit):
+            return None
         if unit["state"] == "awaiting_regression":
             self.settle(unit)
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
@@ -1325,6 +1303,8 @@ class Engine(BaseEngine):
             self.propose(unit)
         if kind == "t2_confirm" and self.defer_for_children(unit):
             return None
+        if kind == "t2_confirm":
+            self.model_ahead(unit)
         if kind == "t4_candidates" and not self.rounds_left(unit) \
                 and not self.limit_reached(unit, "rounds"):
             return None
@@ -1351,6 +1331,7 @@ class Engine(BaseEngine):
             if kind:
                 return kind, [last]
         bulk_running = record.get("state") == "bulk_running"
+        model_wait = False
         for project in record["images"]:
             units = self.units_of(project)
             if project != record.get("reference_image") and any(
@@ -1377,6 +1358,9 @@ class Engine(BaseEngine):
                     self.close(unit, "manual_review_recommended",
                                "the deterministic pass did not reach this marker")
                     continue
+                if self.model_waiting(unit):
+                    model_wait = True
+                    continue
                 kind = self._decision(unit)
                 if kind:
                     return kind, [unit]
@@ -1386,6 +1370,8 @@ class Engine(BaseEngine):
                         return "t1_strip", strip
             if strip:
                 return "t1_strip", strip
+        if model_wait:
+            return "wait", []
         waiting = self.waiting_for_user()
         if waiting:
             return "wait_user", waiting
@@ -1480,14 +1466,7 @@ def summary_of(record) -> dict:
             # evidence (`memo`), and markers given more looks than the default.
             "replayed": len(record.get("replayed") or []),
             "extended": sum(1 for u in units if u.get("extensions")),
-            "by_state": by_state,
-            # With spatial evidence (only then): markers it held, and markers
-            # whose path it changed at all.
-            **({"spatial_held": sum(1 for u in units if u.get("spatial_held")),
-                "spatial_influenced": sum(1 for u in units
-                                          if u.get("spatial_flags") or u.get("contrast_done")
-                                          or u.get("spatial_case"))}
-               if any(u.get("spatial") for u in units) else {})}
+            "by_state": by_state}
 
 
 def _same_pair(a, b):

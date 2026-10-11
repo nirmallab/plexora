@@ -69,11 +69,11 @@ WRITTEN_STATES = ACCEPTED_STATES + EMPTY_GATE_STATES + REVIEW_WRITE_STATES
 SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 
 #: A marker waiting on something: the audit sheet, a look, a check.
-#: `awaiting_contrast`: a first look's direction held for a like-for-like look
-#: (`SessionOptions.spatial = decide`).
+#: `awaiting_correction`: a gate a look approved that the cell model would
+#: move, its few changed cells put to one question (`SessionOptions.hybrid`).
 WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
                   "awaiting_regression", "regression_confirm", "transfer_check",
-                  "awaiting_contrast")
+                  "awaiting_correction")
 
 #: Before any decision: not profiled yet, or (a dataset) waiting for the reference.
 OPEN_STATES = ("pending", "transfer_pending")
@@ -85,7 +85,8 @@ SESSION_STATES = ("created", "needs_setup", "bulk_running", "deciding", "done", 
 FINISHED_STATES = ("done", "cancelled", "rolled_back", "failed")
 
 #: What `gating_next` answers, besides a finished session's own state.
-NEXT_STATES = ("decision", "needs_setup", "bulk_running", "decided", "paused", "stopped")
+NEXT_STATES = ("decision", "needs_setup", "bulk_running", "model_running", "decided", "paused",
+               "stopped")
 
 #: Packet kinds, partitioned by what they are for (a test checks the union is
 #: every packet builder): set-up before any marker (the ones that wait on the
@@ -95,8 +96,8 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
 SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context")
-LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates", "t3_contrast")
-CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check")
+LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
+CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check", "correction_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
@@ -128,12 +129,11 @@ NARRATION = {
                         "cells between candidate thresholds above it.",
     "t4_candidates:down": "The {marker} threshold misses real positives; comparing the cells "
                           "between candidate thresholds below it.",
-    "t3_contrast": "Comparing {marker} cells of similar brightness with and without a bright "
-                   "neighbour, in dense and sparse tissue, before deciding whether the "
-                   "threshold itself is wrong.",
     "regression_confirm": "Checking whether the {marker} threshold is consistent across "
                           "representative tissue regions.",
     "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
+    "correction_check": "Checking the few {marker} cells the cell model says the approved "
+                        "threshold calls wrongly before moving it.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
     "panel_context": "Reading the panel to learn which markers belong together.",
@@ -146,7 +146,7 @@ EVIDENCE_LABELS = {
     "t2_collage": "Cells around the {marker} threshold",
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
-    "contrast_collage": "{marker} cells of one intensity in different surroundings",
+    "correction_collage": "{marker} cells a corrected threshold would change",
     "context_sheet": "{marker} across the tissue",
     "strip": "Markers at their thresholds",
 }
@@ -161,15 +161,15 @@ EVIDENCE_LABELS = {
 #: `manual_review_recommended`, with the best gate reached written and
 #: tagged `needs_review`. `max_extensions` bounds the extra allowances a marker can get.
 LIMIT_POLICIES = ("ask", "extend", "stop")
-#: `spatial` (`SPATIAL_OPTIONS`) is set the same way: `off` until the
-#: ablation on real images shows no clean marker moves (validation pending).
-LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3, "spatial": "off"}
+#: `hybrid` (`HYBRID_OPTIONS`) is set the same way: `off` until the live
+#: ablation clears its bar (docs/internal/bench/AUTOGATE_STEP_LEDGER.md).
+LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3, "hybrid": "off"}
 #: The environment a command line sets them through (`plexora mcp serve
 #: --gating-on-limit`, `plexora ai bench gating --on-limit`), so automated
 #: runs do not stop on a viewer default.
 LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
              "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS",
-             "spatial": "PLEXORA_GATING_SPATIAL"}
+             "hybrid": "PLEXORA_GATING_HYBRID"}
 #: What each limit is called where the user reads it.
 LIMIT_WORDS = {"budget": "its allowance of looks for this marker",
                "rounds": "its rounds of candidate thresholds"}
@@ -248,82 +248,25 @@ ROW_VERDICTS = ("own_stain", "neighbour_only", "unstained", "mixed", "cannot_tel
 PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
             "cannot_tell")
 
-# -- spatial evidence (`SessionOptions.spatial`, `autogate/spatial.py`) ---------------
+# -- the cell model and hybrid gating ------------------------------------------------
 
-#: Bumped when the feature layer's numbers, the targeted pass's reading or the
-#: uncertain layer's rule change meaning: part of every cache key over them,
-#: and of a packet's memo key while the switch is on.
-SPATIAL_VERSION = "2"
-TARGETED_VERSION = "1"
-UNCERTAIN_VERSION = "2"
+#: Bumped when the cell model's reading or calling rule changes meaning
+#: (`autogate/cellcall.py`): part of every stored run's key.
+CELLCALL_VERSION = "1"
 
-#: How much the spatial evidence does in a session, each level adding to the
-#: one before: `off` -- nothing (a session is today's, byte for byte);
-#: `diagnose` -- measured and recorded (a summary per marker, the looks told,
-#: provenance and the report); `stratify` -- + the looks' cells spread over
-#: environments, a row at the gate beside bright neighbours, captions, the
-#: targeted pass; `decide` -- + explanation words, the like-for-like look
-#: (`t3_contrast`), the case table, the T1 audit, the spatial regression
-#: checks and the uncertain layer.
-SPATIAL_OPTIONS = ("off", "diagnose", "stratify", "decide")
-
-#: The evidence a marker is judged with: A -- a mask that matches the table,
-#: and the image; B -- the image and the table's centroids (a Voronoi region
-#: is not a boundary); C -- the table only.
-SPATIAL_MODES = ("A", "B", "C")
-DENSITY_CLASSES = ("sparse", "intermediate", "dense")
-SNR_CLASSES = ("low", "high", "unknown")
-
-#: Whether a cell near the gate may carry a neighbour's stain: `none`;
-#: `candidate` -- a bright neighbour touches it, and only the table is known;
-#: `untested` -- likewise with an image, before its pixels were read;
-#: `supported` / `unsupported` -- what the targeted pass found in the pixels.
-#: Proximity alone never goes past `candidate` / `untested`.
-SPILL_STATES = ("none", "candidate", "untested", "supported", "unsupported")
-
-#: What a look may say the pictures support, beside its row words (at most
-#: three, offered with `decide`): evidence for a case, never a direction.
-EXPLANATIONS = ("threshold_error", "possible_neighbor_spillover",
-                "possible_local_background", "possible_segmentation_error",
-                "genuine_weak_expression", "insufficient_evidence")
-
-#: A first look's rows (the only ones `verdicts.direction_from_rows` reads) and
-#: the rows a spatial look adds: `near_bright` on a first look (cells at the
-#: gate beside a bright neighbour); the rest on a like-for-like look.
-CORE_ROWS = ("below", "near", "above")
-ENV_ROWS = ("near_bright", "bright", "clear", "dense_clear", "low_snr", "reference",
-            "background")
-
-#: What a like-for-like look's rows make of the gate (`verdicts.spatial_case`):
-#: A -- the threshold is wrong everywhere; B -- spill-over concentrated beside
-#: bright neighbours; C -- concentrated in high local background; D -- real dim
-#: positives below the gate; E -- not enough evidence.
-SPATIAL_CASES = ("A", "B", "C", "D", "E")
-SPATIAL_ACTIONS = ("move_up", "move_down", "hold_flag_spill", "hold_investigate_background",
-                   "provisional_review", "about_right")
-#: What a unit records of the spatial evidence; `engine.SPATIAL_CAPPING` says
-#: which cap confidence at moderate.
-SPATIAL_FLAGS = ("spill_concentrated", "background_concentrated", "density_disagreement",
-                 "spill_unverified", "t1_spatial_demoted", "reference_unreadable",
-                 "env_rows_absent", "segmentation_suspected")
-
-#: [cal] the spatial decision rules' cut-points; first guesses, validation
-#: pending. Every number the rules read is an EXCESS: the share of the cells
-#: at the gate in an environment (touching a strong positive, in dense tissue,
-#: in low SNR) minus the same share among clear positives -- positives that
-#: cluster by biology put the cells at the gate there too, so only a surplus
-#: over them points at an artefact. (A raw share or a positive-fraction ratio
-#: between strata reads biology as artefact: on lsp11385_2 the raw spill share
-#: at the gate was 0.42-0.56 and the low/high-SNR ratio 3.5-7.7 for all twelve
-#: human-gated markers; their excesses -0.39 to +0.24; the synthetic spill
-#: scene's spill excess +0.43.) `min_stratum_cells`: cells at the gate before
-#: the T1 audit reads an excess.
-SPATIAL_RULES = {"spill_excess_low": 0.10, "spill_excess_trigger": 0.25,
-                 "snr_excess_trigger": 0.15, "density_excess_trigger": 0.15,
-                 "min_stratum_cells": 200, "min_env_row_cells": 3,
-                 "contrast_rows_max": 6, "priority_per_group": 6,
-                 "near_duplicate_diameters": 2.0, "density_residual_max": 0.10,
-                 "snr_residual_max": 0.10, "min_agreement_tiles": 6}
+#: Hybrid gating (the cell model beside the vision model), in two parts a
+#: session takes separately or together: `tiles` -- the looks draw each cell
+#: as a 2 x 2 block (morphology, the context with the judged cell outlined,
+#: its expected and its not-expected partner: `collage.LAYOUTS["t2m"]`);
+#: `model` -- the cell model (`cellcall.py`) reads the cells near each looked-at
+#: marker's gate and its calls shape the gate (`HYBRID_FEATURES`); `full` --
+#: both. `off` is a session without it, byte for byte.
+HYBRID_OPTIONS = ("off", "tiles", "model", "full")
+HYBRID_FEATURES = {"off": frozenset(), "tiles": frozenset(("tiles",)),
+                   "model": frozenset(("model",)), "full": frozenset(("tiles", "model"))}
+#: Bumped when what the hybrid does to a session changes meaning: part of a
+#: packet's memo key while it is on.
+HYBRID_VERSION = "1"
 
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
 ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,

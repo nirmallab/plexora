@@ -59,7 +59,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: medium
-        kinds: [t1_strip, t2_confirm, t3_biological, t3_contrast, qc_confirm]
+        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm]
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.
@@ -75,7 +75,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: high
-        kinds: [regression_confirm, transfer_check]
+        kinds: [regression_confirm, transfer_check, correction_check]
   qc:
     label: QC
     tasks:

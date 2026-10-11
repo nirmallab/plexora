@@ -546,6 +546,25 @@ const wins = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([6, 6]), { A: f32(
     { A: [1, 10] }, { A: new Uint8Array([0, 1]) });
 check("gate: not called wins over a pass of the same id, whichever row comes first",
     wins.mask[6] === 2 && wins.count === 0 && wins.notCalledCount === 1);
+// What a plugin marks (gating's evidence), shown and never counted differently:
+// 1 uncertain (3), 2 not own by the cell model (5), 3 own by it (4).
+const marked = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([1, 2, 3, 4, 5]),
+    { A: f32([5, 5, 0, 0, 5]) }, { A: [1, 10] }, null, { A: new Uint8Array([2, 1, 3, 0, 0]) });
+check("gate: the cell model's codes draw 4 and 5 and never change the count",
+    Array.from(marked.mask).join("") === "053401" && marked.count === 3
+    && marked.modelOwnCount === 1 && marked.modelNotOwnCount === 1 && marked.uncertainCount === 1,
+    `${Array.from(marked.mask).join("")} count ${marked.count}`);
+const others = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([1, 2]),
+    { A: f32([0, 0]), B: f32([5, 0]) }, { A: [1, 10], B: [1, 10] }, null,
+    { A: new Uint8Array([3, 3]) });
+check("gate: a cell the model calls own is drawn only when every other key passes",
+    Array.from(others.mask).join("") === "040" && others.modelOwnCount === 1 && others.count === 0,
+    Array.from(others.mask).join(""));
+const greyWins = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([1, 2]), { A: f32([0, 5]) },
+    { A: [1, 10] }, { A: new Uint8Array([1, 1]) }, { A: new Uint8Array([3, 2]) });
+check("gate: the cell model never draws over a not-called cell",
+    Array.from(greyWins.mask).join("") === "022" && greyWins.modelOwnCount === 0
+    && greyWins.modelNotOwnCount === 0, Array.from(greyWins.mask).join(""));
 // Math.fround is round-to-nearest-even, the same as numpy's float64 -> float32.
 check("gate: float32 rounding of a bound matches numpy's for a halfway value",
     Math.fround(16777217) === 16777216 && Math.fround(16777219) === 16777220);

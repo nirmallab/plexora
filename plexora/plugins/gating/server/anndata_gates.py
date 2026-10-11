@@ -388,17 +388,24 @@ def save_not_called(source, datasource_name, not_called, n_rows, table_name="gat
     return {"not_called_layer": f"obsm/{key}", "n_not_called": counts}
 
 
-def save_uncertain(source, datasource_name, uncertain, n_rows, table_name="gates",
-                   imageid_column="imageid") -> dict:
-    """Write which positive cells the spatial evidence does not vouch for,
-    beside the gates: `obsm["<table_name>_uncertain"]`, the same shape as
-    `save_not_called` (`{marker: row indices}` within this image's rows).
-    A layer to show beside the calls, never to change them: an uncertain
-    cell is positive by the gate in `uns[table_name]`."""
-    key = f"{table_name}_uncertain"
-    counts = _save_marker_rows(source, datasource_name, uncertain, n_rows, key,
-                               imageid_column)
-    return {"uncertain_layer": f"obsm/{key}", "n_uncertain": counts}
+def save_model_calls(source, datasource_name, own, not_own, n_rows, table_name="gates",
+                     imageid_column="imageid") -> dict:
+    """Write where the cell model disagrees with the gates, beside them:
+    `obsm["<table_name>_model_own"]` -- cells below a gate it confidently
+    reads as stained by their own marker -- and `obsm["<table_name>
+    _model_not_own"]` -- positives it confidently reads as lit by a
+    neighbour or background -- each the shape of `save_not_called`
+    (`{marker: row indices}` within this image's rows). The model's calls
+    are the gate's with these applied: (positive and not `model_not_own`)
+    or `model_own`. A layer beside the calls; the gate in `uns[table_name]`
+    is unchanged."""
+    out = {}
+    for suffix, rows in (("model_own", own), ("model_not_own", not_own)):
+        key = f"{table_name}_{suffix}"
+        out[f"{suffix}_layer"] = f"obsm/{key}"
+        out[f"n_{suffix}"] = _save_marker_rows(source, datasource_name, rows, n_rows, key,
+                                               imageid_column)
+    return out
 
 
 def _save_marker_rows(source, datasource_name, rows_by_marker, n_rows, key, imageid_column):

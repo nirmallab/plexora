@@ -379,34 +379,81 @@
     display: none;
 }
 
-/* The uncertain cells' toggle: one small button under the note, the amber
-   swatch the viewer draws them in -- the same colour as labelTile.js
-   UNCERTAIN_RGB and label.frag.glsl, which cannot read a CSS token. */
-.gate-uncertain {
+/* The cell model's reading: a one-line note of what it would move, with the
+   colours the viewer draws them in (labelTile.js MODEL_OWN_RGB,
+   MODEL_NOT_OWN_RGB, UNCERTAIN_RGB -- the shader cannot read a token), and
+   its buttons under it. */
+.gate-cell-model {
     display: flex;
-    align-items: center;
-    gap: var(--space-1);
+    flex-direction: column;
+    gap: 2px;
     margin-top: 2px;
 }
 
-.gate-uncertain[hidden] {
+.gate-cell-model[hidden],
+.gate-cell-model-note[hidden],
+.gate-cell-model .gate-provenance-action[hidden] {
     display: none;
 }
 
-.gate-uncertain .gate-provenance-action::before {
-    content: "";
+.gate-cell-model-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.gate-cell-model-note[data-tone="error"] {
+    white-space: normal;
+}
+
+/* The counts wrap whole: a narrow sidebar puts the third on a second line
+   rather than cutting it off. */
+.gate-cell-model-note[data-tone="counts"] {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 10px;
+    white-space: normal;
+}
+
+.gate-cell-model-part {
+    white-space: nowrap;
+}
+
+.gate-cell-model-spinner {
+    margin-right: 5px;
+    font-size: 10px;
+}
+
+.gate-cell-model-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.gate-cell-model-swatch {
     display: inline-block;
     width: 7px;
     height: 7px;
-    margin-right: 5px;
+    margin: 0 4px 0 0;
     border-radius: 2px;
-    border: 1.5px solid rgb(255, 176, 32);
     vertical-align: 0;
 }
 
-.gate-uncertain .gate-provenance-action[aria-pressed="true"]::before {
+.gate-cell-model-swatch[data-kind="own"] {
+    background: rgb(86, 180, 233);
+}
+
+.gate-cell-model-swatch[data-kind="not-own"] {
+    background: rgb(255, 70, 230);
+}
+
+.gate-cell-model-swatch[data-kind="uncertain"] {
     background: rgb(255, 176, 32);
 }
+
 
 .gate-qc-note::before {
     content: "";

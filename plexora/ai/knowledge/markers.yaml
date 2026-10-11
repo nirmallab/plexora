@@ -41,7 +41,7 @@ markers:
     caveats: [a control channel; cells bright here are autofluorescent in every channel]
 
   - canonical: CD45
-    synonyms: [PTPRC, LCA, CD45RA, CD45RO]
+    synonyms: [PTPRC, LCA]
     role: lineage_reliable
     compartment: membrane
     lineage: immune (all leukocytes)
@@ -51,6 +51,30 @@ markers:
       - {marker: SOX10, relation: exclusive, confidence: high}
       - {marker: aSMA, relation: exclusive, confidence: moderate}
     caveats: [membrane ring; weak on some myeloid cells and plasma cells]
+
+  # The CD45 isoforms are their own markers, not spellings of CD45: each is
+  # carried by only some leukocytes, so neither can stand in for pan-CD45.
+  - canonical: CD45RA
+    synonyms: [CD45-RA]
+    role: state
+    compartment: membrane
+    lineage: naive T cells, B cells and most NK cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD45RO, relation: exclusive, confidence: moderate}
+    caveats: [cells switching from naive to memory carry both isoforms for a while]
+
+  - canonical: CD45RO
+    synonyms: [CD45-RO]
+    role: state
+    compartment: membrane
+    lineage: memory and activated T cells; also some myeloid cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD45RA, relation: exclusive, confidence: moderate}
+    caveats: [cells switching from naive to memory carry both isoforms for a while]
 
   - canonical: CD3
     synonyms: [CD3e, CD3E, CD3D, CD3G]

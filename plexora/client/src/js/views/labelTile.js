@@ -45,9 +45,15 @@ const SMALL_CELL_TINT = 0.45;
 //: agent/render.py draws QC's left-out cells in -- at the plain layer's alpha.
 const NOT_CALLED_RGB = [122, 122, 122];
 //: A positive cell a plugin marked uncertain (a gate mask's 3: gating's
-//: spatial evidence says its stain may be a neighbour's): still positive,
+//: cell model leans against its stain without being sure): still positive,
 //: drawn amber at full alpha -- the shader's UNCERTAIN.
 const UNCERTAIN_RGB = [255, 176, 32];
+//: The cell model's confident disagreements with the gate (a gate mask's 4
+//: and 5): a cell below the gate it reads as stained, sky blue; a positive it
+//: reads as lit by something else, magenta -- at full alpha, the
+//: shader's MODEL_OWN and MODEL_NOT_OWN.
+const MODEL_OWN_RGB = [86, 180, 233];
+const MODEL_NOT_OWN_RGB = [255, 70, 230];
 
 /** Eight-neighbour boundary test on unpacked ids; the tile's own border counts
  *  as "same" (see the comment at the call site in renderLabelTile). */
@@ -207,6 +213,12 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
         } else if (gateMask && gateMask[cellId] === 3) {
             // Uncertain: amber, opaque -- the shader's UNCERTAIN.
             [red, green, blue] = UNCERTAIN_RGB;
+            alpha = 255;
+        } else if (gateMask && gateMask[cellId] === 4) {
+            [red, green, blue] = MODEL_OWN_RGB;
+            alpha = 255;
+        } else if (gateMask && gateMask[cellId] === 5) {
+            [red, green, blue] = MODEL_NOT_OWN_RGB;
             alpha = 255;
         } else if (lutColors) {
             // Above maxId means the LUT simply does not describe this

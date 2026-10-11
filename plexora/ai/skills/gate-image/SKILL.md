@@ -180,13 +180,6 @@ packet's `mirror` says whether the open viewer shows the same thing.
   counts them as `replayed`). Pass `reuse_answers` false to be asked afresh.
 - `reset_gates` puts a project's gates back at full range (locked ones stay);
   `undo_operation` reverses it.
-- Spatial evidence (`spatial`: `diagnose`, `stratify`, `decide`; default off)
-  says where a gate's errors sit -- beside bright neighbours, in high
-  background, in dense tissue. It never moves a gate by itself: with `decide`
-  a move it ties to neighbours or background is first put to a like-for-like
-  look, and a gate held there carries `spatial_flags`. `n_uncertain` counts
-  positives whose stain may not be their own; they keep their call in every
-  count and export.
 
 ## Mutation policy
 
@@ -203,9 +196,8 @@ packet's `mirror` says whether the open viewer shows the same thing.
 ## Provenance
 
 `gating_report` lists per marker the final gate, the GMM proposal, the tier,
-the confidence, the flags and the decisions (with spatial evidence, its line
-per marker); `get_all_gates` shows each gate's method. Report the session id
-and the number of writes.
+the confidence, the flags and the decisions; `get_all_gates` shows each gate's
+method. Report the session id and the number of writes.
 
 ## Done when
 
@@ -215,7 +207,8 @@ marker that is not `accepted`; open `questions` are put to the user.
 ## Failure modes
 
 - `bulk_running` for long: `gating_session_status` `bulk` says whether the pass
-  runs (the next `gating_next` resumes it after a restart).
+  runs (the next `gating_next` resumes it after a restart). `model_running`:
+  the cell model is reading a marker (`hybrid`); call `gating_next` again.
 - `paused`: wait, then go on. `stopped`: `gating_session_finish` with `close`
   (keeps the gates) or `rollback`, and stop; never start another unasked.
 - `viewer_not_available` while mirroring: the session continues headless.

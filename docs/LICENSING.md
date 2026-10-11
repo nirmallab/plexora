@@ -317,7 +317,7 @@ aliases. The remaining couplings are pinned in
    package registers its own on import.
 4. `mcp/resources_gating.py`. This needs a `Plugin.mcp_factory` hook so
    plugins contribute MCP resources.
-5. `ai/skills.py`, `ai/bench.py` and `ai/bench_spatial.py` read autogate's
-   schemas or time its spatial evidence. The skills manifest should name
-   schemas by plugin; the benchmarks move with the AI package.
+5. `ai/skills.py`, `ai/bench.py` and `ai/bench_cellcall.py` read autogate's
+   schemas or time its cell model. The skills manifest should name schemas by
+   plugin; the benchmarks move with the AI package.
 6. The agent panel's vocabulary in the client should become data-driven.

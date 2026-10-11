@@ -51,25 +51,71 @@ class GatingApi {
     }
 
     /**
-     * Where each gate came from: {marker: {method, status, confidence, ...}}.
-     * An empty object when there is no provenance (or the request fails --
-     * provenance only ever adds to what the panel shows).
+     * The cell model's reading of a marker's gate as it stands:
+     * {state: "ready"|"not_run"|"not_gated", own, notOwn, uncertain, bytes}
+     * -- `bytes` one per table row (1 uncertain, 2 not own above the gate,
+     * 3 own below it), for the viewer's setCellFlagMask -- or null.
      */
-    /** One byte per table row, 1 where the marker's gate has an uncertain
-     *  positive (the spatial evidence's layer), or null. */
-    async getUncertain(marker) {
+    async getCellModel(marker) {
         try {
-            const response = await fetch(this.url('plugins/gating/get_uncertain') + '?' + new URLSearchParams({
+            const response = await fetch(this.url('plugins/gating/get_cell_model') + '?' + new URLSearchParams({
                 datasource: this.datasource, marker
             }));
             if (!response.ok) return null;
-            return new Uint8Array(await response.arrayBuffer());
+            const count = (name) => Number(response.headers.get(name)) || 0;
+            return {
+                state: response.headers.get('X-Cell-Model-State') || 'not_run',
+                own: count('X-Cell-Model-Own'),
+                notOwn: count('X-Cell-Model-Not-Own'),
+                uncertain: count('X-Cell-Model-Uncertain'),
+                bytes: new Uint8Array(await response.arrayBuffer()),
+            };
         } catch (e) {
-            console.log("Error Getting Uncertain Cells", e);
+            console.log("Error Getting Cell Model Calls", e);
             return null;
         }
     }
 
+    /** Start the cell model over some markers' cells: {ok, job_id} or {ok: false, error}. */
+    async runCellModel(markers, refresh = false) {
+        try {
+            const response = await fetch(this.url('plugins/gating/run_cell_model'), {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                body: JSON.stringify({datasource: this.datasource, markers, refresh}),
+            });
+            return await response.json();
+        } catch (e) {
+            console.log("Error Starting The Cell Model", e);
+            return {ok: false, error: {message: String(e.message || e)}};
+        }
+    }
+
+    /** A cell-model job's record ({status, progress, error, result}), or null. */
+    async cellModelJob(jobId) {
+        try {
+            const response = await fetch(this.url(`plugins/gating/jobs/${encodeURIComponent(jobId)}`));
+            if (!response.ok) return null;
+            return (await response.json()).job || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async cancelCellModelJob(jobId) {
+        try {
+            await fetch(this.url(`plugins/gating/jobs/${encodeURIComponent(jobId)}/cancel`),
+                {method: 'POST'});
+        } catch (e) {
+            console.log("Error Cancelling The Cell Model", e);
+        }
+    }
+
+    /**
+     * Where each gate came from: {marker: {method, status, confidence, ...}}.
+     * An empty object when there is no provenance (or the request fails --
+     * provenance only ever adds to what the panel shows).
+     */
     async getGateProvenance() {
         try {
             const response = await fetch(this.url('plugins/gating/get_gate_provenance') + '?' + new URLSearchParams({

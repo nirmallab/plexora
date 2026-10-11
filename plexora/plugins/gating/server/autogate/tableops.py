@@ -71,8 +71,7 @@ def _sample(ds, payload):
         n_per_stratum=int(payload.get("n_per_stratum", 6)),
         include_inconsistent=int(payload.get("include_inconsistent", 6)),
         seed=int(payload.get("seed") or 0), strata=payload.get("strata"),
-        within=payload.get("within"), spatial=payload.get("spatial"),
-        partners=payload.get("partners"))
+        within=payload.get("within"))
 
 
 def _delta(ds, payload):
@@ -83,8 +82,7 @@ def _delta(ds, payload):
         None if payload.get("high") is None else float(payload["high"]),
         n_per_interval=int(payload.get("n_per_interval", 8)),
         n_regression=int(payload.get("n_regression", 8)),
-        seed=int(payload.get("seed") or 0), within=payload.get("within"),
-        spatial=payload.get("spatial"))
+        seed=int(payload.get("seed") or 0), within=payload.get("within"))
 
 
 def _quadrants(ds, payload):
@@ -138,8 +136,7 @@ def _regression(ds, payload):
 
     return regression.numeric_checks(ds, payload["marker"], float(payload["final"]),
                                      float(payload["gmm"]), payload.get("prior"),
-                                     payload.get("partners") or [],
-                                     spatial=payload.get("spatial"))
+                                     payload.get("partners") or [])
 
 
 def _gates_at(ds, payload):
@@ -153,88 +150,15 @@ def _gates_at(ds, payload):
     return {"lows": lows, "n_positive": counts.tolist(), "n_finite": col.n_finite}
 
 
-def _spatial_map(ds, payload):
-    """The background map a payload carries, decoded once per fingerprint."""
-    from plexora.plugins.gating.server.autogate import spatial
+def _cellcall_select(ds, payload):
+    """What the cell model reads for a marker at a gate (`cellcall.select`)."""
+    from plexora.plugins.gating.server.autogate import cellcall
 
-    encoded = payload.get("map")
-    if not encoded:
-        return None
-    return ds.cached(("autogate.spatial.decoded", encoded.get("fingerprint")),
-                     lambda: spatial.decode_map(encoded))
-
-
-def _spatial(ds, payload):
-    """The feature layer's summary at one gate (`spatial.spatial_summary`)."""
-    from plexora.plugins.gating.server.autogate import spatial
-
-    low = float(payload["low"])
-    high = None if payload.get("high") is None else float(payload["high"])
-    bgmap = _spatial_map(ds, payload)
-    key = ("autogate.spatial.summary", payload["marker"], round(low, 9), high,
-           payload.get("mode"), (bgmap or {}).get("fingerprint"), payload.get("pixel_um"),
-           spatial.SPATIAL_VERSION)
-    return ds.cached(key, lambda: spatial.spatial_summary(
-        ds, payload["marker"], low, high, bgmap=bgmap, mode=payload.get("mode"),
-        pixel_um=payload.get("pixel_um"), seed=int(payload.get("seed") or 0)))
-
-
-def _spatial_cells(ds, payload):
-    """Per-cell features for a bounded list of cell ids ({cell_id: record})."""
-    from plexora.agent.limits import MAX_IDS
-    from plexora.plugins.gating.server.autogate import cells as cellmod
-    from plexora.plugins.gating.server.autogate import spatial
-
-    bgmap = _spatial_map(ds, payload)
-    feats = spatial.per_cell(ds, payload["marker"], bgmap=bgmap,
-                             pixel_um=payload.get("pixel_um"))
-    gate = spatial.at_gate(ds, payload["marker"], feats, float(payload["low"]),
-                           payload.get("high"), mode=payload.get("mode") or "C", bgmap=bgmap)
-    c = cellmod.cells(ds)
-    wanted = [int(i) for i in (payload.get("cell_ids") or [])][:MAX_IDS]
-    rows = np.flatnonzero(np.isin(c.ids, wanted))
-    return {"cells": {str(int(c.ids[r])): spatial.cell_record(feats, gate, int(r))
-                      for r in rows}}
-
-
-def _contrast(ds, payload):
-    from plexora.plugins.gating.server.autogate import sampler
-
-    return sampler.contrast_cells(
-        ds, payload["marker"], float(payload["low"]),
-        None if payload.get("high") is None else float(payload["high"]),
-        side=payload.get("side") or "above", n_per_row=int(payload.get("n_per_row", 6)),
-        seed=int(payload.get("seed") or 0), within=payload.get("within"),
-        spatial=payload.get("spatial"), partners=payload.get("partners"))
-
-
-def _purity(ds, payload):
-    """`bivariate.purity_excess` for one partner: how impure a gate's
-    positives are against it, and how impure its brightest ones already are
-    (the partner's own imperfection)."""
-    from plexora.plugins.gating.server.autogate import bivariate
-
-    found = bivariate.purity_excess(ds, payload["marker"], float(payload["low"]),
-                                    payload["partner"], float(payload["partner_gate"]),
-                                    relation=payload.get("relation") or "independent")
-    return {"purity": found}
-
-
-def _uncertain(ds, payload):
-    """The uncertain positives at a gate (`calls.uncertain_mask`): their
-    count, and their row indices when `rows` is asked for."""
-    from plexora.plugins.gating.server.autogate import calls
-
-    spatial = {k: payload.get(k) for k in ("mode", "map", "pixel_um")}
-    mask = calls.uncertain_mask(ds, payload["marker"], float(payload["low"]),
-                                payload.get("high"), spatial=spatial,
-                                confirmed_ids=payload.get("confirmed") or ())
-    if mask is None:
-        return {"n_uncertain": 0, "rows": [] if payload.get("rows") else None}
-    out = {"n_uncertain": int(mask.sum()), "version": calls.UNCERTAIN_VERSION}
-    if payload.get("rows"):
-        out["rows"] = np.flatnonzero(mask).tolist()
-    return out
+    return cellcall.select(ds, payload["marker"], float(payload["low"]), payload.get("high"),
+                           gates=payload.get("gates") or {}, pixel_um=payload.get("pixel_um"),
+                           seed=int(payload.get("seed") or 0),
+                           band_halves=payload.get("band_halves"),
+                           max_cells=payload.get("max_cells"))
 
 
 OPERATIONS = {
@@ -249,11 +173,7 @@ OPERATIONS = {
     "gating.autogate.within": _within,
     "gating.autogate.regression": _regression,
     "gating.autogate.gates_at": _gates_at,
-    "gating.autogate.spatial": _spatial,
-    "gating.autogate.spatial_cells": _spatial_cells,
-    "gating.autogate.contrast": _contrast,
-    "gating.autogate.purity": _purity,
-    "gating.autogate.uncertain": _uncertain,
+    "gating.autogate.cellcall_select": _cellcall_select,
 }
 
 

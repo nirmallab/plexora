@@ -225,16 +225,6 @@ SPATIAL_SCENARIOS = {
     "graph_only": {"spill": {"CD3": 6.0}, "dim": {"CD3": 0.25}, "blank": True},
 }
 
-#: The case the affected marker should reach (`verdicts.spatial_case`):
-#: B spill-over, C local background, D genuine weak expression.
-EXPECTED_CASE = {
-    "dense_spill": {"CD3": "B"}, "low_snr": {"CD4": "C"}, "dim_positive": {"CD8": "D"},
-    "heterogeneous": {"CD3": "B", "CD4": "C", "CD8": "D"},
-    "dense_spill_nomask": {"CD3": "B"}, "dense_spill_uncal": {"CD3": "B"},
-}
-
-SPATIAL_SCENARIO_NAMES = tuple(SPATIAL_SCENARIOS)
-
 
 def _spatial_layout(size, rng, *, dense_per_side=36):
     """Cell centres: the left half on a grid of spacing size/dense_per_side,
@@ -371,7 +361,7 @@ def _label_means(plane, labels, n):
 
 def cell_truth_of(scenario, cells, painted, markers):
     """{marker: {positive, dim, contaminated, density_region, background_region,
-    cause, expected_case}} -- per-cell arrays, plus the scenario's case."""
+    cause}} -- per-cell arrays."""
     out = {}
     regions = np.asarray(painted["regions"])
     background_region = np.asarray(painted["background_region"]).astype(str)
@@ -386,8 +376,7 @@ def cell_truth_of(scenario, cells, painted, markers):
         out[name] = {"positive": positive, "dim": dim, "contaminated": contaminated,
                      "density_region": regions, "background_region":
                      np.where(raised, background_region, "flat"),
-                     "cause": cause,
-                     "expected_case": EXPECTED_CASE.get(scenario, {}).get(name)}
+                     "cause": cause}
     return out
 
 
