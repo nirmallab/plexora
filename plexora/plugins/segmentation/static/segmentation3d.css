@@ -1,0 +1,62 @@
+/* Segment in 3-D (plugins/segmentation): a short form over tokens.css. */
+
+.seg3d-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.seg3d-grid {
+    align-items: center;
+    display: grid;
+    gap: var(--space-2) var(--space-3);
+    grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.seg3d-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.seg3d-field {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.seg3d-number {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 3px 6px;
+    width: 72px;
+}
+
+.seg3d-unit {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.seg3d-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.seg3d-note {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.seg3d-licence {
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.seg3d-panel [hidden] {
+    display: none !important;
+}

@@ -150,7 +150,7 @@
                 pinning.delete(id);
                 global.PlexoraToast?.show?.({
                     title: `${label} could not be added as a layer.`,
-                    body: String(error.message || error), tone: "warning" });
+                    note: String(error.message || error), tone: "warning" });
             }
             paint();
         }
@@ -256,7 +256,7 @@
             } catch (error) {
                 global.PlexoraToast?.show?.({
                     title: "Cells could not be linked across frames.",
-                    body: String(error.message || error), tone: "warning" });
+                    note: String(error.message || error), tone: "warning" });
             }
             loadCells();
         }
@@ -275,7 +275,7 @@
             } catch (error) {
                 global.PlexoraToast?.show?.({
                     title: "Cells could not be measured.",
-                    body: String(error.message || error), tone: "warning" });
+                    note: String(error.message || error), tone: "warning" });
             }
             loadCells();
         }
@@ -357,7 +357,7 @@
                 if (!response.ok) throw new Error(answer.error || `HTTP ${response.status}`);
             } catch (error) {
                 global.PlexoraToast?.show?.({ title: "The area could not be prepared.",
-                                              body: String(error.message || error),
+                                              note: String(error.message || error),
                                               tone: "warning" });
             }
             loadBricks();
@@ -371,7 +371,7 @@
             if (event.type === "plexora:layer-failed") {
                 global.PlexoraToast?.show?.({
                     title: `${label} could not be added as a layer.`,
-                    body: event.detail?.error || "", tone: "warning" });
+                    note: event.detail?.error || "", tone: "warning" });
             }
             paint();
         }

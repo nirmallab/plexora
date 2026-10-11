@@ -163,6 +163,18 @@ In the viewer, outlines, centroids, Cell Explorer's colours, gates and a click o
 the frame on screen's rows; step frames and they follow. A region drawn on one frame counts and
 maps only that frame's cells.
 
+**Segmenting in 3-D (Cellpose).** Tools → Segment in 3-D, on a z-stack. It needs the optional
+install `pip install "plexora[segment3d]"` (Cellpose 4 and PyTorch); without it the card says so.
+The first run downloads Cellpose-SAM's weights (about 1.2 GB, from the Cellpose authors' model
+page, under their licence -- non-commercial at the time of writing; the card says this). Choose the
+nuclear channel (and a membrane/cytoplasm channel for whole cells), "In 3-D" (needs the z step)
+or "Plane by plane", and press Segment: the result becomes this project's mask (one id per cell
+through the planes) and is measured into the cell table; reload when it says so. Measured here on
+a synthetic 10 x 256 x 256 stack of 24 nuclei on the M2 Pro's GPU: in 3-D found 23 in 8.4 min,
+plane by plane 33 (cells split between planes) in 41 s. Large stacks are segmented at a coarser
+level ("Detail: Auto") and the mask drawn back up to full resolution. It runs where Plexora runs;
+a node-backed image's pixels are read through the node.
+
 **Regions of cells, and one plane's outline by hand.** With a 3-D mask, select cells in the
 viewer (click one, Shift-click to add) and press "From cells" in the ROI panel: the region is
 those cells, outlined on every plane they reach, and it holds exactly them when counted or
@@ -244,7 +256,6 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 
 ## Not in this branch yet
 
-- 3-D segmentation inside Plexora (Cellpose on a node): bring a label volume made elsewhere.
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.

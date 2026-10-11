@@ -111,7 +111,12 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
     tmp = dest.with_name(dest.name + ".building")
     if tmp.exists():
         shutil.rmtree(tmp)
-    if isinstance(source, np.ndarray):
+    # An array, or anything array-like enough to read a plane at a time
+    # (`shape`, `dtype`, `[z]`): a label volume made here rather than a file.
+    in_memory = isinstance(source, np.ndarray) or (
+        hasattr(source, "shape") and hasattr(source, "dtype") and hasattr(source, "__getitem__")
+        and not isinstance(source, (str, os.PathLike)))
+    if in_memory:
         array = source
         close = None
     else:
@@ -153,7 +158,7 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
             MARKER: True,
             "depth": depth,
             "frames": frames,
-            "source": str(source) if not isinstance(source, np.ndarray) else None,
+            "source": None if in_memory else str(source),
         })
     finally:
         if close is not None:

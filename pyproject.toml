@@ -213,6 +213,15 @@ volume3d = [
     "torch>=2.5.1",
     "sam2>=1.1",
 ]
+# Segmenting a z-stack in 3-D with Cellpose (plexora/plugins/segmentation).
+# Cellpose 4: its model is Cellpose-SAM, whose weights (about 1.2 GB) Cellpose
+# downloads on first use from the Cellpose authors' model page, under their
+# licence (non-commercial at the time of writing) -- never bundled. Cellpose 3
+# cannot share Plexora's numpy (it pins numpy < 2.1). Imported lazily.
+segment3d = [
+    "cellpose>=4",
+    "torch>=2.5.1",
+]
 
 [project.scripts]
 plexora = "plexora.cli:main"

@@ -1,12 +1,14 @@
 {
   "imported": {
     "anndata": false,
+    "cellpose": false,
     "h5py": false,
     "plexora.plugins.cell_explorer": false,
     "plexora.plugins.figure_builder": true,
     "plexora.plugins.gating": false,
     "plexora.plugins.qc": false,
     "plexora.plugins.roi": false,
+    "plexora.plugins.segmentation": false,
     "plexora.plugins.transcripts": false,
     "plexora.plugins.visium_hd": false,
     "pyarrow": true,
