@@ -109,6 +109,16 @@ with a wide YZ pane, and in 3-D: its dock sits top-right beside the strip (no lo
 the gizmo stacks under it, the legend stays above the XZ pane, the scale bar steps left of the
 panes. Resizing a pane or opening a panel moves controls, never the image.
 
+*When there is not room.* Make the window short (or drag the XZ pane tall) with Figure Builder
+open: its dock folds to its head rather than scrolling under the legend, and opens again when
+the room comes back (your own open/closed choice is kept apart; its button opens it while
+folded). An open mini-map folds the same way. The Plexora AI chat runs along the bottom between
+the mini-map and the legend while that gap is at least about 320 px wide, and above them when it
+is not; a closed mini-map now takes only its button's room. With the sidebar closed, its "show"
+button sits above the caption instead of on it, and a running AI session's chip sits under the
+caption. Figure Builder's capture frame stays out from under the strip and the section panes,
+and steps clear when one opens.
+
 **Motion off.** The Depth card's Motion switch stops the plane fades, the thumb's glide, the
 3-D coast and every eased turn or zoom, for every image. The system's reduced-motion setting
 does the same (the switch then says so).

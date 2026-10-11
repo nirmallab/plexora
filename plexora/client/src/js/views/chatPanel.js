@@ -239,6 +239,9 @@ window.PlexoraChatPanel = (function () {
         pill.appendChild(state.restore);
         pill.appendChild(iconButton("Close Plexora AI", "plx-chat-close", () => toggle(false)));
         root.appendChild(pill);
+        // Not in a corner dock (it is wider than any corner): chatPanel.css
+        // sizes it between the bottom corners from the canvas layout's
+        // published dock sizes, clear of the strip and section panes.
         host.appendChild(root);
         state.root = root;
     }

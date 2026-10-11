@@ -32,6 +32,19 @@
  * Items that move because something arrived or grew glide there (a short
  * FLIP of their `translate`); under reduced motion they jump.
  *
+ * Each dock's size is published (`--plx-dock-<corner>-w/-h`), and with it
+ * the bottom LANE (`--plx-lane-left/right/bottom/top`, px from the wrapper's
+ * edges) for a panel too wide for any corner -- the chat: between the bottom
+ * corners while there is room, above them when there is not.
+ *
+ * WHEN A COLUMN RUNS OUT OF ROOM (a short window, a tall section pane) the
+ * top dock shrinks first and its panels scroll. Past that, items that say
+ * they can fold up (`place(el, {collapse})`, or `data-canvas-collapsible`
+ * and a `plexora:canvas-collapse` listener) are folded, the last placed
+ * first, until the column fits; they open again, in reverse, when the room
+ * comes back. Only a change of the room itself does this -- a panel the user
+ * opens in a tight spot is never folded back under their hand.
+ *
  * The plugin face is `ctx.view.dock(...)` / `ctx.view.reserve(...)`
  * (main.js). Classic script, `window.PlexoraCanvasLayout`.
  */
@@ -42,6 +55,11 @@
     const CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right",
                      "top-center", "bottom-center"];
     const DEFAULT_ORDER = 50;
+    //: The narrowest the bottom LANE may be between the bottom corners
+    //: before it moves up over them (px): a wide panel such as the chat.
+    const LANE_MIN = 320;
+    //: The safe area's padding and the gap between docked things (viewer.css).
+    const EDGE = 12;
     const GLIDE_MS = 180;
 
     function el(tag, className) {
@@ -65,6 +83,8 @@
             this.bands = new Map();          // id -> {edge, size, order}
             this.docks = {};
             this.rects = new WeakMap();      // docked element -> last screen rect
+            this.folders = new WeakMap();    // docked element -> collapse(bool)
+            this.folded = [];                // folded by the layout, latest last
             this.build();
             this.apply();
             this.watch();
@@ -131,6 +151,7 @@
                 offsets[band.edge] += band.size;
             }
             for (const edge of EDGES) style.setProperty(`--plx-inset-${edge}`, `${offsets[edge]}px`);
+            this.measure();
             this.announce();
         }
 
@@ -142,13 +163,15 @@
          * the corner. Returns a function that takes it out again (back into
          * the wrapper, where an element with its own position keeps working).
          */
-        place(element, { corner = "top-right", order = DEFAULT_ORDER, id = null } = {}) {
+        place(element, { corner = "top-right", order = DEFAULT_ORDER, id = null,
+                         collapse = null } = {}) {
             if (!element) return () => {};
             const dock = this.docks[CORNERS.includes(corner) ? corner : "top-right"];
             this.remember();
             element.dataset.canvasDock = dock.dataset.corner;
             element.dataset.canvasOrder = String(order);
             if (id) element.dataset.canvasId = String(id);
+            if (typeof collapse === "function") this.folders.set(element, collapse);
             element.classList.add("plx-docked");
             const after = [...dock.children].find((child) =>
                 Number(child.dataset.canvasOrder ?? DEFAULT_ORDER) > order && child !== element);
@@ -158,6 +181,7 @@
             return () => {
                 if (element.parentElement !== dock) return;
                 this.remember();
+                if (this.folded.includes(element)) this.fold(element, false);
                 element.classList.remove("plx-docked");
                 delete element.dataset.canvasDock;
                 this.wrapper.appendChild(element);
@@ -185,18 +209,99 @@
                 // What is already there (a plugin may have mounted first).
                 for (const node of [...this.wrapper.children]) this.adopt(node);
                 // A docked item growing or shrinking moves its neighbours.
-                this.changes = new MutationObserver(() => this.glide());
+                this.changes = new MutationObserver(() => {
+                    this.glide();
+                    this.measure();
+                });
                 for (const dock of Object.values(this.docks)) {
                     this.changes.observe(dock, { childList: true });
                 }
             }
             if (typeof ResizeObserver === "function") {
-                this.sizes = new ResizeObserver(() => {
+                this.sizes = new ResizeObserver((entries) => {
                     this.glide();
+                    this.measure();
                     this.announce();
+                    // The room changed (not just something in it): fit again.
+                    if (entries.some((entry) => entry.target === this.safe)) this.scheduleFit();
                 });
                 for (const dock of Object.values(this.docks)) this.sizes.observe(dock);
                 this.sizes.observe(this.safe);
+            }
+        }
+
+        // -- folding when a column runs out of room -------------------------
+
+        /** Can `element` fold up, and is it open now? */
+        foldable(element) {
+            return this.folders.has(element) || element.dataset?.canvasCollapsible != null;
+        }
+
+        /** Fold `element` (or open it again), by its own rule. */
+        fold(element, collapsed) {
+            const at = this.folded.indexOf(element);
+            if (collapsed && at < 0) this.folded.push(element);
+            if (!collapsed && at >= 0) this.folded.splice(at, 1);
+            element.classList.toggle("plx-canvas-collapsed", collapsed);
+            const rule = this.folders.get(element);
+            try {
+                if (rule) rule(collapsed);
+                else element.dispatchEvent?.(new CustomEvent("plexora:canvas-collapse",
+                                                             { detail: { collapsed } }));
+            } catch (error) {
+                console.warn("canvasLayout: a control could not fold", error);
+            }
+        }
+
+        /** True when what a column holds, at the height each piece would
+         *  take if nothing squeezed it, is taller than the column. Measured
+         *  with the squeezing switched off for one synchronous layout
+         *  (`plx-measuring`, viewer.css), so a panel that scrolls inside an
+         *  inner list is seen as squeezed too. */
+        crowded(column) {
+            if (!column) return false;
+            column.classList.add("plx-measuring");
+            const wants = column.scrollHeight;
+            column.classList.remove("plx-measuring");
+            return wants > column.clientHeight + 1;
+        }
+
+        scheduleFit() {
+            if (this._fitQueued) return;
+            this._fitQueued = true;
+            const run = () => {
+                this._fitQueued = false;
+                this.fit();
+            };
+            if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(run);
+            else setTimeout(run, 0);
+        }
+
+        /**
+         * Fold what can fold, the last placed first, until every column fits;
+         * then open what the layout folded, latest first, while it still fits.
+         * Measuring after each step forces a layout, which is the point: it
+         * happens inside one task, so nothing half-folded is ever painted.
+         */
+        fit() {
+            for (const column of this.safe.children || []) {
+                const items = () => [...column.children].flatMap((dock) => [...dock.children]);
+                while (this.crowded(column)) {
+                    const open = items().filter((child) => this.foldable(child)
+                        && !this.folded.includes(child));
+                    if (!open.length) break;
+                    open.sort((a, b) => Number(b.dataset.canvasOrder ?? DEFAULT_ORDER)
+                                      - Number(a.dataset.canvasOrder ?? DEFAULT_ORDER));
+                    this.fold(open[0], true);
+                }
+                for (const child of [...this.folded].reverse()) {
+                    if (!items().includes(child)) continue;
+                    this.fold(child, false);
+                    if (this.crowded(column)) {
+                        this.fold(child, true);
+                        break;
+                    }
+                }
             }
         }
 
@@ -244,6 +349,43 @@
             }
         }
 
+        /** Publish how much each corner holds (`--plx-dock-<corner>-w/-h`
+         *  on the wrapper): a panel too big for a corner (the chat, in the
+         *  middle) sizes itself between them. An empty dock is 0. */
+        measure() {
+            const style = this.wrapper.style;
+            const size = {};
+            for (const [corner, dock] of Object.entries(this.docks)) {
+                const shown = [...dock.children].some((child) => !child.hidden
+                    && (child.offsetWidth || child.getBoundingClientRect().width));
+                const rect = shown ? dock.getBoundingClientRect() : { width: 0, height: 0 };
+                size[corner] = { w: Math.round(rect.width), h: Math.round(rect.height) };
+                style.setProperty(`--plx-dock-${corner}-w`, `${size[corner].w}px`);
+                style.setProperty(`--plx-dock-${corner}-h`, `${size[corner].h}px`);
+            }
+            // The LANE: where a panel wider than any corner goes along the
+            // bottom. Between the bottom corners while that is wide enough;
+            // otherwise across the whole safe area, above the taller corner.
+            const inset = this.insets();
+            const width = this.safe.getBoundingClientRect().width;
+            const left = size["bottom-left"];
+            const right = size["bottom-right"];
+            const beside = (part) => (part.w ? part.w + EDGE : 0);
+            const between = width - 2 * EDGE - beside(left) - beside(right);
+            const lane = between >= LANE_MIN
+                ? { left: inset.left + EDGE + beside(left), right: inset.right + EDGE + beside(right),
+                    bottom: inset.bottom + EDGE }
+                : { left: inset.left + EDGE, right: inset.right + EDGE,
+                    bottom: inset.bottom + EDGE + Math.max(left.h, right.h) + (left.h || right.h ? EDGE : 0) };
+            for (const key of ["left", "right", "bottom"]) {
+                style.setProperty(`--plx-lane-${key}`, `${Math.round(lane[key])}px`);
+            }
+            // And what the top corners hold, whichever is taller, so the lane
+            // knows how high it may reach.
+            const top = Math.max(size["top-left"].h, size["top-right"].h, size["top-center"].h);
+            style.setProperty("--plx-lane-top", `${Math.round(inset.top + EDGE + (top ? top + EDGE : 0))}px`);
+        }
+
         announce() {
             clearTimeout(this._announce);
             this._announce = setTimeout(() => {
@@ -272,6 +414,7 @@
         CORNERS, EDGES, CanvasLayout,
         get: layout,
         place: (element, options) => layout()?.place(element, options) || null,
+        fit: () => layout()?.fit(),
         reserve: (id, options) => layout()?.reserve(id, options) || (() => {}),
         release: (id) => layout()?.release(id),
         insets: () => layout()?.insets() || { top: 0, right: 0, bottom: 0, left: 0 },

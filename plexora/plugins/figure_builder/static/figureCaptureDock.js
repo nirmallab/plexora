@@ -196,6 +196,14 @@ class FigureCaptureDock {
         // corner, just after core's own dataset chip (order 0).
         root.setAttribute("data-canvas-dock", "top-right");
         root.setAttribute("data-canvas-order", "5");
+        // Folded to its head when the corner runs out of room (a short
+        // window, a tall section pane), opened again when the room returns;
+        // the user's own open/closed choice is kept apart from this.
+        root.setAttribute("data-canvas-collapsible", "");
+        root.addEventListener("plexora:canvas-collapse", (event) => {
+            this.folded = Boolean(event.detail?.collapsed);
+            this.applyOpen();
+        });
         root.innerHTML = `
             <div class="fb-dock-head">
                 <div class="fb-dock-caption" data-role="caption"></div>
@@ -392,7 +400,14 @@ class FigureCaptureDock {
         } else if (role === "close") {
             this.handlers.onClose?.();
         } else if (role === "collapse") {
-            this.setOpen(!this.open);
+            // Folded by the layout, the button opens it: what the user sees
+            // is closed, whatever their saved choice says.
+            if (this.folded) {
+                this.folded = false;
+                this.setOpen(true);
+            } else {
+                this.setOpen(!this.open);
+            }
         } else if (role === "remove") {
             // Nested inside the item, so `closest` finds this one first --
             // which is what stops discarding a capture from also selecting it
@@ -446,8 +461,9 @@ class FigureCaptureDock {
 
     applyOpen() {
         if (!this.root) return;
-        this.root.classList.toggle("is-collapsed", !this.open);
-        this.el("collapse")?.setAttribute("aria-expanded", String(this.open));
+        const shown = this.open && !this.folded;
+        this.root.classList.toggle("is-collapsed", !shown);
+        this.el("collapse")?.setAttribute("aria-expanded", String(shown));
     }
 
     // -- rendering -------------------------------------------------------

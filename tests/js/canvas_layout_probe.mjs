@@ -15,6 +15,10 @@
  *   **A plugin needs no call into core**: an element appended to the wrapper
  *   with `data-canvas-dock` is docked; one without it is left alone.
  *
+ *   **A column that runs out of room folds what can fold**, the highest
+ *   order first, and only as much as it must; the room coming back opens
+ *   them again, the last folded first.
+ *
  * Run directly:  node tests/js/canvas_layout_probe.mjs
  */
 
@@ -47,6 +51,7 @@ class HTMLElement {
         this.classList = {
             add: (...names) => names.forEach((n) => classes.add(n)),
             remove: (...names) => names.forEach((n) => classes.delete(n)),
+            toggle: (name, on) => ((on ?? !classes.has(name)) ? classes.add(name) : classes.delete(name)),
             contains: (name) => classes.has(name) || this.className.split(/\s+/).includes(name),
         };
         const props = {};
@@ -79,6 +84,11 @@ class HTMLElement {
     remove() { this.detach(); }
     matches() { return false; }
     getBoundingClientRect() { return { left: 0, top: 0, width: 10, height: 10 }; }
+    // Heights: an element is its own `h` plus what it holds; one given a
+    // `room` (a column) shows only that much.
+    get scrollHeight() { return (this.h || 0) + this.children.reduce((sum, c) => sum + c.scrollHeight, 0); }
+    get clientHeight() { return this.room ?? this.scrollHeight; }
+    dispatchEvent(event) { (this.events ||= []).push(event); return true; }
     animate(keyframes, options) { this.animations.push({ keyframes, options }); return {}; }
 }
 
@@ -160,6 +170,54 @@ check("one that does not ask is left where it was put", stray.parentElement === 
 const undock = Layout.place(make("legend"), { corner: "bottom-right", order: 0 });
 check("undocking puts the element back in the wrapper", typeof undock === "function"
     && (undock(), wrapper.children.some((child) => child.id === "legend")));
+
+// -- folding ---------------------------------------------------------------
+
+const fresh = new HTMLElement("div");
+box.document.getElementById = (id) => (id === "openseadragon_wrapper" ? fresh : null);
+const roomy = new box.PlexoraCanvasLayout.CanvasLayout(fresh);
+const right = roomy.safe.children[2];
+const panel = (id, open, folded, order) => {
+    const node = make(id);
+    node.h = open;
+    roomy.place(node, { corner: "top-right", order, collapse: (shut) => { node.h = shut ? folded : open; } });
+    return node;
+};
+const figure = panel("figure", 200, 20, 5);
+const gizmo = panel("gizmo", 150, 20, 10);
+const legend = make("legend");
+legend.h = 100;
+roomy.place(legend, { corner: "bottom-right", order: 0 });
+const shut = (node) => node.classList.contains("plx-canvas-collapsed");
+
+right.room = 500;
+roomy.fit();
+check("a column with room folds nothing", !shut(figure) && !shut(gizmo));
+right.room = 400;
+roomy.fit();
+check("short of room, the highest order folds first, and only that",
+      shut(gizmo) && !shut(figure) && gizmo.h === 20 && figure.h === 200);
+right.room = 250;
+roomy.fit();
+check("shorter still, the next one folds too", shut(gizmo) && shut(figure));
+check("what cannot fold is left as it is", legend.h === 100 && !shut(legend));
+right.room = 400;
+roomy.fit();
+check("room coming back opens the last folded first, as far as it fits",
+      shut(gizmo) && !shut(figure));
+right.room = 600;
+roomy.fit();
+check("and the rest when there is room for it", !shut(gizmo) && !shut(figure));
+
+const plain = make("plugin-card");
+plain.h = 300;
+plain.dataset.canvasCollapsible = "";
+roomy.place(plain, { corner: "top-right", order: 30 });
+right.room = 500;
+roomy.fit();
+check("a plugin's element folds by event, with no call into core",
+      shut(plain) && (plain.events || []).some((e) => e.type === "plexora:canvas-collapse"
+                                                    && e.detail.collapsed === true));
 
 console.log(failures.length ? `\n${failures.length} of ${checks} check(s) failed`
                             : `\nall ${checks} checks passed`);

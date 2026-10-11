@@ -141,7 +141,19 @@ class MiniMap {
         stage.appendChild(note);
         root.appendChild(stage);
         root.appendChild(lens);
-        if (!window.PlexoraCanvasLayout?.place?.(root, { corner: "bottom-left", order: 0, id: "mini-map" })) {
+        // Folded by the canvas layout when the corner runs out of room, and
+        // opened again with it only if it was open then.
+        const fold = (folded) => {
+            if (folded) {
+                this._openBeforeFold = this.expanded;
+                this.collapse();
+            } else if (this._openBeforeFold) {
+                this._openBeforeFold = false;
+                this.expand();
+            }
+        };
+        if (!window.PlexoraCanvasLayout?.place?.(root, { corner: "bottom-left", order: 0, id: "mini-map",
+                                                          collapse: fold })) {
             wrapper.appendChild(root);
         }
 

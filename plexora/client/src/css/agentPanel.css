@@ -526,6 +526,17 @@
 /* The sidebar collapsed (and the dock with it): a tab hanging off the
    viewer's left edge, under the sidebar's expand button -- clear of the
    channel legend (bottom right) and the chat panel (bottom left). */
+/* Docked by the canvas layout (under the caption): a chip in its own right,
+   not a tab hanging off the edge. */
+.plx-agent-chip.plx-docked {
+    border-left: 1px solid var(--border-subtle);
+    border-radius: 6px;
+}
+
+#openseadragon_wrapper .plx-canvas-dock > .plx-agent-panel.plx-docked {
+    width: min(480px, calc(100cqw - 24px));
+}
+
 .plx-agent-chip {
     --plx-agent-ink: #b8c0cc;
     align-items: center;

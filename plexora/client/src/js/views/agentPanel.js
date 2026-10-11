@@ -450,9 +450,16 @@ window.PlexoraAgentPanel = (function () {
             bar.classList.add("is-docked");
             dock.hidden = false;
         }
-        host.appendChild(root);
-        host.appendChild(bar);
-        (wrapper || document.body).appendChild(chip);
+        // In the sidebar's dock where the page has one; over the image (a
+        // page without it), in the canvas layout's bottom-right corner above
+        // the legend rather than over it.
+        const layout = !dock && wrapper ? window.PlexoraCanvasLayout : null;
+        if (!layout?.place?.(root, { corner: "bottom-right", order: 20, id: "agent" })) host.appendChild(root);
+        if (!layout?.place?.(bar, { corner: "bottom-right", order: 21, id: "agent-bar" })) host.appendChild(bar);
+        // The chip (sidebar collapsed) goes under the caption, not on it.
+        if (!(wrapper && window.PlexoraCanvasLayout?.place?.(chip, { corner: "top-left", order: 20, id: "agent-chip" }))) {
+            (wrapper || document.body).appendChild(chip);
+        }
 
         const session = {
             id, root, bar, chip, host, dock,

@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20261010_canvas_layout"
+VERSION = "20261011_layout_fold"
 
 
 def _blueprint():

@@ -2355,6 +2355,13 @@
     z-index: 106;
 }
 
+/* Docked above the caption by the canvas layout: a button of its own, not a
+   tab on the edge, and on the furniture tier so the 3-D view cannot cover it. */
+#openseadragon_wrapper .plx-canvas-dock > .sidebar-expand-button {
+    border-radius: 6px;
+    z-index: 220;
+}
+
 .sidebar-expand-button:hover {
     background: rgba(31, 41, 55, 0.98);
 }
@@ -2736,6 +2743,16 @@
     position: absolute;
     width: min(220px, 30vh);
     z-index: 220;
+}
+
+/* Docked and closed, it takes only the lens's room in its corner, so the
+   corner (and the chat's lane beside it) is not held for a map nobody
+   opened. Opening grows it at once (the stage then scales up from the lens);
+   closing keeps the room until the stage has shrunk. */
+#openseadragon_wrapper .plx-canvas-dock > .viewer-mini-map.plx-docked:not(.is-expanded) {
+    height: 34px;
+    transition: width 0s linear var(--duration-base), height 0s linear var(--duration-base);
+    width: 34px;
 }
 
 /* The circle. Scaled down into the lens button while collapsed rather than
@@ -4189,6 +4206,14 @@ body.sidebar-collapsed .viewer-shell,
 
 .plx-canvas-dock[data-corner^="bottom"] {
     flex: 0 0 auto;
+}
+
+/* Folding measures what a column's docks would take unsqueezed
+   (canvasLayout.js `crowded`): for one synchronous layout nothing shrinks. */
+.plx-canvas-column.plx-measuring > .plx-canvas-dock,
+#openseadragon_wrapper .plx-canvas-column.plx-measuring > .plx-canvas-dock > .plx-docked {
+    flex-shrink: 0 !important;
+    max-height: none !important;
 }
 
 /* The bottom-right corner keeps the scale bar's room under the legend. */

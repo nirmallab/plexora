@@ -51,21 +51,25 @@
     --plx-chat-glass: rgba(255, 255, 255, 0.045);
     --plx-chat-glass-edge: rgba(255, 255, 255, 0.14);
     --plx-chat-solid: rgba(11, 15, 21, 0.84);
-    bottom: calc(var(--plx-inset-bottom, 0px) + var(--space-5));
+    bottom: calc(var(--plx-lane-bottom, 0px) + var(--space-3));
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
     font-size: 13px;
     gap: var(--space-3);
     isolation: isolate;
-    left: 50%;
-    /* Stops 56px short of the top: the caption (top-left) and the dataset
-       arrows (top-right) live in that band. */
-    max-height: calc(100% - var(--space-5) - 56px);
+    /* In the canvas layout's bottom LANE (services/canvasLayout.js): between
+       the mini-map and the legend while there is room, above them when there
+       is not, and always clear of the depth strip and section panes. Left
+       and right are the lane; `max-width` and the auto margins centre the
+       panel in it. It reaches no higher than the top corners' controls. */
+    left: var(--plx-lane-left, 24px);
+    margin: 0 auto;
+    max-height: calc(100% - var(--plx-lane-bottom, 0px) - var(--plx-lane-top, 56px));
+    max-width: 720px;
     pointer-events: none;
     position: absolute;
-    transform: translateX(-50%);
-    width: clamp(300px, calc(100% - 520px), 720px);
+    right: var(--plx-lane-right, 24px);
     z-index: 260;
 }
 
@@ -628,9 +632,9 @@
    edge. The transcript, draft and attachments are hidden, not taken down,
    so Restore brings back exactly what was there. */
 .plx-chat-panel.is-minimized {
-    bottom: var(--space-3);
+    bottom: var(--plx-lane-bottom, var(--space-3));
     gap: 0;
-    width: auto;
+    width: fit-content;
 }
 
 .plx-chat-panel.is-minimized::before,

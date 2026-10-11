@@ -1836,7 +1836,7 @@ async function init(config, savedViewTransform = null) {
      * @property {Object} view - The view on screen and the room over it. On a
      *   z-stack: `planes()`, `frame()`, `label()`, `onChange(fn)`, and
      *   `addSectionOverlay(id, provider)` to draw in the XZ / YZ panes. On
-     *   every image: `dock(element, {corner, order})` floats a control over
+     *   every image: `dock(element, {corner, order, collapse})` floats a control over
      *   the image in core's canvas layout -- corners "top-left", "top-right",
      *   "bottom-left", "bottom-right", "top-center", "bottom-center"; lower
      *   `order` nearer the corner, core's own at 0 -- stacked with core's
@@ -1964,10 +1964,15 @@ async function init(config, savedViewTransform = null) {
                  * out again with the plugin, or by calling what this returns.
                  * The same as appending it to #openseadragon_wrapper with
                  * `data-canvas-dock` (and `data-canvas-order`) set.
+                 * `collapse(folded)`, if given, is called when the corner runs
+                 * out of room (true: fold to something small) and when the
+                 * room comes back (false); without it the control is never
+                 * folded. Declaratively: `data-canvas-collapsible` and a
+                 * `plexora:canvas-collapse` listener ({detail: {collapsed}}).
                  */
-                dock(element, { corner = "top-right", order = 50 } = {}) {
+                dock(element, { corner = "top-right", order = 50, collapse = null } = {}) {
                     const undock = window.PlexoraCanvasLayout?.place?.(element, {
-                        corner, order, id: `${record.definition?.name || "plugin"}` });
+                        corner, order, collapse, id: `${record.definition?.name || "plugin"}` });
                     const off = () => {
                         undock?.();
                         element?.remove?.();
