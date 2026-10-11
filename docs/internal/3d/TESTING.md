@@ -90,6 +90,11 @@ double-click) turn there rather than cut. With the view focused, the arrow keys 
 zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower resolution if
 frames come slowly; it is redrawn in full once it rests.
 
+*Contrast that follows the clip range.* In 3-D, narrow the clip range to a dim part of the stack
+(say the deepest few planes): channels whose range you have not set re-level to the planes kept,
+about a quarter of a second after you stop dragging, and back to the whole stack's when you widen
+it again. A channel whose range you set (or that was saved) is left alone.
+
 **Which way it faces, and turning about one axis.** In 3-D a small X / Y / Z gizmo sits in the
 top-right corner (x red, y green, z blue), faint until you hover it, move the view or lock an
 axis. It follows every turn. Click X, Y or Z to look along that axis at the plane across it --
@@ -210,8 +215,6 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 - 3-D segmentation inside Plexora (Cellpose on a node): bring a label volume made elsewhere.
 - Region shapes edited plane by plane by hand (a carried outline is redrawn by carrying again),
   and labels/masks as regions (`LabelRef`).
-- The area 3-D view's contrast comes from every plane, not the clip range: a narrow clip range
-  draws dim until the slider is moved.
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.

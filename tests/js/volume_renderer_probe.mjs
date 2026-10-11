@@ -14,7 +14,10 @@
  * - past the GPU budget the least recently drawn go first, never one being
  *   drawn;
  * - a request names the window its bytes are quantized with (`w=`), which is
- *   what lets the browser keep them.
+ *   what lets the browser keep them;
+ * - the default contrast follows the clip range: the level's own hint over
+ *   the whole stack, the planes kept (`/hint?z=`, at the level drawn) when
+ *   the range is narrower, asked once per range.
  *
  * Run directly:  node tests/js/volume_renderer_probe.mjs
  */
@@ -189,6 +192,50 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     const asked = detailRequests.length;
     await view.considerDetail();
     check("and is not asked for again while the view stays", detailRequests.length === asked);
+}
+
+// -- the contrast follows the clip range -----------------------------------------
+{
+    const sent = [];
+    const hintAsks = [];
+    let slab = { z0: 0, z1: 3 };
+    box.dispatchEvent = (event) => { if (event.type === "plexora:volume-hint") sent.push(event.detail); return true; };
+    const clipState = { depth: 4, info: { width: 32, height: 32 }, get: () => ({ t: 0, slab }) };
+    const fetchHint = (url) => {
+        if (url.includes("/hint?")) {
+            hintAsks.push(url);
+            return Promise.resolve({ ok: true, json: async () => ({ hint: [5, 50], level: 1, z: [1, 2] }) });
+        }
+        const response = fetchImpl(url);
+        return response.then((r) => ({ ...r, headers: { get: (name) => (name === "X-Plexora-Hint" ? "1,900" : r.headers.get(name)) } }));
+    };
+    const clipped = new VolumeRenderer({ viewState: clipState, datasource: "vol", fetchImpl: fetchHint });
+    clipped.gl = fakeGl();
+    clipped.maxTexture = 2048;
+    await clipped.refresh();
+    check("over the whole stack the level's own hint is sent",
+          sent.length >= 1 && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === 0,
+          JSON.stringify(sent));
+    sent.length = 0;
+    slab = { z0: 1, z1: 2 };
+    clipped.refreshHints({ now: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const asked = hintAsks.map((url) => new URLSearchParams(url.split("?")[1]));
+    check("a narrower clip range asks for its planes' contrast at the level drawn",
+          asked.length >= 1 && asked.every((q) => q.get("z") === "1,2" && q.get("level") === "1" && q.get("w")),
+          hintAsks.join(" "));
+    check("and sends it", sent.length >= 1 && sent.every((d) => d.hint.join() === "5,50"), JSON.stringify(sent));
+    const before = hintAsks.length;
+    clipped.refreshHints({ now: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    check("the same range is not asked again", hintAsks.length === before);
+    sent.length = 0;
+    slab = { z0: 0, z1: 3 };
+    clipped.refreshHints({ now: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    check("back to the whole stack, the level's hint again", sent.length >= 1
+          && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === before);
 }
 
 if (failures.length) {

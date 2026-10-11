@@ -401,6 +401,19 @@ def hint_of(key, block, qmin, qmax, stats_of):
     return hint
 
 
+def hint_over(key, read, window, stats_of):
+    """`hint_of` for a block read only when the hint is not already known:
+    `read()` returns it. The hint route's (some planes of a level)."""
+    with _lock:
+        if key in _hints:
+            _hints.move_to_end(key)
+            return _hints[key]
+    with LEVEL_GATE:
+        block = read()
+    qmin, qmax = window
+    return hint_of(key, block, qmin, qmax, stats_of)
+
+
 def level_payload(key, hint_key, read, window, voxel_format, stats_of, mark=None):
     """`(bytes, shape, hint)` for `key`, built at most once at a time.
 

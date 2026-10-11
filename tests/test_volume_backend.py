@@ -604,6 +604,21 @@ def test_a_nodes_3d_level_is_a_local_reads_bytes(volume_node, client):
     assert local["&level=0&pool=2"].headers["X-Plexora-Shape"] == f"3,{NODE_H},{NODE_W}"
 
 
+def test_a_nodes_clip_range_contrast_is_a_local_reads(volume_node, client):
+    """The 3-D view's contrast over some planes (`/volume/<ds>/hint`) of a
+    node's volume: the same numbers a local read gives."""
+    from plexora.server.volume import serve
+
+    serve.clear()
+    name = _names(volume_node.here)[1]
+    query = "&level=0&box=40,64,200,180&z=1,3&w=0,3000"
+    data_model.load_datasource("here", reload=True)
+    local = client.get(f"/volume/here/hint?channel={name}{query}").get_json()
+    data_model.load_datasource("remote", reload=True)
+    remote = client.get(f"/volume/remote/hint?channel=B{query}").get_json()
+    assert local["hint"] is not None and remote == local
+
+
 def test_a_nodes_level_is_fetched_once_and_revalidated_here(volume_node, client, monkeypatch):
     from plexora.server.providers.node import NodeImageProvider
     from plexora.server.volume import serve

@@ -401,7 +401,7 @@
         "/client/src/js/views/depthTools.js?v=20261010_layout",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
-        "/client/src/js/views/volumeRenderer.js?v=20261010_detail4",
+        "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
         "/client/src/js/views/sectionPanes.js?v=20261010_windows",
         "/client/src/js/views/planeMotion.js?v=20261010_standby",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
@@ -698,7 +698,7 @@
         "/client/src/js/views/depthTools.js?v=20261010_layout",
         "/client/src/js/views/volumeCamera.js?v=20261010_layout",
         "/client/src/js/views/orientationGizmo.js?v=20261010_layout",
-        "/client/src/js/views/volumeRenderer.js?v=20261010_detail4",
+        "/client/src/js/views/volumeRenderer.js?v=20261011_clip_hint",
         "/client/src/js/views/sectionPanes.js?v=20261010_windows",
         "/client/src/js/views/planeMotion.js?v=20261010_standby",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
@@ -730,7 +730,7 @@
       ]
     }
   },
-  "route_count": 212,
+  "route_count": 213,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -834,6 +834,7 @@
     "GET /view_state/<string:datasource>",
     "GET /view_transform/<string:datasource>",
     "GET /viewer_prefs",
+    "GET /volume/<string:datasource>/hint",
     "GET /volume/<string:datasource>/info",
     "GET /volume/<string:datasource>/level",
     "GET /volume/<string:datasource>/objects",

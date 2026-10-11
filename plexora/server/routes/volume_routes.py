@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+from types import SimpleNamespace
 
 from flask import abort, jsonify, request
 
@@ -379,41 +380,17 @@ def volume_level(datasource):
     under 1000 with saturated voxels at 65535 gets four; half floats keep
     about three significant digits at every brightness.
     """
-    _project_or_404(datasource)
-    from plexora.server.models import data_model, views
+    from plexora.server.models import data_model
     from plexora.server.volume.viewspec import BadView
 
-    source = views.current_source(datasource)
-    if source is None or source.volume.is_planar:
-        return jsonify(error="this image has a single plane"), 400
-    volume = source.volume
-    channel = request.args.get('channel', '')
-    try:
-        index = data_model.real_channel_index(channel, datasource)
-    except Exception:
-        return jsonify(error=f"no channel {channel!r}"), 400
-    try:
-        ask = serve.parse_level(volume, request.args)
-    except serve.BadLevel as error:
-        return jsonify(error=str(error)), 400
-    name = data_model.real_channels(datasource)[index]['fullname']
-    performance.skip()
-    # The window the request names (`w=`): the bytes are fixed by the address.
-    # Without one, the window there is now -- the provisional one while the
-    # exact scan runs, which no cache may keep.
-    if ask.named is not None:
-        window, exact = ask.named, True
-    else:
-        window, exact = data_model.volume_window_state(name, datasource)
-    performance.mark("lut")
-    rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
-    pool = ask.pool or serve.z_pool(volume, ask.level)
-    remote = not getattr(source, "is_local", True)
-    identity = serve.source_identity(
-        (data_model.config.get(datasource) or {}).get('channelFile'))
-    if remote:
-        # The project's own record of where the pixels are, not a file here.
-        identity = f"node|{identity}|{data_model.load_generation}"
+    context = _level_context(datasource)
+    if not isinstance(context, SimpleNamespace):
+        return context
+    source, volume, index, name, ask = (context.source, context.volume, context.index,
+                                        context.name, context.ask)
+    window, exact = context.window, context.exact
+    rows, cols, covered, pool = context.rows, context.cols, context.covered, context.pool
+    remote, identity = context.remote, context.identity
     span = () if ask.planes == volume.depth else (ask.z0, ask.z1)
     tag = serve.level_etag(identity, index, ask.t, ask.level, window, ask.voxel_format,
                            tuple(covered) + span, pool)
@@ -463,6 +440,91 @@ def volume_level(datasource):
     response.set_etag(tag)
     response.headers.update(headers)
     response.headers.update(serve.payload_headers(shape, hint))
+    return response
+
+
+def _level_context(datasource):
+    """What the level and hint routes share: the source, the channel, the
+    parsed ask, the window, the area and the pooling -- or the error answer."""
+    _project_or_404(datasource)
+    from plexora.server.models import data_model, views
+
+    source = views.current_source(datasource)
+    if source is None or source.volume.is_planar:
+        return jsonify(error="this image has a single plane"), 400
+    volume = source.volume
+    channel = request.args.get('channel', '')
+    try:
+        index = data_model.real_channel_index(channel, datasource)
+    except Exception:
+        return jsonify(error=f"no channel {channel!r}"), 400
+    try:
+        ask = serve.parse_level(volume, request.args)
+    except serve.BadLevel as error:
+        return jsonify(error=str(error)), 400
+    name = data_model.real_channels(datasource)[index]['fullname']
+    performance.skip()
+    # The window the request names (`w=`): the bytes are fixed by the address.
+    # Without one, the window there is now -- the provisional one while the
+    # exact scan runs, which no cache may keep.
+    if ask.named is not None:
+        window, exact = ask.named, True
+    else:
+        window, exact = data_model.volume_window_state(name, datasource)
+    performance.mark("lut")
+    rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
+    pool = ask.pool or serve.z_pool(volume, ask.level)
+    remote = not getattr(source, "is_local", True)
+    identity = serve.source_identity(
+        (data_model.config.get(datasource) or {}).get('channelFile'))
+    if remote:
+        # The project's own record of where the pixels are, not a file here.
+        identity = f"node|{identity}|{data_model.load_generation}"
+    return SimpleNamespace(source=source, volume=volume, index=index, name=name, ask=ask,
+                           window=window, exact=exact, rows=rows, cols=cols, covered=covered,
+                           pool=pool, remote=remote, identity=identity)
+
+
+@app.route('/volume/<string:datasource>/hint', methods=['GET'])
+def volume_hint(datasource):
+    """The default contrast for some planes of a level the 3-D view drew:
+    `{hint: [lo, hi] | null, level, z: [z0, z1]}` in raw units.
+
+    The same numbers as the level's `X-Plexora-Hint`, over planes `z=z0,z1`
+    only. The 3-D view asks when its clip range is narrower than the stack,
+    naming the `level` (and `box`, `w`) it drew, so a thin clip range through
+    a dim part of the stack is levelled by what it shows rather than by the
+    brightest plane outside it. Takes the level route's query."""
+    from plexora.server.models import data_model
+    from plexora.server.volume.viewspec import BadView
+
+    context = _level_context(datasource)
+    if not isinstance(context, SimpleNamespace):
+        return context
+    ask, window = context.ask, context.window
+    hint_key = (context.identity, datasource, context.index, ask.t, ask.level, tuple(window),
+                context.covered, context.pool, ask.z0, ask.z1)
+    if context.remote:
+        node = data_model._remote_image()
+        if node is None:
+            return jsonify(error="this volume's data node is not attached"), 503
+        key = (context.identity, datasource, context.index, ask.t, ask.level, tuple(window),
+               ask.voxel_format, context.covered, context.pool, ask.z0, ask.z1)
+        try:
+            _, _, hint = serve.forwarded_payload(
+                key, lambda: node.level(context.name, ask, context.covered, context.pool, window))
+        except BadView as error:
+            return jsonify(error=str(error)), 400
+    else:
+        hint = serve.hint_over(
+            hint_key,
+            lambda: serve.read_level(context.source, ask, context.index, context.rows,
+                                     context.cols, context.pool),
+            window, data_model.channel_stats_of)
+    response = jsonify(hint=list(hint) if hint else None, level=ask.level, z=[ask.z0, ask.z1])
+    # Fixed by the address when it names its window.
+    response.headers['Cache-Control'] = ('private, max-age=31536000, immutable'
+                                         if ask.named is not None else 'no-store')
     return response
 
 
