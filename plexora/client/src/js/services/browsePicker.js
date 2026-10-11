@@ -75,8 +75,8 @@
 //: said the same thing twice and agreed with itself only for as long as
 //: somebody remembered to edit both.
 const KIND_EXAMPLES = {
-    image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · dicom" },
-    mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · dicom" },
+    image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · DICOM" },
+    mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · DICOM" },
     data: { file: ".csv · .parquet · .h5ad", directory: "SpatialData (.zarr)" },
     // Import Sample, where the halves are not asking which ROLE the file plays
     // -- detection answers that -- only which shape of thing to browse for.

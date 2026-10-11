@@ -1,8 +1,8 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261004_tool_skeleton">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261010_minimap_rect">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
 {% endblock %}
@@ -470,8 +470,8 @@
    select's client (click an artifact, get its outline; sets itself up once).
    Core services the ROI and QC panels share; they call only /segment/v1. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewSnapshot.js?v=20261004_magic_select" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261004_scribble" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261004_scribble_b" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261010_magic_select_qc" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261010_magic_select_qc" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/canvasHint.js?v=20261004_defaults" defer></script>
 {# Grab/grabbing on the OSD canvas. Deferred and unconditional within this
    branch: it installs three document-level listeners that cost nothing until
@@ -536,137 +536,187 @@
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/main.js?v=20260929_ai_qc" defer></script>
 {% else %}
-{# The home page when nothing is registered yet.
+{# The home page: `/` with no datasource named, whether or not anything is
+   registered yet.
 
-   One vertical run of four things, in the order they are needed: which
-   machine, which image, the typed way in, and the way out to the full import.
+   One raised card that takes one image, and under it the way back to what was
+   opened last. The card is one question asked in reading order -- a file or a
+   folder, on which machine, which one -- and its button is Browse until there
+   is a path in the box and Load from then on, so there is never a second
+   control for the same act.
 
    The one gesture -- pick an image, land in the viewer -- is what this page
    is for, and it is the page's own control rather than a button that opens
    the import dialog: a modal covering an otherwise empty page is a step, not
-   a shortcut. What it is NOT any more is a second importer. The Load button
-   POSTs to `/import/sample`, the same route the dialog submits to, so a
-   Xenium run dropped here brings its transcripts and its table with it
-   instead of being refused for not being one image. See
-   views/quickViewLanding.js.
+   a shortcut. What it is NOT is a second importer. Load POSTs to
+   `/import/sample`, the same route the dialog submits to, so a Xenium run
+   dropped here brings its transcripts and its table with it instead of being
+   refused for not being one image. See views/quickViewLanding.js.
 
-   The footer is the way to everything that needs a decision -- several
-   samples in one folder, a name, a dataset, a question answered. That is the
-   dialog, and it is one link rather than the page's headline act. #}
+   Everything that needs a decision first -- several samples in one folder, a
+   name, a dataset -- is the dialog, one quiet line under the card. #}
 <div id="quick_view_landing" class="quick-view-landing">
-    <div class="quick-view-card">
-        <h1 class="quick-view-title">Plexora</h1>
+    <div class="quick-view-column">
+        {# An instruction, not a logo: the name is already in the navbar, and
+           the page's one heading should say what the page is for. #}
+        <header class="quick-view-hero">
+            <h1 class="quick-view-title">Explore your tissue</h1>
+            <p class="quick-view-tagline">Open an image from this computer or a connected server.</p>
+        </header>
 
-        {# Which machine the image is on, asked ONCE for the whole page.
-           Everywhere else this switch sits inside the row of the one field it
-           governs; here it governs two controls -- the File/Folder pair and
-           the path box -- so it stands above them both, and asking twice on a
-           page whose whole job is one image is what that avoids.
+        {# `is-local` / `is-remote`, `data-face` (browse | load | busy) and
+           `data-check` (idle | checking | ok | bad | url) are set by the
+           controller, and everything that changes with them -- which glyph
+           the machine chip leads with, which face the button shows, the mark
+           at the end of the box -- is CSS over those three. Every icon is in
+           the markup from the start because Font Awesome swaps each <span>
+           for an <svg> once: a class changed on the span afterwards changes
+           nothing anybody can see. #}
+        <section id="quick_view_card" class="quick-view-card is-local" data-face="browse" data-check="idle"
+                 aria-label="Open an image">
+            {# The quick beam, faded in over the card's own slow one while
+               something is happening: choosing, loading, sharing. #}
+            <span class="quick-view-beam" aria-hidden="true"></span>
 
-           services/dataLocation.js renders the [L|R] chip and the place button
-           into `#quick_view_where_control`. The label and the caption beside
-           it are this page's own: two bare letters standing alone explain
-           nothing without a word next to them, and on a form the word they do
-           not need is supplied by the box they sit against. #}
-        <div class="quick-view-where">
-            <span class="quick-view-where-label">Image location</span>
-            <div class="quick-view-where-control" id="quick_view_where_control"></div>
-            {# Local only. On Remote the switch's own place button stands here
-               instead and names the machine -- and unlike this caption it is
-               clickable, which is how the machine is changed without toggling
-               back through Local and losing the box on the way. #}
-            <span class="quick-view-where-caption" id="quick_view_where_caption" hidden></span>
-
-        <p class="quick-view-subtitle">
-            Local images: no setup. Remote images:
-            <a href="{{ data.base_url }}/settings#remotes">configure the server in Settings</a>.
-        </p>
-
-
-        </div>
-        {# Where the share reports itself -- "Sharing…", "Ready on hpc", "Not
-           connected yet". Under the switch rather than under the path row,
-           because it is news about the machine and not about the file. #}
-        <div class="quick-view-where-status" id="quick_view_where_status"></div>
-
-        {# The page's primary action, built by views/quickViewLanding.js out of
-           the shared File/Folder control (services/browsePicker.js) so the
-           format hints under each word are defined in exactly one place.
-
-           Always both halves, on every platform. An OME-Zarr image is a folder
-           and an OME-TIFF is a file; which one you have is a fact about your
-           format, and the example line under each word answers it rather than
-           asking. This used to be one target that opened the question as a
-           popup afterwards -- on the machines that could not answer it in one
-           dialog, which is every machine but a Mac. #}
-        <div class="quick-view-open" id="quick_view_open"></div>
-
-        <div class="quick-view-path">
-            <label for="quick_view_path_input" class="quick-view-path-label">Or type an image path</label>
-            <div class="quick-view-path-row">
-                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false"
-                       placeholder="/path/to/image.ome.tif, https://…/image.zarr or gs://bucket/dicom-folder/">
-                {# No Browse beside it any more: the pair above IS this page's
-                   file browser, and a second route to the same dialog made the
-                   big obvious target look like the slower of the two. #}
-                <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
+            {# Which shape of thing Browse opens a dialog for. Not "which
+               format" -- the chips at the foot of the card answer that --
+               and not a question for a typed path, which is whatever it is:
+               a path that is plainly one or the other moves this with it. #}
+            <div id="quick_view_kind" class="quick-view-kind" role="radiogroup" aria-label="Open a file or a folder">
+                <span class="quick-view-kind-thumb" aria-hidden="true"></span>
+                <button type="button" role="radio" class="quick-view-kind-option" data-kind="file"
+                        aria-checked="true">
+                    <span class="fas fa-file" aria-hidden="true"></span><span>File</span>
+                </button>
+                <button type="button" role="radio" class="quick-view-kind-option" data-kind="directory"
+                        aria-checked="false" tabindex="-1">
+                    <span class="fas fa-folder" aria-hidden="true"></span><span>Folder</span>
+                </button>
             </div>
-            {# Shown instead of the pass/fail border a local path earns from
-               `check_path_existence` -- a web address is never stat'd, so
-               there is nothing here for a green tick or a red one to mean.
-               See views/quickViewLanding.js. #}
-            <span class="quick-view-path-hint" id="quick_view_path_hint" hidden>Web address</span>
-        </div>
 
-        {# A live region that is always in the DOM and empty when it has
-           nothing to say (`:empty` hides it), rather than one toggled with
-           `hidden`: a region that appears and gains its text in the same tick
-           is the shape screen readers miss. Same idiom as
-           `.data-location-status` above it. #}
-        <div id="quick_view_status" class="quick-view-status" role="status"></div>
+            <div class="quick-view-row">
+                <div id="quick_view_field" class="quick-view-field">
+                    {# Which machine the image is on, as the first thing in the
+                       box it governs -- `host:/path`, the shape anybody who
+                       has used scp already reads. "Local" or the server's
+                       name; the menu under it lists the actual machines, so
+                       Remote is never a second question. #}
+                    <button type="button" id="quick_view_where" class="quick-view-where"
+                            aria-haspopup="menu" aria-expanded="false" aria-controls="quick_view_where_menu">
+                        <span class="quick-view-where-local" aria-hidden="true"><span class="fas fa-laptop"></span></span>
+                        <span class="quick-view-where-dot" aria-hidden="true"></span>
+                        <span class="quick-view-where-label">Local</span>
+                        <span class="quick-view-where-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span></span>
+                    </button>
+                    <input id="quick_view_path_input" class="quick-view-input" type="text"
+                           autocomplete="off" spellcheck="false" aria-label="Image path"
+                           placeholder="Paste an image path or URL…">
+                    <span class="quick-view-check" aria-hidden="true">
+                        <span class="quick-view-spinner quick-view-check-checking"></span>
+                        <span class="quick-view-check-ok"><span class="fas fa-circle-check"></span></span>
+                        <span class="quick-view-check-bad"><span class="fas fa-circle-exclamation"></span></span>
+                        <span class="quick-view-check-url"><span class="fas fa-globe"></span></span>
+                    </span>
+                    {# Built by the controller each time it opens, from the
+                       live list of machines (services/remoteState.js). #}
+                    <div id="quick_view_where_menu" class="quick-view-menu" role="menu"
+                         aria-label="Where the image is" hidden></div>
+                </div>
+                {# Browse with an empty box, Load with a path in it -- one
+                   button whose job follows the box, so the typed way in and
+                   the browsed way in can never look like two routes. #}
+                <button type="button" id="quick_view_go" class="quick-view-go">
+                    <span class="quick-view-go-face quick-view-go-browse">
+                        <span class="fas fa-folder-open" aria-hidden="true"></span><span>Browse</span>
+                    </span>
+                    <span class="quick-view-go-face quick-view-go-load">
+                        <span>Load</span><span class="quick-view-go-arrow" aria-hidden="true"><span class="fas fa-arrow-right"></span></span>
+                    </span>
+                    <span class="quick-view-go-face quick-view-go-busy">
+                        <span class="quick-view-spinner" aria-hidden="true"></span><span id="quick_view_go_busy">Loading…</span>
+                    </span>
+                </button>
+            </div>
 
-        {# The three ways out, where the wizard link used to be and for the
-           same reason: this page takes one pick and opens it, and anything
-           that needs a decision first -- or that is not an import at all --
-           belongs somewhere else. One paragraph and `<br>`s rather than a
-           block each, so this stays the single muted line the design has under
-           the status and not a second section competing with the pair above.
+            {# What the card has to say, under the row it is about. Two live
+               regions, each always in the DOM and empty when it has nothing to
+               say: this page's own line, and the location service's (sharing
+               a file on another machine, or why it cannot be). A region that
+               appears and gains its text in the same tick is the shape screen
+               readers miss. The wrapper opens and closes smoothly around
+               whichever has something in it. #}
+            <div class="quick-view-lines">
+                <div class="quick-view-lines-inner">
+                    <div id="quick_view_status" class="quick-view-status" role="status"></div>
+                    <div id="quick_view_where_status" class="quick-view-where-status"></div>
+                </div>
+            </div>
 
-           First, the import dialog. `id="sample-import-home"` is what binds
-           it: views/importSample.js binds every "Import Sample..." on every
-           surface by id, so this needs no controller of its own. A <button>,
-           because it opens a dialog in place and there is no URL to give an
-           <a>.
+            {# Two examples a side, from browsePicker.js's KIND_EXAMPLES -- the
+               same pair every Browse button on the import form shows -- the
+               side for the chosen tab lit, and "and more" so nobody reads four
+               as the whole list. The `?` opens the catalogue the import
+               dialog's own "All formats" link opens (views/importHelp.js). #}
+            <div class="quick-view-formats">
+                <ul id="quick_view_formats" class="quick-view-chips" aria-label="Example formats">
+                    <li class="quick-view-more">and more</li>
+                </ul>
+                <button type="button" class="quick-view-help" id="quick_view_help" aria-haspopup="dialog">
+                    <span class="fas fa-circle-question" aria-hidden="true"></span>
+                    <span>What&rsquo;s supported</span>
+                </button>
+            </div>
+        </section>
 
-           Second, the library. `/` renders this card whenever no datasource is
-           NAMED in the URL -- not only on an empty install -- so somebody with
-           twenty samples lands here too, and the way back to them should not be
-           only in a menu. #}
+        {# The import dialog, for a pick that needs a decision first.
+           `id="sample-import-home"` is what binds it: views/importSample.js
+           binds every "Import Sample..." on every surface by id, so this needs
+           no controller of its own. A <button>, because it opens a dialog in
+           place and there is no URL to give an <a>. #}
         <p class="quick-view-footer">
-            Need to name it, file it in a dataset, or bring in several samples
-            at once?
-            <button type="button" class="quick-view-more" id="sample-import-home">Import Sample&hellip;</button>
-            <br>
-            {# The `?` the import dialog carries in its header, opening the
-               same modal (views/importHelp.js, loaded by base.html on every
-               page). Here rather than in the card's corner: this page is one
-               centred vertical run and a corner-anchored icon is the only
-               thing in it that belongs to no line. It reads as a question
-               like the two around it, and it is the same question the dialog's
-               own "All formats" link answers -- one catalogue, so the two
-               surfaces cannot drift on what Plexora reads. #}
-            Not sure what Plexora reads?
-            <button type="button" class="quick-view-more quick-view-help"
-                    id="quick_view_help" aria-haspopup="dialog">
-                <span class="fas fa-circle-question" aria-hidden="true"></span>
-                <span>What&rsquo;s supported</span>
-            </button>
-            <br>
-            Already have samples?
-            <a href="{{ data.base_url }}/open_project">Open one</a>.
+            Need to name it, file it in a dataset, or bring in several samples at once?
+            <button type="button" class="quick-view-more-link" id="sample-import-home">Import Sample&hellip;</button>
         </p>
+
+        {# The way back to what was opened last. `/` renders this card whenever
+           no datasource is NAMED in the URL -- not only on an empty install --
+           so somebody with twenty samples lands here too. Three rows, from
+           page_routes._recent_rows, rendered with the page so nothing moves
+           when they arrive; quiet until pointed at, because the card above is
+           what this page is for. Absent on an install with nothing to reopen. #}
+        {% if data.recent_projects %}
+        <section class="quick-view-recent" aria-labelledby="quick_view_recent_heading">
+            <div class="quick-view-recent-head">
+                <span class="fas fa-clock-rotate-left" aria-hidden="true"></span>
+                <h2 id="quick_view_recent_heading">Recent</h2>
+                <a class="quick-view-all" href="{{ data.base_url }}/open_project">
+                    <span>All projects</span><span class="fas fa-arrow-right" aria-hidden="true"></span>
+                </a>
+            </div>
+            <ul class="quick-view-recent-list">
+                {% for row in data.recent_projects %}
+                <li class="quick-view-recent-item">
+                    <a class="quick-view-recent-open" href="{{ data.base_url }}/{{ row.name | urlencode }}">
+                        <span class="quick-view-tile tone-{{ row.tone }}" aria-hidden="true"><span class="fas {{ row.icon }}"></span></span>
+                        <span class="quick-view-recent-main">
+                            <span class="quick-view-recent-name">{{ row.name }}</span>
+                            <span class="quick-view-recent-meta">{{ row.meta }}</span>
+                        </span>
+                        {% if row.remote %}
+                        <span class="quick-view-badge" title="Served by {{ row.remote }} — it opens while that connection is up.">
+                            <span class="fas fa-cloud" aria-hidden="true"></span><span class="quick-view-badge-text">{{ row.remote }}</span>
+                        </span>
+                        {% endif %}
+                        {% if row.when %}<time class="quick-view-when" datetime="{{ row.opened }}">{{ row.when }}</time>{% endif %}
+                        <span class="quick-view-recent-go" aria-hidden="true">Open<span class="fas fa-arrow-right"></span></span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261001_pyramid_confirm" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261010_home_redesign" defer></script>
 {% endif %}
 {% endblock %}

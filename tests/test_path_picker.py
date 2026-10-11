@@ -333,11 +333,13 @@ def test_the_import_dialog_never_needs_an_anchor_because_it_never_asks_late():
     assert "anchorEl:" not in dialog
     assert "function pickWith(mode)" in dialog
 
-    # The home page is the other one, for the same reason and with the same
-    # pair. It is a separate surface, so it is separately asserted.
+    # The home page is the other one, for the same reason: its File / Folder
+    # tabs pass their own kind straight through. It is a separate surface, so
+    # it is separately asserted.
     landing = source("src", "js", "views", "quickViewLanding.js")
     assert "anchorEl:" not in landing
     assert "async function browseForImage(mode)" in landing
+    assert "browseForImage(kind);" in landing
 
 def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     """getBoundingClientRect() on a hidden element is four zeros, and
@@ -358,24 +360,26 @@ def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     assert "const box = anchorBox(anchorEl);" in browse
 
 
-def test_both_panels_are_the_halves_on_every_platform():
+def test_both_surfaces_ask_file_or_folder_up_front_on_every_platform():
     """The two surfaces that ask "which file?" with the whole width to do it in
-    -- the home page's primary action and the import dialog's `pick` state --
-    build the shared File/Folder control once and unconditionally, not a single
-    target that a capability probe swaps for the halves after load.
+    -- the home page's card and the import dialog's `pick` state -- ask "file or
+    folder?" before the dialog opens, not as a single target that a capability
+    probe swaps for the halves after load.
 
     The probe existed to decide whether the question could be avoided, and only
     macOS could avoid it. Asking it up front costs macOS one decision and buys
     every platform the same page, no round trip on load, and no popup that can
     open away from the click.
 
-    Both, in one test, because the risk is that they drift: a panel rebuilt by
-    hand on one of them is how the format hints under each word end up saying
-    different things on two screens that are the same control.
+    The dialog builds the shared File/Folder control. The home page asks with
+    tabs above its one path box, and its format chips are read from the same
+    table the control's example lines are -- the risk being guarded is two
+    screens that ask the same question saying different things about formats.
     """
     landing = source("src", "js", "views", "quickViewLanding.js")
-    assert 'buildSplitControl("image", browseForImage,' in landing
-    assert 'panel.classList.add("is-panel");' in landing
+    index = source("templates", "index.html")
+    assert 'data-kind="file"' in index and 'data-kind="directory"' in index
+    assert "KIND_EXAMPLES.image" in landing
     assert "applyCapability" not in landing
 
     dialog = source("src", "js", "views", "importSample.js")
@@ -420,12 +424,14 @@ def test_the_halves_are_a_control_and_the_drop_target_is_separate():
 
 def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
     """Everywhere else the Local/Remote switch sits inside the row of the one
-    field it governs. On the home page and in the import dialog it governs two
-    controls -- the File/Folder pair and the path box -- so it is mounted above
-    them both, which is what `mount` and `statusMount` exist for. Two switches
-    on a surface that takes one pick would be the same question asked twice."""
+    field it governs. In the import dialog it governs two controls -- the
+    File/Folder pair and the path box -- so it is mounted above them both,
+    which is what `mount` and `statusMount` exist for. Two switches on a
+    surface that takes one pick would be the same question asked twice."""
+    # The home page asks it as a chip in its one path box -- the one surface
+    # whose single field IS the whole pick -- and draws that chip itself.
     landing = source("src", "js", "views", "quickViewLanding.js")
-    assert "mount: whereMount," in landing
+    assert "bare: true," in landing
     assert "statusMount: whereStatus," in landing
 
     dialog = source("src", "js", "views", "importSample.js")
@@ -435,7 +441,7 @@ def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
     # The service honours them, and still defaults to the in-row placement
     # every form field depends on.
     assert "if (options.mount) options.mount.appendChild(root);" in location
-    assert "else row.insertBefore(root, row.children[0]);" in location
+    assert "else if (!options.bare) row.insertBefore(root, row.children[0]);" in location
     assert "(options.statusMount || field).appendChild(status);" in location
 
 def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
@@ -445,8 +451,9 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     landing = source("src", "js", "views", "quickViewLanding.js")
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    assert 'panel.querySelectorAll(".browse-kind-half")' in landing
-    assert "halves.forEach((half) => { half.disabled = busy; });" in landing
+    # The home page's File / Folder tabs, which choose what Browse opens.
+    assert "option.disabled = busy();" in landing
+    assert ".quick-view-kind-option:disabled {" in source("src", "css", "quickView.css")
     assert 'panel.querySelectorAll(".browse-kind-half")' in dialog
     assert "half.disabled = busy;" in dialog
     # And it has to look disabled: a half that still lights up under the
@@ -472,12 +479,12 @@ def test_the_chooser_says_which_formats_are_which():
     .h5ad and has never taken a .svs in its life.
     """
     browse = source("src", "js", "services", "browsePicker.js")
-    assert 'image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · dicom" }' in browse
+    assert 'image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · DICOM" }' in browse
     assert ('data: { file: ".csv · .parquet · .h5ad", '
             'directory: "SpatialData (.zarr)" }') in browse
     # And the mask, which shares filter "image" with the image field and must
     # NOT share its examples: nobody has a segmentation mask in .svs.
-    assert 'mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · dicom" }' in browse
+    assert 'mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · DICOM" }' in browse
     # Chosen at open time, by a name of its own rather than by the filter.
     assert "chooseKind(anchorEl, examples || filter)" in browse
     assert "KIND_EXAMPLES[examples] || {}" in browse

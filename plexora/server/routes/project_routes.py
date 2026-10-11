@@ -70,29 +70,73 @@ def list_projects():
     # root is not mounted today does not appear inside a folder it cannot be
     # opened from. Pruned in the VIEW only -- nothing is rewritten here.
     holders = datasets.membership(known=config.keys())
-    projects = []
-    for name, entry in config.items():
+    return jsonify([_project_card(name, entry, homes, holders, own)
+                    for name, entry in config.items()])
+
+
+def _project_card(name, entry, homes, holders, own):
+    """One `/projects` card. `homes`, `holders` and `own` are read once by the
+    caller for the whole listing -- see `list_projects`."""
+    entry = entry or {}
+    home_root = homes.get(name)
+    created_at = entry.get('createdAt') or _fallback_timestamp(name, home_root)
+    last_opened_at = entry.get('lastOpenedAt') or created_at
+    project = Project.from_entry(name, entry, home_root=home_root)
+    holder = holders.get(name)
+    return {
+        'name': name,
+        'createdAt': created_at,
+        'lastOpenedAt': last_opened_at,
+        'thumbnailUrl': f'/project_thumbnail/{name}',
+        'shared': home_root is not None and home_root != own,
+        # The folder this project is in, or null for one at the top level.
+        # Name as well as id, so a card in a flattened search result can say
+        # where it lives without a second lookup.
+        'dataset': ({'id': holder.id, 'name': holder.name} if holder else None),
+        # The badges, from the one manifest reader -- so "has data" means
+        # here exactly what it means to a plugin deciding whether to open.
+        **manifest.summary(project),
+    }
+
+
+def recent_projects(limit=3):
+    """The `limit` projects opened most recently, as `/projects` cards, newest
+    first -- the home page's Recent list.
+
+    Ordered on the config entries' own timestamps BEFORE any card is built, so
+    only the rows that are shown pay for loading a project and summarising its
+    manifest. The home page is opened far more often than the library, and an
+    install with two hundred samples should not build two hundred manifests to
+    draw three rows.
+
+    A project that cannot be summarised is left out rather than raised: these
+    rows are a shortcut on a page whose job is opening an image, and one broken
+    record must not cost somebody that page. The library still lists it, and is
+    where it gets fixed.
+    """
+    config = get_config()
+    if not config:
+        return []
+    homes = Project.load_roots()
+
+    def opened(item):
+        name, entry = item
         entry = entry or {}
-        home_root = homes.get(name)
-        created_at = entry.get('createdAt') or _fallback_timestamp(name, home_root)
-        last_opened_at = entry.get('lastOpenedAt') or created_at
-        project = Project.from_entry(name, entry, home_root=home_root)
-        holder = holders.get(name)
-        projects.append({
-            'name': name,
-            'createdAt': created_at,
-            'lastOpenedAt': last_opened_at,
-            'thumbnailUrl': f'/project_thumbnail/{name}',
-            'shared': home_root is not None and home_root != own,
-            # The folder this project is in, or null for one at the top level.
-            # Name as well as id, so a card in a flattened search result can say
-            # where it lives without a second lookup.
-            'dataset': ({'id': holder.id, 'name': holder.name} if holder else None),
-            # The badges, from the one manifest reader -- so "has data" means
-            # here exactly what it means to a plugin deciding whether to open.
-            **manifest.summary(project),
-        })
-    return jsonify(projects)
+        return (entry.get('lastOpenedAt') or entry.get('createdAt')
+                or _fallback_timestamp(name, homes.get(name)) or '')
+
+    newest = sorted(config.items(), key=opened, reverse=True)
+    holders = datasets.membership(known=config.keys())
+    own = paths.data_root()
+    cards = []
+    for name, entry in newest:
+        if len(cards) == limit:
+            break
+        try:
+            cards.append(_project_card(name, entry, homes, holders, own))
+        except Exception:  # noqa: BLE001 -- see the docstring
+            app.logger.warning("Recent projects: skipped %r", name, exc_info=True)
+    return cards
 
 
 @app.route('/project_thumbnail/<string:name>')
