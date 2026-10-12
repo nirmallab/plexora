@@ -127,6 +127,31 @@ function check(condition, message) {
         "and the viewer is told when the picture shows it");
 }
 
+// -- a clipped following slab: cut at the ends, outlines from its own plane --
+// The thresholding panel's slab (plugins/gating/static/gatingPlanes.js): the
+// planes around z that exist, never a slab centred somewhere else, and a 3-D
+// mask's outlines from z -- the plane the user is on -- not the slab's middle.
+{
+    const vs = new ViewState("clip", { fetchImpl: fakeFetch({
+        "volume/clip/info": { ...VOLUME, segmentation: { ndim: 3 } }, "view_state/clip": {} }) });
+    await vs.load({ search: "" });
+    vs.set({ z: 20 });
+    vs.set({ mode: "slab", slab: { thickness: 5, op: "mean", follow: true, clip: true } });
+    check(vs.spec() === "z18-22mean", `centred on the plane (${vs.spec()})`);
+    check(vs.labelSpec() === "z20", `the outlines are the plane's (${vs.labelSpec()})`);
+    vs.set({ z: 1 });
+    check(vs.spec() === "z0-3mean", `cut at the first plane, not slid down (${vs.spec()})`);
+    check(vs.labelSpec() === "z1", `and the outlines stay the plane's (${vs.labelSpec()})`);
+    vs.set({ z: 39 });
+    check(vs.spec() === "z37-39mean", `cut at the last plane (${vs.spec()})`);
+    const ahead = vs.movedTo(38);
+    check(vs.spec(ahead) === "z36-39mean" && vs.labelSpec(ahead) === "z38"
+          && vs.spec() === "z37-39mean", "movedTo says what a step would show, and changes nothing");
+    vs.set({ slab: { z0: 4, z1: 9, follow: false } });
+    check(vs.labelSpec() === "z6" && !vs.get().slab.clip,
+          `a fixed slab keeps its middle plane's outlines, and does not clip (${vs.labelSpec()})`);
+}
+
 // -- a following slab keeps its thickness, even at the ends -----------------
 {
     const vs = new ViewState("vol", { fetchImpl: fakeFetch({

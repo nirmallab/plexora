@@ -527,3 +527,99 @@
 #gate_contrast_control:focus-within .gate-contrast-slider {
     opacity: 1;
 }
+
+/* ---------------------------------------------------------------------------
+   A z-stack, gated plane by plane (gatingPlanes.js).
+
+   VIEW     [ Plane | Slab ]             core's segmented control (viewer.css
+            [ 5 ] µm  [Mean v]  5 planes   .cell-mode-options) and the Depth
+                                           card's own number and select fields,
+   so the row reads as the viewer's controls rather than a second design. The
+   two captions (`.gate-row-caption`, on core's own row and caption) share one
+   width so MARKER's and VIEW's controls start on one line, and the slab's
+   fields start under the selector they belong to.
+   --------------------------------------------------------------------------- */
+.gate-planes {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.gate-planes[hidden],
+.gate-slab-row[hidden],
+.gate-plane-readout[hidden] {
+    display: none;
+}
+
+#gate_marker_section:has(> .gate-planes:not([hidden])) .gate-row-caption,
+.gate-planes .gate-row-caption {
+    min-width: 58px;
+}
+
+.gate-view-control {
+    min-width: 0;
+}
+
+.gate-slab-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+    /* Under the selector, not under its caption: the caption's 58px and the
+       row's 10px gap. */
+    padding-left: 68px;
+}
+
+.gate-slab-row .gate-slab-agg {
+    flex: 0 1 auto;
+    min-width: 0;
+    width: auto;
+}
+
+.gate-slab-row .gate-slab-planes {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The plane's cells under the stack's line: a quiet neutral shading, not a
+   second colour -- cyan is the gate, and the line is the stack. */
+.gate-plane-distribution {
+    fill: var(--text-secondary);
+    fill-opacity: 0.2;
+    stroke: var(--text-secondary);
+    stroke-opacity: 0.45;
+    stroke-width: 1;
+}
+
+/* "[] z 12 . 41 of 312 positive", under the plot it counts: the swatch is the
+   shading above it. One line; the whole sentence is the tooltip. */
+.gate-plane-readout {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    line-height: 1.4;
+    margin-top: calc(var(--space-2) * -1 + 2px);
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.gate-plane-swatch {
+    background: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-secondary) 50%, transparent);
+    border-radius: 2px;
+    flex: 0 0 auto;
+    height: 8px;
+    width: 10px;
+}
+
+.gate-plane-text {
+    color: var(--text-secondary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

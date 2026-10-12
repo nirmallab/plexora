@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_no_cell_model"
+VERSION = "20261012_plane_merge"
 
 
 def _blueprint():
@@ -49,8 +49,9 @@ PLUGIN = Plugin(
     # gatingApi.js first: the other two construct GatingApi at init.
     # gatingAgentBridge.js answers core's viewer control plane (agentBridge.js)
     # through window events; nothing else references it.
-    scripts=("gatingApi.js", "csvGatingList.js", "gatingSidebarController.js",
-             "gatingAgentBridge.js"),
+    # gatingPlanes.js before the controller, which builds its plane control.
+    scripts=("gatingApi.js", "csvGatingList.js", "gatingPlanes.js",
+             "gatingSidebarController.js", "gatingAgentBridge.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has
     # nothing to gate; it needs the marker/metadata split to know WHICH columns

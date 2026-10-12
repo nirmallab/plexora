@@ -45,10 +45,17 @@
        `.slider-auto-button` for its revert and busy states; `.gate-marker-auto`
        only keeps the row from stretching it (gating.css). #}
     <div class="control-row">
-        <label class="control-label" for="gate_marker_select">Marker</label>
+        <label class="control-label gate-row-caption" for="gate_marker_select">Marker</label>
         <div id="gate_marker_select" class="marker-combobox-mount"></div>
         <button id="gate_auto_button" class="slider-auto-button gate-marker-auto" type="button"></button>
     </div>
+    {# A Z-STACK ONLY: what the image shows while gating -- the plane, or a slab
+       of planes around it combined (mean, max or median; 5 um by default),
+       for a stain too faint to judge on one optical section. The outlines
+       stay the plane's own cells, and the gate is always applied to each
+       cell's whole-cell value: the slab is for looking. Built by
+       gatingPlanes.js; hidden for a 2-D image, a 2-D mask and the 3-D view. #}
+    <div id="gate_planes" class="gate-planes" hidden></div>
     {# THE WHOLE GATE ON ONE LINE: `0.42 ---o=====o--- 9.10`, which is the
        image channel's contrast window exactly (viewerSidebar's
        createChannelSlot).
@@ -85,6 +92,10 @@
             </button>
         </div>
     </div>
+    {# A Z-STACK ONLY, while a plane is on screen: its cells -- the outlines
+       drawn -- shaded under the line above and counted by the gate's calls:
+       "z 12 . 41 of 312 positive". Painted by gatingPlanes.js. #}
+    <div id="gate_plane_readout" class="gate-plane-readout" hidden></div>
     {# WHICH CELLS AUTO FITTED, when QC has been run on the image: "QC-passed
        cells only . 2,318 left out by QC", the counts in full in its tooltip.
        The cells QC failed

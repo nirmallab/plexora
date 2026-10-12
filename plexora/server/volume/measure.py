@@ -126,12 +126,16 @@ def _boundary_counts(a, b, n):
 
 
 def measure(label_volume, read_channel_plane, *, channel_names, spacing=None,
-            units="physical", t=0, progress=None):
+            units="physical", t=0, progress=None, planes=None):
     """Measure every object of `label_volume` (a `labels.LabelVolume`).
 
     `read_channel_plane(channel_index, z, rows, cols)` returns one channel's
     level-0 pixels for a strip of plane z. `spacing` is a `Spacing`; physical
     columns need its z step to be known (see module docstring).
+
+    `planes`, when given, is a `planes.PlaneWriter`: every plane's cells and
+    their voxels on it are added as the pass leaves the plane -- the per-plane
+    cell index, from the same reads.
 
     Returns `(columns: dict of numpy arrays, manifest: dict)`.
     """
@@ -152,6 +156,10 @@ def measure(label_volume, read_channel_plane, *, channel_names, spacing=None,
                 top = max(top, int(block.max()))
     n = top + 1
     acc = _Acc(n=n, channels=channels)
+    if planes is not None:
+        # This plane's voxels per cell; only the entries a plane touched are
+        # reset when the pass leaves it, so a plane costs its cells, not `n`.
+        plane_count = np.zeros(n, np.int64)
     xs_cache = {}
     previous_plane_rows = None
     total = depth * max(1, math.ceil(height / STRIP_ROWS))
@@ -164,14 +172,17 @@ def measure(label_volume, read_channel_plane, *, channel_names, spacing=None,
             labels = label_volume.read(0, z, z, rows, slice(None))[0].astype(np.int64)
             h, w = labels.shape
             flat = labels.ravel()
-            acc.count += np.bincount(flat, minlength=n)[:n]
+            strip_count = np.bincount(flat, minlength=n)[:n]
+            acc.count += strip_count
+            if planes is not None:
+                plane_count += strip_count
             if w not in xs_cache:
                 xs_cache[w] = np.arange(w, dtype=np.float64)
             xs = np.broadcast_to(xs_cache[w], (h, w)).ravel()
             ys = np.repeat(np.arange(y0, y0 + h, dtype=np.float64), w)
             acc.sx += np.bincount(flat, weights=xs, minlength=n)[:n]
             acc.sy += np.bincount(flat, weights=ys, minlength=n)[:n]
-            acc.sz += np.bincount(flat, minlength=n)[:n] * float(z)
+            acc.sz += strip_count * float(z)
             _bbox_kernel(labels.astype(np.uint32), y0, z, *acc.bbox)
             # Faces across x within the strip, and the stack's own x edges.
             acc.faces_x += _boundary_counts(labels[:, 1:], labels[:, :-1], n)
@@ -205,6 +216,11 @@ def measure(label_volume, read_channel_plane, *, channel_names, spacing=None,
             if progress is not None:
                 progress(done, total)
         previous_plane_rows = plane_rows
+        if planes is not None:
+            present = np.flatnonzero(plane_count)
+            present = present[present > 0]
+            planes.add(t, z, present, plane_count[present])
+            plane_count[present] = 0
     return _columns(acc, channel_names, spacing, physical, depth, height, width, t)
 
 

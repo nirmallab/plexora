@@ -1121,7 +1121,8 @@ def seg_block(resource_id):
 # hours: progress goes back to the primary's task and a cancel stops it.
 
 #: job id -> {"state", "stage", "done", "total", "error", "manifest", "meta",
-#: "result", "cancel"}: a measurement's or a surface build's.
+#: "result", "planes", "cancel"}: a measurement's or a surface build's
+#: (`planes` is a measurement's per-plane cell index, server/volume/planes.py).
 _JOBS: "OrderedDict[str, dict]" = OrderedDict()
 _JOBS_LOCK = threading.Lock()
 #: Finished jobs kept for their result; the oldest go first.
@@ -1157,7 +1158,8 @@ def _start_job(name, work):
 
     job_id = secrets.token_hex(8)
     job = {"state": "running", "stage": None, "done": 0, "total": 0, "error": None,
-           "manifest": None, "meta": None, "result": None, "cancel": threading.Event()}
+           "manifest": None, "meta": None, "result": None, "planes": None,
+           "cancel": threading.Event()}
 
     def run():
         try:
@@ -1197,13 +1199,18 @@ def volume_measure():
     units = str(body.get("units") or "physical")
 
     def work(job):
+        import shutil
+        import tempfile
         from dataclasses import replace
+        from pathlib import Path
 
         from plexora.server.volume import labels as volume_labels
         from plexora.server.volume import objects
+        from plexora.server.volume import planes as volume_planes
         from plexora.server.volume.sources import open_volume
 
         source = None
+        scratch = Path(tempfile.mkdtemp(prefix="plexora-planes-"))
         try:
             # Opened here, not borrowed from the tile path's handles: an hour
             # of reading must not hold those resources' locks.
@@ -1221,15 +1228,21 @@ def volume_measure():
                 frame_interval=body.get("frame_interval"), frames=source.volume.frames)
             if spacing is not source.volume.spacing:
                 source.volume = replace(source.volume, spacing=spacing)
+            folder = scratch / volume_planes.FOLDER
             frame, manifest = objects.measure_columns(
                 labels, source, channel_names=names, indices=indices, units=units,
-                progress=_progress_of(job), cancelled=job["cancel"].is_set)
+                progress=_progress_of(job), cancelled=job["cancel"].is_set,
+                planes_folder=folder)
             buffer = io.BytesIO()
             frame.write_parquet(buffer)
-            job.update(manifest=manifest, result=buffer.getvalue())
+            # The plane index travels as one tar beside the table (the primary
+            # keeps both); the voxels never leave this machine.
+            job.update(manifest=manifest, result=buffer.getvalue(),
+                       planes=volume_planes.pack(folder))
         finally:
             if source is not None:
                 source.close()
+            shutil.rmtree(scratch, ignore_errors=True)
 
     return jsonify(success=True, job=_start_job("measure", work)), 202
 
@@ -1250,6 +1263,16 @@ def volume_job_result(job_id):
     if job["state"] != "done" or job["result"] is None:
         raise ResourceError(f"job {job_id!r} is {job['state']}, not done")
     return current_app.response_class(job["result"], mimetype="application/octet-stream")
+
+
+@node_bp.route("/volume/jobs/<job_id>/planes")
+def volume_job_planes(job_id):
+    """A finished measurement's per-plane cell index (planes.pack): which
+    cells have voxels on each plane."""
+    job = _job(job_id)
+    if job["state"] != "done" or job.get("planes") is None:
+        raise ResourceError(f"job {job_id!r} has no per-plane cell index")
+    return current_app.response_class(job["planes"], mimetype="application/x-tar")
 
 
 @node_bp.route("/volume/measure/<job_id>/cancel", methods=["POST"])

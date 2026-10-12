@@ -72,6 +72,53 @@
         return typeof global.plexoraUrl === "function" ? global.plexoraUrl(path) : `/${path}`;
     }
 
+    /**
+     * One cell's outline where a pane cuts it: its runs plane by plane
+     * (`{z0, a0, a1}`, a0..a1 inclusive), stroked as ONE stepped boundary --
+     * each run's two ends, and its top and bottom only where the plane above
+     * or below has no run of the same cell, so a cell crossing nine planes is
+     * one shape and not nine boxes. `along` and `across` map image pixels and
+     * planes to the pane's own; YZ swaps them on screen.
+     */
+    function strokeCellOutline(context, spans, { along, across, xz }) {
+        const byPlane = new Map();
+        for (const span of spans) {
+            const row = byPlane.get(span.z0) || [];
+            row.push([span.a0, span.a1 + 1]);
+            byPlane.set(span.z0, row);
+        }
+        const uncovered = (a0, a1, row) => {
+            let pieces = [[a0, a1]];
+            for (const [b0, b1] of row || []) {
+                pieces = pieces.flatMap(([c0, c1]) => (b1 <= c0 || b0 >= c1 ? [[c0, c1]]
+                    : [[c0, b0], [b1, c1]].filter(([d0, d1]) => d1 > d0)));
+            }
+            return pieces;
+        };
+        const line = (a0, z0, a1, z1) => {
+            const [p, q] = [along(a0), across(z0)];
+            const [r, s] = [along(a1), across(z1)];
+            if (xz) {
+                context.moveTo(p, q);
+                context.lineTo(r, s);
+            } else {
+                context.moveTo(q, p);
+                context.lineTo(s, r);
+            }
+        };
+        context.globalAlpha = 1;
+        context.beginPath();
+        for (const [z, row] of byPlane) {
+            for (const [a0, a1] of row) {
+                line(a0, z, a0, z + 1);
+                line(a1, z, a1, z + 1);
+                for (const [c0, c1] of uncovered(a0, a1, byPlane.get(z - 1))) line(c0, z, c1, z);
+                for (const [c0, c1] of uncovered(a0, a1, byPlane.get(z + 1))) line(c0, z + 1, c1, z + 1);
+            }
+        }
+        context.stroke();
+    }
+
     /** Uniforms the channel shader reads that only mean something for the
      *  plane's own cells; a section has none to draw. */
     function centerProps(imageViewer) {
@@ -510,7 +557,9 @@
          * `{axis, at, depth, t}` -- the cut is the line y = `at` (XZ) or
          * x = `at` (YZ) of the plane, in image pixels -- with
          * `[{color, selected, spans: [{z0, z1, a0, a1}]}]`: planes z0..z1 by
-         * image pixels a0..a1 along the cut.
+         * image pixels a0..a1 along the cut. A shape with `outline: true` is a
+         * cell (sectionCells.js): its spans, a0..a1 inclusive, are drawn as
+         * one stepped outline and not filled, so the tissue shows through.
          */
         paintOverlay() {
             const canvas = this.overlay;
@@ -531,7 +580,7 @@
             const xz = this.axis === "xz";
             const query = { axis: this.axis, at: Math.round(xz ? frame.cy : frame.cx),
                             depth: Math.max(1, owner.viewState.depth),
-                            t: owner.viewState.get()?.t || 0 };
+                            t: owner.viewState.get()?.t || 0, scale: view.scale };
             const rows = this.geometry.height;
             const start = xz ? frame.x0 : frame.y0;
             for (const provider of owner.overlays.values()) {
@@ -545,6 +594,14 @@
                     context.fillStyle = shape.color || "#8b93a6";
                     context.strokeStyle = shape.color || "#8b93a6";
                     context.lineWidth = shape.selected ? 2 : 1;
+                    if (shape.outline) {
+                        strokeCellOutline(context, shape.spans || [], {
+                            along: (a) => (a - start) * view.scale,
+                            across: (z) => ((z / query.depth) * rows - view.top) * view.scale,
+                            xz,
+                        });
+                        continue;
+                    }
                     for (const span of shape.spans || []) {
                         const along0 = (span.a0 - start) * view.scale;
                         const along1 = (span.a1 - start) * view.scale;

@@ -10,7 +10,13 @@
  *     info  = what the image IS: depth, frames, spacing, levels (from
  *             /volume/<ds>/info, read once at boot)
  *     state = { t, z, mode: "plane"|"slab", slab: {z0, z1, op, q, thickness,
- *               follow}, section: {x, y}, layout, aux, volume }
+ *               follow, clip}, section: {x, y}, layout, aux, volume }
+ *
+ * A FOLLOWING slab (`follow`) is recentred on z whenever z moves; at the ends
+ * of the stack it slides back inside to keep its thickness, unless `clip`,
+ * when it is cut there instead -- the slab of planes around z that exist,
+ * never one centred somewhere else. Either way z is the plane it follows, and
+ * a 3-D mask's outlines are that plane's (labelSpec).
  *
  * A PLANAR IMAGE HAS NO VIEW STATE. `enabled()` is false, `spec()` is "", no
  * DOM is built, no key is bound and no tile address changes -- which is what
@@ -287,10 +293,17 @@
             if (z1 < z0) [z0, z1] = [z1, z0];
             slab.thickness = clamp(int(slab.thickness, z1 - z0 + 1), 1, this.depth);
             slab.follow = slab.follow !== false;
+            slab.clip = slab.follow && slab.clip === true;
+            if (!slab.clip) delete slab.clip;
             if (slab.follow && out.mode === "slab" && raw.__recentre) {
                 const half = Math.floor((slab.thickness - 1) / 2);
-                z0 = clamp(out.z - half, 0, Math.max(0, top - slab.thickness + 1));
-                z1 = clamp(z0 + slab.thickness - 1, 0, top);
+                if (slab.clip) {
+                    z0 = clamp(out.z - half, 0, top);
+                    z1 = clamp(out.z + half, 0, top);
+                } else {
+                    z0 = clamp(out.z - half, 0, Math.max(0, top - slab.thickness + 1));
+                    z1 = clamp(z0 + slab.thickness - 1, 0, top);
+                }
             }
             slab.z0 = z0;
             slab.z1 = z1;
@@ -360,13 +373,15 @@
         }
 
         /** The plane a 3-D label volume's outlines are read from: the plane on
-         *  screen (a projection's middle plane), or "" for a 2-D mask. */
+         *  screen -- for a projection, the plane a following slab follows, else
+         *  its middle plane -- or "" for a 2-D mask. A projection's picture is
+         *  several planes; its outlines are always ONE plane's cells. */
         labelSpec(state = this.state) {
             if (!this.labelsAre3d() || !state) return "";
             if (state.mode === "volume" && this._frozen) return this.labelSpec(this._frozen);
             const t = this.frames > 1 && state.t ? `t${state.t}` : "";
-            const z = state.mode === "slab"
-                ? Math.floor((state.slab.z0 + state.slab.z1) / 2) : state.z;
+            const z = state.mode !== "slab" || state.slab.follow
+                ? state.z : Math.floor((state.slab.z0 + state.slab.z1) / 2);
             return `${t}z${z}`;
         }
 
@@ -451,6 +466,14 @@
             this._schedule();
             if (save) this._scheduleSave();
             return this.get();
+        }
+
+        /** `state` moved to plane `z` as `set({ z })` would move it -- a
+         *  following slab recentred with it -- without changing anything: what
+         *  a step would show, for the planes prefetched ahead of the hand. */
+        movedTo(z, state = this.state) {
+            const follows = state.mode === "slab" && state.slab.follow;
+            return this._clean({ ...state, z, __recentre: follows });
         }
 
         /** Step z by `dz` planes (the keys, the wheel, the play button). */

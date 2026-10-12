@@ -82,6 +82,10 @@ class GatingSidebarController {
         this._plotRedrawFrame = 0;
         //: The contrast slider over the viewer (GateContrastControl below).
         this.contrast = null;
+        //: A z-stack with a 3-D mask: the plane or the slab around it on screen,
+        //: and the plane's cells under the histogram (gatingPlanes.js). Null
+        //: otherwise -- a 2-D project's panel is exactly what it was.
+        this.planes = null;
         //: Whether the panel is on screen (between onShow and onHide). Kept
         //: here, not only in the contrast control, because on a reload the
         //: tool loader shows the restored panel BEFORE setup() has built that
@@ -130,6 +134,13 @@ class GatingSidebarController {
         this.contrast = new GateContrastControl(this);
         // A panel restored on reload was shown before this line ran.
         if (this._shown) this.contrast.show();
+
+        // Gating a z-stack plane by plane (gatingPlanes.js): built only where
+        // there are whole cells in depth -- a 3-D mask -- to step through.
+        if (typeof GatePlaneControl === "function" && GatePlaneControl.applies(this.ctx)) {
+            this.planes = new GatePlaneControl(this);
+            this.planes.init();
+        }
 
         // One request, not awaited: the panel is usable while it is in flight
         // and the notes appear under the plot when it lands. Nothing below
@@ -497,6 +508,8 @@ class GatingSidebarController {
         this.paintConsistency();
         this.paintProvenance();
         this.paintQcNote();
+        // The plane on screen's cells, read for this marker.
+        this.planes?.follow();
         // Gating always works off the feature-table column (ensureGateSelection
         // above), independent of the image -- a gate marker is very often not
         // an image channel at all (adata.var_names vs. the image's channel
@@ -683,6 +696,7 @@ class GatingSidebarController {
         this.updateGateReadout(normalized);
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
+        this.planes?.paintReadout();
         // Counted, never with the marker or the values (optional telemetry).
         window.PlexoraTelemetry?.feature(
             eventName === CSVGatingList.events.SELECTION_CHANGED ? "gate.commit" : "gate.brush",
@@ -931,6 +945,9 @@ class GatingSidebarController {
             .attr("class", "sidebar-distribution-line")
             .attr("clip-path", "url(#gate_distribution_clip)")
             .attr("d", line);
+        // A z-stack: the cells on the plane on screen, shaded under the line
+        // (gatingPlanes.js) -- the stack's line is what the gate cuts.
+        this.planes?.drawOverlay(g, { xScale, innerHeight, line: true });
         g.append("g")
             .attr("class", "distribution-axis")
             .attr("transform", `translate(0,${innerHeight})`)
@@ -963,7 +980,23 @@ class GatingSidebarController {
         grip.addEventListener("pointerleave", () => this.paintGripHover(null));
 
         this.gateDistributionScale = xScale;
-        this.gateDistributionGeometry = { grip, innerWidth };
+        this.gateDistributionGeometry = { grip, innerWidth, innerHeight, group: g };
+    }
+
+    /**
+     * Only the plane's shading, redrawn in place: a step through the stack
+     * changes which cells are shaded, not the stack's line or the lines a
+     * hand may be holding -- rebuilding the SVG under a drag would drop it.
+     */
+    redrawPlaneOverlay() {
+        const geometry = this.gateDistributionGeometry;
+        if (!this.gateDistributionScale || !geometry?.group) {
+            this.drawGateDistribution();
+            return;
+        }
+        geometry.group.selectAll(".gate-plane-distribution").remove();
+        this.planes?.drawOverlay(geometry.group, { xScale: this.gateDistributionScale,
+                                                   innerHeight: geometry.innerHeight, line: true });
     }
 
     /** Pointer x in the plotting area's own coordinates. */

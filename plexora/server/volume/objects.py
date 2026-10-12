@@ -17,6 +17,11 @@ are linked, server/volume/tracking.py); with one label volume for every
 frame, the same objects are measured at every frame -- each cell's intensity
 through time.
 
+The same pass writes the PER-PLANE CELL INDEX beside the table
+(`objects_planes_v1/`, server/volume/planes.py): which cells have voxels on
+each plane -- what the thresholding panel counts as the cells on the plane
+on screen.
+
 A project that already has a table keeps it: the object table is written
 beside it and the caller decides (attach_as_table=True replaces it).
 """
@@ -32,6 +37,7 @@ import numpy as np
 
 from plexora.server.volume import labels as volume_labels
 from plexora.server.volume import measure as volume_measure
+from plexora.server.volume import planes as volume_planes
 
 TABLE_NAME = "objects_v1.parquet"
 MANIFEST_NAME = "objects_v1.json"
@@ -77,10 +83,13 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
         raise ObjectsUnavailable(f"no channel(s) {unknown!r} in this image")
     indices = [all_names.index(name) for name in wanted]
 
+    table_path, manifest_path = object_paths(project)
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    planes_folder = volume_planes.folder_for(table_path)
     image_binding = project.resource("image") if hasattr(project, "resource") else None
     if image_binding is not None:
         frame, manifest = _measure_on_node(project, image_binding, wanted, indices,
-                                           units, progress, cancelled)
+                                           units, progress, cancelled, planes_folder)
     else:
         from plexora.server.utils.source_image import open_project_volume
 
@@ -90,12 +99,10 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
         try:
             frame, manifest = measure_columns(
                 labels, source, channel_names=wanted, indices=indices, units=units,
-                progress=progress, cancelled=cancelled)
+                progress=progress, cancelled=cancelled, planes_folder=planes_folder)
         finally:
             source.close()
 
-    table_path, manifest_path = object_paths(project)
-    table_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = table_path.with_name(table_path.name + ".tmp")
     frame.write_parquet(tmp)
     tmp.replace(table_path)
@@ -107,6 +114,9 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
         "table": str(table_path),
         "columns": list(frame.columns),
     })
+    plane_index = volume_planes.PlaneIndex.open(planes_folder)
+    if plane_index is not None:
+        manifest["planes"] = {"folder": planes_folder.name, "rows": plane_index.rows}
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     attached = False
@@ -119,7 +129,7 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
 
 
 def measure_columns(labels, source, *, channel_names, indices, units="physical",
-                    progress=None, cancelled=None):
+                    progress=None, cancelled=None, planes_folder=None):
     """`(frame, manifest)`: every object of `labels` measured against the
     image `source` (an open volume source), one row per object per frame.
 
@@ -127,7 +137,8 @@ def measure_columns(labels, source, *, channel_names, indices, units="physical",
     that runs where they are: here for a local image, on the data node for one
     held there (node/api.volume_measure). `labels` is a label volume -- a
     local store, or the node's own. `indices` are the image's channels to read,
-    named `channel_names` in the table.
+    named `channel_names` in the table. With `planes_folder` the per-plane
+    cell index is written there too (planes.py), from the same reads.
     """
     import polars as pl
 
@@ -144,6 +155,29 @@ def measure_columns(labels, source, *, channel_names, indices, units="physical",
             f"the mask has {labels.frames} frames and the image {frames}; "
             "they do not describe the same series")
 
+    writer = None
+    if planes_folder is not None:
+        writer = volume_planes.PlaneWriter(planes_folder, depth=volume.depth, frames=frames)
+    try:
+        parts, manifest = _measure_frames(labels, source, channel_names, indices, units,
+                                          frames, progress, cancelled, writer)
+    except BaseException:
+        if writer is not None:
+            writer.abort()
+        raise
+    if writer is not None:
+        writer.close(labels_per_frame=labels.frames > 1)
+    frame = pl.concat([pl.DataFrame({name: np.asarray(values) for name, values in part.items()})
+                       for part in parts], how="vertical")
+    if frames > 1:
+        manifest["frames"] = frames
+        manifest["labels_per_frame"] = labels.frames > 1
+    return frame, manifest
+
+
+def _measure_frames(labels, source, channel_names, indices, units, frames, progress,
+                    cancelled, writer):
+    volume = source.volume
     parts, manifest = [], None
     for t in range(frames):
         def read(index, z, rows, cols, t=t):
@@ -158,18 +192,13 @@ def measure_columns(labels, source, *, channel_names, indices, units="physical",
 
         columns, manifest = volume_measure.measure(
             labels.frame(t), read, channel_names=list(channel_names), spacing=volume.spacing,
-            units=units, t=t, progress=step)
+            units=units, t=t, progress=step, planes=writer)
         parts.append(columns)
-
-    frame = pl.concat([pl.DataFrame({name: np.asarray(values) for name, values in part.items()})
-                       for part in parts], how="vertical")
-    if frames > 1:
-        manifest["frames"] = frames
-        manifest["labels_per_frame"] = labels.frames > 1
-    return frame, manifest
+    return parts, manifest
 
 
-def _measure_on_node(project, image_binding, wanted, indices, units, progress, cancelled):
+def _measure_on_node(project, image_binding, wanted, indices, units, progress, cancelled,
+                     planes_folder=None):
     """`measure_columns`, run on the data node that holds the image -- which
     has to hold the mask too: measuring reads both, plane by plane, and the
     one machine that has both files is the one to read them on."""
@@ -188,7 +217,8 @@ def _measure_on_node(project, image_binding, wanted, indices, units, progress, c
             image_binding, seg_binding, channel_names=wanted, indices=indices, units=units,
             z_semantics=spec.z_semantics, t_semantics=spec.t_semantics,
             pixel_size=spec.pixel_size, pixel_size_z=spec.pixel_size_z,
-            frame_interval=spec.frame_interval, progress=progress, cancelled=cancelled)
+            frame_interval=spec.frame_interval, progress=progress, cancelled=cancelled,
+            planes_folder=planes_folder)
     except ResourceError as exc:
         raise ObjectsUnavailable(str(exc)) from exc
 

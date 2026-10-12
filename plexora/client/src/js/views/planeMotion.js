@@ -389,18 +389,26 @@
             return out;
         }
 
-        /** The planes worth having ready: ahead twice, behind once. */
-        neighbours() {
+        /** The views worth having ready: ahead twice, behind once -- planes,
+         *  or a projection that follows the plane (it moves with every step). */
+        neighbourStates() {
             const vs = this.viewState;
             const state = vs?.get?.();
-            if (!state || state.mode !== "plane" || vs.depth < 2) return [];
+            const follows = state?.mode === "slab" && state.slab?.follow;
+            if (!state || (state.mode !== "plane" && !follows) || vs.depth < 2) return [];
             const dir = this.direction || 1;
             const out = [];
             for (const dz of [dir, 2 * dir, -dir]) {
                 const z = state.z + dz;
-                if (z >= 0 && z < vs.depth) out.push(vs.spec({ ...state, z }));
+                if (z < 0 || z >= vs.depth) continue;
+                out.push(follows && vs.movedTo ? vs.movedTo(z, state) : { ...state, z });
             }
             return out;
+        }
+
+        /** Their tile tokens. */
+        neighbours() {
+            return this.neighbourStates().map((state) => this.viewState.spec(state));
         }
 
         /** Whether every item of the plane on screen has what it needs. */
@@ -424,7 +432,12 @@
                     this.timer = setTimeout(() => this.run(), this.idleMs);
                     return;
                 }
-                this.viewerManager.prepareStandby(this.neighbours());
+                // A 3-D mask's outlines come too: a projection's are one plane's,
+                // so their tokens are not the picture's.
+                const states = this.neighbourStates();
+                this.viewerManager.prepareStandby(
+                    states.map((state) => this.viewState.spec(state)),
+                    states.map((state) => this.viewState.labelSpec?.(state) || ""));
                 return;
             }
             const queue = this.plan();

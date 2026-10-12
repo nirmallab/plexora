@@ -305,3 +305,25 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
    z step, or is the edit page's "Planes on Z" enough?
 2. Is the ROI schema staying at version 1 (so `main` can still open regions drawn here) the
    right trade, given that `main` then forgets their planes?
+
+## Thresholding plane by plane (feature/plane-gating-3d)
+
+Design and measurements: `PLANE_GATING.md`. Gates always use each cell's whole-cell value; the
+slab only changes what the image shows.
+
+- **Plane by plane.** Open a z-stack with a 3-D mask whose cells are measured (Depth card, Cells
+  in 3-D), turn Outlines on, open Thresholding and pick a marker. Step with `]` / `[`: only the
+  cells with voxels on the plane are outlined, the shading under the histogram's line is that
+  plane's cells, and the line under the plot reads "z 12 · 41 of 312 positive". Move the gate:
+  the count follows the outlines exactly.
+- **Slab.** View → Slab: the image becomes the mean of 5 µm around the plane (the badge names the
+  planes), the outlines stay the plane's own cells, and "z 12–16" beside the fields names the
+  planes combined. Step to the first or last plane: the slab is cut there ("z 0–2"), and the
+  outlines are still plane 0's. Change the thickness (planes it comes to are shown as you type) and
+  Mean / Max / Median. Without a known z step the field is in planes.
+- **Kept.** Switch markers, step planes, reload: the slab and its thickness stay. View → Plane
+  returns to the plane; the 3-D view hides the row.
+- **Sections.** With the section panes on, each cell the XZ / YZ cut crosses is outlined plane by
+  plane; with a gate on, only the cells it passes (as on the plane).
+- **Measured before this branch?** Counts still appear, from each cell's planes in depth (the
+  tooltip says so); measure the cells again for an exact count.
