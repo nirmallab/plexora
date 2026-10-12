@@ -179,7 +179,6 @@ window.PlexoraSurfaceInspect = (function () {
                 `volume/${ds}/surfaces/${encodeURIComponent(id)}/neighbours?object=${object}&within=${within}`));
             if (response.status === 403) {
                 const body = await response.json().catch(() => ({}));
-                if (body.license) window.PlexoraPaid?.explain(body.license);
                 list.textContent = "";
                 return;
             }

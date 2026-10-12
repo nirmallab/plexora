@@ -890,11 +890,11 @@ window.PlexoraToolLoader = (function () {
         }
 
         if (payload.locked) {
-            // A Paid tool on a Free (or lapsed) licence. The server decided,
-            // and it sent nothing to mount -- so explain rather than open,
-            // and leave the viewer exactly as it was.
-            if (options.quiet) return { skipped: "locked" };
-            await window.PlexoraPaid?.explain(payload.locked);
+            // A Paid tool on a Free (or lapsed) licence. The page does not
+            // offer one (plugins.unlocked), so this is a stale link or a
+            // licence that lapsed while the page was open: the server sent
+            // nothing to mount, and the viewer stays exactly as it was.
+            console.warn(`toolLoader: ${toolName} is not included in this licence`);
             return { skipped: "locked" };
         }
 

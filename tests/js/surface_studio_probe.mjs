@@ -5,8 +5,7 @@
  * Pinned:
  * - on a licence without Surface Studio the dock does not open and asks the
  *   server nothing (not granted, not shown); on a licence that lapsed while
- *   the page was open, the server's refusal opens the Paid modal with its
- *   own words;
+ *   the page was open, the server's refusal closes it quietly, never a modal;
  * - the slider starts at the server's suggestion, over the histogram's range;
  * - dragging asks for ONE preview after the debounce, and a newer preview
  *   aborts the one still in flight;
@@ -196,8 +195,7 @@ hinted = true;
 const refused = await Studio.open({ channel: "CD31" });
 check("a licence that lapsed: the server refuses and the dock closes",
       refused === false && !Studio.isOpen());
-check("and the Paid modal opens with the server's words",
-      explained.length === 1 && explained[0].label === "Surface Studio");
+check("and quietly: nothing explains or upsells", explained.length === 0);
 
 // -- with the licence ------------------------------------------------------------------
 

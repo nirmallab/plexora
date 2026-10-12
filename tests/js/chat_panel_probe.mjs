@@ -278,8 +278,8 @@ const source = readFileSync(PANEL, "utf8");
     const w = makeWorld({ license: true });
     w.panel.open();
     await tick(5);
-    check("on Free the paid-feature modal opens and the panel stays closed",
-          w.explained.length === 1 && w.explained[0].entitlement === "ai:chat"
+    check("on Free the panel stays closed and nothing explains or upsells",
+          w.explained.length === 0
           && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true);
 }
 

@@ -259,7 +259,7 @@ window.PlexoraSurfaceStudio = (function () {
         setBusy(true);
         try {
             const header = await service().preview(previewParams(), { signal: controller?.signal });
-            if (!header) return close();         // the licence refused; the modal is open
+            if (!header) return close();         // the licence refused: close, quietly
             if (!state || state.iso !== asked) return;
             const pieces = header.report?.pieces_kept ?? (header.empty ? 0 : null);
             const triangles = header.triangles || 0;
@@ -696,8 +696,8 @@ window.PlexoraSurfaceStudio = (function () {
 
     /**
      * Open the dock. `from` is a surface's request (Edit), `channel` a channel to
-     * start on, `source: "mask"` the 3-D mask. Resolves false when the licence
-     * refused (the Paid modal is open instead).
+     * start on, `source: "mask"` the 3-D mask. Resolves false, and opens
+     * nothing, without Plexora 3D or when the licence refused.
      */
     async function open({ from = null, channel = null, source = null, ids = null } = {}) {
         // Plexora 3D: without it Surface Studio does not open at all -- the

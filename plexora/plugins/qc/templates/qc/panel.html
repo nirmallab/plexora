@@ -372,8 +372,10 @@
         <div class="qc-tool-body" id="qc_roi_body">
             <div class="qc-tool-sub">
                 <span class="qc-tool-views" role="toolbar" aria-label="ROI QC views">
+                    {% if licensed('ai:qc:session') %}
                     <button id="qc_start_ai" class="qc-tool-icon" type="button"
                             title="An AI QC session is run by your agent: ask it to &quot;QC this image&quot; (click to copy that)"><span class="fas fa-robot"></span></button>
+                    {% endif %}
                     <button id="qc_refresh" class="qc-tool-icon" type="button" hidden
                             title="Apply my ROI edits: take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells"><span class="fas fa-arrows-rotate"></span></button>
                     <button id="qc_download" class="qc-tool-icon" type="button" aria-haspopup="true" aria-expanded="false" hidden

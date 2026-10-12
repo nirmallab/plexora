@@ -38,7 +38,7 @@ CHECKS = [
     "a reload reopens the same conversation, minimized as it was, and the replay redraws the user's line and a decided approval",
     "a line sent from this page is not drawn twice when its user_message comes back",
     "a conversation the server no longer has is not resumed: a new one starts in its place",
-    "on Free the paid-feature modal opens and the panel stays closed",
+    "on Free the panel stays closed and nothing explains or upsells",
     "the panel never parses markup",
 ]
 

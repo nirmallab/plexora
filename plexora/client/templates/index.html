@@ -23,11 +23,11 @@
                    gone (base.html). The key cap keyboardShortcuts.js prints is
                    hidden on an icon button (viewer.css). #}
                 <div class="sidebar-header-actions">
-                    {# Plexora AI: always here. With an `ai` licence it opens the
-                       launcher (Gate / QC / chat with Plexora AI,
-                       views/agentPanel.js); without one it says Plexora AI
-                       needs a licence. The one coloured control in a muted
-                       header, on purpose. #}
+                    {# Plexora AI: with an `ai` licence it opens the launcher
+                       (Gate / QC / chat with Plexora AI, views/agentPanel.js);
+                       without one it is not here at all. The one coloured
+                       control in a muted header, on purpose. #}
+                    {% if licensed('ai') %}
                     <button id="plexora_ai_button" class="icon-button plx-ai-spark" type="button"
                             title="Plexora AI" aria-label="Plexora AI"
                             aria-haspopup="dialog" aria-expanded="false">
@@ -39,6 +39,7 @@
                         </svg>
                         <span class="plx-ai-spark-label" aria-hidden="true">AI</span>
                     </button>
+                    {% endif %}
                     <button id="sidebar_collapse_button" class="icon-button" title="Collapse controls" type="button"
                             data-shortcut="mod+\">
                         <span class="fas fa-chevron-left"></span>
@@ -567,7 +568,7 @@
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
 <script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261012_video_merge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_video_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_license_tiers" defer></script>
@@ -585,10 +586,10 @@
    agent session's phase, evidence and controls. Before agentBridge.js, which
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261011_fold" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261012_license_tiers" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
-<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261011_fold" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_video_merge" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After

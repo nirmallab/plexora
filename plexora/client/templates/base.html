@@ -119,7 +119,7 @@
        state of a compute node. Both are deferred, so both are parsed before
        either runs; the order is for readers. #}
     <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20261011_import_home" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261011_import_home" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261012_license_tiers" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -197,7 +197,7 @@
     {# The Paid-feature modal and badge (PlexoraPaid). After confirmDialog,
        which it opens. Inert until a locked feature is asked for: no banner,
        no timer, no request at load. #}
-    <script src="{{ data.base_url }}/client/src/js/services/paidFeature.js?v=20261002_license_adopt" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/paidFeature.js?v=20261012_license_tiers" defer></script>
     <!-- Drags inside the page by pointer, for the desktop app's window only
          (its native file drop swallows HTML5 drag events on Windows). -->
     <script src="{{ data.base_url }}/client/src/js/services/pointerDrag.js?v=20260925_desktop_app" defer></script>
@@ -214,7 +214,7 @@
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20260926_help_menu" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260927_docs" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261011_import_home" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261012_license_tiers" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -224,8 +224,8 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261011_import_home" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261011_video_studio" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261012_license_tiers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261012_license_tiers" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}

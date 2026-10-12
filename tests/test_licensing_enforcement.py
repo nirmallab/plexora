@@ -174,6 +174,18 @@ def test_describe_and_the_mcp_description_say_paid(session):
     assert "Paid" not in tools.description_for(registry.get("gating.set"))
 
 
+def test_mcp_lists_paid_tools_on_free_too(session):
+    """Not granted, not shown is the page's rule, not MCP's: the tool list is
+    built once per server and the licence can change under it, so a Paid tool
+    stays listed (its description says Paid) and its call refuses."""
+    from types import SimpleNamespace
+
+    from plexora.mcp.server import _offered
+
+    offered = {cap.tool_name for cap in _offered(SimpleNamespace(profile=None))}
+    assert {"measure_objects", "run_qc_3d", "gating_session_start", "set_gate"} <= offered
+
+
 def test_license_required_is_a_known_code_everywhere():
     from plexora.telemetry.schema import AGENT_OUTCOMES
 
