@@ -535,16 +535,22 @@ async function init(config, savedViewTransform = null) {
         }
         // A table that places each cell in depth (an object table, or a CSV
         // with X, Y and Z): the centroid dots are the planes on screen's
-        // cells, a slab's whole range. The 3-D view draws no dots, so the 2-D
-        // pane keeps the plane it was left on.
+        // cells, a slab's whole range, and a right-click keeps to the cells
+        // on those planes. The 3-D view draws no dots and hands the tiles no
+        // click (a rotated view has no image x/y to pick at, so it sends no
+        // planes); the 2-D pane keeps the plane it was left on.
         const tableZ = viewState.info?.table_z;
         if (tableZ && viewState.depth > 1) {
-            const planesOf = (state) => (state.mode === "slab"
+            const centroidPlanesOf = (state) => (state.mode === "slab"
                 ? { column: tableZ, z0: state.slab.z0, z1: state.slab.z1 }
                 : { column: tableZ, z0: state.z, z1: state.z });
-            seaDragonViewer.setCentroidPlanes(planesOf(viewState.get()));
+            const pickPlanesOf = (state) => state.mode === "slab" ? [state.slab.z0, state.slab.z1]
+                : state.mode === "plane" ? [state.z, state.z] : null;
+            seaDragonViewer.setCentroidPlanes(centroidPlanesOf(viewState.get()));
+            dataLayer.tablePlanes = pickPlanesOf(viewState.get());
             viewState.subscribe((state) => {
-                if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(planesOf(state));
+                dataLayer.tablePlanes = pickPlanesOf(state);
+                if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(centroidPlanesOf(state));
             });
         }
     }

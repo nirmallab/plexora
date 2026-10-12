@@ -20,6 +20,13 @@ rather than thousands), in two parts:
   zoomed-in view, or the 3-D view of it, reads. Budgeted (`CACHE_BUDGET`),
   least-recently-used shards go first.
 
+- **Pooled levels**, built after the coarse levels: a level the 3-D view reads
+  max-pooled in z (`model.pool_for`) kept pooled, as an array of its own named
+  `"{level}p{pool}"` -- the light-sheet stack's level 2 is 485 pooled planes
+  instead of 1937 read and reduced on every request. Only `read_pooled` reads
+  them; every other read still gets the source's own pixels. Built for a stack
+  chunked across z as well (`worth_pooling`), which needs no copy otherwise.
+
 Reads come through `BrickedSource`, which stands in for the stack's own source:
 plane reads go to the source (its own tiles are the right shape for them),
 reads across planes go to the bricks when they hold that part, and to the
@@ -57,6 +64,9 @@ BRICK = (32, 128, 128)
 SHARD_XY = 256
 #: The finest coarse level is the finest whose stack of one channel fits this.
 LEVEL_BUDGET = int(os.environ.get("PLEXORA_VOLUME_LEVEL_BUDGET", 256 * 2**20))
+#: The most the coarse copy holds of a stack none of whose levels fits
+#: LEVEL_BUDGET (its coarsest level, a channel at a time).
+FALLBACK_BUDGET = 4 * LEVEL_BUDGET
 #: What the cache of finer levels may hold on disk.
 CACHE_BUDGET = int(os.environ.get("PLEXORA_ROI_BRICK_BUDGET", 4 * 2**30))
 #: At most this much of a level is prepared by one request.
@@ -112,14 +122,60 @@ def worth_it(source) -> bool:
     return volume.depth * volume.height * volume.width >= MIN_VOXELS
 
 
+def pooled_levels(volume) -> list[tuple[int, int]]:
+    """`(level, pool)` of each level the store keeps max-pooled in z: every
+    level that keeps every plane, whose pool (`model.pool_for`) is at least 2,
+    and whose pooled stack of one channel fits LEVEL_BUDGET. Needs a stated z
+    step: without one nothing is pooled."""
+    from plexora.server.volume.model import pool_for
+
+    if volume.is_planar or volume.depth < 8 or not volume.spacing.z.known:
+        return []
+    itemsize = np.dtype(volume.dtype).itemsize
+    out = []
+    for info in volume.levels:
+        if info.depth is not None and info.depth < volume.depth:
+            continue
+        pool = pool_for(volume, info.index)
+        if pool < 2:
+            continue
+        if -(-volume.depth // pool) * info.height * info.width * itemsize <= LEVEL_BUDGET:
+            out.append((info.index, pool))
+    return out
+
+
+def pooled_name(level: int, pool: int) -> str:
+    return f"{int(level)}p{int(pool)}"
+
+
+def worth_pooling(source) -> bool:
+    """Whether a stack should get pooled levels: a large deep local stack with
+    a stated z step, read plane-major or chunked across z alike."""
+    volume = source.volume
+    if not enabled() or volume.depth < 8 or volume.is_planar:
+        return False
+    if volume.depth * volume.height * volume.width < MIN_VOXELS:
+        return False
+    return bool(pooled_levels(volume))
+
+
 def coarse_levels(volume) -> list[int]:
     """The levels the coarse copy holds: from the finest whose stack of one
-    channel fits LEVEL_BUDGET down to the coarsest."""
+    channel fits LEVEL_BUDGET down to the coarsest.
+
+    When none fits, the coarsest alone if it is at most FALLBACK_BUDGET, and
+    nothing past that: a single-level 4096 x 4096 x 200 stack would otherwise
+    be copied whole, 6.7 GB a channel, for views that cannot draw it anyway.
+    Such a stack is given a pyramid at import (`image_pyramid.pyramid_gaps`);
+    areas of it are still prepared on demand (`prepare`)."""
     itemsize = np.dtype(volume.dtype).itemsize
     for info in volume.levels:
         if volume.depth * info.height * info.width * itemsize <= LEVEL_BUDGET:
             return [level.index for level in volume.levels if level.index >= info.index]
-    return [volume.levels[-1].index]
+    coarsest = volume.levels[-1]
+    if volume.depth * coarsest.height * coarsest.width * itemsize <= FALLBACK_BUDGET:
+        return [coarsest.index]
+    return []
 
 
 def layout(volume, level: int):
@@ -179,6 +235,7 @@ class Store:
                     or raw.get("source_key") != self.key):
                 raw = {"version": FORMAT_VERSION, "source_key": self.key,
                        "coarse": {}, "shards": {}, "bytes": 0}
+            raw.setdefault("pooled", {})
             self._manifest = raw
         return self._manifest
 
@@ -234,6 +291,57 @@ class Store:
         self._arrays[level] = array
         return array
 
+    def pooled_array(self, level: int, pool: int, create: bool = False):
+        """Level `level` max-pooled `pool` planes at a time, (T, C, ceil(Z /
+        pool), H, W): a separately named array, read only by `read_pooled`."""
+        name = pooled_name(level, pool)
+        array = self._arrays.get(name)
+        if array is not None:
+            return array
+        import zarr
+
+        try:
+            group = zarr.open_group(str(self.path), mode="a", zarr_format=3)
+        except Exception:
+            if not create:
+                return None
+            raise
+        if name in group:
+            array = group[name]
+        elif create:
+            from zarr.codecs import BloscCodec
+
+            volume = self.volume
+            info = volume.levels[level]
+            depth = -(-volume.depth // pool)
+            chunks = (1, 1, min(BRICK[0], depth), min(BRICK[1], info.height),
+                      min(BRICK[2], info.width))
+            sy = -(-max(chunks[3], min(SHARD_XY, info.height)) // chunks[3]) * chunks[3]
+            sx = -(-max(chunks[4], min(SHARD_XY, info.width)) // chunks[4]) * chunks[4]
+            array = group.create_array(
+                name, shape=(volume.frames, volume.channels, depth, info.height, info.width),
+                dtype=volume.dtype, chunks=chunks, shards=(1, 1, chunks[2], sy, sx),
+                compressors=BloscCodec(cname="zstd", clevel=3, shuffle="bitshuffle"),
+                fill_value=0)
+        else:
+            return None
+        self._arrays[name] = array
+        return array
+
+    def has_pooled(self, level: int, pool: int) -> bool:
+        return bool(self.manifest()["pooled"].get(pooled_name(level, pool)))
+
+    def pooled_held(self, level: int) -> list[int]:
+        """The pools level `level` is held at, finished ones only, largest first."""
+        out = []
+        with self.lock:
+            held = list(self.manifest()["pooled"].items())
+        for name, done in held:
+            stem, _, pool = name.partition("p")
+            if done and stem == str(int(level)) and pool.isdigit():
+                out.append(int(pool))
+        return sorted(out, reverse=True)
+
     def shard_shape(self, level: int) -> tuple[int, int, int]:
         _chunks, shards = layout(self.volume, level)
         return int(shards[2]), int(shards[3]), int(shards[4])
@@ -245,6 +353,9 @@ class Store:
 
     def coarse_complete(self) -> bool:
         return all(self.has_coarse(level) for level in coarse_levels(self.volume))
+
+    def pooled_complete(self) -> bool:
+        return all(self.has_pooled(level, pool) for level, pool in pooled_levels(self.volume))
 
     @staticmethod
     def shard_id(t, c, zb, sy, sx) -> str:
@@ -274,14 +385,16 @@ class Store:
             self._touched[f"{level}/{shard}"] = now
         return True
 
-    def read(self, level, t, channel, z0, z1, rows, cols) -> np.ndarray:
+    def read(self, level, t, channel, z0, z1, rows, cols, *, pool=None) -> np.ndarray:
         """Planes z0..z1 of a rectangle, brick by brick through the
         decoded-chunk cache (volume/chunk_cache.py): a brick decoded for one
-        section tile is not decoded again for its neighbour."""
-        array = self.array(level)
+        section tile is not decoded again for its neighbour. `pool`: of the
+        level's pooled array, z0..z1 then being pooled planes."""
+        array = self.array(level) if pool is None else self.pooled_array(level, pool)
+        name = int(level) if pool is None else pooled_name(level, pool)
         _t, _c, cz, cy, cx = (int(v) for v in array.chunks)
         dtype = np.dtype(array.dtype)
-        keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
+        keys = [(self.cache_id, name, int(t), int(channel), zc, yc, xc)
                 for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
                 for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
                 for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx)]
@@ -371,21 +484,31 @@ def _free_bytes(directory: Path):
     return free(directory)
 
 
-def build_coarse(store: Store, source, report=None, cancel=None) -> None:
-    """Copy every coarse level, a block of BRICK[0] planes of one channel at a
-    time (resumable: a finished block is never copied again)."""
+def build_coarse(store: Store, source, report=None, cancel=None, *, copy=True) -> None:
+    """Copy every coarse level (unless `copy` is False: a stack chunked across
+    z needs no copy), a block of BRICK[0] planes of one channel at a time,
+    then build the pooled levels (`pooled_levels`) the same way. Resumable: a
+    finished block is never copied again."""
     volume = source.volume
-    levels = coarse_levels(volume)
+    levels = coarse_levels(volume) if copy else []
+    pooled = pooled_levels(volume)
     itemsize = np.dtype(volume.dtype).itemsize
     need = sum(volume.frames * volume.channels * volume.depth
                * volume.levels[level].height * volume.levels[level].width * itemsize
                for level in levels)
+    need += sum(volume.frames * volume.channels * -(-volume.depth // pool)
+                * volume.levels[level].height * volume.levels[level].width * itemsize
+                for level, pool in pooled)
     free = _free_bytes(store.path.parent)
     if free is not None and free < need:
         raise OSError(f"Not enough free space for the stack's 3-D copy: about "
                       f"{need / 2**20:.0f} MB is needed and {free / 2**20:.0f} MB is free.")
     units = [(level, t, c, z0) for level in levels for t in range(volume.frames)
              for c in range(volume.channels) for z0 in range(0, volume.depth, BRICK[0])]
+    pooled_units = [(level, pool, t, c, p0) for level, pool in pooled
+                    for t in range(volume.frames) for c in range(volume.channels)
+                    for p0 in range(0, -(-volume.depth // pool), BRICK[0])]
+    total = len(units) + len(pooled_units)
     manifest = store.manifest()
     done = set(manifest.setdefault("units", []))
     for count, (level, t, c, z0) in enumerate(units):
@@ -408,7 +531,50 @@ def build_coarse(store: Store, source, report=None, cancel=None) -> None:
                     manifest["coarse"][str(level)] = True
                 store._save()
         if report is not None:
-            report(100.0 * (count + 1) / len(units), f"Copying the stack in 3-D: level {level}")
+            report(100.0 * (count + 1) / total, f"Copying the stack in 3-D: level {level}")
+    # Read through the copy itself, so a level it already holds is pooled
+    # from bricks rather than from the stack.
+    reader = BrickedSource(source, store) if levels else source
+    for count, (level, pool, t, c, p0) in enumerate(pooled_units, start=len(units)):
+        if cancel is not None and cancel.is_set():
+            return
+        name = pooled_name(level, pool)
+        unit = f"{name}.{t}.{c}.{p0}"
+        if unit not in done:
+            info = volume.levels[level]
+            depth = -(-volume.depth // pool)
+            p1 = min(depth, p0 + BRICK[0])
+            block = _pool_from_planes(reader, level, t, c, p0 * pool,
+                                      min(volume.depth, p1 * pool) - 1, pool,
+                                      slice(0, info.height), slice(0, info.width))
+            array = store.pooled_array(level, pool, create=True)
+            array[t, c, p0:p1] = np.asarray(block, dtype=volume.dtype)
+            with store.lock:
+                manifest["units"].append(unit)
+                done.add(unit)
+                if all(f"{name}.{tt}.{cc}.{pp}" in done for tt in range(volume.frames)
+                       for cc in range(volume.channels)
+                       for pp in range(0, depth, BRICK[0])):
+                    manifest["pooled"][name] = True
+                store._save()
+        if report is not None:
+            report(100.0 * (count + 1) / total, f"Pooling the stack in depth: level {level}")
+
+
+def _pool_from_planes(source, level, t, channel, z0, z1, pool, rows, cols):
+    """Planes z0..z1 max-pooled `pool` at a time, from the planes themselves
+    (never from a pooled array: this is what builds one)."""
+    from plexora.server.volume.model import read_pooled
+
+    class _Planes:
+        def __init__(self, inner):
+            self._inner = inner
+            self.volume = inner.volume
+
+        def read_block(self, *args):
+            return self._inner.read_block(*args)
+
+    return read_pooled(_Planes(source), level, t, channel, z0, z1, pool, rows, cols)
 
 
 def prepare(store: Store, source, level: int, box, *, channels=None, t=0, report=None,
@@ -497,10 +663,14 @@ class BrickedSource:
     """A volume source whose reads across planes come from its bricks where
     they hold them (see module docstring). Everything else is the source's."""
 
-    def __init__(self, source, store: Store):
+    def __init__(self, source, store: Store, *, copies=True):
         self._source = source
         self.store = store
         self.volume = source.volume
+        #: Whether areas of finer levels are copied on demand (`prepare`): not
+        #: for a stack chunked across z, which has a store for its pooled
+        #: levels only.
+        self.copies = copies
 
     def __getattr__(self, name):
         return getattr(self._source, name)
@@ -586,15 +756,50 @@ class BrickedSource:
                 return out
         return self._source.read_block(level, t, channel, z0, z1, rows, cols)
 
+    def read_pooled(self, level, t, channel, z0, z1, pool, rows, cols):
+        """Planes z0..z1 of `level` max-pooled `pool` at a time, from a pooled
+        array the store holds -- one at `pool`, or at a pool `pool` is a
+        multiple of, pooled further -- or None (the caller pools the planes).
+        Only for a span on whole pools: it starts on one and ends on one or
+        at the stack's last plane, so a stored pool never runs past it."""
+        from plexora.server.volume.model import stored_depth
+
+        volume = self.volume
+        if stored_depth(volume, level) < volume.depth or pool < 2 or z0 % pool:
+            return None
+        end = int(z1) + 1
+        if end % pool and end != volume.depth:
+            return None
+        if not (isinstance(rows, slice) and isinstance(cols, slice)):
+            return None
+        height, width = self.level_shape(level)
+        rows = slice(*rows.indices(height)[:2])
+        cols = slice(*cols.indices(width)[:2])
+        store = self.store
+        for held in store.pooled_held(level):
+            if pool % held:
+                continue
+            q0, q1 = z0 // held, -(-end // held) - 1
+            block = store.read(level, t, channel, q0, q1, rows, cols, pool=held)
+            factor = pool // held
+            if factor == 1:
+                return block
+            count = -(-(end - z0) // pool)
+            out = np.empty((count,) + block.shape[1:], dtype=block.dtype)
+            for k in range(count):
+                np.max(block[k * factor:(k + 1) * factor], axis=0, out=out[k])
+            return out
+        return None
+
     def close(self):
         self._source.close()
 
 
-def adopt(source, store: Store):
+def adopt(source, store: Store, *, copies=True):
     """`source`, reading through `store` once it holds anything."""
     if isinstance(source, BrickedSource):
         return source
-    return BrickedSource(source, store)
+    return BrickedSource(source, store, copies=copies)
 
 
 def state(store: Store | None, source=None) -> dict:
@@ -602,10 +807,15 @@ def state(store: Store | None, source=None) -> dict:
     if store is None:
         return {"state": "none"}
     manifest = store.manifest()
-    levels = coarse_levels(store.volume)
+    copies = getattr(source, "copies", True) if source is not None else True
+    levels = coarse_levels(store.volume) if copies else []
     held = [level for level in levels if manifest["coarse"].get(str(level))]
-    return {"state": "ready" if len(held) == len(levels) else "partial" if held else "none",
+    pooled = [pooled_name(level, pool) for level, pool in pooled_levels(store.volume)]
+    pooled_ready = [name for name in pooled if manifest["pooled"].get(name)]
+    complete = len(held) == len(levels) and len(pooled_ready) == len(pooled)
+    return {"state": "ready" if complete else "partial" if held or pooled_ready else "none",
             "coarse_levels": levels, "coarse_ready": held,
+            "pooled_levels": pooled, "pooled_ready": pooled_ready,
             "cache_bytes": int(manifest.get("bytes", 0)), "cache_budget": CACHE_BUDGET,
             "cached_levels": sorted(int(level) for level, shards
                                     in manifest.get("shards", {}).items() if shards)}

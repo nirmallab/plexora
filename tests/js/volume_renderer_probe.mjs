@@ -117,6 +117,8 @@ slots[2].enabled = true;
 await settle();
 check("a channel switched on for the first time is fetched, the others are not",
     requests.length === 3 && requests[2].includes("channel=full%3ACD3"));
+check("at the level the others are drawn at, so one picture has one resolution",
+    new URLSearchParams(requests[2].split("?")[1]).get("level") === "1", requests[2]);
 
 hd = true;
 await settle();
@@ -236,6 +238,29 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     await new Promise((resolve) => setTimeout(resolve, 0));
     check("back to the whole stack, the level's hint again", sent.length >= 1
           && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === before);
+}
+
+// -- a stack no level of which fits a 3-D texture ----------------------------------
+
+{
+    const said = "no level of this stack fits a 3-D texture (900 MB, 4096 px a side at its coarsest)";
+    const refuse = () => Promise.resolve({ ok: false, status: 400, json: async () => ({ error: said }),
+                                           headers: { get: () => null } });
+    const notes = [];
+    const wrapper = { appendChild: (node) => notes.push(node) };
+    const realCreate = box.document.createElement;
+    box.document.createElement = (tag) => (tag === "p"
+        ? { tag, hidden: true, textContent: "", setAttribute() {}, remove() {} } : realCreate(tag));
+    const refused = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl: refuse, wrapper });
+    refused.gl = fakeGl();
+    refused.maxTexture = 2048;
+    await refused.refresh();
+    check("a refused level is not an error: the view says why there is nothing to draw",
+          refused.status === "unavailable" && notes.length === 1 && notes[0].textContent === said
+          && notes[0].hidden === false, JSON.stringify({ status: refused.status, notes }));
+    refused.show(false);
+    check("and the sentence leaves with the 3-D view", notes[0].hidden === true);
+    box.document.createElement = realCreate;
 }
 
 // -- a channel switched on for the first time is drawn at once --------------------

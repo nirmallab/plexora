@@ -51,6 +51,13 @@ from plexora.server.utils.segmentation_pyramid import PyramidError
 #: same "affordable" side `brightfield.MAX_SOURCE_SIDE` uses.
 FLAT_IMAGE_MAX_SIDE = 4096
 
+#: The most voxels one channel's whole stack may have at a single level
+#: before a z-stack or time series is given a pyramid: 64 M, what the 3-D
+#: view's texture budget holds. A 4096 x 4096 x 200 stack is under the side
+#: rule above, and with one level its zoomed-out tiles, profiles, 3-D view and
+#: 3-D copy all read level 0 -- 6.7 GB a channel.
+STACK_LEVEL_VOXELS = 2**26
+
 #: Stamped as the OME Image Name of every copy this module writes, so
 #: recognising one is an exact metadata check.
 IMAGE_MARKER = "plexora-image-pyramid"
@@ -89,8 +96,13 @@ def _workers() -> int:
 # Detection
 # --------------------------------------------------------------------------
 
-def pyramid_gaps(shape, levels: int, dtype, threshold: Optional[int] = None) -> list:
+def pyramid_gaps(shape, levels: int, dtype, threshold: Optional[int] = None,
+                 planes: Optional[int] = None) -> list:
     """Why an image of this geometry needs a pyramid; empty when it does not.
+
+    `planes` (depth x frames) makes it a stack: one with a single level also
+    needs one when a channel's whole stack is more than STACK_LEVEL_VOXELS,
+    whatever its side. A planar image keeps the side rule alone.
 
     Empty -- "leave it alone" -- also for anything this module cannot write:
     a rank other than (C, Y, X), an empty image, or a pixel type outside plain
@@ -105,9 +117,36 @@ def pyramid_gaps(shape, levels: int, dtype, threshold: Optional[int] = None) -> 
     height, width = shape[1], shape[2]
     if threshold is None:
         threshold = FLAT_IMAGE_MAX_SIDE
-    if max(height, width) <= int(threshold):
-        return []
-    return [f"{width} x {height} px with no reduced-resolution levels"]
+    if max(height, width) > int(threshold):
+        return [f"{width} x {height} px with no reduced-resolution levels"]
+    if planes and int(planes) > 1 and int(planes) * height * width > STACK_LEVEL_VOXELS:
+        return [f"{width} x {height} px x {int(planes)} planes with no reduced-resolution "
+                "levels"]
+    return []
+
+
+def stack_min_levels(planes: Optional[int], height: int, width: int) -> Optional[int]:
+    """How many levels a stack's pyramid needs for its coarsest to hold at most
+    STACK_LEVEL_VOXELS a channel (None for a planar image)."""
+    if not planes or int(planes) <= 1:
+        return None
+    levels, factor = 1, 1
+    while (int(planes) * -(-height // factor) * -(-width // factor) > STACK_LEVEL_VOXELS
+           and max(-(-height // factor), -(-width // factor)) > 1):
+        factor *= 2
+        levels += 1
+    return levels
+
+
+def stack_planes(volume_description) -> Optional[int]:
+    """Planes (z x t) of the stack a volume description lays out."""
+    if not volume_description:
+        return None
+    planes = 1
+    for name, size in volume_description.get("page_axes") or ():
+        if str(name) in ("z", "t"):
+            planes *= max(1, int(size))
+    return planes
 
 
 def _open_series(path, all_pages: bool = False):
@@ -136,11 +175,12 @@ def _open_series(path, all_pages: bool = False):
 
 
 def flat_image_report(path, threshold: Optional[int] = None,
-                      all_pages: bool = False) -> Optional[dict]:
+                      all_pages: bool = False, planes: Optional[int] = None) -> Optional[dict]:
     """What the import dialog says about a flat image, or None when it is fine.
 
     Header-only: no pixel is decoded. `all_pages` counts every plane of a
-    volume (see `_open_series`).
+    volume (see `_open_series`); `planes` is its depth x frames, for the
+    stack rule (`pyramid_gaps`) and the level count.
     """
     try:
         tiff, series = _open_series(path, all_pages=all_pages)
@@ -148,13 +188,14 @@ def flat_image_report(path, threshold: Optional[int] = None,
         return None
     try:
         shape = tuple(int(side) for side in series.shape)
-        reasons = pyramid_gaps(shape, len(series.levels), series.dtype, threshold)
+        reasons = pyramid_gaps(shape, len(series.levels), series.dtype, threshold, planes)
         if not reasons:
             return None
         channels, height, width = shape
         dtype = np.dtype(series.dtype)
         raw = channels * height * width * dtype.itemsize
-        factors = segmentation_pyramid.pyramid_factors(height, width, TILE_SIZE)
+        factors = segmentation_pyramid.pyramid_factors(
+            height, width, TILE_SIZE, stack_min_levels(planes, height, width))
         return {
             "height": height,
             "width": width,
@@ -568,7 +609,11 @@ def pyramidize_image(
         level0 = zarr.open(series.aszarr(level=0, maxworkers=workers), mode="r")
         if not isinstance(level0, zarr.Array):
             level0 = level0["0"]
-        factors = segmentation_pyramid.pyramid_factors(height, width, tile_size)
+        # A stack goes down to a level whose whole stack fits the 3-D view
+        # (`stack_min_levels`), which can be coarser than one tile.
+        factors = segmentation_pyramid.pyramid_factors(
+            height, width, tile_size,
+            stack_min_levels(stack_planes(volume_description), height, width))
         level_shapes = [(-(-height // f), -(-width // f)) for f in factors]
         scratch = _Scratch([(channels,) + level for level in level_shapes[1:]],
                            dtype, destination.parent,
@@ -654,6 +699,9 @@ def pyramidize_image(
                 metadata=_ome_metadata(channels, channel_names, physical, source, fingerprint,
                                        volume_description),
                 tile_size=tile_size,
+                # The levels the scratch was laid out for, a stack's padding
+                # (`stack_min_levels`) included: the writer counts by tile alone.
+                min_levels=len(factors),
                 compression=compression,
                 compression_args=compression_args,
                 max_workers=workers,

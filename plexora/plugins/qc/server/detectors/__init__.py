@@ -11,10 +11,14 @@ behaviour as before.
 
 from __future__ import annotations
 
+import logging
+
 from plexora.plugins.qc.server.detectors.base import (Candidate, DetectorContext,  # noqa: F401
                                                         DetectorRequires, QCDetector)
 
 ENTRY_POINT_GROUP = "plexora.qc_detectors"
+
+_log = logging.getLogger(__name__)
 
 
 def builtin():
@@ -37,7 +41,7 @@ def discover_external() -> tuple:
             detector = entry.load()
             out.append(detector() if isinstance(detector, type) else detector)
         except Exception as exc:  # pragma: no cover - a broken third-party package
-            print(f"WARNING: QC detector {entry.name!r} failed to load: {exc}")
+            _log.warning("QC detector %r failed to load: %s", entry.name, exc)
     return tuple(out)
 
 

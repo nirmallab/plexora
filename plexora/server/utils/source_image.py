@@ -99,7 +99,18 @@ class SourceImage:
     `provenance(level, channels)` is what a picture read from here says it is.
     """
 
-    def __init__(self, datasource, view=None):
+    # Read exactly unless asked otherwise, for a reader set up field by field
+    # (a stand-in over an in-memory stack) as much as for one `__init__` built.
+    _budgeted = False
+    spec = None
+    coarsened = 0
+
+    def __init__(self, datasource, view=None, *, budgeted=False):
+        """`budgeted`: a projection or section read keeps to the tile routes'
+        budgets (`plane_view.SERVED_SLAB_BYTES`, `SECTION_READ_BUDGET`) --
+        computed at a coarser level and drawn up past them, `coarsened` saying
+        by how many levels -- instead of reading every plane of a gigabyte
+        rectangle. For an agent's render; an export reads exactly."""
         from plexora.api.dataset import ProjectData, project_data
         from plexora.server.utils import brightfield
 
@@ -123,6 +134,10 @@ class SourceImage:
         self.volume = None
         self.spec = None
         self._volume_source = None
+        self._budgeted = bool(budgeted)
+        #: Levels coarser than asked the most coarsened read was computed at
+        #: (0: every read exact). Only a budgeted view read coarsens.
+        self.coarsened = 0
         wanted = "" if view is None else str(view).strip()
         #: Whether this panel is one colour picture rather than a stack to
         #: colorize. Read off the layer's own tile key, which is the sentinel
@@ -257,7 +272,7 @@ class SourceImage:
             return False
         try:
             self._choose_view(source.volume, wanted)
-            pyramid = plane_pyramid(source, self.spec)
+            pyramid = plane_pyramid(source, self.spec, served=self._budgeted)
         except Exception:
             source.close()
             raise
@@ -437,6 +452,13 @@ class SourceImage:
         # decode on the lazy DICOM and OME-Zarr levels, for a panel that needs
         # a few hundred pixels of it.
         if array.ndim == 3:
+            if self._budgeted and self.spec is not None:
+                from plexora.server.volume.plane_view import served_steps
+
+                served_steps()
+                block = np.asarray(array[channel_index, y0:y1, x0:x1])
+                self.coarsened = max(self.coarsened, served_steps())
+                return block, (x0, y0, x1, y1)
             return np.asarray(array[channel_index, y0:y1, x0:x1]), (x0, y0, x1, y1)
         return np.asarray(array[y0:y1, x0:x1]), (x0, y0, x1, y1)
 

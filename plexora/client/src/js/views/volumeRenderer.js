@@ -23,7 +23,9 @@
  * its channel is on: switching a channel off and on again, leaving 3-D and
  * coming back to the same area, or going back to fast tiles after HD, is a
  * uniform, not a download and an upload. A channel switched on while others
- * hold textures is fetched at the budget its share allows; the others keep
+ * hold textures is fetched at the level they are drawn at when that level, for
+ * every visible channel, still fits the shared budget -- one picture at one
+ * resolution; otherwise at the budget its share allows, the others keeping
  * the finer levels they have while the budget holds them. The level route
  * names its bytes (ETag, and `w=` for the window), so a reload revalidates
  * instead of downloading.
@@ -573,6 +575,8 @@ ${sample}`;
             this.surfaces?.destroy();
             this.surfaces = null;
             this.canvas?.remove();
+            this.note?.remove();
+            this.note = null;
             this.gizmo?.root.remove();
             this.gizmo = null;
             this.canvas = null;
@@ -581,6 +585,8 @@ ${sample}`;
 
         show(visible) {
             if (this.canvas) this.canvas.hidden = !visible;
+            // The sentence goes with the canvas; refresh says it again on return.
+            if (this.note && !visible) this.note.hidden = true;
             this.gizmo?.show(visible);
             if (!visible) {
                 this.setLock(null);
@@ -725,8 +731,13 @@ ${sample}`;
             this.paintStatus();
             const budget = Math.max(this.budget,
                                     Math.floor((4 * this.budget) / Math.max(1, channels.length)));
+            // The level already drawn, when every visible channel at it still
+            // fits what they share (eight channels at the default budget).
+            const held = channels.map((channel) => this.textureOf(channel)).find(Boolean);
+            const level = held && held.bytes * channels.length <= 8 * this.budget
+                ? held.level : null;
             await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget,
-                                                                        channel.stamp)));
+                                                                        channel.stamp, level)));
             this.evict(new Set(channels.map((channel) => this.textureKey(
                 channel.name, undefined, undefined, undefined, channel.stamp || ""))));
             this.status = "ready";
@@ -762,7 +773,9 @@ ${sample}`;
             return global.__plexora?.viewerSidebar?.isHdMode?.() ? "f16" : "u8";
         }
 
-        async loadChannel(name, t, budget = this.budget, stamp = "") {
+        /** One channel's texture: at `level` when given (the level the other
+         *  channels are drawn at), else the finest the budget allows. */
+        async loadChannel(name, t, budget = this.budget, stamp = "", level = null) {
             const format = this.format();
             const area = this.boxKey();
             const key = this.textureKey(name, t, format, area, stamp);
@@ -771,6 +784,7 @@ ${sample}`;
             const query = new URLSearchParams({ channel: name, t: String(t),
                                                 budget: String(budget),
                                                 max_side: String(this.maxTexture), format });
+            if (Number.isInteger(level)) query.set("level", String(level));
             if (area) query.set("box", area);
             if (stamp) query.set("w", stamp);
             global.PlexoraVolumeAtlas?.LINK?.ask(query);
@@ -779,6 +793,19 @@ ${sample}`;
                 : `/volume/${ds}/level?${query}`;
             const load = (async () => {
                 const response = await this.fetch(address);
+                if (response.status === 400) {
+                    // The server's sentence: no level of this stack fits a 3-D
+                    // texture, say. Shown as it is (see refresh).
+                    let said = "";
+                    try {
+                        said = String((await response.json())?.error || "");
+                    } catch (error) {
+                        said = "";
+                    }
+                    const refused = new Error(said || "volume level: HTTP 400");
+                    refused.refused = true;
+                    throw refused;
+                }
                 if (!response.ok) throw new Error(`volume level: HTTP ${response.status}`);
                 const shape = String(response.headers.get("X-Plexora-Shape") || "")
                     .split(",").map(Number);
@@ -1369,9 +1396,16 @@ ${sample}`;
                     this.channels().map((channel) => channel.name));
                 const channels = this.channels();
                 await this.ensureTextures(channels);
+                this.say("");
             } catch (error) {
-                console.error("volumeRenderer:", error);
-                this.status = "error";
+                if (error?.refused) {
+                    // Not a fault: this stack has nothing a GPU can hold.
+                    this.status = "unavailable";
+                    this.say(error.message);
+                } else {
+                    console.error("volumeRenderer:", error);
+                    this.status = "error";
+                }
                 this.paintStatus();
             }
             this.invalidate();
@@ -1379,7 +1413,26 @@ ${sample}`;
 
         paintStatus() {
             global.dispatchEvent?.(new CustomEvent("plexora:volume-progress",
-                { detail: { status: this.status, level: this.level, shape: this.shape } }));
+                { detail: { status: this.status, level: this.level, shape: this.shape,
+                            message: this.note?.textContent || "" } }));
+        }
+
+        /** One sentence over the canvas -- why there is nothing to draw -- or
+         *  none for "". */
+        say(text) {
+            if (!text) {
+                if (this.note) this.note.hidden = true;
+                return;
+            }
+            if (!this.note && this.wrapper && typeof document !== "undefined") {
+                this.note = document.createElement("p");
+                this.note.className = "viewer-volume-note";
+                this.note.setAttribute("role", "status");
+                this.wrapper.appendChild(this.note);
+            }
+            if (!this.note) return;
+            this.note.textContent = text;
+            this.note.hidden = false;
         }
 
         /** A named view (volumeCamera.VIEWS): xy, xz, yz or iso. */

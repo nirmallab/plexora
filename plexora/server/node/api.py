@@ -30,6 +30,7 @@ import gzip
 import hmac
 import io
 import json
+import logging
 import os
 import threading
 from collections import OrderedDict, deque
@@ -55,6 +56,8 @@ from plexora.server.providers.operations import (
 from plexora.server.volume.viewspec import BadView
 from plexora.telemetry import node_hooks as _node_telemetry
 from plexora.telemetry import performance as _perf
+
+_log = logging.getLogger(__name__)
 
 API_VERSION = 1
 
@@ -1549,7 +1552,8 @@ def image_level(resource_id):
             window = _volume_window(resource, view, index, "volume")
         rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
         pool = ask.pool or serve.z_pool(volume, ask.level)
-    parts = ("level", index, ask.t, ask.level, f"{window[0]:g},{window[1]:g}",
+    parts = ("level", serve.PAYLOAD_VERSION, index, ask.t, ask.level,
+             f"{window[0]:g},{window[1]:g}",
              ask.voxel_format, ",".join(str(int(v)) for v in covered), ask.z0, ask.z1,
              pool) + view.key
     etag = _etag(resource, *parts)
@@ -2466,8 +2470,7 @@ def _scan_window(resource, index):
     try:
         window = data_model.quantization_window_of(opened, index)
     except Exception as exc:
-        print(f"[plexora-node] window scan failed for {resource.id}[{index}]: "
-              f"{exc}", flush=True)
+        _log.warning("window scan failed for %s[%s]: %s", resource.id, index, exc)
         return
     _remember_window(resource, index, window)
     if resource.opened is opened:
@@ -2491,8 +2494,7 @@ def _scan_volume_window(resource, zs, ts, index):
             reading = SimpleNamespace(base=base, reading=f"{zs or ''}|{ts or ''}")
             _volume_window(resource, reading, index, "volume")
     except Exception as exc:
-        print(f"[plexora-node] volume window scan failed for {resource.id}[{index}]: "
-              f"{exc}", flush=True)
+        _log.warning("volume window scan failed for %s[%s]: %s", resource.id, index, exc)
 
 
 def _provisional_window(resource, index):

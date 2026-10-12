@@ -136,7 +136,7 @@ def test_a_nav_item_without_a_shortcut_says_so_rather_than_omitting_the_field():
     assert described["icon"] == "" and described["shortcut"] == ""
 
 
-def test_two_plugins_claiming_one_chord_are_reported_by_name(fake_registry, capsys):
+def test_two_plugins_claiming_one_chord_are_reported_by_name(fake_registry, caplog):
     """A warning, not a startup error: whether two shortcuts collide is a
     question about the installed SET, and one unlucky third-party letter must
     not stop the app from starting."""
@@ -145,12 +145,12 @@ def test_two_plugins_claiming_one_chord_are_reported_by_name(fake_registry, caps
 
     registry.install(FakeApp(), ["alpha", "beta"])
 
-    warning = capsys.readouterr().out
+    warning = caplog.text
     assert "mod+e" in warning
     assert "alpha" in warning and "beta" in warning
 
 
-def test_a_nav_entry_collides_with_a_tool_the_same_way(fake_registry, capsys):
+def test_a_nav_entry_collides_with_a_tool_the_same_way(fake_registry, caplog):
     """The two kinds of claim share one keyspace -- a nav entry's key and a
     tool's key are pressed on the same keyboard."""
     fake_registry["alpha"] = _fake_plugin("alpha", shortcut="mod+k")
@@ -160,16 +160,16 @@ def test_a_nav_entry_collides_with_a_tool_the_same_way(fake_registry, capsys):
 
     registry.install(FakeApp(), ["alpha", "beta"])
 
-    assert "mod+k" in capsys.readouterr().out
+    assert "mod+k" in caplog.text
 
 
-def test_distinct_chords_are_not_reported(fake_registry, capsys):
+def test_distinct_chords_are_not_reported(fake_registry, caplog):
     fake_registry["alpha"] = _fake_plugin("alpha", shortcut="mod+e")
     fake_registry["gamma"] = _fake_plugin("gamma", shortcut="mod+b")
 
     registry.install(FakeApp(), ["alpha", "gamma"])
 
-    assert "claimed by" not in capsys.readouterr().out
+    assert "claimed by" not in caplog.text
 
 
 # --------------------------------------------------------------------------
@@ -453,7 +453,7 @@ def test_no_plugins_requested_installs_nothing(fake_registry):
     assert app.registered == []
 
 
-def test_unknown_names_are_skipped_rather_than_fatal(fake_registry, capsys):
+def test_unknown_names_are_skipped_rather_than_fatal(fake_registry, caplog):
     """A stale entry in PLEXORA_PLUGINS must not make the app unstartable."""
     fake_registry["gating"] = _fake_plugin("gating")
     app = FakeApp()
@@ -461,7 +461,7 @@ def test_unknown_names_are_skipped_rather_than_fatal(fake_registry, capsys):
     registry.install(app, ["gating", "nope"])
 
     assert [p.name for p in registry.installed(app)] == ["gating"]
-    assert "nope" in capsys.readouterr().out
+    assert "nope" in caplog.text
 
 
 def test_a_plugin_that_fails_to_load_is_skipped(fake_registry, monkeypatch):

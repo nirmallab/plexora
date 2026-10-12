@@ -7,6 +7,10 @@ multiprocessing.freeze_support()
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    # Before waitress, whose serve() adds a handler only to a root that has none.
+    from plexora import _logging
+    _logging.configure()
+
     from waitress import serve
     from plexora import app
 

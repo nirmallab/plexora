@@ -23,6 +23,7 @@ exempts it from eviction.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import threading
@@ -31,6 +32,8 @@ from typing import Any, Mapping, Optional
 
 from plexora import paths
 from plexora.server.providers.base import is_remote_locator
+
+_log = logging.getLogger(__name__)
 
 FILENAME = "remote_sources.json"
 
@@ -453,7 +456,7 @@ def start_warm(project) -> Optional[dict]:
             stage("coarse")
             _fetch(store, keys, cancel, report)
         except RemoteUnreachable as exc:
-            print(f"{project.name}: remote image offline, not warming -- {exc}")
+            _log.info("%s: remote image offline, not warming -- %s", project.name, exc)
 
     return layer_jobs.start_task(project.name, REMOTE_WARM_ID, work,
                                  stages=WARM_STAGES)

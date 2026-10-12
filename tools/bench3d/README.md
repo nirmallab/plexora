@@ -7,7 +7,7 @@ network and memory. Results and targets: `docs/internal/3d/PERF.md`.
 ```bash
 PY=<the plexora conda env's python>
 $PY tools/bench3d/fixtures.py make small twoplane flat        # seconds
-$PY tools/bench3d/fixtures.py make medium large               # minutes
+$PY tools/bench3d/fixtures.py make medium large mediumz flatstack   # minutes
 $PY tools/bench3d/fixtures.py register --ims <file.ims> --meso <stack.zarr> --prescan
 $PY tools/bench3d/run.py --label S1 --datasets small,twoplane,ims,meso,flat
 $PY tools/bench3d/report.py docs/internal/3d/perf/<before>.json docs/internal/3d/perf/<after>.json
@@ -25,4 +25,11 @@ $PY tools/bench3d/parity2d.py <before>.json <after>.json
   no marks of its own is measured exactly like an "after".
 - To measure an older commit without stopping work: `git worktree add --detach
   ~/plexora-bench/tree-<sha> <sha>` and `run.py --tree ~/plexora-bench/tree-<sha>`.
+  When the change is in what an import derives (pyramid copies, recorded levels), give each
+  tree its own data root, registered by that tree: `fixtures.py register --tree <tree>
+  --data <root>`, then `run.py --tree <tree> --data <root>`.
+- Besides timings, a run records what entering 3-D read (`enter_levelMB`, the level route's
+  server read phase `enter_serverReadMs`, refusals and failures `enter_errors`), whether every
+  channel is drawn from one level (`volume_levelSpread`), and each dataset's derived files on
+  disk (`bricks_diskMB`, `pyramid_diskMB`).
 - `legacy/` holds the scripts the numbers in TESTING.md were first taken with.

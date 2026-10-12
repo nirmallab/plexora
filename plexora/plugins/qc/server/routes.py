@@ -119,8 +119,9 @@ def cells():
 @qc_bp.route("/cell_at", methods=["GET"])
 def cell_at():
     """QC's record of the cell under a point of the image (`x`, `y` in
-    full-resolution pixels; `radius` how far from it to look): why it was
-    flagged, on what value and against which bar -- the viewer's hover card."""
+    full-resolution pixels; `radius` how far from it to look; `z0`, `z1` the
+    planes on screen of a z-stack, inclusive): why it was flagged, on what
+    value and against which bar -- the viewer's hover card."""
     import math
 
     from plexora.plugins.qc.server import viewer_data
@@ -129,12 +130,15 @@ def cell_at():
     try:
         x, y = float(request.args["x"]), float(request.args["y"])
         radius = float(request.args.get("radius") or 0.0)
+        planes = None
+        if request.args.get("z0") not in (None, "") and request.args.get("z1") not in (None, ""):
+            planes = tuple(sorted((int(request.args["z0"]), int(request.args["z1"]))))
     except (KeyError, TypeError, ValueError):
         abort(400)
     if not all(math.isfinite(v) for v in (x, y, radius)):
         abort(400)
     return _read(lambda: viewer_data.cell_at(_session().data(project), project, x, y,
-                                             radius=radius))
+                                             radius=radius, planes=planes))
 
 
 @qc_bp.route("/regions/delete", methods=["POST"])

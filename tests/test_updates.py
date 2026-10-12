@@ -453,7 +453,8 @@ def test_main_relaunches_after_serve_when_a_restart_was_asked(monkeypatch):
         app=fake_app, _lifetime=_lifetime,
         paths=types.SimpleNamespace(first_run_notice=lambda: None, data_root_notices=lambda: [],
                                     DataRootError=RuntimeError),
-        _clean_base_url=lambda base_url: "")
+        _clean_base_url=lambda base_url: "",
+        _logging=types.SimpleNamespace(configure=lambda level=None, **kwargs: None))
     import sys
 
     monkeypatch.setitem(sys.modules, "waitress", fake_waitress)

@@ -867,7 +867,8 @@ def _ensure_segmentation(project, segmentation, ids, kernel, *, data_root,
 
     if _is_path(segmentation):
         fields, pending = datasource_api._segmentation_config_fields(
-            segmentation, data_root / project.name, False, segmentation_mode)
+            segmentation, data_root / project.name, False, segmentation_mode,
+            image_levels=project.image.max_level)
         updated = project.patch(
             image=replace(project.image, channels=tuple(
                 datasource_api._with_area_channel(

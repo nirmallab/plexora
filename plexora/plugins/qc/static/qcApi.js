@@ -65,10 +65,17 @@ class QcApi {
     /** QC's record of the cell at full-resolution pixel (x, y), looking up
      *  to `radius` pixels away: `{cell, method, result_id}`, `cell` null on
      *  glass (the viewer's hover card). */
-    async cellAt(x, y, radius) {
+    /** `planes`: `[first, last]` on screen of a z-stack (`ctx.view.planes()`),
+     *  so a 3-D mask is read on the plane drawn; null for a flat image. */
+    async cellAt(x, y, radius, planes = null) {
+        const query = { datasource: this.datasource, x: String(x), y: String(y),
+                        radius: String(radius || 0) };
+        if (Array.isArray(planes) && planes.length === 2) {
+            query.z0 = String(planes[0]);
+            query.z1 = String(planes[1]);
+        }
         const response = await fetch(this.url("plugins/qc/cell_at") + "?"
-            + new URLSearchParams({ datasource: this.datasource, x: String(x), y: String(y),
-                                    radius: String(radius || 0) }));
+            + new URLSearchParams(query));
         return this._read(response);
     }
 

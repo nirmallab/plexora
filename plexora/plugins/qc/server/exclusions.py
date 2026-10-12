@@ -30,12 +30,15 @@ applies to every cell.
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 from types import SimpleNamespace
 
 import numpy as np
 
 from plexora.plugins.qc.server import results
+
+_log = logging.getLogger(__name__)
 
 _CACHE: dict = {}
 _CACHE_LOCK = threading.Lock()
@@ -353,7 +356,7 @@ def clipped_z(ds):
     except (OSError, ValueError, KeyError) as exc:
         # An object table that cannot be read leaves nothing out; the QC
         # half of the record is unaffected.
-        print(f"WARNING: QC could not read {table} for clipped cells: {exc}")
+        _log.warning("QC could not read %s for clipped cells: %s", table, exc)
     with _CACHE_LOCK:
         if len(_CLIPPED) > _CACHE_MAX:
             _CLIPPED.clear()

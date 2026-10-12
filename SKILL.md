@@ -106,6 +106,7 @@ Entry points:
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/_lifetime.py` | Leaf module, stdlib only: what ends this process cleanly. `ensure_std_streams()`, `flush_std()`; `watch_stdin(on_eof)` (a daemon thread that calls `on_eof` once stdin reaches EOF -- the shape `--desktop` and the data node's `--exit-on-stdin-close` both build on); `request_shutdown(reason, grace=...)` raises `KeyboardInterrupt` on the MAIN thread, because that is waitress's own clean stop (`serve()` returns, every `atexit` handler runs), with a 10s `os._exit` backstop if that wedges; `shutdown_requested()`, `install_signal_handlers()` (SIGTERM the same way), and `exit_when_stdin_closes(log=print)` -- the data node's old `os._exit(0)`-on-EOF behaviour, moved here so the desktop app's server can tie its life to stdin the same way without duplicating the watcher. `request_restart(reason)` sets a flag and then calls `request_shutdown` -- the restart itself happens after `serve()` returns, in `cli.restart_after_update`, not here. `make_interruptible()` explicitly sets SIGINT back to its default disposition on the main thread before installing the handler: a launcher that starts Plexora as `plexora &` from a script leaves SIGINT inherited as `SIG_IGN`, which makes `interrupt_main()` a no-op and silently drops every Quit/restart to the 10s `os._exit` backstop -- fixed here, in both `cli.main` and `server_cli`. |
+| `plexora/_logging.py` | What Plexora writes to the terminal, decided in one place. `configure(level=None, *, verbose=False, fmt=None, everything=False)` puts one stderr handler on the ROOT logger (so waitress's `basicConfig()` adds none), sets the `plexora` logger to `resolve_level` (`-v` -> DEBUG, else `PLEXORA_LOG_LEVEL`, else WARNING; an unreadable value falls back rather than stopping a server) and takes Flask's `default_handler` off, so no line is written twice. **Never stdout**, because the desktop app reads one JSON line from it, `plexora connect` parses a node's announce from it and MCP speaks JSON-RPC over it. Called once before serving by `cli.py`'s serve path (`-v/--verbose`), `_desktop_logging` (`DESKTOP_FORMAT`, `everything=True` -- every library's loggers, as the desktop log file always had), `server_cli.py`, `run.py` and `server/node/app.py`'s `serve_node`; library use configures nothing. Modules log through a per-module `_log` (not `log`, because `prime_hot_code(log=)` already takes that name) and never print progress. |
 | `plexora/_subprocess.py` | Leaf module, stdlib only, importable without the package for the same reason `cli.py`/`connect.py` are (see Key Invariants): `popen_kwargs()` returns `{"creationflags": CREATE_NO_WINDOW}` only for a console-less Windows process -- the desktop shell launches its server with `CREATE_NO_WINDOW`, and without this every child THAT process starts (an `nvidia-smi` probe, an ssh, a tkinter dialog) would flash its own console. `{}` everywhere else, including a Windows terminal launch, where a child sharing the console is correct (ssh prompting for a password needs it). Every `Popen`/`run` in the package passes `popen_kwargs()`; `cli.py`, `connect.py` and `gcloud.py` reach it through a lazy `_spawn_flags()` helper rather than importing it at module level. `tests/test_subprocess_flags.py` statically scans the tree for a spawn call that forgot it. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
@@ -124,17 +125,24 @@ Entry points:
 - `models/data_model.py` — the high-risk file. Datasource loading, zarr/OME-TIFF
   access, tile extraction and encoding, GMM/contrast statistics, segmentation,
   spatial queries. Holds mutable module-level globals (`source`, `config`,
-  `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
+  `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`, `ball_tree`).
+  `ball_tree` keeps its historical name but holds a
+  `server/utils/spatial_index.SpatialIndex` (sklearn's BallTree is gone):
+  `load_ball_tree` builds it, cached under
+  `derived_root/spatial_index_v1/{manifest.json,index.pickle}` (versioned, so
+  an older state is rebuilt rather than read; a legacy `ball_tree.pickle` is
+  deleted when seen), `load_datasource` resets it, and
+  `_spatial_index`/`spatial_index(name)` build lazily.
+  `query_for_closest_cell(x, y, name, t=None, planes=None)` is behind
+  `/get_nearest_cell`, which takes `z0`/`z1`, the planes on screen.
   **A cell with no position is ignored, never a reason to refuse the table.**
-  `load_ball_tree` fits the BallTree on rows with finite x AND y only (it used
-  to fail the whole table with sklearn's "Input contains NaN"); such a row
-  keeps its place in the row-aligned arrays but is not in the tree, so the
-  module global `ball_tree_rows` holds the table row of each tree point (None
-  when the tree holds every row), `_tree_rows(indices)` maps a query's tree
-  positions back to rows in `query_for_closest_cell`, and the pickle cache
-  stores `'rows'` (absent in an older cache = every row). `_unplaced_cells`
-  counts them for `consistency.report`. A marker NaN is never gated positive
-  and is left out of the statistics and the GMM fit.
+  `SpatialIndex.build` indexes rows with finite x AND y only (sklearn's
+  "Input contains NaN" used to fail the whole table); such a row keeps its
+  place in the row-aligned arrays but is not in the index, whose `rows` maps
+  each indexed point back to its table row (None when it holds every row) and
+  is part of the cached state. `_unplaced_cells` counts them for
+  `consistency.report`. A marker NaN is never gated positive and is left out
+  of the statistics and the GMM fit.
   `generate_thumbnail(name)` is the Open Project grid's card and is the one
   image path that deliberately does NOT load the datasource -- a page of
   projects must not be a data load per card. It reads one coarse level and
@@ -203,6 +211,20 @@ Entry points:
   name, because a viewer coloured by one gene asks for that column on every
   tile. `get_datasource_description` merges in a lazy adapter's
   `describe_features()` when `_feature_reader()` is not `None`.
+- `server/utils/spatial_index.py` — **which cell is at a point, on this frame
+  and these planes**: the index behind the viewer's right-click and QC's
+  hover. `SpatialIndex` is one `cKDTree` over (x, y) with each row's frame and
+  plane extent beside it as arrays, filtered after the tree. (x, y) and not
+  (x, y, z), because a tall cell clicked forty planes from its centroid is
+  still the cell under the cursor, and a tree over scaled z would rank a small
+  cell on the plane ahead of it; one tree, not one per plane or frame, because
+  those multiply memory by depth times frames. A cell's planes are
+  `bbox_z0..bbox_z1` when the table has them, else its rounded Z give or take
+  half the median `n_planes`. `nearest(x, y, t=, planes=, radius=)`: a
+  filtered pick is bounded at `reach` (3 cell diameters, clamped to 8--256
+  px); an unfiltered one is the unbounded `k=1`, exactly the 2-D answer it
+  always was. Stateless -- the caller (data_model, QC per project) decides
+  when it is stale.
 - `server/utils/ome_zarr.py` — **OME-Zarr / NGFF images**, the second format the
   multichannel pipeline reads. `open_image(path, extension=None)` returns an
   `NgffPyramid` shaped like the zarr *group* tifffile produces for a pyramidal
@@ -1525,7 +1547,7 @@ One authoritative database; nodes are data services with no project state.
   A `ResourceUnavailable` that reaches the route layer is answered by
   `create_app`'s handler -- **503 with the exception's own sentence and its
   `node`, never a 500**, because the sentence is the whole diagnosis and the
-  traceback adds nothing to it. `_say_unavailable_once` prints it once per
+  traceback adds nothing to it. `_say_unavailable_once` logs it (a warning) once per
   `data_model.load_generation` (a reload being the only thing that can change
   the answer): the viewer asks one tile at a time, so a single screenful of a
   project on a disconnected node used to print dozens of identical stacks.
@@ -3205,10 +3227,12 @@ deliberately left out and what should be built next.
   /clear, /regions/write]` and `/plugins/qc/artifacts[, /objects, /run, /set,
   /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
   check that runs as a job, and `GET /plugins/qc/cell_at?datasource=&x=&y=
-  &radius=` -> `viewer_data.cell_at`: the mask label at the point, or the
+  &radius=[&z0=&z1=]` -> `viewer_data.cell_at`: the mask label at the point, or the
   nearest within `radius` (capped at `MAX_HOVER_RADIUS_PX = 64`), read
-  through `propagate._mask_provider`, falling back to the nearest centroid
-  (a cached `cKDTree`) when there is no mask to read; the per-project hover
+  through `propagate._mask_provider` (the middle of `z0..z1` for a 3-D
+  mask, the plane the viewer draws labels of), falling back to the nearest
+  centroid (`_centroids`, a cached `SpatialIndex` filtered to the planes on
+  screen) when there is no mask to read; the per-project hover
   context is cached on `exclusions._file_token`, so a hover never re-reads
   the QC store until it changes; client `QcApi.cellAt`).
   Four free "image checks" live beside the session, in their own state so
@@ -5138,7 +5162,59 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
   `/volume/<ds>/level` and the node's `/node/v1/image/<rid>/level`; the
   route answers 304 on its ETag before a voxel is read, and is
-  `immutable` for a year when the request names its window.
+  `immutable` for a year when the request names its window. Levels are
+  budgeted by STORED planes, because a coarse NGFF level may halve z:
+  `read_level` is `model.read_pooled` over stored planes, `texture_size()`
+  is the measure, and `level=auto` on a stack none of whose levels fits is a
+  `BadLevel` ("no level of this stack fits a 3-D texture ..."), which
+  `volumeRenderer.js` shows as its sentence (`.viewer-volume-note`) rather
+  than a blank. `PAYLOAD_VERSION` (2) is part of the level cache key and of
+  both level ETags (viewer and node), so a payload change is never answered
+  from an old cache. `server/volume/model.py` holds the
+  stored-depth arithmetic (`stored_depth`, `z_scale`, `stored_plane`,
+  `stored_span`, `stored_pool`, `read_stored`, `read_pooled`) and `pool_for`,
+  the one power-of-two z-pooling rule `serve.z_pool` and
+  `brick_serve.pool_for` both use, so the level payload and the bricks cannot
+  disagree about which planes a level is. `server/volume/bricks.py` adds
+  pooled levels (`"{L}p{P}"`, `pooled_levels`, `worth_pooling`,
+  `Store.read(pool=)`, `build_coarse(copy=)`, `BrickedSource.read_pooled`,
+  `.copies`) and `FALLBACK_BUDGET`, past which `coarse_levels` returns
+  nothing; `data_model._with_bricks` pools z-chunked stacks when
+  `worth_pooling` says so, and the prepare route refuses a source that does
+  not `copies`. `plane_view`'s drawn-up projection tiles are final
+  (`served_final()`, cached by the tile route) while sections stay
+  provisional.
+  `server/volume/sources/ngff.py` derives an OME-Zarr stack's missing coarse
+  levels for every plane (`image_pyramid_volume.zarr`), and "missing" has two
+  rules, because a plane small enough to zoom out to can still be too large a
+  stack for any 3-D texture: `needs_volume_extension` is the 2-D side rule OR
+  stored planes x h x w > `image_pyramid.STACK_LEVEL_VOXELS`
+  (`extension_shapes` halves until both hold). `_convert_zarr_image` records
+  `imagePyramid` at import for a stack only the voxel rule flags.
+  `providers/local.py` `_open_volume` derives a small extension inline; past
+  `FOREGROUND_EXTENSION_BYTES` (256 MB, `extension_read_bytes`) it only
+  `plan_extension(dest)`s, so a large stack opens at once: the future levels
+  are served meanwhile as `_Subsampled` views (every 2^k-th row and column of
+  the coarsest stored level), and `data_model._with_volume_extension` runs
+  `build_volume_extension(..., cancel=)` as the `layer_jobs` task
+  `EXTENSION_TASK = "volume-levels"` (progress per plane, written to
+  `<dest>.building` and renamed into place so a reader never opens half a
+  store). `adopt_extension(path)` swaps the real levels in, and
+  `_adopted_extension` rebuilds the global `channels` if the project is still
+  loaded. While that task is pending `_with_bricks` is skipped for the load,
+  because copying would copy levels about to change; the next load bricks it.
+  `bricks_state` reports the task under `levels`, and the depth panel's
+  `[data-depth-bricks]` row then reads "Zoomed-out levels" instead of "3-D
+  copy". **3-D label volumes go as coarse as the image**:
+  `volume/labels.py` stops at 512 px a side unless given `min_levels`, and
+  every builder passes the image's level count (`convertOmeTiff` ->
+  `resolve_outline_segmentation` -> `_resolve_label_volume` take
+  `image_levels`, fed `channel_info["maxLevel"]` by
+  `datasource._segmentation_config_fields`, `project.image.max_level` by
+  `memory.py` and segmentation's `_write_labels`, and `_image_levels_for(name)`
+  for the asynchronous segmentation job). A store built earlier keeps its
+  levels; past its coarsest, `label_overlay` strides a finer one
+  (`_PlaneLevel.oindex`, `array_keys`).
   `server/volume/chunk_cache.py` — one process-wide decoded-chunk LRU
   (`CACHE`, `PLEXORA_CHUNK_CACHE_MB`) with one load per chunk, and
   `DECODE_POOL` (`PLEXORA_DECODE_THREADS`) where readers decompress outside
@@ -5155,12 +5231,24 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `PLEXORA_PROJECTION_GATE`, `PLEXORA_PLANE_CACHE`, `PLEXORA_WINDOW_SCAN`.
 - Benchmark: `tools/bench3d/` (README there; Chrome over CDP with the GPU,
   scratch data root), results as `docs/internal/3d/perf/<sha>-<label>.json`.
+  Fixtures include `mediumz` (OME-Zarr whose coarse levels halve z) and
+  `flatstack` (3 x 100 x 2048², one level). `fixtures.py register --tree
+  <tree> --data <root>` gives each checkout its own data root, because what
+  an import derives differs between trees. Beyond timings a run records
+  `enter_levelMB`, `enter_serverReadMs`, `enter_errors`, `enter_refused`,
+  `volume_levelSpread`, `bricks_diskMB` and `pyramid_diskMB`, with targets in
+  `targets.json`.
 - Tests: JS probes
   `tests/js/{plane_flash,gl_init,nav_revision,section_panes,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
   (wrapped in `tests/test_viewer_3d_client.py`), `test_volume_level_cache.py`,
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
-  `test_volume_sections.py`, and node level parity in
-  `test_volume_backend.py`.
+  `test_volume_sections.py`, `test_volume_depth_levels.py`, and node level
+  parity in `test_volume_backend.py`. Picking a cell on a plane:
+  `test_spatial_index.py`, `test_nearest_cell.py`, `test_nearest_cell_3d.py`
+  and `tests/js/nearest_cell_query_probe.mjs` (wrapped in
+  `test_datalayer_requests.py`) -- the client's `dataLayer.tablePlanes` /
+  `planeQuery()`, set by `main.js` from the view state (plane or slab; null in
+  volume mode), and `/volume/<ds>/info`'s `table_z`.
   The fade has `tests/js/channel_fade_probe.mjs` wrapped by
   `test_channel_fade_client.py`; `section_panes_probe.mjs` and
   `volume_renderer_probe.mjs` carry its hook checks, and the
@@ -6897,7 +6985,11 @@ on a colour change or a re-expand. `tests/js/mini_map_probe.mjs` +
 probe checks, 19 pytest tests, 15 of them mutation tests) and
 `tests/test_channel_overview.py` covers the route and the quantization
 contract, including that the Area placeholder does not shift the zarray
-channel index.
+channel index. On a z-stack the lens shows the plane or projection on screen:
+`miniMap.js` follows `plexora:view-changed` and asks
+`/generated/overview/...?view=`, and `generate_channel_overview(view=)` reads
+that view's coarsest level through `_minimap_overview`, held per load and
+view, in place of `zarray`.
 
 If the lens opens to a black circle, check the server's age before the code —
 see "A Python change needs a restart" under Key Invariants. `MiniMap._updateNote`
@@ -7007,7 +7099,11 @@ in **5.6 s**.
   each other. `_build_mcp_parser`/`_build_ai_parser` follow the same rule --
   `mcp`/`sys.executable`-launching code stays inside `_run_mcp`/`_run_ai`, so
   parsing `plexora mcp --help` never needs the optional `[ai]` extra
-  installed.
+  installed. The flip side: a test that fakes the `plexora` package for
+  `cli.main` (`tests/test_cli.py`, `test_desktop_cli.py`, `test_updates.py`)
+  must give the fake a `_logging` with `configure` -- plus `DESKTOP_FORMAT`
+  for `--desktop` -- because the serve path lazily imports
+  `plexora._logging` before waitress, and a fake without it fails there.
 - **The agent layer (`plexora/agent`, `plexora/mcp`, `plexora/ai`) never
   imports `data_model`, and never calls `ImageHandle.stats`,
   `quantization_window` or `SegHandle.centroid_*`.** `data_model` holds the
@@ -8186,7 +8282,11 @@ in **5.6 s**.
 Python environment is the conda env `plexora`. The path differs per machine --
 `C:/Users/aj/.conda/envs/plexora/python.exe` on Windows,
 `/Users/aj/miniconda3/envs/plexora/bin/python` on macOS. Plain `python` is the
-miniforge base env and has no Flask, so it is not a fallback.
+miniforge base env and has no Flask, so it is not a fallback. Core imports
+`spatialagents` (`plexora/agent/errors.py`, `plexora/ai/`; pinned
+`spatialagents>=0.1,<0.2` in `pyproject.toml`), so an env that does not have
+it installed needs the sibling repo's `spatialagents/src` on `PYTHONPATH` for
+the suite to collect.
 
 ```bash
 # Test suite -- from the repo root, with NO path argument

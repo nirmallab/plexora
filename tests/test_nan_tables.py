@@ -39,7 +39,7 @@ UNPLACED = (3, 9)
 def client(tmp_path, monkeypatch):
     """A 256x256 image and no table yet -- test_consistency's fixture shape."""
     use_data_root(monkeypatch, tmp_path)
-    for name in ("ball_tree", "ball_tree_rows", "source", "config", "seg",
+    for name in ("ball_tree", "source", "config", "seg",
                  "zarray", "channels", "metadata", "_loaded_source", "datasource"):
         if hasattr(data_model, name):
             monkeypatch.setattr(data_model, name, None)
@@ -153,12 +153,13 @@ def test_a_table_with_every_cell_placed_reports_nothing(client, tmp_path):
 
 
 def test_the_cached_tree_keeps_its_row_map(client, tmp_path):
-    """The tree is pickled beside the project. Reloaded from that file without
+    """The index is pickled beside the project. Reloaded from that file without
     its rows, every hover after the first NaN row would be off by one."""
     frame = _frame(nan_xy=True)
     _attach(client, tmp_path, frame, ".csv")
     cached = pickle.loads(
-        (paths.derived_root("proj") / "ball_tree.pickle").read_bytes())
+        (paths.derived_root("proj") / data_model.SPATIAL_INDEX_DIR / "index.pickle")
+        .read_bytes())
     expected = [row for row in range(ROWS) if row not in UNPLACED]
     assert cached["rows"].tolist() == expected
 

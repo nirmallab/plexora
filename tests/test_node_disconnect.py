@@ -20,6 +20,8 @@ asking whether a machine is up is exactly what may be done to one that was
 taken down, and it is how registering it again begins.
 """
 
+import logging
+
 import pytest
 
 import plexora
@@ -188,7 +190,7 @@ def test_speculation_does_not_leak_out_of_the_block():
 
 
 def test_a_node_going_away_ends_the_warm_up_without_calling_it_a_failure(
-        capsys, monkeypatch):
+        caplog, monkeypatch):
     """`Background cache warmup failed for ...` is a bug report, and what
     happened is that the user clicked Disconnect. Nothing is waiting on this
     work and there is nothing to repair, so it stops where it is and says so
@@ -198,14 +200,15 @@ def test_a_node_going_away_ends_the_warm_up_without_calling_it_a_failure(
             "data node 'HMS-O2' was disconnected from this server.")
 
     monkeypatch.setattr(data_model, "get_datasource_description", gone)
+    caplog.set_level(logging.INFO, logger="plexora")
     _warm_up("nlu358")
 
-    said = capsys.readouterr().out
+    said = "\n".join(record.getMessage() for record in caplog.records)
     assert "Stopped warming nlu358" in said
     assert "failed" not in said
 
 
-def test_the_warm_up_still_reports_a_real_fault(capsys, monkeypatch):
+def test_the_warm_up_still_reports_a_real_fault(caplog, monkeypatch):
     """Only a node that went away is quiet. Anything else is a bug in the
     warm-up itself and has to keep saying so -- it runs on a thread whose
     exceptions nobody else will ever see."""
@@ -215,4 +218,4 @@ def test_the_warm_up_still_reports_a_real_fault(capsys, monkeypatch):
     monkeypatch.setattr(data_model, "get_datasource_description", broken)
     _warm_up("nlu358")
 
-    assert "Background cache warmup failed for nlu358" in capsys.readouterr().out
+    assert "Background cache warmup failed for nlu358" in caplog.text

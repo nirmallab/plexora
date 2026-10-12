@@ -39,8 +39,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-#: Bumped when the bytes for the same inputs change meaning.
-PAYLOAD_VERSION = 1
+#: Bumped when the bytes for the same inputs change meaning. 2: a level that
+#: stores fewer planes (Imaris) is sent once per stored plane, and pools are
+#: powers of two (`model.pool_for`).
+PAYLOAD_VERSION = 2
 
 
 def _env_int(name, default):
@@ -144,31 +146,40 @@ LEVEL_BUDGET_BYTES = 64 * 2**20
 
 
 def z_pool(volume, level: int) -> int:
-    """How many planes the level route max-pools into one texel at `level`.
+    """How many of `level`'s stored planes the level route max-pools into one
+    texel: `model.pool_for` (a power of two, so voxels are about as deep as
+    they are wide -- what Imaris does to its own coarse levels), counted in
+    the planes the level stores.
 
-    As many as fit in one of the level's pixels, so the texture's voxels are
-    about as deep as they are wide -- what Imaris does to its own coarse
-    levels. A light-sheet stack of 1937 planes 5 µm apart is 1937 texels deep
-    at every level otherwise: a ray marched across it samples one plane in four
-    and misses most of what a MIP should show, and the budget goes on depth
-    instead of on detail. A maximum keeps every peak. 1 without a stated z step.
+    A light-sheet stack of 1937 planes 5 µm apart is 1937 texels deep at every
+    level otherwise: a ray marched across it samples one plane in four and
+    misses most of what a MIP should show, and the budget goes on depth
+    instead of on detail. A maximum keeps every peak. 1 without a stated z
+    step.
     """
-    spacing = volume.spacing
-    sx, sz = spacing.x.value, spacing.z.value
-    if not (sx and sz) or spacing.z.source not in ("metadata", "manual"):
-        return 1
-    info = volume.levels[level]
-    pixel = float(sx) * volume.width / max(1, info.width)
-    return max(1, int(pixel // float(sz)))
+    from plexora.server.volume.model import pool_for, stored_pool
+
+    return stored_pool(volume, level, pool_for(volume, level))
+
+
+def _texels_deep(volume, level, planes, pool=None):
+    """Texels deep of `planes` of the stack at `level`: the stored planes they
+    read, pooled."""
+    from plexora.server.volume.model import z_scale
+
+    stored = -(-int(planes) // z_scale(volume, level))
+    return -(-stored // (pool or z_pool(volume, level)))
 
 
 def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048, planes=None):
-    """The finest level whose (Z, H, W) uint8 stack -- Z after `z_pool` -- fits
-    the budget and whose every side fits a 3-D texture (WebGL2 guarantees 256;
-    real GPUs 2048). `planes` is how many planes are asked for (all)."""
+    """The finest level whose (Z, H, W) uint8 stack -- Z the stored planes
+    after `z_pool` -- fits the budget and whose every side fits a 3-D texture
+    (WebGL2 guarantees 256; real GPUs 2048). `planes` is how many planes are
+    asked for (all). The coarsest level when none does (`texture_size` says
+    whether a texture of it can be made at all)."""
     planes = volume.depth if planes is None else planes
     for info in volume.levels:
-        depth = -(-planes // z_pool(volume, info.index))
+        depth = _texels_deep(volume, info.index, planes)
         voxels = depth * info.height * info.width
         if voxels <= budget_bytes and max(info.height, info.width, depth) <= max_side:
             return info.index
@@ -195,15 +206,24 @@ def area_at(volume, level, box):
 
 def choose_area_level(volume, box, budget_bytes, max_side=2048, planes=None):
     """`choose_level` for an area: the finest level at which `box`, through
-    every plane asked for (after `z_pool`), fits the budget and a 3-D texture."""
+    every plane asked for (stored planes, after `z_pool`), fits the budget and
+    a 3-D texture."""
     planes = volume.depth if planes is None else planes
     for info in volume.levels:
         rows, cols, _ = area_at(volume, info.index, box)
-        depth = -(-planes // z_pool(volume, info.index))
+        depth = _texels_deep(volume, info.index, planes)
         height, width = rows.stop - rows.start, cols.stop - cols.start
         if depth * height * width <= budget_bytes and max(height, width, depth) <= max_side:
             return info.index
     return volume.levels[-1].index
+
+
+def texture_size(volume, level, box, planes, pool=None, voxel_bytes=1):
+    """(bytes, longest side) of the texture `planes` of `box` at `level` make."""
+    rows, cols, _ = area_at(volume, level, box)
+    depth = _texels_deep(volume, level, planes, pool)
+    height, width = rows.stop - rows.start, cols.stop - cols.start
+    return depth * height * width * voxel_bytes, max(depth, height, width)
 
 
 #: The most any one level payload may be, whatever a request asks for.
@@ -290,10 +310,21 @@ def parse_level(volume, args) -> LevelAsk:
         if not 1 <= pool <= volume.depth:
             raise BadLevel(f"pool is 1 to {volume.depth} planes")
     raw_level = args.get('level', 'auto')
-    if raw_level == 'auto' and box is not None:
-        level = choose_area_level(volume, box, budget // voxel_bytes, max_side, planes)
-    elif raw_level == 'auto':
-        level = choose_level(volume, budget // voxel_bytes, max_side, planes)
+    if raw_level == 'auto':
+        if box is not None:
+            level = choose_area_level(volume, box, budget // voxel_bytes, max_side, planes)
+        else:
+            level = choose_level(volume, budget // voxel_bytes, max_side, planes)
+        # The coarsest level comes back when none fits the budget. It is still
+        # sent if a texture of it can be made at all; a level 0 of 6 GB, or
+        # sides no GPU takes, is refused -- the node's answer and the
+        # primary's alike -- instead of being read, quantized and dropped.
+        size, side = texture_size(volume, level, box, planes, pool, voxel_bytes)
+        if size > MAX_LEVEL_BYTES or side > max_side:
+            raise BadLevel(
+                f"no level of this stack fits a 3-D texture ({size / 2**20:.0f} MB, "
+                f"{side} px a side at its coarsest): import it with a pyramid, or wait "
+                "for its 3-D copy")
     else:
         try:
             level = int(raw_level)
@@ -301,36 +332,22 @@ def parse_level(volume, args) -> LevelAsk:
             raise BadLevel("level is an integer or auto") from None
         if not 0 <= level < len(volume.levels):
             raise BadLevel(f"level {level} does not exist")
-        rows, cols, _covered = area_at(volume, level, box)
-        pooled = -(-planes // (pool or z_pool(volume, level)))
-        if (pooled * (rows.stop - rows.start) * (cols.stop - cols.start) * voxel_bytes
-                > MAX_LEVEL_BYTES):
+        size, _side = texture_size(volume, level, box, planes, pool, voxel_bytes)
+        if size > MAX_LEVEL_BYTES:
             raise BadLevel("that level is too large to send whole")
     named = parse_stamp(args.get('w')) if args.get('w') else None
     return LevelAsk(t, level, voxel_format, box, z0, z1, pool, named)
 
 
 def read_level(source, ask: LevelAsk, index, rows, cols, pool):
-    """The (pooled) block a level payload is quantized from."""
-    if pool == 1:
-        return source.read_block(ask.level, ask.t, index, ask.z0, ask.z1, rows, cols)
-    # Pooled into one preallocated stack. Read in runs of whole pools of
-    # about READ_RUN_BYTES, not one pool at a time: a store read is a fixed
-    # cost (and a parallel decode) however few planes it covers -- 388 reads
-    # of five planes each for a 1937-plane light-sheet level.
-    volume = source.volume
-    itemsize = np.dtype(volume.dtype).itemsize
-    plane = max(1, (rows.stop - rows.start) * (cols.stop - cols.start) * itemsize)
-    run_planes = max(pool, (READ_RUN_BYTES // plane) // pool * pool)
-    pooled = -(-ask.planes // pool)
-    block = np.empty((pooled, rows.stop - rows.start, cols.stop - cols.start),
-                     dtype=volume.dtype)
-    for start in range(ask.z0, ask.z1 + 1, run_planes):
-        stop = min(ask.z1 + 1, start + run_planes)
-        run = np.asarray(source.read_block(ask.level, ask.t, index, start, stop - 1, rows, cols))
-        for k, first in enumerate(range(0, stop - start, pool)):
-            np.max(run[first:first + pool], axis=0, out=block[(start - ask.z0) // pool + k])
-    return block
+    """The (pooled) block a level payload is quantized from: the stored planes
+    planes z0..z1 read from at the level, each once, max-pooled `pool` (stored
+    planes) at a time -- see `model.read_pooled`."""
+    from plexora.server.volume.model import read_pooled, stored_span
+
+    s0, s1 = stored_span(source.volume, ask.level, ask.z0, ask.z1)
+    return read_pooled(source, ask.level, ask.t, index, s0, s1, pool, rows, cols,
+                       run_bytes=READ_RUN_BYTES)
 
 
 #: The headers a level payload's reader needs, readable across origins.

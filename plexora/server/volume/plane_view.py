@@ -172,6 +172,9 @@ class SlabLevel(_ViewLevel):
             return np.zeros((max(0, y1 - y0), max(0, x1 - x0)), dtype=self.dtype)
         steps = self.coarsening(y1 - y0, x1 - x0) if self._served else 0
         if steps:
+            # Said (`served_steps`), but final: nothing ever sharpens a drawn-up
+            # projection, so it may be kept like any other tile.
+            _served.steps = max(getattr(_served, "steps", 0), steps)
             out = self._drawn_up(channel, y0, y1, x0, x1, steps)
         else:
             out = self._reduce(self._level, channel, y0, y1, x0, x1)
@@ -258,7 +261,16 @@ def served_steps(reset: bool = True) -> int:
     steps = getattr(_served, "steps", 0)
     if reset:
         _served.steps = 0
+        _served.provisional = False
     return steps
+
+
+def served_final() -> bool:
+    """Whether the last served tile on this thread, if it was drawn up, is
+    final: a projection's is (nothing sharpens it), a section's is not (it is
+    replaced once the area is prepared in 3-D) and is kept out of every
+    cache."""
+    return not getattr(_served, "provisional", False)
 
 
 def decode_shape(source, level: int) -> tuple[int, int, int]:
@@ -327,6 +339,7 @@ class SectionLevel(_ViewLevel):
         steps = self.coarsening(r0, r1, c0, c1) if self._served else 0
         if steps:
             _served.steps = max(getattr(_served, "steps", 0), steps)
+            _served.provisional = True
             out = self._drawn_up(channel, r0, r1, c0, c1, steps)
         else:
             out = self._read(channel, r0, r1, c0, c1)

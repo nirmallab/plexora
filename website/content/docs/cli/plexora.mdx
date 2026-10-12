@@ -23,7 +23,7 @@ plexora [-h] [--version] [--host HOST] [--port PORT] [--data-dir DATA_DIR]
                [--data-dir-default DATA_DIR_DEFAULT] [--base-url BASE_URL] [--plugins PLUGINS]
                [-r] [--login-host LOGIN_HOST] [--bind-node] [--ood] [--also-serve KIND:ID=PATH]
                [--node-port NODE_PORT] [--node-allow-origin ORIGIN] [--no-detect]
-               [--allow-source-writes] [--desktop] [--browser | --no-browser]
+               [--allow-source-writes] [--desktop] [-v] [--browser | --no-browser]
                [datasource]
 ```
 
@@ -130,6 +130,12 @@ Let a token with admin scope (`plexora ai token create --scope admin`) write gat
 <Param name={"--desktop"} kind={"internal"}>
 
 Run as the Plexora desktop app's server: loopback only, a per-launch token, one JSON ready line on stdout, and exit when stdin closes. Started by the app; not meant to be typed.
+
+</Param>
+
+<Param name={"-v, --verbose"}>
+
+Show what Plexora is doing as it loads and serves (debug messages, on stderr). PLEXORA_LOG_LEVEL=info is a quieter middle ground.
 
 </Param>
 

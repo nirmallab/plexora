@@ -124,9 +124,11 @@
     {# A large stack stored plane by plane gets a copy in 3-D bricks for every
        read across planes -- projections, sections, the 3-D view
        (server/volume/bricks.py): its coarse levels in the background, finer
-       ones for an area on demand. Hidden for a stack that needs none. #}
+       ones for an area on demand. An OME-Zarr stack deriving the zoomed-out
+       levels it lacks shows that here too. Hidden for a stack that needs
+       neither. #}
     <div class="depth-panel-pin" data-depth-bricks hidden>
-        <span class="depth-panel-label">3-D copy</span>
+        <span class="depth-panel-label" data-depth-bricks-label>3-D copy</span>
         <span class="depth-panel-note" data-depth-bricks-note></span>
         <div class="depth-panel-actions">
             <button type="button" class="layer-card-action" id="depth_prepare_button"

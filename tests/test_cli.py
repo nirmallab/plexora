@@ -98,6 +98,10 @@ def _fake_serve(monkeypatch, served):
                                     data_root_notices=lambda: [],
                                     DataRootError=RuntimeError),
         _clean_base_url=lambda base_url: "" if not base_url else "/" + str(base_url).strip("/"),
+        # Configured before waitress (plexora/_logging.py); what it was asked
+        # for is kept in `served["logging"]`.
+        _logging=types.SimpleNamespace(
+            configure=lambda level=None, **kwargs: served.update(logging=kwargs)),
     )
     monkeypatch.setitem(sys.modules, "waitress", fake_waitress)
     monkeypatch.setitem(sys.modules, "plexora", fake_plexora)
@@ -124,6 +128,18 @@ def test_main_leaves_the_data_path_for_the_resolver_and_serves(monkeypatch):
     assert "PLEXORA_DATA_PATH" not in os.environ
     assert served["host"] == "127.0.0.1"
     assert served["port"] == 8765
+
+
+def test_logging_is_configured_before_serving_and_v_makes_it_verbose(monkeypatch):
+    """Load-time chatter is debug logging now, so `-v` is how to see it."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+
+    cli.main(["--no-browser", "--port", "8765"])
+    assert served["logging"] == {"verbose": False}
+
+    cli.main(["--no-browser", "--port", "8765", "-v"])
+    assert served["logging"] == {"verbose": True}
 
 
 def test_main_pins_the_data_path_when_asked(monkeypatch, tmp_path):

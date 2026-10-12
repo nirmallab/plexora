@@ -1,4 +1,3 @@
-from sklearn.neighbors import BallTree
 import numpy as np
 import polars as pl
 import os
@@ -35,12 +34,14 @@ import threading
 import zarr
 from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
+import logging
 
+# `_log`, not `log`: prime_hot_code takes a `log` callback of its own.
+_log = logging.getLogger(__name__)
+
+#: The loaded project's cell index (server/utils/spatial_index.SpatialIndex),
+#: or None: no table, no coordinates, or not built since the last load.
 ball_tree = None
-# The table row each of the tree's points is, or None when the tree holds every
-# row in order (the ordinary case). A cell with no position -- a NaN x or y --
-# stays in the table and is simply not in the tree; see load_ball_tree.
-ball_tree_rows = None
 source = None
 config = None
 seg = None
@@ -268,7 +269,8 @@ def _servable_as_is(segmentation_path, mode):
 
 
 def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress_callback=None,
-                                 mode=segmentation_pyramid.DEFAULT_MODE, stage_callback=None):
+                                 mode=segmentation_pyramid.DEFAULT_MODE, stage_callback=None,
+                                 image_levels=None):
     """Return the mask to serve for `segmentation_path`, converting it in one
     pass when it is not already servable.
 
@@ -296,7 +298,8 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
     # A 3-D label volume: stored as one, plane by plane, whatever the mode --
     # outlines are derived per tile from the filled labels (renderLabelTile).
     label_volume = _resolve_label_volume(segmentation_path, dataDirectory,
-                                         progress_callback, stage_callback)
+                                         progress_callback, stage_callback,
+                                         image_levels=image_levels)
     if label_volume is not None:
         return label_volume
     if _servable_as_is(segmentation_path, mode):
@@ -317,9 +320,13 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
 
 
 def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callback=None,
-                          stage_callback=None):
+                          stage_callback=None, image_levels=None):
     """The label-volume store for a (Z, Y, X) mask, built or adopted; None for
     anything else (every 2-D mask takes the path below, unchanged).
+
+    `image_levels` (the reference image's level count) makes a new build go
+    as coarse as the image does. A store adopted from an earlier build keeps
+    its levels: past its coarsest the tile route strides a finer one.
 
     Written beside the project's other derived files (or beside the mask when
     there is no project directory), named after the mask, and adopted when
@@ -338,7 +345,8 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
     # The rule a data node follows too (volume_labels.resolve_label_volume),
     # so a mask converted by either is adopted by both.
     return volume_labels.resolve_label_volume(
-        source, [folder], progress=progress_callback, stage=stage_callback)
+        source, [folder], progress=progress_callback, stage=stage_callback,
+        min_levels=image_levels)
 
 
 def segmentation_mode(entry):
@@ -669,6 +677,7 @@ def is_loaded(datasource_name) -> bool:
 
 def load_datasource(datasource_name, reload=False):
     global datasource
+    global ball_tree
     global source
     global config
     global seg
@@ -734,12 +743,12 @@ def load_datasource(datasource_name, reload=False):
                     failures[kind] = (
                         str(exc) if isinstance(exc, providers.ResourceUnavailable)
                         else f"{exc}. Point this project at it again on the Edit page.")
-                    print(f"{datasource_name}: {kind} is unavailable -- {exc}")
+                    _log.warning("%s: %s is unavailable -- %s", datasource_name, kind, exc)
                     return fallback
 
             if project.has_table:
                 progress.stage("table")
-                print("Loading datasource data.. (this can take some time)")
+                _log.debug("%s: loading the table", datasource_name)
                 # Somewhere for the load to say where it has got to, polled by the
                 # browser while the request doing the work is still outstanding.
                 stage, report = table_progress(datasource_name)
@@ -759,11 +768,11 @@ def load_datasource(datasource_name, reload=False):
             else:
                 loaded_datasource = None
             progress.stage("segmentation")
-            print("Loading segmentation.")
+            _log.debug("%s: loading the segmentation", datasource_name)
             loaded_seg = attempt("segmentation", resolved.segmentation.open,
                                  missing_ok=True)
             progress.stage("image")
-            print("Loading image descriptions.")
+            _log.debug("%s: loading the image", datasource_name)
             # Classified on the way past, then re-raised unchanged. The image is
             # the one resource `attempt` does not swallow (see above), so this is
             # the only place that ever sees WHY it would not open -- by the time
@@ -794,9 +803,14 @@ def load_datasource(datasource_name, reload=False):
             loaded_volume = getattr(resolved.image, "volume_source", None)
             if loaded_volume is not None:
                 _apply_project_spacing(loaded_volume, project)
-                loaded_volume = _with_bricks(datasource_name, loaded_volume)
+                if not _with_volume_extension(datasource_name, loaded_volume):
+                    loaded_volume = _with_bricks(datasource_name, loaded_volume)
 
             datasource = loaded_datasource
+            # An index never outlives the table it was built from: the callers
+            # that load a project directly (not through load_ball_tree) would
+            # otherwise pick against the previous project's cells.
+            ball_tree = None
             seg = loaded_seg
             channels = loaded_channels
             volume_source = loaded_volume
@@ -845,7 +859,7 @@ def load_datasource(datasource_name, reload=False):
             # Set last, after every global above is in place, so a concurrent
             # reader never sees _loaded_source set against a half-built state.
             _loaded_source = loaded_scope(datasource_name)
-            print("Data loading done.")
+            _log.debug("%s: loaded", datasource_name)
         except BaseException as exc:
             progress.finish(exc)
             raise
@@ -863,6 +877,48 @@ def load_datasource(datasource_name, reload=False):
 BRICK_STAGES = {"copying": (0, 100, "Copying the stack in 3-D")}
 BRICK_TASK = "volume-bricks"
 
+EXTENSION_STAGES = {"deriving": (0, 100, "Deriving zoomed-out levels of every plane")}
+EXTENSION_TASK = "volume-levels"
+
+
+def _with_volume_extension(datasource_name, source) -> bool:
+    """Derive a large OME-Zarr stack's missing coarse levels in the background
+    (sources/ngff.py `plan_extension`); True while that is pending.
+
+    The source serves them as subsamples meanwhile, and takes up the real ones
+    the moment they are written: the default plane the tile route holds is
+    rebuilt from them. Its 3-D copy waits for the next load, which finds the
+    levels there -- copying before them would copy levels about to change.
+    """
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume.sources.ngff import build_volume_extension
+
+    dest = getattr(source, "pending_extension", None)
+    if not dest:
+        return False
+
+    def work(stage, report, cancel):
+        stage("deriving")
+        built = build_volume_extension(source, dest, progress_callback=report, cancel=cancel)
+        if built and not cancel.is_set() and source.adopt_extension(built):
+            _adopted_extension(datasource_name, source)
+
+    layer_jobs.start_task(datasource_name, EXTENSION_TASK, work, stages=EXTENSION_STAGES,
+                          message="Deriving zoomed-out levels of every plane")
+    return True
+
+
+def _adopted_extension(datasource_name, adopted):
+    """Point the loaded project's default plane at `adopted`'s new levels, if
+    it is still the stack on screen."""
+    global channels
+
+    if source != datasource_name or volume_source is not adopted:
+        return
+    view = adopted.volume.default_view
+    channels = adopted.plane_pyramid(view.t, view.z)
+    _log.info("Zoomed-out levels of every plane derived for %s", datasource_name)
+
 
 def _with_bricks(datasource_name, source):
     """The loaded stack, reading across planes from its z-chunked copy where
@@ -877,24 +933,29 @@ def _with_bricks(datasource_name, source):
 
     try:
         path = getattr(source, "path", None)
-        if not bricks.worth_it(source) or not path or not Path(str(path)).exists():
+        # A stack chunked across z needs no copy, but its pooled levels still
+        # spare the 3-D view a read of every plane (bricks.worth_pooling).
+        copies = bricks.worth_it(source)
+        if not (copies or bricks.worth_pooling(source)) or not path \
+                or not Path(str(path)).exists():
             return source
         store = bricks.store_for(datasource_name, source)
         if store.key is None:
             return source
         store.reset_if_stale()
-        if not store.coarse_complete():
+        if (copies and not store.coarse_complete()) or not store.pooled_complete():
             def work(stage, report, cancel):
                 stage("copying")
                 bricks.build_coarse(store, source,
                                     report=lambda percent, _text: report(percent, 100),
-                                    cancel=cancel)
+                                    cancel=cancel, copy=copies)
 
             layer_jobs.start_task(datasource_name, BRICK_TASK, work, stages=BRICK_STAGES,
                                   message="Copying the stack in 3-D")
-        return bricks.adopt(source, store)
+        return bricks.adopt(source, store, copies=copies)
     except Exception as exc:  # the copy is an optimisation, never a reason to fail a load
-        print(f"Could not set up the 3-D copy of {datasource_name}: {exc}")
+        _log.warning("Could not set up the 3-D copy of %s: %s", datasource_name, exc,
+                     exc_info=True)
         return source
 
 
@@ -943,7 +1004,8 @@ def _warm_remote_image(datasource_name):
     try:
         remote_sources.start_warm(project)
     except Exception as exc:  # noqa: BLE001 -- warming is an optimisation
-        print(f"{datasource_name}: could not start warming the remote image -- {exc}")
+        _log.warning("%s: could not start warming the remote image -- %s",
+                     datasource_name, exc)
 
 
 #: The project whose remote image is being warmed, if any.
@@ -1251,88 +1313,160 @@ def _ball_tree_signature(project):
     return _ball_tree_source_signature(Path(project.dataset.src))
 
 
+#: Where the cell index's cache lives under a project's derived directory.
+#: Versioned by name: a change to what is cached gets a new directory rather
+#: than a misread of the old one.
+SPATIAL_INDEX_DIR = "spatial_index_v1"
+#: The pickled sklearn BallTree the index replaced; removed when seen.
+_LEGACY_BALL_TREE = "ball_tree.pickle"
+
+
+def _spatial_index_manifest(project, signature):
+    """What a cached index must have been built from to be read back."""
+    import scipy
+
+    from plexora.server.utils import spatial_index
+
+    roles = project.roles
+    raw = {
+        "version": spatial_index.STATE_VERSION,
+        "source": signature,
+        "id_column": roles.cell_id,
+        "x_column": roles.x,
+        "y_column": roles.y,
+        "z_column": roles.get("z"),
+        "t_column": roles.get("t"),
+        "columns": sorted(c for c in datasource.columns
+                          if c in spatial_index.EXTENT_COLUMNS + spatial_index.SIZE_COLUMNS
+                          or c == spatial_index.DEPTH_COLUMN),
+        "rows": int(datasource.height),
+        "library": "scipy.cKDTree",
+        "scipy": scipy.__version__,
+    }
+    # Through JSON once, so it compares equal to what a manifest file reads back.
+    return json.loads(json.dumps(raw, default=str))
+
+
+def _read_cached_index(directory, expected):
+    from plexora.server.utils.spatial_index import SpatialIndex
+
+    try:
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        if manifest != expected:
+            _log.debug("Spatial index cache is stale: %s",
+                       sorted(k for k in expected if manifest.get(k) != expected[k]))
+            return None
+        with open(directory / "index.pickle", "rb") as handle:
+            return SpatialIndex.from_state(pickle.load(handle))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        _log.warning("Could not read the cached spatial index, rebuilding: %s", exc)
+        return None
+
+
+def _write_cached_index(directory, expected, index):
+    # The index is built and usable already; the files are only a cache of it.
+    # A project directory that does not exist yet is an ordinary state for a
+    # project registered without any data attached, and losing the index over
+    # a cache write is much worse than rebuilding it next time.
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        tmp = directory / "index.pickle.tmp"
+        with open(tmp, "wb") as handle:
+            pickle.dump(index.state(), handle, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, directory / "index.pickle")
+        # The manifest last: a reader that finds it finds the index it names.
+        (directory / "manifest.json").write_text(json.dumps(expected), encoding="utf-8")
+    except (OSError, pickle.PicklingError) as exc:
+        _log.warning("Could not cache the spatial index (%s); it will be rebuilt next load.",
+                     exc)
+
+
 def load_ball_tree(datasource_name_name, reload=False):
+    """Build (or read back) the loaded project's cell index into `ball_tree`.
+
+    The name is historical: it held an sklearn BallTree over (x, y). It now
+    holds a `SpatialIndex` (server/utils/spatial_index.py): a cKDTree over
+    (x, y) plus each row's frame and plane extent, so a pick on a z-stack or a
+    time series keeps to what is on screen. Cached under the project's derived
+    directory with a manifest of what it was built from.
+    """
     global ball_tree
-    global ball_tree_rows
     global datasource
     global config
     if loaded_scope(datasource_name_name) != _loaded_source:
         load_datasource(datasource_name_name)
 
     project = _project(datasource_name_name)
-    ball_tree_rows = None
     # `datasource is None` is a third way to have nothing to index, alongside
     # the two below: the project HAS a table and its coordinate columns are
     # named, but the node holding it was unreachable when this loaded. Same
-    # answer -- no tree -- because the alternative is indexing a table that is
+    # answer -- no index -- because the alternative is indexing a table that is
     # not there.
     if datasource is None or not project.has_table or not (project.roles.x and project.roles.y):
-        # Nothing to build a tree from: either there is no feature table at all
+        # Nothing to index: either there is no feature table at all
         # (image-only project), or one was imported whose coordinate columns
         # nobody has identified yet -- a spatial index over columns we cannot
         # name is not something to guess at. Every direct consumer of
-        # ball_tree/datasource checks for None rather than dereferencing a tree
-        # that was never built.
+        # ball_tree/datasource checks for None rather than dereferencing an
+        # index that was never built.
         ball_tree = None
         return
 
-    pickled_kd_tree_path = str(
-        paths.derived_root(datasource_name_name) / "ball_tree.pickle")
+    from plexora.server.utils.spatial_index import SpatialIndex
 
-    signature = _ball_tree_signature(project)
+    derived = paths.derived_root(datasource_name_name)
+    try:
+        (derived / _LEGACY_BALL_TREE).unlink()
+    except OSError:
+        pass
+    directory = derived / SPATIAL_INDEX_DIR
+    expected = _spatial_index_manifest(project, _ball_tree_signature(project))
+    if not reload:
+        cached = _read_cached_index(directory, expected)
+        if cached is not None:
+            ball_tree = cached
+            _log.info("Spatial index for %s: read from cache (%d cells)",
+                      datasource_name_name, len(cached))
+            return
 
-    if Path(pickled_kd_tree_path).is_file() and reload is False:
-        print("Pickled KD Tree Exists, Loading")
-        try:
-            with open(pickled_kd_tree_path, "rb") as tree_file:
-                cached = pickle.load(tree_file)
-            if isinstance(cached, dict) and cached.get('signature') == signature:
-                ball_tree = cached['tree']
-                # Absent from a cache written before rows could be left out,
-                # which is right: back then a NaN position failed the build,
-                # so every cached tree holds every row.
-                ball_tree_rows = cached.get('rows')
-                print("Pickled KD Tree Loaded.")
-                return
-            print("Pickled KD Tree is stale (source CSV changed), rebuilding.")
-        except Exception as exc:
-            print(f"Could not load pickled KD Tree, rebuilding: {exc}")
-
-    print("Creating KD Tree.")
-    xCoordinate = project.roles.x
-    yCoordinate = project.roles.y
+    started = time.perf_counter()
+    roles = project.roles
+    columns = set(datasource.columns)
     # Reuse the feature table load_datasource already parsed instead of
     # re-reading the (potentially multi-million-row) CSV from disk again.
-    points = datasource.select([xCoordinate, yCoordinate]).to_numpy()
-    # A cell with a NaN (or null, or infinite) x or y has no position: it keeps
-    # its row -- every row-aligned array (gate bytes, not-called bytes) counts
-    # it -- but it is nowhere on the image, so nothing hovers onto it. This used
-    # to fail the whole table with sklearn's "Input contains NaN".
-    finite = np.isfinite(points.astype(np.float64, copy=False)).all(axis=1)
-    if not finite.any():
-        ball_tree = None
+    ball_tree = SpatialIndex.build(
+        datasource, x=roles.x, y=roles.y,
+        z=roles.get("z") if roles.get("z") in columns else None,
+        t=roles.get("t") if roles.get("t") in columns else None)
+    if ball_tree is None:
+        _log.warning("%s: no cell has a finite position in %s/%s; nothing to pick",
+                     datasource_name_name, roles.x, roles.y)
         return
-    if not finite.all():
-        ball_tree_rows = np.flatnonzero(finite)
-        points = points[finite]
-    ball_tree = BallTree(points, metric='euclidean')
-    # The tree itself is built and usable at this point; the file is only a
-    # cache of it. A project directory that does not exist yet is an ordinary
-    # state for a project registered without any data attached, and losing the
-    # spatial index over a cache write is a much worse outcome than rebuilding
-    # it next time.
-    try:
-        Path(pickled_kd_tree_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(pickled_kd_tree_path, 'wb') as tree_file:
-            pickle.dump({'signature': signature, 'tree': ball_tree,
-                         'rows': ball_tree_rows}, tree_file)
-    except OSError as exc:
-        print(f"Could not cache KD Tree ({exc}); it will be rebuilt next load.")
-    print('Creating KD Tree done.')
+    _log.info("Spatial index for %s: built over %d cells%s in %.2f s",
+              datasource_name_name, len(ball_tree),
+              f" (planes from {ball_tree.extent_from})" if ball_tree.extent_from else "",
+              time.perf_counter() - started)
+    _write_cached_index(directory, expected, ball_tree)
+
+
+def _spatial_index(datasource_name):
+    """The cell index of `datasource_name`, loading the project and building
+    the index when either is not current; None without positions."""
+    _ensure_loaded(datasource_name)
+    if ball_tree is None and datasource is not None:
+        load_ball_tree(datasource_name)
+    return ball_tree
+
+
+def spatial_index(datasource_name):
+    """Public twin of `_spatial_index`, for callers outside this module."""
+    return _spatial_index(datasource_name)
 
 
 def _ensure_loaded(datasource_name):
-    """Ensure the CSV/BallTree for datasource_name is the currently loaded one."""
+    """Ensure the table and cell index of datasource_name are the loaded ones."""
     if loaded_scope(datasource_name) != _loaded_source:
         load_ball_tree(datasource_name)
 
@@ -1473,8 +1607,7 @@ def _warm_datasource_caches(datasource_name):
                     # reduction in channel_stats_of is undefined on those --
                     # which used to abandon the warm-up at the first one and
                     # leave the other ninety-one to be computed on click.
-                    print(f"Skipped warming {fullname} in {datasource_name}: "
-                          f"{exc}")
+                    _log.debug("Skipped warming %s in %s: %s", fullname, datasource_name, exc)
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
                 warm(get_image_channel_stats, fullname)
@@ -1493,9 +1626,9 @@ def _warm_datasource_caches(datasource_name):
         # disconnected it -- so there is nothing here to repair and nothing
         # waiting on the work. Stop at the channel we reached and say so once,
         # plainly, instead of filing a bug report about a deliberate action.
-        print(f"Stopped warming {datasource_name}: {exc}")
+        _log.info("Stopped warming %s: %s", datasource_name, exc)
     except Exception as exc:
-        print(f"Background cache warmup failed for {datasource_name}: {exc}")
+        _log.exception("Background cache warmup failed for %s: %s", datasource_name, exc)
     finally:
         lock.release()
 
@@ -1512,58 +1645,40 @@ def _frame_rows(datasource_name, t):
     return datasource[column].to_numpy() == int(t)
 
 
-def query_for_closest_cell(x, y, datasource_name, t=None):
-    global datasource
-    global source
-    global ball_tree
-    _ensure_loaded(datasource_name)
-    if ball_tree is None:
-        return {}
-    keep = _frame_rows(datasource_name, t)
-    if keep is not None:
-        # The tree holds every frame's cells; the nearest of THIS frame's is
-        # among the nearest few of all (every frame's copy of a still cell
-        # sits on the same spot), asked for widely enough to find one.
-        frames = max(1, int(np.unique(datasource[_project(datasource_name).roles.get("t")]
-                                      .to_numpy()).size))
-        k = min(ball_tree.data.shape[0], max(8, 4 * frames))
-        distances, indices = ball_tree.query([[x, y]], k=k)
-        indices = _tree_rows(indices)
-        picked = [(d, i) for d, i in zip(distances[0], indices[0]) if keep[int(i)]]
-        if not picked:
-            return {}
-        distance, index = np.array([[picked[0][0]]]), np.array([[picked[0][1]]])
-    else:
-        distance, index = ball_tree.query([[x, y]], k=1)
-        index = _tree_rows(index)
-    if distance == np.inf:
-        return {}
-    #         Nothing found
-    else:
-        try:
-            remote = _remote_table()
-            if remote is not None:
-                # The tree, and the compact (id, x, y) copy it was built from,
-                # are here; the row's other columns are not. One id goes out
-                # and one row comes back, which is the whole reason the primary
-                # does not need the table itself to answer a hover.
-                obj = dict(_first_row(remote.rows(
-                    datasource['id'][index[0].tolist()].to_list())))
-            else:
-                row = datasource[index[0].tolist()]
-                obj = row.to_dicts()[0]
-            if 'celltype' not in obj:
-                obj['celltype'] = ''
-            return obj
-        except:
-            return {}
+def query_for_closest_cell(x, y, datasource_name, t=None, planes=None):
+    """The table row of the cell nearest (x, y), as a dict; {} for none.
 
-
-def _tree_rows(indices):
-    """The table rows the ball tree's `indices` are (see `ball_tree_rows`)."""
-    if ball_tree_rows is None:
-        return indices
-    return ball_tree_rows[np.asarray(indices)]
+    `t` keeps to one frame of a time series' object table and `planes`
+    (first, last; inclusive) to the cells whose plane extent overlaps those
+    planes -- what is on screen of a z-stack. Either one also bounds the
+    search at a few cell diameters (`SpatialIndex.nearest`): a click on empty
+    tissue on this plane is not a click on a cell forty planes away. Neither:
+    the nearest cell anywhere, as a 2-D project has always had it.
+    """
+    index = _spatial_index(datasource_name)
+    if index is None:
+        return {}
+    found = index.nearest(x, y, t=t, planes=planes)
+    if found is None:
+        return {}
+    row, _distance = found
+    try:
+        remote = _remote_table()
+        if remote is not None:
+            # The index, and the compact (id, x, y) copy it was built from,
+            # are here; the row's other columns are not. One id goes out and
+            # one row comes back, which is the whole reason the primary does
+            # not need the table itself to answer a hover.
+            obj = dict(_first_row(remote.rows(datasource['id'][[row]].to_list())))
+        else:
+            obj = datasource[[row]].to_dicts()[0]
+        if 'celltype' not in obj:
+            obj['celltype'] = ''
+        return obj
+    except Exception:
+        _log.debug("Nearest cell to (%s, %s) in %s: row %s could not be read",
+                   x, y, datasource_name, row, exc_info=True)
+        return {}
 
 
 def _first_row(rows):
@@ -2328,8 +2443,8 @@ def _remember_quantization_window(datasource_name, channel_name, window):
         except Exception as exc:
             # Never fatal: the window is already in memory and correct, and a
             # project on a read-only or full filesystem must still open.
-            print(f"Could not persist quantization window for "
-                  f"{datasource_name}/{channel_name}: {exc}")
+            _log.warning("Could not persist quantization window for %s/%s: %s",
+                         datasource_name, channel_name, exc)
 
 
 
@@ -2595,7 +2710,8 @@ def _exact_window_loop():
         try:
             _volume_quantization_window(channel_name, datasource_name)
         except Exception as exc:  # noqa: BLE001 -- the provisional window stands
-            print(f"{datasource_name}: the exact window of {channel_name} failed -- {exc}")
+            _log.warning("%s: the exact window of %s failed -- %s",
+                         datasource_name, channel_name, exc)
         finally:
             _provisional_windows.pop((loaded_scope(datasource_name), channel_name), None)
 
@@ -3194,11 +3310,48 @@ def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None,
     return file_object.getvalue(), 'image/webp'
 
 
-def generate_channel_overview(datasource_name, channel_name):
+#: The widest level the mini-map's overview of a view reads (a z-stack's plane
+#: or projection on screen); past it the default plane's overview stands in.
+OVERVIEW_VIEW_MAX_SIDE = 2048
+_minimap_overviews: collections.OrderedDict = collections.OrderedDict()
+_minimap_overviews_lock = threading.Lock()
+
+
+def _minimap_overview(datasource_name, view):
+    """`zarray` for a view: every channel's mean-pooled overview of a plane or
+    projection of a z-stack (`providers.local.volume_overview`), held per load
+    and view; None when its pyramid has no level small enough to read for a
+    thumbnail (a single-level stack)."""
+    from plexora.server.models import views
+    from plexora.server.providers.local import volume_overview
+    from plexora.server.volume.model import is_single_array
+
+    key = (load_generation, datasource_name, view)
+    with _minimap_overviews_lock:
+        held = _minimap_overviews.get(key)
+        if held is not None:
+            _minimap_overviews.move_to_end(key)
+            return held
+    pyramid = views.plane_pyramid_for(datasource_name, view)
+    levels = [pyramid] if is_single_array(pyramid) else [
+        pyramid[key_] for key_ in sorted(list(pyramid), key=int)]
+    if min(max(level.shape[-2:]) for level in levels) > OVERVIEW_VIEW_MAX_SIDE:
+        return None
+    overview = np.asarray(volume_overview(pyramid))
+    with _minimap_overviews_lock:
+        _minimap_overviews[key] = overview
+        while len(_minimap_overviews) > 8:
+            _minimap_overviews.popitem(last=False)
+    return overview
+
+
+def generate_channel_overview(datasource_name, channel_name, view=None):
     """One channel's whole-tissue overview, for the viewer's mini-map.
 
     Returns WebP bytes, or None if `channel_name` is not one of this
-    datasource's image channels.
+    datasource's image channels. `view` (a z-stack's plane or projection,
+    canonical) is the one on screen: its coarsest level, so the map shows the
+    plane being looked at; the default view's overview otherwise.
 
     Two properties make this the right source, and both are easy to lose:
 
@@ -3240,6 +3393,14 @@ def generate_channel_overview(datasource_name, channel_name):
         return None
 
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    if view and volume_source is not None:
+        try:
+            overview = _minimap_overview(datasource_name, view)
+        except Exception:  # noqa: BLE001 -- decoration: the default plane stands in
+            _log.debug("Overview of %s at %s failed", datasource_name, view, exc_info=True)
+            overview = None
+        if overview is not None:
+            return encode_overview(overview[image_channelIdx], qmin, qmax)
     return encode_overview(
         _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
 
@@ -3844,7 +4005,7 @@ def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
         channel_info['imagePyramidKey'] = ome_zarr._source_key(filePath)
     # A store with a z or t axis records it, as a TIFF, DICOM or Imaris stack
     # does: the edit page and the agent read a project's shape from here.
-    from plexora.server.volume.sources.ngff import open_ngff_volume
+    from plexora.server.volume.sources.ngff import needs_volume_extension, open_ngff_volume
 
     try:
         source = open_ngff_volume(filePath)
@@ -3853,6 +4014,13 @@ def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
     if source is not None:
         try:
             channel_info.update(_volume_fields(source.volume))
+            # Small enough a plane to zoom out to, too large a stack for any
+            # 3-D view: where its coarse levels go is recorded now, and they
+            # are derived for every plane when it is first opened
+            # (LocalImageProvider._open_volume).
+            if dataDirectory and not extension and needs_volume_extension(source):
+                channel_info['imagePyramid'] = str(ome_zarr.extension_path(dataDirectory))
+                channel_info['imagePyramidKey'] = ome_zarr._source_key(filePath)
         finally:
             source.close()
     return channel_info
@@ -4166,7 +4334,8 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
     from plexora.datasource import _channel_names_from_image_metadata
 
     report_ = image_pyramid.flat_image_report(
-        filePath, threshold=0, all_pages=bool(volume_description)) or {}
+        filePath, threshold=0, all_pages=bool(volume_description),
+        planes=image_pyramid.stack_planes(volume_description)) or {}
     needed = int(report_.get("output_bytes_estimate", 0)) \
         + int(report_.get("scratch_bytes_estimate", 0))
     where = image_pyramid.resolve_derived_image(
@@ -4175,7 +4344,7 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
         return where.existing
     if not where.writable:
         raise image_pyramid.PyramidError(where.reason)
-    print(f"Building a pyramid for {Path(filePath).name} (one-time) -> {where.target}")
+    _log.info("Building a pyramid for %s (one-time) -> %s", Path(filePath).name, where.target)
     channels = int(report_.get("channels") or 0)
     names = None
     if channels and not volume_description:
@@ -4255,7 +4424,8 @@ def _convert_ims_image(filePath):
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
-                   pyramidize=None, z_semantics=None, t_semantics=None):
+                   pyramidize=None, z_semantics=None, t_semantics=None,
+                   image_levels=None):
     """What registering an image records about it.
 
     `pyramidize` is for a large multiplex TIFF written with one resolution
@@ -4275,6 +4445,9 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     needed only when the mask source is a table of boundary polygons, which
     states where its cells are but not how big the picture they sit in is.
     `start_segmentation_job` resolves it from the project.
+
+    `image_levels` is the reference image's level count, for a 3-D label
+    volume's pyramid to go as coarse as the image's (a 2-D mask ignores it).
 
     `z_semantics`/`t_semantics` answer whether a TIFF's stored z/t axis is a
     depth stack / time series (`depth`/`time`) or imaging cycles to fold into
@@ -4388,7 +4561,8 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                 }
                 gaps = image_pyramid.pyramid_gaps(
                     (len(channel_io.series[0].pages), volume.height, volume.width),
-                    channel_info['maxLevel'], channel_io.series[0].dtype)
+                    channel_info['maxLevel'], channel_io.series[0].dtype,
+                    planes=volume.depth * volume.frames)
             else:
                 channel_info = _describe_local_tiff(series, filePath)
                 gaps = image_pyramid.pyramid_gaps(
@@ -4464,6 +4638,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         write_path = resolve_outline_segmentation(
             filePath, dataDirectory, progress_callback=progress_callback,
             mode=segmentation_mode_, stage_callback=stage_callback,
+            image_levels=image_levels,
         )
         return {'segmentation': write_path}
 
@@ -4848,6 +5023,18 @@ def _label_geometry_for(datasource_name, label_file):
         return None
 
 
+def _image_levels_for(datasource_name):
+    """The project's image level count, or None: what a 3-D label volume's
+    pyramid is built down to."""
+    project = Project.find(datasource_name)
+    if project is None:
+        return None
+    try:
+        return int(project.image.max_level or 0) or None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def start_segmentation_job(datasource_name, label_file, data_directory,
                            mode=segmentation_pyramid.DEFAULT_MODE):
     """Convert a label mask into the layer the viewer draws, on a background
@@ -4869,6 +5056,7 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
     # read off the project -- and by the time this job runs, the project it
     # was started for may not be the one that is open.
     label_geometry = _label_geometry_for(datasource_name, label_file)
+    image_levels = _image_levels_for(datasource_name)
     # Reading this costs a header parse, and it is the only chance to explain
     # *why* a mask the user thinks is ready is being converted anyway.
     work = describe_segmentation_work(label_file, mode)
@@ -4905,6 +5093,7 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 stage_callback=stage,
                 segmentation_mode_=mode,
                 label_geometry=label_geometry,
+                image_levels=image_levels,
             )
             _segmentation_jobs[datasource_name] = {
                 "status": "ready",

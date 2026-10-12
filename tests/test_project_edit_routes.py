@@ -899,7 +899,7 @@ def test_swapping_a_csv_for_an_h5ad_rebuilds_the_spatial_index_from_the_new_tabl
     # return a neighbour anywhere near here.
     tree = data_model.get_current_ball_tree()
     assert tree is not None
-    assert tree.data.shape[0] == 6
+    assert len(tree) == 6
 
 
 # --------------------------------------------------------------------------

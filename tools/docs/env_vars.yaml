@@ -49,7 +49,7 @@ public:
     description: When set, the viewer only opens from a URL carrying `?token=<value>`. `plexora --ood` and the desktop app set it for you.
   - name: PLEXORA_LOG_LEVEL
     group: Server
-    description: Python logging level for the server (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
+    description: What the server logs to stderr (`DEBUG`, `INFO`, `WARNING`, `ERROR`). `INFO` says what it loads and builds, once each; `plexora -v` is `DEBUG`. Every mode; the desktop server applies it to every library's messages too.
     default: WARNING
   - name: PLEXORA_DOCKER
     group: Server

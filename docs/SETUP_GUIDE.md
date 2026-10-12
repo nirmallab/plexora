@@ -1276,6 +1276,11 @@ Notes on the "–" entries:
 Whatever Plexora printed last. Every route above ends with Plexora telling you
 the address; none of them expects you to construct one.
 
+### "The terminal shows nothing while I work"
+
+That is on purpose: it shows the address and warnings only. `plexora -v` shows
+what Plexora loads and builds as it goes; see DEPLOYMENT.md, Troubleshooting.
+
 ### "It worked yesterday and today the link is dead"
 
 Ports and compute nodes change between sessions. Reconnect and use the new

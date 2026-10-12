@@ -162,12 +162,46 @@ compression saves five-sixths. So:
   asked once two large responses have arrived under 30 MB/s, from the first request when the
   page itself is served from another machine.
 
+## Pyramids in depth (2026-10-11, branch feature/3d-index-pyramids)
+
+Not benchmarked yet: the `tools/bench3d` before/after runs (and the targets they would add)
+are still to do. What changed, code-traced:
+
+- **One z-pooling rule** (`model.pool_for`, a power of two): the level route, its hint, the
+  bricks and the stored pooled levels pool alike, so one stored array serves all of them.
+  The light-sheet stack's level-2 texture goes from 388 pooled planes to 485.
+- **Levels that store fewer planes** (Imaris, an OME-Zarr store that halves z) are read once
+  per stored plane (`model.read_stored`) and budgeted by stored planes: an Imaris level 1 of a
+  190-plane stack is a 95-plane texture, not 190 with each plane twice. An OME-Zarr store's
+  coarse levels are indexed by their own planes (they were indexed by the stack's).
+- **Pooled levels stored** in the 3-D copy as `"{level}p{pool}"` (`bricks.pooled_levels`),
+  built after the coarse levels, for z-chunked stacks too (`worth_pooling`): the level route
+  and the atlas read them instead of every plane. Only `read_pooled` reads them.
+- **No level fits**: `level=auto` answers 400 with a sentence (the 3-D view shows it) instead
+  of reading, quantizing and dropping an oversized level 0.
+- **Stacks get pyramids by voxels** (`image_pyramid.STACK_LEVEL_VOXELS`, 64 M a channel): a
+  single-level 4096² × 200 stack imports with levels down to one that fits; the 3-D copy no
+  longer copies a single-level stack past `FALLBACK_BUDGET`.
+- **OME-Zarr reads through the chunk cache** (`chunk_cache.read_through`): a section's next
+  tile reuses its neighbour's chunks; a read too large to keep bypasses it.
+- **Drawn-up projection tiles are final**: cached and marked (`X-Plexora-Served-Steps`);
+  sections stay `no-store`. An agent's render of a deep projection keeps to the same budget and
+  says by how much it coarsened (`coarsened_levels`).
+- **OME-Zarr stacks get the coarse levels they lack by the same voxel rule**
+  (`ngff.needs_volume_extension`), and one whose derivation reads more than 256 MB derives them
+  in the background (`data_model._with_volume_extension`, task `volume-levels`, shown on the
+  Depth card). Until it is done a plane serves those levels as subsamples of the store's coarsest
+  (`plan_extension`), so a zoomed-out tile never fails; when it is done the open project takes
+  them up (`adopt_extension`). Its 3-D copy waits for the next load.
+- **3-D label volumes go as coarse as the image** (`build_label_volume(min_levels=)`, given the
+  image's level count at import and by 3-D segmentation); one built before strides a finer level.
+
 ## Beyond 2 TB: what is left
 
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;
   levels still go through the primary (which caches and revalidates them).
-- **Pooled coarse brick levels built once** (`"{level}p{pool}"`), so pooling costs nothing on a
-  terabyte stack's 3-D view; remote (http) OME-Zarr shard-index caching under the chunk cache.
+- ~~Pooled coarse brick levels built once~~ (done, above); remote (http) OME-Zarr shard-index
+  caching under the chunk cache.
 - **Predictive prefetch from velocity** (standby is direction-aware only), and a residency
   ledger across the main viewer and the panes if a dataset shows tile-cache churn.
 

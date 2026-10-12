@@ -64,27 +64,33 @@ def volume_info(datasource):
     info["table_t"] = project.roles.get("t") if project.has_table else None
     # A table that places each cell in depth (an object table, or a CSV with
     # X, Y and Z): the viewer draws each plane's own cells as centroids
-    # (ImageViewer.setCentroidPlanes) instead of the whole stack's.
+    # (ImageViewer.setCentroidPlanes) instead of the whole stack's, and
+    # sends the planes on screen with a pick, which keeps to the cells on them.
     info["table_z"] = project.roles.get("z") if project.has_table else None
     return jsonify(info)
 
 
 def bricks_state(datasource) -> dict:
     """The stack's z-chunked copy (volume/bricks.py): what it holds, and the
-    background copy or preparation running, if any."""
+    background copy or preparation running, if any -- and, under `levels`,
+    the derivation of an OME-Zarr stack's missing coarse levels."""
     from plexora.server.models import data_model, layer_jobs, views
     from plexora.server.volume import bricks
 
     source = views.current_source(datasource)
-    if not isinstance(source, bricks.BrickedSource):
-        return {"state": "not_needed"}
-    out = bricks.state(source.store)
     jobs = layer_jobs.tasks(datasource) or {}
-    for name in (data_model.BRICK_TASK, PREPARE_TASK):
+    if isinstance(source, bricks.BrickedSource):
+        out = bricks.state(source.store, source)
+    else:
+        out = {"state": "not_needed"}
+    names = {data_model.EXTENSION_TASK: "levels"}
+    if isinstance(source, bricks.BrickedSource):
+        names.update({data_model.BRICK_TASK: "copy", PREPARE_TASK: "prepare"})
+    for name, key in names.items():
         record = jobs.get(name)
         if record:
-            out["copy" if name == data_model.BRICK_TASK else "prepare"] = {
-                key: record.get(key) for key in ("status", "progress", "message", "error")}
+            out[key] = {field: record.get(field)
+                        for field in ("status", "progress", "message", "error")}
     return out
 
 
@@ -109,7 +115,7 @@ def volume_prepare(datasource):
     if request.method == 'GET':
         return jsonify(bricks_state(datasource))
     source = views.current_source(datasource)
-    if not isinstance(source, bricks.BrickedSource):
+    if not isinstance(source, bricks.BrickedSource) or not source.copies:
         return jsonify(error="this stack is read across planes from its own chunks; "
                              "there is nothing to prepare"), 409
     body = request.get_json(silent=True) or {}

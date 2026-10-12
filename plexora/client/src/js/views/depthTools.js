@@ -297,7 +297,8 @@
                 bricksState = null;
             }
             paintBricks();
-            const running = ["copy", "prepare"].some((key) => bricksState?.[key]?.status === "pending");
+            const running = ["copy", "prepare", "levels"]
+                .some((key) => bricksState?.[key]?.status === "pending");
             clearTimeout(bricksTimer);
             if (running && root) bricksTimer = setTimeout(loadBricks, 1500);
         }
@@ -306,18 +307,31 @@
             const row = q("[data-depth-bricks]");
             if (!row) return;
             const state = bricksState || {};
-            row.hidden = !state.state || state.state === "not_needed";
+            // An OME-Zarr stack deriving the zoomed-out levels it lacks
+            // (server/volume/sources/ngff.py) says so here, copy or no copy.
+            const deriving = state.levels?.status === "pending";
+            const derivingFailed = state.levels?.status === "failed";
+            const copied = Boolean(state.state) && state.state !== "not_needed";
+            row.hidden = !copied && !deriving && !derivingFailed;
             if (row.hidden) return;
+            const label = q("[data-depth-bricks-label]");
+            if (label) label.textContent = copied ? "3-D copy" : "Zoomed-out levels";
             const note = q("[data-depth-bricks-note]");
             const button = q("#depth_prepare_button");
             const copying = state.copy?.status === "pending";
             const preparing = state.prepare?.status === "pending";
-            if (button) button.disabled = copying || preparing;
+            if (button) button.disabled = !copied || copying || preparing || deriving;
             if (!note) return;
             const percent = (task) => (Number.isFinite(task?.progress)
                 ? ` ${Math.round(task.progress)} %` : "");
             const gb = (bytes) => `${(Number(bytes || 0) / 2 ** 30).toFixed(1)} GB`;
-            if (copying) {
+            if (deriving) {
+                note.textContent = `Deriving zoomed-out levels of every plane…${percent(state.levels)} `
+                    + "Zoomed-out views read the stack's coarsest level until they are done.";
+            } else if (derivingFailed) {
+                note.textContent = "Could not derive zoomed-out levels: "
+                    + `${state.levels.error || "see the server log"}`;
+            } else if (copying) {
                 note.textContent = `Copying the stack in 3-D bricks…${percent(state.copy)} `
                     + "Projections, sections and the 3-D view are faster once it is done.";
             } else if (state.copy?.status === "failed") {

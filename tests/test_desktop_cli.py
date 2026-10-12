@@ -71,7 +71,7 @@ def rig(monkeypatch, tmp_path):
 def _rig(monkeypatch, tmp_path):
     rig = types.SimpleNamespace(events=[], created=[], watched=[], signals=[],
                                 interrupt=True, notices=[], stdout=io.StringIO(),
-                                stderr=io.StringIO())
+                                stderr=io.StringIO(), logging=[])
 
     def create_server(app, sockets=(), **kwargs):
         # The announce must not have happened yet: the shell reads the ready
@@ -97,7 +97,12 @@ def _rig(monkeypatch, tmp_path):
         data_root=lambda: tmp_path / "data",
         settings_path=lambda: tmp_path / "settings.json",
     )
-    package = types.SimpleNamespace(app=app, paths=fake_paths)
+    # Logging is configured through plexora/_logging.py; what it was asked
+    # for is kept in `rig.logging`.
+    logging_ = types.SimpleNamespace(
+        DESKTOP_FORMAT="desktop-format",
+        configure=lambda level=None, **kwargs: rig.logging.append(kwargs))
+    package = types.SimpleNamespace(app=app, paths=fake_paths, _logging=logging_)
     models = types.ModuleType("plexora.server.models")
     models.data_model = types.SimpleNamespace(
         prime_hot_code=lambda: rig.events.append("prime"))
@@ -197,6 +202,11 @@ def test_the_server_is_closed_on_the_way_out(rig):
     server, kwargs = rig.created[0]
     assert server.closed
     assert kwargs["threads"] == 8
+
+
+def test_the_desktop_logs_every_library_in_its_own_format(rig):
+    run(rig, ["--desktop", "--port", "0"])
+    assert rig.logging == [{"fmt": "desktop-format", "everything": True}]
 
 
 @pytest.mark.parametrize("flag", ["--remote", "--ood"])

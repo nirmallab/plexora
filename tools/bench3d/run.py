@@ -6,7 +6,10 @@
 Results go to docs/internal/3d/perf/<sha12>[-dirty]-<label>.json with the
 commit, the WebGL renderer, the display period F and every scenario's raw
 values; `report.py` turns two of them into the before/after tables. A server is
-started for the run (serve.py) unless `--port` names one already up.
+started for the run (serve.py) unless `--port` names one already up. After a
+dataset's scenarios, what its derived files hold on disk is recorded too
+(`disk`: the 3-D copy, `bricks_diskMB`; an import's pyramid copy,
+`pyramid_diskMB`).
 """
 
 from __future__ import annotations
@@ -43,7 +46,35 @@ DATASETS = {
               "params": {"channels": [0, 1], "extra": 2, "z0": 1990}},
     "xenium": {"scenarios": ["open", "zsteps", "zoom"], "params": {"channels": [0], "z0": 5}},
     "flat": {"scenarios": ["parity2d"], "params": {}},
+    "mediumz": {"scenarios": ["open", "zsteps", "volume", "zoom"],
+                "params": {"channels": [0, 1], "extra": 2, "z0": 64}},
+    "flatstack": {"scenarios": ["open", "zsteps", "sync", "volume", "zoom"],
+                  "params": {"channels": [0, 1], "extra": 2, "z0": 50}},
 }
+
+
+def _size_mb(path: Path) -> float:
+    if path.is_file():
+        return path.stat().st_size / 1e6
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1e6
+
+
+def disk_metrics(data: Path, dataset: str) -> dict:
+    """What the dataset's derived files hold on disk: its 3-D copy (every
+    `volume_v1` store under the data root with the dataset in its path) and
+    the pyramid copy its import recorded, if any."""
+    metrics = {}
+    stores = [p for p in data.rglob("volume_v1") if p.is_dir() and dataset in p.parts]
+    if stores:
+        metrics["bricks_diskMB"] = [round(sum(_size_mb(p) for p in stores), 1)]
+    try:
+        entry = json.loads((data / "config.json").read_text()).get(dataset) or {}
+    except Exception:
+        entry = {}
+    pyramid = entry.get("imagePyramid")
+    if pyramid and Path(pyramid).exists():
+        metrics["pyramid_diskMB"] = [round(_size_mb(Path(pyramid)), 1)]
+    return metrics
 
 
 def git(*args) -> str:
@@ -119,6 +150,9 @@ def main(argv=None):
                 status = result.get("error") or result.get("skipped") or "ok"
                 print(f"  {status if isinstance(status, str) else 'ok'} "
                       f"({result.get('wall_s', '?')} s)", flush=True)
+            disk = disk_metrics(Path(args.data).expanduser(), dataset)
+            if disk:
+                record["results"].setdefault(dataset, {})["disk"] = {"metrics": disk}
     finally:
         if server:
             stop(server["pid"])

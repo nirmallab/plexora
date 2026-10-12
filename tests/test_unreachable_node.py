@@ -249,7 +249,7 @@ def test_a_node_disconnected_after_the_project_loaded_is_reported(
     assert answer["nodes"] == ["o2"]
 
 
-def test_the_project_is_not_reloaded_to_find_that_out(client, tmp_path, capsys):
+def test_the_project_is_not_reloaded_to_find_that_out(client, tmp_path, monkeypatch):
     """A registry read, not a probe and not a reload. The whole point of the
     check is that it costs nothing, so it can run on every open of every
     project -- and a reload here would be the expensive answer to a question a
@@ -258,11 +258,21 @@ def test_the_project_is_not_reloaded_to_find_that_out(client, tmp_path, capsys):
     a_project(tmp_path)
     client.get("/init_database?datasource=dark")
     node_registry.remove("o2")
-    capsys.readouterr()
+    loads = []
+    real = data_model.load_datasource
+
+    def counted(name, *args, **kwargs):
+        loads.append(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(data_model, "load_datasource", counted)
 
     client.get("/resource_status?datasource=dark")
 
-    assert "Data loading done" not in capsys.readouterr().out
+    assert loads == []
+    # The counter does see a load: what a reload costs, and the check does not.
+    client.post("/reload_datasource?datasource=dark")
+    assert loads
 
 
 def test_a_disconnected_node_is_still_offered_as_a_profile(client, tmp_path):
@@ -340,48 +350,48 @@ def test_a_tile_from_a_vanished_node_is_a_503_not_a_500(client, tmp_path):
     assert body["node"] == "o2"
 
 
-def test_the_first_tile_says_so(client, tmp_path, capsys):
+def test_the_first_tile_says_so(client, tmp_path, caplog):
     """Loud once, and about a request rather than about the load -- the load
     said its own piece minutes ago, and this is somebody looking at a viewer
     now and wondering why it is empty."""
     a_project(tmp_path)
     client.get("/init_database?datasource=dark")
-    capsys.readouterr()  # everything the load itself had to say
+    caplog.clear()  # everything the load itself had to say
 
     client.get("/generated/data/dark/dark_0/0/0_0.png")
 
-    printed = capsys.readouterr().out
+    printed = caplog.text
     assert "data node 'o2' is not connected" in printed
     assert "GET /generated/data/dark/dark_0/0/0_0.png" in printed
 
 
-def test_the_rest_of_the_screenful_does_not(client, tmp_path, capsys):
+def test_the_rest_of_the_screenful_does_not(client, tmp_path, caplog):
     """What the flood actually was: OpenSeadragon asks one tile at a time, so
     a single viewport of a project on a disconnected node printed dozens of
     identical traces. The sentence is worth saying once."""
     a_project(tmp_path)
     client.get("/generated/data/dark/dark_0/0/0_0.png")
-    capsys.readouterr()  # the load's own chatter, and the first sentence
+    caplog.clear()  # the load's own chatter, and the first sentence
 
     for tile in ("0_1", "1_0", "1_1", "2_0"):
         assert client.get(
             f"/generated/data/dark/dark_0/0/{tile}.png").status_code == 503
 
-    assert "not connected" not in capsys.readouterr().out
+    assert "not connected" not in caplog.text
 
 
-def test_reloading_lets_it_be_said_again(client, tmp_path, capsys):
+def test_reloading_lets_it_be_said_again(client, tmp_path, caplog):
     """The quiet is keyed on the load, because reloading is the one thing that
     re-reads the bindings -- a silence that outlived it would hide the second
     absence as thoroughly as the first one was reported."""
     a_project(tmp_path)
     client.get("/generated/data/dark/dark_0/0/0_0.png")
     client.post("/reload_datasource?datasource=dark")
-    capsys.readouterr()
+    caplog.clear()
 
     client.get("/generated/data/dark/dark_0/0/0_0.png")
 
-    assert "data node 'o2' is not connected" in capsys.readouterr().out
+    assert "data node 'o2' is not connected" in caplog.text
 
 
 def test_a_project_that_is_here_is_untouched_by_any_of_this(client, tmp_path):

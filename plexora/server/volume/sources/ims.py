@@ -289,6 +289,12 @@ class ImsVolumeSource(VolumeSource):
             return span[[z - stored[0] for z in stored]]
         return self._span(level, t, channel, z0, z1, rows, cols)
 
+    def read_stored(self, level, t, channel, s0, s1, rows, cols):
+        """Stored planes s0..s1 of `level`, each once (`model.read_stored`)."""
+        info = self._levels[level]
+        return self._span(level, t, channel, int(s0), int(s1),
+                          _clip(rows, info["height"]), _clip(cols, info["width"]))
+
     def close(self) -> None:
         super().close()
         chunk_cache.CACHE.forget(self.cache_id)

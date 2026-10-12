@@ -475,24 +475,50 @@ async function volume(ctx) {
         k.vs().set({ mode: "volume", layout: "single" });
         const end = performance.now() + 180000;
         const d0 = __bench.counters.volumeDraws || 0;
+        let ended = null;
         while (performance.now() < end) {
             __bench.hookApp();
             const r = k.P().volumeView?.renderer;
             if (r && r.status === "ready" && !r._loads?.size && (__bench.counters.volumeDraws || 0) > d0) break;
+            // Refused or failed: nothing more is coming.
+            if (r && ["unavailable", "error"].includes(r.status)) { ended = r.status; break; }
             await k.sleep(2);
         }
         const ready = performance.now() - t0;
-        return { ready, counters: k.delta(c0, k.counters()) };
+        return { ready, ended, counters: k.delta(c0, k.counters()) };
     });
     const leave = async () => ctx.browser.eval(async () => {
         __bench.k.vs().set({ mode: "plane" });
         await __bench.k.quiet(400);
         return true;
     });
+    const entryMark = ctx.browser.net.length;
     const first = await enter();
+    // What entering read: every /level response's bytes, its server read
+    // phase (Server-Timing `read`), and any the server refused or failed.
+    const levels = ctx.browser.netSince(entryMark).filter((r) => r.kind === "level");
+    put(metrics, "enter_levelMB", levels.reduce((sum, r) => sum + (r.bytes || 0), 0) / 1e6);
+    put(metrics, "enter_serverReadMs", levels.reduce((sum, r) => sum + (r.timing?.read || 0), 0));
+    put(metrics, "enter_errors", levels.filter((r) => r.status >= 400 || (r.failed && !r.canceled)).length
+        + (first.ended ? 1 : 0));
+    if (first.ended) {
+        // A stack no level of which fits: there is nothing to rotate.
+        put(metrics, "enter_refused", first.ready);
+        await leave();
+        return { metrics, F, extra: { ended: first.ended } };
+    }
     put(metrics, "enter_first", first.ready);
     put(metrics, "enter_levelFetches", first.counters["fetch:level"] || 0);
     put(metrics, "enter_texImage3D", first.counters.texImage3DCalls || 0);
+    // Every channel drawn from one level (the renderer's textures, detail aside).
+    put(metrics, "volume_levelSpread", await ctx.browser.eval(() => {
+        const r = __bench.k.P().volumeView?.renderer;
+        const held = [...(r?.textures?.entries?.() || [])]
+            .filter(([key]) => !String(key).includes("|D"))
+            .map(([, texture]) => texture?.level)
+            .filter(Number.isFinite);
+        return held.length ? Math.max(...held) - Math.min(...held) : null;
+    }));
     // rotation by a real drag, then the coast
     const centre = await ctx.browser.eval(() => {
         const c = __bench.k.P().volumeView.renderer.canvas.getBoundingClientRect();

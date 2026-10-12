@@ -203,8 +203,8 @@ def segment_project(project, *, nuclear, cytoplasm=None, mode="3d", diameter_um=
 
 
 def _write_labels(project, labels, factor, height, width):
-    """The label volume, at the image's full size, beside the project's other
-    derived files."""
+    """The label volume, at the image's full size and down to the image's
+    coarsest level, beside the project's other derived files."""
     from plexora import paths
     from plexora.server.volume import labels as volume_labels
 
@@ -212,7 +212,8 @@ def _write_labels(project, labels, factor, height, width):
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / "segment3d_labels_v1.zarr"
     source = _UpsampledLabels(labels, factor, height, width) if factor > 1 else labels
-    built = volume_labels.build_label_volume(source, dest)
+    built = volume_labels.build_label_volume(
+        source, dest, min_levels=getattr(project.image, "max_level", None) or None)
     import zarr
 
     zarr.open_group(built, mode="r+").update_attributes(
