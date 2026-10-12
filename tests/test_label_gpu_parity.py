@@ -53,15 +53,13 @@ def test_every_case_matches_the_cpu_path(parity):
 
 def test_the_matrix_actually_ran(parity):
     lines = [line for line in parity.stdout.splitlines() if line.startswith("PASS ")]
-    # 4 geometries x 2 segmentation modes x 13 cases, plus the hand-back check.
-    assert len(lines) == 4 * 2 * 13 + 1, parity.stdout
+    # 4 geometries x 2 segmentation modes x 11 cases, plus the hand-back check.
+    assert len(lines) == 4 * 2 * 11 + 1, parity.stdout
     for needle in ("| filled | gate mask", "| outlines | sparse colours",
                    "3 px cells 300x200 edge tile | filled | two layers stacked",
                    "| filled | gate mask, not called grey",
                    "| outlines | not called over colours, alpha-0 category",
                    "| filled | filled mode, not called",
-                   "| outlines | gate mask, uncertain amber",
-                   "| outlines | gate mask, the cell model's colours",
                    "the context is handed back to the channel program"):
         assert needle in parity.stdout, needle
 

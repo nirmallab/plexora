@@ -72,144 +72,32 @@ two regression checks and draw an amber "uncertain" layer. It was removed on
 gain (`stratify` moving two gates toward the human ones through partner
 confidence) came at +6-9 packets a session. The measurements are in
 `docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md` and
-`docs/internal/bench/AUTOGATE_STEP_LEDGER.md`. What the cell model needs of a
-cell's neighbourhood -- its value in the fit space and how far its nearest
-strong positive sits -- is `autogate/neighbourhood.py`.
+`docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
 
-## 2b. The cell model
+## 2b. The cell model (removed)
 
-A small cell-aware CNN (`autogate/cellcall.py`; weights `cellcall_weights.py`,
-one ~2.8 MB ONNX file fetched once from `nirmallab/plexora-models`, pinned by
-sha256, `PLEXORA_CELLCALL_MODEL_DIR` for an offline copy) answers, per cell,
-the probability that the marker's stain is the cell's own. **The gate's call
-stands unless the model is confident**: `p_own >= 1 - confident` makes a cell
-positive (`promoted`), `<= confident` negative (`demoted`); a cell where it
-leans against the gate unconfidently keeps the gate's call and is
-`uncertain`. It is never applied to the data: the gate, the matrix,
-`calls()`, counts and exports stay the gate's.
+A small per-cell CNN read each cell near a looked-at marker's gate and said
+whether its stain was its own; a session option (`hybrid`) let its confident
+calls correct the gate a look approved, and the viewer drew its disagreements
+beside the gate. It was removed on 2026-10-12 after the PCA benchmark
+(`docs/internal/bench/AUTOGATE_STEP_LEDGER.md`): its per-cell overrides were
+worse than the gates. A session stored with it resumes without it
+(`Engine._migrate`). What it left is the multi-view look below.
 
-What it reads (the model's contract, `cellcall.CHANNELS`, `cellcall_v1`):
-crops of 12 cell radii at full resolution, the central 8 resampled to 48 px
-(`resample` reproduces the training's `scipy.ndimage.zoom` bit for bit) -- so
-no pixel size is needed; channel 0 is the marker over its **pixel gate** (the
-cell-mask mean that best reproduces the table's calls on up to 200 isolated
-cells within two band halves), so the table's units never reach the model;
-the marker, DNA and partners image-relative ((x - p50) / (p99 - p50), signed
-log, pooled over gate-independent reference cells); the cell's mask, its
-neighbours' and their edges; up to two expected and two not-expected
-partners (`partner_plan`, the labelling pages' rule over the vocabulary's
-relations). It needs a mask and a fluorescence image (`Unavailable` says
-why otherwise). It runs on the cells within `band_halves` band halves of the
-gate, nearest first, at most `max_cells` (`CELLCALL`); outside, the gate's
-call stands. `select` is a table op (where the table is); `predict` reads the
-pixels a few pyramid tiles at a time. A run is stored per gate, data, mask,
-QC and model (`<agent_root>/gating/<project>/cellcall/`), the previous gate's
-run replaced.
+## 2c. Multi-view looks (`tiles`)
 
-Why this rule (2026-10-10, lsp11385_2 held out of the weights,
-`docs/internal/bench/runs/2026-10-10-cellcall-model/`): on 281 expert cells
-near the gate and 73 far from it (>= 4 band halves), at a live session's
-gates, with every labelled cell read, agreement went 63 % -> 80 % (near)
-and 77 % -> 85 % (far); no marker got worse. Through this code end to end
-(`run`, its cap included): the expert's own gates 59 % -> 79 % near and
-75 % -> 84 % far; a live session's gates 63 % -> 79 % near and 77 % -> 77 %
-far -- half the far cells lie beyond the cap's reach of a gate that is off
-(4-71 band halves), and the six confident calls among them were all right.
-Reading further is the open trade against time. Letting the model call every cell was worse far from the gate
-(60 %): there its unconfident disagreements with the gate were right 3 times
-in 27, its confident ones 10 in 11. `confident` 0.1-0.2 scored the same;
-0.1 was read off this one image -- validation pending. The weights are
-the three-seed ensemble, not one seed: one seed made more confident
-overrides with no more of them right (at live gates, near 79 % against
-80 %, far 81 % against 85 %) for a third of the time. Throughput on a
-laptop (M2 Pro, CPU): reads ~30-45 s a marker whatever the count (one block
-per pyramid tile and channel, read on a thread of their own), then ~2 ms a
-cell for the crops and the model -- 100,000 cells in ~3 min. CoreML is slower here (5 of the graph's partitions)
-and moves p by up to 0.07, so the CPU provider is the one used. The
-process's resident memory rises ~1.5 GB during a run and levels off (the
-image reader's tile cache); a read holds at most ~100 MB of blocks.
-
-Where it shows (`capabilities_cellcall.py`): `run_cell_model` (a job, per
-marker `ready` with counts, `unavailable` with why, `not_gated`) and
-`get_cell_model_calls` (what is stored for each gate as it stands; with a
-marker and `cells`, the cell ids). The sidebar's block under the gate
-(`paintCellModel`): "Check cells with the model" starts the job through
-`/plugins/gating/run_cell_model` and follows it (`/plugins/gating/jobs/<id>`,
-Cancel); then one line -- N own below the gate · M not own above · K
-uncertain, each with the colour it is drawn in -- and "Show model calls",
-which hands `/plugins/gating/get_cell_model`'s byte per row (1 uncertain,
-2 not own, 3 own) to the core's `setCellFlagMask`: the viewer's gate mask
-draws 4 (own below the gate, sky blue) and 5 (not own above it, magenta)
-beside 3 (uncertain, amber); every count stays the gate's. A moved gate
-stops drawing them and reads
-`not_run` until checked again. `write_gates_to_source` adds
-`obsm["<table>_model_own"]` and `obsm["<table>_model_not_own"]` for the
-markers with a run at their current gate: the model's calls are (positive
-and not `model_not_own`) or `model_own`.
-
-## 2c. Hybrid gating: the cell model beside the vision model
-
-One session switch, `SessionOptions.hybrid` (`schemas.HYBRID_OPTIONS`;
-default from `PLEXORA_GATING_HYBRID`, else `off`; `plexora mcp serve
---gating-hybrid`), in two parts a session takes apart or together
-(`schemas.HYBRID_FEATURES`):
-
-| Level | What it adds |
-|---|---|
-| `off` | Nothing: packets, memo keys, provenance and gates are the session's without it |
-| `tiles` | Every look's collage draws each cell as a 2 x 2 block (`collage.LAYOUTS["t2m"]`, 64 px panels): morphology; the context with the judged cell's outline white; one expected and one not-expected partner channel, each windowed so its gate sits at 40 % grey (`collage.PARTNER_GATE_GREY`), the judged outline magenta. Partners are the cell model's (`cellcall.partner_plan`, gated ones first; `Engine.partner_panels`); a look that asked for a reference shows it in the panel its relation belongs to. Guide entries `collage_t2m`, `collage_flips_m` |
-| `model` | The cell model's step 3 below, and the per-cell layer for every looked-at marker |
-| `full` | Both |
-
-**The model's runs in a session** (`autogate/hybrid.py`). A run takes about a
-minute on a laptop's CPU, so it never runs inside a packet's call: the
-session keeps a queue (`record["cellcall"]`), and a session job
-(`gating.session_cellcall`, submitted by `gating_next` / `gating_answer`
-whenever runs are queued and none is being read) drains it, one marker at a
-time, each run parallel inside. Purposes: `decide` (±`HYBRID["decide_halves"]`
-band halves, at most `decide_cells`: what step 3 reads; queued ahead when a
-marker's first look goes out, `Engine.model_ahead`) and `layer` (the model's
-own reach, at the written gate of each looked-at marker; nothing waits for
-it). A unit that must wait for a run keeps its state and gets no decision
-(`unit["model"]["waiting"]`, `Engine.model_waiting`); readiness then says
-`wait` and `gating_next` answers `model_running`, never `decided`. A marker
-the model cannot read (`cellcall.Unavailable`, no model file) is gated as
-without it.
-
-**Step 3, correcting the gate a look approved** (`correction.py`, pure;
-`hybrid.plan_correction` at `Engine.settle`, before the regression checks).
-With the model's p for the cells near the approved gate `g_v`:
-
-    J(g) = flagged(g) + lam * unflagged_changed(g, g_v)
-
-`flagged(g)` counts confident own cells at or below `g` and confident not-own
-cells above it; `unflagged_changed` the cells whose call differs between `g`
-and `g_v` that `g_v` did not already miscall by the model (cells the model
-did not read count here). `g*` is the lowest `J` over the unit's frozen
-lattice points within ±`CORRECTION["window_halves"]` band halves, never
-across an interval a look at candidates judged (`hybrid.judged_limits`:
-`own_stain` keeps the gate below it, `unstained` / `neighbour_only` above);
-ties go to `g_v`. A move is applied as computed (`status: applied`), or, with
-`HYBRID["confirm"]`, first put to one `correction_check` packet (a check
-kind, unbudgeted, once per unit): up to `HYBRID["check_cells"]` cells the
-move changes, spread over their values, and a few clear positives; the
-question says only what the gate as it stands calls them, never the model or
-the move. `hybrid.apply_answer` takes the move when the share of the
-answered cells agreeing with it reaches `accept_share`; otherwise the
-approved gate stays and `model_disagrees` caps confidence at moderate (so
-does a model cut `far_halves` away, recorded, never moved to). The check is
-off by default: live, it refused moves as good as those it took (ledger E9). A run read more than
-`rerun_halves` from `g_v` is read again first. Provenance keeps both gates
-(`detail["cellcall"]["correction"]`); the report says "Cell model corrected:
-a -> b ...".
-
-**Step 1 was tried and dropped**: leaving the model's confident not-own
-cells out of every estimate before the looks (an estimation-only layer in
-`cell_exclusions`, never in calls) moved the scored start toward the human
-gates but away from the expert's cells on lsp11385_2, and by a few points
-either way, marker by marker, on IMC and CODEX (ledger E5); the layer was
-removed, its patch kept with the study. The evidence for every part -- what
-helped, what did not -- is `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
+One session option, `SessionOptions.tiles` (default False). On, every look's
+collage draws each cell as a 2 x 2 block (`collage.LAYOUTS["t2m"]`, 64 px
+panels): morphology; the context with the judged cell's outline white; one
+expected and one not-expected partner channel, each windowed so its gate sits
+at 40 % grey (`collage.PARTNER_GATE_GREY`), the judged outline magenta. The
+partners come from the panel context's vocabulary relations alone
+(`partners.partner_plan`, gated ones first; `Engine.partner_panels`); a look
+that asked for a reference shows it in the panel its relation belongs to.
+Guide entries `collage_t2m`, `collage_flips_m`. The pictures differ, so a
+tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
+keys, provenance and gates are the session's without it, byte for byte. The
+bench runs it as `--variants baseline,tiles`.
 
 ## 3. Where things live
 
@@ -252,19 +140,13 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     mirror_script.py what the viewer is told, from the collage manifest
     report.py        HTML + reportlab PDF; CSV export
     tableops.py      the column work as table operations (runs on a data node)
-    cellcall.py      the cell model: what it reads, its runs (stored per gate), its calls
-    cellcall_weights.py  the model file: fetched, pinned by sha256 (or an unpinned dev file)
-    neighbourhood.py what the cell model selects with: fit-space values, the nearest strong positive
-    hybrid.py        a hybrid session's model runs (queue, job), the correction step
-    correction.py    the correction of an approved gate (pure)
+    partners.py      the expected / not-expected partners a multi-view look shows
 plexora/plugins/gating/capabilities_autogate.py   analytical tools
-plexora/plugins/gating/capabilities_cellcall.py   run_cell_model, get_cell_model_calls
 plexora/plugins/gating/capabilities_session.py    the session tools
 plexora/ai/knowledge/markers.yaml, vocabulary.py  shipped marker vocabulary
 plexora/ai/skills/{gate-image,gate-dataset,review-gating,diagnose-marker}
 plexora/mcp/prompts.py, resources_gating.py       prompts and plexora://gating/*
 plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
-plexora/ai/bench_cellcall.py                      `plexora ai bench cellcall` (model throughput)
 ```
 
 ## 4. Invariants

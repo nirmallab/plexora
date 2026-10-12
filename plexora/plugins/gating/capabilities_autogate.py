@@ -697,7 +697,7 @@ def capabilities():
         kwargs.setdefault("tags", TAGS)
         return Capability(owner=OWNER, requires=requires, version="1", **kwargs)
 
-    from plexora.plugins.gating import capabilities_cellcall, capabilities_session
+    from plexora.plugins.gating import capabilities_session
 
     return [
         cap(name="gating.profile_marker", entitlement="ai:gating:analytics", tool_name="profile_marker",
@@ -803,5 +803,4 @@ def capabilities():
             permission="read", input_model=ProjectInput, handler=get_provenance,
             egress="metadata", tags=TAGS + ("provenance", "history", "methods")),
         *capabilities_session.capabilities(),
-        *capabilities_cellcall.capabilities(),
     ]

@@ -226,19 +226,13 @@ class ImageViewer {
                 filterIds: null,
                 filterRequest: 0,
                 //: The same gate evaluated in the browser: one byte per cell id
-                //: (1 = passes, 2 = not called by QC, drawn grey, 3 = passes but
-                //: a plugin marked it uncertain, drawn amber, 4 / 5 = the cell
-                //: model's own below the gate / not own above it --
-                //: setCellFlagMask), how many ids pass, how many are not
-                //: called, uncertain, and moved either way by the cell model.
-                //: Set instead of filterIds when the provider's gate can be
-                //: evaluated here -- see updateSegmentationFilter.
+                //: (1 = passes, 2 = not called by QC, drawn grey), how many ids
+                //: pass and how many are not called. Set instead of filterIds
+                //: when the provider's gate can be evaluated here -- see
+                //: updateSegmentationFilter.
                 gateMask: null,
                 gateCount: null,
                 gateNotCalled: null,
-                gateUncertain: null,
-                gateModelOwn: null,
-                gateModelNotOwn: null,
                 //: Bumped whenever this layer's label pixels change (gate,
                 //: colours, visibility): the GPU cell layer redraws a tile when
                 //: it moves. lutVersion moves with the colour table alone.
@@ -276,9 +270,6 @@ class ImageViewer {
             gateMask: null,
             gateCount: null,
             gateNotCalled: null,
-            gateUncertain: null,
-            gateModelOwn: null,
-            gateModelNotOwn: null,
             renderVersion: 0,
             lutVersion: 0,
             styleCache: new Map(),
@@ -556,7 +547,7 @@ class ImageViewer {
                 // Versioned with the gate mask's meaning (2 = not called,
                 // drawn grey): a cached older shader would draw those cells
                 // as positives.
-                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261010_cell_model"),
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261012_no_cell_model"),
                 labelTile: PlexoraLabelTile,
                 onChange: () => this.applyLabelRenderer(),
             })
@@ -1154,9 +1145,6 @@ class ImageViewer {
         view.gateMask = this.segmentationGateMask || null;
         view.gateCount = this.segmentationGateCount ?? null;
         view.gateNotCalled = this.segmentationGateNotCalled ?? null;
-        view.gateUncertain = this.segmentationGateUncertain ?? null;
-        view.gateModelOwn = this.segmentationGateModelOwn ?? null;
-        view.gateModelNotOwn = this.segmentationGateModelNotOwn ?? null;
         return view;
     }
 
@@ -2653,18 +2641,12 @@ class ImageViewer {
                 layer.gateCount = gate ? gate.count : null;
                 layer.lastGates = gates;
                 layer.gateNotCalled = gate ? gate.notCalledCount : null;
-                layer.gateUncertain = gate ? gate.uncertainCount : null;
-                layer.gateModelOwn = gate ? gate.modelOwnCount : null;
-                layer.gateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
                 this.segmentationLastGates = gates;
                 this.segmentationGateNotCalled = gate ? gate.notCalledCount : null;
-                this.segmentationGateUncertain = gate ? gate.uncertainCount : null;
-                this.segmentationGateModelOwn = gate ? gate.modelOwnCount : null;
-                this.segmentationGateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2932,32 +2914,6 @@ class ImageViewer {
      * needs the redraw. Coalesced, so a session writing a burst of regions
      * reads them once.
      */
-    /**
-     * Mark some of a gated marker's cells apart -- one byte per table row, as
-     * /get_all_cells sends ids -- or clear the mark with null. A plugin's to
-     * give (the gating plugin's evidence, from its own routes): 1 uncertain
-     * (a positive, drawn amber), 2 not its own by the cell model (a positive,
-     * magenta), 3 its own by the cell model (a cell below the gate,
-     * sky blue). Shown, never applied: every count stays the gate's
-     * (PlexoraLabelGpu.evaluateGateMask). Each gated layer is evaluated again.
-     */
-    setCellFlagMask(marker, bytes) {
-        this.cellFlags = this.cellFlags || {};
-        if (bytes && bytes.length) this.cellFlags[marker] = bytes;
-        else delete this.cellFlags[marker];
-        this.reapplyGates();
-    }
-
-    /** Evaluate every gated cell layer again (its provider's current ranges). */
-    reapplyGates() {
-        for (const layer of this.cellLayers()) {
-            const provider = layer.provider;
-            if (!provider?.localRangeGate || !(layer.gateMask || layer.filterIds)) continue;
-            this.updateSegmentationFilter(provider.getColorCodedRanges?.() ?? {}, false, layer.name)
-                .catch((e) => console.warn("Gate not re-read:", e.message || e));
-        }
-    }
-
     onQcChanged(detail = {}) {
         const mine = globalThis.flaskVariables?.datasource;
         if (detail.datasource && mine && detail.datasource !== mine) return;
@@ -3004,17 +2960,14 @@ class ImageViewer {
             ]);
             const columns = {};
             const notCalled = {};
-            const flagged = {};
             keys.forEach((key, i) => {
                 if (!values[i] || values[i].length !== ids.length) {
                     throw new Error(`column ${key} has ${values[i]?.length} values for ${ids.length} cells`);
                 }
                 columns[key] = values[i];
                 if (skips[i] && skips[i].length === ids.length) notCalled[key] = skips[i];
-                const flags = this.cellFlags?.[key];
-                if (flags && flags.length === ids.length) flagged[key] = flags;
             });
-            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled, flagged);
+            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled);
             if (gate.maxId + 1 > PlexoraLabelGpu.MAX_IDS) return null;
             return gate;
         } catch (e) {
