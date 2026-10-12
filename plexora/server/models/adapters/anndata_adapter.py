@@ -700,8 +700,14 @@ class AnnDataAdapter:
                 raise ValueError("Resolved AnnData subset has zero observations")
 
             x_values, y_values = self._resolve_coordinates(group, obs, row_indices)
-            if not np.isfinite(x_values).all() or not np.isfinite(y_values).all():
-                raise ValueError("Resolved X/Y coordinates contain non-finite values")
+            # A cell with a NaN position is kept and simply not drawn -- the
+            # same as a CSV row with an empty x (data_model.load_ball_tree).
+            # Only a table where NO cell has one is refused: there is nothing
+            # to put on the image, and that is a wrong read spec, not missing
+            # values.
+            if not (np.isfinite(x_values) & np.isfinite(y_values)).any():
+                raise ValueError("Resolved X/Y coordinates contain no finite "
+                                 "values -- no cell has a position")
 
             names, source, obs_values = self._plan_features(group, obs, row_indices)
             id_field_name, id_values = self._resolve_identifier(obs, row_indices)
@@ -734,8 +740,13 @@ class AnnDataAdapter:
                     raise ValueError(
                         f"celltype column {self.celltype_column!r} collides with a "
                         f"reserved/ID column name -- choose a different column.")
-                columns[self.celltype_column] = obs.take(
-                    self.celltype_column, row_indices).astype(str).to_numpy()
+                # A missing type (NaN in a categorical) is "" -- what a cell
+                # with no type already reads as -- rather than the float nan
+                # that `astype(str)` leaves in a categorical, which polars
+                # refuses in a string column and so failed the whole load.
+                celltypes = obs.take(self.celltype_column, row_indices)
+                columns[self.celltype_column] = np.asarray(
+                    celltypes.astype(object).where(celltypes.notna(), "").astype(str))
                 celltype_column = self.celltype_column
 
             return TablePlan(

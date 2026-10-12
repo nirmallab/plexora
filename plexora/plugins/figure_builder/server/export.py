@@ -141,6 +141,16 @@ def preflight(document, options):
                     # crop.
                     reports.append((panel, _imported_report(origin, panel, dpi)))
                     continue
+                if volume_state(panel) is not None:
+                    # A 3-D panel exports from its stored picture: no source
+                    # to open, and its sharpness is that picture's.
+                    found = repository.get_preview(document["figure_id"], panel["panel_id"])
+                    native = _preview_width(found)
+                    w_in = max(1e-6, float(panel["placement"]["w_mm"]) / 25.4)
+                    reports.append((panel, {"client_rendered": True, "missing_channels": [],
+                                            "missing_overlays": [], "requested_dpi": dpi,
+                                            "effective_dpi": int(round(native / w_in))}))
+                    continue
                 source = _source_for(document, panel, sources)
                 if source is None:
                     reports.append((panel, {"missing_source": True,
@@ -226,6 +236,44 @@ def _render_imported(document, panel, figure_id, width_px, height_px):
         return opened.convert("RGB").resize((width_px, height_px), Image.LANCZOS)
 
 
+def volume_state(panel):
+    """The 3-D view's state a panel was captured with (`scene.plugins.volume`,
+    contributed by core's 3-D view), when it was captured in 3-D; else None."""
+    plugins = (panel.get("scene") or {}).get("plugins") or {}
+    part = plugins.get("volume") if isinstance(plugins, dict) else None
+    state = (part or {}).get("state") if isinstance(part, dict) else None
+    return state if isinstance(state, dict) and state.get("mode") == "volume" else None
+
+
+def _preview_width(found) -> int:
+    if not found:
+        return 0
+    import io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(found[0])) as opened:
+        return int(opened.width)
+
+
+def _render_client_raster(document, panel, width_px, height_px):
+    """A 3-D panel: the picture the viewer's 3-D renderer drew, from the
+    panel's stored preview, resampled to the page. This server has no 3-D
+    renderer, so this is the only faithful source; the report says so and
+    how sharp it is."""
+    import io
+
+    from PIL import Image
+
+    found = repository.get_preview(document["figure_id"], panel["panel_id"])
+    if found is None:
+        return None, 0
+    data, _fmt, _revision = found
+    with Image.open(io.BytesIO(data)) as opened:
+        native = opened.width
+        return opened.convert("RGB").resize((width_px, height_px), Image.LANCZOS), native
+
+
 def _mirrored(image, place):
     """A panel's raster, flipped the way its placement says.
 
@@ -270,6 +318,14 @@ def _render_unflipped(document, panel, sources, dpi):
                 {"missing_source": True, "missing_channels": [], "missing_overlays": [],
                  "effective_dpi": 0, "requested_dpi": dpi})
 
+    if volume_state(panel) is not None:
+        image, native = _render_client_raster(document, panel, width_px, height_px)
+        if image is not None:
+            w_in = max(1e-6, float(panel["placement"]["w_mm"]) / 25.4)
+            return image, {"client_rendered": True, "missing_channels": [],
+                           "missing_overlays": [], "requested_dpi": dpi,
+                           "effective_dpi": int(round(native / w_in))}
+
     source = _source_for(document, panel, sources)
     if source is None:
         # The source is gone. A black panel rather than a hole, and the
@@ -306,6 +362,14 @@ def _warnings(results, fonts=()):
             "kind": "low_resolution", "panels": low,
             "message": "Some panels are enlarged past what their source holds. They "
                        "will export, but they cannot become sharper than the image is.",
+        })
+    client = [panel["panel_id"] for panel, report in results if report.get("client_rendered")]
+    if client:
+        out.append({
+            "kind": "client_rendered", "panels": client,
+            "message": "3-D panels are exported from the picture the viewer's 3-D view drew "
+                       "(Figure Builder's server renderer has no 3-D); capture them at the "
+                       "size they are printed at for the sharpest result.",
         })
     missing_source = [panel["panel_id"] for panel, report in results
                       if report.get("missing_source")]

@@ -6,6 +6,7 @@
     "image-channels",
     "layers",
     "segmentation",
+    "surfaces",
     "cell-overlays",
     "transcript-rendering",
     "display-controls",

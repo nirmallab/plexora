@@ -421,7 +421,8 @@ def _apply_gates(records, filter_table, gates):
 def get_tiles(config, datasource_name, level, tiles, gates=None, max_points=None):
     project = _project(config, datasource_name)
     if not project.has_table or not (project.roles.x and project.roles.y):
-        return []
+        # An empty record array, not a list: the route sends `.tobytes()`.
+        return np.empty(0, dtype=RESPONSE_DTYPE)
     get_manifest(config, datasource_name, build=True)
     gates = gates or {}
     arrays = [_read_tile(datasource_name, level, tile) for tile in tiles]

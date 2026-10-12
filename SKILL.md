@@ -125,6 +125,16 @@ Entry points:
   access, tile extraction and encoding, GMM/contrast statistics, segmentation,
   spatial queries. Holds mutable module-level globals (`source`, `config`,
   `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
+  **A cell with no position is ignored, never a reason to refuse the table.**
+  `load_ball_tree` fits the BallTree on rows with finite x AND y only (it used
+  to fail the whole table with sklearn's "Input contains NaN"); such a row
+  keeps its place in the row-aligned arrays but is not in the tree, so the
+  module global `ball_tree_rows` holds the table row of each tree point (None
+  when the tree holds every row), `_tree_rows(indices)` maps a query's tree
+  positions back to rows in `query_for_closest_cell`, and the pickle cache
+  stores `'rows'` (absent in an older cache = every row). `_unplaced_cells`
+  counts them for `consistency.report`. A marker NaN is never gated positive
+  and is left out of the statistics and the GMM fit.
   `generate_thumbnail(name)` is the Open Project grid's card and is the one
   image path that deliberately does NOT load the datasource -- a page of
   projects must not be a data load per card. It reads one coarse level and
@@ -903,7 +913,7 @@ Entry points:
   something derived from a project's record (a layer pyramid, a layer tile, its
   ETag) knows when to throw it away. `project.py` also gained `LayerSpec` (one
   registered layer of a spatial scene — `kind` is `"image"`/`"labels"`/
-  `"points"`/`"shapes"`, a rendering strategy, not a modality) and
+  `"points"`/`"shapes"`/`"surface"`, a rendering strategy, not a modality) and
   `Project.spatial_layers` — stored as `spatialLayers` in config.json, because
   `project.dataset.layers` already means the AnnData expression matrices, and
   the two must not collide. `Project.reference_layer`, `all_layers` (the
@@ -992,7 +1002,10 @@ Entry points:
   `NormalizedDatasource` and `TablePlan`; `csv_adapter.py` /
   `anndata_adapter.py` / `spatialdata_adapter.py` take a `DataSpec`;
   `get_adapter(type)` is the factory and `detect_data_type(path)` routes a
-  dropped path to one of them. `classify.py` is the single marker-vs-metadata
+  dropped path to one of them. `anndata_adapter.plan()` refuses a table only
+  when NO cell has a finite x/y ("no cell has a position"); a NaN position is
+  tolerated (see `data_model`'s ball tree), and a NaN in a categorical
+  celltype column becomes `""` rather than crashing polars. `classify.py` is the single marker-vs-metadata
   predictor (it replaced three drifting denylists); `inspection.py` reads a
   not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
   `load_table` is split into `_read_frame()` + `_normalize()`, the same
@@ -1130,7 +1143,10 @@ Entry points:
   ever asks — the viewer serves mask tiles in the IMAGE's coordinate system
   (`Project.all_layers` gives the mask layer the image's width and height), so
   a mask of another size is stretched over the wrong pixels rather than
-  refused. Core's and not gating's for the reason cell opacity is: every plugin
+  refused. `report(..., *, unplaced=0, rows=0)` also emits
+  `cells_without_position` ("N of M cells have no x/y position ...", from
+  `_unplaced_findings`) — silent for none and for all, because all is
+  `no_cells`. Core's and not gating's for the reason cell opacity is: every plugin
   that draws per-cell results has the question.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state,
   now also `ViewTransform` (`{degrees, flipH, flipV}` as JSON, one row per
@@ -1157,6 +1173,8 @@ Entry points:
   (see the adapters row's WIDE mode) and so are read through the provider,
   cached there, the same way `plugins/gating/server/tableops.gmm` reads a
   channel through `dataset.table.columns` rather than `frame()[channel]`.
+  `get_tiles` returns an empty `RESPONSE_DTYPE` array, not `[]`, for a project
+  without a table or roles, because the route calls `.tobytes()` on it.
 - `models/bin_tiles.py` — the store for a counted grid (Visium HD's 2 micron
   squares, and anything shaped like it): a sibling of `transcript_tiles.py`
   copied rather than subclassed, because a bin is already a count and needs no
@@ -1552,7 +1570,8 @@ One authoritative database; nodes are data services with no project state.
   written into a project's config.json, the same way `node://` never leaves
   `resources.py`'s bookkeeping. Pyramids for a kernel array come from
   `server/utils/memory_pyramid.py`: `image_pyramid()` (mean-pooled via
-  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour)
+  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour;
+  `_as_2d` refuses a non-integer mask, which cannot hold ids)
   both return an `ome_zarr.NgffPyramid`, so the tile route needs no third
   pathway; `_NumpyLevel` materializes slices of a lazy level-0 (dask/zarr) on
   demand, and `level_bytes()` sizes them.
@@ -2375,8 +2394,9 @@ A third-party pip package and a bundled one get exactly the same thing.
 - `layers(project, kind=None, modality=None)`, `layer(project, id)` and
   `sample(project)` — what is IN this sample, beside what its table holds.
   **`kind` is core's and `modality` is the plugin's**, and the split is the
-  whole contract: a kind is a rendering strategy and there are four of them
-  (`image`, `labels`, `points`, `shapes`), while a modality is what the data
+  whole contract: a kind is a rendering strategy and there are five of them
+  (`image`, `labels`, `points`, `shapes`, and `surface` — a triangle mesh the
+  3-D view draws; adding a kind means adding a renderer), while a modality is what the data
   MEANS (`transcripts`, `cell_boundaries`, `visium_spots`, `he`) and is an
   open string core never holds a list of. A transcripts tool asks for
   `modality="transcripts"` and does not care that it draws as points; core
@@ -3586,7 +3606,9 @@ deliberately left out and what should be built next.
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
   `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
-  capability), `gating` and `qc`, each a shared `_COMMON` set plus one kind of
+  capability), `gating`, `qc` and `volume` (z-stacks, including the
+  `surface_*` tools and `viewer_set_volume_mode`/`viewer_set_camera`/
+  `viewer_set_surface`), each a shared `_COMMON` set plus one kind of
   work's tools, because every tool's name, description and schema is sent on
   every turn (all capabilities are ~300k characters — a 129k-token prefix for a
   coordinator that called a dozen of them). The five server tools are always
@@ -3960,7 +3982,7 @@ deliberately left out and what should be built next.
   the screen-space invariant under Key Invariants.
 - `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
   affine maths: the one ordered list of everything the viewer draws (image,
-  labels, points, shapes), because the viewer used to have two layer stacks
+  labels, points, shapes, and `surface` on the `gl` surface), because the viewer used to have two layer stacks
   that did not know about each other (OSD's `world` and the cell-layer
   registry) and "which layer is on top" had two answers. Three composite
   surfaces, in a fixed sequence — `tiles` (inside OSD's world), `overlay`,
@@ -5180,6 +5202,103 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, and node level parity in
   `test_volume_backend.py`.
+
+**Surface Studio** (branch `feature/surface-studio`; the full write-up —
+licence split, renderer passes, measurements, merge notes — is
+`docs/internal/3d/SURFACES.md`, the user page `website/content/docs/viewer/
+surfaces.mdx`). A surface is a triangle mesh beside the voxels — an
+isosurface of one channel, one closed surface per cell of a 3-D mask, or an
+imported mesh — kept as a layer of kind `surface`, because then listing,
+ordering, restyling and deleting one are the generic layer routes.
+
+- Server engine, `plexora/server/surface/`: `mesh.py` (the `Mesh`, its
+  `PXMS` file — `uint32` header length, JSON header, 4-byte-aligned arrays the
+  browser reads with typed-array views — plus `weld`, Taubin smoothing and the
+  measurements); `marching.py` (Lewiner marching cubes over z-strips plus the
+  next strip's first plane, so shared-plane vertices are bitwise equal and
+  `weld` closes every seam with no tolerance); `isosurface.py` (per-strip
+  preprocessing with a halo — Gaussian `sigma_um`, `background_um` local
+  background — components numbered by size, `min_size`); `labels.py` (per-cell
+  crops read in tile groups, each blurred 0.6 of its own axis's voxel, which is
+  what takes the terraces off an anisotropic stack, then marched at 0.5);
+  `levels.py` (quality presets, regions, `z_stride`, triangle budgets — a
+  request that cannot fit is refused up front with the estimate, not built and
+  then undrawable; `PLEXORA_SURFACE_BUDGET_TRIANGLES`); `preview.py` (the
+  slider's grid read once and cached, marching cubes per isovalue, contours
+  through the plane and section planes; `PLEXORA_SURFACE_PREVIEW_VOXELS`);
+  `suggest.py` (Otsu, triangle, log-GMM split); `store.py` (the layer:
+  `surf-<token>`, built in the background by the `surface` builder like a
+  pinned projection, files under `<derived root>/surfaces_v1/<token>/` —
+  `manifest.json`, `mesh-L<k>.bin`, `objects.parquet` — the token a hash of
+  the source and every shaping parameter, so the same request returns the
+  same layer); `refine.py` (each edit a new `mesh-L<k>-v<n>.bin` version in
+  the manifest, undo drops the last); `export.py`/`importers.py` (PLY, OBJ,
+  STL, GLB with the manifest beside them); `contacts.py` (surface and
+  centroid neighbours; contact area from the MASK's shared voxel faces, not
+  the mesh); `sections.py` (where a mesh cuts XY/XZ/YZ, for the 2-D views).
+- Routes: `server/routes/surface_routes.py`, all under
+  `/volume/<ds>/surfaces...` (make, list, `preview`, `suggest`, `estimate`,
+  `import`, and per surface `manifest`, `mesh`, `objects`, `cancel`,
+  `sections`, `export`, `refine`, `neighbours`).
+- Licence: a root entitlement `surfaces` ("Surface Studio") in
+  `plexora/licensing/manifest.py`, beside `ai` rather than under it. Making
+  and analysing (the POST, `preview`, `suggest`, `estimate`, `refine`,
+  `neighbours`, `import`) is guarded by `guards.require_entitlement`; reading,
+  exporting, cancelling and deleting a surface that exists stay Free, because
+  what a Paid feature produced stays usable on any plan (SURFACES.md §1 has
+  the table, agent tools included). Tests mint `issue(ent=["surfaces"])`.
+- Client: `views/surfaceRenderer.js` (mesh passes on the volume renderer's
+  own GL context — opaque to a depth FBO, translucent by weighted blended OIT,
+  then the ray caster's surface variant built by
+  `volumeFragment(fragmentSource(...))` so rays stop at the meshes — plus
+  one-pixel id picking); `services/surfaceLayers.js` (load, style, persist,
+  create, preview, 2-D cuts, and the scene seam `captureState()`/
+  `applyState(list, {save})`, exposed as `ctx.view.surfaces`);
+  `views/surfaceCard.js`, `surfaceStudio.js` (the Quick Surface dock, opened
+  from the cubes button in the Layers header on z-stacks), `surfaceInspect.js`,
+  `surfaceObjects.js`. Hooks in `volumeRenderer.js` are marked `[surfaces]`;
+  `layerStack.js` maps kind `surface` to the `gl` surface. The view state now
+  persists `volume.camera {q, dist, pan}` and `volume.show {volume,
+  surfaces}`, which the 3-D camera never was before.
+- Agent: `plexora/agent/core/surface.py` (the `surface_*` tools), viewer
+  commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`
+  (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
+  profile, skill `plexora/ai/skills/surface-rendering`.
+- Figure Builder: a capture taken in 3-D has `figureCaptureTool.grabPreview`
+  draw the volume renderer again at print size (`snapshot({width, height})`),
+  and core contributes `scene.plugins.volume` to the panel; export's
+  `volume_state(panel)` sends such a panel down a client-raster branch — the
+  stored preview resampled, reported `client_rendered` with its effective dpi
+  — because the server has no 3-D renderer to draw it again.
+- Data nodes: extraction reads a whole channel or a whole label volume, so it
+  runs on the node that holds those voxels — `store._builds_on` picks the
+  image's binding for an isosurface, the mask's for cell surfaces — and only
+  the mesh travels. `_build_on_node` posts the spec, zs/ts and spacing (for
+  cells also `image_width`, scale and the object table's `TABLE_COLUMNS` as
+  base64 parquet) to `POST /node/v1/volume/surface`, where
+  `store.extract_on_node` runs the same pure `extract_isosurface`/
+  `extract_label_surfaces` a local build calls; `providers.node.
+  build_surface_on_node` polls `/volume/jobs/<id>`, relays stage/progress and
+  cancel, and turns the float-exact `.npz` result into a `Mesh`. The primary
+  then measures, joins and writes the surface, so every read after the build
+  is local. `store.open_volume_for(project)` (also used by
+  `agent/core/surface.py`) opens the stack locally or as a
+  `NodeVolumeReader` (`project_volume_reader`, cached per node endpoint+token
+  for `READER_TTL` 60 s, reading through `POST /node/v1/image/<rid>/block`,
+  capped at `BLOCK_MAX_VOXELS`), which is what previews and suggestions read;
+  contact areas read the mask through `project_label_volume`. Cache tokens use
+  `_identity` (for a node image, its locator plus the recorded binding
+  fingerprint) and the manifest records `source.built_on`; `check()` asks
+  `project_has_label_volume` rather than for a local `image.src`.
+- Video Studio is NOT on this branch (it is `feature/video-studio`); the
+  seam it will use is `ctx.view.surfaces` (SURFACES.md §8).
+- Tests: `tests/test_surface_engine.py`, `test_surface_layer.py`,
+  `test_surface_phase2.py`, `test_surface_agent.py`, `test_node_surfaces.py`
+  (node build == local build, mesh and object table),
+  `plexora/plugins/figure_builder/tests/test_figure_builder_volume.py`, and
+  JS probes `tests/js/{surface_renderer,surface_studio}_probe.mjs` (wrapped in
+  `tests/test_viewer_3d_client.py`). The boundary goldens include the
+  `/surfaces` routes and the `?v=20261011_surfaces` asset tag.
 
 ## Telemetry
 
@@ -7101,6 +7220,85 @@ in **5.6 s**.
   branches that skip conversion because the user's own mask is already fine (a
   servable label pyramid; a mask that already looks like outlines) leave no OME
   marker for `generated_mask_kind` to read. `load_config` backfills node-backed
+- **A mask is any format that can hold an integer id, and everything else is
+  refused up front with a sentence.** `segmentation_pyramid.mask_format_refusal(path)`
+  returns that sentence or None: JPEG (lossy, so ids are not preserved), slide
+  scanners (`.svs/.ndpi/.scn/.mrxs/.svslide/.bif`), `.qptiff`, `.dcm/.dicom`,
+  and a colour PNG (`_NOT_A_MASK` says why, `_SAVE_AS` what to export
+  instead). PNG is read by `read_png_labels` (greyscale via imagecodecs; palette
+  via Pillow so the indices are the ids), and its size comes off the IHDR with
+  no decode (`png_header`, which `plane_size`, `label_pyramid_gaps` and
+  `import_proposal._geometry_of` use). `can_serve_in_place(path)` is true only
+  for a local TIFF or zarr — a PNG is always converted, even one that looks
+  like outlines — and both `data_model._servable_as_is` and `node/app.py` ask it
+  before serving a mask unconverted; a local zarr label group is served as-is
+  only when its levels are 2-D arrays named 0, 1, 2…, else converted
+  (`_zarr_level_gaps`). `_zarr_level_zero` is the one reader of a zarr's level 0
+  for local and remote (bare array, NGFF multiscale by first dataset path,
+  bioformats2raw series 0), leading axes pinned by `_Plane2D`. A remote TIFF is
+  read by tile ranges through `tiff_region` (`_TiffPlane`), never tifffile's
+  zarr view, which deadlocks on streamed reads; `_remote_level_zero(url)`
+  returns `(plane, closer)`. `import_proposal.looks_like_label_image` reads PNGs
+  too, `_detect_image` warns with the refusal when a file added as a mask cannot
+  be one, `_remote_image_layer` proposes a remote TIFF/PNG as a mask when
+  answered so, or when declared or named so AND `_remote_label_plane`
+  (header-only) says it is one integer plane, and
+  `import_routes.attach_segmentation` raises `ValueError` with the refusal
+  before recording anything. **An Imaris `.ims` is a mask too**, always converted
+  (`is_ims`; `can_serve_in_place` is False; `label_pyramid_gaps` answers "it is
+  an Imaris file"), and refused when remote (`_REMOTE_IMS`: HDF5 can only be
+  read from a disk). `volume/sources/ims.py`'s `ImsLabels(path, channel=None)`
+  reads one channel as (Z,Y,X) or (T,Z,Y,X) at the real extent; Imaris stores
+  32-bit data as float, so a mask of more than 65,535 cells arrives as float32
+  and is read as uint32 only after every value is checked whole (`FLOAT_ID_LIMIT`
+  2**24). Planes come from one chunk-deep slab read (`SLAB_LIMIT` 1 GiB)
+  because Imaris chunks run 64 planes deep. `label_channel()` takes the only
+  channel, else the single one whose middle window passes `looks_like_labels`
+  (whole numbers, zero background, short runs: confocal stains measured 13-41
+  repeats per id and row, masks 1.0-1.5, so it is size-independent; a binary
+  mask fails), preferring one named as a mask; ambiguity raises a sentence
+  naming the channels. `mask_verdict()` feeds `looks_like_label_image`: one id
+  channel is True, stains plus one id channel is None (asked) unless a name
+  says mask, no id channel is False. A single-plane `.ims` takes the 2-D
+  pyramid path (`ims.ImsPlane`, the middle plane of frame 0); a 3-D or
+  time-series one becomes a label volume like a 3-D TIFF, through
+  `volume/labels.py` (`label_volume_shape`, `build_label_volume`).
+  **A data node serves a 3-D mask as a label volume too.**
+  `resolve_label_volume(source, folders, progress, stage)` is the one
+  adopt-or-build rule (`<stem>_labels_v1.zarr`, adopted by source path plus the
+  `source_key` fingerprint attr); `data_model._resolve_label_volume` calls it
+  with the project folder, the node with beside-the-mask then
+  `node-masks/<id>`. `node/app._convert_mask_if_needed` refuses
+  `mask_format_refusal` formats with that sentence (`NodeStartupError`), serves
+  a label-volume store as is, and builds a (Z,Y,X)/(T,Z,Y,X) TIFF or `.ims` into
+  one and repoints the resource (`plexora node prepare` does the same).
+  `Resource.describe()` carries `label_volume` facts (`_label_volume_facts`,
+  cached per path). `seg_tile` takes `view` (`LabelVolume.at_view` picks the
+  plane a view token names; `_seg_view_key` drops it from the cache key and
+  ETag for a 2-D mask), and a tile that fails to read while the resource is
+  PREPARING is blank, because the raw 3-D/`.ims` source has no pyramid yet;
+  `seg_region` takes `z`/`t`; `POST /seg/<id>/block` returns (Z,H,W) uint32
+  (`BLOCK_MAX_VOXELS` 128M). On the primary, `NodeSegmentationProvider`
+  (`label_volume(t)`, `tile(level, tile, view)`, `read_block`) hands back a
+  `providers.node.NodeLabelVolume` with `LabelVolume`'s face, and
+  `project_label_volume(project, t)`/`project_has_label_volume` answer for a
+  mask wherever it is held, so `volume_routes`, `agent/sections.py`,
+  `SegHandle.label_volume` and `volume/objects` never ask where it lives.
+  Client side, `__plexora.trackLabelPlanes()` runs on `onMaskReady` so a node
+  mask that finishes converting after load still registers the "labels"
+  surface. 3-D object measurement runs on the node that holds the image:
+  `volume/objects.measure_columns` is the pixel-reading half,
+  `measure_project_objects` writes the table here, and the job is
+  `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,
+  `.../cancel`), driven by `measure_objects_on_node`. Its job store is shared
+  with surface builds (`_JOBS` via `_start_job`/`_job`, `JOBS_KEPT` = 8), so
+  the generic `GET /volume/jobs/<job>` (state, stage, done/total, error,
+  manifest, result meta) with `.../result` and `.../cancel` answers for
+  either kind; the measure-specific routes are kept beside it. The mask must be on the same node, or
+  `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
+  `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
+  `tests/test_node_new_formats.py` pin it;
+  `tests/test_nan_tables.py` pins the NaN-position rules above.
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
 - **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_source`
@@ -7856,6 +8054,22 @@ in **5.6 s**.
   node.** The node's `/node/v1/image/<rid>/level` is built with the
   primary's choices sent explicitly, so a node-served volume is byte-for-byte
   a local read; the primary forwards, caches and revalidates it.
+- **A surface never writes into an image or a mask.** It is a picture of the
+  data, not the data: refinement writes a new mesh version, and a cell
+  surface's voxel measurements in its objects table still describe the mask,
+  which stays the truth.
+- **An isovalue is in the channel's raw units** (above the local background
+  when background subtraction is on), never a display window's 0..1, so the
+  record says exactly which value a surface is and moving a contrast slider
+  never moves a surface.
+- **Mesh positions are level-0 voxel coordinates** (`x, y, z`, voxel centres
+  on integers) — the frame of the viewer's box and every table's X/Y/Z.
+  Spacing is applied when something is measured, never stored, so a z step
+  corrected later re-measures a surface without re-extracting it.
+- **Agent surface tools never load the viewer's project.** They open the
+  volume themselves with `source_image.open_project_volume(record)` and close
+  it, because an agent call must not touch the viewer's loaded project
+  (`tests/test_agent_architecture.py`).
 
 ## Validation
 

@@ -516,6 +516,15 @@ async function init(config, savedViewTransform = null) {
             viewState.registerSurface("labels", {
                 order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
         }
+        // A 3-D mask a data node finishes converting after this page opened
+        // was read as 2-D until then (the node reports no label volume while
+        // it builds one): track the plane from now on.
+        __plexora.trackLabelPlanes = async () => {
+            if (!(await viewState.refreshLabels()) || !viewState.labelsAre3d()) return;
+            viewState.registerSurface("labels", {
+                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
+            viewerManager.presetLabelPlane(viewState.labelSpec());
+        };
         // A time series' object table (one row per cell per frame): the rows
         // the viewer reads follow the frame on screen -- the cells, their
         // centroids, the nearest cell to a click and every gate.
@@ -528,8 +537,13 @@ async function init(config, savedViewTransform = null) {
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
     // pyramid, at a new tile address.
-    window.PlexoraResourceStatus?.onMaskReady?.(
-        (version) => viewerManager.reloadLabelLayer(version));
+    window.PlexoraResourceStatus?.onMaskReady?.(async (version) => {
+        try {
+            await __plexora.trackLabelPlanes?.();
+        } finally {
+            viewerManager.reloadLabelLayer(version);
+        }
+    });
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
     // whichever tool (if any) is active, so they work on a plain base viewer too.
@@ -599,6 +613,21 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // Surfaces (plexora/server/surface): layers drawn in the 3-D view,
+            // made in Surface Studio's dock.
+            try {
+                window.PlexoraSurfaceLayers?.init({ datasource,
+                                                    layerStack: seaDragonViewer.layerStack });
+                window.PlexoraSurfaceStudio?.init();
+                window.PlexoraSurfaceInspect?.init();
+                const surfaceButton = document.getElementById("layer_surface_button");
+                if (surfaceButton && window.PlexoraSurfaceStudio && viewState.depth > 1) {
+                    surfaceButton.hidden = false;
+                    surfaceButton.addEventListener("click", () => window.PlexoraSurfaceStudio.toggle());
+                }
+            } catch (error) {
+                console.error("main: surfaces could not be set up", error);
+            }
         } catch (error) {
             console.error("main: could not build the depth strip", error);
         }
@@ -1945,6 +1974,13 @@ async function init(config, savedViewTransform = null) {
                     const frame = __plexora.dataLayer?.tableFrame;
                     return frame ? frame.t : null;
                 },
+                /**
+                 * Surfaces in the 3-D view (services/surfaceLayers.js): what is
+                 * shown, captured and put back as part of a scene -- Video
+                 * Studio's frames and Figure Builder's panels.
+                 * `surfaces.captureState()` / `applyState(list, {save})`.
+                 */
+                get surfaces() { return window.PlexoraSurfaceLayers || null; },
                 /** Whether the mask is a 3-D label volume (one id per cell
                  *  across planes): whole cells in depth to work with. */
                 labelsAre3d() {

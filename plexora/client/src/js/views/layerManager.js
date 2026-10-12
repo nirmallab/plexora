@@ -72,6 +72,7 @@ window.PlexoraLayerManager = (function () {
         labels: "Segmentation",
         points: "Points",
         shapes: "Shapes",
+        surface: "Surface",
     };
 
     /**
@@ -96,7 +97,7 @@ window.PlexoraLayerManager = (function () {
      * plugin's JavaScript -- so a transcript layer still being built gets its
      * card, and its "Preparing…" line, before anything has claimed anything.
      */
-    const CARDED_KINDS = new Set(["image"]);
+    const CARDED_KINDS = new Set(["image", "surface"]);
 
     function kindOf(layer) { return String(layer?.kind || ""); }
 
@@ -329,6 +330,9 @@ window.PlexoraLayerManager = (function () {
     /** Which of the three cards this layer gets. */
     function cardStyle(layer) {
         if (layer.id === baseId()) return "base";
+        // A surface's card is its own (views/surfaceCard.js): drawn by core's
+        // 3-D view, configured by colour, style and material.
+        if (kindOf(layer) === "surface" && window.PlexoraSurfaceCard) return "surface";
         if (adopted.has(layer.id) || stagedFor(layer)) return "plugin";
         return "raster";
     }
@@ -385,7 +389,7 @@ window.PlexoraLayerManager = (function () {
                 tone: "bad",
             };
         }
-        if (!layer.transform && layer.spec?.modality === "projection") {
+        if (!layer.transform && (layer.spec?.modality === "projection" || kindOf(layer) === "surface")) {
             // A pinned projection (server/volume/pin.py) is computed from the
             // reference image's own pixels: aligned by construction.
             return { text: "Computed from this image", tone: "ok" };
@@ -934,6 +938,14 @@ window.PlexoraLayerManager = (function () {
     async function retryBuild(layer, line) {
         const sample = window.flaskVariables?.datasource;
         if (!sample) return;
+        if (kindOf(layer) === "surface" && window.PlexoraSurfaceLayers) {
+            // A surface is rebuilt from the request it was made with.
+            line.textContent = "Retrying…";
+            await window.PlexoraSurfaceLayers.retry(layer.id).catch(() => {
+                line.textContent = "Could not be prepared";
+            });
+            return;
+        }
         line.textContent = "Retrying…";
         try {
             await fetch(plexoraUrl("import/layers"), {
@@ -1071,6 +1083,7 @@ window.PlexoraLayerManager = (function () {
         const style = cardStyle(layer);
         if (style === "base") return buildBaseBody(layer);
         if (style === "plugin") return buildPluginBody(layer);
+        if (style === "surface") return window.PlexoraSurfaceCard.build(layer);
         return buildBody(layer);
     }
 
@@ -1531,7 +1544,11 @@ window.PlexoraLayerManager = (function () {
         if (sample && confirm) {
             const sure = await confirm.ask({
                 title: `Remove ${labelFor(layer)}?`,
-                body: "The layer stops being drawn and leaves this sample's "
+                // A surface's files are Plexora's own (server/surface/store.py).
+                body: kindOf(layer) === "surface"
+                    ? "The surface and the mesh Plexora made for it are deleted. The "
+                      + "image and the mask it was made from are unchanged."
+                    : "The layer stops being drawn and leaves this sample's "
                     + "stack. The file it was read from is left exactly where "
                     + "it is.",
                 confirm: "Remove",
@@ -1597,6 +1614,7 @@ window.PlexoraLayerManager = (function () {
         const existing = cards.get(layer.id);
         if (existing) {
             if (cardStyle(layer) === "raster") refreshBody(existing, layer);
+            if (cardStyle(layer) === "surface") window.PlexoraSurfaceCard.refresh(existing, layer);
             return existing;
         }
         const card = buildCard(layer);

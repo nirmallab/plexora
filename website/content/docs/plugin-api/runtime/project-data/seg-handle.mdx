@@ -6,7 +6,7 @@ symbol: "plexora.api.SegHandle"
 signature: "SegHandle(project: Project)"
 badge: "class"
 source:
-  end: 630
+  end: 635
   path: "plexora/api/dataset.py"
   start: 505
 ---
@@ -87,11 +87,29 @@ The mask's location -- local, or on a data node.
 label_volume(t: int = 0)
 ```
 
-The mask as a 3-D label volume -- one id per cell across planes -- at frame `t` of a time series, or None for a 2-D mask (one segmentation drawn on every plane) or a mask held on a data node.
+The mask as a 3-D label volume -- one id per cell across planes -- at frame `t` of a time series, or None for a 2-D mask (one segmentation drawn on every plane).
 
 Its `read(level, z0, z1, rows, cols)` gives `(Z, H, W)` label ids;
 `plane(z)` one plane's 2-D pyramid; `depth`, `height`, `width`,
-`frames`.
+`frames`. A mask held on a data node comes back as a
+`providers.node.NodeLabelVolume`, the same face read over the wire.
+
+<ParamTable>
+
+<Param name={"t"} type={"int"} default={"0"}>
+
+The frame of a time series; 0 for a single z-stack.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"LabelVolume | NodeLabelVolume | None"}>
+
+None for a 2-D mask or a
+project without one.
+
+</Returns>
 
 ### provider
 

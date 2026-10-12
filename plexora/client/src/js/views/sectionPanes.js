@@ -560,6 +560,27 @@
                         }
                         context.stroke();
                     }
+                    // Polylines, `[a0, z0, a1, z1, ...]` in image pixels along
+                    // the cut and planes (a surface's contour where the pane
+                    // cuts it: views/surfaceStudio.js).
+                    if (shape.lines?.length) {
+                        context.globalAlpha = 0.95;
+                        context.lineWidth = shape.selected ? 2 : 1.5;
+                        context.setLineDash(shape.dash || [4, 3]);
+                        for (const line of shape.lines) {
+                            context.beginPath();
+                            for (let i = 0; i + 1 < line.length; i += 2) {
+                                const along = (line[i] - start) * view.scale;
+                                const across = (((line[i + 1] + 0.5) / query.depth) * rows - view.top)
+                                    * view.scale;
+                                const [x, y] = xz ? [along, across] : [across, along];
+                                if (i === 0) context.moveTo(x, y);
+                                else context.lineTo(x, y);
+                            }
+                            context.stroke();
+                        }
+                        context.setLineDash([]);
+                    }
                 }
             }
             context.globalAlpha = 1;
@@ -907,6 +928,9 @@
                 clearTimeout(this.targetTimer);
                 this.targetKey = "";
                 this.showAt(this.frame);
+                // Where the cuts now are, for what draws along them (surfaces).
+                global.dispatchEvent?.(new CustomEvent("plexora:sections-moved",
+                    { detail: { x: this.frame.cx, y: this.frame.cy } }));
                 clearTimeout(this.prepareTimer);
                 this.prepareTimer = setTimeout(() => this.prepareArea(), PREPARE_DELAY_MS);
                 return;

@@ -128,6 +128,14 @@ public:
     group: Z-stacks
     description: How many 3-D view levels are built at once; further requests wait their turn.
     default: "3"
+  - name: PLEXORA_SURFACE_BUDGET_TRIANGLES
+    group: Z-stacks
+    description: The most triangles one surface may have (Surface Studio). A request past it is refused with the estimate and what to change -- a lower quality, a smaller region or fewer cells -- rather than built and then not drawable in a browser.
+    default: "5000000"
+  - name: PLEXORA_SURFACE_PREVIEW_VOXELS
+    group: Z-stacks
+    description: Voxels the Surface Studio threshold preview reads (a coarse level of the area asked for, kept in memory while the slider moves).
+    default: "2000000"
   - name: PLEXORA_PROJECTION_GATE
     group: Z-stacks
     description: How many projection tiles (MIP, mean and the like) are computed at once.

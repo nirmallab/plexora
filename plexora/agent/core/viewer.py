@@ -325,6 +325,67 @@ def set_slab(call, inp):
     return _receipted(call, view, ack)
 
 
+class VolumeModeInput(ViewInput):
+    mode: Literal["volume", "plane"] = Field(
+        "volume", description="volume: the 3-D view; plane: back to one plane.")
+    show_volume: bool | None = Field(None, description="Draw the voxels (MIP / additive).")
+    show_surfaces: bool | None = Field(None, description="Draw the surfaces.")
+    composite: Literal["mip", "additive"] | None = None
+
+
+def set_volume_mode(call, inp):
+    arguments = {"mode": inp.mode}
+    show = {k: v for k, v in (("volume", inp.show_volume), ("surfaces", inp.show_surfaces))
+            if v is not None}
+    if show:
+        arguments["show"] = show
+    if inp.composite:
+        arguments["composite"] = inp.composite
+    _c, view, ack = _send(call, inp, "set_volume_mode", arguments, timeout=60)
+    return _receipted(call, view, ack)
+
+
+class CameraInput(ViewInput):
+    preset: Literal["xy", "xz", "yz", "iso"] | None = Field(
+        None, description="Look down onto XY, from the side (XZ, YZ), or three-quarters.")
+    q: list[float] | None = Field(None, min_length=4, max_length=4,
+                                  description="The camera's orientation as a unit quaternion "
+                                              "(from viewer_get_state's volume.camera).")
+    dist: float | None = Field(None, gt=0, le=8, description="Distance; the stack's longest "
+                               "side is 1 (default 2.2).")
+    pan: list[float] | None = Field(None, min_length=2, max_length=2)
+
+
+def set_camera(call, inp):
+    arguments = {k: v for k, v in (("preset", inp.preset), ("q", inp.q), ("dist", inp.dist),
+                                   ("pan", inp.pan)) if v is not None}
+    if not arguments:
+        raise AgentError("invalid_input", "name a preset, or q / dist / pan")
+    _c, view, ack = _send(call, inp, "set_camera", arguments, timeout=45)
+    return _receipted(call, view, ack)
+
+
+class SetSurfaceInput(ViewInput):
+    surface: str = Field(description="The surface's layer id (surface_list).")
+    visible: bool | None = None
+    opacity: float | None = Field(None, ge=0, le=1)
+    color: str | None = None
+    style: Literal["solid", "glass", "wireframe", "solid+wire", "outline",
+                   "illustration"] | None = None
+    isolate: list[int] | None = Field(None, description="Show only these objects ([] for all).")
+    select: int | None = Field(None, description="Highlight this object.")
+
+
+def set_surface(call, inp):
+    arguments = {"surface": inp.surface}
+    for key in ("visible", "opacity", "color", "style", "isolate", "select"):
+        value = getattr(inp, key)
+        if value is not None:
+            arguments[key] = value
+    _c, view, ack = _send(call, inp, "set_surface", arguments, timeout=45)
+    return _receipted(call, view, ack)
+
+
 class PreviewGateInput(ViewInput):
     marker: str
     low: float = Field(description="The gate to show on the slider (nothing is saved).")
@@ -526,6 +587,19 @@ def capabilities():
             purpose="Show a projection of planes z0..z1 of a z-stack (max, mean, min, std, "
                     "median, percentile). This tab only.",
             input_model=SetSlabInput, handler=set_slab),
+        cap(name="viewer.set_volume_mode", tool_name="viewer_set_volume_mode",
+            purpose="Show a z-stack in 3-D (or back on one plane), with the voxels, the "
+                    "surfaces, or both, as MIP or additive. This tab only.",
+            input_model=VolumeModeInput, handler=set_volume_mode),
+        cap(name="viewer.set_camera", tool_name="viewer_set_camera",
+            purpose="Turn the 3-D view: a named view (xy, xz, yz, iso) or an exact camera. "
+                    "This tab only.",
+            input_model=CameraInput, handler=set_camera),
+        cap(name="viewer.set_surface", tool_name="viewer_set_surface",
+            purpose="Show, hide, fade, recolour or restyle a surface in this tab, isolate "
+                    "some of its objects or highlight one. Nothing is saved (surface_update "
+                    "saves).",
+            input_model=SetSurfaceInput, handler=set_surface),
         cap(name="viewer.preview_gate", tool_name="viewer_preview_gate",
             purpose="Move the gating slider to a candidate gate so the user sees which cells "
                     "it calls positive. Nothing is saved.",

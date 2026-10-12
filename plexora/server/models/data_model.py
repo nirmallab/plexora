@@ -37,6 +37,10 @@ from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
 
 ball_tree = None
+# The table row each of the tree's points is, or None when the tree holds every
+# row in order (the ordinary case). A cell with no position -- a NaN x or y --
+# stays in the table and is simply not in the tree; see load_ball_tree.
+ball_tree_rows = None
 source = None
 config = None
 seg = None
@@ -252,10 +256,11 @@ def _servable_as_is(segmentation_path, mode):
     level -- which is the "user brought their own pyramidised mask" case, the
     one situation where importing costs no conversion at all.
     """
-    if providers.is_remote_locator(segmentation_path):
+    if not segmentation_pyramid.can_serve_in_place(segmentation_path):
         # Never served from the web tile by tile: the tile route reads a mask
         # far more often than an image, and a label pyramid converted once into
-        # the project is what keeps that off the network.
+        # the project is what keeps that off the network. Nor a PNG, which
+        # the tile route cannot open at all -- however outline-like it looks.
         return False
     if mode == segmentation_pyramid.MODE_FILLED:
         return segmentation_pyramid.is_servable_label_pyramid(segmentation_path)
@@ -330,26 +335,10 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
         return None
     source = Path(segmentation_path)
     folder = Path(dataDirectory) if dataDirectory else source.parent
-    stem = source.name.split(".")[0]
-    target = folder / f"{stem}_labels_v1.zarr"
-    key = segmentation_pyramid.source_fingerprint(source)
-    if volume_labels.is_label_volume(target):
-        try:
-            import zarr as _zarr
-
-            attrs = dict(_zarr.open_group(str(target), mode="r").attrs)
-            if attrs.get("source_key") == key and attrs.get("source") == str(source):
-                return str(target)
-        except Exception:
-            pass
-    if stage_callback is not None:
-        stage_callback("building")
-    folder.mkdir(parents=True, exist_ok=True)
-    built = volume_labels.build_label_volume(source, target, progress=progress_callback)
-    import zarr as _zarr
-
-    _zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
-    return built
+    # The rule a data node follows too (volume_labels.resolve_label_volume),
+    # so a mask converted by either is adopted by both.
+    return volume_labels.resolve_label_volume(
+        source, [folder], progress=progress_callback, stage=stage_callback)
 
 
 def segmentation_mode(entry):
@@ -1264,12 +1253,14 @@ def _ball_tree_signature(project):
 
 def load_ball_tree(datasource_name_name, reload=False):
     global ball_tree
+    global ball_tree_rows
     global datasource
     global config
     if loaded_scope(datasource_name_name) != _loaded_source:
         load_datasource(datasource_name_name)
 
     project = _project(datasource_name_name)
+    ball_tree_rows = None
     # `datasource is None` is a third way to have nothing to index, alongside
     # the two below: the project HAS a table and its coordinate columns are
     # named, but the node holding it was unreachable when this loaded. Same
@@ -1297,6 +1288,10 @@ def load_ball_tree(datasource_name_name, reload=False):
                 cached = pickle.load(tree_file)
             if isinstance(cached, dict) and cached.get('signature') == signature:
                 ball_tree = cached['tree']
+                # Absent from a cache written before rows could be left out,
+                # which is right: back then a NaN position failed the build,
+                # so every cached tree holds every row.
+                ball_tree_rows = cached.get('rows')
                 print("Pickled KD Tree Loaded.")
                 return
             print("Pickled KD Tree is stale (source CSV changed), rebuilding.")
@@ -1309,6 +1304,17 @@ def load_ball_tree(datasource_name_name, reload=False):
     # Reuse the feature table load_datasource already parsed instead of
     # re-reading the (potentially multi-million-row) CSV from disk again.
     points = datasource.select([xCoordinate, yCoordinate]).to_numpy()
+    # A cell with a NaN (or null, or infinite) x or y has no position: it keeps
+    # its row -- every row-aligned array (gate bytes, not-called bytes) counts
+    # it -- but it is nowhere on the image, so nothing hovers onto it. This used
+    # to fail the whole table with sklearn's "Input contains NaN".
+    finite = np.isfinite(points.astype(np.float64, copy=False)).all(axis=1)
+    if not finite.any():
+        ball_tree = None
+        return
+    if not finite.all():
+        ball_tree_rows = np.flatnonzero(finite)
+        points = points[finite]
     ball_tree = BallTree(points, metric='euclidean')
     # The tree itself is built and usable at this point; the file is only a
     # cache of it. A project directory that does not exist yet is an ordinary
@@ -1318,7 +1324,8 @@ def load_ball_tree(datasource_name_name, reload=False):
     try:
         Path(pickled_kd_tree_path).parent.mkdir(parents=True, exist_ok=True)
         with open(pickled_kd_tree_path, 'wb') as tree_file:
-            pickle.dump({'signature': signature, 'tree': ball_tree}, tree_file)
+            pickle.dump({'signature': signature, 'tree': ball_tree,
+                         'rows': ball_tree_rows}, tree_file)
     except OSError as exc:
         print(f"Could not cache KD Tree ({exc}); it will be rebuilt next load.")
     print('Creating KD Tree done.')
@@ -1519,14 +1526,16 @@ def query_for_closest_cell(x, y, datasource_name, t=None):
         # sits on the same spot), asked for widely enough to find one.
         frames = max(1, int(np.unique(datasource[_project(datasource_name).roles.get("t")]
                                       .to_numpy()).size))
-        k = min(len(keep), max(8, 4 * frames))
+        k = min(ball_tree.data.shape[0], max(8, 4 * frames))
         distances, indices = ball_tree.query([[x, y]], k=k)
+        indices = _tree_rows(indices)
         picked = [(d, i) for d, i in zip(distances[0], indices[0]) if keep[int(i)]]
         if not picked:
             return {}
         distance, index = np.array([[picked[0][0]]]), np.array([[picked[0][1]]])
     else:
         distance, index = ball_tree.query([[x, y]], k=1)
+        index = _tree_rows(index)
     if distance == np.inf:
         return {}
     #         Nothing found
@@ -1548,6 +1557,13 @@ def query_for_closest_cell(x, y, datasource_name, t=None):
             return obj
         except:
             return {}
+
+
+def _tree_rows(indices):
+    """The table rows the ball tree's `indices` are (see `ball_tree_rows`)."""
+    if ball_tree_rows is None:
+        return indices
+    return ball_tree_rows[np.asarray(indices)]
 
 
 def _first_row(rows):
@@ -2096,10 +2112,25 @@ def get_consistency_report(datasource_name):
     # "cannot say" must not be reported as "they differ".
     if project.segmentation.available and "segmentation" not in project.resources:
         mask_size = segmentation_pyramid.plane_size(project.segmentation.derived)
+    rows, unplaced = _unplaced_cells(project)
     report = consistency.report(
-        project, get_datasource_description(datasource_name), mask_size)
+        project, get_datasource_description(datasource_name), mask_size,
+        unplaced=unplaced, rows=rows)
     _consistency_cache[datasource_name] = report
     return report
+
+
+def _unplaced_cells(project):
+    """(rows, how many of them have a non-finite x or y) for the loaded table.
+
+    (0, 0) when there is nothing to count. Read off the loaded frame, which is
+    the compact (id, x, y) copy for a table on a node -- the same rows.
+    """
+    x, y = project.roles.x, project.roles.y
+    if datasource is None or not (x and y) or not {x, y} <= set(datasource.columns):
+        return 0, 0
+    points = datasource.select([x, y]).to_numpy().astype(np.float64, copy=False)
+    return int(points.shape[0]), int((~np.isfinite(points).all(axis=1)).sum())
 
 
 def get_channel_gmm(channel_name, datasource_name, view=""):
@@ -2947,6 +2978,12 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
             slice(iy, iy + tile_height), slice(ix, ix + tile_width))
     if channel_num is None:
         tile = _label_region(pyramid, level, iy, ix, tile_height, tile_width)
+        if not tile.size:
+            # Wholly past the mask's edge, which a viewer asks for when the
+            # mask is smaller than the image it is drawn on. No cells there:
+            # one background pixel, which the browser draws as nothing over
+            # the whole tile, where packing an empty array would raise.
+            return np.zeros((1, 1, 4), dtype=np.uint8)
         if tile.dtype.itemsize != 4:
             tile = tile.astype(np.uint32)
         tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
@@ -3034,7 +3071,7 @@ def encode_tile(datasource_name, channel, level, tile, quality, view="", window=
             # spells the default as its own plane and adds the project's z/t
             # reading -- and not at all for a planar image, whose URL is the
             # one it has always been.
-            forwarded = (node.tile(level, tile) if is_segmentation
+            forwarded = (node.tile(level, tile, view=view) if is_segmentation
                          else node.tile(channel, level, tile, quality, view=view,
                                         window=window))
             _perf.mark("node")

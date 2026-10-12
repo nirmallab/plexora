@@ -200,6 +200,14 @@ def _make_mask_servable(resource, log=print, progress=None):
     resource.progress = None
 
 
+def _converting(progress):
+    """`progress(done, total)` for a build, reported as this node's
+    (stage, done, total) -- None when nobody is listening."""
+    if progress is None:
+        return None
+    return lambda done, total: progress("converting", done, total)
+
+
 def _node_mask_dir(resource):
     """Where this node keeps a mask's pyramid when the mask's own folder is
     read-only: under the node's data root, on the machine the data is on.
@@ -261,6 +269,35 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
     # The source, not `path`: a retry after a failed conversion starts again
     # from what was asked for.
     source = Path(resource.source_path or resource.path)
+    # A format that cannot hold cell ids (a JPEG, a slide scanner's file, a
+    # colour PNG) is said in the same sentence a local import says it in,
+    # rather than as "could not be read".
+    refusal = sp.mask_format_refusal(source)
+    if refusal is not None:
+        raise NodeStartupError(refusal)
+    # A 3-D mask -- (Z, Y, X) or (T, Z, Y, X) ids, a TIFF stack or an Imaris
+    # file -- is stored as a label volume, exactly as the viewer's own machine
+    # stores one (volume_labels.resolve_label_volume), and served plane by
+    # plane (api.seg_tile's `view`). It used to reach the 2-D pyramid below
+    # and come out as its middle plane.
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.is_label_volume(source):
+        return sp.MODE_FILLED
+    if volume_labels.label_volume_shape(source) is not None:
+        fallback = _node_mask_dir(resource)
+        log(f"  {source.name} is a 3-D mask; storing it as a label volume.")
+        try:
+            store = volume_labels.resolve_label_volume(
+                source, [source.parent, fallback],
+                progress=_converting(progress))
+        except OSError as exc:
+            raise NodeStartupError(
+                f"{source} could not be stored as a label volume: {exc}") from exc
+        log(f"    {store}")
+        _note_where(resource, source, store)
+        resource.repoint(store)
+        return sp.MODE_FILLED
     # A mask Plexora produced is servable whatever its level count -- an image
     # small enough to fit in one tile converts to a single tiled level, and
     # there is nothing further to downsample to. This is the same rule
@@ -269,7 +306,8 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
     generated = sp.generated_mask_kind(source)
     if generated is not None:
         return generated
-    if sp.looks_like_outline_mask(source):
+    # A PNG is converted whatever it looks like: the tile route cannot open one.
+    if sp.can_serve_in_place(source) and sp.looks_like_outline_mask(source):
         return sp.MODE_OUTLINES
 
     gaps = sp.label_pyramid_gaps(source)
@@ -363,6 +401,23 @@ def prepare_mask(source, output=None, *, outline=False, log=print, banner=True,
     source = Path(source).expanduser()
     if not source.exists():
         raise NodeStartupError(f"there is nothing at {source}")
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.label_volume_shape(source) is not None:
+        # A 3-D mask is stored as a label volume, which `serve` adopts from
+        # beside the mask (or serves as it is, named on the command line).
+        folder = Path(output).expanduser().parent if output else source.parent
+        if banner:
+            log(f"{source}\n  is a 3-D mask; storing it as a label volume in {folder}")
+        try:
+            written = volume_labels.resolve_label_volume(
+                source, [folder], progress=_converting(progress))
+        except OSError as exc:
+            raise NodeStartupError(str(exc)) from exc
+        if banner:
+            log(f"Ready. Serve it with:\n"
+                f"  plexora node serve --serve segmentation:mask={written} ...")
+        return written
     mode = sp.MODE_OUTLINES if outline else sp.MODE_FILLED
     if output:
         output = Path(output).expanduser()

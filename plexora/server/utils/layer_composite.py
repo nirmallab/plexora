@@ -81,6 +81,9 @@ def plan(record, layers="visible"):
         if layer.kind == "shapes":
             skip("shapes layers are not drawn in agent renders yet")
             continue
+        if layer.kind == "surface":
+            skip("a surface is drawn in the 3-D view only")
+            continue
         if layer.kind == "image" and not layer.src:
             skip("it has no image source to read")
             continue

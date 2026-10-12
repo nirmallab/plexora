@@ -85,6 +85,12 @@ PROFILES: dict[str, tuple | None] = {
         "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
         "list_rois", "get_roi", "create_roi", "update_roi", "carry_roi_through_planes",
         "count_cells_in_roi",
+        # Surfaces (plexora/agent/core/surface.py; skill surface-rendering).
+        "surface_create", "surface_suggest_threshold", "surface_list", "surface_inspect",
+        "surface_measure", "surface_objects", "surface_refine", "surface_neighbours",
+        "surface_export",
+        "surface_update", "surface_delete",
+        "viewer_set_volume_mode", "viewer_set_camera", "viewer_set_surface",
     ),
 }
 

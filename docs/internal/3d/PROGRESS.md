@@ -182,3 +182,21 @@ gate does not).
 
 - Should the import dialog also ask "depth or cycles?" for multi-channel stacks with no z
   step, or is the edit page's "Planes on Z" enough as the way out of the silent `cycle` default?
+
+
+## Surface Studio (feature/surface-studio, 2026-10-11)
+
+Surfaces in the 3-D view, Phases 1 + 2 of the Surface Studio spec, Paid (`surfaces`).
+Design, measurements, limits and merge notes: [SURFACES.md](SURFACES.md).
+
+| Item | State |
+|---|---|
+| Engine (strip MC, isosurfaces, cell surfaces, levels, preview, suggest) | done, tests/test_surface_engine.py |
+| Surface layer, routes, licence split | done, tests/test_surface_layer.py |
+| Renderer (opaque, WBOIT/sorted, ray caster variant, picking) | done, surface_renderer_probe.mjs + GPU Chrome e2e |
+| Quick Surface dock, card, inspector, objects table, plane/pane cuts | done, surface_studio_probe.mjs + e2e screenshots |
+| Refine (versions/undo), export/import, neighbours/contacts, sections | done, tests/test_surface_phase2.py |
+| Agent (10 tools, 3 viewer commands, skill surface-rendering) | done, tests/test_surface_agent.py |
+| Figure Builder 3-D capture + client-raster export | done, figure_builder/tests/test_figure_builder_volume.py |
+| Video Studio | not rebuilt (feature/video-studio); scene seam `ctx.view.surfaces` ready |
+| Bench scenario `surfaces` in tools/bench3d | not done; numbers from the e2e in SURFACES.md §6 |

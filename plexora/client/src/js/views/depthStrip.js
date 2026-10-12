@@ -483,21 +483,64 @@
                 { separator: true },
                 { label: "View",
                   actions: [
-                      { icon: "arrows-to-dot", title: "Looking down onto XY",
+                      { icon: "fas fa-arrows-to-dot", title: "Looking down onto XY",
                         onSelect: () => renderer?.preset("xy") },
-                      { icon: "grip-lines", title: "From the side, XZ",
+                      { icon: "fas fa-grip-lines", title: "From the side, XZ",
                         onSelect: () => renderer?.preset("xz") },
-                      { icon: "grip-lines-vertical", title: "From the side, YZ",
+                      { icon: "fas fa-grip-lines-vertical", title: "From the side, YZ",
                         onSelect: () => renderer?.preset("yz") },
-                      { icon: "cube", title: "Three-quarter view",
+                      { icon: "fas fa-cube", title: "Three-quarter view",
                         onSelect: () => renderer?.preset("iso") },
                   ] },
                 { label: "All planes",
                   onSelect: () => vs.set({ slab: { z0: 0, z1: vs.depth - 1, follow: false,
                                                     thickness: vs.depth } }) },
-                { separator: true },
-                { label: "Back to one plane", onSelect: () => vs.set({ mode: "plane" }) },
             ];
+            // Surfaces (services/surfaceLayers.js): what the 3-D view shows,
+            // once there is a surface, and a new one.
+            const surfaces = global.PlexoraSurfaceLayers;
+            if (surfaces) {
+                items.push({ separator: true });
+                if (surfaces.surfaceLayers().length) {
+                    const show = surfaces.shown();
+                    items.push(
+                        { label: "Volume and surfaces", checked: show.volume && show.surfaces,
+                          onSelect: () => surfaces.setShow({ volume: true, surfaces: true }) },
+                        { label: "Volume only", checked: show.volume && !show.surfaces,
+                          onSelect: () => surfaces.setShow({ volume: true, surfaces: false }) },
+                        { label: "Surfaces only", checked: !show.volume && show.surfaces,
+                          onSelect: () => surfaces.setShow({ volume: false, surfaces: true }) });
+                }
+                items.push({ label: "New surface…", title: "Surface Studio (S)",
+                             onSelect: () => global.PlexoraSurfaceStudio?.open() });
+                items.push({ label: "Import mesh…", title: "PLY, OBJ, STL, GLB, or a zip Plexora exported",
+                             onSelect: () => {
+                                 const input = document.createElement("input");
+                                 input.type = "file";
+                                 input.accept = ".ply,.obj,.stl,.glb,.zip";
+                                 input.addEventListener("change", () => {
+                                     const file = input.files?.[0];
+                                     if (!file) return;
+                                     surfaces.importMesh(file).catch((error) => global.PlexoraToast?.show?.(
+                                         { title: error.message, tone: "warning" }));
+                                 });
+                                 input.click();
+                             } });
+                if (surfaces.surfaceLayers().length) {
+                    const current = surfaces.lightName();
+                    items.push({ label: "Light",
+                                 actions: [["left", "arrow-left", "Light from the left"],
+                                           ["above", "arrow-up", "Light from above"],
+                                           ["right", "arrow-right", "Light from the right"],
+                                           ["front", "circle-dot", "Light from the front"]]
+                                     .map(([name, glyph, title]) => ({
+                                         icon: `fas fa-${glyph}`,
+                                         title: current === name ? `${title} (now)` : title,
+                                         onSelect: () => surfaces.setLight(name) })) });
+                }
+            }
+            items.push({ separator: true },
+                       { label: "Back to one plane", onSelect: () => vs.set({ mode: "plane" }) });
             global.PlexoraMenu?.open?.(this.readout, items);
         }
 

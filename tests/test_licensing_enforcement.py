@@ -69,6 +69,13 @@ PAID = {
     "ai.chat_approve": "ai:chat",
     "ai.chat_control": "ai:chat",
     "ai.chat_history": "ai:chat",
+    # Surface Studio (plexora/agent/core/surface.py): making and analysing
+    # surfaces. Reading, restyling, exporting and deleting one stay Free.
+    "surface.create": "surfaces",
+    "surface.suggest_threshold": "surfaces",
+    "surface.inspect": "surfaces",
+    "surface.refine": "surfaces",
+    "surface.neighbours": "surfaces",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -120,7 +127,8 @@ def test_manual_gating_stays_free(session):
 
 
 def test_paid_covers_everything_it_should():
-    grants = tuple(manifest.AI_MODULES)
+    # The Paid roots: `ai` (and the modules under it) and Surface Studio.
+    grants = tuple(manifest.AI_MODULES) + ("surfaces",)
     for entitlement in set(PAID.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
