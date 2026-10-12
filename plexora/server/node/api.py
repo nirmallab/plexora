@@ -1480,7 +1480,14 @@ def image_tile(resource_id, channel, level, tile):
         view = _volume_view(resource, request.args, served=True)
         if view is None:
             (qmin, qmax), exact = _windowed(resource, index)
-        elif quality not in ("hd", "legacy") and request.args.get("w"):
+        elif quality in ("hd", "legacy"):
+            # A 16-bit tile is the voxels themselves (encode_tile_array never
+            # reads the window for it), so a view's tile waits on no window:
+            # asking `_volume_window` here made a channel's first HD tile wait
+            # for a scan of its whole stack -- the primary's own HD path
+            # (data_model.encode_tile) never asked.
+            (qmin, qmax), exact = (None, None), True
+        elif request.args.get("w"):
             # The window the viewer named (`w=`, services/volumeWindows.js):
             # the bytes are fixed by the address, as on the primary.
             from plexora.server.volume.windows import parse_stamp
@@ -1518,9 +1525,42 @@ def image_tile(resource_id, channel, level, tile):
         key += view.key
         parts += view.key
     encoded, mimetype = _cached_tile(key, encode)
+    if view is not None:
+        _read_ahead(resource, view, index, level, tile, width, height)
     return _viewed(_stamped(
         _image(encoded, mimetype, _etag(resource, *parts), durable=exact),
         resource), view)
+
+
+def _read_ahead(resource, view, index, level, tile, width, height):
+    """Queue the block of planes ahead of a plane tile just served
+    (server/volume/prefetch.py): read the same tile there, in the background,
+    so stepping across the block's edge finds its chunks decoded."""
+    from plexora.server.models import data_model
+    from plexora.server.volume.model import block_depth
+    from plexora.server.volume.prefetch import PREFETCHER
+
+    spec = view.spec
+    if spec.kind != "plane" or spec.default:
+        return
+    base = view.base
+    try:
+        block = block_depth(base, 0)
+        depth = int(base.volume.depth)
+    except Exception:  # noqa: BLE001 -- a source that cannot say reads nothing ahead
+        return
+    zs, ts, t = view.zs, view.ts, int(spec.t)
+
+    def read(z):
+        with _reading(resource):
+            source = _volume_source(resource, zs, ts)
+            if source is None:
+                return
+            data_model.read_tile(source.plane_pyramid(t, z), index, level, tile, width, height)
+
+    region = (resource.id, getattr(resource, "generation", 0), view.reading, t, index,
+              str(level), str(tile))
+    PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
 
 
 @node_bp.route("/image/<resource_id>/level")
@@ -1667,8 +1707,10 @@ def image_stats(resource_id):
                 (qmin, qmax), exact = _volume_window(
                     resource, view, index, view.spec.window_class()), None
             stats = _cached(resource, ("stats", index, qmin, qmax) + view.stats_key,
-                            lambda: data_model.channel_stats_of(
-                                _view_overview(resource, view)[index], qmin, qmax))
+                            lambda: _persisted_packet(
+                                resource, f"stats|{index}|{qmin!r}|{qmax!r}|{view.stats_key!r}",
+                                lambda: data_model.channel_stats_of(
+                                    _view_overview(resource, view)[index], qmin, qmax)))
             if exact is not None:
                 stats = {**stats, "window_exact": bool(exact)}
             return _viewed(_stamped(_json(stats), resource), view)
@@ -1696,8 +1738,10 @@ def image_gmm(resource_id):
         if view is not None:
             qmin, qmax = _volume_window(resource, view, index, view.spec.window_class())
             packet = _cached(resource, ("gmm", index, qmin, qmax) + view.stats_key,
-                             lambda: data_model.channel_gmm_of(
-                                 _view_overview(resource, view)[index], qmin, qmax))
+                             lambda: _persisted_packet(
+                                 resource, f"gmm|{index}|{qmin!r}|{qmax!r}|{view.stats_key!r}",
+                                 lambda: data_model.channel_gmm_of(
+                                     _view_overview(resource, view)[index], qmin, qmax)))
             return _viewed(_stamped(_json(packet), resource), view)
         qmin, qmax = _quantization(resource, index)
         packet = _cached(resource, ("gmm", index, qmin, qmax),
@@ -2028,14 +2072,121 @@ def _view_overview(resource, view):
 
     A slab's own; the default plane's for a plane or a section -- the split
     `data_model._slab_view` makes on the primary, by the same heuristic
-    (`providers.local.volume_overview`).
+    (`providers.local.volume_overview`). Kept on disk as well as in memory
+    (`_persisted_array`): every channel's at once means opening every
+    channel's dataset, and on a cluster filesystem that was the 20-odd
+    seconds a node spent before the first channel switched on could show.
     """
     from plexora.server.providers.local import volume_overview
     from plexora.server.volume.plane_view import plane_pyramid
 
     spec = view.spec if view.spec.kind == "slab" else view.base.volume.default_view
+    name = f"overview|{view.reading}|{spec.stats_key()!r}"
     return _cached(resource, ("overview", view.reading, spec.stats_key()),
-                   lambda: volume_overview(plane_pyramid(view.base, spec)))
+                   lambda: _persisted_array(
+                       resource, name, lambda: volume_overview(plane_pyramid(view.base, spec))))
+
+
+def _keep_open_overview(resource):
+    """Have the provider keep a volume's opening overview on disk
+    (`_persisted_array`). Opening a volume builds every channel's overview of
+    its default plane -- each channel's dataset opened and read, the cost
+    `_view_overview` is kept on disk for -- and a node pays it on every start
+    otherwise: in its warm-up, or in the first request that finds it cold."""
+    provider = getattr(resource, "provider", None)
+    if provider is None or not hasattr(provider, "overview_builder"):
+        return
+    if not getattr(resource, "path", None) or provider.overview_builder is not None:
+        return
+    from plexora.server.providers import local
+
+    reading = (f"open-overview|{getattr(provider, '_z_semantics', None) or ''}"
+               f"|{getattr(provider, '_t_semantics', None) or ''}"
+               f"|{bool(getattr(provider, '_rgb', False))}")
+    provider.overview_builder = lambda channels: _persisted_array(
+        resource, reading, lambda: local.volume_overview(channels))
+
+
+def _derived_dir(resource):
+    from plexora import paths
+
+    return paths.data_root() / "node-derived" / str(resource.id)
+
+
+def _derived_name(fingerprint, name):
+    import hashlib
+
+    return hashlib.sha1(f"{fingerprint}|{name}".encode("utf-8")).hexdigest()[:32]
+
+
+def _persisted_array(resource, name, compute):
+    """`compute()`'s array, kept on disk for the file as it is now.
+
+    Keyed by the file's fingerprint (`_file_fingerprint`) as well as `name`,
+    so a rewritten file is computed afresh; best-effort both ways -- a store
+    that cannot be read or written is a value computed, never an error. The
+    store lives beside the window store, in the node's data root, which on a
+    cluster is the user's home: it outlives the job.
+    """
+    import numpy as np
+
+    fingerprint = _file_fingerprint(resource.path) if getattr(resource, "path", None) else None
+    if fingerprint is None:
+        return compute()
+    path = _derived_dir(resource) / f"{_derived_name(fingerprint, name)}.npy"
+    try:
+        if path.is_file():
+            return np.load(path, allow_pickle=False)
+    except Exception:  # noqa: BLE001 -- unreadable: computed again below
+        pass
+    value = compute()
+    if isinstance(value, np.ndarray):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f"{path.stem}.{threading.get_ident()}.part")
+            with open(partial, "wb") as handle:
+                np.save(handle, value, allow_pickle=False)
+            os.replace(partial, path)
+        except Exception:  # noqa: BLE001 -- a read-only home must not break a request
+            pass
+    return value
+
+
+_derived_store_lock = threading.Lock()
+
+
+def _persisted_packet(resource, name, compute):
+    """`compute()`'s JSON-able packet (a channel's stats, its mixture fit),
+    kept on disk for the file as it is now -- `_persisted_array`'s rule."""
+    fingerprint = _file_fingerprint(resource.path) if getattr(resource, "path", None) else None
+    if fingerprint is None:
+        return compute()
+    path = _derived_dir(resource) / "packets.json"
+    key = _derived_name(fingerprint, name)
+
+    def load():
+        try:
+            stored = json.loads(path.read_text())
+        except Exception:  # noqa: BLE001 -- absent or unreadable: nothing kept
+            return {}
+        return stored.get("packets") or {} if stored.get("fingerprint") == fingerprint else {}
+
+    with _derived_store_lock:
+        held = load().get(key)
+    if held is not None:
+        return held
+    value = _json_safe(compute())
+    try:
+        with _derived_store_lock:
+            packets = load()
+            packets[key] = value
+            path.parent.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f"packets.{threading.get_ident()}.part")
+            partial.write_text(json.dumps({"fingerprint": fingerprint, "packets": packets}))
+            os.replace(partial, path)
+    except Exception:  # noqa: BLE001 -- a read-only home must not break a request
+        pass
+    return value
 
 
 def _volume_geometry(resource):
@@ -2149,12 +2300,39 @@ _COMPUTE_GUARD = threading.Lock()
 #:
 #: Keyed by resource AND generation, so a reload invalidates by making the old
 #: entries unreachable rather than by hunting them down; they then age out.
-#: Sized for one viewport across a handful of channels rather than for a whole
-#: session -- each entry pins its encoded bytes, so at ~50-300 KB a tile this
-#: is a budget in the low hundreds of MB, and a node is frequently a laptop.
-_TILE_CACHE_MAX = 600
+#:
+#: Budgeted in BYTES, not entries. It used to be 600 tiles, sized for 8-bit
+#: tiles of ~50-300 KB -- and a 16-bit tile is 2 MB (stored PNG, see
+#: data_model.encode_tile_array), so the same 600 meant anything from 30 MB
+#: to 1.2 GB, while a volume's planes (70 channels of 194 planes on the stack
+#: this was measured on) never stayed long enough to step back to. A
+#: sixteenth of the memory this process was given, 128 MB to 2 GB
+#: (`PLEXORA_NODE_TILE_CACHE_MB`): a laptop node keeps what it kept, a
+#: cluster job of 64 GB keeps a few hundred 16-bit tiles of planes left
+#: behind.
+_TILE_CACHE_MAX = 20000
+
+
+def _tile_cache_budget():
+    raw = os.environ.get("PLEXORA_NODE_TILE_CACHE_MB")
+    try:
+        if raw:
+            return max(16, int(raw)) * 2**20
+    except ValueError:
+        pass
+    try:
+        from plexora._resources import allocated_memory_bytes
+
+        total = allocated_memory_bytes() or 8 * 2**30
+    except Exception:  # noqa: BLE001 -- sizing only
+        total = 8 * 2**30
+    return int(max(128 * 2**20, min(2 * 2**30, total // 16)))
+
+
+_TILE_CACHE_BYTES = _tile_cache_budget()
 _tile_cache = OrderedDict()
 _tile_cache_lock = threading.Lock()
+_tile_cache_bytes = 0
 
 
 def _open_generation(resource):
@@ -2188,12 +2366,31 @@ def _cached_tile(key, encode):
     _perf.note("cache", "miss")
     _perf.skip()
     value = encode()
+    global _tile_cache_bytes
+    size = _tile_bytes(value)
     with _tile_cache_lock:
+        if not _tile_cache:
+            # Emptied from outside (a test's `clear()`): the count goes with it.
+            _tile_cache_bytes = 0
+        previous = _tile_cache.pop(key, None)
+        if previous is not None:
+            _tile_cache_bytes -= _tile_bytes(previous)
         _tile_cache[key] = value
-        _tile_cache.move_to_end(key)
-        while len(_tile_cache) > _TILE_CACHE_MAX:
-            _tile_cache.popitem(last=False)
+        _tile_cache_bytes += size
+        # Never the tile just stored: one bigger than the whole budget is
+        # still worth answering the next request for it from.
+        while len(_tile_cache) > 1 and (len(_tile_cache) > _TILE_CACHE_MAX
+                                        or _tile_cache_bytes > _TILE_CACHE_BYTES):
+            _, dropped = _tile_cache.popitem(last=False)
+            _tile_cache_bytes -= _tile_bytes(dropped)
     return value
+
+
+def _tile_bytes(value):
+    try:
+        return len(value[0])
+    except Exception:  # noqa: BLE001 -- an entry of unknown size costs nothing
+        return 0
 
 
 def _opened(resource):
@@ -2209,6 +2406,7 @@ def _opened(resource):
     """
     if getattr(resource, "opened", None) is None:
         if resource.kind == "image":
+            _keep_open_overview(resource)
             channels, overview, metadata = resource.provider.open()
             # `opened` last, and deliberately: `_reading` tests it without a
             # lock, so it must never be visible while its two companions are
@@ -2347,6 +2545,25 @@ def _stored_window(resource, index):
         return None
 
 
+def _stored_volume_windows(resource):
+    """Every persisted VOLUME window of this file as it is now:
+    `{"<index>|volume|<reading>": (qmin, qmax)}` -- the keys `_volume_window`
+    caches under, so warming can seed them all from one read."""
+    fingerprint = _file_fingerprint(resource.path) if getattr(resource, "path", None) else None
+    if fingerprint is None:
+        return {}
+    try:
+        with _window_store_lock:
+            stored = json.loads(_window_store_path(resource).read_text())
+        if stored.get("fingerprint") != fingerprint:
+            return {}
+        return {key: (float(pair[0]), float(pair[1]))
+                for key, pair in (stored.get("windows") or {}).items()
+                if "|volume|" in key and pair}
+    except Exception:  # noqa: BLE001 -- nothing banked is nothing to seed
+        return {}
+
+
 def _remember_window(resource, index, window):
     """Best-effort and never fatal: a read-only home must not break a tile."""
     fingerprint = _file_fingerprint(resource.path)
@@ -2440,10 +2657,15 @@ def _ensure_window_scanner():
 
 
 def _window_scan_loop():
-    while True:
-        _window_scan_wake.wait()
-        _window_scan_wake.clear()
-        _drain_window_scans()
+    from plexora.server.volume import chunk_cache
+
+    # In the chunk cache's background lane: a scan reads every plane of a
+    # channel, and its chunks must never be what a tile on screen waits for.
+    with chunk_cache.background():
+        while True:
+            _window_scan_wake.wait()
+            _window_scan_wake.clear()
+            _drain_window_scans()
 
 
 def _scan_window(resource, index):

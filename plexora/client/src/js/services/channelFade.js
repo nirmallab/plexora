@@ -27,6 +27,19 @@
  * motion off (services/viewerPrefs.js, or the system's reduced-motion
  * setting) a channel lands at once.
  *
+ * READY IS "FULL RESOLUTION", OR "THE WHOLE VIEW AT ANY RESOLUTION" A MOMENT
+ * LATER (`whenCanDraw`'s `grace`). OpenSeadragon draws a coarser level under
+ * every tile of the finer one it is still waiting for, and the tile scheduler
+ * (tileFetch.js) asks for coarse levels first -- so a few small tiles cover
+ * the view long before the full-resolution ones arrive. A channel whose full
+ * resolution is that quick comes in sharp; one that is not (a cold plane of a
+ * volume on a data node) comes in from its coarse level after GRACE_MS and
+ * sharpens in place, instead of the screen holding still until it can be
+ * shown at its best. `covers` is that test: OSD's own coverage needs a tile
+ * DRAWN at full opacity, which an item held at nothing never is, so this
+ * reads which tiles each level needs on screen (`coverage`, refreshed every
+ * update) against which of them have loaded (`tilesMatrix`).
+ *
  * Classic script, `window.PlexoraChannelFade`.
  */
 (function (global) {
@@ -38,6 +51,13 @@
     //: How long a channel is held back for its tiles before it comes in with
     //: what it has.
     const READY_CEILING_MS = 800;
+    //: How long full resolution gets before a channel that already covers the
+    //: view at a coarser level comes in with that (see `whenCanDraw`): long
+    //: enough that a warm plane is never shown soft for a frame, short enough
+    //: that a cold one is on screen before the wait reads as a stall.
+    const GRACE_MS = 140;
+    //: How often an item's coverage is looked at while it is held back.
+    const COVER_POLL_MS = 40;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -67,25 +87,89 @@
     }
 
     /**
+     * Whether `item` can draw the whole view now, at SOME level: every tile
+     * one level needs on screen (OSD's `coverage[level]`, written on each
+     * update) has loaded (`tilesMatrix`). False for an item OSD has not
+     * updated yet, or whose internals are not these.
+     */
+    function covers(item) {
+        const coverage = item?.coverage;
+        const matrix = item?.tilesMatrix;
+        if (!coverage || !matrix) return false;
+        for (const level of Object.keys(coverage)) {
+            const columns = coverage[level];
+            const tiles = matrix[level];
+            if (!columns || !tiles) continue;
+            let seen = 0;
+            let whole = true;
+            for (const x of Object.keys(columns)) {
+                for (const y of Object.keys(columns[x] || {})) {
+                    seen += 1;
+                    const tile = tiles[x]?.[y];
+                    // A tile past the image's edge (`exists` false) needs nothing.
+                    if (!tile || (tile.exists !== false && !tile.loaded)) {
+                        whole = false;
+                        break;
+                    }
+                }
+                if (!whole) break;
+            }
+            if (whole && seen) return true;
+        }
+        return false;
+    }
+
+    /**
      * Call `done` once `item` can draw what the view needs: OpenSeadragon's
      * `fully-loaded`, which Plexora's decode has already answered by the time
-     * it flips (viewerManager.whenItemCanDraw says why). An item that cannot
-     * answer is ready at once. Returns a function that stops listening.
+     * it flips (viewerManager.whenItemCanDraw says why) -- or, with `grace`,
+     * once that long has passed and the item covers the view at a coarser
+     * level (`covers`). An item that cannot answer is ready at once. Returns
+     * a function that stops listening.
      */
-    function whenCanDraw(item, done) {
+    function whenCanDraw(item, done, { grace = 0 } = {}) {
         if (typeof item?.getFullyLoaded !== "function" || typeof item?.addHandler !== "function"
                 || item.getFullyLoaded()) {
             done();
             return () => {};
         }
-        const stop = () => item.removeHandler?.("fully-loaded-change", onChange);
-        const onChange = () => {
-            if (!item.getFullyLoaded()) return;
+        const start = now();
+        let over = false;
+        let poll = null;
+        const stop = () => {
+            over = true;
+            item.removeHandler?.("fully-loaded-change", onChange);
+            if (poll !== null) clearTimeout(poll);
+            poll = null;
+        };
+        const finish = () => {
+            if (over) return;
             stop();
             done();
         };
+        const onChange = () => {
+            if (item.getFullyLoaded()) finish();
+        };
         item.addHandler("fully-loaded-change", onChange);
+        if (grace > 0) {
+            const check = () => {
+                poll = null;
+                if (over) return;
+                if (now() - start >= grace && covers(item)) {
+                    finish();
+                    return;
+                }
+                poll = setTimeout(check, COVER_POLL_MS);
+            };
+            poll = setTimeout(check, Math.min(grace, COVER_POLL_MS));
+        }
         return stop;
+    }
+
+    /** `whenCanDraw` with the channel fade's grace: full resolution if it is
+     *  quick, the view covered at any level if it is not. */
+    function whenCanDrawSoon(item, done) {
+        return whenCanDraw(item, done, { grace: GRACE_MS });
     }
 
     /** Whether `item` is still on its viewer's world (switched off mid-fade). */
@@ -106,7 +190,7 @@
      * @param onDone - `(items) => void`, once, when they are in full or gone.
      * @returns `{join(item | null), finish()}` -- finish ends it at once, in full.
      */
-    function group(count, { target = () => 1, ready = whenCanDraw, onDone = null,
+    function group(count, { target = () => 1, ready = whenCanDrawSoon, onDone = null,
                             ms = FADE_MS, ceiling = READY_CEILING_MS } = {}) {
         const items = [];
         let answered = 0;
@@ -215,7 +299,8 @@
         return fade;
     }
 
-    const ChannelFade = { group, fadeIn, smooth, ease, whenCanDraw, FADE_MS, READY_CEILING_MS };
+    const ChannelFade = { group, fadeIn, smooth, ease, whenCanDraw, whenCanDrawSoon, covers,
+                          FADE_MS, READY_CEILING_MS, GRACE_MS };
     global.PlexoraChannelFade = ChannelFade;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = ChannelFade;

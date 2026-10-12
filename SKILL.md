@@ -5125,7 +5125,24 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   order of need, decoded once in a worker, cancelled with its item; label and
   RGB tiles keep OSD's path. `ViewerManager.prepareStandby`/`takeStandby`
   keep the next planes in the direction of travel built invisibly, so a step
-  to one is an opacity flip. `planeMotion.compose` lays an OPAQUE ghost
+  to one is an opacity flip. A plane swap does not wait for full resolution:
+  `viewerManager.whenItemCanDraw(item, done, PLANE_SWAP_GRACE_MS)` (140 ms,
+  through `channelFade.whenCanDraw`'s `grace`) hands over once the new plane
+  `covers` the view at ANY level, so a far jump to a cold plane shows up soft
+  in a beat and sharpens in place instead of leaving the old plane frozen; a
+  quality swap passes no grace and still waits in full. Volumes get OSD
+  `blendTime` 0.18 (`imageViewer.js`; planar stays 0) so the finer levels
+  dissolve over the coarse one. `main.js` makes a volume HD from the start
+  even when streamed, and an HD add asks `/volume/window` alongside rather
+  than waiting on it, because a 16-bit tile names no window and is never
+  refetched for one. `depthStrip.js` marks the plane under the pointer
+  (`.depth-strip-hover`) and raises `plexora:plane-hover`, which
+  `planeMotion.NeighbourPrefetch.hover` adds as one more standby plane; the
+  thumb breathes (`.viewer-depth-strip.is-loading`, `viewer.css`) while a
+  plane loads. `viewerSidebar.easeSlotRange` eases an auto-levelled range in
+  over `RANGE_EASE_MS` (240 ms) rather than jumping, never the user's drag.
+  `viewerManager.js` is bundled, so a change to it means `npm run build`.
+  `planeMotion.compose` lays an OPAQUE ghost
   (ground + canvas) for the plane fade. `GLRenderer.ready()` builds the tile
   program once per page. `volumeRenderer.js` keeps 3-D textures by what their
   bytes are in a `GPU_BUDGET` LRU whatever channels are on; at rest
@@ -5147,8 +5164,9 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   switched on in over 240 ms, eased out, on every surface the image channel
   section drives. Callers add the channel's OSD items at opacity 0 with
   `preload` and join them to one fade (`group(count, {target, onDone})` /
-  `fadeIn(items)`); it holds until every item is fully loaded (ceiling
-  800 ms) and brings them up together. Hooks: `viewerManager.addChannelItems`
+  `fadeIn(items)`); it holds until every item is fully loaded or, after
+  `GRACE_MS` (140), covers the view at a coarser level (`whenCanDrawSoon`;
+  ceiling 800 ms), and brings them up together. Hooks: `viewerManager.addChannelItems`
   (an ordinary add only -- not HD swaps, plane steps or standby),
   `addTiledLayer` via `spec.fade` (a layer's channel pairs, from
   `addLayerChannelSet`), and `sectionPanes.js`'s `Pane.show` (channels new to
@@ -5216,9 +5234,38 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   levels; past its coarsest, `label_overlay` strides a finer one
   (`_PlaneLevel.oindex`, `array_keys`).
   `server/volume/chunk_cache.py` — one process-wide decoded-chunk LRU
-  (`CACHE`, `PLEXORA_CHUNK_CACHE_MB`) with one load per chunk, and
-  `DECODE_POOL` (`PLEXORA_DECODE_THREADS`) where readers decompress outside
-  their locks. `server/volume/windows.py`'s `provisional_window` +
+  (`CACHE`, `PLEXORA_CHUNK_CACHE_MB`, default an eighth of the ALLOCATED
+  memory, 256 MB..8 GB) with one load per chunk, and `DECODE_POOL`
+  (`PLEXORA_DECODE_THREADS`, default twice the allocated cores, 4..32) where
+  readers read and decompress outside their locks. Both are sized by
+  `plexora/_resources.py` `allocated_memory_bytes` / `allocated_cpus` (the
+  minimum of cgroup, `SLURM_MEM_PER_NODE`/`SLURM_MEM_PER_CPU` and physical),
+  because a 64 GB job on a node of several hundred must not plan for the
+  node. Work nobody is waiting on (window scans, read-ahead) runs inside
+  `chunk_cache.background()`, which sends its chunks to `BACKGROUND_POOL`
+  (a quarter of the threads) so a tile on screen never queues behind it.
+  `server/volume/sources/ims.py` asks HDF5 only WHERE a chunk is under the
+  file lock (`get_chunk_info_by_coord`) and reads the bytes by offset outside
+  it, in parallel (`_RawFile`: `os.pread`, or a handle per thread on
+  Windows); the first chunk per dataset is checked against h5py's
+  `read_direct_chunk`, and a mismatch (or an h5py too old to locate) reads
+  that dataset the old locked way. `server/volume/prefetch.py`
+  (`PREFETCHER`, a `PlanePrefetcher`) reads the chunk block of planes ahead
+  of each plane tile served, in the direction of travel, in the background
+  lane, from the node tile route (`node/api._read_ahead`) and the primary
+  (`data_model._read_ahead` in `generate_zarr_png`); it reads nothing where
+  chunks are one plane deep or the chunk cache is under `MIN_BUDGET` (1 GB),
+  and `/volume/<ds>/perf` reports it as `plane_prefetch`. On a data node
+  (`node/api.py`) a view's HD tile waits on no volume window; the tile cache
+  is budgeted in bytes (`PLEXORA_NODE_TILE_CACHE_MB`, default a sixteenth of
+  the allocation, 128 MB..2 GB);
+  view overviews, stats and GMM packets persist under
+  `data_root/node-derived/<resource id>/` keyed by the file's fingerprint
+  (`_persisted_array`, `_persisted_packet`), as does the provider's opening
+  overview (`_keep_open_overview` sets `LocalImageProvider.overview_builder`),
+  because rebuilding them cost a cluster node tens of seconds on every start;
+  `node/app.warm_resources` seeds the banked volume windows
+  (`_stored_volume_windows`). `server/volume/windows.py`'s `provisional_window` +
   `data_model.volume_window_state`/`queue_exact_window`: a provisional window
   at once, the exact scan on a background worker; the node answers the same
   way when asked `provisional=1`. `plane_view.SECTION_READ_BUDGET`
@@ -5242,8 +5289,12 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `tests/js/{plane_flash,gl_init,nav_revision,section_panes,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
   (wrapped in `tests/test_viewer_3d_client.py`), `test_volume_level_cache.py`,
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
-  `test_volume_sections.py`, `test_volume_depth_levels.py`, and node level
-  parity in `test_volume_backend.py`. Picking a cell on a plane:
+  `test_volume_sections.py`, `test_volume_depth_levels.py`, node level
+  parity in `test_volume_backend.py`, and `test_volume_fluid_planes.py`
+  (offset reads, the background lane, read-ahead, the node tile cache and
+  persisted packets, allocation sizing; it runs
+  `tests/js/coverage_ready_probe.mjs` for `covers`/grace and the hovered
+  plane, skipping without `node`). Picking a cell on a plane:
   `test_spatial_index.py`, `test_nearest_cell.py`, `test_nearest_cell_3d.py`
   and `tests/js/nearest_cell_query_probe.mjs` (wrapped in
   `test_datalayer_requests.py`) -- the client's `dataLayer.tablePlanes` /
@@ -8225,8 +8276,14 @@ in **5.6 s**.
   at a time and start only once the plane on screen has loaded, because a
   cold channel enable regressed to 2.9 s while standby tiles held the server.
 - **Volume readers decompress outside their locks.** Raw chunks are read
-  under the file or store lock and inflated on `chunk_cache.DECODE_POOL`;
-  holding a lock across decompression serialised every thread.
+  under the file or store lock and inflated with the lock released (`ims.py`
+  on `chunk_cache.pool()`: `DECODE_POOL`, or `BACKGROUND_POOL` inside
+  `chunk_cache.background()`); holding a lock across decompression
+  serialised every thread. An Imaris file goes further: only the chunk's location is asked under the lock and
+  the bytes are read by offset outside it, because on a cluster filesystem
+  the read itself was the slow part (a 16-core O2 node answered about 21 cold
+  tiles a second); that path stays honest only while its first chunk per
+  dataset matches h5py's own read.
 - **A 3-D level is built by the same `serve.py` functions locally and on a
   node.** The node's `/node/v1/image/<rid>/level` is built with the
   primary's choices sent explicitly, so a node-served volume is byte-for-byte
@@ -11366,8 +11423,9 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   so it is not fixed by reloading the page.
 - `tests/test_icon_names.py`'s `shipped` fixture skips both its tests when
   `plexora/client/node_modules/@fortawesome` is missing -- true on this
-  checkout, where `node_modules` is a partially-synced Dropbox copy holding
-  only `cross-spawn` and `mockttp`. That means the suite CANNOT catch a dead
+  checkout, where `node_modules` is now an empty placeholder directory, so
+  any JS probe that imports a client dependency needs a worktree that has run
+  its own `npm ci` in `plexora/client`. That means the suite CANNOT catch a dead
   Font Awesome name here: a new `fa-*` class added on this machine is
   unverified until someone runs `npm install` in `plexora/client`.
 - `dicom_wsi.is_dicom_path` must be checked **before** the colour/OpenSlide

@@ -42,9 +42,11 @@ import sys
 MIN_WORKER_THREADS = 8
 
 #: Above this, more workers only add concurrent full-resolution reads to hold
-#: in memory. All image I/O is serialized downstream anyway (see data_model's
+#: in memory. Most image I/O is serialized downstream anyway (see data_model's
 #: note on the zarr io thread and tifffile's per-file read lock), so the extra
-#: workers would queue on that lock rather than do useful work.
+#: workers would queue on that lock rather than do useful work. An Imaris
+#: volume is the exception (volume/sources/ims.py reads its chunks in
+#: parallel), and 32 is already twice a typical cluster allocation.
 MAX_WORKER_THREADS = 32
 
 #: The page never fans out wider than this even on a large node. Past roughly
@@ -160,6 +162,69 @@ def allocated_cpus():
                                       _scheduler_cpus(), os.cpu_count())
                   if value]
     return max(1, min(candidates)) if candidates else 1
+
+
+def _physical_memory_bytes():
+    """The machine's RAM in bytes, or None where it cannot be read."""
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and page_size > 0:
+            return int(pages * page_size)
+    except (AttributeError, ValueError, OSError):
+        pass
+    gigabytes = _total_memory_gb()
+    return int(gigabytes * 1024 ** 3) if gigabytes else None
+
+
+def _cgroup_memory_bytes():
+    """The cgroup memory limit in bytes, or None when unlimited/absent."""
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            text = _read_text(path)
+        except OSError:
+            continue
+        if text == "max":
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            continue
+        # cgroup v1 writes "unlimited" as a number near 2**63.
+        if 0 < value < 2 ** 60:
+            return value
+    return None
+
+
+def _scheduler_memory_bytes():
+    """What the batch scheduler was asked for, in bytes, or None outside a job.
+
+    SLURM states it in megabytes, per node or per CPU (`--mem` and
+    `--mem-per-cpu` set one or the other, never both)."""
+    raw = os.environ.get("SLURM_MEM_PER_NODE")
+    try:
+        if raw:
+            return int(str(raw).strip()) * 2 ** 20
+        raw = os.environ.get("SLURM_MEM_PER_CPU")
+        if raw:
+            return int(str(raw).strip()) * 2 ** 20 * allocated_cpus()
+    except ValueError:
+        pass
+    return None
+
+
+def allocated_memory_bytes():
+    """Memory this process may use, in bytes; None when nothing says.
+
+    `allocated_cpus`' rule for the same reason: the machine's own size is
+    what a cluster job sees and not what it was given (O2's interactive
+    partition puts a 64 GB job on a node of several hundred), so the minimum
+    of every signal that answered is the only reading that cannot overcommit.
+    """
+    candidates = [value for value in (_cgroup_memory_bytes(), _scheduler_memory_bytes(),
+                                      _physical_memory_bytes()) if value]
+    return min(candidates) if candidates else None
 
 
 def worker_threads():

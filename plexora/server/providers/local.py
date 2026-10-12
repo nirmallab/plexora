@@ -410,6 +410,12 @@ class LocalImageProvider:
         #: The `VolumeSource` the last `open()` found, or None for a planar
         #: image. Read by data_model right after `open()`.
         self.volume_source = None
+        #: How a volume's default-plane overview is built on open, or None for
+        #: `volume_overview`. A data node sets one that keeps the overview on
+        #: disk (node/api.py `_opened`): it is every channel's dataset opened
+        #: and read, which on a cluster filesystem is tens of seconds a node
+        #: would otherwise pay again on every start.
+        self.overview_builder = None
         #: Read this image as colour even though its own tags do not say so.
         #: The one thing about an image file that cannot be answered by looking
         #: at it: three `minisblack` planes are a legal way to write RGB and a
@@ -622,7 +628,8 @@ class LocalImageProvider:
         # A source whose 2-D reader has its own overview and metadata (DICOM)
         # answers with them, so its default plane opens exactly as before.
         overview = (source.overview(channels) if hasattr(source, "overview")
-                    else (overview or volume_overview)(channels))
+                    else (overview or getattr(self, "overview_builder", None)
+                          or volume_overview)(channels))
         metadata = (source.physical_metadata() if hasattr(source, "physical_metadata")
                     else volume_metadata(source, self._path))
         return channels, overview, metadata

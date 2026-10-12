@@ -2707,8 +2707,12 @@ def _exact_window_loop():
         # and a different one loaded since has its own queue.
         if not is_loaded(datasource_name):
             continue
+        from plexora.server.volume import chunk_cache
+
         try:
-            _volume_quantization_window(channel_name, datasource_name)
+            # Behind every tile anybody is waiting on (chunk_cache.background).
+            with chunk_cache.background():
+                _volume_quantization_window(channel_name, datasource_name)
         except Exception as exc:  # noqa: BLE001 -- the provisional window stands
             _log.warning("%s: the exact window of %s failed -- %s",
                          datasource_name, channel_name, exc)
@@ -3062,11 +3066,46 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
                 pyramid = labels.plane(spec.z)
             elif spec.kind == "slab":
                 pyramid = labels.plane((spec.z0 + spec.z1) // 2)
-    return read_tile(
+    array = read_tile(
         pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],
         config[datasource_name]['tileHeight'],
     )
+    if view and not segmentation:
+        _read_ahead(datasource_name, channel_num, level, tile, view)
+    return array
+
+
+def _read_ahead(datasource_name, channel_num, level, tile, view):
+    """Queue the block of planes ahead of a plane tile just read
+    (server/volume/prefetch.py), as a node does for its own: the same tile,
+    read in the background, so stepping across a block's edge is a hit."""
+    from plexora.server.models import views
+    from plexora.server.volume.model import block_depth
+    from plexora.server.volume.prefetch import PREFETCHER
+
+    source = volume_source
+    try:
+        spec = views.resolve(datasource_name, view)
+        if source is None or spec is None or spec.kind != "plane" or spec.default:
+            return
+        block = block_depth(source, 0)
+        depth = int(source.volume.depth)
+    except Exception:  # noqa: BLE001 -- nothing to read ahead of
+        return
+    generation = load_generation
+    width = config[datasource_name]['tileWidth']
+    height = config[datasource_name]['tileHeight']
+    t = int(spec.t)
+
+    def read(z):
+        # Never for a project loaded since: its source has been closed.
+        if load_generation != generation or volume_source is not source:
+            return
+        read_tile(source.plane_pyramid(t, z), channel_num, level, tile, width, height)
+
+    region = (generation, datasource_name, t, channel_num, str(level), str(tile))
+    PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
 
 
 def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
