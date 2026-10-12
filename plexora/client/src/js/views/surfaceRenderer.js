@@ -179,6 +179,7 @@ flat in vec4 v_lut;
 flat in uint v_object;
 uniform vec3 u_extent;
 uniform vec2 u_clip_z;
+uniform vec4 u_clip_xy;        // x0, x1, y0, y1: the volume's setClip, [0,1]
 uniform vec4 u_clip_plane;
 uniform bool u_use_clip_plane;
 uniform bool u_useLut;
@@ -199,8 +200,8 @@ uniform highp sampler2D u_opaqueDepth;
 ${outputs}
 void main() {
     vec3 p = v_world / u_extent + 0.5;
-    if (p.z < u_clip_z.x || p.z > u_clip_z.y || p.x < -0.001 || p.x > 1.001
-            || p.y < -0.001 || p.y > 1.001) discard;
+    if (p.z < u_clip_z.x || p.z > u_clip_z.y || p.x < u_clip_xy.x - 0.001 || p.x > u_clip_xy.y + 0.001
+            || p.y < u_clip_xy.z - 0.001 || p.y > u_clip_xy.w + 0.001) discard;
     if (u_use_clip_plane && dot(vec4(v_world, 1.0), u_clip_plane) < 0.0) discard;
     if (u_useLut && v_lut.a < 0.002) discard;
 #ifdef PASS_PICK
@@ -830,7 +831,10 @@ void main() {`],
             const clipZ = typeof volume.clipRangeZ === "function"
                 ? volume.clipRangeZ(state, depth)
                 : (state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1]);
-            return { origin: [covered[0], covered[1], 0], extent, clipZ,
+            // The box cut open from the side (the volume's setClip), as the voxels are.
+            const xy = volume.clipXY || { x: [0, 1], y: [0, 1] };
+            const clipXY = [xy.x[0], xy.x[1], xy.y[0], xy.y[1]];
+            return { origin: [covered[0], covered[1], 0], extent, clipZ, clipXY,
                      scale: extent.map((side, i) => side / Math.max(1e-9, span[i])) };
         }
 
@@ -860,6 +864,7 @@ void main() {`],
             gl.uniform3fv(u("u_scale"), frame.placement.scale);
             gl.uniform3fv(u("u_extent"), frame.placement.extent);
             gl.uniform2fv(u("u_clip_z"), frame.placement.clipZ);
+            gl.uniform4fv(u("u_clip_xy"), frame.placement.clipXY || [0, 1, 0, 1]);
             gl.uniform1i(u("u_use_clip_plane"), this.clipPlane ? 1 : 0);
             gl.uniform4fv(u("u_clip_plane"), this.clipPlane || [0, 0, 1, 0]);
             const style = mesh.style;

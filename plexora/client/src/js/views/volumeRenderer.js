@@ -250,6 +250,7 @@ ${samplers.join("\n")}
 uniform mat4 u_inverse;        // clip -> model (box in [0,1]^3, then scaled)
 uniform vec3 u_extent;         // physical box, longest side 1
 uniform vec2 u_clip_z;         // texture z range shown, [0,1]
+uniform vec4 u_clip_xy;        // texture x0, x1, y0, y1 shown, [0,1] (setClip)
 uniform vec3 u_color[NCH];
 uniform vec2 u_window[NCH];    // [lo, hi] in 0..1 texture units
 uniform float u_opacity[NCH];
@@ -279,8 +280,8 @@ void main() {
     vec4 farPoint = u_inverse * vec4(v_ndc, 1.0, 1.0);
     vec3 origin = nearPoint.xyz / nearPoint.w;
     vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
-    vec3 lo = vec3(0.0, 0.0, u_clip_z.x) * u_extent - 0.5 * u_extent;
-    vec3 hi = vec3(1.0, 1.0, u_clip_z.y) * u_extent - 0.5 * u_extent;
+    vec3 lo = vec3(u_clip_xy.x, u_clip_xy.z, u_clip_z.x) * u_extent - 0.5 * u_extent;
+    vec3 hi = vec3(u_clip_xy.y, u_clip_xy.w, u_clip_z.y) * u_extent - 0.5 * u_extent;
     vec2 hit = hitBox(origin, dir, lo, hi);
     if (hit.x > hit.y || hit.y < 0.0) {
         outColor = vec4(u_ground, 1.0);
@@ -1200,11 +1201,13 @@ ${sample}`;
             this.dirty = false;
             const gl = this.gl;
             const canvas = this.canvas;
-            if (!gl || !canvas || canvas.hidden) return;
+            if (!gl || !canvas || (canvas.hidden && !this._drawHidden)) return;
             const fast = this.moving();
             this.drawnFast = fast;
             const ratio = Math.min(global.devicePixelRatio || 1, 1.5) * (fast ? this.fastScale : 1);
-            // An export's size (snapshot) wins over the canvas's CSS size.
+            // A pinned size wins over the canvas's CSS size: a frame rendered
+            // for a video is the video's size (pinSize), and so is an export's
+            // (snapshot), whatever the window.
             const pinned = this._pinnedSize;
             const width = pinned ? pinned.width : Math.max(1, Math.round(canvas.clientWidth * ratio));
             const height = pinned ? pinned.height : Math.max(1, Math.round(canvas.clientHeight * ratio));
@@ -1295,8 +1298,10 @@ ${sample}`;
             // The revision on screen (attach's surface), not the one asked for.
             const state = this.view || this.viewState?.get?.();
             const depth = Math.max(1, this.viewState?.depth || 1);
-            const clip = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
+            const clip = this.clipRangeZ(state, depth);
             gl.uniform2fv(uniform("u_clip_z"), clip);
+            const xy = this.clipXY || { x: [0, 1], y: [0, 1] };
+            gl.uniform4fv(uniform("u_clip_xy"), [xy.x[0], xy.x[1], xy.y[0], xy.y[1]]);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
             // As many samples as the finest voxels drawn: the detail's, spread
             // over the whole box, when there is one.
@@ -1521,15 +1526,16 @@ ${sample}`;
             const extent = this.extent();
             const state = this.view || this.viewState?.get?.();
             const depth = Math.max(1, this.viewState?.depth || 1);
-            const clip = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
+            const clip = this.clipRangeZ(state, depth);
+            const xy = this.clipXY || { x: [0, 1], y: [0, 1] };
             const n = REGION_LATTICE;
             const min = [Infinity, Infinity, Infinity];
             const max = [-Infinity, -Infinity, -Infinity];
             const m = forward;
             for (let i = 0; i <= n; i += 1) {
-                const px = i / n;
+                const px = xy.x[0] + (i / n) * (xy.x[1] - xy.x[0]);
                 for (let j = 0; j <= n; j += 1) {
-                    const py = j / n;
+                    const py = xy.y[0] + (j / n) * (xy.y[1] - xy.y[0]);
                     for (let k = 0; k <= n; k += 1) {
                         const pz = clip[0] + (k / n) * (clip[1] - clip[0]);
                         const x = (px - 0.5) * extent[0];
@@ -1549,10 +1555,11 @@ ${sample}`;
                 }
             }
             if (!Number.isFinite(min[0])) return null;
-            const step = [1 / n, 1 / n, (clip[1] - clip[0]) / n];
+            const step = [(xy.x[1] - xy.x[0]) / n, (xy.y[1] - xy.y[0]) / n, (clip[1] - clip[0]) / n];
+            const bounds = [xy.x, xy.y, clip];
             return {
-                lo: min.map((v, a) => Math.max(a === 2 ? clip[0] : 0, v - step[a])),
-                hi: max.map((v, a) => Math.min(a === 2 ? clip[1] : 1, v + step[a])),
+                lo: min.map((v, a) => Math.max(bounds[a][0], v - step[a])),
+                hi: max.map((v, a) => Math.min(bounds[a][1], v + step[a])),
             };
         }
 
@@ -1580,15 +1587,115 @@ ${sample}`;
                         this.detail = null;
                         this.invalidate();
                     }
-                    atlas.update(this.atlasView(lead)).catch((error) =>
-                        console.error("volumeRenderer: the atlas could not be filled", error));
+                    this.trackFill(atlas.update(this.atlasView(lead)).catch((error) =>
+                        console.error("volumeRenderer: the atlas could not be filled", error)));
                     return;
                 }
                 // Nothing finer than the base (a small stack), or no room on
                 // the GPU: the base is all there is to draw.
                 if (lead && lead.level === 0) return;
             }
-            this.considerDetail();
+            this.trackFill(this.considerDetail());
+        }
+
+        /** Remember a detail fill in flight until it ends (settled()). */
+        trackFill(promise) {
+            this._filling = promise;
+            Promise.resolve(promise).finally(() => {
+                if (this._filling === promise) this._filling = null;
+            });
+        }
+
+        /** The texture z range drawn: the slab band, narrowed by setClip's z. */
+        clipRangeZ(state, depth) {
+            const slab = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
+            const z = this.clipXY?.z;
+            if (!z) return slab;
+            const lo = Math.max(slab[0], z[0]);
+            return [lo, Math.max(lo, Math.min(slab[1], z[1]))];
+        }
+
+        /**
+         * Clip the box to `{x: [a, b], y: [a, b], z?: [a, b]}` (texture space,
+         * [0, 1] along the stack's own axes), or null for none. Beside the
+         * slab band, which stays the z range: a caller that cuts the stack
+         * open from the side (Video Studio's reveals) uses x and y. Not saved,
+         * like the camera.
+         */
+        setClip(clip) {
+            const range = (r) => (Array.isArray(r) && r.length === 2
+                ? [Math.max(0, Math.min(1, Math.min(r[0], r[1]))), Math.max(0, Math.min(1, Math.max(r[0], r[1])))]
+                : [0, 1]);
+            const next = clip ? { x: range(clip.x), y: range(clip.y), ...(clip.z ? { z: range(clip.z) } : {}) } : null;
+            const whole = next && next.x[0] === 0 && next.x[1] === 1 && next.y[0] === 0 && next.y[1] === 1
+                && (!next.z || (next.z[0] === 0 && next.z[1] === 1));
+            const value = whole ? null : next;
+            if (JSON.stringify(value) === JSON.stringify(this.clipXY || null)) return false;
+            this.clipXY = value;
+            this.invalidate();
+            return true;
+        }
+
+        // -- frame by frame (Video Studio) -----------------------------------
+        //
+        // A caller that renders a video drives the camera itself, one frame at
+        // a time on its own clock: it pins the drawing size to the output,
+        // sets `camera`, asks for detail at once (`refine`, rather than after
+        // the resting delay), waits for `whenSettled()` and takes
+        // `renderFrame()`. Nothing here runs unless a caller asks.
+
+        /** Draw at exactly `{width, height}` device pixels from now on (null
+         *  goes back to following the canvas's CSS size). */
+        pinSize(size) {
+            this._pinnedSize = size && size.width > 0 && size.height > 0
+                ? { width: Math.round(size.width), height: Math.round(size.height) } : null;
+            this.invalidate();
+        }
+
+        /** Whether everything the current camera can show has arrived: no
+         *  level loading, no atlas bricks in flight, no detail being read. */
+        settled() {
+            if (this.status !== "ready") return this.status === "error";
+            // Not on screen yet: the 3-D view's revision has not committed, so
+            // the picture would be whatever was drawn last time it was shown.
+            if (!this.canvas || this.canvas.hidden) return false;
+            if (this._loads.size) return false;
+            // A texture for every channel at its CURRENT window: when a
+            // provisional window turns exact the textures reload under the new
+            // stamp a moment later, and until then the old one is still drawn.
+            if (this.channels().some((channel) => !this.textureOf(channel))) return false;
+            const atlas = this.atlas;
+            if (atlas && (atlas.status === "loading" || atlas.inflight?.size > 0)) return false;
+            // [surfaces] A visible surface's mesh still on its way.
+            if (global.PlexoraSurfaceLayers?.loading?.()) return false;
+            return !this._filling;
+        }
+
+        /** Resolves once `settled()` holds (or the renderer is gone). */
+        async whenSettled({ pollMs = 16 } = {}) {
+            while (this.gl && !this.settled()) {
+                await new Promise((resolve) => setTimeout(resolve, pollMs));
+            }
+        }
+
+        /** The current camera drawn now, at full quality (never the fast
+         *  path), at the pinned size, every channel in full (never partway
+         *  in, presence). Stops any motion of its own first. */
+        renderFrame() {
+            if (!this.canvas) return null;
+            this.spin = null;
+            this.tween = null;
+            this.zoomTarget = null;
+            this.interacting = false;
+            // Always a real draw: never the canvas's last picture returned as
+            // if it were this frame's.
+            this._drawHidden = true;
+            try {
+                this.draw(now(), { settled: true });
+            } finally {
+                this._drawHidden = false;
+            }
+            return this.canvas;
         }
 
         /** The key a channel's detail texture is kept under. */
@@ -1774,6 +1881,8 @@ ${sample}`;
                 this.draw(now(), { settled: true });
                 return this.canvas;
             }
+            // A video's pinned size (pinSize) comes back afterwards.
+            const pinned = this._pinnedSize;
             this._pinnedSize = { width: Math.round(width), height: Math.round(height) };
             try {
                 this.spin = null;
@@ -1787,7 +1896,7 @@ ${sample}`;
                 copy.getContext("2d").drawImage(this.canvas, 0, 0);
                 return copy;
             } finally {
-                this._pinnedSize = null;
+                this._pinnedSize = pinned || null;
                 this.invalidate();
             }
         }

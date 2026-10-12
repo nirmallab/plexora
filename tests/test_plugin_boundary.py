@@ -46,6 +46,7 @@ ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.gating", "plexora.plugins.roi",
                       "plexora.plugins.qc", "plexora.plugins.transcripts",
                       "plexora.plugins.visium_hd", "plexora.plugins.segmentation",
+                      "plexora.plugins.video_studio", "imageio_ffmpeg",
                       "torch", "sam2", "cellpose")
 
 
@@ -125,6 +126,11 @@ def visium_hd(tmp_path_factory):
 @pytest.fixture(scope="module")
 def segmentation(tmp_path_factory):
     return _probe("segmentation", tmp_path_factory.mktemp("segmentation"))
+
+
+@pytest.fixture(scope="module")
+def video_studio(tmp_path_factory):
+    return _probe("video_studio", tmp_path_factory.mktemp("video_studio"))
 
 
 def test_core_build_installs_no_gating_routes(core):
@@ -586,3 +592,55 @@ def test_qc_page_loads_only_its_own_assets(qc):
 
 def test_qc_build_matches_its_golden(qc):
     _check_golden("qc", qc)
+
+
+# --------------------------------------------------------------------------
+# Video Studio: card-less like Figure Builder, Paid as a whole, and the one
+# plugin with a launcher in the viewer's top-right dock (Plugin.launcher).
+# --------------------------------------------------------------------------
+
+def test_video_studio_installs_its_routes(video_studio):
+    routes = {r.split(" ", 1)[1] for r in video_studio["routes"]
+              if "/plugins/video_studio/" in r}
+    for path in ("/plugins/video_studio/api/state", "/plugins/video_studio/api/videos",
+                 "/plugins/video_studio/api/videos/<video_id>/exports",
+                 "/plugins/video_studio/api/presets/build",
+                 "/plugins/video_studio/static/<path:filename>"):
+        assert path in routes, path
+    for path in routes:
+        assert path.startswith("/plugins/video_studio/"), f"un-namespaced route: {path}"
+
+
+def test_installing_video_studio_only_adds_routes(core, video_studio):
+    missing = sorted(set(core["routes"]) - set(video_studio["routes"]))
+    assert missing == [], f"installing video_studio removed core routes: {missing}"
+
+
+def test_a_video_studio_build_pulls_in_no_other_plugin(video_studio):
+    for name in ("gating", "roi", "cell_explorer", "figure_builder", "qc"):
+        assert video_studio["imported"][f"plexora.plugins.{name}"] is False, name
+
+
+def test_starting_a_video_studio_build_looks_for_no_encoder(video_studio):
+    """ffmpeg is found (and imageio_ffmpeg imported) when an export asks which
+    encoders there are -- never at start-up."""
+    assert video_studio["imported"]["imageio_ffmpeg"] is False
+
+
+def test_the_launcher_is_offered_from_the_plugin_descriptor(core, video_studio):
+    """Core renders a launcher only for a tool that asked for one: none in a
+    core build, Video Studio's in its own -- named by data, not by core."""
+    assert "viewer_tool_launchers" not in core["pages"]["viewer"]["ids"]
+    assert "viewer_tool_launchers" in video_studio["pages"]["viewer"]["ids"]
+
+
+def test_video_studio_is_not_mounted_on_a_free_licence(video_studio):
+    """Paid as a whole: on Free the Tools menu and the launcher still list it,
+    but `?tool=video_studio` mounts nothing -- its scripts stay unloaded."""
+    page = video_studio["pages"]["viewer_tool"]
+    assert page["flask_variables"]["active_tool"] in (None, "")
+    assert not [s for s in _asset_paths(page["scripts"]) if "/plugins/video_studio/" in s]
+
+
+def test_video_studio_route_inventory_matches_golden(video_studio):
+    _check_golden("video_studio", video_studio)

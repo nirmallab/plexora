@@ -203,6 +203,13 @@ window.PlexoraSurfaceLayers = (function () {
         await record.loading;
     }
 
+    /** Whether a surface's mesh is still being fetched (the 3-D view's
+     *  `settled()`: a video frame waits for it). */
+    function loading() {
+        for (const record of records.values()) if (record.loading) return true;
+        return false;
+    }
+
     /** Bring the renderer in line with the stack: load, restyle, unload. */
     function sync() {
         if (typeof scheduleCuts === "function") scheduleCuts();
@@ -668,7 +675,7 @@ window.PlexoraSurfaceLayers = (function () {
         init, sync, style, create, retry, suggest, estimate, preview, clearPreview, objects,
         manifest, list, setShow, shown, select, selected, hideObjects, isolate, setTableLut,
         styleOf, surfaceLayers, cellLut, captureState, applyState, sceneState, applyScene,
-        refine, reload, importMesh, setLight, lightName, LIGHTS,
+        refine, reload, importMesh, setLight, lightName, LIGHTS, loading,
         get renderer() { return renderer(); },
         KIND,
     };

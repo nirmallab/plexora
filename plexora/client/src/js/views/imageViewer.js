@@ -2396,6 +2396,7 @@ class ImageViewer {
             clearTimeout(this.centroidTileTimer);
         }
         this.centroidTileTimer = setTimeout(() => {
+            this.centroidTileTimer = null;
             this.updateVisibleCentroidTiles(showSpinner);
         }, delay);
     }
@@ -2417,6 +2418,7 @@ class ImageViewer {
             return;
         }
         const requestId = ++this.centroidTileRequest;
+        this.centroidTilesInFlight = (this.centroidTilesInFlight || 0) + 1;
         const shouldSpin = showSpinner || this.centroidFirstLoad;
         if (shouldSpin) {
             this.setLoading(true);
@@ -2440,10 +2442,33 @@ class ImageViewer {
             this.centroidFirstLoad = false;
             this.refreshCentroidOverlay();
         } finally {
+            this.centroidTilesInFlight -= 1;
             if (shouldSpin) {
                 this.setLoading(false);
             }
         }
+    }
+
+    /**
+     * Whether the overlay canvas shows everything the view asks for: no
+     * centroid tiles scheduled or being read. For a caller that captures
+     * frames (Video Studio), which repaints the overlay itself first.
+     */
+    overlaysSettled() {
+        return !this.centroidTileTimer && !(this.centroidTilesInFlight > 0);
+    }
+
+    /**
+     * The canvases a frame is composed from, bottom first: the tiles, then
+     * the overlay canvas (centroids, outlines drawn as geometry, plugin
+     * overlays). Unlike renderCurrentViewCanvas(), nothing is baked in -- a
+     * caller compositing at its own size draws its own scale bar and legend.
+     */
+    exportSources() {
+        return {
+            drawer: this.viewer?.drawer?.canvas || null,
+            overlay: this.canvasOverlay?.canvas?.() || null,
+        };
     }
 
     prepareLegacyCentroidCache() {

@@ -1,0 +1,979 @@
+/* Video Studio -- the Quick Capture bar, the Export dialog, the render cover,
+   the camera path overlay and the timeline band.
+
+   Every class is `vs-` prefixed (tests/test_plugin_css_boundary.py). Colours
+   and spacing come from core's tokens (client/src/css/tokens.css); the glass is
+   the magic-select bar's recipe (viewer.css .plx-magic-bar), so the two
+   floating bars over the image read as one family.
+
+   Stacking (comments only in core, see viewer.css): the bar sits in the plugin
+   dock tier (240), the path overlay just above the section crosshair (206),
+   the timeline band at 230, the render cover over everything on the canvas
+   (255) and under the app's dialogs and toasts. */
+
+.vs-dock {
+    --vs-glass: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
+    --vs-glass-edge: rgba(255, 255, 255, 0.16);
+    --vs-control: 26px;
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: calc(100vw - 24px);
+    pointer-events: none;
+    width: max-content;
+    z-index: 240;
+}
+
+.vs-dock > * {
+    pointer-events: auto;
+}
+
+/* `hidden` beats every display rule below (memory: display defeats [hidden]). */
+.vs-dock [hidden],
+.vs-dialog [hidden],
+.vs-render-cover [hidden],
+.vs-timeline [hidden],
+.vs-path-overlay[hidden] {
+    display: none !important;
+}
+
+/* -- the pill ----------------------------------------------------------------- */
+
+.vs-bar {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    align-items: center;
+    animation: vs-in var(--duration-base) var(--ease-standard);
+    background: var(--vs-glass);
+    border: 1px solid var(--vs-glass-edge);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    color: var(--text-primary);
+    display: flex;
+    gap: 2px;
+    padding: 4px 5px 4px 6px;
+    width: max-content;
+}
+
+@keyframes vs-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+}
+
+.vs-orb {
+    align-items: center;
+    background: radial-gradient(circle at 35% 30%, rgba(125, 211, 252, 0.95), rgba(56, 189, 248, 0.55) 55%,
+                                rgba(14, 116, 144, 0.5));
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+    color: #04121c;
+    display: inline-flex;
+    flex: none;
+    font-size: 10px;
+    height: 22px;
+    justify-content: center;
+    margin-right: 4px;
+    width: 22px;
+}
+
+.vs-sep {
+    align-self: stretch;
+    background: rgba(255, 255, 255, 0.12);
+    flex: none;
+    margin: 4px 4px;
+    width: 1px;
+}
+
+.vs-icon-button,
+.vs-preset,
+.vs-button {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: none;
+    font: inherit;
+    font-size: 12px;
+    gap: 6px;
+    height: var(--vs-control);
+    justify-content: center;
+    line-height: 1;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.vs-icon-button {
+    padding: 0;
+    width: var(--vs-control);
+}
+
+.vs-preset {
+    font-weight: 600;
+    max-width: 220px;
+    padding: 0 10px;
+}
+
+.vs-preset-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vs-preset .fa-chevron-down {
+    color: var(--text-muted);
+    font-size: 9px;
+}
+
+.vs-button {
+    padding: 0 12px;
+}
+
+.vs-icon-button:hover,
+.vs-preset:hover,
+.vs-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.vs-icon-button[aria-pressed="true"] {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.vs-primary {
+    background: var(--accent-channel);
+    color: #04121c;
+    font-weight: 650;
+}
+
+.vs-primary:hover {
+    background: #7dd3fc;
+    color: #04121c;
+}
+
+.vs-primary:disabled,
+.vs-button:disabled,
+.vs-icon-button:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+.vs-icon-button:focus-visible,
+.vs-preset:focus-visible,
+.vs-button:focus-visible,
+.vs-seg:focus-visible,
+.vs-switch:focus-visible,
+.vs-chip:focus-visible,
+.vs-scrub:focus-visible,
+.vs-format:focus-visible,
+.vs-key:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.vs-time {
+    color: var(--text-secondary);
+    flex: none;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 92px;
+    padding: 0 6px;
+    text-align: center;
+}
+
+.vs-dock.is-busy .vs-bar {
+    border-color: var(--accent-channel-soft);
+}
+
+/* -- the strip ---------------------------------------------------------------- */
+
+.vs-strip {
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    animation: vs-in var(--duration-base) var(--ease-standard);
+    background: rgba(11, 15, 21, 0.86);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(720px, calc(100vw - 24px));
+    padding: 10px 12px 9px;
+}
+
+.vs-fields {
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+}
+
+.vs-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.vs-field-label {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.vs-segmented {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    gap: 1px;
+    padding: 1px;
+}
+
+.vs-seg {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11.5px;
+    height: 24px;
+    min-width: 28px;
+    padding: 0 8px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.vs-seg:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.vs-seg[aria-checked="true"] {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.vs-number {
+    align-items: center;
+    display: inline-flex;
+    gap: 4px;
+}
+
+.vs-input,
+.vs-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    height: 26px;
+    padding: 0 6px;
+    width: 64px;
+}
+
+.vs-input:focus,
+.vs-select:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-tint);
+    outline: none;
+}
+
+.vs-unit {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.vs-switch {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    cursor: pointer;
+    height: 20px;
+    padding: 0;
+    position: relative;
+    transition: background var(--duration-fast) var(--ease-standard);
+    width: 34px;
+}
+
+.vs-switch-knob {
+    background: var(--text-secondary);
+    border-radius: 50%;
+    height: 14px;
+    left: 2px;
+    position: absolute;
+    top: 2px;
+    transition: transform var(--duration-fast) var(--ease-standard);
+    width: 14px;
+}
+
+.vs-switch[aria-checked="true"] {
+    background: var(--accent-channel-soft);
+    border-color: var(--accent-channel);
+}
+
+.vs-switch[aria-checked="true"] .vs-switch-knob {
+    background: #fff;
+    transform: translateX(14px);
+}
+
+.vs-view-field {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.vs-chip {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-size: 11.5px;
+    height: 24px;
+    padding: 0 10px;
+}
+
+.vs-chip:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.vs-chip.is-set {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.vs-chip-quiet {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+}
+
+.vs-channel-pick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 420px;
+}
+
+.vs-chan {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-size: 11px;
+    gap: 5px;
+    height: 22px;
+    max-width: 140px;
+    padding: 0 8px 0 6px;
+}
+
+.vs-chan-dot {
+    background: var(--vs-chan);
+    border-radius: 50%;
+    flex: none;
+    height: 8px;
+    width: 8px;
+}
+
+.vs-chan-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vs-chan-order {
+    color: var(--accent-channel);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.vs-chan[aria-pressed="true"] {
+    border-color: var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+/* -- scrub rail ------------------------------------------------------------------- */
+
+.vs-scrub {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    cursor: pointer;
+    height: 4px;
+    margin: 6px 2px 2px;
+    position: relative;
+    touch-action: none;
+}
+
+.vs-scrub::before {
+    content: "";
+    inset: -8px 0;
+    position: absolute;
+}
+
+.vs-scrub-fill {
+    background: var(--accent-channel);
+    border-radius: inherit;
+    inset: 0;
+    position: absolute;
+    transform: scaleX(0);
+    transform-origin: left center;
+}
+
+.vs-scrub-knob {
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    height: 12px;
+    left: 0;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+}
+
+.vs-scrub-ticks {
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+}
+
+.vs-tick {
+    background: rgba(255, 255, 255, 0.55);
+    border-radius: 1px;
+    height: 8px;
+    position: absolute;
+    top: -2px;
+    transform: translateX(-50%);
+    width: 2px;
+}
+
+.vs-tick-range {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+.vs-hint {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.4;
+    margin: 0;
+    max-width: 100%;
+}
+
+.vs-error {
+    color: var(--accent-danger);
+    font-size: 11.5px;
+    margin: 0;
+}
+
+/* Too little room for the strip: the pill alone, and only its essentials. */
+.vs-dock.is-compact .vs-preset,
+.vs-dock.is-compact .vs-sep,
+.vs-dock.is-compact [data-role="start"],
+.vs-dock.is-compact [data-role="loop"],
+.vs-dock.is-compact [data-role="more"],
+.vs-dock.is-compact [data-role="fold"],
+.vs-dock.is-compact .vs-export span:not(.fas) {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .vs-time { min-width: 0; }
+    .vs-export span:not(.fas) { display: none; }
+}
+
+@media (max-width: 620px) {
+    .vs-preset-label { max-width: 110px; }
+    .vs-fields { gap: 8px 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vs-bar, .vs-strip { animation: none; }
+}
+
+/* -- the Export dialog ----------------------------------------------------------- */
+
+.vs-dialog {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    max-width: min(560px, calc(100vw - 32px));
+    padding: 0;
+    width: 560px;
+}
+
+.vs-dialog::backdrop {
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    background: rgba(2, 4, 8, 0.55);
+}
+
+.vs-dialog-header {
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    padding: 14px 16px 12px 20px;
+}
+
+.vs-dialog-title {
+    font-size: 15px;
+    font-weight: 650;
+    margin: 0;
+}
+
+.vs-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    padding: 16px 20px 18px;
+}
+
+.vs-dialog-row {
+    align-items: flex-start;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 96px 1fr;
+}
+
+.vs-dialog-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding-top: 5px;
+}
+
+.vs-dialog-control {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.vs-custom-size {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+}
+
+.vs-custom-size .vs-input {
+    width: 76px;
+}
+
+.vs-format-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.vs-format {
+    align-items: baseline;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: 10px;
+    justify-content: space-between;
+    padding: 7px 10px;
+    text-align: left;
+}
+
+.vs-format:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.vs-format[aria-checked="true"] {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+}
+
+.vs-format:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.vs-format-name {
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.vs-format-how {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: right;
+}
+
+.vs-check {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 7px;
+}
+
+.vs-check input[type="checkbox"] {
+    accent-color: var(--accent-channel);
+}
+
+.vs-overlay-grid {
+    display: grid;
+    gap: 6px 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vs-attribution {
+    width: 100%;
+}
+
+.vs-note {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.vs-estimate {
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    margin: 2px 0 0;
+    padding-top: 12px;
+}
+
+.vs-warning {
+    background: var(--accent-warning-soft);
+    border: 1px solid rgba(243, 184, 69, 0.3);
+    border-radius: var(--radius-sm);
+    color: #fde68a;
+    font-size: 11.5px;
+    margin: 0;
+    padding: 7px 10px;
+}
+
+.vs-dialog-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.vs-dialog-actions .vs-button {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    height: 32px;
+    padding: 0 16px;
+}
+
+.vs-dialog-actions .vs-primary {
+    border-color: transparent;
+}
+
+@media (max-width: 520px) {
+    .vs-dialog-row { grid-template-columns: 1fr; gap: 6px; }
+    .vs-dialog-label { padding-top: 0; }
+}
+
+/* -- the render cover --------------------------------------------------------------- */
+
+.vs-render-cover {
+    background: transparent;
+    cursor: progress;
+    inset: 0;
+    position: absolute;
+    z-index: 255;
+}
+
+.vs-render-banner {
+    -webkit-backdrop-filter: blur(18px) saturate(170%);
+    backdrop-filter: blur(18px) saturate(170%);
+    align-items: center;
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.82), rgba(12, 16, 22, 0.8) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color: var(--text-primary);
+    cursor: default;
+    display: flex;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    gap: 10px;
+    left: 50%;
+    padding: 5px 6px 5px 14px;
+    position: fixed;
+    top: 72px;
+    transform: translateX(-50%);
+}
+
+.vs-render-line {
+    background: rgba(255, 255, 255, 0.08);
+    height: 2px;
+    left: 0;
+    position: fixed;
+    right: 0;
+    top: 0;
+}
+
+.vs-render-fill {
+    background: var(--accent-channel);
+    height: 100%;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform var(--duration-fast) linear;
+}
+
+/* -- the preview overlay: the output's frame, captions, fades, spotlight ----------------- */
+
+.vs-preview-overlay {
+    height: 100%;
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
+    z-index: 204;
+}
+
+/* -- the camera path overlay (Phase 2) ------------------------------------------------ */
+
+.vs-path-overlay {
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    z-index: 206;
+}
+
+.vs-path-overlay.is-faded {
+    opacity: 0.15;
+}
+
+.vs-path-curve {
+    fill: none;
+    stroke: rgba(125, 211, 252, 0.9);
+    stroke-dasharray: 5 4;
+    stroke-width: 1.5;
+}
+
+.vs-path-box {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.28);
+    stroke-width: 1;
+}
+
+.vs-path-handle {
+    cursor: grab;
+    pointer-events: auto;
+}
+
+.vs-path-handle circle {
+    fill: #0b1220;
+    stroke: var(--accent-channel);
+    stroke-width: 2;
+}
+
+.vs-path-handle.is-selected circle {
+    fill: var(--accent-channel);
+}
+
+/* A position whose camera is off this view: pinned to the edge, dashed. */
+.vs-path-handle.is-edge circle {
+    stroke-dasharray: 3 2;
+}
+
+.vs-path-handle text {
+    fill: #fff;
+    font: 600 10px "Inter", system-ui, sans-serif;
+    pointer-events: none;
+    text-anchor: middle;
+}
+
+.vs-path-rect {
+    fill: rgba(56, 189, 248, 0.06);
+    stroke: rgba(125, 211, 252, 0.85);
+    stroke-dasharray: 4 3;
+    stroke-width: 1.5;
+}
+
+.vs-viewpoints {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.vs-viewpoint {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-size: 11.5px;
+    gap: 6px;
+    height: 26px;
+    padding: 0 8px;
+}
+
+.vs-viewpoint[aria-pressed="true"] {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+.vs-viewpoint-index {
+    color: var(--accent-channel);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+/* -- the timeline band (Phase 2) ------------------------------------------------------ */
+
+.vs-timeline {
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    background: rgba(8, 11, 16, 0.92);
+    border-top: 1px solid var(--border-strong);
+    bottom: 0;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    font-size: 11.5px;
+    height: var(--plx-band-timeline-size, 148px);
+    left: var(--plx-inset-left, 0px);
+    position: absolute;
+    right: var(--plx-inset-right, 0px);
+    z-index: 230;
+}
+
+.vs-timeline-head {
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    gap: 4px;
+    height: 32px;
+    padding: 0 8px;
+}
+
+.vs-timeline-title {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-right: 6px;
+    text-transform: uppercase;
+}
+
+.vs-timeline-spacer {
+    flex: 1;
+}
+
+.vs-timeline-body {
+    display: grid;
+    flex: 1;
+    grid-template-columns: 120px 1fr;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.vs-track-label {
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    display: flex;
+    gap: 6px;
+    height: 24px;
+    overflow: hidden;
+    padding: 0 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vs-track-lane {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    height: 24px;
+    position: relative;
+}
+
+.vs-track-range {
+    background: rgba(56, 189, 248, 0.16);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 4px;
+    bottom: 4px;
+    position: absolute;
+    top: 4px;
+}
+
+.vs-track-range.is-step {
+    background: rgba(243, 184, 69, 0.14);
+    border-color: rgba(243, 184, 69, 0.35);
+}
+
+.vs-key {
+    background: #e2e8f0;
+    border: 1px solid rgba(0, 0, 0, 0.5);
+    cursor: grab;
+    height: 9px;
+    padding: 0;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%) rotate(45deg);
+    width: 9px;
+}
+
+.vs-key.is-selected {
+    background: var(--accent-channel);
+}
+
+.vs-ruler {
+    border-bottom: 1px solid var(--border-subtle);
+    height: 18px;
+    position: relative;
+}
+
+.vs-ruler-tick {
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--text-muted);
+    font-size: 9.5px;
+    height: 100%;
+    padding-left: 3px;
+    position: absolute;
+}
+
+.vs-playhead {
+    background: var(--accent-gate);
+    bottom: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    width: 1px;
+}

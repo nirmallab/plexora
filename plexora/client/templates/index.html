@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261011_surfaces">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261012_video_merge">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -424,6 +424,25 @@
                     data-canvas-dock="top-left" data-canvas-order="-10">
                 <span class="fas fa-chevron-right"></span>
             </button>
+            {# One-click launchers for tools that declared `launcher` (a plugin
+               descriptor flag; core names no plugin here). Docked top-right
+               beside the dataset navigation; toolLoader.js wires each to the
+               same toggle as its Tools-menu row. #}
+            {% set launchers = data.available_tools | selectattr('launcher') | list %}
+            {% if launchers %}
+            <div id="viewer_tool_launchers" class="viewer-tool-launchers" role="toolbar"
+                 aria-label="Tools" data-canvas-dock="top-right" data-canvas-order="2"
+                 data-viewer-furniture>
+                {% for tool in launchers %}
+                <button type="button" class="viewer-launcher" data-tool="{{ tool.name }}"
+                        {% if tool.shortcut %}data-launcher-shortcut="{{ tool.shortcut }}"{% endif %}
+                        title="{{ tool.label }}" aria-label="{{ tool.label }}" aria-pressed="false">
+                    <span class="fas fa-{{ tool.icon or 'puzzle-piece' }}" aria-hidden="true"></span>
+                    {% if tool.locked %}<span class="viewer-launcher-paid" aria-hidden="true"></span>{% endif %}
+                </button>
+                {% endfor %}
+            </div>
+            {% endif %}
             {# The one place the viewer's ground colour is not the app's. A
                transmitted-light image IS its white background, and the dark
                shell behind it reads as a shadow the scanner never recorded. #}
@@ -530,10 +549,10 @@
    badge on the canvas, and core's Depth card. Before main.js, which reads
    the state beside /config and mounts the strip. All three do nothing for a
    planar image. #}
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261012_plane_gating" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261012_main_merge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261010_motion" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261011_video_studio" defer></script>
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
@@ -546,16 +565,16 @@
 {# Surfaces (plexora/server/surface): the meshes drawn in the 3-D view, the
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
-<script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261011_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261012_video_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_video_merge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261011_surface_fade" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_plane_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_main_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_main_merge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261012_plane_gating" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_plane_gating" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_main_merge" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -569,7 +588,7 @@
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261011_fold" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261011_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_video_merge" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}

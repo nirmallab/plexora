@@ -74,8 +74,8 @@
     <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261010_perf3d"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20261010_nav3d"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261011_batch"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_plane_merge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261012_main_merge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_main_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261012_no_cell_model"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
     {# Where the viewer is looking, in full-resolution image pixels, and how to
@@ -83,7 +83,7 @@
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261011_fold"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261012_no_cell_model"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261012_video_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261011_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -225,7 +225,7 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261011_import_home" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261011_video_studio" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}

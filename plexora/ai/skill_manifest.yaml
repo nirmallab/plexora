@@ -48,6 +48,13 @@ skills:
     when: The user asks to see, show, look at or describe a region, a marker or a cell.
     tier: judgement
     tools: [inspect_project, list_channels, render_region, list_rois, get_artifact]
+  - name: video-storyboard
+    title: Make a scientific video of an image
+    description: Choose a Video Studio preset or storyboard from the request, show it, preview it in the viewer, export it with a manifest of every frame.
+    when: The user asks for a video, movie, animation, rotation, sweep, zoom or reveal of an image.
+    tier: routine
+    tools: [inspect_project, inspect_volume, list_channels, list_viewers, create_video, get_video,
+            list_videos, edit_video, preview_video, export_video, job_wait]
   - name: marker-qc
     title: Quality-check a marker before trusting it
     description: Is the stain real, is the column the channel, is the distribution usable.

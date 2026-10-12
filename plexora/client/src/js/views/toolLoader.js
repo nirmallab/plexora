@@ -507,6 +507,12 @@ window.PlexoraToolLoader = (function () {
         links.forEach((link) => {
             link.classList.toggle("is-open", isOpen(link.dataset?.tool));
         });
+        // The viewer's launcher buttons (Plugin.launcher) read as pressed
+        // while their tool is open: the same toggle, said on the image.
+        const launchers = document.querySelectorAll?.("#viewer_tool_launchers [data-tool]") || [];
+        launchers.forEach((button) => {
+            button.setAttribute?.("aria-pressed", isOpen(button.dataset?.tool) ? "true" : "false");
+        });
     }
 
     /**
@@ -1361,6 +1367,24 @@ window.PlexoraToolLoader = (function () {
             link.addEventListener("click", (event) => {
                 event.preventDefault();
                 toggleTool(link.dataset.tool, link);
+            });
+        });
+        // A launcher is a second way to press the Tools-menu row, so it hands
+        // the row itself to toggleTool: whatever the row's click does -- the
+        // lazy fetch, the requirements modal, the Paid explanation -- the
+        // button does too.
+        document.querySelectorAll("#viewer_tool_launchers [data-tool]").forEach((button) => {
+            const shortcut = button.dataset.launcherShortcut;
+            const format = window.PlexoraShortcuts?.format;
+            if (shortcut && typeof format === "function") {
+                button.title = `${button.getAttribute("aria-label")} (${format(shortcut)})`;
+            }
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                const name = button.dataset.tool;
+                const row = [...document.querySelectorAll("a[data-tool]")]
+                    .find((link) => link.dataset.tool === name);
+                toggleTool(name, row || undefined);
             });
         });
     });

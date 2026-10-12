@@ -1716,6 +1716,24 @@ window.PlexoraAgentBridge = (function () {
                 viewState());
         },
 
+        /**
+         * A command addressed to one plugin by name -- `{command:
+         * "<plugin>:<command>", arguments}` -- offered on
+         * `plexora:agent-command` like any other a plugin may claim, and
+         * acknowledged with what it resolved to. Core names no plugin: the
+         * prefix only says whose it is, and nobody claiming it is
+         * `unsupported`.
+         */
+        async plugin_command(args) {
+            const name = String(args.command || "");
+            if (!/^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/.test(name)) {
+                throw new Error("plugin_command needs command \"<plugin>:<command>\"");
+            }
+            const answer = await offer(name, args.arguments || {});
+            if (!answer) throw unsupported(`no open tool answers "${name}"`);
+            return answer.result === undefined ? null : answer.result;
+        },
+
         async focus_roi(args) {
             // The ROI tool can SELECT the region as well as frame it, so it is
             // asked first; a box is the fallback when no plugin answers.

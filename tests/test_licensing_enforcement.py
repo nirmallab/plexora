@@ -112,9 +112,19 @@ def test_every_capability_names_a_known_entitlement(session):
 
 
 def test_the_paid_set_is_exactly_the_classification(session):
+    # A plugin sold as a unit (`plugin:<name>`, Video Studio) is classified as a
+    # whole by its descriptor and tested with it; the registry is process-wide,
+    # so its capabilities are here whenever an earlier test discovered it.
     entitled = {cap.name: cap.entitlement for cap in registry.all_capabilities()
-                if cap.entitlement not in (None, "free")}
+                if cap.entitlement not in (None, "free")
+                and not cap.entitlement.startswith(manifest.PLUGIN_ROOT + ":")}
     assert entitled == PAID
+
+
+def test_a_plugin_sold_as_a_unit_entitles_only_its_own_capabilities(session):
+    for cap in registry.all_capabilities():
+        if (cap.entitlement or "").startswith(manifest.PLUGIN_ROOT + ":"):
+            assert cap.entitlement == f"{manifest.PLUGIN_ROOT}:{cap.owner}", (cap.name, cap.owner)
 
 
 def test_manual_gating_stays_free(session):

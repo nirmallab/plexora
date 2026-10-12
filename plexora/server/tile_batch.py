@@ -74,8 +74,15 @@ def serve(app, paths, headers=None) -> bytes:
                 response.direct_passthrough = False
                 body = response.get_data()
                 response.close()
-                return ({"status": response.status_code, "type": response.mimetype,
-                         "etag": response.headers.get("ETag"), "bytes": len(body)}, body)
+                meta = {"status": response.status_code, "type": response.mimetype,
+                        "etag": response.headers.get("ETag"), "bytes": len(body)}
+                # A coarse stand-in section (volume/plane_view.py) says so in
+                # a header when fetched alone; batched, the header is lost,
+                # so the fact rides in the tile's meta instead.
+                steps = response.headers.get("X-Plexora-Served-Steps")
+                if steps:
+                    meta["steps"] = steps
+                return (meta, body)
         except Exception as exc:
             # One tile that fails (or a test app that re-raises) fails alone.
             return ({"status": 500, "type": "text/plain", "etag": None, "bytes": 0,
