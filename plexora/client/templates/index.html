@@ -438,7 +438,6 @@
                         {% if tool.shortcut %}data-launcher-shortcut="{{ tool.shortcut }}"{% endif %}
                         title="{{ tool.label }}" aria-label="{{ tool.label }}" aria-pressed="false">
                     <span class="fas fa-{{ tool.icon or 'puzzle-piece' }}" aria-hidden="true"></span>
-                    {% if tool.locked %}<span class="viewer-launcher-paid" aria-hidden="true"></span>{% endif %}
                 </button>
                 {% endfor %}
             </div>

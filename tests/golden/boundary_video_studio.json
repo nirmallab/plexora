@@ -190,17 +190,7 @@
         "active_tool_panels": {},
         "active_tool_scripts": [],
         "active_tool_styles": [],
-        "available_tools": [
-          {
-            "entitlement": "plugin:video_studio",
-            "icon": "video",
-            "label": "Video Studio",
-            "launcher": true,
-            "locked": true,
-            "name": "video_studio",
-            "shortcut": "mod+j"
-          }
-        ],
+        "available_tools": [],
         "base_url": "",
         "client_node": "",
         "datasource": "probe_ds",
@@ -281,7 +271,6 @@
         "navbarFileDropdown",
         "navbarHelpDropdown",
         "navbarSupportedContent",
-        "navbarToolsDropdown",
         "navbarViewDropdown",
         "num-selected-channels",
         "openseadragon",
@@ -303,8 +292,7 @@
         "topBar",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar",
-        "viewer_tool_launchers"
+        "viewer_sidebar"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
@@ -456,17 +444,7 @@
         "active_tool_panels": {},
         "active_tool_scripts": [],
         "active_tool_styles": [],
-        "available_tools": [
-          {
-            "entitlement": "plugin:video_studio",
-            "icon": "video",
-            "label": "Video Studio",
-            "launcher": true,
-            "locked": true,
-            "name": "video_studio",
-            "shortcut": "mod+j"
-          }
-        ],
+        "available_tools": [],
         "base_url": "",
         "client_node": "",
         "datasource": "probe_ds",
@@ -547,7 +525,6 @@
         "navbarFileDropdown",
         "navbarHelpDropdown",
         "navbarSupportedContent",
-        "navbarToolsDropdown",
         "navbarViewDropdown",
         "num-selected-channels",
         "openseadragon",
@@ -569,8 +546,7 @@
         "topBar",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar",
-        "viewer_tool_launchers"
+        "viewer_sidebar"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",

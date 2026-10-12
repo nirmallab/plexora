@@ -381,12 +381,7 @@
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
                        href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
-                        <span class="nav-item-label">{{ tool.label }}</span>
-                        {# A Paid plugin's tool stays listed, badged, when the
-                           licence does not unlock it; opening it explains
-                           rather than mounts (tool_routes `locked`). Nothing
-                           here for a Free tool, which is every tool today. #}
-                        {% if tool.locked %}<span class="plx-paid-badge" title="Part of Plexora Paid">Paid</span>{% endif %}</a>
+                        <span class="nav-item-label">{{ tool.label }}</span></a>
                     {% endfor %}
                 </div>
             </li>
@@ -421,12 +416,7 @@
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
                        href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
-                        <span class="nav-item-label">{{ tool.label }}</span>
-                        {# A Paid plugin's tool stays listed, badged, when the
-                           licence does not unlock it; opening it explains
-                           rather than mounts (tool_routes `locked`). Nothing
-                           here for a Free tool, which is every tool today. #}
-                        {% if tool.locked %}<span class="plx-paid-badge" title="Part of Plexora Paid">Paid</span>{% endif %}</a>
+                        <span class="nav-item-label">{{ tool.label }}</span></a>
                     {% endfor %}
                     <div class="dropdown-divider"></div>
                     {% endif %}

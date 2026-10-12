@@ -882,16 +882,18 @@ class Plugin:
     #: whose whole point is the image (Video Studio). Data only: core renders
     #: the button from `icon`, `label` and `shortcut` and wires its click to
     #: the same `toggleTool` a Tools-menu row uses, so the launcher can never
-    #: open a tool the menu would not (a locked Paid tool explains itself).
+    #: open a tool the menu would not (a locked Paid tool is in neither).
     launcher: bool = False
 
     #: The licence entitlement this WHOLE plugin needs (plexora/licensing/
     #: manifest.py) -- `plugin:<name>` for a plugin sold as a unit. None, the
-    #: default and what every plugin shipped today declares, is Free: a
-    #: third-party plugin never has to know licensing exists.
+    #: default and what every basic plugin declares, is Free: a third-party
+    #: plugin never has to know licensing exists.
     #:
-    #: When set, the Tools menu still lists the tool (with a Paid badge), its
-    #: `/panel` answers `locked` instead of the panel, its blueprint's routes
+    #: When set and the licence does not unlock it, the plugin is still
+    #: installed but not shown: no Tools-menu row, launcher, layer section or
+    #: scripts (plugins.unlocked). Its `/panel` answers `locked` instead of the
+    #: panel, its blueprint's routes
     #: answer 403 (its static assets excepted), and its capabilities default
     #: to it -- a capability that names its own entitlement, or "free", keeps
     #: that instead: the capability-level answer wins.
@@ -966,8 +968,9 @@ class Plugin:
     def describe(self) -> dict:
         """The shape core hands the client for the Tools menu.
 
-        `entitlement` only for a Paid plugin, so the Tools menu can badge it;
-        a Free plugin's shape is unchanged from before licensing existed.
+        `entitlement` only for a Paid plugin; a Free plugin's shape is
+        unchanged from before licensing existed. A Paid plugin the licence
+        does not unlock is never described to a page (plugins.unlocked).
         """
         out = {"name": self.name, "label": self.label,
                "icon": self.icon, "shortcut": self.shortcut}
