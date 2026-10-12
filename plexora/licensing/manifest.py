@@ -13,6 +13,11 @@ be narrower without a schema change, not because any licence is sold that way
 today. Which grants a plan carries is the BioCognia platform's to say (plans
 and prices are edited only there); what the roots ARE is said here.
 
+`surfaces` is Surface Studio (plexora/server/surface): making, refining and
+analysing surfaces. A surface that exists is a read -- drawn, exported,
+measured, deleted -- and stays open on any plan, like everything else a Paid
+feature produced.
+
 Add-ons are roots sold separately from the Paid default. `mcp` is the first:
 it lets an outside coding agent (Claude Code, Codex, Cursor) reach the Paid
 capabilities over MCP with its own model. A Paid capability called over MCP
@@ -70,6 +75,11 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
         "The image scans, channel profiles and evidence sheets an agent "
         "gathers before judging an artifact, including the example sheets "
         "sampled across a QC check's scores."),
+    "surfaces": (
+        "Surface Studio",
+        "Surfaces in the 3-D view: isosurfaces of a channel with live "
+        "thresholding, a surface for every cell of a 3-D mask, their mesh "
+        "measurements and spatial neighbours, and mesh refinement."),
     "mcp": (
         "External MCP access",
         "Using Plexora's Paid features from an outside coding agent such as "

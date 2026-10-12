@@ -1048,12 +1048,14 @@ def _resources_from_entry(entry: Mapping[str, Any]) -> dict:
     return bindings
 
 
-#: What a layer draws, and therefore how the viewer draws it. Four kinds, not
+#: What a layer draws, and therefore how the viewer draws it. Five kinds, not
 #: one per modality: this is a rendering strategy, and a channel group IS an
 #: image layer with more than one channel, spots and bins ARE points with a
-#: render hint, and an annotation IS a shape somebody can edit. Adding a fifth
-#: means adding a renderer; adding a modality does not.
-LAYER_KINDS = ("image", "labels", "points", "shapes")
+#: render hint, and an annotation IS a shape somebody can edit. A `surface` is
+#: a triangle mesh in the volume's voxel frame, drawn by the 3-D view's mesh
+#: renderer (plexora/server/surface). Adding a kind means adding a renderer;
+#: adding a modality does not.
+LAYER_KINDS = ("image", "labels", "points", "shapes", "surface")
 
 #: What a registered layer may be RE-categorised as after import, per kind,
 #: as (modality, what the edit page calls it). Within a kind only: the kind

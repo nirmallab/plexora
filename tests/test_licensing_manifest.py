@@ -23,11 +23,19 @@ def test_manifest_is_well_formed():
 
 
 def test_paid_covers_every_declared_entitlement():
-    # Add-ons are sold separately, so the `ai` root plus every add-on is what
-    # must cover the manifest.
-    grants = tuple(manifest.AI_MODULES) + manifest.ADD_ONS
+    # The Paid roots (`ai`, `surfaces`) plus every add-on are what must cover
+    # the manifest: nothing declared may sit outside a root a plan can grant.
+    grants = tuple(manifest.AI_MODULES) + ("surfaces",) + manifest.ADD_ONS
     for name in manifest.ENTITLEMENTS:
         assert ent.any_satisfies(grants, name), name
+
+
+def test_surface_studio_is_its_own_root_outside_ai():
+    assert "surfaces" in manifest.ROOTS and "surfaces" not in manifest.ADD_ONS
+    assert not ent.any_satisfies(tuple(manifest.AI_MODULES), "surfaces")
+    from plexora.server import surface
+
+    assert surface.ENTITLEMENT == "surfaces"
 
 
 def test_add_ons_are_declared_roots_outside_the_ai_root():
@@ -39,9 +47,11 @@ def test_add_ons_are_declared_roots_outside_the_ai_root():
 def test_unlocks_lists_every_root_with_whether_it_is_granted():
     rows = manifest.unlocks(["ai"], paid=True)
     assert [row["entitlement"] for row in rows] == list(manifest.ROOTS)
-    assert {row["entitlement"]: row["granted"] for row in rows} == {"ai": True, "mcp": False}
-    assert all(row["granted"] for row in manifest.unlocks(["ai", "mcp"], paid=True))
-    assert not any(row["granted"] for row in manifest.unlocks(["ai", "mcp"], paid=False))
+    assert {row["entitlement"]: row["granted"] for row in rows} == {
+        "ai": True, "surfaces": False, "mcp": False}
+    assert all(row["granted"] for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=True))
+    assert not any(row["granted"]
+                   for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=False))
 
 
 def test_known_accepts_plugin_paths_but_not_typos():
