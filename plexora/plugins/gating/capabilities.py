@@ -457,11 +457,6 @@ def write_source(call, inp):
     frame = ds.table.geometry()
     payload["not_called"] = not_called
     payload["n_rows"] = int(frame.height) if frame is not None else 0
-    # And where the cell model, run at a gate as it stands, disagrees with it
-    # confidently (`cellcall.decide`): only markers it was run for.
-    model_own, model_not_own = _model_rows(ds, gates)
-    if model_own or model_not_own:
-        payload["model_own"], payload["model_not_own"] = model_own, model_not_own
     qc_fp = cell_exclusions.fingerprint(record)
     if inp.include_provenance:
         from plexora.plugins.gating.server.autogate import report

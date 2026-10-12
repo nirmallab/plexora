@@ -243,10 +243,7 @@ def _judge_rows(unit, packet, answer):
     value: each row's word over the range of values its cells showed
     (`packets._row_spans`), in `unit["judged_rows"]` -- no refit code makes
     afterwards crosses it (`Engine.clamp_to_judged`, beside the candidate
-    intervals' `judged`). The cell model's correction keeps to the candidate
-    intervals alone (`hybrid.judged_limits`): its per-cell calls are evidence
-    of their own, and on the PCA benchmark it moved FOXP3 toward the user's
-    gate across a first look's row. And whether a look
+    intervals' `judged`). And whether a look
     has ever seen the marker's own stain with confidence (`own_seen`: a
     population no look saw is what `replan` may call absent)."""
     if _confidence(answer) < ENGINE["t2_min_confidence"]:
@@ -385,8 +382,8 @@ def apply_t4(engine, packet, answer):
     unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t4"
     unit["rounds"] = int(unit.get("rounds", 0)) + 1
-    # What the rows judged, by value: a later correction by the cell model
-    # never crosses it (`hybrid.judged_limits`).
+    # What the rows judged, by value: no later refit crosses it
+    # (`engine.judged_limits`).
     spans = {row["row"]: (row["from"], row["to"])
              for row in (packet.get("evidence") or {}).get("intervals") or ()
              if row.get("from") is not None and row.get("to") is not None}
@@ -713,32 +710,8 @@ def apply_transfer(engine, packet, answer):
     return transfer.apply_transfer(engine, packet, answer)
 
 
-
-
-def apply_correction(engine, packet, answer):
-    """The cells a corrected gate would change, one word each: the move is
-    taken when enough of the answered cells agree with it
-    (`hybrid.apply_answer`), else the approved gate stays (and the doubt is
-    recorded); either way the gate goes on to the whole-image checks."""
-    from plexora.agent.errors import AgentError
-    from plexora.plugins.gating.server.autogate import hybrid
-
-    unit = _units(engine, packet)[0]
-    shown = (packet.get("evidence") or {}).get("cells") or []
-    missing = [key for key in shown if key not in answer.cells]
-    if missing:
-        raise AgentError("invalid_input", f"judge every numbered cell; missing {missing}",
-                         detail={"cells": shown})
-    _note(unit, answer)
-    words = {key: word for key, word in answer.cells.items() if key in shown}
-    record = hybrid.apply_answer(engine, unit, words)
-    unit["state"] = "awaiting_regression"
-    engine.settle(unit)
-    return _outcome(unit, correction=record["status"], share=record.get("share"))
-
-
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
-         "pixel_setup": apply_pixel, "correction_check": apply_correction}
+         "pixel_setup": apply_pixel}

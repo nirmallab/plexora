@@ -66,8 +66,7 @@ BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
 #: The packet kind each waiting state asks for.
 ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
         "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
-        "regression_confirm": "regression_confirm", "transfer_check": "transfer_check",
-        "awaiting_correction": "correction_check"}
+        "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
 #: answer models can describe them without importing the engine).
@@ -255,10 +254,6 @@ def confidence_for(unit) -> str:
         # Most of the image failed QC: what remains may not be representative.
         # A cap, never a route -- the evidence is judged as usual.
         cap = "moderate" if cap == "high" else cap
-    if "model_disagrees" in (unit.get("look_flags") or ()):
-        # The cell model reads the gate elsewhere, and the looks did not take
-        # its correction (or it lies too far to propose): a doubt, never a route.
-        cap = "moderate" if cap == "high" else cap
     if "pattern_mismatch" in (unit.get("look_flags") or ()) or unit.get("t4_stopped_mixed"):
         # The stain was not the compartment's pattern, or the gate stopped at
         # a row that held both kinds of cell: a doubt, never a route.
@@ -355,6 +350,22 @@ def compact_scoring(result, partners) -> dict:
 # -- the engine -------------------------------------------------------------------
 
 
+def judged_limits(unit, col):
+    """(lo, hi) in the fit space: the gate may not cross an interval a look
+    at candidates judged -- one judged `own_stain` keeps the gate below it,
+    one judged `unstained` / `neighbour_only` above it. Only intervals on the
+    side the unit's candidate left them on count (`Engine.clamp_to_judged`)."""
+    g = float(col.to_fit(unit["candidate"]))
+    lo, hi = -np.inf, np.inf
+    for a, b, word in unit.get("judged") or ():
+        fa, fb = float(col.to_fit(a)), float(col.to_fit(b))
+        if word == "own_stain" and fa >= g - 1e-9:
+            hi = min(hi, fa)
+        elif word in ("unstained", "neighbour_only") and fb <= g + 1e-9:
+            lo = max(lo, fb)
+    return lo, hi
+
+
 class Engine(BaseEngine):
     """One session, loaded; mutate through methods, then `save()`."""
 
@@ -374,6 +385,29 @@ class Engine(BaseEngine):
     def __init__(self, call, session_id, *, st=None):
         super().__init__(call, session_id, st=st or store())
 
+    def _migrate(self):
+        """A session stored while gating had its per-cell model (removed
+        2026-10-12) resumes without it: a unit waiting on the model's
+        correction goes back to its regression, a correction packet still
+        out is dropped, and the old `hybrid` option's tiles become `tiles`.
+        Whatever else the model left on the record (`cellcall`,
+        `model_withheld`, a unit's `model`) is never read."""
+        super()._migrate()
+        record = self.record
+        options = record["options"]
+        if "hybrid" in options:
+            if options.pop("hybrid") in ("tiles", "full"):
+                options["tiles"] = True
+        for unit in (record.get("units") or {}).values():
+            if unit.get("state") == "awaiting_correction":
+                unit["state"] = "awaiting_regression"
+        held = record["outstanding"]
+        dropped = [pid for pid, entry in held.items() if entry.get("kind") == "correction_check"]
+        for packet_id in dropped:
+            del held[packet_id]
+        if dropped:
+            self._sync_outstanding()
+
     # -- the workflow's hooks (`BaseEngine`) --
 
     def option_defaults(self):
@@ -384,29 +418,19 @@ class Engine(BaseEngine):
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])
 
-    # -- hybrid gating (`SessionOptions.hybrid`) --
+    # -- the multi-view looks (`SessionOptions.tiles`) --
 
-    def hybrid_option(self) -> str:
-        option = self.options["hybrid"]
-        return option if option in schemas.HYBRID_OPTIONS else "off"
-
-    def hybrid_has(self, feature, unit=None) -> bool:
-        """Whether the session's `hybrid` level includes `feature` (`tiles`
-        or `model`: `schemas.HYBRID_FEATURES`) -- for `unit`'s image: the
-        model is withheld from an image with no QC result
-        (`capabilities_session._model_withheld`)."""
-        if feature == "model" and unit is not None \
-                and unit["project"] in (self.record.get("model_withheld") or ()):
-            return False
-        return feature in schemas.HYBRID_FEATURES[self.hybrid_option()]
+    def tiles_on(self) -> bool:
+        """Whether the session draws its looks as the 2 x 2 multi-view block
+        (`SessionOptions.tiles`)."""
+        return bool(self.options["tiles"])
 
     def partner_panels(self, unit):
         """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
         `anti` panels): one expected and one not-expected partner of the
-        marker, as the cell model picks them (`cellcall.partner_plan`: gated
-        partners first), by image channel, with the gates this run holds for
+        marker (`partners.partner_plan`: gated partners first), by image channel, with the gates this run holds for
         them; {} when the marker has none."""
-        from plexora.plugins.gating.server.autogate import cellcall, views
+        from plexora.plugins.gating.server.autogate import partners, views
 
         ds = _data(self.call, unit["project"])
         entries = self.panel_for(unit["project"]).get("entries") or {}
@@ -415,7 +439,7 @@ class Engine(BaseEngine):
         book = self.ledger(unit["project"], without=unit)
         gated = {m: e["gate"] for m, e in book.items()
                  if e["grade"] not in ("failed", "pending") and e.get("gate") is not None}
-        plan = cellcall.partner_plan(entries, unit["marker"], present, {}, 1, set(gated))
+        plan = partners.partner_plan(entries, unit["marker"], present, {}, 1, set(gated))
         out = {"markers": {}, "gates": {}}
         for p in plan:
             if p["kind"] in out["markers"]:
@@ -425,38 +449,6 @@ class Engine(BaseEngine):
             if p["marker"] in gated:
                 out["gates"][channels[p["marker"]]] = float(gated[p["marker"]])
         return out if out["markers"] else {}
-
-    def model_waiting(self, unit) -> bool:
-        """Whether the unit's next decision waits on a run of the cell model
-        (`hybrid.waiting`); never with the model off."""
-        from plexora.plugins.gating.server.autogate import hybrid
-
-        return self.hybrid_has("model", unit) and hybrid.waiting(unit)
-
-    def model_ahead(self, unit):
-        """Read the marker's cells near its start while its first look is out
-        (`hybrid`, purpose `decide`, nothing waits): a gate the looks keep, or
-        move less than `HYBRID["rerun_halves"]`, is then corrected at once."""
-        from plexora.plugins.gating.server.autogate import hybrid
-
-        state = unit.get("model") or {}
-        if not self.hybrid_has("model", unit) or not hybrid.HYBRID["correct"] \
-                or unit.get("no_image_channel") or unit.get("condition") \
-                or state.get("runs") or state.get("ahead") or unit.get("candidate") is None:
-            return None
-        unit.setdefault("model", {})["ahead"] = float(unit["candidate"])
-        return hybrid.request(self, unit, unit["candidate"], purpose="decide")
-
-    def model_layer(self, unit, low):
-        """Queue the per-cell layer at the gate a looked-at marker was given
-        (`hybrid`, purpose `layer`): only markers that needed a look, only
-        with the model on. Nothing waits for it."""
-        from plexora.plugins.gating.server.autogate import hybrid
-
-        if low is None or not self.hybrid_has("model", unit) or not hybrid.HYBRID["layer"] \
-                or unit.get("no_image_channel") or not (unit.get("used") or {}).get("packets"):
-            return None
-        return hybrid.request(self, unit, low, purpose="layer")
 
     def unit_ref(self, unit):
         return {"project": unit["project"], "marker": unit["marker"]}
@@ -488,10 +480,9 @@ class Engine(BaseEngine):
         # an answer given before it is not replayed after it.
         qc = (packet.get("evidence") or {}).get("qc_exclusion") or {}
         extra = (f"qc:{qc.get('mode')}:{qc.get('fingerprint')}",) if qc.get("applied") else ()
-        if self.hybrid_option() != "off":
-            # The pictures and the cells they hold are the hybrid's; off,
-            # the key is today's.
-            extra += (f"hybrid:{schemas.HYBRID_VERSION}:{self.hybrid_option()}",)
+        if self.tiles_on():
+            # The multi-view looks are other pictures: off, the key is today's.
+            extra += ("tiles:1",)
         return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
@@ -641,12 +632,6 @@ class Engine(BaseEngine):
                   "confidence_notes": unit.get("confidence_notes")}
         if unit.get("condition"):
             detail["condition"] = unit["condition"]
-        if self.hybrid_has("model", unit) and unit.get("model"):
-            # What the cell model said and did; absent with it off, so a row
-            # is today's.
-            from plexora.plugins.gating.server.autogate import hybrid
-
-            detail["cellcall"] = hybrid.detail(unit)
         depends = unit.get("depends_on") or {r["marker"]: r["gate"]
                                              for r in unit.get("reference_gates") or []}
         if depends:
@@ -660,8 +645,6 @@ class Engine(BaseEngine):
                "delta_fit": unit.get("delta_fit"), "delta_fraction": unit.get("delta_fraction"),
                "refinement_rounds": int(unit.get("rounds") or 0), "session_id": self.id,
                "principal": getattr(self.call.policy, "principal", None) or "agent"}
-        if not empty:
-            self.model_layer(unit, snapped_low)
         if self.options["mode"] != "apply":
             unit["proposed"] = snapped_low
             provenance.record(ds.name, marker, **{**row, "status": "proposed",
@@ -718,16 +701,6 @@ class Engine(BaseEngine):
         is written there anyway, tagged `needs_review` with confidence
         `manual_review` (`_review_gate`): every gated marker ends with a value."""
         unit["reason"] = reason
-        if state in schemas.REVIEW_WRITE_STATES and self.hybrid_has("model", unit) \
-                and not unit.get("user_edited") and (proposed is None or unit.get("candidate") is None
-                     or abs(float(proposed) - float(unit["candidate"])) <= 1e-9):
-            # The gate written for review, corrected by the cell model first
-            # when a run near it is stored (`hybrid.correct_for_review`).
-            from plexora.plugins.gating.server.autogate import hybrid
-
-            corrected = hybrid.correct_for_review(self, unit)
-            if corrected is not None and proposed is not None:
-                proposed = corrected
         if proposed is not None:
             unit["proposed"] = float(proposed)
         if state in schemas.EMPTY_GATE_STATES and unit.get("seen") is not None:
@@ -1018,13 +991,6 @@ class Engine(BaseEngine):
 
     def settle(self, unit):
         """Advance a unit through every deterministic step it is waiting on."""
-        if unit["state"] == "awaiting_regression" and self.hybrid_has("model", unit):
-            from plexora.plugins.gating.server.autogate import hybrid
-
-            if hybrid.plan_correction(self, unit):
-                # The cell model reads the approved gate first, or its move
-                # is put to one question (`correction_check`).
-                return
         if unit["state"] == "awaiting_regression":
             result = self.run_regression(unit)
             if "lineage" in result["failed"]:
@@ -1207,7 +1173,7 @@ class Engine(BaseEngine):
             return unit["scoring"]
         if unit.get("judged") or unit.get("judged_rows"):
             # A rescore after a look (the marker turned out continuous) never
-            # crosses a row a look judged (`hybrid.judged_limits`).
+            # crosses a row a look judged (`judged_limits`).
             proposal = self.clamp_to_judged(unit, ds, float(proposal), why="rescore")
         unit["start"] = {"source": "scoring", "low": float(proposal),
                          "basis": result.get("proposal_source"),
@@ -1223,16 +1189,14 @@ class Engine(BaseEngine):
         """`low` clipped so it crosses no row a look judged -- a first look's
         rows (`judged_rows`) or a look at candidates' intervals (`judged`):
         one called `own_stain` keeps a gate below it, one called `unstained`
-        or `neighbour_only` above it (`hybrid.judged_limits`, relative to the
+        or `neighbour_only` above it (`judged_limits`, relative to the
         unit's current candidate) -- and the clip logged. The rule for every
         refit code makes after a look (a conditional refit, a rescore)."""
-        from plexora.plugins.gating.server.autogate import hybrid
-
         judged = list(unit.get("judged") or []) + list(unit.get("judged_rows") or [])
         if not judged or unit.get("candidate") is None:
             return low
         col = profmod.column(ds, unit["marker"])
-        lo, hi = hybrid.judged_limits({**unit, "judged": judged}, col)
+        lo, hi = judged_limits({**unit, "judged": judged}, col)
         fit = float(col.to_fit(low))
         clipped = min(max(fit, lo), hi)
         if clipped == fit:
@@ -1420,7 +1384,6 @@ class Engine(BaseEngine):
                 return ([], "busy") if held else ([(kind, [])], None)
         bulk_running = record.get("state") == "bulk_running"
         picks = []
-        model_wait = False
 
         def blocked(why):
             if picks:
@@ -1452,11 +1415,6 @@ class Engine(BaseEngine):
                     continue
                 if unit["state"] != "accepted_t1" and not self._settled(unit, links):
                     continue
-                if self.model_waiting(unit):
-                    # The cell model is reading this marker (`hybrid`): the
-                    # rest goes on; nothing is "done" while it reads.
-                    model_wait = True
-                    continue
                 kind = self._decision(unit)
                 if kind:
                     picks.append((kind, [unit]))
@@ -1478,8 +1436,6 @@ class Engine(BaseEngine):
             return picks, None
         if held:
             return [], "busy"
-        if model_wait:
-            return [], "wait"
         if self.waiting_for_user():
             return [], "wait_user"
         return [], None
@@ -1531,8 +1487,6 @@ class Engine(BaseEngine):
         settled, closed or waits on the audit sheet."""
         if self.check_user_edit(unit):
             return None
-        if self.model_waiting(unit):
-            return None
         if unit["state"] == "awaiting_regression":
             self.settle(unit)
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
@@ -1544,8 +1498,6 @@ class Engine(BaseEngine):
             return None
         if kind == "t2_confirm" and self.defer_for_children(unit):
             return None
-        if kind == "t2_confirm":
-            self.model_ahead(unit)
         if kind == "t4_candidates" and not self.rounds_left(unit) \
                 and not self.limit_reached(unit, "rounds"):
             return None
@@ -1574,7 +1526,6 @@ class Engine(BaseEngine):
             if kind:
                 return kind, [last]
         bulk_running = record.get("state") == "bulk_running"
-        model_wait = False
         for project in record["images"]:
             units = self.units_of(project)
             if project != record.get("reference_image") and any(
@@ -1601,9 +1552,6 @@ class Engine(BaseEngine):
                     self.close(unit, "manual_review_recommended",
                                "the deterministic pass did not reach this marker")
                     continue
-                if self.model_waiting(unit):
-                    model_wait = True
-                    continue
                 kind = self._decision(unit)
                 if kind:
                     return kind, [unit]
@@ -1613,8 +1561,6 @@ class Engine(BaseEngine):
                         return "t1_strip", strip
             if strip:
                 return "t1_strip", strip
-        if model_wait:
-            return "wait", []
         waiting = self.waiting_for_user()
         if waiting:
             return "wait_user", waiting

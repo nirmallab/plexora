@@ -111,6 +111,22 @@ def test_no_move_after_a_look_crosses_a_row_it_judged():
     assert unit["clamps"][0] == {"why": "within", "from": 8.36, "to": pytest.approx(7.87)}
 
 
+def test_the_judged_limits_never_cross_what_a_look_judged():
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate.engine import judged_limits
+
+    col = SimpleNamespace(to_fit=lambda v: float(v))
+    unit = {"candidate": 5.0, "judged": [
+        [4.6, 4.8, "unstained"], [4.8, 5.0, "neighbour_only"],     # passed going up
+        [5.0, 5.2, "own_stain"],                                     # where it stopped
+        [5.4, 5.6, "unstained"],                                     # above: not a limit
+        [4.0, 4.2, "own_stain"],                                     # below: not a limit
+        [5.2, 5.4, "mixed"]]}                                        # no word, no limit
+    assert judged_limits(unit, col) == (5.0, 5.0)
+    assert judged_limits({"candidate": 5.0}, col) == (float("-inf"), float("inf"))
+
+
 def test_a_confident_look_records_what_its_rows_judged_and_an_unsure_one_does_not():
     from plexora.plugins.gating.server.autogate import transitions
 
@@ -120,7 +136,7 @@ def test_a_confident_look_records_what_its_rows_judged_and_an_unsure_one_does_no
     unit = {}
     transitions._judge_rows(unit, packet, sure)
     assert unit["judged_rows"] == [[7.9, 8.3, "own_stain"]] and unit["own_seen"] is True
-    assert "judged" not in unit             # the cell model keeps to the intervals
+    assert "judged" not in unit             # a candidate look's intervals are its own
     unsure = SimpleNamespace(rows={"below": "unstained", "near": "mixed", "above": "own_stain"},
                              confidence="unsure")
     other = {}
@@ -355,28 +371,6 @@ def test_strict_qc_without_a_qc_result_is_said_at_the_start():
     warning = cs._qc_warning(blocks)["qc_warning"]
     assert warning["images"] == ["A"] and "no QC result" in warning["message"]
     assert cs._qc_warning({"B": blocks["B"]}) == {}
-
-
-def test_the_cell_model_is_withheld_from_an_image_with_no_qc_result():
-    """With the model on, an image strict QC cannot act on gets no model
-    (its confident calls would promote the image's artifacts); the start
-    says so, and every other image keeps it."""
-    from types import SimpleNamespace
-
-    from plexora.plugins.gating import capabilities_session as cs
-    from plexora.plugins.gating.server.autogate.engine import Engine
-
-    blocks = {"A": {"mode": "strict", "applied": False, "reason": "no QC result for this image"},
-              "B": {"mode": "strict", "applied": True}}
-    assert cs._model_withheld(blocks, "full") == ["A"] and cs._model_withheld(blocks, "tiles") == []
-    warning = cs._qc_warning(blocks, "model")["qc_warning"]
-    assert warning["model_withheld"] == ["A"] and "cell model" in warning["message"]
-    assert "model_withheld" not in cs._qc_warning(blocks)["qc_warning"]
-    fake = SimpleNamespace(options={"hybrid": "full"}, record={"model_withheld": ["A"]})
-    fake.hybrid_option = lambda: Engine.hybrid_option(fake)
-    assert not Engine.hybrid_has(fake, "model", {"project": "A"})
-    assert Engine.hybrid_has(fake, "model", {"project": "B"})
-    assert Engine.hybrid_has(fake, "tiles", {"project": "A"})
 
 
 def test_a_look_that_went_out_before_the_lineage_partner_is_still_caught_at_the_close():

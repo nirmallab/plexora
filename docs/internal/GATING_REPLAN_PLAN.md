@@ -146,16 +146,17 @@ the packet at most once, so the rounds are bounded by the panel size.
   value (the sampled cells' range per row), in `unit["judged_rows"]`, beside
   the T4 intervals' `judged`. This is recorded only for looks at
   `fairly_sure` or better.
-- `Engine.clamp_to_judged` (using `hybrid.judged_limits`) clips every refit
+- `Engine.clamp_to_judged` (using `engine.judged_limits`, once
+  `hybrid.judged_limits`) clips every refit
   code makes after a look to both records: the `within` refit, and a rescore
   after a look. A move past a row the reader called `own_stain` (going up) or
   `unstained` / `neighbour_only` (going down) is clipped to that row, and the
   clip is logged.
-- The hybrid cell-model correction keeps its existing clip (T4 intervals
-  only). Its per-cell calls are evidence in their own right, and on the
+- The hybrid cell-model correction kept its existing clip (T4 intervals
+  only). Its per-cell calls were evidence in their own right, and on the
   benchmark it moved LSP11321 FOXP3 toward the user's gate across a
-  first-look row. Clipping it there too failed the hybrid's own tests and
-  would have undone that move.
+  first-look row. (The cell model was removed on 2026-10-12: its per-cell
+  overrides were worse than the gates on the PCA benchmark.)
 - `within: P` is offered only when the data agree that the marker sits inside
   P: the share of the marker's positives that are P-negative must be at most
   `within_max_orphan`, and P must be accepted cleanly (no `needs_review`).
@@ -319,9 +320,9 @@ Re-checked against every test since 2026-10-08 (the step ledger's E1-E13).
   has run, purity failing again with nothing else failing caps the gate's
   confidence at low (`Engine.purity_capped`). A spatial check failing too
   still asks.
-- **The cell model needs a QC result.** It is withheld from an image strict
-  QC cannot act on (`record["model_withheld"]`, said in `qc_warning`).
-  Synthetic bench scenes run with `qc: off`, since they have no QC.
+- **Strict QC without a QC result is said at the start** (`qc_warning`). The
+  cell model was withheld from such an image until the model was removed on
+  2026-10-12, and the synthetic bench's `qc: off` went with it.
 - **A re-screen when a partner lands** (`replan.rescreen`). A marker whose
   look settled nothing can close for review before its excluding partner is
   gated. When that partner is accepted, the lineage check runs again and the

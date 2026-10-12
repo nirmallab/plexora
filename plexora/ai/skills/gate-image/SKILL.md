@@ -207,8 +207,7 @@ marker that is not `accepted`; open `questions` are put to the user.
 ## Failure modes
 
 - `bulk_running` for long: `gating_session_status` `bulk` says whether the pass
-  runs (the next `gating_next` resumes it after a restart). `model_running`:
-  the cell model is reading a marker (`hybrid`); call `gating_next` again.
+  runs (the next `gating_next` resumes it after a restart).
 - `paused`: wait, then go on. `stopped`: `gating_session_finish` with `close`
   (keeps the gates) or `rollback`, and stop; never start another unasked.
 - `viewer_not_available` while mirroring: the session continues headless.

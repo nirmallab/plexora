@@ -147,13 +147,6 @@ public:
   - name: PLEXORA_WINDOW_SCAN
     group: Z-stacks
     description: Set to `inline` to compute a z-stack's brightness window before its first tile, as before; by default the first tiles use a provisional window and the exact one is computed in the background.
-  - name: PLEXORA_CELLCALL_MODEL_DIR
-    group: Cell model
-    description: Directory the gating cell model's file is read from and downloaded to (the model that checks, per cell near a gate, whether the stain is the cell's own). For an offline machine, copy `cellcall_v1.onnx` here and nothing is fetched.
-    default: "<data directory>/.models/cellcall"
-  - name: PLEXORA_CELLCALL_MODEL_URL
-    group: Cell model
-    description: Fetch the cell model's file from this address instead of Plexora's release (a mirror inside a firewalled site). The file is checked against the same checksum either way.
 
   - name: PLEXORA_AI_MODELS
     group: AI agents
@@ -166,7 +159,6 @@ public:
     description: The model your agent client runs routine work on (tool relay, listing, write-ups). Overrides `plexora ai tiers routine=<model>`; unset, the client picks its cheapest model that calls tools reliably.
 internal:
   - PLEXORA_ADMIN_TOKEN
-  - PLEXORA_CELLCALL_MODEL_FILE
   - PLEXORA_ALLOW_SOURCE_WRITES
   - PLEXORA_ASKPASS_NONCE
   - PLEXORA_ASKPASS_TIMEOUT
@@ -180,7 +172,6 @@ internal:
   - PLEXORA_DESKTOP_RUNTIME
   - PLEXORA_GATING_MAX_EXTENSIONS
   - PLEXORA_GATING_ON_LIMIT
-  - PLEXORA_GATING_HYBRID
   - PLEXORA_QC_MAX_EXTENSIONS
   - PLEXORA_QC_ON_LIMIT
   - PLEXORA_QC_CHECKS

@@ -71,8 +71,6 @@ def _limit_default(name):
         return default
     if name == "on_limit":
         return raw if raw in schemas.LIMIT_POLICIES else default
-    if name == "hybrid":
-        return raw if raw in schemas.HYBRID_OPTIONS else default
     try:
         return max(0, min(10, int(raw)))
     except ValueError:
@@ -179,15 +177,11 @@ class SessionOptions(AgentModel):
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
-    hybrid: Literal[schemas.HYBRID_OPTIONS] = Field(
-        default_factory=lambda: _limit_default("hybrid"),
-        description="Hybrid gating: tiles (the looks draw each cell with its own outline and "
-                    "one expected and one not-expected partner channel), model (a small "
-                    "per-cell image model reads the cells near each looked-at marker's gate, "
-                    "and its confident calls shape the gate; it needs the segmentation mask "
-                    "and the model file, and runs on this machine's CPU), full (both), or "
-                    "off. A marker the model cannot read is gated as without it. Default "
-                    "from PLEXORA_GATING_HYBRID, else off.")
+    tiles: bool = Field(False, description="Draw every look's cells as a 2 x 2 block: "
+                        "morphology, the context with the judged cell outlined, and one "
+                        "expected and one not-expected partner channel from the panel "
+                        "context (reading guide `collage_t2m`). Off, the looks are the "
+                        "two-panel cells.")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -226,12 +220,8 @@ def session_qc(handler):
 
 def option_defaults() -> dict:
     """Every session option at its default (what an older session's stored
-    options are completed with). `hybrid` completes as `off` whatever the
-    environment says: a session stored before the switch existed ran
-    without it, and resuming it must not change how it decides."""
-    out = SessionOptions.model_construct().model_dump(mode="json")
-    out["hybrid"] = "off"
-    return out
+    options are completed with)."""
+    return SessionOptions.model_construct().model_dump(mode="json")
 
 
 def _cap_by_name(name):
@@ -349,7 +339,6 @@ def start(call, inp):
         "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
         "pixel": pixel, "qc_exclusion": qc_blocks,
         "qc_missing": _qc_missing(qc_blocks),
-        "model_withheld": _model_withheld(qc_blocks, inp.hybrid),
     }
     if expression.get("status") == "pending":
         record["state"] = "needs_setup"
@@ -399,7 +388,7 @@ def start(call, inp):
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(pixel), "state": record["state"],
             "qc_exclusion": qc_blocks,
-            **_qc_warning(qc_blocks, inp.hybrid),
+            **_qc_warning(qc_blocks),
             **_guide(inp.reading, inp.known_guide),
             **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
@@ -480,35 +469,19 @@ def _qc_missing(blocks) -> list:
                   and block.get("reason") == "no QC result for this image")
 
 
-def _model_withheld(blocks, hybrid) -> list:
-    """The images the cell model is not used on (`Engine.hybrid_has`): with
-    the model on, every `_qc_missing` image. With nothing left out, the
-    model's confident calls promote whatever bright artifact the image holds
-    (PCA benchmark 2026-10-11: an edge band in LSP11761, which had no QC)."""
-    from plexora.plugins.gating.server.autogate import schemas
-
-    if "model" not in schemas.HYBRID_FEATURES.get(hybrid, frozenset()):
-        return []
-    return _qc_missing(blocks)
-
-
-def _qc_warning(blocks, hybrid="off") -> dict:
+def _qc_warning(blocks) -> dict:
     """A warning in the start output for `_qc_missing` images -- never a
     silent no-op: artifacts there (an edge band, a fold) reach every marker's
     fit, sample and look."""
     missing = _qc_missing(blocks)
     if not missing:
         return {}
-    withheld = _model_withheld(blocks, hybrid)
     return {"qc_warning": {
         "images": missing,
-        **({"model_withheld": withheld} if withheld else {}),
         "message": (f"{', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no QC "
                     "result, so the QC mode leaves nothing out: an artifact there (an edge "
                     "band, a fold, autofluorescence) reaches every marker. "
-                    + ("The cell model is not used there until QC has run: it would promote "
-                       "such an artifact. " if withheld else "")
-                    + "Tell the user; run QC first if they want it ("
+                    "Tell the user; run QC first if they want it ("
                     + tool_name_of("qc.session_start") + "), or go on and let re-planning "
                     "flag an image whose looks keep naming the same artifact.")}}
 
@@ -702,48 +675,6 @@ def _submit_bulk(call, session_id):
     return jobs.submit(child, BulkInput(session_id=session_id))
 
 
-def _submit_model(call, session_id):
-    from plexora.agent import jobs
-
-    capability = _cap_by_name("gating.session_cellcall")
-    child = dataclasses.replace(call, capability=capability,
-                                operation_id=f"{call.operation_id}.cellcall",
-                                arguments={"session_id": session_id}, receipted=False,
-                                extras=dict(call.extras))
-    return jobs.submit(child, BulkInput(session_id=session_id))
-
-
-def _ensure_model_job(call, session_id, st):
-    """A session with cell-model runs queued (`autogate/hybrid.py`) and none
-    being read gets its job; the job drains the queue and ends. Returns the
-    job id submitted, or None."""
-    from plexora.agent import jobs
-    from plexora.plugins.gating.server.autogate import engine as engines
-    from plexora.plugins.gating.server.autogate import hybrid
-
-    with engines.engine_for(call, session_id, st=st) as engine:
-        q = engine.record.get("cellcall") or {}
-        if not q.get("queue"):
-            return None
-        running = q.get("job_id")
-        if running:
-            job = jobs.store().get(running)
-            if job is not None and job.get("status") in ("queued", "running"):
-                return None
-            # A job that died (a restarted server) leaves its runs taken.
-            for entry in q["queue"]:
-                entry.pop("taken", None)
-        job = _submit_model(call, session_id)
-        hybrid.queue_of(engine.record)["job_id"] = job["job_id"]
-        return job["job_id"]
-
-
-def cellcall_runs(call, inp):
-    from plexora.plugins.gating.server.autogate import hybrid
-
-    return hybrid.run_queue(call, inp.session_id)
-
-
 def _announce(call, record, session_id, event, /, **payload):
     """Tell every tab open on one of the session's images what the session is
     doing (`schemas.SESSION_EVENTS`; core's agent panel listens)."""
@@ -929,10 +860,6 @@ def next_packet(call, inp):
                         "outstanding_kind": record.get("outstanding_kind"),
                         "panel_pending": record.get("panel_pending"),
                         "units": record["units"]}
-            model_queued = bool((record.get("cellcall") or {}).get("queue"))
-            model_job = (record.get("cellcall") or {}).get("job_id")
-        if model_queued:
-            model_job = _ensure_model_job(call, inp.session_id, st) or model_job
         if status in ("packet", "again"):
             kind = packet.get("kind")
             mirrors = _mirroring(mirror) and not detached
@@ -979,11 +906,6 @@ def next_packet(call, inp):
                         "next": f"{tool_name_of('gating.session_finish')}(session_id, "
                                 f"action='close'), then {tool_name_of('gating.report')}"}
         if time.monotonic() >= deadline:
-            if state != "bulk_running" and model_queued:
-                return {"state": "model_running", "progress": progress, "retry_after_s": 5,
-                        "job_id": model_job,
-                        "next": f"call {tool_name_of('gating.next')} again; the cell model is "
-                                "still reading the next marker's cells"}
             return {"state": "bulk_running", "progress": progress,
                     "job_id": engine.record.get("bulk_job_id"),
                     "next": f"call {tool_name_of('gating.next')} again; the deterministic "
@@ -1136,9 +1058,6 @@ def answer(call, inp):
                   and states_before.get(k) not in schemas.TERMINAL_STATES]
         snapshot = {"images": record["images"], "state": record["state"],
                     "outstanding_kind": None, "units": record["units"]}
-        model_queued = bool((record.get("cellcall") or {}).get("queue"))
-    if model_queued:
-        _ensure_model_job(call, inp.session_id, st)
     if not outcome.get("already_applied"):
         refs = outcome.get("unit") or ""
         # One event per answer: the markers it closed ride on `answered`
@@ -1221,16 +1140,6 @@ def _unit_row(unit):
     row = {k: unit.get(k) for k in ("project", "marker", "state", "confidence", "final",
                                     "proposed", "gmm", "tier", "class", "reason")
            if unit.get(k) is not None}
-    model = unit.get("model")
-    if model:
-        # Only with the session's `hybrid` model on.
-        correction = model.get("correction") or {}
-        row["model"] = {"waiting": model.get("waiting") is not None,
-                        "unavailable": model.get("unavailable"),
-                        "runs": {k: v.get("status") for k, v in (model.get("runs") or {}).items()},
-                        "correction": {k: correction.get(k) for k in (
-                            "status", "g_v", "g_star", "changed", "agree", "answered")
-                            if correction.get(k) is not None} or None}
     return row
 
 
@@ -1575,13 +1484,6 @@ def capabilities():
             permission="reversible_write", input_model=BulkInput, handler=session_qc(bulk),
             writes=("gates",), persistent=True, execution="job", egress="aggregates",
             reads=("table", "gates", "image")),
-        cap(name="gating.session_cellcall", entitlement="ai:gating:session",
-            tool_name="gating_session_cellcall",
-            purpose="The cell model's runs of a hybrid gating session (submitted by the "
-                    "session itself; call it yourself only to resume one).",
-            permission="read", input_model=BulkInput, handler=session_qc(cellcall_runs),
-            persistent=True, execution="job", egress="aggregates",
-            reads=("table", "gates", "image", "mask")),
         cap(name="gating.next", entitlement="ai:gating:session", tool_name="gating_next",
             purpose="The session's next decision packet: one question, compact numbers, at "
                     "most two small images, and the answer schema. The same packet again "

@@ -109,17 +109,6 @@ class ConfirmAnswer(_Base):
     verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"]
 
 
-class CorrectionAnswer(_Base):
-    kind: Literal["correction_check"] = "correction_check"
-    cells: dict[str, Literal["own", "not_own", "cannot_tell"]] = Field(
-        description="EVERY numbered cell (c1, c2, ...): `own` -- the marker's stain on this "
-                    "cell is its own (where the marker sits: a ring, the cytoplasm, the "
-                    "nucleus), even dim; `not_own` -- unstained, or the light on it is a "
-                    "neighbour's or the background's; `cannot_tell`. Judge each cell on its "
-                    "own pixels; the reference cells (r1, ...) are clear positives, to compare "
-                    "with, and are not answered.")
-
-
 class TransferAnswer(_Base):
     kind: Literal["transfer_check"] = "transfer_check"
     per_image: dict[str, Literal["holds", "too_low", "too_high", "cannot_tell"]]
@@ -177,7 +166,7 @@ class ReplanAnswer(_Base):
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          CorrectionAnswer, ReplanAnswer)
+          ReplanAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

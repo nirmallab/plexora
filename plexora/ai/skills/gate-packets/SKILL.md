@@ -36,8 +36,8 @@ A session that exists (`gating_session_status` finds it).
    A value `{as_in: packet_id}` is unchanged since that packet (`as_in`).
 3. Stop, without answering the packet in hand, when `units_done` reached your
    quota, or the state is `decided`, `waiting_for_user`, `paused`, `stopped`
-   or `other_tasks` (what is ready is another worker's). `bulk_running`,
-   `model_running` or `busy`: call `gating_next` again.
+   or `other_tasks` (what is ready is another worker's). `bulk_running` or
+   `busy`: call `gating_next` again.
 
 How to judge (the guide says how to read each picture):
 
@@ -72,8 +72,6 @@ How to judge (the guide says how to read each picture):
   just judged (or none, `as_in`): answer from that look.
 - `regression_confirm`: `holds` unless a region is clearly wrong; the failing
   `checks` say what to look at.
-- `correction_check`: one word per numbered cell (`own`, `not_own`,
-  `cannot_tell`), each on its own pixels; r-cells are clear positives.
 - `replan`: failed markers and images, as notes and numbers. Per marker:
   `absent` only when the positives are artifact (the whole-image view said
   so, or `lineage_contamination` puts even the brightest on an excluding

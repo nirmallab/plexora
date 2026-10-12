@@ -28,7 +28,6 @@ then scoring its session: `--score-session <id>`.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import os
@@ -147,15 +146,10 @@ def rows_for(direction, evidence) -> dict:
 
 
 class TruthAgent:
-    """Answers packets from known per-cell truth (see the module docstring).
-
-    With `cell_truth` (a scene's per-cell causes, by marker) and `ids` (cell
-    id per row), the oracle cell model reads the causes (`oracle_cell_model`)
-    and a correction check is answered cell by cell (`shown_captions`);
+    """Answers packets from known per-cell truth (see the module docstring);
     `noisy:P` turns a word with probability P."""
 
-    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, *, cell_truth=None,
-                 ids=None):
+    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
         self.style, self.p = (style.split(":") + ["0.2"])[:2] if style.startswith("noisy") \
@@ -163,15 +157,6 @@ class TruthAgent:
         self.p = float(self.p)
         self.rng = np.random.default_rng(seed)
         self._best = {}
-        self.cell_truth = cell_truth or {}
-        self.index = {int(i): k for k, i in enumerate(ids)} if ids is not None else {}
-
-    def truth_by_row(self):
-        """{marker: bool per table row}: the truth the oracle cell model reads."""
-        return self.truth
-
-    def cell_truth_by_row(self):
-        return self.cell_truth
 
     def _errors(self, marker, low):
         called = self.values[marker] > np.float32(low)
@@ -228,21 +213,6 @@ class TruthAgent:
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
         if kind == "regression_confirm":
             return {"kind": kind, "verdict": "holds"}
-        if kind == "correction_check":
-            # Each numbered cell from its truth (own when it is a true
-            # positive); `noisy:P` turns a word with probability P.
-            captions = shown_captions(packet)
-            words = {}
-            for key in ev.get("cells") or []:
-                row = self.index.get(captions.get(key, -1))
-                if row is None:
-                    words[key] = "cannot_tell"
-                    continue
-                word = "own" if self.truth[marker][row] else "not_own"
-                if self.style == "noisy" and self.rng.random() < self.p:
-                    word = "not_own" if word == "own" else "own"
-                words[key] = word
-            return {"kind": kind, "cells": words}
         if kind == "pixel_setup":
             # An uncalibrated image's size check: the scenes paint nuclei at
             # the size the estimate assumes.
@@ -263,20 +233,11 @@ class TruthAgent:
         return {"kind": "panel_context", "entries": []}
 
 
-
 # -- variants -------------------------------------------------------------------------
 
-#: Synthetic scenes have no QC result, and nothing for QC to find: their
-#: sessions run with QC off, as a user who chose to ignore QC would, so a
-#: hybrid variant keeps its cell model (`Engine.hybrid_has` withholds it from
-#: an image strict QC cannot act on).
-SYNTHETIC_OPTIONS = {"qc": "off"}
-
-#: The ablation's variants: what each sets of a session's options. The hybrid
-#: levels (`schemas.HYBRID_OPTIONS`): the multi-view looks, the cell model's
-#: correction, both.
-VARIANTS = {"baseline": {}, "tiles": {"hybrid": "tiles"}, "model": {"hybrid": "model"},
-            "hybrid": {"hybrid": "full"}}
+#: The ablation's variants: what each sets of a session's options. `tiles`
+#: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
+VARIANTS = {"baseline": {}, "tiles": {"tiles": True}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -286,33 +247,10 @@ def variant_arm(variant, variants) -> str:
 
 
 def check_variants(variants):
-    from plexora.plugins.gating.server.autogate import schemas
-
     unknown = [v for v in variants if v not in VARIANTS]
     if unknown:
         raise ValueError(f"unknown variants {unknown}; choose from {sorted(VARIANTS)}")
-    for name, options in VARIANTS.items():
-        assert options.get("hybrid", "off") in schemas.HYBRID_OPTIONS, name
     return tuple(variants)
-
-
-def shown_captions(packet) -> dict:
-    """{caption: cell id} of a packet's first collage, for packets that
-    number their cells (`correction_check`)."""
-    from plexora.agent import artifacts
-
-    for image in packet.get("images") or []:
-        art = image.get("artifact_id")
-        if not art:
-            continue
-        try:
-            _png, sidecar = artifacts.get(art)
-        except KeyError:
-            continue
-        rows = (sidecar.get("manifest") or {}).get("rows") or []
-        return {c["caption"]: int(c["cell_id"]) for r in rows for c in r.get("cells") or []
-                if c.get("caption")}
-    return {}
 
 
 def cause_scores(values, truth, low, cell_truth, *, high=None) -> dict:
@@ -377,11 +315,6 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
     held, sent = {}, {"packets": 0, "chars": 0, "images": 0, "pixels": 0}
     result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
     for _ in range(limit):
-        if result["state"] == "model_running":
-            # A hybrid session's cell model is reading a marker: let it.
-            jobs.drain(600)
-            result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
-            continue
         if result["state"] != "decision":
             break
         packet = result["packet"]
@@ -421,70 +354,6 @@ def _session_units(session_id):
         return []
 
 
-def _drain_model_runs(session_id, timeout_s=120.0):
-    """Wait until a session's queued cell-model runs (its per-cell layers)
-    are done, so none outlives the bench's stand-in model."""
-    from plexora.plugins.gating.server.autogate import engine
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        try:
-            queued = (engine.store().load(session_id).get("cellcall") or {}).get("queue")
-        except Exception:
-            return
-        if not queued:
-            return
-        time.sleep(0.2)
-
-
-class _OracleModel:
-    """The bench's stand-in for the cell model's weights (never called: the
-    oracle's `predict` answers from truth)."""
-
-    identity = "oracle"
-    workers = 1
-
-    def __call__(self, x):
-        return np.full(len(x), 0.5, dtype=np.float32)
-
-
-@contextlib.contextmanager
-def oracle_cell_model(truth, *, cell_truth=None, seed=0, unsure=0.15):
-    """Run the cell model as an oracle (`hybrid` variants of the synthetic
-    bench): a cell's p_own is high when it is truly positive and not lit by a
-    neighbour (`cell_truth`'s `contaminated`), low otherwise, and 0.5 (no
-    confident word) for a seeded share `unsure` of cells -- what the real
-    model's confident calls are, without an image model on synthetic tiles."""
-    import zlib
-
-    from plexora.plugins.gating.server.autogate import cellcall
-
-    saved = cellcall.predict, cellcall.predictor
-
-    def predict(session, ds, selection, *, model=None, progress=None, cancelled=None):
-        marker = selection["marker"]
-        rows = np.asarray(selection["run"], dtype=np.int64)
-        own = np.asarray(truth[marker], dtype=bool)[rows]
-        spill = (cell_truth or {}).get(marker) or {}
-        if spill.get("contaminated") is not None:
-            own &= ~np.asarray(spill["contaminated"], dtype=bool)[rows]
-        rng = np.random.default_rng([int(seed), zlib.crc32(marker.encode())])
-        p = np.where(own, 0.97, 0.03).astype(np.float32)
-        p[rng.random(rows.size) < unsure] = 0.5
-        if progress:
-            progress(rows.size, rows.size)
-        return {"rows": rows.tolist(), "p": p.tolist(), "pixel_gate": 1.0,
-                "pixel_gate_agreement": 1.0, "n_calibration": 0, "levels": {}, "plan": [],
-                "channels": [], "crop_px": 0.0}
-
-    cellcall.predict = predict
-    cellcall.predictor = _OracleModel
-    try:
-        yield
-    finally:
-        cellcall.predict, cellcall.predictor = saved
-
-
 def gates_for_arms(session, project, markers, agent, arms, *, variants=("baseline",),
                    options=None):
     """({arm: {marker: gate}}, {arm: the session's units and costs}). Each
@@ -505,12 +374,8 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
             arm = variant_arm(variant, variants)
             started = {**(options or {}), **VARIANTS[variant],
                        "agent": f"bench:{variant}", "reuse_answers": False}
-            oracle = oracle_cell_model(agent.truth_by_row(), cell_truth=agent.cell_truth_by_row()) \
-                if started.get("hybrid") in ("model", "full") else contextlib.nullcontext()
-            with oracle:
-                units, status, seconds, sid = run_session(session, project, markers, agent,
-                                                          mode="propose", options=started)
-                _drain_model_runs(sid)
+            units, status, seconds, sid = run_session(session, project, markers, agent,
+                                                      mode="propose", options=started)
             out[arm] = {m: units.get(m, {}).get("final") for m in markers}
             stored = _session_units(sid)
             extras[arm] = {"units": units, "used": status["used"], "seconds": seconds,
@@ -595,10 +460,9 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,
                                           seed=seed + index, markers=markers)
                 agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                   seed=seed + index, cell_truth=made.get("cell_truth"),
-                                   ids=made.get("ids"))
+                                   seed=seed + index)
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
-                                               variants=variants, options=SYNTHETIC_OPTIONS)
+                                               variants=variants)
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
                                        cell_truth=made.get("cell_truth")):
                     row["scenario"] = scenario
@@ -633,7 +497,7 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
         try:
             registry.discover(["gating"])
             session = AgentSession(table_limit=4)
-            options = {**SYNTHETIC_OPTIONS, **VARIANTS[check_variants((variant,))[0]]}
+            options = dict(VARIANTS[check_variants((variant,))[0]])
             for index, scenario in enumerate(scenarios):
                 name = f"bench_{scenario}"
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,
@@ -641,15 +505,13 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
                 runs = []
                 for repeat in range(int(repeats)):
                     agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                       seed=seed + 1000 * repeat + index,
-                                       cell_truth=made.get("cell_truth"), ids=made.get("ids"))
+                                       seed=seed + 1000 * repeat + index)
                     units, _status, _s, _sid = run_session(
                         session, name, markers, agent, mode="propose",
                         options={**options, "agent": f"{agent_style}#{repeat}"})
                     runs.append(units)
                 replay_agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                          seed=seed + index, cell_truth=made.get("cell_truth"),
-                                          ids=made.get("ids"))
+                                          seed=seed + index)
                 replay, _status, _s, _sid = run_session(
                     session, name, markers, replay_agent, mode="propose",
                     options={**options, "agent": f"{agent_style}#0"})
@@ -1184,10 +1046,7 @@ def code_state() -> dict:
 
 
 def _meta(variants):
-    from plexora.plugins.gating.server.autogate import schemas
-
-    return {"variants": list(variants), "code": code_state(),
-            "hybrid_version": schemas.HYBRID_VERSION}
+    return {"variants": list(variants), "code": code_state()}
 
 
 def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DEFAULT,

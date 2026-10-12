@@ -6,6 +6,15 @@ what it did to the gates on real tissue, and a verdict. Each entry names its
 evidence; numbers come from recorded sessions or from studies in
 `docs/internal/bench/runs/` (gitignored), never from memory.*
 
+> **2026-10-12: the cell model was removed.** On the PCA benchmark (3 images x
+> 17 markers against the user's gates) its per-cell overrides were worse than
+> the gates. `hybrid` is gone with it; the multi-view look survives as its own
+> off-by-default session option, `tiles` (`--variants baseline,tiles`). The
+> entries below are kept as history: file and option names in them (`hybrid:
+> model`, `cellcall.py`, `correction.py`, `neighbourhood.py`, `correction_check`)
+> no longer exist in the code, and `docs/internal/CELL_CALL_LEARNING.md` is
+> in git history only.
+
 Verdicts: **helped** (moved gates toward the expert more often than away),
 **neutral** (no measurable effect), **hurt**, **untested** (no real-tissue
 evidence yet), and a proposed action: keep / fix / candidate to remove.

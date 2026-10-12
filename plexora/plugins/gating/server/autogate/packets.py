@@ -96,12 +96,6 @@ READING_GUIDE = {
                         "current gate outward: row i1 is the cells between the current gate and "
                         "candidate c1, row i2 between c1 and c2, and so on. Judge every row on "
                         "its own"),
-    "correction_check": ("a check of single cells: each numbered cell (c1, c2, ...) is one "
-                         "the threshold as it stands calls as the question says; judge each "
-                         "on its own pixels, one word -- `own` (the marker's stain on it is "
-                         "its own, even dim), `not_own` (unstained, or the light on it is a "
-                         "neighbour's or the background's), `cannot_tell`. The reference "
-                         "cells (r1, ...) are clear positives, to compare with"),
     "collage_flips": ("each cell is two panels, morphology | context, as in the first look, "
                       "the judged nucleus between four magenta ticks. Rows run from the "
                       "current gate outward: row i1 is the cells between the current gate "
@@ -681,12 +675,12 @@ def _images(packet, pairs):
 
 
 def _multiview(engine, unit, ds, reference=None):
-    """(layout, partners, evidence) for a look's collage with hybrid tiles
-    (`SessionOptions.hybrid`): the 2 x 2 multi-view layout `t2m` and the
+    """(layout, partners, evidence) for a look's collage with tiles on
+    (`SessionOptions.tiles`): the 2 x 2 multi-view layout `t2m` and the
     partner channels its `co` / `anti` panels show -- the reference, when a
     look asked for one, in the panel its relation belongs to. (None, None,
     {}) without tiles: the look is today's."""
-    if not engine.hybrid_has("tiles"):
+    if not engine.tiles_on():
         return None, None, {}
     partners = dict(engine.partner_panels(unit) or {})
     partners.setdefault("markers", {})
@@ -1266,71 +1260,12 @@ def transfer_check(engine, units):
     return transfer.transfer_packet(engine, units)
 
 
-
-
-def correction_check(engine, units):
-    """The cells a corrected gate would call differently from the gate a look
-    approved (`hybrid.plan_correction`), and a few clear positives to compare
-    with: one word per cell. Names no model and no direction of a move --
-    only what the gate as it stands calls them."""
-    from plexora.agent.evidence import collage
-    from plexora.plugins.gating.server.autogate import cells as cellmod
-
-    unit = units[0]
-    ds, channel = _unit_channel(engine, unit)
-    record = (unit.get("model") or {}).get("correction") or {}
-    c = cellmod.cells(ds)
-    row_of = {int(i): k for k, i in enumerate(c.ids)}
-
-    def drawn(ids, prefix):
-        return [{"cell_id": int(i), "x": float(c.xs[row_of[int(i)]]),
-                 "y": float(c.ys[row_of[int(i)]]), "caption": f"{prefix}{n + 1}"}
-                for n, i in enumerate(ids) if int(i) in row_of]
-
-    asked = drawn(record.get("cells") or [], "c")
-    refs = drawn(record.get("references") or [], "r")
-    rows = [{"label": f"cells {asked[i]['caption']}-{asked[min(i + 5, len(asked) - 1)]['caption']}",
-             "key": "check", "cells": asked[i:i + 6]} for i in range(0, len(asked), 6)]
-    if refs:
-        rows.append({"label": "reference: clear positives", "key": "reference", "cells": refs})
-    layout, partner_panels, multiview = _multiview(engine, unit, ds)
-    calls = "positive" if record.get("direction") == "up" else "negative"
-    main = collage.render_collage(
-        engine.call.session, ds, layout=layout or "t2", rows=rows, marker=channel,
-        gate=record.get("g_v"), high=unit.get("high"), fmt=_fmt(engine),
-        pixel=engine.pixel_for(ds.name), partners=partner_panels,
-        title=f"{unit['marker']} · c-cells: is the stain each one's own? · r-cells: clear "
-              f"positives (each cell: "
-              f"{_panel_words(layout, partner_panels) or 'morphology | context'})")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
-    compartment = (unit.get("context") or {}).get("compartment")
-    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
-    keys = [cell["caption"] for cell in asked]
-    guide = ["correction_check", "collage_t2m" if layout else "collage_t2"]
-    packet = {
-        "question": (f"{unit['marker']} ({ds.name}): the threshold as it stands calls each of "
-                     f"the cells {keys[0]}-{keys[-1]} {calls}. For each of them, is the "
-                     f"{stain} stain its OWN? One word per cell; r-cells are clear positives "
-                     "to compare with."),
-        "evidence": {"marker": unit["marker"], "project": ds.name, "calls": calls,
-                     "cells": keys, "references": [cell["caption"] for cell in refs],
-                     **multiview, **_reading(engine, guide)},
-        "allowed": {"cells": keys, "words": ["own", "not_own", "cannot_tell"]},
-        "_image_meta": [],
-    }
-    images = _images(packet, ((main, "correction_collage", "the cells a corrected threshold "
-                                                            "would change"),))
-    unit["last_manifest"] = main["manifest"]
-    return packet, images
-
-
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "replan": replan_packet,
             "transfer_check": transfer_check,
-            "expression_setup": expression_setup, "pixel_setup": pixel_setup,
-            "correction_check": correction_check}
+            "expression_setup": expression_setup, "pixel_setup": pixel_setup}
 
 
 def narrate(packet) -> str:

@@ -116,9 +116,9 @@ except one additive hunk each in `agent/cell_gallery.py` and `autogate/sheet.py`
 - Field sampling with every cell left out says so (`precondition_missing`) instead of failing.
 
 Not done, on purpose: display calibration per view kind (gating draws planes only, never a
-projection, so there is one kind of window); the 3-D neighbourhood for the hybrid cell model
-(the 2-D one is uncommitted work in the gating session's tree); the gating packets' z-profile
-sparkline (`autogate/packets.py` is the gating branch's).
+projection, so there is one kind of window); the gating packets' z-profile sparkline
+(`autogate/packets.py` is the gating branch's). (A 3-D neighbourhood for gating's per-cell
+model was planned here; the model was removed on 2026-10-12.)
 
 Agent tools (2026-10-11): `colocalize_3d` (core `agent/core/volume_analysis.py`: voxels at the
 finest level under 30 M per channel, ROI by its extent / cells by id, Otsu Manders, refuses a
