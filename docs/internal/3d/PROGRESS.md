@@ -91,6 +91,17 @@ causes, before/after tables and what was re-scoped: `PERF.md`. Harness: `tools/b
 | ROI cells and hand edits (2026-10-11): `labels` solids (mask label ids + per-plane outlines from `SegHandle.label_volume`, gaps allowed; membership by id in `mapping.assign(cell_ids=)` / `cells_in_roi`), `/plugins/roi/api/from_cells` + panel "From cells" (viewer selection) + `create_roi(cells=)`; one plane's outline dragged by hand (`RoiGeometry.editableGeometry`, `keys`), the server re-deriving the footprint when `set_solid` sends none; a cells region reshaped becomes contours | done |
 | QC plugin integration (2026-10-11): `qc3d` gains `z_registration_drift` (3-D phase correlation per cycle), `stitching_seams`, `segmentation_3d` (flat / clipped / taller than wide / split / volume outliers), faint planes, runs merged; QC `run_qc_3d` (job) / `get_qc_3d` / `write_qc_3d_regions` (plane findings as QC regions with `extent`, existing classes) / `set_qc_plane`; every QC check reads the chosen plane and fingerprints it (`server/plane.py`); QC's cell propagation keeps a region's planes/frame and maps by centroid on a 3-D mask; panel Stack section. Per-object findings stay data (not regions) | done |
 
+## Plane-by-plane thresholding (feature/plane-gating-3d, 2026-10-12)
+
+| Item | State |
+|---|---|
+| Thresholding View: Plane / Slab (µm or planes; mean, max, median): the viewer's following projection, clipped at the stack's ends; gates stay whole-cell | done, `gating_planes_probe.mjs`, `view_state_probe.mjs` |
+| Per-plane cell index from the measure pass (local + node), `/volume/<ds>/plane_cells`, the plane's cells shaded and counted under the histogram | done, `test_plane_index.py`, `test_plane_cells_route.py`, `test_node_plane_index.py` |
+| Label planes prefetched with the image's standby planes (planes and following slabs) | done, e2e |
+| 3-D mask outlines in the XZ / YZ panes, gate-aware (`/volume/<ds>/section_cells`) | done, `test_section_cells.py` + e2e |
+
+Design, rules and what was left out: [PLANE_GATING.md](PLANE_GATING.md).
+
 ## Phase 4 / 5
 
 Gating evidence in depth (2026-10-11), kept to files `feature/spatial-gating` does not touch

@@ -101,7 +101,7 @@
         "/client/src/js/services/resourceRouting.js?v=20261009_volume",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
-        "/client/dist/vendor_bundle.js?v=20261011_colour_z",
+        "/client/dist/vendor_bundle.js?v=20261012_plane_gating",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
@@ -116,7 +116,7 @@
         "/client/src/js/views/tileColorize.js?v=20261010_nav3d",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
         "/client/src/js/views/tileFetch.js?v=20261011_batch",
-        "/client/src/js/views/labelTile.js?v=20261010_cell_model",
+        "/client/src/js/views/labelTile.js?v=20261012_plane_gating",
         "/client/src/js/views/labelGpu.js?v=20261010_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
@@ -308,7 +308,7 @@
         "/client/src/js/services/resourceRouting.js?v=20261009_volume",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
-        "/client/dist/vendor_bundle.js?v=20261011_colour_z",
+        "/client/dist/vendor_bundle.js?v=20261012_plane_gating",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
@@ -323,7 +323,7 @@
         "/client/src/js/views/tileColorize.js?v=20261010_nav3d",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
         "/client/src/js/views/tileFetch.js?v=20261011_batch",
-        "/client/src/js/views/labelTile.js?v=20261010_cell_model",
+        "/client/src/js/views/labelTile.js?v=20261012_plane_gating",
         "/client/src/js/views/labelGpu.js?v=20261010_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
@@ -396,7 +396,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260927_docs",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/viewState.js?v=20261011_node_labels",
+        "/client/src/js/services/viewState.js?v=20261012_plane_gating",
         "/client/src/js/services/perfProbe.js?v=20261010_perf",
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
@@ -412,14 +412,15 @@
         "/client/src/js/views/surfaceInspect.js?v=20261011_surfaces",
         "/client/src/js/views/surfaceObjects.js?v=20261011_surfaces",
         "/client/src/js/views/volumeRenderer.js?v=20261011_surfaces",
-        "/client/src/js/views/sectionPanes.js?v=20261011_surfaces",
-        "/client/src/js/views/planeMotion.js?v=20261010_standby",
+        "/client/src/js/views/sectionPanes.js?v=20261012_plane_gating",
+        "/client/src/js/views/sectionCells.js?v=20261012_plane_gating",
+        "/client/src/js/views/planeMotion.js?v=20261012_plane_gating",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261011_fold",
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261011_surfaces",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_surface_merge"
+        "/client/src/js/main.js?v=20261012_plane_gating"
       ],
       "status": 200,
       "styles": [
@@ -449,13 +450,14 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261010_drop_uncertain",
-          "/plugins/gating/static/csvGatingList.js?v=20261010_drop_uncertain",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261010_drop_uncertain",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261010_drop_uncertain"
+          "/plugins/gating/static/gatingApi.js?v=20261012_plane_gating",
+          "/plugins/gating/static/csvGatingList.js?v=20261012_plane_gating",
+          "/plugins/gating/static/gatingPlanes.js?v=20261012_plane_gating",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261012_plane_gating",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261012_plane_gating"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261010_drop_uncertain"
+          "/plugins/gating/static/gating.css?v=20261012_plane_gating"
         ],
         "available_tools": [
           {
@@ -537,6 +539,8 @@
         "gate_marker_select",
         "gate_nudge_down",
         "gate_nudge_up",
+        "gate_plane_readout",
+        "gate_planes",
         "gate_provenance",
         "gate_qc_note",
         "gate_slider",
@@ -614,7 +618,7 @@
         "/client/src/js/services/resourceRouting.js?v=20261009_volume",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
-        "/client/dist/vendor_bundle.js?v=20261011_colour_z",
+        "/client/dist/vendor_bundle.js?v=20261012_plane_gating",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
@@ -629,7 +633,7 @@
         "/client/src/js/views/tileColorize.js?v=20261010_nav3d",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
         "/client/src/js/views/tileFetch.js?v=20261011_batch",
-        "/client/src/js/views/labelTile.js?v=20261010_cell_model",
+        "/client/src/js/views/labelTile.js?v=20261012_plane_gating",
         "/client/src/js/views/labelGpu.js?v=20261010_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
@@ -685,10 +689,11 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261010_drop_uncertain",
-        "/plugins/gating/static/csvGatingList.js?v=20261010_drop_uncertain",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261010_drop_uncertain",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261010_drop_uncertain",
+        "/plugins/gating/static/gatingApi.js?v=20261012_plane_gating",
+        "/plugins/gating/static/csvGatingList.js?v=20261012_plane_gating",
+        "/plugins/gating/static/gatingPlanes.js?v=20261012_plane_gating",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261012_plane_gating",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261012_plane_gating",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -706,7 +711,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260927_docs",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/viewState.js?v=20261011_node_labels",
+        "/client/src/js/services/viewState.js?v=20261012_plane_gating",
         "/client/src/js/services/perfProbe.js?v=20261010_perf",
         "/client/src/js/services/volumeWindows.js?v=20261010_windows",
         "/client/src/js/services/viewerPrefs.js?v=20261010_motion",
@@ -722,14 +727,15 @@
         "/client/src/js/views/surfaceInspect.js?v=20261011_surfaces",
         "/client/src/js/views/surfaceObjects.js?v=20261011_surfaces",
         "/client/src/js/views/volumeRenderer.js?v=20261011_surfaces",
-        "/client/src/js/views/sectionPanes.js?v=20261011_surfaces",
-        "/client/src/js/views/planeMotion.js?v=20261010_standby",
+        "/client/src/js/views/sectionPanes.js?v=20261012_plane_gating",
+        "/client/src/js/views/sectionCells.js?v=20261012_plane_gating",
+        "/client/src/js/views/planeMotion.js?v=20261012_plane_gating",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261011_fold",
         "/client/src/js/views/chatPanel.js?v=20261011_fold",
         "/client/src/js/services/agentBridge.js?v=20261011_surfaces",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261011_surface_merge"
+        "/client/src/js/main.js?v=20261012_plane_gating"
       ],
       "status": 200,
       "styles": [
@@ -739,7 +745,7 @@
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261010_drop_uncertain"
+        "/plugins/gating/static/gating.css?v=20261012_plane_gating"
       ],
       "tool_mounts": [
         [
@@ -753,7 +759,7 @@
       ]
     }
   },
-  "route_count": 236,
+  "route_count": 238,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -867,7 +873,9 @@
     "GET /volume/<string:datasource>/level",
     "GET /volume/<string:datasource>/objects",
     "GET /volume/<string:datasource>/perf",
+    "GET /volume/<string:datasource>/plane_cells",
     "GET /volume/<string:datasource>/section",
+    "GET /volume/<string:datasource>/section_cells",
     "GET /volume/<string:datasource>/surfaces",
     "GET /volume/<string:datasource>/surfaces/<path:surface_id>/export",
     "GET /volume/<string:datasource>/surfaces/<path:surface_id>/manifest",

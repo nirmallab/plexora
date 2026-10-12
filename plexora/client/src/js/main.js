@@ -605,6 +605,14 @@ async function init(config, savedViewTransform = null) {
                 console.error("main: the section panes could not be set up", error);
             }
             __plexora.sectionPanes = sections;
+            // A 3-D mask's cells where the panes cut them (views/sectionCells.js).
+            try {
+                __plexora.sectionCells = window.PlexoraSectionCells?.attach?.(sections, {
+                    imageViewer: seaDragonViewer, viewState, datasource,
+                }) || null;
+            } catch (error) {
+                console.error("main: the section panes' cells could not be set up", error);
+            }
             const strip = new PlexoraDepthStrip(viewState, {
                 viewer: seaDragonViewer.viewer,
                 openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),

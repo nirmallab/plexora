@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from types import SimpleNamespace
 
 from flask import abort, jsonify, request
@@ -203,6 +204,10 @@ def normalize_view_state(value, depth=None, frames=None):
     if z1 < z0:
         z0, z1 = z1, z0
     out["slab"] = {"z0": z0, "z1": z1, "op": op, "follow": bool(slab.get("follow", True))}
+    # A following slab cut where the stack ends rather than slid back inside it
+    # (the thresholding panel's slab: centred on the plane where it can be).
+    if slab.get("clip"):
+        out["slab"]["clip"] = True
     if op == "pct":
         try:
             q = float(slab.get("q", 95))
@@ -838,6 +843,158 @@ def _z_step_known(project) -> bool:
         return False
     source = views.current_source(project.name)
     return bool(source is not None and source.volume.spacing.volumetric_ok())
+
+
+#: The cells on a plane, as two arrays in this order (`n` from the header).
+PLANE_CELLS_DTYPES = (("ids", "<u4"), ("values", "<f4"))
+_plane_values_lock = threading.Lock()
+#: (id of the loaded frame, id column, t column, t, column) -> (ids sorted, values).
+_plane_values: dict = {}
+
+
+def _cells_on_plane(project, z, t):
+    """`(labels ascending, source)` of the cells on plane `z` of frame `t`:
+    from the measurement's per-plane cell index ("index", exact), else from
+    the object table's boxes in depth ("bbox": a concave cell can be counted
+    on a plane inside its box it has no voxels on). None when neither exists."""
+    import numpy as np
+
+    from plexora.server.models import data_model
+    from plexora.server.volume import objects as volume_objects
+    from plexora.server.volume import planes as volume_planes
+
+    table, _ = volume_objects.object_paths(project)
+    index = volume_planes.index_for(table)
+    if index is not None and z < index.depth and t < index.frames:
+        return index.cells_on(t, z)[0], "index"
+    data_model.ensure_loaded(project.name)
+    frame = data_model.get_datasource_df()
+    roles = project.roles
+    if frame is None or roles.cell_id not in frame.columns \
+            or not {"bbox_z0", "bbox_z1"} <= set(frame.columns):
+        return None, None
+    import polars as pl
+
+    rows = frame
+    if roles.t and roles.t in frame.columns:
+        rows = rows.filter(pl.col(roles.t) == t)
+    rows = rows.filter((pl.col("bbox_z0") <= z) & (pl.col("bbox_z1") >= z))
+    return np.sort(rows[roles.cell_id].cast(pl.Int64).to_numpy()), "bbox"
+
+
+def _whole_values(frame, id_column, t_column, t, column):
+    """Every cell's value in `column` of the loaded table -- what its gate is
+    applied to -- by id, for frame `t`; cached per loaded frame."""
+    import numpy as np
+    import polars as pl
+
+    key = (id(frame), id_column, t_column, int(t), column)
+    with _plane_values_lock:
+        hit = _plane_values.get(key)
+    if hit is not None:
+        return hit
+    ids = frame[id_column].cast(pl.Int64, strict=False).fill_null(-1).to_numpy()
+    values = frame[column].cast(pl.Float64, strict=False).fill_null(float("nan")).to_numpy()
+    if t_column and t_column in frame.columns:
+        keep = frame[t_column].cast(pl.Int64, strict=False).fill_null(0).to_numpy() == int(t)
+        ids, values = ids[keep], values[keep]
+    order = np.argsort(ids, kind="stable")
+    built = (ids[order], values[order])
+    with _plane_values_lock:
+        if len(_plane_values) > 16:
+            _plane_values.clear()
+        _plane_values[key] = built
+    return built
+
+
+@app.route('/volume/<string:datasource>/plane_cells', methods=['GET'])
+def plane_cells(datasource):
+    """The cells on plane `z` (frame `t`) of a z-stack with a 3-D mask -- the
+    cells whose outlines that plane draws -- and each one's value in table
+    column `column`: its whole-cell value, the number its gate is applied to,
+    the same on every plane. What the thresholding panel counts under its
+    histogram ("z 12 . 41 of 312 positive") while the user steps through.
+
+    Binary, little-endian: `n` uint32 ids, then `n` float32 values (NaN for
+    a cell the table has no row for). `X-Plane-Cells` is JSON
+    `{z, t, n, source}`, `source` "index" (exact) or "bbox" (see
+    `_cells_on_plane`). 400 without either, or for a plane outside the stack.
+    """
+    import numpy as np
+
+    from plexora.server.models import data_model
+
+    project = _project_or_404(datasource)
+    try:
+        z = int(request.args.get("z", ""))
+        t = int(request.args.get("t", 0) or 0)
+    except ValueError:
+        return jsonify(error="z and t are plane and frame numbers"), 400
+    if z < 0 or t < 0 or z >= project.image.depth:
+        return jsonify(error=f"plane {z} of frame {t} is outside the stack"), 400
+    labels, source = _cells_on_plane(project, z, t)
+    if labels is None:
+        return jsonify(error="the cells on a plane need the 3-D mask's cells measured "
+                             "(Depth card, Cells in 3-D)", reason="not_measured"), 400
+    column = str(request.args.get("column") or "")
+    values = np.full(labels.size, np.nan)
+    data_model.ensure_loaded(project.name)
+    frame = data_model.get_datasource_df()
+    roles = project.roles
+    if column and frame is not None and column in frame.columns \
+            and roles.cell_id in frame.columns and labels.size:
+        ids, column_values = _whole_values(frame, roles.cell_id, roles.t, t, column)
+        if ids.size:
+            at = np.minimum(np.searchsorted(ids, labels.astype(np.int64)), ids.size - 1)
+            found = ids[at] == labels
+            values[found] = column_values[at[found]]
+    header = {"z": z, "t": t, "n": int(labels.size), "source": source}
+    body = labels.astype("<u4").tobytes() + values.astype("<f4").tobytes()
+    response = app.response_class(body, mimetype="application/octet-stream")
+    response.headers["X-Plane-Cells"] = json.dumps(header)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route('/volume/<string:datasource>/section_cells', methods=['GET'])
+def section_cells(datasource):
+    """A 3-D mask's cells where a section pane cuts them: `axis` xz (a row
+    `at`) or yz (a column `at`), between `a0` and `a1` along the line, frame
+    `t`, at the label level `level` (the pane's zoom; coarser past a read
+    budget). Binary, little-endian, four arrays of `n`: uint16 z, uint32
+    label, uint32 a0, uint32 a1 (inclusive, full-resolution pixels).
+    `X-Section-Cells` is JSON `{axis, at, level, n, depth}`. 400 for a 2-D
+    mask, which has nothing to cut through."""
+    from plexora.server.volume import labels as volume_labels
+    from plexora.server.volume import section_cells as cuts
+
+    project = _project_or_404(datasource)
+    axis = str(request.args.get("axis") or "")
+    try:
+        at = int(request.args.get("at", ""))
+        t = int(request.args.get("t", 0) or 0)
+        level = int(request.args.get("level", 0) or 0)
+        a0 = request.args.get("a0")
+        a1 = request.args.get("a1")
+        a0 = None if a0 in (None, "") else int(float(a0))
+        a1 = None if a1 in (None, "") else int(float(a1))
+    except ValueError:
+        return jsonify(error="at, t, level, a0 and a1 are numbers"), 400
+    if axis not in cuts.AXES:
+        return jsonify(error=f"axis is one of {', '.join(cuts.AXES)}"), 400
+    volume = volume_labels.project_label_volume(project, t)
+    if volume is None:
+        return jsonify(error="the mask is not a 3-D label volume: no cells to cut through",
+                       reason="no_label_volume"), 400
+    z, label, first, last, used = cuts.runs(volume.frame(t), axis, at, a0, a1, level)
+    header = {"axis": axis, "at": at, "level": used, "n": int(label.size),
+              "depth": int(volume.depth)}
+    body = (z.astype("<u2").tobytes() + label.astype("<u4").tobytes()
+            + first.astype("<u4").tobytes() + last.astype("<u4").tobytes())
+    response = app.response_class(body, mimetype="application/octet-stream")
+    response.headers["X-Section-Cells"] = json.dumps(header)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route('/volume/<string:datasource>/tracks', methods=['POST'])

@@ -5177,6 +5177,24 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, and node level parity in
   `test_volume_backend.py`.
+- Plane-by-plane gating (`docs/internal/3d/PLANE_GATING.md`):
+  `server/volume/planes.py` is the per-plane cell index `objects_planes_v1/`,
+  written by `measure.measure(planes=)` from the same reads as the object
+  table and sent back from a data node at `/node/v1/volume/jobs/<id>/planes`;
+  `server/volume/section_cells.py` reads the runs of a 3-D mask along an XZ/YZ
+  cut. Core routes `GET /volume/<ds>/plane_cells` (the plane's cells and their
+  table values) and `GET /volume/<ds>/section_cells`. Client:
+  `views/sectionCells.js` and `sectionPanes.js`'s `outline: true` shapes draw
+  cell outlines in the section panes (`labelTile.cellColour(layer, id)`);
+  `viewState.js` has the slab `clip` flag and `movedTo(z)`;
+  `planeMotion.NeighbourPrefetch` and `viewerManager.prepareLabelStandby`/
+  `takeLabelStandby` prefetch label planes; the gating plugin's
+  `static/gatingPlanes.js` is Thresholding's "View: Plane | Slab" and the
+  plane's cells under the histogram. Tests: `test_plane_index.py`,
+  `test_plane_cells_route.py`, `test_node_plane_index.py`,
+  `test_section_cells.py`, `test_gating_planes_js.py`
+  (`tests/js/gating_planes_probe.mjs`), and the `clip` checks in
+  `tests/js/view_state_probe.mjs`.
 
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
 licence split, renderer passes, measurements, merge notes — is
@@ -8045,6 +8063,23 @@ in **5.6 s**.
   volume themselves with `source_image.open_project_volume(record)` and close
   it, because an agent call must not touch the viewer's loaded project
   (`tests/test_agent_architecture.py`).
+- **A gate in 3-D is always applied to each cell's whole-cell value; the
+  slab is only what the image shows.** `objects_v1`'s mean over every voxel is
+  the same number on every plane, so a cell has one call for the whole stack
+  and stepping through it never changes a gate's result — a per-plane or
+  per-slab measurement as a gate value was tried and ruled out. A following
+  slab's outlines are the plane it follows (`labelSpec`), not its middle, so
+  at a clipped stack end the masks are still that plane's own cross-section.
+  The plane's cell list (`plane_cells`) is exact from the per-plane index
+  `objects_planes_v1/`; without the index it falls back to `bbox_z0..z1` and
+  says so with `source: "bbox"`, because a bounding-box count overstates and
+  must never read as exact. Prefetched label planes (standby items, their
+  source marked `plexoraLabelStandby`) are never claimed by the layer stack,
+  because the stack hands the mask's opacity to the items it holds and would
+  make an invisible standby plane visible; and `viewerManager.labelItems()`
+  skips them, so a plane swap never takes one for the outlines on screen.
+  Adopting one (`takeLabelStandby`) clears the mark and claims it. See
+  `docs/internal/3d/PLANE_GATING.md`.
 
 ## Validation
 

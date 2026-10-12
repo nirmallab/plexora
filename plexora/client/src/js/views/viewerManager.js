@@ -833,8 +833,12 @@ export class ViewerManager {
      * are dropped with their tiles kept as zombies. Nothing for a planar
      * image, a hidden base layer, or a view with no scheduler.
      */
-    prepareStandby(tokens) {
+    prepareStandby(tokens, labelTokens = tokens) {
         const wanted = new Set((tokens || []).filter((token) => token && token !== viewSelection.spec));
+        // A 3-D mask's outlines at the same steps (a plane's label token is its
+        // view token; a following projection's is the plane it follows): they
+        // arrive with the picture, not a beat after it.
+        this.prepareLabelStandby(labelTokens || []);
         const key = this.standbyKey();
         for (const [token, entry] of [...this.standby.entries()]) {
             if (!wanted.has(token) || entry.key !== key) this.dropStandby(token);
@@ -922,6 +926,91 @@ export class ViewerManager {
         }
     }
 
+    /**
+     * Keep a 3-D label volume's outlines BUILT at the planes the hand is
+     * heading to: the label twin of the image's standby planes, called with
+     * the same tokens. One label item per plane, on the world at opacity 0 and
+     * loading, and left out of the layer stack -- so the mask's opacity, which
+     * the stack hands to the items it holds, never reaches it. A step's
+     * `prepareLabelPlane` adopts the item that already holds the plane, and
+     * the swap is a flip rather than a fetch. Only while the plane on screen
+     * is still (NeighbourPrefetch's moment: label tiles do not go through the
+     * tile scheduler, so nothing else would keep them behind the plane on
+     * screen), and never for a 2-D mask, whose outlines are every plane's.
+     */
+    prepareLabelStandby(tokens) {
+        if (!this.labelStandby) this.labelStandby = new Map();
+        const world = this.viewer?.world;
+        const outgoing = this.labelItems();
+        const live = Boolean(window.__plexora?.viewState?.labelsAre3d?.()) && world
+            && this.labelLayerRequested && !this.imageViewer?.noLabel && outgoing.length;
+        const wanted = new Set(live ? (tokens || []).filter(
+            (token) => token && token !== viewSelection.labels) : []);
+        for (const token of [...this.labelStandby.keys()]) {
+            if (!wanted.has(token)) this.dropLabelStandby(token);
+        }
+        for (const token of wanted) {
+            if (this.labelStandby.has(token)) continue;
+            const entry = { token, item: null };
+            this.labelStandby.set(token, entry);
+            this.viewer.addTiledImage({
+                tileSource: { ...this.labelTileSource(token), plexoraLabelStandby: true },
+                compositeOperation: outgoing[0].compositeOperation
+                    || (this.imageViewer.config.image_kind === "brightfield" ? "source-over" : "lighter"),
+                opacity: 0,
+                preload: true,
+                success: (e) => {
+                    if (this.labelStandby.get(token) !== entry) {
+                        if (world.getIndexOfItem(e.item) >= 0) world.removeItem(e.item);
+                        return;
+                    }
+                    entry.item = e.item;
+                    // Draws through the same GL pass; `open` redraws.
+                    this.viewer.raiseEvent("open", e.item);
+                },
+                error: () => {
+                    if (this.labelStandby.get(token) === entry) this.labelStandby.delete(token);
+                },
+            });
+        }
+    }
+
+    /** The label items drawing the mask now -- never a standby plane's. */
+    labelItems() {
+        const world = this.viewer?.world;
+        const out = [];
+        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item?.source?.tileFormat === 32 && !item.source.plexoraLabelStandby) out.push(item);
+        }
+        return out;
+    }
+
+    /** The prefetched label item at `token`, taken for a swap, or null. */
+    takeLabelStandby(token) {
+        const entry = this.labelStandby?.get(token);
+        if (!entry) return null;
+        this.labelStandby.delete(token);
+        const item = entry.item;
+        if (!item || this.viewer?.world?.getIndexOfItem(item) < 0) return null;
+        item.source.plexoraLabelStandby = false;
+        globalThis.PlexoraViewPerf?.count?.("labelStandbyAdopted");
+        return item;
+    }
+
+    dropLabelStandby(token = null) {
+        if (!this.labelStandby) return;
+        const world = this.viewer?.world;
+        const tokens = token === null ? [...this.labelStandby.keys()] : [token];
+        for (const one of tokens) {
+            const entry = this.labelStandby.get(one);
+            this.labelStandby.delete(one);
+            if (entry?.item && world && world.getIndexOfItem(entry.item) >= 0) {
+                world.removeItem(entry.item);
+            }
+        }
+    }
+
     dropPair(pair) {
         if (!pair) return;
         const items = pair.map((entry) => entry.item);
@@ -954,11 +1043,7 @@ export class ViewerManager {
         const next = String(token || "");
         if (next === viewSelection.labels) return Promise.resolve(null);
         const world = this.viewer?.world;
-        const outgoing = [];
-        for (let i = 0; world && i < world.getItemCount(); i += 1) {
-            const item = world.getItemAt(i);
-            if (item?.source?.tileFormat === 32) outgoing.push(item);
-        }
+        const outgoing = this.labelItems();
         // Not drawn yet (no mask, or not loaded): the plane is simply where
         // the layer will be read from when it is.
         if (!outgoing.length || !this.labelLayerRequested || this.imageViewer?.noLabel) {
@@ -1001,6 +1086,15 @@ export class ViewerManager {
                 this.viewer.forceRedraw?.();
             };
             commit.discard = drop;
+            // Built ahead while the user was still (prepareLabelStandby): it
+            // already holds the plane, so the swap waits on nothing.
+            const held = this.takeLabelStandby(next);
+            if (held) {
+                item = held;
+                stop = whenItemCanDraw(held, () => answer(commit));
+                if (!answered) timer = setTimeout(() => answer(commit), PLANE_SWAP_TIMEOUT_MS);
+                return;
+            }
             this.viewer.addTiledImage({
                 tileSource: this.labelTileSource(next),
                 compositeOperation: outgoing[0].compositeOperation
@@ -2951,6 +3045,7 @@ export class ViewerManager {
         }
         const world = this.viewer && this.viewer.world;
         if (!world || !this.imageViewer.config.segmentation) return;
+        this.labelStandby?.clear();
         for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
             const item = world.getItemAt(i);
             if (item && item.source && item.source.tileFormat === 32) {

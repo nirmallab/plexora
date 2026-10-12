@@ -273,11 +273,42 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
     return context;
 }
 
+/**
+ * One cell's colour under `layer`, by renderLabelTile's own rule -- `[r, g,
+ * b, a]`, or null when the layer does not draw the cell (no id, filtered out,
+ * outside the gate, no colour). For what draws a cell somewhere other than a
+ * label tile: a 3-D mask's cells where the XZ / YZ section panes cut them
+ * (sectionCells.js), which must agree with the plane's outlines cell for cell.
+ */
+function cellColour(layer, cellId) {
+    if (!cellId || (layer.filterIds && !layer.filterIds.has(cellId))) return null;
+    const gateMask = layer.gateMask || null;
+    if (gateMask && !gateMask[cellId]) return null;
+    if (gateMask && gateMask[cellId] === 2) return [...NOT_CALLED_RGB, 220];
+    if (gateMask && gateMask[cellId] === 3) return [...UNCERTAIN_RGB, 255];
+    if (gateMask && gateMask[cellId] === 4) return [...MODEL_OWN_RGB, 255];
+    if (gateMask && gateMask[cellId] === 5) return [...MODEL_NOT_OWN_RGB, 255];
+    const lut = layer.lut;
+    if (lut?.colors) {
+        if (cellId > lut.maxId) return null;
+        const offset = cellId * 4;
+        const alpha = lut.colors[offset + 3];
+        return alpha ? [lut.colors[offset], lut.colors[offset + 1], lut.colors[offset + 2], alpha]
+            : null;
+    }
+    if (lut?.map) {
+        const entry = lut.map.get(cellId);
+        return entry && entry[3] ? [...entry] : null;
+    }
+    return [255, 255, 255, 220];
+}
+
 // Classic script, like every other file under client/src/js served straight to
 // the page. The module shape is for the node probes, which load this file into a
 // vm context and read the global back out.
 const PLEXORA_LABEL_TILE = {
     renderLabelTile, isBoundary, smallCellWeight, fillWeightOf, alphaTables, labelIds,
+    cellColour,
     NOT_CALLED_RGB,
     UNCERTAIN_RGB,
 };

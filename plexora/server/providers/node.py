@@ -1081,7 +1081,8 @@ MEASURE_POLL_SECONDS = 1.0
 def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indices,
                             units="physical", z_semantics=None, t_semantics=None,
                             pixel_size=None, pixel_size_z=None, frame_interval=None,
-                            progress=None, cancelled=None, poll=MEASURE_POLL_SECONDS):
+                            progress=None, cancelled=None, poll=MEASURE_POLL_SECONDS,
+                            planes_folder=None):
     """`volume.objects.measure_columns`, run on the node that holds the image
     and the mask: `(frame, manifest)`, the table exactly as a local
     measurement makes it (parquet on the wire, so every column keeps its
@@ -1091,6 +1092,11 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
     z-stack, `progress(done, total)` is relayed from it, and `cancelled()`
     stops it. The project's z/t reading and any pixel size somebody typed are
     sent, so the node reads the stack the way this machine's viewer does.
+
+    With `planes_folder`, the per-plane cell index the node wrote in the same
+    pass is streamed here and unpacked there (server/volume/planes.py). A node
+    from before the index has none to give: the folder is then removed rather
+    than left describing an older measurement.
     """
     import io
     import time
@@ -1131,7 +1137,34 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
                                      expected_api=API_VERSION)
     except ResourceUnavailable:
         raise
+    if planes_folder is not None:
+        _fetch_planes(node, job, planes_folder)
     return pl.read_parquet(io.BytesIO(data)), dict(status.get("manifest") or {})
+
+
+def _fetch_planes(node, job, folder):
+    """A finished node measurement's plane index, streamed to disk and unpacked."""
+    import os
+    import shutil
+    import tarfile
+    import tempfile
+    from pathlib import Path
+
+    from plexora.server.volume import planes as volume_planes
+
+    folder = Path(folder)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(prefix="planes-", suffix=".tar", dir=folder.parent)
+    try:
+        with os.fdopen(handle, "wb") as out:
+            for chunk in http.stream_request(node, "GET", f"/node/v1/volume/jobs/{job}/planes"):
+                out.write(chunk)
+        volume_planes.unpack(Path(name), folder)
+    except (ResourceError, ValueError, OSError, tarfile.TarError) as exc:
+        print(f"no per-plane cell index from data node {node.name!r}: {exc}")
+        shutil.rmtree(folder, ignore_errors=True)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 # -- surfaces of a node-held z-stack ----------------------------------------------
