@@ -913,7 +913,7 @@ Entry points:
   something derived from a project's record (a layer pyramid, a layer tile, its
   ETag) knows when to throw it away. `project.py` also gained `LayerSpec` (one
   registered layer of a spatial scene — `kind` is `"image"`/`"labels"`/
-  `"points"`/`"shapes"`, a rendering strategy, not a modality) and
+  `"points"`/`"shapes"`/`"surface"`, a rendering strategy, not a modality) and
   `Project.spatial_layers` — stored as `spatialLayers` in config.json, because
   `project.dataset.layers` already means the AnnData expression matrices, and
   the two must not collide. `Project.reference_layer`, `all_layers` (the
@@ -2394,8 +2394,9 @@ A third-party pip package and a bundled one get exactly the same thing.
 - `layers(project, kind=None, modality=None)`, `layer(project, id)` and
   `sample(project)` — what is IN this sample, beside what its table holds.
   **`kind` is core's and `modality` is the plugin's**, and the split is the
-  whole contract: a kind is a rendering strategy and there are four of them
-  (`image`, `labels`, `points`, `shapes`), while a modality is what the data
+  whole contract: a kind is a rendering strategy and there are five of them
+  (`image`, `labels`, `points`, `shapes`, and `surface` — a triangle mesh the
+  3-D view draws; adding a kind means adding a renderer), while a modality is what the data
   MEANS (`transcripts`, `cell_boundaries`, `visium_spots`, `he`) and is an
   open string core never holds a list of. A transcripts tool asks for
   `modality="transcripts"` and does not care that it draws as points; core
@@ -3580,7 +3581,9 @@ deliberately left out and what should be built next.
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
   `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
-  capability), `gating` and `qc`, each a shared `_COMMON` set plus one kind of
+  capability), `gating`, `qc` and `volume` (z-stacks, including the
+  `surface_*` tools and `viewer_set_volume_mode`/`viewer_set_camera`/
+  `viewer_set_surface`), each a shared `_COMMON` set plus one kind of
   work's tools, because every tool's name, description and schema is sent on
   every turn (all capabilities are ~300k characters — a 129k-token prefix for a
   coordinator that called a dozen of them). The five server tools are always
@@ -3954,7 +3957,7 @@ deliberately left out and what should be built next.
   the screen-space invariant under Key Invariants.
 - `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
   affine maths: the one ordered list of everything the viewer draws (image,
-  labels, points, shapes), because the viewer used to have two layer stacks
+  labels, points, shapes, and `surface` on the `gl` surface), because the viewer used to have two layer stacks
   that did not know about each other (OSD's `world` and the cell-layer
   registry) and "which layer is on top" had two answers. Three composite
   surfaces, in a fixed sequence — `tiles` (inside OSD's world), `overlay`,
@@ -5174,6 +5177,103 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, and node level parity in
   `test_volume_backend.py`.
+
+**Surface Studio** (branch `feature/surface-studio`; the full write-up —
+licence split, renderer passes, measurements, merge notes — is
+`docs/internal/3d/SURFACES.md`, the user page `website/content/docs/viewer/
+surfaces.mdx`). A surface is a triangle mesh beside the voxels — an
+isosurface of one channel, one closed surface per cell of a 3-D mask, or an
+imported mesh — kept as a layer of kind `surface`, because then listing,
+ordering, restyling and deleting one are the generic layer routes.
+
+- Server engine, `plexora/server/surface/`: `mesh.py` (the `Mesh`, its
+  `PXMS` file — `uint32` header length, JSON header, 4-byte-aligned arrays the
+  browser reads with typed-array views — plus `weld`, Taubin smoothing and the
+  measurements); `marching.py` (Lewiner marching cubes over z-strips plus the
+  next strip's first plane, so shared-plane vertices are bitwise equal and
+  `weld` closes every seam with no tolerance); `isosurface.py` (per-strip
+  preprocessing with a halo — Gaussian `sigma_um`, `background_um` local
+  background — components numbered by size, `min_size`); `labels.py` (per-cell
+  crops read in tile groups, each blurred 0.6 of its own axis's voxel, which is
+  what takes the terraces off an anisotropic stack, then marched at 0.5);
+  `levels.py` (quality presets, regions, `z_stride`, triangle budgets — a
+  request that cannot fit is refused up front with the estimate, not built and
+  then undrawable; `PLEXORA_SURFACE_BUDGET_TRIANGLES`); `preview.py` (the
+  slider's grid read once and cached, marching cubes per isovalue, contours
+  through the plane and section planes; `PLEXORA_SURFACE_PREVIEW_VOXELS`);
+  `suggest.py` (Otsu, triangle, log-GMM split); `store.py` (the layer:
+  `surf-<token>`, built in the background by the `surface` builder like a
+  pinned projection, files under `<derived root>/surfaces_v1/<token>/` —
+  `manifest.json`, `mesh-L<k>.bin`, `objects.parquet` — the token a hash of
+  the source and every shaping parameter, so the same request returns the
+  same layer); `refine.py` (each edit a new `mesh-L<k>-v<n>.bin` version in
+  the manifest, undo drops the last); `export.py`/`importers.py` (PLY, OBJ,
+  STL, GLB with the manifest beside them); `contacts.py` (surface and
+  centroid neighbours; contact area from the MASK's shared voxel faces, not
+  the mesh); `sections.py` (where a mesh cuts XY/XZ/YZ, for the 2-D views).
+- Routes: `server/routes/surface_routes.py`, all under
+  `/volume/<ds>/surfaces...` (make, list, `preview`, `suggest`, `estimate`,
+  `import`, and per surface `manifest`, `mesh`, `objects`, `cancel`,
+  `sections`, `export`, `refine`, `neighbours`).
+- Licence: a root entitlement `surfaces` ("Surface Studio") in
+  `plexora/licensing/manifest.py`, beside `ai` rather than under it. Making
+  and analysing (the POST, `preview`, `suggest`, `estimate`, `refine`,
+  `neighbours`, `import`) is guarded by `guards.require_entitlement`; reading,
+  exporting, cancelling and deleting a surface that exists stay Free, because
+  what a Paid feature produced stays usable on any plan (SURFACES.md §1 has
+  the table, agent tools included). Tests mint `issue(ent=["surfaces"])`.
+- Client: `views/surfaceRenderer.js` (mesh passes on the volume renderer's
+  own GL context — opaque to a depth FBO, translucent by weighted blended OIT,
+  then the ray caster's surface variant built by
+  `volumeFragment(fragmentSource(...))` so rays stop at the meshes — plus
+  one-pixel id picking); `services/surfaceLayers.js` (load, style, persist,
+  create, preview, 2-D cuts, and the scene seam `captureState()`/
+  `applyState(list, {save})`, exposed as `ctx.view.surfaces`);
+  `views/surfaceCard.js`, `surfaceStudio.js` (the Quick Surface dock, opened
+  from the cubes button in the Layers header on z-stacks), `surfaceInspect.js`,
+  `surfaceObjects.js`. Hooks in `volumeRenderer.js` are marked `[surfaces]`;
+  `layerStack.js` maps kind `surface` to the `gl` surface. The view state now
+  persists `volume.camera {q, dist, pan}` and `volume.show {volume,
+  surfaces}`, which the 3-D camera never was before.
+- Agent: `plexora/agent/core/surface.py` (the `surface_*` tools), viewer
+  commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`
+  (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
+  profile, skill `plexora/ai/skills/surface-rendering`.
+- Figure Builder: a capture taken in 3-D has `figureCaptureTool.grabPreview`
+  draw the volume renderer again at print size (`snapshot({width, height})`),
+  and core contributes `scene.plugins.volume` to the panel; export's
+  `volume_state(panel)` sends such a panel down a client-raster branch — the
+  stored preview resampled, reported `client_rendered` with its effective dpi
+  — because the server has no 3-D renderer to draw it again.
+- Data nodes: extraction reads a whole channel or a whole label volume, so it
+  runs on the node that holds those voxels — `store._builds_on` picks the
+  image's binding for an isosurface, the mask's for cell surfaces — and only
+  the mesh travels. `_build_on_node` posts the spec, zs/ts and spacing (for
+  cells also `image_width`, scale and the object table's `TABLE_COLUMNS` as
+  base64 parquet) to `POST /node/v1/volume/surface`, where
+  `store.extract_on_node` runs the same pure `extract_isosurface`/
+  `extract_label_surfaces` a local build calls; `providers.node.
+  build_surface_on_node` polls `/volume/jobs/<id>`, relays stage/progress and
+  cancel, and turns the float-exact `.npz` result into a `Mesh`. The primary
+  then measures, joins and writes the surface, so every read after the build
+  is local. `store.open_volume_for(project)` (also used by
+  `agent/core/surface.py`) opens the stack locally or as a
+  `NodeVolumeReader` (`project_volume_reader`, cached per node endpoint+token
+  for `READER_TTL` 60 s, reading through `POST /node/v1/image/<rid>/block`,
+  capped at `BLOCK_MAX_VOXELS`), which is what previews and suggestions read;
+  contact areas read the mask through `project_label_volume`. Cache tokens use
+  `_identity` (for a node image, its locator plus the recorded binding
+  fingerprint) and the manifest records `source.built_on`; `check()` asks
+  `project_has_label_volume` rather than for a local `image.src`.
+- Video Studio is NOT on this branch (it is `feature/video-studio`); the
+  seam it will use is `ctx.view.surfaces` (SURFACES.md §8).
+- Tests: `tests/test_surface_engine.py`, `test_surface_layer.py`,
+  `test_surface_phase2.py`, `test_surface_agent.py`, `test_node_surfaces.py`
+  (node build == local build, mesh and object table),
+  `plexora/plugins/figure_builder/tests/test_figure_builder_volume.py`, and
+  JS probes `tests/js/{surface_renderer,surface_studio}_probe.mjs` (wrapped in
+  `tests/test_viewer_3d_client.py`). The boundary goldens include the
+  `/surfaces` routes and the `?v=20261011_surfaces` asset tag.
 
 ## Telemetry
 
@@ -7165,8 +7265,11 @@ in **5.6 s**.
   `volume/objects.measure_columns` is the pixel-reading half,
   `measure_project_objects` writes the table here, and the job is
   `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,
-  `.../cancel`; `_MEASURES` keeps the last 8), driven by
-  `measure_objects_on_node`. The mask must be on the same node, or
+  `.../cancel`), driven by `measure_objects_on_node`. Its job store is shared
+  with surface builds (`_JOBS` via `_start_job`/`_job`, `JOBS_KEPT` = 8), so
+  the generic `GET /volume/jobs/<job>` (state, stage, done/total, error,
+  manifest, result meta) with `.../result` and `.../cancel` answers for
+  either kind; the measure-specific routes are kept beside it. The mask must be on the same node, or
   `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
   `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
   `tests/test_node_new_formats.py` pin it;
@@ -7926,6 +8029,22 @@ in **5.6 s**.
   node.** The node's `/node/v1/image/<rid>/level` is built with the
   primary's choices sent explicitly, so a node-served volume is byte-for-byte
   a local read; the primary forwards, caches and revalidates it.
+- **A surface never writes into an image or a mask.** It is a picture of the
+  data, not the data: refinement writes a new mesh version, and a cell
+  surface's voxel measurements in its objects table still describe the mask,
+  which stays the truth.
+- **An isovalue is in the channel's raw units** (above the local background
+  when background subtraction is on), never a display window's 0..1, so the
+  record says exactly which value a surface is and moving a contrast slider
+  never moves a surface.
+- **Mesh positions are level-0 voxel coordinates** (`x, y, z`, voxel centres
+  on integers) — the frame of the viewer's box and every table's X/Y/Z.
+  Spacing is applied when something is measured, never stored, so a z step
+  corrected later re-measures a surface without re-extracting it.
+- **Agent surface tools never load the viewer's project.** They open the
+  volume themselves with `source_image.open_project_volume(record)` and close
+  it, because an agent call must not touch the viewer's loaded project
+  (`tests/test_agent_architecture.py`).
 
 ## Validation
 

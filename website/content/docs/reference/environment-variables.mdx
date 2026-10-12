@@ -245,6 +245,18 @@ How many 3-D view levels are built at once; further requests wait their turn.
 
 </Param>
 
+<Param name={"PLEXORA_SURFACE_BUDGET_TRIANGLES"} default={"5000000"}>
+
+The most triangles one surface may have (Surface Studio). A request past it is refused with the estimate and what to change -- a lower quality, a smaller region or fewer cells -- rather than built and then not drawable in a browser.
+
+</Param>
+
+<Param name={"PLEXORA_SURFACE_PREVIEW_VOXELS"} default={"2000000"}>
+
+Voxels the Surface Studio threshold preview reads (a coarse level of the area asked for, kept in memory while the slider moves).
+
+</Param>
+
 <Param name={"PLEXORA_PROJECTION_GATE"} default={"half the cores, at least 2"}>
 
 How many projection tiles (MIP, mean and the like) are computed at once.

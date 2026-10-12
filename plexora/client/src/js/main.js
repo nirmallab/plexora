@@ -613,6 +613,21 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // Surfaces (plexora/server/surface): layers drawn in the 3-D view,
+            // made in Surface Studio's dock.
+            try {
+                window.PlexoraSurfaceLayers?.init({ datasource,
+                                                    layerStack: seaDragonViewer.layerStack });
+                window.PlexoraSurfaceStudio?.init();
+                window.PlexoraSurfaceInspect?.init();
+                const surfaceButton = document.getElementById("layer_surface_button");
+                if (surfaceButton && window.PlexoraSurfaceStudio && viewState.depth > 1) {
+                    surfaceButton.hidden = false;
+                    surfaceButton.addEventListener("click", () => window.PlexoraSurfaceStudio.toggle());
+                }
+            } catch (error) {
+                console.error("main: surfaces could not be set up", error);
+            }
         } catch (error) {
             console.error("main: could not build the depth strip", error);
         }
@@ -1959,6 +1974,13 @@ async function init(config, savedViewTransform = null) {
                     const frame = __plexora.dataLayer?.tableFrame;
                     return frame ? frame.t : null;
                 },
+                /**
+                 * Surfaces in the 3-D view (services/surfaceLayers.js): what is
+                 * shown, captured and put back as part of a scene -- Video
+                 * Studio's frames and Figure Builder's panels.
+                 * `surfaces.captureState()` / `applyState(list, {save})`.
+                 */
+                get surfaces() { return window.PlexoraSurfaceLayers || null; },
                 /** Whether the mask is a 3-D label volume (one id per cell
                  *  across planes): whole cells in depth to work with. */
                 labelsAre3d() {

@@ -1099,48 +1099,83 @@ def seg_block(resource_id):
 # image) and only the table travels. A job, polled, because it is minutes to
 # hours: progress goes back to the primary's task and a cancel stops it.
 
-#: job id -> {"state", "done", "total", "error", "manifest", "result", "cancel"}
-_MEASURES: "OrderedDict[str, dict]" = OrderedDict()
-_MEASURES_LOCK = threading.Lock()
+#: job id -> {"state", "stage", "done", "total", "error", "manifest", "meta",
+#: "result", "cancel"}: a measurement's or a surface build's.
+_JOBS: "OrderedDict[str, dict]" = OrderedDict()
+_JOBS_LOCK = threading.Lock()
 #: Finished jobs kept for their result; the oldest go first.
-MEASURES_KEPT = 8
+JOBS_KEPT = 8
 
 
-def _measure_job(job_id) -> dict:
-    with _MEASURES_LOCK:
-        job = _MEASURES.get(str(job_id))
+def _job(job_id) -> dict:
+    with _JOBS_LOCK:
+        job = _JOBS.get(str(job_id))
     if job is None:
-        raise ResourceError(f"no measurement {job_id!r} on this node")
+        raise ResourceError(f"no job {job_id!r} on this node")
     return job
 
 
-@node_bp.route("/volume/measure", methods=["POST"])
-def volume_measure():
-    """Start measuring a label volume's objects against an image's planes."""
-    import secrets
-
+def _semantics(body):
+    """The primary's z/t reading of the stack, checked."""
     from plexora.server.volume.model import T_SEMANTICS, Z_SEMANTICS
 
-    body = request.get_json(silent=True) or {}
-    image = _registry().get(str(body.get("image") or ""), kind="image")
-    seg = _registry().get(str(body.get("segmentation") or ""), kind="segmentation")
     zs = body.get("zs") or None
     ts = body.get("ts") or None
     if zs is not None and zs not in Z_SEMANTICS:
         raise ResourceError(f"zs is one of {', '.join(Z_SEMANTICS)}, not {zs!r}")
     if ts is not None and ts not in T_SEMANTICS:
         raise ResourceError(f"ts is one of {', '.join(T_SEMANTICS)}, not {ts!r}")
+    return zs, ts
+
+
+def _start_job(name, work):
+    """Run `work(job)` on its own thread as a polled job; the job's id.
+    `work` sets `result` (bytes) and whatever `meta`/`manifest` it reports,
+    and may raise InterruptedError for a cancel."""
+    import secrets
+
+    job_id = secrets.token_hex(8)
+    job = {"state": "running", "stage": None, "done": 0, "total": 0, "error": None,
+           "manifest": None, "meta": None, "result": None, "cancel": threading.Event()}
+
+    def run():
+        try:
+            work(job)
+            job["state"] = "done"
+        except InterruptedError:
+            job["state"] = "cancelled"
+        except Exception as exc:  # noqa: BLE001 -- said to the primary, not raised
+            job.update(state="error", error=str(exc) or type(exc).__name__)
+
+    with _JOBS_LOCK:
+        _JOBS[job_id] = job
+        while len(_JOBS) > JOBS_KEPT:
+            oldest = next(iter(_JOBS))
+            if _JOBS[oldest]["state"] == "running":
+                break
+            _JOBS.pop(oldest)
+    threading.Thread(target=run, name=f"plexora-{name}-{job_id}", daemon=True).start()
+    return job_id
+
+
+def _progress_of(job):
+    def progress(done, total):
+        job["done"], job["total"] = int(done), int(total)
+    return progress
+
+
+@node_bp.route("/volume/measure", methods=["POST"])
+def volume_measure():
+    """Start measuring a label volume's objects against an image's planes."""
+    body = request.get_json(silent=True) or {}
+    image = _registry().get(str(body.get("image") or ""), kind="image")
+    seg = _registry().get(str(body.get("segmentation") or ""), kind="segmentation")
+    zs, ts = _semantics(body)
     names = [str(name) for name in body.get("channel_names") or []]
     indices = [int(index) for index in body.get("indices") or []]
     units = str(body.get("units") or "physical")
-    job_id = secrets.token_hex(8)
-    job = {"state": "running", "done": 0, "total": 0, "error": None,
-           "manifest": None, "result": None, "cancel": threading.Event()}
 
-    def progress(done, total):
-        job["done"], job["total"] = int(done), int(total)
-
-    def work():
+    def work(job):
         from dataclasses import replace
 
         from plexora.server.volume import labels as volume_labels
@@ -1167,49 +1202,114 @@ def volume_measure():
                 source.volume = replace(source.volume, spacing=spacing)
             frame, manifest = objects.measure_columns(
                 labels, source, channel_names=names, indices=indices, units=units,
-                progress=progress, cancelled=job["cancel"].is_set)
+                progress=_progress_of(job), cancelled=job["cancel"].is_set)
             buffer = io.BytesIO()
             frame.write_parquet(buffer)
-            job.update(state="done", manifest=manifest, result=buffer.getvalue())
-        except InterruptedError:
-            job.update(state="cancelled")
-        except Exception as exc:  # noqa: BLE001 -- said to the primary, not raised
-            job.update(state="error", error=str(exc) or type(exc).__name__)
+            job.update(manifest=manifest, result=buffer.getvalue())
         finally:
             if source is not None:
                 source.close()
 
-    with _MEASURES_LOCK:
-        _MEASURES[job_id] = job
-        while len(_MEASURES) > MEASURES_KEPT:
-            oldest = next(iter(_MEASURES))
-            if _MEASURES[oldest]["state"] == "running":
-                break
-            _MEASURES.pop(oldest)
-    threading.Thread(target=work, name=f"plexora-measure-{job_id}", daemon=True).start()
-    return jsonify(success=True, job=job_id), 202
+    return jsonify(success=True, job=_start_job("measure", work)), 202
 
 
 @node_bp.route("/volume/measure/<job_id>")
 def volume_measure_status(job_id):
-    job = _measure_job(job_id)
+    job = _job(job_id)
     return jsonify(success=True, state=job["state"], done=job["done"], total=job["total"],
                    error=job["error"], manifest=job["manifest"])
 
 
 @node_bp.route("/volume/measure/<job_id>/result")
-def volume_measure_result(job_id):
-    """The finished table, as parquet: every column keeps its dtype."""
-    job = _measure_job(job_id)
+@node_bp.route("/volume/jobs/<job_id>/result")
+def volume_job_result(job_id):
+    """A finished job's bytes: a measurement's table as parquet (every column
+    keeps its dtype), a surface's mesh arrays as an .npz."""
+    job = _job(job_id)
     if job["state"] != "done" or job["result"] is None:
-        raise ResourceError(f"measurement {job_id!r} is {job['state']}, not done")
+        raise ResourceError(f"job {job_id!r} is {job['state']}, not done")
     return current_app.response_class(job["result"], mimetype="application/octet-stream")
 
 
 @node_bp.route("/volume/measure/<job_id>/cancel", methods=["POST"])
-def volume_measure_cancel(job_id):
-    _measure_job(job_id)["cancel"].set()
+@node_bp.route("/volume/jobs/<job_id>/cancel", methods=["POST"])
+def volume_job_cancel(job_id):
+    _job(job_id)["cancel"].set()
     return jsonify(success=True)
+
+
+@node_bp.route("/volume/jobs/<job_id>")
+def volume_job_status(job_id):
+    job = _job(job_id)
+    return jsonify(success=True, state=job["state"], stage=job["stage"], done=job["done"],
+                   total=job["total"], error=job["error"], manifest=job["manifest"],
+                   result=job["meta"])
+
+
+# -- surfaces, extracted where the voxels are -----------------------------
+#
+# Surface Studio's extraction reads a whole channel or a whole label volume,
+# so for a z-stack this node holds it runs here (`surface.store.extract_on_node`,
+# the code the primary runs for a local stack) and only the mesh travels; the
+# primary measures it, joins its object table and writes the surface.
+
+
+@node_bp.route("/volume/surface", methods=["POST"])
+def volume_surface():
+    """Start extracting a surface: `spec` (Surface Studio's request) and
+    `image` (an isosurface's channel `channel`) or `segmentation` (cell
+    surfaces, with the image's `scale`/`image_width` and the primary's object
+    `table` when it has one)."""
+    body = request.get_json(silent=True) or {}
+    spec = body.get("spec") or {}
+    zs, ts = _semantics(body)
+    image = seg = None
+    if (spec.get("type") or "isosurface") == "isosurface":
+        image = _registry().get(str(body.get("image") or ""), kind="image")
+    else:
+        seg = _registry().get(str(body.get("segmentation") or ""), kind="segmentation")
+    body = dict(body, zs=zs, ts=ts)
+
+    def work(job):
+        import numpy as np
+
+        from plexora.server.surface import store as surface_store
+
+        def open_image(zs_, ts_):
+            from plexora.server.volume.sources import open_volume
+
+            # Its own handle, as a measurement opens one: a long read must not
+            # hold the tile path's resource lock.
+            return open_volume(image.path, rgb=image.reads_colour,
+                               z_semantics=zs_, t_semantics=ts_)
+
+        def stage(name):
+            job["stage"], job["done"], job["total"] = str(name), 0, 0
+
+        surface, level, info = surface_store.extract_on_node(
+            body, image=open_image if image is not None else None,
+            labels=seg.path if seg is not None else None, stage=stage,
+            report=_progress_of(job), cancelled=job["cancel"].is_set)
+        if job["cancel"].is_set():
+            raise InterruptedError("cancelled")
+        arrays = {"positions": surface.positions, "triangles": surface.triangles,
+                  "object_id": surface.object_id}
+        for name in ("normals", "positions_raw", "objects"):
+            value = getattr(surface, name)
+            if value is not None:
+                arrays[name] = value
+        buffer = io.BytesIO()
+        np.savez(buffer, **arrays)
+        job.update(meta={"level": int(level), "info": _json_safe(info)},
+                   result=buffer.getvalue())
+
+    return jsonify(success=True, job=_start_job("surface", work)), 202
+
+
+def _json_safe(value):
+    """`value` with numpy scalars and arrays as plain JSON."""
+    return json.loads(json.dumps(value, default=lambda v: v.tolist() if hasattr(v, "tolist")
+                                 else str(v)))
 
 
 # -- image ----------------------------------------------------------------
@@ -1429,6 +1529,51 @@ def image_level(resource_id):
     response.headers.update(headers)
     response.headers.update(serve.payload_headers(shape, hint))
     return _viewed(_stamped(response, resource), view)
+
+
+@node_bp.route("/image/<resource_id>/block", methods=["POST"])
+def image_block(resource_id):
+    """`(Z, H, W)` raw values of one channel of a z-stack: planes z0..z1
+    inclusive of frame `t` at `level`, over `rows`/`cols` (half-open, clipped
+    to the level), under the primary's z/t reading -- a local volume
+    source's `read_block`, for `providers.node.NodeVolumeReader`. What a
+    surface preview reads; capped like a mask block."""
+    import numpy as np
+
+    resource = _registry().get(resource_id, kind="image")
+    body = request.get_json(silent=True) or {}
+    zs, ts = _semantics(body)
+    level = int(body.get("level") or 0)
+    channel = int(body.get("c") or 0)
+    t = int(body.get("t") or 0)
+    with _reading(resource):
+        source = _volume_source(resource, zs, ts)
+        if source is None or source.volume.is_planar:
+            raise ResourceError("this node reads the image as a single plane, so it has no "
+                                "planes to read a block of")
+        volume = source.volume
+        if not 0 <= level < len(volume.levels):
+            raise ResourceError(f"level {level} is outside this image's "
+                                f"{len(volume.levels)} levels")
+        if not 0 <= channel < volume.channels:
+            raise ResourceError(f"channel {channel} is outside this image's "
+                                f"{volume.channels} channels")
+        if not 0 <= t < volume.frames:
+            raise ResourceError(f"t {t} is outside this image's {volume.frames} frames")
+        info = volume.levels[level]
+        z0 = max(0, min(volume.depth - 1, int(body.get("z0") or 0)))
+        z1 = int(body["z1"]) if body.get("z1") is not None else z0
+        z1 = max(z0, min(volume.depth - 1, z1))
+        rows = slice(*slice(*(body.get("rows") or [None, None])).indices(info.height)[:2])
+        cols = slice(*slice(*(body.get("cols") or [None, None])).indices(info.width)[:2])
+        voxels = (z1 - z0 + 1) * max(0, rows.stop - rows.start) * max(0, cols.stop - cols.start)
+        if voxels > BLOCK_MAX_VOXELS:
+            raise ResourceError("this block covers more of the image than one read can "
+                                "carry; ask for fewer planes or a lower resolution")
+        block = np.asarray(source.read_block(level, t, channel, z0, z1, rows, cols))
+    return _stamped(_frame(wire.pack_array(np.ascontiguousarray(block), level=level,
+                                           z0=z0, z1=z1)),
+                    resource)
 
 
 @node_bp.route("/image/<resource_id>/overview")

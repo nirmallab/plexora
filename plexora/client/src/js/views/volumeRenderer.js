@@ -364,11 +364,14 @@ ${sample}`;
         return shader;
     }
 
-    function program(gl, count, detail = false, atlas = false) {
+    function program(gl, count, detail = false, atlas = false, surf = false) {
         const built = gl.createProgram();
+        // [surfaces] The ray caster that stops at surfaces and splits at the
+        // translucent ones (views/surfaceRenderer.js), made from this source.
+        const text = surf ? global.PlexoraSurfaceRenderer.volumeFragment(
+            fragmentSource(count, detail, atlas)) : fragmentSource(count, detail, atlas);
         gl.attachShader(built, compile(gl, gl.VERTEX_SHADER, VERTEX));
-        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER,
-                                       fragmentSource(count, detail, atlas)));
+        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER, text));
         gl.bindAttribLocation(built, 0, "a_position");
         gl.linkProgram(built);
         if (!gl.getProgramParameter(built, gl.LINK_STATUS)) {
@@ -523,6 +526,9 @@ ${sample}`;
             });
             this.bindPointer(canvas);
             this.wrapper.appendChild(canvas);
+            // [surfaces] Meshes drawn on this context (views/surfaceRenderer.js).
+            this.surfaces = global.PlexoraSurfaceRenderer
+                ? new global.PlexoraSurfaceRenderer(this) : null;
             if (global.PlexoraOrientationGizmo) {
                 this.gizmo = new global.PlexoraOrientationGizmo({
                     onAxis: (name, options) => this.lookAlong(name, options) });
@@ -552,6 +558,8 @@ ${sample}`;
             clearTimeout(this._detailTimer);
             this.atlas?.destroy();
             this.atlas = null;
+            this.surfaces?.destroy();
+            this.surfaces = null;
             this.canvas?.remove();
             this.gizmo?.root.remove();
             this.gizmo = null;
@@ -603,6 +611,7 @@ ${sample}`;
             this.textureBytes = 0;
             this.detail = null;
             this.atlas?.lost();
+            this.surfaces?.lost();
             this.programs.clear();
             this.status = "lost";
             global.PlexoraToast?.show?.({
@@ -936,6 +945,8 @@ ${sample}`;
                 this.draw(time);
                 if (!this.moving()) this.scheduleDetail();
             }
+            // [surfaces] The camera at rest is remembered (attach's onRest).
+            if (!this.moving()) this.onRest?.();
             if (this.animating()) {
                 this.schedule();
             } else if (!this.interacting && this.drawnFast) {
@@ -1144,8 +1155,10 @@ ${sample}`;
             const fast = this.moving();
             this.drawnFast = fast;
             const ratio = Math.min(global.devicePixelRatio || 1, 1.5) * (fast ? this.fastScale : 1);
-            const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
-            const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+            // An export's size (snapshot) wins over the canvas's CSS size.
+            const pinned = this._pinnedSize;
+            const width = pinned ? pinned.width : Math.max(1, Math.round(canvas.clientWidth * ratio));
+            const height = pinned ? pinned.height : Math.max(1, Math.round(canvas.clientHeight * ratio));
             if (canvas.width !== width || canvas.height !== height) {
                 canvas.width = width;
                 canvas.height = height;
@@ -1154,9 +1167,19 @@ ${sample}`;
             const at = now();
             const channels = this.channels().map((channel) => ({ ...channel, entry: this.textureOf(channel) }))
                 .filter((channel) => channel.entry);
-            gl.clearColor(0, 0, 0, 1);
+            // [surfaces] "Surfaces only" draws no channel; surfaces draw their
+            // passes first and leave the volume two outputs to fill.
+            if (this.surfaces?.hideVolume) channels.length = 0;
+            const surf = this.surfaces?.begin(channels, { fast }) || null;
+            gl.clearColor(0, 0, 0, surf ? 0 : 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
-            if (!channels.length) return;
+            if (!channels.length) {
+                if (surf) {
+                    surf.finish(false);
+                    this.paintGizmo(fast);
+                }
+                return;
+            }
             // What is drawn sets the box's proportions and the step count:
             // channels may hold different levels (see ensureTextures).
             for (const channel of channels) channel.entry.used = at;
@@ -1175,10 +1198,10 @@ ${sample}`;
             const withAtlas = this.atlasFits(channels, lead) && this.atlas.active();
             const withDetail = !withAtlas && Boolean(detail) && details.length > 0
                 && details.every(Boolean);
-            const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}`;
+            const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}${surf ? "|s" : ""}`;
             let built = this.programs.get(programKey);
             if (!built) {
-                built = program(gl, channels.length, withDetail, withAtlas);
+                built = program(gl, channels.length, withDetail, withAtlas, Boolean(surf));
                 this.programs.set(programKey, built);
             }
             gl.useProgram(built);
@@ -1241,10 +1264,12 @@ ${sample}`;
             const steps = Math.min(finest ? 2048 : 1024, Math.max(96, Math.round(longest * 2)));
             gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
+            surf?.bindDepth(uniform);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
             gl.enableVertexAttribArray(0);
             gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            surf?.finish(true);
             this.paintGizmo(fast);
         }
 
@@ -1310,6 +1335,7 @@ ${sample}`;
                 const pan = event.shiftKey || event.button === 1;
                 const box = canvas.getBoundingClientRect();
                 drag = { x: event.clientX, y: event.clientY, a: 0, b: 0, pan, box,
+                         x0: event.clientX, y0: event.clientY,
                          // A locked drag's rule is fixed as it starts (volumeCamera).
                          locked: !pan && this.lock
                              ? Camera().lockedDrag(this.camera.q, this.lock) : null,
@@ -1353,6 +1379,15 @@ ${sample}`;
             });
             const end = (event) => {
                 if (!drag) return;
+                // [surfaces] A click (no drag) on a surface picks its object.
+                if (event?.type === "pointerup" && this.surfaces?.active()
+                        && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < 4) {
+                    const box = canvas.getBoundingClientRect();
+                    const hit = this.surfaces.pick(event.clientX - box.left, event.clientY - box.top);
+                    global.dispatchEvent?.(new CustomEvent("plexora:surface-pick", {
+                        detail: { hit, clientX: event.clientX, clientY: event.clientY,
+                                  additive: Boolean(event.shiftKey || event.metaKey) } }));
+                }
                 const turning = !drag.pan && event?.type === "pointerup";
                 const locked = drag.locked ? this.lock : null;
                 drag = null;
@@ -1667,11 +1702,50 @@ ${sample}`;
             this.textureBytes -= entry.bytes;
         }
 
-        /** The current picture as a canvas (captures). */
-        snapshot() {
+        /** The current picture as a canvas (captures): at the canvas's own
+         *  size, or drawn at `{width, height}` device pixels for an export
+         *  (copied out, then the canvas goes back to its size). */
+        snapshot({ width = null, height = null } = {}) {
             if (!this.canvas) return null;
-            this.draw();
-            return this.canvas;
+            if (!(width > 0 && height > 0)) {
+                this.draw();
+                return this.canvas;
+            }
+            this._pinnedSize = { width: Math.round(width), height: Math.round(height) };
+            try {
+                this.spin = null;
+                this.tween = null;
+                this.zoomTarget = null;
+                this.interacting = false;
+                this.draw();
+                const copy = document.createElement("canvas");
+                copy.width = this.canvas.width;
+                copy.height = this.canvas.height;
+                copy.getContext("2d").drawImage(this.canvas, 0, 0);
+                return copy;
+            } finally {
+                this._pinnedSize = null;
+                this.invalidate();
+            }
+        }
+
+        /** The camera as the view state stores it (volume_routes). */
+        cameraState() {
+            const c = this.camera;
+            return { q: c.q.slice(), dist: c.dist, pan: [c.panX, c.panY] };
+        }
+
+        /** Put a stored camera back (`{q, dist, pan}`); false when unusable. */
+        restoreCamera(stored) {
+            const q = stored?.q;
+            if (!Array.isArray(q) || q.length !== 4 || !q.every(Number.isFinite)) return false;
+            this.camera.q = q.slice();
+            if (Number.isFinite(stored.dist)) this.camera.dist = Math.max(MIN_DIST, Math.min(8, stored.dist));
+            if (Array.isArray(stored.pan) && stored.pan.every(Number.isFinite)) {
+                [this.camera.panX, this.camera.panY] = stored.pan;
+            }
+            this.invalidate();
+            return true;
         }
     }
 
@@ -1690,6 +1764,21 @@ ${sample}`;
         let lastT = null;
         let wasOn = false;
         let lastClip = "";
+        // [surfaces] The camera, remembered per project like the plane
+        // (`volume.camera` of the view state), once it has rested a moment.
+        let savedCamera = "";
+        let cameraTimer = 0;
+        const rememberCamera = () => {
+            clearTimeout(cameraTimer);
+            cameraTimer = setTimeout(() => {
+                if (!renderer || !viewState.isVolume()) return;
+                const camera = renderer.cameraState();
+                const text = JSON.stringify(camera);
+                if (text === savedCamera) return;
+                savedCamera = text;
+                viewState.set({ volume: { ...(viewState.get().volume || {}), camera } });
+            }, 800);
+        };
         /** The area on screen, when the plane is zoomed in on part of the image:
          *  the 3-D view draws that, finer, rather than the whole stack coarsely. */
         const areaOnScreen = () => {
@@ -1708,6 +1797,8 @@ ${sample}`;
         };
         const controller = {
             get renderer() { return renderer; },
+            /** The 3-D view's surfaces (views/surfaceRenderer.js), once it exists. */
+            get surfaces() { return renderer?.surfaces || null; },
             sync(state) {
                 if (renderer) renderer.view = state;
                 const on = viewState.isVolume(state);
@@ -1730,7 +1821,16 @@ ${sample}`;
                         viewState.set({ mode: "plane" });
                         return;
                     }
+                    // [surfaces] Back where the camera was, and say the view
+                    // exists (services/surfaceLayers.js loads meshes into it).
+                    if (renderer.restoreCamera(state.volume?.camera)) {
+                        savedCamera = JSON.stringify(renderer.cameraState());
+                    }
+                    renderer.onRest = rememberCamera;
+                    global.dispatchEvent?.(new CustomEvent("plexora:volume-mounted",
+                        { detail: { renderer } }));
                 }
+                renderer.surfaces?.setShow(state.volume?.show || {});
                 document.getElementById("openseadragon_wrapper")?.classList.add("is-volume-mode");
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
@@ -1776,6 +1876,11 @@ ${sample}`;
                 event.preventDefault();
                 event.stopPropagation();
                 if (!event.repeat) renderer.setLock(key);
+            } else if (key === "s" && renderer.engaged()) {
+                // [surfaces] S opens or closes the Quick Surface dock.
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) global.dispatchEvent?.(new CustomEvent("plexora:surface-studio-toggle"));
             }
         }, true);
         // HD swaps the textures for half floats (or back): the same refresh.

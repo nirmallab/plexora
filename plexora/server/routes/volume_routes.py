@@ -237,14 +237,39 @@ def normalize_view_state(value, depth=None, frames=None):
             pass
     if camera.get("preset") in ("xy", "xz", "yz", "iso"):
         clean_camera["preset"] = camera["preset"]
+    # The renderer's own camera (views/volumeCamera.js): a unit quaternion,
+    # the distance and the pan. Kept only when every number is finite.
+    q = _numbers(camera.get("q"), 4)
+    if q is not None and 0.5 < math.sqrt(sum(v * v for v in q)) < 2.0:
+        norm = math.sqrt(sum(v * v for v in q))
+        clean_camera["q"] = [v / norm for v in q]
+    pan = _numbers(camera.get("pan"), 2)
+    if pan is not None:
+        clean_camera["pan"] = [max(-100.0, min(100.0, v)) for v in pan]
+    show = volume.get("show") if isinstance(volume.get("show"), dict) else {}
     out["volume"] = {
         "composite": composite if composite in COMPOSITES else "mip",
         "opacity": clean_opacity,
         "camera": clean_camera,
         "quality": volume.get("quality") if volume.get("quality") in (
             "auto", "1/8", "1/4", "1/2", "1") else "auto",
+        # What the 3-D view draws: the volume, the surfaces, or both
+        # (plexora/server/surface). Both by default.
+        "show": {"volume": show.get("volume") is not False,
+                 "surfaces": show.get("surfaces") is not False},
     }
     return out
+
+
+def _numbers(value, length):
+    """`length` finite floats from a list, or None."""
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        return None
+    try:
+        numbers = [float(v) for v in value]
+    except (TypeError, ValueError):
+        return None
+    return numbers if all(math.isfinite(v) for v in numbers) else None
 
 
 def get_view_state(datasource, depth=None, frames=None):

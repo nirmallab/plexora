@@ -20,6 +20,8 @@ and repeating it is how a refusal turns into a duplicate.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import Any, Mapping
 from urllib.parse import quote
 
@@ -781,6 +783,24 @@ class NodeImageProvider(_NodeBacked):
             self._attach_volume()
         return self.volume_source
 
+    def read_volume_block(self, level, t, channel, z0, z1, rows, cols, timeout=600.0):
+        """`(Z, H, W)` raw values of channel index `channel`: planes z0..z1
+        inclusive of frame `t` at `level`, under the project's z/t reading --
+        a local volume source's `read_block`, on the node that has the file.
+        For the few million voxels a surface preview reads; a whole build runs
+        over there instead (`build_surface_on_node`)."""
+        rows = rows if isinstance(rows, slice) else slice(*rows)
+        cols = cols if isinstance(cols, slice) else slice(*cols)
+        data, _ = http.bytes_request(
+            self.node, "POST", f"/node/v1/image/{self._binding.resource_id}/block",
+            body={"level": int(level), "t": int(t), "c": int(channel), "z0": int(z0),
+                  "z1": int(z1), "rows": [rows.start, rows.stop],
+                  "cols": [cols.start, cols.stop], "zs": self._z_semantics,
+                  "ts": self._t_semantics},
+            expected_api=API_VERSION, timeout=timeout)
+        array, _meta = wire.unpack_array(data)
+        return array
+
     def _view_params(self, view=None) -> dict:
         """The parameters a request about this image carries.
 
@@ -1112,3 +1132,122 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
     except ResourceUnavailable:
         raise
     return pl.read_parquet(io.BytesIO(data)), dict(status.get("manifest") or {})
+
+
+# -- surfaces of a node-held z-stack ----------------------------------------------
+
+
+class NodeVolumeReader:
+    """A node-held z-stack as a surface reads it: the volume's description
+    (spacing included, as the project states it) and `read_block` over the
+    wire. Enough to plan a surface, preview a threshold and measure a mesh;
+    a build reads the whole stack, so it runs on the node instead."""
+
+    is_local = False
+
+    def __init__(self, provider, volume):
+        self._provider = provider
+        self.volume = volume
+
+    def read_block(self, level, t, c, z0, z1, rows, cols):
+        return self._provider.read_volume_block(level, t, c, z0, z1, rows, cols)
+
+    def close(self) -> None:
+        pass
+
+
+#: (project, node, resource, reading) -> (made at, reader): a preview asks per
+#: slider move, and the volume's description is a round trip.
+_READERS: "OrderedDict[tuple, tuple]" = OrderedDict()
+_READERS_LOCK = threading.Lock()
+READER_TTL = 60.0
+
+
+def project_volume_reader(project):
+    """A `NodeVolumeReader` for a project whose z-stack a data node holds;
+    None when it does not, or when the node cannot describe it as a volume."""
+    import time
+
+    binding = (getattr(project, "resources", None) or {}).get("image")
+    if binding is None or not getattr(binding, "node", None):
+        return None
+    image = project.image
+    # By address too: a node that reconnects comes back on another port.
+    entry = node_for(binding)
+    key = (project.name, binding.node, getattr(entry, "endpoint", None),
+           getattr(entry, "token", None), binding.resource_id, image.z_semantics,
+           image.t_semantics, image.pixel_size, image.pixel_size_z, image.frame_interval,
+           tuple(image.channel_names))
+    now = time.monotonic()
+    with _READERS_LOCK:
+        held = _READERS.get(key)
+        if held is not None and now - held[0] < READER_TTL:
+            return held[1]
+    provider = NodeImageProvider(binding).with_channels(
+        image.channel_names, image.tile_width, image.tile_height).with_volume(image)
+    described = provider.volume()
+    if described is None:
+        return None
+    reader = NodeVolumeReader(provider, described.volume)
+    with _READERS_LOCK:
+        _READERS[key] = (now, reader)
+        while len(_READERS) > 16:
+            _READERS.popitem(last=False)
+    return reader
+
+
+SURFACE_POLL_SECONDS = 1.0
+
+
+def build_surface_on_node(binding, body, *, stage=None, progress=None, cancelled=None,
+                          poll=SURFACE_POLL_SECONDS):
+    """`surface.store.extract_on_node`, run on the node `binding` names:
+    `(mesh, level, info)`, the mesh exactly as a local extraction makes it
+    (every array float-exact on the wire).
+
+    A job over there, like a measurement (`measure_objects_on_node`): the
+    node's stage and progress are relayed to `stage(name)` and
+    `progress(done, total)`, and `cancelled()` stops it."""
+    import io
+    import time
+
+    from plexora.server.surface import mesh as mesh_mod
+
+    node = node_for(binding)
+    started = http.json_request(node, "POST", "/node/v1/volume/surface", body=body,
+                                expected_api=API_VERSION)
+    job = str(started.get("job") or "")
+    if not job:
+        raise ResourceError("the data node did not start the surface build")
+    seen_stage = None
+    while True:
+        if cancelled is not None and cancelled():
+            http.json_request(node, "POST", f"/node/v1/volume/jobs/{job}/cancel",
+                              expected_api=API_VERSION)
+            raise InterruptedError("cancelled")
+        status = http.json_request(node, "GET", f"/node/v1/volume/jobs/{job}",
+                                   expected_api=API_VERSION)
+        if stage is not None and status.get("stage") and status["stage"] != seen_stage:
+            seen_stage = status["stage"]
+            stage(seen_stage)
+        if progress is not None and status.get("total"):
+            progress(int(status.get("done") or 0), int(status["total"]))
+        state = status.get("state")
+        if state == "done":
+            break
+        if state == "error":
+            raise ResourceError(status.get("error") or "the surface build failed on the node")
+        if state == "cancelled":
+            raise InterruptedError("cancelled")
+        time.sleep(poll)
+    data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/jobs/{job}/result",
+                                 expected_api=API_VERSION)
+    arrays = np.load(io.BytesIO(data), allow_pickle=False)
+    surface = mesh_mod.Mesh(
+        positions=arrays["positions"], triangles=arrays["triangles"],
+        object_id=arrays["object_id"],
+        normals=arrays["normals"] if "normals" in arrays.files else None,
+        positions_raw=arrays["positions_raw"] if "positions_raw" in arrays.files else None,
+        objects=arrays["objects"] if "objects" in arrays.files else None)
+    result = status.get("result") or {}
+    return surface, int(result.get("level") or 0), dict(result.get("info") or {})

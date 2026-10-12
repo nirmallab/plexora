@@ -532,6 +532,13 @@ class SegHandle:
         `plane(z)` one plane's 2-D pyramid; `depth`, `height`, `width`,
         `frames`. A mask held on a data node comes back as a
         `providers.node.NodeLabelVolume`, the same face read over the wire.
+
+        Args:
+            t (int): The frame of a time series; 0 for a single z-stack.
+
+        Returns:
+            LabelVolume | NodeLabelVolume | None: None for a 2-D mask or a
+            project without one.
         """
         from plexora.server.volume import labels
 

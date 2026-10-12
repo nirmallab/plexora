@@ -496,11 +496,13 @@ def project_remove_layer(name, layer_id):
     remove the mask is to clear the mask field, and an X that quietly did
     nothing would be worse than no X.
 
-    A pinned projection (plexora/server/volume/pin.py) is the one layer whose
-    file IS Plexora's: computed from the stack, in the project's derived
-    folder, reachable from nowhere else. Its file goes with it.
+    A pinned projection (plexora/server/volume/pin.py) and a surface
+    (plexora/server/surface/store.py) are the layers whose files ARE
+    Plexora's: computed from the stack, in the project's derived folder,
+    reachable from nowhere else. Their files go with them.
     """
     from plexora.server.models.project import RESERVED_LAYER_IDS
+    from plexora.server.surface import store as surface_store
     from plexora.server.volume import pin
 
     if layer_id in RESERVED_LAYER_IDS:
@@ -515,6 +517,8 @@ def project_remove_layer(name, layer_id):
     Project.mutate(name, lambda current: current.without_layer(layer_id))
     if layer.modality == pin.MODALITY:
         pin.forget(project, layer)
+    if layer.kind == surface_store.KIND:
+        surface_store.forget(project, layer)
     return jsonify(success=True, layer=layer_id)
 
 
