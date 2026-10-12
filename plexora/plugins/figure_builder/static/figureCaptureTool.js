@@ -1133,8 +1133,13 @@ class FigureCaptureTool {
         const cssWidth = Math.max(1, screenRect.width);
         const cssHeight = Math.max(1, screenRect.height);
         const ratio = window.devicePixelRatio || 1;
-        const scale = Math.min(ratio, FigureCaptureTool.MAX_PREVIEW_EDGE
-            / Math.max(cssWidth, cssHeight));
+        // In 3-D the picture is the volume renderer's own canvas, and it is
+        // what a 3-D panel exports from (the server has no 3-D renderer): so
+        // it is drawn again at print size rather than cropped from the screen.
+        const volume = FigureCaptureTool.volumeCanvas();
+        const scale = volume
+            ? Math.min(3, FigureCaptureTool.MAX_VOLUME_EDGE / Math.max(cssWidth, cssHeight))
+            : Math.min(ratio, FigureCaptureTool.MAX_PREVIEW_EDGE / Math.max(cssWidth, cssHeight));
 
         const out = document.createElement("canvas");
         out.width = Math.max(1, Math.round(cssWidth * scale));
@@ -1166,8 +1171,33 @@ class FigureCaptureTool {
                 console.error("figure_builder: a layer could not be previewed", error);
             }
         }
+        if (volume) {
+            try {
+                const rect = volume.canvas.getBoundingClientRect();
+                const drawn = volume.renderer.snapshot({ width: Math.round(rect.width * scale),
+                                                         height: Math.round(rect.height * scale) });
+                const sx = (screenRect.x - (rect.left - containerRect.left)) * scale;
+                const sy = (screenRect.y - (rect.top - containerRect.top)) * scale;
+                context.drawImage(drawn, sx, sy, cssWidth * scale, cssHeight * scale,
+                    0, 0, out.width, out.height);
+            } catch (error) {
+                console.error("figure_builder: the 3-D view could not be previewed", error);
+            }
+        }
         return out;
     }
+
+    /** The 3-D view when it is the picture on screen: `{renderer, canvas}`, or null. */
+    static volumeCanvas() {
+        const renderer = window.__plexora?.volumeView?.renderer;
+        const state = window.__plexora?.viewState;
+        if (!renderer?.canvas || renderer.canvas.hidden || !state?.isVolume?.()) return null;
+        if (typeof renderer.snapshot !== "function") return null;
+        return { renderer, canvas: renderer.canvas };
+    }
+
+    /** A 3-D capture's longest side: what its panel exports from. */
+    static get MAX_VOLUME_EDGE() { return 2400; }
 
     /** The preview as a WebP blob, or null. */
     previewBlob(screenRect) {

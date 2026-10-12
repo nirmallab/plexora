@@ -226,19 +226,13 @@ class ImageViewer {
                 filterIds: null,
                 filterRequest: 0,
                 //: The same gate evaluated in the browser: one byte per cell id
-                //: (1 = passes, 2 = not called by QC, drawn grey, 3 = passes but
-                //: a plugin marked it uncertain, drawn amber, 4 / 5 = the cell
-                //: model's own below the gate / not own above it --
-                //: setCellFlagMask), how many ids pass, how many are not
-                //: called, uncertain, and moved either way by the cell model.
-                //: Set instead of filterIds when the provider's gate can be
-                //: evaluated here -- see updateSegmentationFilter.
+                //: (1 = passes, 2 = not called by QC, drawn grey), how many ids
+                //: pass and how many are not called. Set instead of filterIds
+                //: when the provider's gate can be evaluated here -- see
+                //: updateSegmentationFilter.
                 gateMask: null,
                 gateCount: null,
                 gateNotCalled: null,
-                gateUncertain: null,
-                gateModelOwn: null,
-                gateModelNotOwn: null,
                 //: Bumped whenever this layer's label pixels change (gate,
                 //: colours, visibility): the GPU cell layer redraws a tile when
                 //: it moves. lutVersion moves with the colour table alone.
@@ -276,9 +270,6 @@ class ImageViewer {
             gateMask: null,
             gateCount: null,
             gateNotCalled: null,
-            gateUncertain: null,
-            gateModelOwn: null,
-            gateModelNotOwn: null,
             renderVersion: 0,
             lutVersion: 0,
             styleCache: new Map(),
@@ -311,6 +302,12 @@ class ImageViewer {
         this.centroidTiles = new Map();
         this.centroidFilter = {};
         this.centroidFilterSignature = "{}";
+        //: `{column, z0, z1}` while a z-stack's table places cells in depth:
+        //: the dots drawn are those planes' cells (setCentroidPlanes).
+        this.centroidPlanes = null;
+        //: True from a plane change until the new planes' tiles land; the
+        //: old ones stay drawn meanwhile, so stepping through z never blinks.
+        this.centroidTilesStale = false;
         this.centroidTileTimer = null;
         this.centroidTileRequest = 0;
         this.centroidFirstLoad = true;
@@ -550,7 +547,7 @@ class ImageViewer {
                 // Versioned with the gate mask's meaning (2 = not called,
                 // drawn grey): a cached older shader would draw those cells
                 // as positives.
-                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261010_cell_model"),
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261012_no_cell_model"),
                 labelTile: PlexoraLabelTile,
                 onChange: () => this.applyLabelRenderer(),
             })
@@ -1148,9 +1145,6 @@ class ImageViewer {
         view.gateMask = this.segmentationGateMask || null;
         view.gateCount = this.segmentationGateCount ?? null;
         view.gateNotCalled = this.segmentationGateNotCalled ?? null;
-        view.gateUncertain = this.segmentationGateUncertain ?? null;
-        view.gateModelOwn = this.segmentationGateModelOwn ?? null;
-        view.gateModelNotOwn = this.segmentationGateModelNotOwn ?? null;
         return view;
     }
 
@@ -2416,7 +2410,8 @@ class ImageViewer {
                 this.centroidTiles.delete(key);
             }
         }
-        const missing = tiles.filter((tile) => !this.centroidTiles.has(tile.key));
+        const stale = this.centroidTilesStale;
+        const missing = stale ? tiles : tiles.filter((tile) => !this.centroidTiles.has(tile.key));
         if (!missing.length) {
             this.refreshCentroidOverlay();
             return;
@@ -2428,8 +2423,13 @@ class ImageViewer {
         }
         try {
             const payload = missing.map(({ x, y }) => ({ x, y }));
-            const buffer = await this.dataLayer.getCentroidTiles(level, payload, this.centroidFilter, 50000);
+            const buffer = await this.dataLayer.getCentroidTiles(
+                level, payload, this.centroidRequestFilter(), 50000);
             if (requestId !== this.centroidTileRequest || !buffer) return;
+            if (stale) {
+                this.centroidTiles.clear();
+                this.centroidTilesStale = false;
+            }
             const grouped = this.decodeCentroidTileBuffer(buffer, level);
             for (const tile of missing) {
                 this.centroidTiles.set(tile.key, grouped.get(tile.key) || {
@@ -2641,18 +2641,12 @@ class ImageViewer {
                 layer.gateCount = gate ? gate.count : null;
                 layer.lastGates = gates;
                 layer.gateNotCalled = gate ? gate.notCalledCount : null;
-                layer.gateUncertain = gate ? gate.uncertainCount : null;
-                layer.gateModelOwn = gate ? gate.modelOwnCount : null;
-                layer.gateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
                 this.segmentationLastGates = gates;
                 this.segmentationGateNotCalled = gate ? gate.notCalledCount : null;
-                this.segmentationGateUncertain = gate ? gate.uncertainCount : null;
-                this.segmentationGateModelOwn = gate ? gate.modelOwnCount : null;
-                this.segmentationGateModelNotOwn = gate ? gate.modelNotOwnCount : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2702,6 +2696,34 @@ class ImageViewer {
         }
         this.rerenderSegmentationTiles?.(null);
         this.viewer?.forceRedraw?.();
+    }
+
+    /**
+     * Follow the planes on screen with the centroid dots, for a z-stack whose
+     * cell table places each cell in depth (`planes` is `{column, z0, z1}`,
+     * inclusive, or null): plane k shows the cells centred on plane k, not
+     * every cell of the stack flattened onto it. Only the dots -- a 3-D mask's
+     * outlines follow the plane already, and gates, counts and the cells' rows
+     * stay the whole volume's.
+     */
+    setCentroidPlanes(planes) {
+        const z0 = Number(planes?.z0);
+        const z1 = Number(planes?.z1);
+        const next = planes && planes.column && Number.isFinite(z0) && Number.isFinite(z1)
+            ? { column: String(planes.column), z0: Math.min(z0, z1), z1: Math.max(z0, z1) } : null;
+        if (JSON.stringify(this.centroidPlanes) === JSON.stringify(next)) return;
+        this.centroidPlanes = next;
+        this.centroidTilesStale = this.centroidTiles.size > 0;
+        this.centroidTileRequest += 1;
+        this.scheduleCentroidTileUpdate(0, false);
+    }
+
+    /** The centroid filter narrowed to the planes on screen: z within half a
+     *  plane of them (low < z <= high, the rule `withFrame` uses for t). */
+    centroidRequestFilter() {
+        const planes = this.centroidPlanes;
+        if (!planes) return this.centroidFilter;
+        return { ...this.centroidFilter, [planes.column]: [planes.z0 - 0.5, planes.z1 + 0.5] };
     }
 
     /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,
@@ -2892,32 +2914,6 @@ class ImageViewer {
      * needs the redraw. Coalesced, so a session writing a burst of regions
      * reads them once.
      */
-    /**
-     * Mark some of a gated marker's cells apart -- one byte per table row, as
-     * /get_all_cells sends ids -- or clear the mark with null. A plugin's to
-     * give (the gating plugin's evidence, from its own routes): 1 uncertain
-     * (a positive, drawn amber), 2 not its own by the cell model (a positive,
-     * magenta), 3 its own by the cell model (a cell below the gate,
-     * sky blue). Shown, never applied: every count stays the gate's
-     * (PlexoraLabelGpu.evaluateGateMask). Each gated layer is evaluated again.
-     */
-    setCellFlagMask(marker, bytes) {
-        this.cellFlags = this.cellFlags || {};
-        if (bytes && bytes.length) this.cellFlags[marker] = bytes;
-        else delete this.cellFlags[marker];
-        this.reapplyGates();
-    }
-
-    /** Evaluate every gated cell layer again (its provider's current ranges). */
-    reapplyGates() {
-        for (const layer of this.cellLayers()) {
-            const provider = layer.provider;
-            if (!provider?.localRangeGate || !(layer.gateMask || layer.filterIds)) continue;
-            this.updateSegmentationFilter(provider.getColorCodedRanges?.() ?? {}, false, layer.name)
-                .catch((e) => console.warn("Gate not re-read:", e.message || e));
-        }
-    }
-
     onQcChanged(detail = {}) {
         const mine = globalThis.flaskVariables?.datasource;
         if (detail.datasource && mine && detail.datasource !== mine) return;
@@ -2964,17 +2960,14 @@ class ImageViewer {
             ]);
             const columns = {};
             const notCalled = {};
-            const flagged = {};
             keys.forEach((key, i) => {
                 if (!values[i] || values[i].length !== ids.length) {
                     throw new Error(`column ${key} has ${values[i]?.length} values for ${ids.length} cells`);
                 }
                 columns[key] = values[i];
                 if (skips[i] && skips[i].length === ids.length) notCalled[key] = skips[i];
-                const flags = this.cellFlags?.[key];
-                if (flags && flags.length === ids.length) flagged[key] = flags;
             });
-            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled, flagged);
+            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled);
             if (gate.maxId + 1 > PlexoraLabelGpu.MAX_IDS) return null;
             return gate;
         } catch (e) {

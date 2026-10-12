@@ -265,6 +265,48 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
     check("zoomed in, every image row is its own section", zoomedIn.xz === "xzy101" && zoomedIn.yz === "yzx202");
 }
 
+// -- a channel switched on comes in (services/channelFade.js) ----------------------
+
+{
+    runInContext(readFileSync(join(JS, "services/channelFade.js"), "utf8"), box);
+    const Fade = box.PlexoraChannelFade;
+    let frames = [];
+    box.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const run = (ms) => {
+        for (let t = 0; t < ms; t += 16) {
+            advance(16);
+            const due = frames;
+            frames = [];
+            for (const fn of due) fn(clock.now);
+        }
+    };
+    const { pane, owner, osd } = makePane(1);
+    pane.show("xzy10");
+    const first = osd.land();
+    check("a pane's first section starts from nothing", first.every((item) => item.opacity === 0));
+    first.forEach((item) => item.ready());
+    await tick();
+    run(Fade.FADE_MS + 64);
+    check("and comes in, to full", first.every((item) => item.opacity === 1));
+
+    // A second channel switched on: the pane rebuilds every channel's item.
+    owner.channels = () => [0, 1].map((i) => [i, { url: `/t/${i}/` }]);
+    owner.channelCount = () => 2;
+    pane.token = "";
+    pane.show("xzy10");
+    const [kept, added] = osd.land();
+    kept.ready();
+    added.ready();
+    await tick();
+    check("the channel already there hands over in full; the new one starts from nothing",
+          kept.opacity === 1 && added.opacity === 0, JSON.stringify([kept.opacity, added.opacity]));
+    run(Fade.FADE_MS / 2);
+    check("and comes in", added.opacity > 0 && added.opacity < 1, String(added.opacity));
+    run(Fade.FADE_MS);
+    check("to full", added.opacity === 1 && first.every((item) => item.removed));
+    box.requestAnimationFrame = () => 0;
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

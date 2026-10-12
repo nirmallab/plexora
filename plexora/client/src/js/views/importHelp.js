@@ -121,7 +121,7 @@ window.PlexoraImportHelp = (function () {
         {
             name: "Multiplex image", shape: "file",
             pointAt: "the image",
-            marker: ".ome.tif · .tif · .tiff · .qptiff",
+            marker: ".ome.tif · .tif · .tiff · .qptiff · .ims",
             produces: ["multiplex"],
             mayAsk: ["pyramidize"],
             note: "Channel names come from the file's own metadata.",
@@ -137,11 +137,13 @@ window.PlexoraImportHelp = (function () {
         {
             name: "Segmentation mask", shape: "file",
             pointAt: "the label image",
-            marker: "one plane, integer labels — or a name saying mask, "
-                  + "label, seg, nuclei, cells",
+            marker: ".tif · .ome.tif · .png · .ims · OME-Zarr labels: "
+                  + "integer ids, one plane or a volume — or a name saying "
+                  + "mask, label, seg, nuclei, cells",
             produces: ["mask"],
             mayAsk: ["mask-or-image"],
-            note: "Must match the image's width and height.",
+            note: "Must match the image's width and height. Not a JPEG or a "
+                + "scanner slide: those cannot hold cell ids.",
         },
         {
             name: "Cell table", shape: "file",

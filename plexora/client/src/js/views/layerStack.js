@@ -16,6 +16,7 @@
  *   labels  tiles    one TiledImage (tileFormat 32) plus a per-layer canvas stack
  *   points  overlay  canvas2d, or WebGL at transcript scale
  *   shapes  overlay  Path2D
+ *   surface gl       triangle meshes in the 3-D view (views/surfaceRenderer.js)
  *
  * ONE ORDER, THREE SURFACES -- and the seam is honest rather than hidden.
  * Surfaces composite in a fixed sequence (`tiles`, inside OSD's world, then
@@ -40,6 +41,8 @@ const LAYER_KIND_SURFACE = {
     labels: "tiles",
     points: "overlay",
     shapes: "overlay",
+    //: A mesh, drawn by the 3-D view (views/surfaceRenderer.js).
+    surface: "gl",
 };
 
 const LAYER_KINDS = Object.keys(LAYER_KIND_SURFACE);

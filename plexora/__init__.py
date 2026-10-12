@@ -243,6 +243,8 @@ def create_app(plugins=None):
     # Volumes (plexora/server/volume): what a z-stack is and where the viewer
     # was in it. Pixels come down the ordinary tile route with `view=`.
     from plexora.server.routes import volume_routes
+    # Surfaces (plexora/server/surface): meshes of a volume, kept as layers.
+    from plexora.server.routes import surface_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 

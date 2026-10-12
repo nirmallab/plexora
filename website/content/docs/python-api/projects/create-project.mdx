@@ -3,10 +3,10 @@ title: "create_project"
 description: "Register one project and return its name."
 generated: true
 symbol: "plexora.create_project"
-signature: "create_project(image, *, name=None, segmentation=None, data=None, table=None, subset=None, cell_id=None, x=None, y=None, sample=None, celltype=None, markers=None, metadata=None, coordinates=None, layer=None, log1p=None, single_image=None, row_number_ids=None, channel_names=None, image_type=None, copy=False, exist_ok=False, dataset=None, node=None) -> str"
+signature: "create_project(image, *, name=None, segmentation=None, data=None, table=None, subset=None, cell_id=None, x=None, y=None, z=None, sample=None, celltype=None, markers=None, metadata=None, coordinates=None, layer=None, log1p=None, single_image=None, row_number_ids=None, channel_names=None, image_type=None, copy=False, exist_ok=False, dataset=None, node=None) -> str"
 aliases: ["sample", "project", "register image", "mask", "cell table"]
 source:
-  end: 861
+  end: 863
   path: "plexora/datasets.py"
   start: 645
 ---
@@ -29,6 +29,7 @@ create_project(
     cell_id=None,
     x=None,
     y=None,
+    z=None,
     sample=None,
     celltype=None,
     markers=None,
@@ -267,6 +268,17 @@ matches no existing dataset creates one.
 If a project already exists under `name`
 (or, with no `name`, one already reads this same image), adopt it
 instead of raising. Defaults to False.
+
+</Param>
+
+</ParamTable>
+
+<ParamTable title={"Other parameters"}>
+
+<Param name={"z"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that holds each cell's plane, for a
+table over a z-stack that places its cells in depth.
 
 </Param>
 

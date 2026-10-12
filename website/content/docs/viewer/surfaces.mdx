@@ -1,0 +1,97 @@
+---
+title: "Make 3-D surfaces"
+description: "Draw a z-stack's structures and cells as surfaces in the 3-D view: isosurfaces of a channel, a surface for every cell of a 3-D mask, their measurements, neighbours and export."
+aliases: ["surfaces", "isosurface", "surface studio", "mesh", "3d rendering", "imaris surfaces", "cell surfaces"]
+---
+
+A **surface** is a triangle mesh drawn in the 3-D view, beside or instead of the
+voxels: the boundary where a channel crosses one value (an *isosurface*), or the
+outside of every cell of a 3-D segmentation. Surfaces are layers — each has a card
+in the Layers panel, an eye, a colour and a style — and every one records exactly
+how it was made.
+
+Surface Studio is part of Plexora Paid. On Free, the button explains what it is
+and how to start a trial; surfaces that already exist stay readable, drawable,
+exportable and removable on any plan.
+
+## Make an isosurface
+
+1. Open a z-stack and press **New surface** — the cubes button in the Layers
+   header, **New surface…** in the 3-D view's options menu, or **S** while the
+   pointer is over the 3-D view.
+2. Choose the channel under **Source**. The dock reads a coarse copy of the stack
+   and suggests thresholds — **Otsu**, **Triangle** and **Mixture** — on the
+   channel's histogram.
+3. Move the threshold. The 3-D view shows a preview surface as you drag, and the
+   plane and the XZ / YZ sections show its contour, dashed, so you can judge the
+   boundary against the pixels it is drawn from.
+4. Choose **Smoothing**, a **Min size** to drop small pieces, and a **Quality**,
+   then **Create surface**. Its card follows the build.
+
+The threshold is always in the channel's **raw** intensity units. Changing a
+channel's contrast never moves a surface, and the surface's record says which
+value it is.
+
+Under **Advanced**: a Gaussian **blur** (in µm) for speckled stains, **background**
+subtraction keyed to the diameter of the objects to keep, the **region** (the
+whole volume, the area on screen, or the planes of the slab band), a colour and
+a name.
+
+## Make a surface for every cell
+
+With a 3-D mask, choose **Cells of the 3-D mask** as the source (optionally just
+some cell ids). Each cell gets its own closed surface under its own id — the
+same id as its row in the cell table — so colouring, picking and the table line
+up. Neighbouring cells that touch are drawn a little apart so they do not show
+through each other. The mask itself is never changed.
+
+## Look at surfaces
+
+- **Volume, surfaces or both**: the 3-D view's options menu switches between
+  them without reloading anything.
+- **Style**: Solid, Glass (see-through), Wire (the mesh's triangles) or Outline
+  (a dark silhouette line), with a **Look** (soft, matte, glossy, glass).
+- **Colour**: one colour, a colour per object, the cell colours of the active
+  tool (Cell Explorer, gating), or a measurement from the Objects table.
+- **Clip**: the slab band's planes cut surfaces exactly as they cut the voxels.
+- **In the planes**: on the plane view and in the section panes each visible
+  surface is drawn where it crosses them, physically aligned with the image.
+
+## Pick, isolate and measure objects
+
+Click an object in the 3-D view (without dragging). Its card shows its id, its
+**voxel** measurements from the mask beside its **mesh** measurements, and
+whether it touches the edge of the volume. From there: **Hide**, **Isolate**,
+**Show all**, **In planes** (the plane through it, centred), and **Neighbours**
+within a distance — for cells, with the contact area the two cells share in the
+mask.
+
+**Objects…** on the card lists every object with its measurements: sort by any
+column, filter to a range, colour by a column, and show only what the filter
+keeps.
+
+## Edit and export
+
+Edits — remove small pieces, keep the largest, delete objects, smooth again —
+make a new version of the mesh; the previous one is a step back away. **Export**
+writes PLY, OBJ, STL or glTF (GLB), in microns when the z step is known, zipped
+with a `manifest.json` that says how the surface was made.
+
+## What a surface is, and is not
+
+- An isosurface is the boundary at one value you chose. A nearby value can draw
+  a different shape; it is not a validated object boundary.
+- Smoothing moves vertices by at most about half a voxel. Mesh areas and
+  volumes are close to the mask's, not equal to them: report cell sizes from the
+  voxel columns.
+- Distances between surfaces are geometry. Two cells that touch are near each
+  other; whether they interact is a separate question.
+- Without a z step, every size is in voxels and says so.
+
+## Related
+
+<Cards>
+  <Card title="Show and adjust image channels" href="/docs/viewer/image-channels" description="Channels drawn in the 3-D view beside surfaces." />
+  <Card title="Layers" href="/docs/viewer/layers" description="Every surface is a layer, with its own card." />
+  <Card title="Export" href="/docs/viewer/export" description="Saving pictures of the view, 3-D included." />
+</Cards>

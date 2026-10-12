@@ -171,10 +171,12 @@ def render_sections(session, inp, *, store=True):
         from plexora.server.volume import labels as volume_labels
 
         seg = record.segmentation
-        if not (seg.available and seg.derived and volume_labels.is_label_volume(seg.derived)):
+        # Local or on a data node (providers/node.NodeLabelVolume reads the
+        # same planes over the wire).
+        labels = volume_labels.project_label_volume(record)
+        if labels is None:
             raise AgentError("precondition_missing", "outlines in sections need a 3-D label "
                              "volume; this project's mask is flat or absent")
-        labels = volume_labels.open_label_volume(seg.derived)
         rows_y = (lbox[1], lbox[3])
         cols_x = (lbox[0], lbox[2])
         plane = _label_crop(labels, level, cz, cz, rows_y, cols_x)[0]
@@ -272,8 +274,7 @@ def table_planes(data, keep):
     zs = np.asarray(data.table.columns([z_column])[z_column], dtype=np.float64)[keep]
     from plexora.server.volume import labels as volume_labels
 
-    seg = record.segmentation
-    solid = bool(seg.available and seg.derived and volume_labels.is_label_volume(seg.derived))
+    solid = volume_labels.project_has_label_volume(record)
     return zs, depth, solid
 
 

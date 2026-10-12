@@ -4659,3 +4659,729 @@ body.sidebar-collapsed .viewer-shell,
     width: var(--plx-band-sections-yz, 56px);
     z-index: 211;
 }
+
+/* -- Surface Studio (views/surfaceCard.js, surfaceStudio.js, surfaceInspect.js,
+   surfaceObjects.js) ------------------------------------------------------------- */
+
+/* `display` on the icon-button class would defeat [hidden]: the button shows
+   only for a z-stack. */
+#layer_surface_button[hidden] {
+    display: none;
+}
+
+.plx-surf-card {
+    display: grid;
+    gap: 8px;
+}
+
+.plx-surf-row {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+}
+
+/* The colour: a dot that is the native picker, so it opens the system's. */
+.plx-surf-swatch {
+    background: var(--swatch, #d8b45a);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+    flex: 0 0 auto;
+    height: 22px;
+    overflow: hidden;
+    position: relative;
+    width: 22px;
+}
+
+.plx-surf-swatch input {
+    cursor: pointer;
+    inset: 0;
+    opacity: 0;
+    position: absolute;
+}
+
+.plx-surf-swatch:focus-within {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* One choice of several, drawn as one control. */
+.plx-surf-seg {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex: 1 1 auto;
+    gap: 2px;
+    min-width: 0;
+    padding: 2px;
+}
+
+.plx-surf-seg-option {
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 1 1 0;
+    font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 4px 6px;
+    text-overflow: ellipsis;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-surf-seg-option:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.plx-surf-seg-option:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel);
+    outline: none;
+}
+
+.plx-surf-seg-option[aria-checked="true"] {
+    background: var(--accent-channel-tint);
+    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+.plx-surf-looks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.plx-surf-field {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.plx-surf-field > span {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-surf-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 11px;
+    min-width: 0;
+    padding: 3px 6px;
+}
+
+.plx-surf-select:focus-visible {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+/* What the surface is, in one line. */
+.plx-surf-what {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-surf-state {
+    align-items: center;
+    display: flex;
+    font-size: 11px;
+    gap: 8px;
+}
+
+.plx-surf-state:empty {
+    display: none;
+}
+
+.plx-surf-state.is-pending {
+    color: var(--text-secondary);
+}
+
+.plx-surf-state.is-bad {
+    color: var(--accent-danger);
+}
+
+.plx-surf-progress {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border-subtle);
+    border: 0;
+    border-radius: 2px;
+    flex: 1 1 auto;
+    height: 4px;
+    min-width: 40px;
+    overflow: hidden;
+}
+
+.plx-surf-progress::-webkit-progress-bar {
+    background: var(--border-subtle);
+    border-radius: 2px;
+}
+
+.plx-surf-progress::-webkit-progress-value {
+    background: var(--accent-channel);
+    border-radius: 2px;
+    transition: width var(--duration-fast) var(--ease-standard);
+}
+
+.plx-surf-progress::-moz-progress-bar {
+    background: var(--accent-channel);
+    border-radius: 2px;
+}
+
+.plx-surf-link {
+    background: none;
+    border: 0;
+    color: var(--accent-channel);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 4px;
+}
+
+.plx-surf-link:hover {
+    text-decoration: underline;
+}
+
+.plx-surf-link:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.plx-surf-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.plx-surf-actions[hidden] {
+    display: none;
+}
+
+.plx-surf-action {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    gap: 5px;
+    padding: 3px 7px;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-surf-action .fas {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.plx-surf-action:hover,
+.plx-surf-action:focus-visible {
+    border-color: var(--accent-channel-soft);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-surf-action[aria-pressed="true"] {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+/* The Quick Surface dock and the objects table: the magic bar's liquid glass,
+   with a dark tint, because they sit over bright tissue as often as over
+   black. */
+.plx-surf-studio,
+.plx-surf-objects,
+.plx-surf-inspect {
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+    background: linear-gradient(180deg, rgba(30, 36, 48, 0.86), rgba(10, 14, 20, 0.84) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), var(--shadow-md);
+    color: var(--text-primary);
+    font-size: 12px;
+    pointer-events: auto;
+}
+
+.plx-surf-studio {
+    animation: plx-surf-in var(--duration-base) var(--ease-standard);
+    display: grid;
+    gap: 9px;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    padding: 10px 12px 12px;
+    width: 320px;
+}
+
+.plx-surf-studio[aria-busy="true"] .plx-surf-studio-mark {
+    animation: plx-magic-bar-busy 0.9s var(--ease-standard) infinite alternate;
+}
+
+@keyframes plx-surf-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.plx-surf-studio-head {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.plx-surf-studio-mark {
+    color: var(--accent-channel);
+    font-size: 13px;
+}
+
+.plx-surf-studio-title {
+    flex: 1 1 auto;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-surf-icon-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.66);
+    cursor: pointer;
+    display: inline-flex;
+    height: 24px;
+    justify-content: center;
+    width: 24px;
+}
+
+.plx-surf-icon-button:hover,
+.plx-surf-icon-button:focus-visible {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    outline: none;
+}
+
+.plx-surf-studio .plx-surf-seg-option {
+    padding: 4px 2px;
+}
+
+.plx-surf-studio-field {
+    align-items: center;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 74px 1fr auto;
+}
+
+.plx-surf-studio-label {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-surf-studio-unit {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.plx-surf-number {
+    min-width: 0;
+    width: 100%;
+}
+
+.plx-surf-studio-threshold {
+    display: grid;
+    gap: 6px;
+}
+
+.plx-surf-studio-threshold[hidden],
+.plx-surf-studio-mask[hidden],
+.plx-surf-studio-field[hidden] {
+    display: none;
+}
+
+.plx-surf-histogram {
+    background: rgba(0, 0, 0, 0.32);
+    border-radius: var(--radius-sm);
+    cursor: ew-resize;
+    display: block;
+    height: 56px;
+    touch-action: none;
+    width: 100%;
+}
+
+/* The threshold's box, moved out of its slider into the row above the
+   histogram: as wide as the Min size box below it. */
+.plx-surf-studio-iso {
+    display: flex;
+    min-width: 0;
+}
+
+.plx-surf-studio-iso .plx-number-group {
+    flex: 1 1 auto;
+}
+
+.plx-surf-studio-iso .plx-number {
+    width: 100%;
+}
+
+.plx-surf-marks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.plx-surf-chip {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+}
+
+.plx-surf-chip:hover,
+.plx-surf-chip:focus-visible {
+    border-color: var(--accent-channel-soft);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-surf-studio-estimate {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: -2px 0 0 82px;
+    min-height: 14px;
+}
+
+.plx-surf-studio-estimate.is-bad {
+    color: var(--accent-warning);
+}
+
+.plx-surf-text {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 11px;
+    min-width: 0;
+    padding: 4px 7px;
+    width: 100%;
+}
+
+.plx-surf-text:focus-visible {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.plx-surf-colour {
+    background: none;
+    border: 0;
+    cursor: pointer;
+    height: 22px;
+    padding: 0;
+    width: 36px;
+}
+
+.plx-surf-studio-advanced > summary {
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    margin-bottom: 6px;
+}
+
+.plx-surf-studio-advanced > div,
+.plx-surf-studio-advanced {
+    display: grid;
+    gap: 6px;
+}
+
+.plx-surf-studio-foot {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    gap: 10px;
+    padding-top: 9px;
+}
+
+.plx-surf-studio-status {
+    color: var(--text-secondary);
+    flex: 1 1 auto;
+    font-size: 11px;
+    line-height: 1.35;
+    margin: 0;
+    min-width: 0;
+}
+
+.plx-surf-create {
+    background: var(--accent-channel);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: #04121c;
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    transition: filter var(--duration-fast) var(--ease-standard);
+}
+
+.plx-surf-create:hover {
+    filter: brightness(1.08);
+}
+
+.plx-surf-create:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+}
+
+.plx-surf-create:disabled {
+    cursor: default;
+    filter: grayscale(0.6);
+    opacity: 0.55;
+}
+
+/* The picked object's card, beside the pointer. */
+.plx-surf-inspect {
+    display: grid;
+    gap: 8px;
+    max-width: 300px;
+    min-width: 240px;
+    padding: 10px 12px;
+    position: absolute;
+    z-index: 270;
+}
+
+.plx-surf-inspect-head {
+    align-items: baseline;
+    display: flex;
+    gap: 8px;
+}
+
+.plx-surf-inspect-head h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.plx-surf-inspect-of {
+    color: var(--text-muted);
+    flex: 1 1 auto;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-surf-facts {
+    display: grid;
+    font-size: 11px;
+    gap: 3px 10px;
+    grid-template-columns: auto 1fr;
+    margin: 0;
+}
+
+.plx-surf-facts dt {
+    color: var(--text-muted);
+}
+
+.plx-surf-facts dd {
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    text-align: right;
+}
+
+.plx-surf-warn {
+    color: var(--accent-warning);
+    font-size: 11px;
+    line-height: 1.35;
+    margin: 0;
+}
+
+.plx-surf-muted {
+    color: var(--text-muted);
+}
+
+.plx-surf-near {
+    align-items: center;
+    display: flex;
+    font-size: 11px;
+    gap: 6px;
+}
+
+.plx-surf-near .plx-surf-number {
+    width: 64px;
+}
+
+.plx-surf-unit {
+    color: var(--text-muted);
+}
+
+.plx-surf-near-list {
+    display: grid;
+    font-size: 11px;
+    gap: 2px;
+    margin: 0;
+    max-height: 140px;
+    overflow-y: auto;
+    padding-left: 18px;
+}
+
+.plx-surf-near-list:empty {
+    display: none;
+}
+
+/* The objects table: a panel over the image, not a sidebar card -- it is wide. */
+.plx-surf-objects {
+    bottom: 16px;
+    display: grid;
+    gap: 8px;
+    grid-template-rows: auto auto auto 1fr auto;
+    left: 50%;
+    max-height: min(60%, 520px);
+    padding: 10px 12px;
+    position: absolute;
+    transform: translateX(-50%);
+    width: min(860px, calc(100% - 32px));
+    z-index: 268;
+}
+
+.plx-surf-objects-tools {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.plx-surf-objects-tools .plx-surf-select {
+    flex: 0 1 160px;
+}
+
+.plx-surf-objects-tools .plx-surf-number {
+    width: 76px;
+}
+
+.plx-surf-objects-legend {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 0;
+}
+
+.plx-surf-objects-legend:empty {
+    display: none;
+}
+
+.plx-surf-objects-scroll {
+    min-height: 120px;
+    overflow: auto;
+}
+
+.plx-surf-table {
+    border-collapse: collapse;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    width: 100%;
+}
+
+.plx-surf-table th {
+    background: rgba(12, 16, 22, 0.96);
+    position: sticky;
+    top: 0;
+}
+
+.plx-surf-th {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 6px;
+    white-space: nowrap;
+}
+
+.plx-surf-th[data-dir]::after {
+    content: " ▾";
+}
+
+.plx-surf-th[data-dir="up"]::after {
+    content: " ▴";
+}
+
+.plx-surf-table td {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    padding: 3px 6px;
+    text-align: right;
+}
+
+.plx-surf-table tbody tr {
+    cursor: pointer;
+}
+
+.plx-surf-table tbody tr:hover td,
+.plx-surf-table tbody tr:focus-visible td {
+    background: var(--accent-channel-tint);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-surf-menu {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    display: grid;
+    min-width: 220px;
+    padding: 4px;
+    position: fixed;
+    z-index: 2000;
+}
+
+.plx-surf-menu-item {
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 6px 10px;
+    text-decoration: none;
+}
+
+.plx-surf-menu-item:hover,
+.plx-surf-menu-item:focus-visible {
+    background: var(--accent-channel-tint);
+    color: var(--text-primary);
+    outline: none;
+    text-decoration: none;
+}
+
+.plx-surf-menu-note {
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 10px;
+    margin: 4px 0 0;
+    padding: 6px 10px 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-surf-studio,
+    .plx-surf-studio[aria-busy="true"] .plx-surf-studio-mark {
+        animation: none;
+    }
+}

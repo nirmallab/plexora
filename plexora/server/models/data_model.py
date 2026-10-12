@@ -257,10 +257,11 @@ def _servable_as_is(segmentation_path, mode):
     level -- which is the "user brought their own pyramidised mask" case, the
     one situation where importing costs no conversion at all.
     """
-    if providers.is_remote_locator(segmentation_path):
+    if not segmentation_pyramid.can_serve_in_place(segmentation_path):
         # Never served from the web tile by tile: the tile route reads a mask
         # far more often than an image, and a label pyramid converted once into
-        # the project is what keeps that off the network.
+        # the project is what keeps that off the network. Nor a PNG, which
+        # the tile route cannot open at all -- however outline-like it looks.
         return False
     if mode == segmentation_pyramid.MODE_FILLED:
         return segmentation_pyramid.is_servable_label_pyramid(segmentation_path)
@@ -341,27 +342,11 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
         return None
     source = Path(segmentation_path)
     folder = Path(dataDirectory) if dataDirectory else source.parent
-    stem = source.name.split(".")[0]
-    target = folder / f"{stem}_labels_v1.zarr"
-    key = segmentation_pyramid.source_fingerprint(source)
-    if volume_labels.is_label_volume(target):
-        try:
-            import zarr as _zarr
-
-            attrs = dict(_zarr.open_group(str(target), mode="r").attrs)
-            if attrs.get("source_key") == key and attrs.get("source") == str(source):
-                return str(target)
-        except Exception:
-            pass
-    if stage_callback is not None:
-        stage_callback("building")
-    folder.mkdir(parents=True, exist_ok=True)
-    built = volume_labels.build_label_volume(source, target, progress=progress_callback,
-                                             min_levels=image_levels)
-    import zarr as _zarr
-
-    _zarr.open_group(built, mode="r+").update_attributes({"source_key": key or ""})
-    return built
+    # The rule a data node follows too (volume_labels.resolve_label_volume),
+    # so a mask converted by either is adopted by both.
+    return volume_labels.resolve_label_volume(
+        source, [folder], progress=progress_callback, stage=stage_callback,
+        min_levels=image_levels)
 
 
 def segmentation_mode(entry):
@@ -2242,10 +2227,25 @@ def get_consistency_report(datasource_name):
     # "cannot say" must not be reported as "they differ".
     if project.segmentation.available and "segmentation" not in project.resources:
         mask_size = segmentation_pyramid.plane_size(project.segmentation.derived)
+    rows, unplaced = _unplaced_cells(project)
     report = consistency.report(
-        project, get_datasource_description(datasource_name), mask_size)
+        project, get_datasource_description(datasource_name), mask_size,
+        unplaced=unplaced, rows=rows)
     _consistency_cache[datasource_name] = report
     return report
+
+
+def _unplaced_cells(project):
+    """(rows, how many of them have a non-finite x or y) for the loaded table.
+
+    (0, 0) when there is nothing to count. Read off the loaded frame, which is
+    the compact (id, x, y) copy for a table on a node -- the same rows.
+    """
+    x, y = project.roles.x, project.roles.y
+    if datasource is None or not (x and y) or not {x, y} <= set(datasource.columns):
+        return 0, 0
+    points = datasource.select([x, y]).to_numpy().astype(np.float64, copy=False)
+    return int(points.shape[0]), int((~np.isfinite(points).all(axis=1)).sum())
 
 
 def get_channel_gmm(channel_name, datasource_name, view=""):
@@ -3094,6 +3094,12 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
             slice(iy, iy + tile_height), slice(ix, ix + tile_width))
     if channel_num is None:
         tile = _label_region(pyramid, level, iy, ix, tile_height, tile_width)
+        if not tile.size:
+            # Wholly past the mask's edge, which a viewer asks for when the
+            # mask is smaller than the image it is drawn on. No cells there:
+            # one background pixel, which the browser draws as nothing over
+            # the whole tile, where packing an empty array would raise.
+            return np.zeros((1, 1, 4), dtype=np.uint8)
         if tile.dtype.itemsize != 4:
             tile = tile.astype(np.uint32)
         tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
@@ -3181,7 +3187,7 @@ def encode_tile(datasource_name, channel, level, tile, quality, view="", window=
             # spells the default as its own plane and adds the project's z/t
             # reading -- and not at all for a planar image, whose URL is the
             # one it has always been.
-            forwarded = (node.tile(level, tile) if is_segmentation
+            forwarded = (node.tile(level, tile, view=view) if is_segmentation
                          else node.tile(channel, level, tile, quality, view=view,
                                         window=window))
             _perf.mark("node")
@@ -3927,7 +3933,7 @@ def _image_channel_stem(filePath):
     return re.sub(
         r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
         r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
-        r'|\.dcm|\.dicom',
+        r'|\.dcm|\.dicom|\.ims',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 

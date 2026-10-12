@@ -788,6 +788,8 @@ _PROJECT_OPTIONS = (
     ("--cell-id", {"help": "The column holding the cell identifier."}),
     ("--x", {"help": "The column holding the X coordinate."}),
     ("--y", {"help": "The column holding the Y coordinate."}),
+    ("--z", {"help": "The column holding the Z coordinate (each cell's plane), "
+                     "for a table over a z-stack."}),
     ("--sample", {"help": "The column holding the image or sample id."}),
     ("--celltype", {"help": "The column holding a phenotype or cell type."}),
     ("--markers", {"nargs": "+", "metavar": "COLUMN",
@@ -1440,12 +1442,6 @@ def _build_mcp_parser():
                             "server. Not for typing into a client config.")
     serve.add_argument("--bridge-nonce", default=None, metavar="N", help=argparse.SUPPRESS)
     _gating_limit_arguments(serve, "--gating-on-limit", "--gating-max-extensions")
-    serve.add_argument("--gating-hybrid", dest="gating_hybrid", choices=GATING_HYBRID_OPTIONS,
-                       default=None,
-                       help="Automatic gating's default hybrid level: tiles (each cell drawn "
-                            "with its outline and partner channels), model (a per-cell image "
-                            "model shapes the gate), full (both), or off (the default). A "
-                            "session can still choose its own.")
     smoke = subs.add_parser("smoke", help="Check the server works against this data "
                                           "directory (read-only).")
     smoke.add_argument("--project", help="Inspect this project (default: the first).")
@@ -1545,7 +1541,7 @@ def _build_ai_parser():
                        help="Print the raw lines as JSON, one per line.")
     bench = subs.add_parser("bench", help="Benchmark automatic gating or QC against known "
                                           "truth.")
-    bench.add_argument("bench_target", choices=("gating", "qc", "cellcall"))
+    bench.add_argument("bench_target", choices=("gating", "qc"))
     from plexora.ai import bench as bench_module, bench_data
 
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
@@ -1587,19 +1583,11 @@ def _build_ai_parser():
                             "how far each marker's gate moves.")
     bench.add_argument("--variants", default="baseline",
                        help="Gating: the ablation's variants, comma-separated -- "
-                            "baseline, tiles, model, hybrid (the hybrid levels); each runs "
-                            "its own session (default baseline).")
+                            "baseline, tiles (every look drawn as the 2 x 2 multi-view "
+                            "block); each runs its own session (default baseline).")
     bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
                        help="With --truth csv:<path>: the header column holding the gates "
                             "(\"Human gate\"); the markers are the first column.")
-    bench.add_argument("--workers", default="0",
-                       help="Cellcall: comma-separated numbers of model workers to time "
-                            "(0: the default split of the cores).")
-    bench.add_argument("--halves", type=float, default=None,
-                       help="Cellcall: how far from each gate cells are read, in band "
-                            "halves (default the model's own reach).")
-    bench.add_argument("--cells", type=int, default=None,
-                       help="Cellcall: at most this many cells a marker, nearest the gate.")
     _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
 
     # Plexora's own harness: AI features with no external agent, billed in
@@ -1696,10 +1684,7 @@ def _mcp_missing():
 #: without importing the plugin; a test keeps the two the same.
 GATING_LIMIT_POLICIES = ("ask", "extend", "stop")
 GATING_LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
-                    "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS",
-                    "hybrid": "PLEXORA_GATING_HYBRID"}
-#: Automatic gating's hybrid levels (autogate `schemas.HYBRID_OPTIONS`).
-GATING_HYBRID_OPTIONS = ("off", "tiles", "model", "full")
+                    "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS"}
 
 
 def _gating_limit_arguments(parser, policy_flag, extensions_flag):
@@ -1722,8 +1707,6 @@ def _apply_gating_limits(args):
         os.environ[GATING_LIMIT_ENV["on_limit"]] = args.gating_on_limit
     if getattr(args, "gating_max_extensions", None) is not None:
         os.environ[GATING_LIMIT_ENV["max_extensions"]] = str(args.gating_max_extensions)
-    if getattr(args, "gating_hybrid", None):
-        os.environ[GATING_LIMIT_ENV["hybrid"]] = args.gating_hybrid
 
 
 def _run_mcp(args):
@@ -1853,17 +1836,6 @@ def _run_ai(args):
             else "oracle"
         return bench_qc.bench_command(synthetic=scenarios, agent=agent, arms=arms,
                                       out=args.out, seed=args.seed)
-    if command == "bench" and args.bench_target == "cellcall":
-        from plexora.ai import bench_cellcall
-
-        if not args.bench_projects:
-            print("bench cellcall needs --project", file=sys.stderr)
-            return 2
-        return bench_cellcall.bench_command(
-            project=args.bench_projects[0],
-            markers=[m.strip() for m in args.markers.split(",") if m.strip()]
-            if args.markers else None,
-            workers=args.workers, band_halves=args.halves, max_cells=args.cells, out=args.out)
     if command == "bench":
         from plexora.ai import bench, bench_data
 

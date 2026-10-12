@@ -348,6 +348,17 @@
             return Number(this.info?.segmentation?.ndim) === 3;
         }
 
+        /** Ask again what the mask is, for a mask that changed after boot: a
+         *  data node converting a 3-D mask reports none until its label
+         *  volume lands. Resolves true when `labelsAre3d()` changed. */
+        async refreshLabels() {
+            if (!this.info || !this.datasource) return false;
+            const was = this.labelsAre3d();
+            const info = await this._json(url(`volume/${encodeURIComponent(this.datasource)}/info`));
+            if (info && info.segmentation) this.info = { ...this.info, segmentation: info.segmentation };
+            return this.labelsAre3d() !== was;
+        }
+
         /** The plane a 3-D label volume's outlines are read from: the plane on
          *  screen (a projection's middle plane), or "" for a 2-D mask. */
         labelSpec(state = this.state) {

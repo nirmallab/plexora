@@ -54,66 +54,46 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
 
     `attach`: None attaches the table only when the project has none; True
     always; False never. `cancelled()` is polled between planes.
-    """
-    from plexora.server.utils.source_image import open_project_volume
 
+    The pixels are read where they are. A local image is measured here; an
+    image a data node holds is measured ON that node, against the mask it
+    holds beside it (`providers.node.measure_objects_on_node`), because a
+    whole z-stack is not something to pull across a network one strip at a
+    time. Either way the table is written and attached here, by the code
+    below, so a node's measurement is the same file as a local one.
+    """
     seg = project.segmentation
-    if not seg.available or not volume_labels.is_label_volume(seg.derived):
+    labels = volume_labels.project_label_volume(project)
+    if labels is None:
         if seg.available:
             raise ObjectsUnavailable(
                 "this project's mask is one 2-D segmentation drawn on every plane; "
                 "objects in depth need a 3-D label volume (one id per cell across planes)")
         raise ObjectsUnavailable("this project has no segmentation mask")
-    labels = volume_labels.open_label_volume(seg.derived)
-    source = open_project_volume(project)
-    if source is None:
-        raise ObjectsUnavailable("this project's image is not a z-stack")
-    try:
-        volume = source.volume
-        if (labels.depth, labels.height, labels.width) != (volume.depth, volume.height,
-                                                            volume.width):
-            raise ObjectsUnavailable(
-                f"the mask is {labels.depth}x{labels.height}x{labels.width} (z, y, x) and "
-                f"the image {volume.depth}x{volume.height}x{volume.width}; they do not "
-                "describe the same volume")
-        all_names = list(project.image.channel_names)
-        wanted = list(channels) if channels else all_names
-        unknown = [name for name in wanted if name not in all_names]
-        if unknown:
-            raise ObjectsUnavailable(f"no channel(s) {unknown!r} in this image")
-        indices = [all_names.index(name) for name in wanted]
-        frames = max(1, int(volume.frames))
-        if labels.frames > 1 and labels.frames != frames:
-            raise ObjectsUnavailable(
-                f"the mask has {labels.frames} frames and the image {frames}; "
-                "they do not describe the same series")
+    all_names = list(project.image.channel_names)
+    wanted = list(channels) if channels else all_names
+    unknown = [name for name in wanted if name not in all_names]
+    if unknown:
+        raise ObjectsUnavailable(f"no channel(s) {unknown!r} in this image")
+    indices = [all_names.index(name) for name in wanted]
 
-        parts, manifest = [], None
-        for t in range(frames):
-            def read(index, z, rows, cols, t=t):
-                if cancelled is not None and cancelled():
-                    raise InterruptedError("cancelled")
-                level = source.level_array(t, z, 0)
-                return np.asarray(level[indices[index], rows, cols])
+    image_binding = project.resource("image") if hasattr(project, "resource") else None
+    if image_binding is not None:
+        frame, manifest = _measure_on_node(project, image_binding, wanted, indices,
+                                           units, progress, cancelled)
+    else:
+        from plexora.server.utils.source_image import open_project_volume
 
-            def step(done, total, t=t):
-                if progress is not None:
-                    progress(t * total + done, frames * total)
+        source = open_project_volume(project)
+        if source is None:
+            raise ObjectsUnavailable("this project's image is not a z-stack")
+        try:
+            frame, manifest = measure_columns(
+                labels, source, channel_names=wanted, indices=indices, units=units,
+                progress=progress, cancelled=cancelled)
+        finally:
+            source.close()
 
-            columns, manifest = volume_measure.measure(
-                labels.frame(t), read, channel_names=wanted, spacing=volume.spacing,
-                units=units, t=t, progress=step)
-            parts.append(columns)
-    finally:
-        source.close()
-
-    import polars as pl
-
-    frame = pl.concat([pl.DataFrame({name: np.asarray(values) for name, values in part.items()})
-                       for part in parts], how="vertical")
-    if frames > 1:
-        manifest["frames"] = frames
-        manifest["labels_per_frame"] = labels.frames > 1
     table_path, manifest_path = object_paths(project)
     table_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = table_path.with_name(table_path.name + ".tmp")
@@ -136,6 +116,81 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
     return {"objects": int(frame.height), "table": str(table_path), "attached": attached,
             "units": manifest["units"], "columns": list(frame.columns),
             "spacing_um": manifest.get("spacing_um"), "manifest": str(manifest_path)}
+
+
+def measure_columns(labels, source, *, channel_names, indices, units="physical",
+                    progress=None, cancelled=None):
+    """`(frame, manifest)`: every object of `labels` measured against the
+    image `source` (an open volume source), one row per object per frame.
+
+    The half of `measure_project_objects` that reads pixels, and so the half
+    that runs where they are: here for a local image, on the data node for one
+    held there (node/api.volume_measure). `labels` is a label volume -- a
+    local store, or the node's own. `indices` are the image's channels to read,
+    named `channel_names` in the table.
+    """
+    import polars as pl
+
+    volume = source.volume
+    if (labels.depth, labels.height, labels.width) != (volume.depth, volume.height,
+                                                        volume.width):
+        raise ObjectsUnavailable(
+            f"the mask is {labels.depth}x{labels.height}x{labels.width} (z, y, x) and "
+            f"the image {volume.depth}x{volume.height}x{volume.width}; they do not "
+            "describe the same volume")
+    frames = max(1, int(volume.frames))
+    if labels.frames > 1 and labels.frames != frames:
+        raise ObjectsUnavailable(
+            f"the mask has {labels.frames} frames and the image {frames}; "
+            "they do not describe the same series")
+
+    parts, manifest = [], None
+    for t in range(frames):
+        def read(index, z, rows, cols, t=t):
+            if cancelled is not None and cancelled():
+                raise InterruptedError("cancelled")
+            level = source.level_array(t, z, 0)
+            return np.asarray(level[indices[index], rows, cols])
+
+        def step(done, total, t=t):
+            if progress is not None:
+                progress(t * total + done, frames * total)
+
+        columns, manifest = volume_measure.measure(
+            labels.frame(t), read, channel_names=list(channel_names), spacing=volume.spacing,
+            units=units, t=t, progress=step)
+        parts.append(columns)
+
+    frame = pl.concat([pl.DataFrame({name: np.asarray(values) for name, values in part.items()})
+                       for part in parts], how="vertical")
+    if frames > 1:
+        manifest["frames"] = frames
+        manifest["labels_per_frame"] = labels.frames > 1
+    return frame, manifest
+
+
+def _measure_on_node(project, image_binding, wanted, indices, units, progress, cancelled):
+    """`measure_columns`, run on the data node that holds the image -- which
+    has to hold the mask too: measuring reads both, plane by plane, and the
+    one machine that has both files is the one to read them on."""
+    from plexora.server.providers import node as node_provider
+    from plexora.server.providers.base import ResourceError
+
+    seg_binding = project.resource("segmentation")
+    if seg_binding is None or seg_binding.node != image_binding.node:
+        raise ObjectsUnavailable(
+            f"this project's image is on data node {image_binding.node!r} and its mask "
+            "is not; 3-D objects are measured on the machine that holds both, so share "
+            "the mask on that node too")
+    spec = project.image
+    try:
+        return node_provider.measure_objects_on_node(
+            image_binding, seg_binding, channel_names=wanted, indices=indices, units=units,
+            z_semantics=spec.z_semantics, t_semantics=spec.t_semantics,
+            pixel_size=spec.pixel_size, pixel_size_z=spec.pixel_size_z,
+            frame_interval=spec.frame_interval, progress=progress, cancelled=cancelled)
+    except ResourceError as exc:
+        raise ObjectsUnavailable(str(exc)) from exc
 
 
 def attach_object_table(project, table_path, frame=None):

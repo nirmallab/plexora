@@ -116,7 +116,7 @@ Entry points:
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
 | `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
-| `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `model_files.py` is the verified download every model shares (a file gets its real name only after its sha256 matched, so a half-finished download is never loaded); `sam_weights.py` and gating's `cellcall_weights.py` both delegate to it. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
+| `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `model_files.py` is the verified download every model shares (a file gets its real name only after its sha256 matched, so a half-finished download is never loaded); `sam_weights.py` delegates to it. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
 | `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
 | `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
@@ -135,6 +135,14 @@ Entry points:
   `_spatial_index`/`spatial_index(name)` build lazily.
   `query_for_closest_cell(x, y, name, t=None, planes=None)` is behind
   `/get_nearest_cell`, which takes `z0`/`z1`, the planes on screen.
+  **A cell with no position is ignored, never a reason to refuse the table.**
+  `SpatialIndex.build` indexes rows with finite x AND y only (sklearn's
+  "Input contains NaN" used to fail the whole table); such a row keeps its
+  place in the row-aligned arrays but is not in the index, whose `rows` maps
+  each indexed point back to its table row (None when it holds every row) and
+  is part of the cached state. `_unplaced_cells` counts them for
+  `consistency.report`. A marker NaN is never gated positive and is left out
+  of the statistics and the GMM fit.
   `generate_thumbnail(name)` is the Open Project grid's card and is the one
   image path that deliberately does NOT load the datasource -- a page of
   projects must not be a data load per card. It reads one coarse level and
@@ -927,7 +935,7 @@ Entry points:
   something derived from a project's record (a layer pyramid, a layer tile, its
   ETag) knows when to throw it away. `project.py` also gained `LayerSpec` (one
   registered layer of a spatial scene — `kind` is `"image"`/`"labels"`/
-  `"points"`/`"shapes"`, a rendering strategy, not a modality) and
+  `"points"`/`"shapes"`/`"surface"`, a rendering strategy, not a modality) and
   `Project.spatial_layers` — stored as `spatialLayers` in config.json, because
   `project.dataset.layers` already means the AnnData expression matrices, and
   the two must not collide. `Project.reference_layer`, `all_layers` (the
@@ -1016,7 +1024,10 @@ Entry points:
   `NormalizedDatasource` and `TablePlan`; `csv_adapter.py` /
   `anndata_adapter.py` / `spatialdata_adapter.py` take a `DataSpec`;
   `get_adapter(type)` is the factory and `detect_data_type(path)` routes a
-  dropped path to one of them. `classify.py` is the single marker-vs-metadata
+  dropped path to one of them. `anndata_adapter.plan()` refuses a table only
+  when NO cell has a finite x/y ("no cell has a position"); a NaN position is
+  tolerated (see `data_model`'s ball tree), and a NaN in a categorical
+  celltype column becomes `""` rather than crashing polars. `classify.py` is the single marker-vs-metadata
   predictor (it replaced three drifting denylists); `inspection.py` reads a
   not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
   `load_table` is split into `_read_frame()` + `_normalize()`, the same
@@ -1154,7 +1165,10 @@ Entry points:
   ever asks — the viewer serves mask tiles in the IMAGE's coordinate system
   (`Project.all_layers` gives the mask layer the image's width and height), so
   a mask of another size is stretched over the wrong pixels rather than
-  refused. Core's and not gating's for the reason cell opacity is: every plugin
+  refused. `report(..., *, unplaced=0, rows=0)` also emits
+  `cells_without_position` ("N of M cells have no x/y position ...", from
+  `_unplaced_findings`) — silent for none and for all, because all is
+  `no_cells`. Core's and not gating's for the reason cell opacity is: every plugin
   that draws per-cell results has the question.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state,
   now also `ViewTransform` (`{degrees, flipH, flipV}` as JSON, one row per
@@ -1181,6 +1195,8 @@ Entry points:
   (see the adapters row's WIDE mode) and so are read through the provider,
   cached there, the same way `plugins/gating/server/tableops.gmm` reads a
   channel through `dataset.table.columns` rather than `frame()[channel]`.
+  `get_tiles` returns an empty `RESPONSE_DTYPE` array, not `[]`, for a project
+  without a table or roles, because the route calls `.tobytes()` on it.
 - `models/bin_tiles.py` — the store for a counted grid (Visium HD's 2 micron
   squares, and anything shaped like it): a sibling of `transcript_tiles.py`
   copied rather than subclassed, because a bin is already a count and needs no
@@ -1576,7 +1592,8 @@ One authoritative database; nodes are data services with no project state.
   written into a project's config.json, the same way `node://` never leaves
   `resources.py`'s bookkeeping. Pyramids for a kernel array come from
   `server/utils/memory_pyramid.py`: `image_pyramid()` (mean-pooled via
-  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour)
+  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour;
+  `_as_2d` refuses a non-integer mask, which cannot hold ids)
   both return an `ome_zarr.NgffPyramid`, so the tile route needs no third
   pathway; `_NumpyLevel` materializes slices of a lazy level-0 (dask/zarr) on
   demand, and `level_bytes()` sizes them.
@@ -2399,8 +2416,9 @@ A third-party pip package and a bundled one get exactly the same thing.
 - `layers(project, kind=None, modality=None)`, `layer(project, id)` and
   `sample(project)` — what is IN this sample, beside what its table holds.
   **`kind` is core's and `modality` is the plugin's**, and the split is the
-  whole contract: a kind is a rendering strategy and there are four of them
-  (`image`, `labels`, `points`, `shapes`), while a modality is what the data
+  whole contract: a kind is a rendering strategy and there are five of them
+  (`image`, `labels`, `points`, `shapes`, and `surface` — a triangle mesh the
+  3-D view draws; adding a kind means adding a renderer), while a modality is what the data
   MEANS (`transcripts`, `cell_boundaries`, `visium_spots`, `he`) and is an
   open string core never holds a list of. A transcripts tool asks for
   `modality="transcripts"` and does not care that it draws as points; core
@@ -2863,79 +2881,51 @@ deliberately left out and what should be built next.
   in `packets._sheet`), `events.py` (the `gating.session` event payload and its
   `control` URL, the one place core's agent panel learns which route to post
   pause/resume/stop/take-over to, so it never names the plugin),
-  `neighbourhood.py` (what the cell model selects with: `of(ds, marker,
-  pixel_um=)` gives each cell's fit-space value `vf`, whether it is
-  `eligible`, its `nearest_strong` positive and `adjacent_px`, one
-  `kernels.neighbour_values` walk per marker, the arrays kept for
-  `NEIGHBOURHOOD["cache_markers"]` (2) markers because each is N-sized;
-  `image_facts`, `mask_identity`, `qc_fingerprint`, `radius_px`,
-  `clear_cache`). The spatial-evidence switch that once sat here
+  `partners.py` (`partner_plan`: the expected and not-expected partners a
+  multi-view look shows, from the panel context's vocabulary relations
+  alone). The spatial-evidence switch that once sat here
   (`spatial.py`, `calls.py`, `SessionOptions.spatial`, `t3_contrast`, the
   uncertain layer) was removed, because on real tissue its decide mode
-  engaged none of its rules (`AUTOMATIC_GATING.md` §2a).
-  `cellcall.py` is the cell model's layer (`docs/internal/AUTOMATIC_GATING.md`
-  §2b): a small ONNX CNN gives each cell near the gate a `p_own`, and
-  `decide` keeps **the gate's call unless the model is confident**
-  (`CELLCALL["confident"]` 0.1), because on lsp11385_2 letting it call every
-  cell was worse far from the gate than the gate itself. `select` (table op
-  `gating.autogate.cellcall_select`) runs where the table is, `predict`
-  where the pixels are, reading crops `tiles_per_read` pyramid tiles at a
-  time on a reader thread so memory stays bounded; `resample` reproduces
-  scipy's zoom bit for bit, because that is what the weights were trained
-  on. `Pool` holds `workers` onnxruntime sessions of one file
-  (`default_workers`: a quarter of the cores, at most two) and `predict`
-  pipelines reads against them; `sweep` runs several jobs in one pass;
-  `select`/`run` take a reach and cap override. Runs are cached as `.npz` under
-  `agent_root/gating/<project>/cellcall/`, keyed on `CELLCALL_VERSION`,
-  the model's `cellcall_weights.identity()`, the gate and the data, each
-  storing the fit-space values `vf`, and only a marker's newest
-  `CELLCALL["keep_runs"]` (3) are kept; `current` finds the
-  run at the gate as it stands, `codes` turns it into one byte per row (1
-  uncertain, 2 not own, 3 own). `cellcall_weights.py` fetches
-  `cellcall_v1.onnx`, sha-pinned, from release `cellcall-model-v1` of
-  `nirmallab/plexora-models` (env `PLEXORA_CELLCALL_MODEL_DIR`/
-  `PLEXORA_CELLCALL_MODEL_URL`, default `<data_root>/.models/cellcall`);
-  `PLEXORA_CELLCALL_MODEL_FILE` loads an unpinned (dev or held-out) file
-  instead, identified as `unpinned:<sha16>` so its calls never mix with the
-  shipped model's.
-  `hybrid.py` is hybrid gating (`AUTOMATIC_GATING.md` §2c),
-  `SessionOptions.hybrid` `off`/`tiles`/`model`/`full`
-  (`schemas.HYBRID_OPTIONS`/`HYBRID_FEATURES`; default `off`, env
-  `PLEXORA_GATING_HYBRID`, `plexora mcp serve --gating-hybrid`; a resumed
-  session's options complete as `off`, so resuming never
-  changes how it decides). `tiles` draws each looked-at cell as the
-  `collage.LAYOUTS["t2m"]` 2 x 2 block — morphology, the context with the
-  judged cell outlined, the expected and the not-expected partner
-  (`Engine.partner_panels`), 64 px a panel. `model` queues cell-model runs
-  on the session record (`record["cellcall"]`), submitted by
-  `gating_next`/`gating_answer` and drained by the session job
-  `gating.session_cellcall` (tool `gating_session_cellcall`), so
-  `gating_next` may answer `model_running`; purpose `decide` reads ahead
-  when a marker's first look goes out (`Engine.model_ahead`), `layer` makes
-  the per-cell layer at the written gate. A look-approved gate is then
-  corrected at `Engine.settle` (`plan_correction`; `correct_for_review` for
-  a gate written for review) to the minimum of the pure `correction.py`'s
-  J(g) = flagged(g) + lam x unflagged_changed(g, g_v) (`CORRECTION`: `lam`
-  0.6, window 4 band halves), so the model moves only the cells it is
-  confident about and pays for every other cell the move changes. With
-  `HYBRID["confirm"]` off (the default) the correction is applied as
-  computed and recorded; on, it waits in state `awaiting_correction` for one
-  `correction_check` packet (`answers.CorrectionAnswer`, a `CHECK_KINDS`
-  member, `tasks.yaml`'s `final_validation`). Which steps earned their place
-  is `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`; the default stays `off`
-  until the live ablation clears its bar there.
-  Tools `run_cell_model` (a job) and `get_cell_model_calls`
-  (`capabilities_cellcall.py`, chained from `capabilities_autogate`,
-  entitlement `ai:gating:analytics`); routes `GET get_cell_model` (bytes
-  plus `X-Cell-Model-*` headers), `POST run_cell_model`, `GET jobs/<job_id>`,
-  `POST jobs/<job_id>/cancel`; the sidebar's `#gate_cell_model` block
-  (`gatingSidebarController.paintCellModel`/`startCellModel`/…). Through
-  `setCellFlagMask`, `evaluateGateMask` writes code 1 as 3 (amber, the
-  model's unconfident lean against a positive) and code 2 as 5 (magenta,
-  `MODEL_NOT_OWN`) over a positive, and code 3 as 4 (sky blue, `MODEL_OWN`)
-  over a negative only when every other gated key passes, and counts them
-  apart (`uncertainCount`/`modelOwnCount`/`modelNotOwnCount`); the gate's `count` is
-  unchanged. Nothing
+  engaged none of its rules (`AUTOMATIC_GATING.md` §2a). The per-cell model
+  that followed it (`cellcall.py`, `hybrid.py`, `correction.py`,
+  `neighbourhood.py`, `capabilities_cellcall.py`, `SessionOptions.hybrid`,
+  the `correction_check` packet, the viewer's model codes 3-5) was removed
+  on 2026-10-12, because on the PCA benchmark its per-cell overrides were
+  worse than the gates (`AUTOMATIC_GATING.md` §2b). What it left is
+  `SessionOptions.tiles` (default False; no env var or CLI flag):
+  `Engine.tiles_on()` makes every look's collage (`packets._multiview`)
+  the `collage.LAYOUTS["t2m"]` 2 x 2 block — morphology, the context with
+  the judged cell outlined, the expected and the not-expected partner
+  (`Engine.partner_panels` over `partners.partner_plan`), 64 px a panel,
+  reading guide `collage_t2m`/`collage_flips_m` — and adds `tiles:1` to a
+  packet's memo key (off, the key is the old one byte for byte).
+  `Engine._migrate` resumes a session stored with the model: `hybrid`
+  `tiles`/`full` becomes `tiles: True`, a unit `awaiting_correction` goes
+  back to `awaiting_regression`, an outstanding `correction_check` is
+  dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
+  are never read. Which steps earned their place is
+  `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
+  `replan.py` re-plans when a marker fails (`docs/internal/GATING_REPLAN_PLAN.md`):
+  every close that fails runs `after_close` (reorder the unstarted markers
+  without the failed one, rescore dependents, close an accepted gate only the
+  failed one led), and only what code cannot call goes to the agent as one
+  session-level `replan` packet (a `schemas.PLAN_KINDS` member, routed to
+  `tasks.yaml`'s planning task; answer `answers.ReplanAnswer`; state
+  `awaiting_replan`, in `WAITING_STATES`; `SessionOptions.replan`, default
+  True). Each marker and image flag is asked at most once, so the loop is
+  bounded by the panel, and it only routes (close, reopen for looks, or a
+  note on an accepted gate, never a demotion): context never moves a gate.
+  `Engine.lineage_purity` is the cross-lineage contamination screen
+  (`LINEAGE` limits), and `replan.rescreen` runs it again when an excluding
+  partner is accepted, because a marker can close for review before that
+  partner is gated. Three guards beside it: `Engine.clamp_to_judged` with
+  `unit["judged_rows"]` (limits from `engine.judged_limits`) keeps any
+  automatic refit from crossing a row a look judged; `within` is offered only when the orphan share is at most
+  `bivariate.WITHIN["max_orphan"]`; and `Engine.purity_capped` caps
+  confidence at low when purity fails again alone after the purity push,
+  instead of spending a second `regression_confirm` look.
+  `scoring.background` uses a floor-valley basis for zero-heavy channels.
+  Nothing
   here imports `data_model` —
   `tests/test_agent_architecture.py` scans the folder for it. Exposed as
   tools through `plugins/gating/capabilities_autogate.py` (analytical,
@@ -2988,11 +2978,7 @@ deliberately left out and what should be built next.
   `obsm["<table>_not_called"]` beside the `uns` gates
   (`anndata_gates.save_not_called`, from the `gating.save_gates` payload
   `capabilities.py` builds), and the provenance rows written with it carry
-  `call_mode`, `qc_fingerprint` and `n_not_called`. The same write puts
-  the cell model's confident disagreements beside them,
-  `obsm["<table>_model_own"]`/`obsm["<table>_model_not_own"]`
-  (`anndata_gates.save_model_calls`), only for markers with a run at their
-  current gate, so a write without one is unchanged.
+  `call_mode`, `qc_fingerprint` and `n_not_called`.
 - `plexora/plugins/qc/` — automated image QC, built on the shared
   `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
   Server: `schemas.py` (the closed vocabulary of QC classes and the
@@ -3516,13 +3502,9 @@ deliberately left out and what should be built next.
   against a trusted one, not an expert) or `--truth csv:<path>` (a
   `marker,value` file, `bench.reference_csv`; `--truth-column "Human gate"`
   picks the gates column of a wider file); `--variants
-  baseline,tiles,model,hybrid` runs one session per variant
-  (`bench.variant_arm`, `bench.VARIANTS`), the hybrid arms against the
-  baseline, the synthetic bench standing in for the cell
-  model with an oracle (`bench.oracle_cell_model`); `plexora ai bench
-  cellcall --project P --markers A,B --workers 1,2 --halves R --cells N`
-  (`ai/bench_cellcall.py`) times the cell model's reads per worker count;
-  `--synthetic spatial` runs `bench_data.SPATIAL_SCENARIOS` (scenes with
+  baseline,tiles` runs one session per variant (`bench.variant_arm`,
+  `bench.VARIANTS`; `tiles` is `{"tiles": True}`), the tiles arm against
+  the baseline; `--synthetic spatial` runs `bench_data.SPATIAL_SCENARIOS` (scenes with
   per-cell causes), and the summary's `causes` (`bench.cause_scores`,
   `CAUSE_METRICS`) says where each arm's errors fall; `--score-session ID` scores a
   stored session's `SESSION_ARMS` (gmm/proposal/ceiling/control/final: MAE
@@ -3587,7 +3569,9 @@ deliberately left out and what should be built next.
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
   `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
-  capability), `gating` and `qc`, each a shared `_COMMON` set plus one kind of
+  capability), `gating`, `qc` and `volume` (z-stacks, including the
+  `surface_*` tools and `viewer_set_volume_mode`/`viewer_set_camera`/
+  `viewer_set_surface`), each a shared `_COMMON` set plus one kind of
   work's tools, because every tool's name, description and schema is sent on
   every turn (all capabilities are ~300k characters — a 129k-token prefix for a
   coordinator that called a dozen of them). The five server tools are always
@@ -3961,7 +3945,7 @@ deliberately left out and what should be built next.
   the screen-space invariant under Key Invariants.
 - `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
   affine maths: the one ordered list of everything the viewer draws (image,
-  labels, points, shapes), because the viewer used to have two layer stacks
+  labels, points, shapes, and `surface` on the `gl` surface), because the viewer used to have two layer stacks
   that did not know about each other (OSD's `world` and the cell-layer
   registry) and "which layer is on top" had two answers. Three composite
   surfaces, in a fixed sequence — `tiles` (inside OSD's world), `overlay`,
@@ -5153,6 +5137,21 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   window until it is exact and announces `plexora:volume-window`;
   `services/perfProbe.js` (`window.PlexoraViewPerf`) holds the marks and
   counters the benchmark reads. Both are loaded from `index.html`.
+- Channel fade: `services/channelFade.js` (`window.PlexoraChannelFade`,
+  classic script loaded from `index.html` before `main.js`) fades a channel
+  switched on in over 240 ms, eased out, on every surface the image channel
+  section drives. Callers add the channel's OSD items at opacity 0 with
+  `preload` and join them to one fade (`group(count, {target, onDone})` /
+  `fadeIn(items)`); it holds until every item is fully loaded (ceiling
+  800 ms) and brings them up together. Hooks: `viewerManager.addChannelItems`
+  (an ordinary add only -- not HD swaps, plane steps or standby),
+  `addTiledLayer` via `spec.fade` (a layer's channel pairs, from
+  `addLayerChannelSet`), and `sectionPanes.js`'s `Pane.show` (channels new to
+  the pane). The 3-D view fades by a per-channel `presence()` uniform in
+  `volumeRenderer.js` instead, whose `refresh()` awaits
+  `volumeWindows.ensure` before fetching levels (a channel switched on in 3-D
+  used to not draw until toggled twice). Motion off (viewerPrefs or
+  reduced-motion) lands at once.
 - Server: `server/volume/serve.py` — the level payload builder
   (`parse_level`, `read_level`, `level_payload`, `forwarded_payload`, an
   LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
@@ -5245,6 +5244,107 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_datalayer_requests.py`) -- the client's `dataLayer.tablePlanes` /
   `planeQuery()`, set by `main.js` from the view state (plane or slab; null in
   volume mode), and `/volume/<ds>/info`'s `table_z`.
+  The fade has `tests/js/channel_fade_probe.mjs` wrapped by
+  `test_channel_fade_client.py`; `section_panes_probe.mjs` and
+  `volume_renderer_probe.mjs` carry its hook checks, and the
+  `test_viewer_3d_client.py` wrapper now expects at least 30 checks.
+
+**Surface Studio** (branch `feature/surface-studio`; the full write-up —
+licence split, renderer passes, measurements, merge notes — is
+`docs/internal/3d/SURFACES.md`, the user page `website/content/docs/viewer/
+surfaces.mdx`). A surface is a triangle mesh beside the voxels — an
+isosurface of one channel, one closed surface per cell of a 3-D mask, or an
+imported mesh — kept as a layer of kind `surface`, because then listing,
+ordering, restyling and deleting one are the generic layer routes.
+
+- Server engine, `plexora/server/surface/`: `mesh.py` (the `Mesh`, its
+  `PXMS` file — `uint32` header length, JSON header, 4-byte-aligned arrays the
+  browser reads with typed-array views — plus `weld`, Taubin smoothing and the
+  measurements); `marching.py` (Lewiner marching cubes over z-strips plus the
+  next strip's first plane, so shared-plane vertices are bitwise equal and
+  `weld` closes every seam with no tolerance); `isosurface.py` (per-strip
+  preprocessing with a halo — Gaussian `sigma_um`, `background_um` local
+  background — components numbered by size, `min_size`); `labels.py` (per-cell
+  crops read in tile groups, each blurred 0.6 of its own axis's voxel, which is
+  what takes the terraces off an anisotropic stack, then marched at 0.5);
+  `levels.py` (quality presets, regions, `z_stride`, triangle budgets — a
+  request that cannot fit is refused up front with the estimate, not built and
+  then undrawable; `PLEXORA_SURFACE_BUDGET_TRIANGLES`); `preview.py` (the
+  slider's grid read once and cached, marching cubes per isovalue, contours
+  through the plane and section planes; `PLEXORA_SURFACE_PREVIEW_VOXELS`);
+  `suggest.py` (Otsu, triangle, log-GMM split); `store.py` (the layer:
+  `surf-<token>`, built in the background by the `surface` builder like a
+  pinned projection, files under `<derived root>/surfaces_v1/<token>/` —
+  `manifest.json`, `mesh-L<k>.bin`, `objects.parquet` — the token a hash of
+  the source and every shaping parameter, so the same request returns the
+  same layer); `refine.py` (each edit a new `mesh-L<k>-v<n>.bin` version in
+  the manifest, undo drops the last); `export.py`/`importers.py` (PLY, OBJ,
+  STL, GLB with the manifest beside them); `contacts.py` (surface and
+  centroid neighbours; contact area from the MASK's shared voxel faces, not
+  the mesh); `sections.py` (where a mesh cuts XY/XZ/YZ, for the 2-D views).
+- Routes: `server/routes/surface_routes.py`, all under
+  `/volume/<ds>/surfaces...` (make, list, `preview`, `suggest`, `estimate`,
+  `import`, and per surface `manifest`, `mesh`, `objects`, `cancel`,
+  `sections`, `export`, `refine`, `neighbours`).
+- Licence: a root entitlement `surfaces` ("Surface Studio") in
+  `plexora/licensing/manifest.py`, beside `ai` rather than under it. Making
+  and analysing (the POST, `preview`, `suggest`, `estimate`, `refine`,
+  `neighbours`, `import`) is guarded by `guards.require_entitlement`; reading,
+  exporting, cancelling and deleting a surface that exists stay Free, because
+  what a Paid feature produced stays usable on any plan (SURFACES.md §1 has
+  the table, agent tools included). Tests mint `issue(ent=["surfaces"])`.
+- Client: `views/surfaceRenderer.js` (mesh passes on the volume renderer's
+  own GL context — opaque to a depth FBO, translucent by weighted blended OIT,
+  then the ray caster's surface variant built by
+  `volumeFragment(fragmentSource(...))` so rays stop at the meshes — plus
+  one-pixel id picking); `services/surfaceLayers.js` (load, style, persist,
+  create, preview, 2-D cuts, and the scene seam `captureState()`/
+  `applyState(list, {save})`, exposed as `ctx.view.surfaces`);
+  `views/surfaceCard.js`, `surfaceStudio.js` (the Quick Surface dock, opened
+  from the cubes button in the Layers header on z-stacks), `surfaceInspect.js`,
+  `surfaceObjects.js`. Hooks in `volumeRenderer.js` are marked `[surfaces]`;
+  `layerStack.js` maps kind `surface` to the `gl` surface. The view state now
+  persists `volume.camera {q, dist, pan}` and `volume.show {volume,
+  surfaces}`, which the 3-D camera never was before.
+- Agent: `plexora/agent/core/surface.py` (the `surface_*` tools), viewer
+  commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`
+  (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
+  profile, skill `plexora/ai/skills/surface-rendering`.
+- Figure Builder: a capture taken in 3-D has `figureCaptureTool.grabPreview`
+  draw the volume renderer again at print size (`snapshot({width, height})`),
+  and core contributes `scene.plugins.volume` to the panel; export's
+  `volume_state(panel)` sends such a panel down a client-raster branch — the
+  stored preview resampled, reported `client_rendered` with its effective dpi
+  — because the server has no 3-D renderer to draw it again.
+- Data nodes: extraction reads a whole channel or a whole label volume, so it
+  runs on the node that holds those voxels — `store._builds_on` picks the
+  image's binding for an isosurface, the mask's for cell surfaces — and only
+  the mesh travels. `_build_on_node` posts the spec, zs/ts and spacing (for
+  cells also `image_width`, scale and the object table's `TABLE_COLUMNS` as
+  base64 parquet) to `POST /node/v1/volume/surface`, where
+  `store.extract_on_node` runs the same pure `extract_isosurface`/
+  `extract_label_surfaces` a local build calls; `providers.node.
+  build_surface_on_node` polls `/volume/jobs/<id>`, relays stage/progress and
+  cancel, and turns the float-exact `.npz` result into a `Mesh`. The primary
+  then measures, joins and writes the surface, so every read after the build
+  is local. `store.open_volume_for(project)` (also used by
+  `agent/core/surface.py`) opens the stack locally or as a
+  `NodeVolumeReader` (`project_volume_reader`, cached per node endpoint+token
+  for `READER_TTL` 60 s, reading through `POST /node/v1/image/<rid>/block`,
+  capped at `BLOCK_MAX_VOXELS`), which is what previews and suggestions read;
+  contact areas read the mask through `project_label_volume`. Cache tokens use
+  `_identity` (for a node image, its locator plus the recorded binding
+  fingerprint) and the manifest records `source.built_on`; `check()` asks
+  `project_has_label_volume` rather than for a local `image.src`.
+- Video Studio is NOT on this branch (it is `feature/video-studio`); the
+  seam it will use is `ctx.view.surfaces` (SURFACES.md §8).
+- Tests: `tests/test_surface_engine.py`, `test_surface_layer.py`,
+  `test_surface_phase2.py`, `test_surface_agent.py`, `test_node_surfaces.py`
+  (node build == local build, mesh and object table),
+  `plexora/plugins/figure_builder/tests/test_figure_builder_volume.py`, and
+  JS probes `tests/js/{surface_renderer,surface_studio}_probe.mjs` (wrapped in
+  `tests/test_viewer_3d_client.py`). The boundary goldens include the
+  `/surfaces` routes and the `?v=20261011_surfaces` asset tag.
 
 ## Telemetry
 
@@ -6345,6 +6445,15 @@ and reports the wait through `PlexoraStatus.begin("HD tiles"/"Fast tiles")` —
 the swap is no longer instant, and the navbar chip is what says the click was
 heard.
 
+**HD is on by default, decided once at boot.** `main.js` presets HD before the
+first channel is added unless `flaskVariables.image_streamed` or
+`flaskVariables.server_is_remote` is set. Channel image kinds only
+(not rgb, brightfield or blank), and a Prev/Next carry-over's `hd` wins over
+the preset. `image_streamed` comes from `page_routes.image_streamed(project)`:
+true when the image's src is a web or node address, or the image resource is
+bound to a node.
+`tests/test_hd_default.py` pins the rule.
+
 ### Brightfield draws none of that
 
 A project with `image_kind == "brightfield"` (H&E and every other transmitted
@@ -7146,6 +7255,85 @@ in **5.6 s**.
   or stem. Callers with a recorded `segmentationSourceKey` still use it
   (`refresh_segmentation_ mapping`); the ones without — a fresh import, a node
   — fall back to "ours, of this mode, not older than the source".
+- **A mask is any format that can hold an integer id, and everything else is
+  refused up front with a sentence.** `segmentation_pyramid.mask_format_refusal(path)`
+  returns that sentence or None: JPEG (lossy, so ids are not preserved), slide
+  scanners (`.svs/.ndpi/.scn/.mrxs/.svslide/.bif`), `.qptiff`, `.dcm/.dicom`,
+  and a colour PNG (`_NOT_A_MASK` says why, `_SAVE_AS` what to export
+  instead). PNG is read by `read_png_labels` (greyscale via imagecodecs; palette
+  via Pillow so the indices are the ids), and its size comes off the IHDR with
+  no decode (`png_header`, which `plane_size`, `label_pyramid_gaps` and
+  `import_proposal._geometry_of` use). `can_serve_in_place(path)` is true only
+  for a local TIFF or zarr — a PNG is always converted, even one that looks
+  like outlines — and both `data_model._servable_as_is` and `node/app.py` ask it
+  before serving a mask unconverted; a local zarr label group is served as-is
+  only when its levels are 2-D arrays named 0, 1, 2…, else converted
+  (`_zarr_level_gaps`). `_zarr_level_zero` is the one reader of a zarr's level 0
+  for local and remote (bare array, NGFF multiscale by first dataset path,
+  bioformats2raw series 0), leading axes pinned by `_Plane2D`. A remote TIFF is
+  read by tile ranges through `tiff_region` (`_TiffPlane`), never tifffile's
+  zarr view, which deadlocks on streamed reads; `_remote_level_zero(url)`
+  returns `(plane, closer)`. `import_proposal.looks_like_label_image` reads PNGs
+  too, `_detect_image` warns with the refusal when a file added as a mask cannot
+  be one, `_remote_image_layer` proposes a remote TIFF/PNG as a mask when
+  answered so, or when declared or named so AND `_remote_label_plane`
+  (header-only) says it is one integer plane, and
+  `import_routes.attach_segmentation` raises `ValueError` with the refusal
+  before recording anything. **An Imaris `.ims` is a mask too**, always converted
+  (`is_ims`; `can_serve_in_place` is False; `label_pyramid_gaps` answers "it is
+  an Imaris file"), and refused when remote (`_REMOTE_IMS`: HDF5 can only be
+  read from a disk). `volume/sources/ims.py`'s `ImsLabels(path, channel=None)`
+  reads one channel as (Z,Y,X) or (T,Z,Y,X) at the real extent; Imaris stores
+  32-bit data as float, so a mask of more than 65,535 cells arrives as float32
+  and is read as uint32 only after every value is checked whole (`FLOAT_ID_LIMIT`
+  2**24). Planes come from one chunk-deep slab read (`SLAB_LIMIT` 1 GiB)
+  because Imaris chunks run 64 planes deep. `label_channel()` takes the only
+  channel, else the single one whose middle window passes `looks_like_labels`
+  (whole numbers, zero background, short runs: confocal stains measured 13-41
+  repeats per id and row, masks 1.0-1.5, so it is size-independent; a binary
+  mask fails), preferring one named as a mask; ambiguity raises a sentence
+  naming the channels. `mask_verdict()` feeds `looks_like_label_image`: one id
+  channel is True, stains plus one id channel is None (asked) unless a name
+  says mask, no id channel is False. A single-plane `.ims` takes the 2-D
+  pyramid path (`ims.ImsPlane`, the middle plane of frame 0); a 3-D or
+  time-series one becomes a label volume like a 3-D TIFF, through
+  `volume/labels.py` (`label_volume_shape`, `build_label_volume`).
+  **A data node serves a 3-D mask as a label volume too.**
+  `resolve_label_volume(source, folders, progress, stage)` is the one
+  adopt-or-build rule (`<stem>_labels_v1.zarr`, adopted by source path plus the
+  `source_key` fingerprint attr); `data_model._resolve_label_volume` calls it
+  with the project folder, the node with beside-the-mask then
+  `node-masks/<id>`. `node/app._convert_mask_if_needed` refuses
+  `mask_format_refusal` formats with that sentence (`NodeStartupError`), serves
+  a label-volume store as is, and builds a (Z,Y,X)/(T,Z,Y,X) TIFF or `.ims` into
+  one and repoints the resource (`plexora node prepare` does the same).
+  `Resource.describe()` carries `label_volume` facts (`_label_volume_facts`,
+  cached per path). `seg_tile` takes `view` (`LabelVolume.at_view` picks the
+  plane a view token names; `_seg_view_key` drops it from the cache key and
+  ETag for a 2-D mask), and a tile that fails to read while the resource is
+  PREPARING is blank, because the raw 3-D/`.ims` source has no pyramid yet;
+  `seg_region` takes `z`/`t`; `POST /seg/<id>/block` returns (Z,H,W) uint32
+  (`BLOCK_MAX_VOXELS` 128M). On the primary, `NodeSegmentationProvider`
+  (`label_volume(t)`, `tile(level, tile, view)`, `read_block`) hands back a
+  `providers.node.NodeLabelVolume` with `LabelVolume`'s face, and
+  `project_label_volume(project, t)`/`project_has_label_volume` answer for a
+  mask wherever it is held, so `volume_routes`, `agent/sections.py`,
+  `SegHandle.label_volume` and `volume/objects` never ask where it lives.
+  Client side, `__plexora.trackLabelPlanes()` runs on `onMaskReady` so a node
+  mask that finishes converting after load still registers the "labels"
+  surface. 3-D object measurement runs on the node that holds the image:
+  `volume/objects.measure_columns` is the pixel-reading half,
+  `measure_project_objects` writes the table here, and the job is
+  `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,
+  `.../cancel`), driven by `measure_objects_on_node`. Its job store is shared
+  with surface builds (`_JOBS` via `_start_job`/`_job`, `JOBS_KEPT` = 8), so
+  the generic `GET /volume/jobs/<job>` (state, stage, done/total, error,
+  manifest, result meta) with `.../result` and `.../cancel` answers for
+  either kind; the measure-specific routes are kept beside it. The mask must be on the same node, or
+  `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
+  `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
+  `tests/test_node_new_formats.py` pin it;
+  `tests/test_nan_tables.py` pins the NaN-position rules above.
 - **A remote mask is never served directly — always converted into the
   project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
   skips beside-the-source entirely: there is no folder beside a URL to write
@@ -7737,19 +7925,12 @@ in **5.6 s**.
   never creates a positive population, and never overrides a relation the
   user or the panel context stated. An `inferred` source is always reported
   as inferred, never as the sample's diagnosis.
-- **`hybrid: off` is a session without it, byte for byte**
-  (`schemas.HYBRID_OPTIONS`); `HYBRID_VERSION` joins a packet's memo key
-  only while it is on, so turning it on is a new look, never a remembered one.
+- **`tiles: false` is a session without it, byte for byte**
+  (`SessionOptions.tiles`); `tiles:1` joins a packet's memo key only while
+  it is on, so turning it on is a new look, never a remembered one.
 - **A spatial regression check may hold or reject, never move a gate**
   (`engine.SPATIAL_CHECKS`: `edge_ratio`, `spatial_tiles`), because they say
   where positives are, not how many.
-- **The cell model is a layer beside the gate, never applied to it**
-  (`autogate/cellcall.py`). The gate's call stands unless the model is
-  confident, and even its confident calls go only to the viewer's codes 4/5
-  and the `<table>_model_own`/`_model_not_own` obsm; the gate, `calls()`,
-  counts and exports stay the gate's. A changed reading or rule bumps
-  `schemas.CELLCALL_VERSION`, a new weights file `cellcall_weights.MODEL_VERSION`
-  plus new pins, because both are in every stored run's key.
 - **A failed gate is never used as a reference.** `hierarchy.grade` marks a
   unit closed `technically_failed`, `no_positive_population`,
   `manual_review_recommended`, `not_binary` or `insufficient_information` as
@@ -7929,6 +8110,34 @@ in **5.6 s**.
   node.** The node's `/node/v1/image/<rid>/level` is built with the
   primary's choices sent explicitly, so a node-served volume is byte-for-byte
   a local read; the primary forwards, caches and revalidates it.
+- **A surface never writes into an image or a mask.** It is a picture of the
+  data, not the data: refinement writes a new mesh version, and a cell
+  surface's voxel measurements in its objects table still describe the mask,
+  which stays the truth.
+- **An isovalue is in the channel's raw units** (above the local background
+  when background subtraction is on), never a display window's 0..1, so the
+  record says exactly which value a surface is and moving a contrast slider
+  never moves a surface.
+- **Mesh positions are level-0 voxel coordinates** (`x, y, z`, voxel centres
+  on integers) — the frame of the viewer's box and every table's X/Y/Z.
+  Spacing is applied when something is measured, never stored, so a z step
+  corrected later re-measures a surface without re-extracting it.
+- **Agent surface tools never load the viewer's project.** They open the
+  volume themselves with `surface.store.open_volume_for(record)` (the file
+  here, or a data node's `NodeVolumeReader`) and close it, because an agent
+  call must not touch the viewer's loaded project
+  (`tests/test_agent_architecture.py`).
+- **A channel's items are added at opacity 0 and owned by one fade.** While
+  `PlexoraChannelFade` runs it owns their opacity -- an `opacity-change` guard
+  re-applies it and `target()` is read every frame -- so anything that sets
+  those items' opacity mid-fade is overridden, and a caller that wants a
+  different level changes what `target()` returns instead. Items join the
+  fade only through an ordinary add; HD swaps, plane steps and standby build
+  their own items and must not, or a swap would fade out and in.
+- **The HD default rule lives in `main.js`'s boot, and `image_streamed` is
+  golden-pinned.** The key is in the viewer page's `flask_variables`, so it
+  is part of the boundary goldens' `pages` record; renaming or dropping it
+  fails all of them, not just `tests/test_hd_default.py`.
 
 ## Validation
 
@@ -10749,8 +10958,8 @@ relying on **5653 passed** above.
 `tests/test_gating_spatial_session.py`, `tests/test_spatial_timing.py` and
 the fixture `make_spatial_gating_project`, as did
 `GET /plugins/gating/get_uncertain`. Gate value 3 (amber, still counted
-positive) and the "uncertain" count stay in `gate_not_called_probe.mjs` and
-`label_gpu_parity.mjs`, now as the cell model's code 1. Against `main`,
+positive) and the "uncertain" count stayed for the cell model's code 1, and
+went with the cell model (below). Against `main`,
 `route_count` is +1 in each golden for core's `GET /get_not_called`. The
 branch's last full-suite count, **7484 passed, 22 failed, 8 errors, 11
 skipped** (macOS, 2026-10-08; all 30 failures/errors the machine's missing
@@ -10759,19 +10968,18 @@ and two `test_gating_delta` trims, all present on the branch's base commit),
 was taken with those tests in place and is stale; no count has been reported
 since their removal.
 
-**The cell model in gating** (same branch, see the `autogate/` row). New
-`tests/test_gating_cellcall.py`; its real-weights test runs only when
-`PLEXORA_TEST_CELLCALL_MODEL_DIR` points at the weights, otherwise it skips.
-`label_gpu_probe.mjs` (+ `test_label_gpu.py`'s list), `label_gpu_parity.mjs`
-(13 cases) and `gate_not_called_probe.mjs` (+ `test_gate_not_called_js.py`'s
-`CHECKS`) cover codes 4/5 and their counts; `test_licensing_enforcement`'s
-`PAID` gains `gating.cell_model_run`/`gating.cell_model_calls`. Every
-boundary golden was regenerated for the asset tag `20261010_cell_model`;
-`boundary_gating.json`'s `route_count` 199 → 202 (four cell-model routes
-in, `get_uncertain` out) and `test_plugin_boundary` counts 17 gating routes
-(16 API plus static). No
-full-suite count has been reported for this change. Hybrid gating adds
-`tests/test_gating_hybrid.py`; no count has been reported for it either.
+**The cell model in gating — removed 2026-10-12** (`feature/gating-replan`;
+see the `autogate/` row). Its tests went with it: `tests/test_gating_cellcall.py`
+and `tests/test_gating_hybrid.py`, whose tiles, partner-plan and
+judged-limits tests moved to `tests/test_gating_tiles.py` and
+`tests/test_gating_replan.py`. `label_gpu_probe.mjs`, `label_gpu_parity.mjs`
+(back to 11 cases), `gate_not_called_probe.mjs` and their Python lists are
+back to the gate's and QC's codes alone; `test_licensing_enforcement`'s
+`PAID` lost `gating.session_cellcall`/`gating.cell_model_run`/
+`gating.cell_model_calls`. Every boundary golden was regenerated for the
+asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
+236 → 232 (the four cell-model routes out) and `test_plugin_boundary` counts
+13 gating routes (12 API plus static).
 
 ## Sharp Edges
 
@@ -10826,7 +11034,7 @@ full-suite count has been reported for this change. Hybrid gating adds
   and the plan's bar did not hold).
 - **`gate_rule.passes(values, low, None)` is all False.** `np.float32(None)`
   is NaN and every comparison with NaN fails, so an open-ended gate must pass
-  `np.inf` as `high` (as `cellcall.select` does), never `None`.
+  `np.inf` as `high`, never `None`.
 - `data_model` module globals are mutated under `load_lock`, but
   `generate_zarr_png` reads them without it. A datasource switch mid-pan can race.
 - `getTileKey` omits the HD flag while `getTileUrl` appends `?q=hd` — same key,

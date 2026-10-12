@@ -36,8 +36,8 @@ A session that exists (`gating_session_status` finds it).
    A value `{as_in: packet_id}` is unchanged since that packet (`as_in`).
 3. Stop, without answering the packet in hand, when `units_done` reached your
    quota, or the state is `decided`, `waiting_for_user`, `paused`, `stopped`
-   or `other_tasks` (what is ready is another worker's). `bulk_running`,
-   `model_running` or `busy`: call `gating_next` again.
+   or `other_tasks` (what is ready is another worker's). `bulk_running` or
+   `busy`: call `gating_next` again.
 
 How to judge (the guide says how to read each picture):
 
@@ -72,8 +72,16 @@ How to judge (the guide says how to read each picture):
   just judged (or none, `as_in`): answer from that look.
 - `regression_confirm`: `holds` unless a region is clearly wrong; the failing
   `checks` say what to look at.
-- `correction_check`: one word per numbered cell (`own`, `not_own`,
-  `cannot_tell`), each on its own pixels; r-cells are clear positives.
+- `replan`: failed markers and images, as notes and numbers. Per marker:
+  `absent` only when the positives are artifact (the whole-image view said
+  so, or `lineage_contamination` puts even the brightest on an excluding
+  lineage) and no look saw own stain; `whole_image` is the whole-image
+  check's answer on a lineage suspect (`real_signal`: some cells carry it
+  apart from that lineage, so not absent); `bleed_through`, a real population
+  under another channel's light; `technical_failure`; else
+  `keep_for_review`. Per image: `image_artifact` when the flag is the
+  image's own (edge, fold, autofluorescence), else `not_image_level`.
+  A lineage the tissue surely holds is rarely absent: unsure, keep it.
 - Every look: set `artifact_flags` when segmentation, focus, saturation,
   bleed-through, autofluorescence, folds or edges affect the cells shown.
   `confidence` is `sure`, `fairly_sure` or `unsure`; say `unsure` rather than

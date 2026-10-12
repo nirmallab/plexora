@@ -985,9 +985,10 @@ def test_session_vocabularies_are_partitioned_and_derived():
     from plexora.plugins.gating.server.autogate import (answers, bivariate, engine, packets,
                                                         provenance, schemas)
 
-    kinds = schemas.SETUP_KINDS + schemas.LOOK_KINDS + schemas.CHECK_KINDS
+    kinds = schemas.SETUP_KINDS + schemas.PLAN_KINDS + schemas.LOOK_KINDS + schemas.CHECK_KINDS
     assert len(kinds) == len(set(kinds)) and set(kinds) == set(packets.BUILDERS)
     assert set(schemas.USER_SETUP_KINDS) <= set(schemas.SETUP_KINDS) <= set(answers.KINDS)
+    assert set(schemas.PLAN_KINDS) <= set(answers.KINDS)
     # Review states are written too (tagged `needs_review`): every gated
     # marker ends with a value.
     assert schemas.WRITTEN_STATES == (schemas.ACCEPTED_STATES + schemas.EMPTY_GATE_STATES

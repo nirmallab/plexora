@@ -76,7 +76,7 @@
 //: somebody remembered to edit both.
 const KIND_EXAMPLES = {
     image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · DICOM" },
-    mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · DICOM" },
+    mask: { file: ".ome.tiff · .png", directory: ".ome.zarr · SpatialData" },
     data: { file: ".csv · .parquet · .h5ad", directory: "SpatialData (.zarr)" },
     // Import Sample, where the halves are not asking which ROLE the file plays
     // -- detection answers that -- only which shape of thing to browse for.
@@ -88,10 +88,9 @@ const KIND_EXAMPLES = {
 
 /**
  * @function buildSplitControl - the two-half control itself, without deciding
- * where it lives. Used three ways: as the Browse button on a form field, as
- * the landing page's open-an-image panel (`.is-panel`, the same halves at the
- * size of the surface they replace), and as a floating menu for the callers
- * that still have to ask after the fact.
+ * where it lives. Used two ways: as the Browse button on a form field, and as
+ * a floating menu for the callers that still have to ask after the fact. (The
+ * home page and the import dialog ask with File | Folder tabs of their own.)
  * @param examples - which KIND_EXAMPLES entry labels the halves. A name of
  *   its own rather than the filter, because image and mask share a filter and
  *   want different examples.
@@ -510,14 +509,8 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
  * can point a mounted field at a different computer, and the control has to
  * follow it -- a laptop's File/Folder pair left over on a field now aimed at a
  * cluster would offer two routes to the same listing.
- *
- * `buttonEl` need not be a button. The landing page hands this its open-an-image
- * panel, which is a surface rather than a control but is replaced by exactly the
- * same halves at exactly the same moment, and for the same reason. `variant` is
- * the class that sizes them for it.
  */
-function applyCapability(buttonEl, inputEl, examples, nodeNow, go,
-                         {variant = null} = {}) {
+function applyCapability(buttonEl, inputEl, examples, nodeNow, go) {
     let split = null;
     let showing = null;
 
@@ -527,7 +520,6 @@ function applyCapability(buttonEl, inputEl, examples, nodeNow, go,
         if (kind === "kinds") {
             if (!split) {
                 split = buildSplitControl(examples, go);
-                if (variant) split.classList.add(variant);
                 split.addEventListener("keydown", (event) => {
                     stepBetweenHalves(split, event);
                 });

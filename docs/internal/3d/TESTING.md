@@ -292,8 +292,9 @@ The 3-D view turns at 120 frames a second at full resolution; a preset turn take
 
 ## Not in this branch yet
 
-- The 3-D neighbourhood in automatic gating's per-cell model, and a z-profile line in its
-  packets: both live in the gating work that is not merged yet.
+- A z-profile line in automatic gating's packets: it lives in the gating work that is not
+  merged yet. (Gating's per-cell model, whose 3-D neighbourhood was listed here, was removed
+  on 2026-10-12.)
 - Full resolution in 3-D for an image on a data node: it refines the part you rest on (bricks
   are served for local images only). 3-D levels of a node-backed image go through this server
   (tiles may be fetched straight from the node).

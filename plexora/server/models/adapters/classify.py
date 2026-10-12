@@ -55,6 +55,7 @@ _METADATA_NAMES = {
     "columncentroid", "rowcentroid", "column", "row", "globalx", "globaly",
     # position in depth and time: a z-stack's object table (server/volume)
     "z", "zcentroid", "centroidz", "zposition", "zcoordinate", "globalz",
+    "zplane", "zslice", "zindex", "plane",
     "t", "frame", "xum", "yum", "zum",
     # morphology
     "area", "convexarea", "filledarea", "bboxarea", "perimeter",
@@ -97,7 +98,7 @@ _ROLE_PATTERNS = {
     "y": (r"^ycentroid$", r"^centroidy$", r"^yposition$", r"^ycoordinate$",
           r"^rowcentroid$", r"^globaly$", r"^y$"),
     "z": (r"^zcentroid$", r"^centroidz$", r"^zposition$", r"^zcoordinate$",
-          r"^globalz$", r"^z$"),
+          r"^globalz$", r"^z$", r"^zplane$", r"^zslice$", r"^zindex$", r"^plane$"),
     "celltype": (r"^phenotype$", r"^celltype$", r"^cluster$", r"^leiden$"),
     "image_id": tuple(rf"^{re.escape(name)}$" for name in sorted(_LIKELY_IMAGE_IDENTIFIER_NAMES)),
 }

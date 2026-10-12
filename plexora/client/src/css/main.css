@@ -2317,9 +2317,10 @@ dialog .file-source .data-location-place {
 
 /* The fallback shape, for the cases the question could not be asked in
    advance: the capability probe failed, or the caller passed nothing to
-   replace. Every control that CAN be replaced is replaced -- see
-   `.is-panel` below and applyCapability() -- because a popup that opens
-   somewhere the eye is not goes unnoticed however well it is drawn. */
+   replace. Every control that CAN be replaced is replaced -- the home page
+   and the import dialog ask File | Folder up front with tabs -- because a
+   popup that opens somewhere the eye is not goes unnoticed however well it
+   is drawn. */
 .browse-kind-split.is-floating {
     /* Fixed, and positioned from a viewport rect in JS: the path row sits
        inside a scrolling card on the import page, and an absolutely
@@ -2432,90 +2433,6 @@ dialog .file-source .data-location-place {
     letter-spacing: 0.01em;
     color: var(--text-muted);
     white-space: nowrap;
-}
-
-/* -- The panel variant ------------------------------------------------ *
- * The same two halves at the size of a surface rather than a control, for
- * the landing page's "open an image" panel. That panel used to be one big
- * target that opened the File/Folder menu as a popup -- which, anchored to a
- * button the capability swap had already hidden, landed in the top-left
- * corner of the window and was routinely missed.
- *
- * So the panel becomes the two halves, exactly as a Browse button does. The
- * question is the same question; only the scale of the thing asking it
- * differs, which is why this is a variant and not a second component.       */
-.browse-kind-split.is-panel {
-    /* 280px is a form row's floor, not a panel's. Here the card sets the
-       width and the halves divide it. */
-    min-width: 0;
-    flex-shrink: 1;
-    /* Solid, and 1px like every other border in the system. It inherited a
-       2px dashed edge from the dropzone it replaced, and a dashed rectangle
-       says "drop something here" -- which this page has never been able to
-       accept: there is no dragover or drop handler anywhere in
-       views/quickViewLanding.js, and there never was. It is two buttons, so
-       it is drawn as a control rather than as a target.
-
-       DESIGN.md's Border-First Rule does the rest: a 1px hairline and a step
-       up in surface tone is what makes this read as raised off the page. */
-    background: var(--surface-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    text-align: center;
-}
-
-.browse-kind-split.is-panel .browse-kind-half {
-    /* Icon above the text, not beside it -- the row's arrangement exists
-       because a row is one line tall, and this has room to breathe. */
-    flex-direction: column;
-    justify-content: center;
-    gap: var(--space-3);
-    padding: var(--space-5) var(--space-4);
-    text-align: center;
-}
-
-/* Matching the container's own edge, so the seam reads as a fold in one
-   panel rather than a rule drawn across it -- which now means the row
-   variant's hairline, at the weight every other divider in the system uses. */
-.browse-kind-split.is-panel .browse-kind-half + .browse-kind-half {
-    border-left: 1px solid var(--border-subtle);
-}
-
-/* Muted at rest and lit on hover, rather than the 36px accent glyph the
-   single dropzone carried: one accent icon anchors a page, two side by side
-   compete with each other and with the heading above them. The colour still
-   arrives -- on the half being pointed at, which is the one it means
-   something about. */
-.browse-kind-split.is-panel .browse-kind-icon {
-    /* DESIGN.md's `headline` step. The single dropzone this replaces carries a
-       36px glyph -- on no step at all, and carrying the whole page on its own.
-       Two icons do not need to, and the ramp has a size for this. (That 36px
-       is left alone: the dropzone is still what macOS and desktop-less
-       machines get, and it is one of four off-ramp sizes already standing in
-       quickView.css.) */
-    font-size: 20px;
-    width: auto;
-    transition: color var(--duration-base) var(--ease-standard);
-}
-
-.browse-kind-split.is-panel .browse-kind-half:hover .browse-kind-icon,
-.browse-kind-split.is-panel .browse-kind-half:focus-visible .browse-kind-icon {
-    color: var(--accent-channel);
-}
-
-.browse-kind-split.is-panel .browse-kind-text {
-    align-items: center;
-    gap: var(--space-1);
-}
-
-/* The dropzone's own type, inherited rather than re-picked: this panel is
-   the same thing at the same size and should not read as a new one. */
-.browse-kind-split.is-panel .browse-kind-name {
-    font-size: 15px;
-}
-
-.browse-kind-split.is-panel .browse-kind-example {
-    font-size: 12px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -5524,8 +5441,102 @@ dialog .file-source .data-location-place {
    nothing on screen is labelled by what Plexora expected to be given.
    -------------------------------------------------------------------------- */
 
+/* The home card's surface (quickView.css `.quick-view-card`): glass, a
+   hairline rim, a slow beam round its edge. Opaque where the card is
+   translucent -- a modal has a dimmed backdrop behind it, not the page's own
+   light for a blur to bend, and the page's heading showed through the title
+   -- and no backdrop-filter, which would make the
+   dialog the containing block of the fixed-position machine menu. */
+@property --plx-import-beam {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+}
+
 .plx-import {
+    /* The home page's motion vocabulary, so the toggle and the button move
+       the way they do there. */
+    --plx-import-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --plx-import-spring: cubic-bezier(0.3, 1.25, 0.5, 1);
+    --plx-import-calm: 260ms;
+    --plx-import-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    background: linear-gradient(180deg, #171e29 0%, #0c1016 100%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.07),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.02),
+        0 0 0 1px rgba(0, 0, 0, 0.55),
+        0 2px 6px rgba(0, 0, 0, 0.35),
+        0 30px 70px -26px rgba(0, 0, 0, 0.85),
+        0 40px 100px -60px rgba(56, 189, 248, 0.26);
+    isolation: isolate;
+    padding: var(--space-5) 22px 18px;
     width: min(680px, 94vw);
+}
+
+/* The beam: an arc of the channel accent running the rim, masked to a 1px
+   ring just inside the border (the dialog's `overflow: auto` clips anything
+   drawn on the border itself). */
+.plx-import::before {
+    animation: plx-import-beam 14s linear infinite;
+    background: conic-gradient(from var(--plx-import-beam),
+        transparent 0 68%, rgba(56, 189, 248, 0) 68%,
+        rgba(56, 189, 248, 0.30) 86%, rgba(165, 220, 255, 0.85) 99%, transparent 100%);
+    border-radius: calc(var(--radius-lg) - 1px);
+    content: "";
+    inset: 0;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0.5;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+}
+
+/* Fully lit while something is happening. */
+.plx-import[data-phase="importing"]::before {
+    opacity: 1;
+}
+
+@keyframes plx-import-beam {
+    to {
+        --plx-import-beam: 360deg;
+    }
+}
+
+/* The sheen across the top of the glass, under the content. */
+.plx-import::after {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 40%),
+        radial-gradient(120% 60% at 0% 0%, rgba(56, 189, 248, 0.07), rgba(56, 189, 248, 0) 60%);
+    border-radius: inherit;
+    content: "";
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+}
+
+/* The home page's heading voice, at a dialog's size. */
+.plx-import .plx-dialog-title {
+    color: #b8c8e8;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+}
+
+/* The home page's Load face on the affirmative button once it can be
+   pressed: the cyan fill, lit from above. Near-black text, never white:
+   white on #38bdf8 does not clear 4.5:1. */
+.plx-import-foot .plx-button-primary:not(:disabled) {
+    background: linear-gradient(180deg, #5cc9fb 0%, var(--accent-channel) 100%);
+    border-color: rgba(56, 189, 248, 0.9);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 8px 22px -10px rgba(56, 189, 248, 0.55);
+    color: #05070a;
 }
 
 .plx-import-head {
@@ -5545,7 +5556,7 @@ dialog .file-source .data-location-place {
    body has to repeat any of it. */
 .plx-import-subtitle {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
     margin: var(--space-1) 0 0;
 }
@@ -5565,54 +5576,6 @@ dialog .file-source .data-location-place {
 
 .plx-import[data-phase="importing"] .plx-import-help {
     display: none;
-}
-
-/* The Local/Remote switch, in a row of its own above the pick controls: it
-   decides WHOSE filesystem is browsed, so it qualifies everything below it
-   rather than any one field. The landing page's arrangement.
-
-   It is a direct child of the dialog and NOT of the body, because the
-   proposal and importing states both clear the body with innerHTML -- which
-   would destroy the mounted switch and the service's hold on it. Hidden by
-   phase instead, so it is built once and keeps its answer. */
-.plx-import-where {
-    align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-3);
-    min-height: var(--control-height);
-}
-
-/* Hidden wherever there is nothing to browse -- which is every state but
-   `pick`, EXCEPT while a card's own "choose a file" row is open. That row
-   browses exactly as the pick state does, so without this it reached whichever
-   machine was chosen last with nothing on screen saying which, and no way to
-   change it. `[data-adding]` is set by importSample's `render`. */
-.plx-import:not([data-phase="pick"]):not([data-adding]) .plx-import-where {
-    display: none;
-}
-
-/* The two letters, said. The same pair the home page puts around this switch
-   (`.quick-view-where-label` / `-caption`, quickView.css) and to the same
-   metrics: a label before the chip and a caption after it is this control's
-   shape wherever it has a row of its own, and it is what carries the meaning
-   that a [data-tooltip] cannot -- a tooltip inside a dialog is clipped by
-   `.plx-dialog { overflow: auto }`, which is not negotiable and is what lets
-   every dialog scroll. */
-.plx-import-where-label {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    line-height: 1.2;
-    text-transform: uppercase;
-}
-
-.plx-import-where-caption,
-.plx-import-where-status {
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.2;
 }
 
 /* Scrollbars in Plexora's colours inside every dialog -- the import dialog's
@@ -5658,8 +5621,12 @@ dialog .file-source .data-location-place {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    /* Room for the focus rings drawn OUTSIDE the field and the toggle, which
+       a scrolling box clips at its own edge; the margin gives the room back. */
+    margin: -4px;
     max-height: 52vh;
     overflow: auto;
+    padding: 4px;
 }
 
 /* Rigid children, so the body is what scrolls. A flex item's `min-height:
@@ -5672,32 +5639,584 @@ dialog .file-source .data-location-place {
     flex-shrink: 0;
 }
 
-/* The pick state. A dashed target because it also takes a drop, and the
-   formats line under it is the only place this dialog names a format at all --
-   as an invitation, never as a field label. */
-.plx-import-drop {
-    /* Stretch, not centre: the split control and the path box under it are
-       two halves of one question, and a panel narrower than the box below it
-       reads as two unrelated controls that happen to be near each other. */
-    align-items: stretch;
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-lg);
+/* The pick state: the home page's card, as a control (`buildPickControl`
+   in importSample.js). File | Folder, one field with the machine chip at its
+   front, one button that is Browse until a path is typed and Add from then
+   on, and the formats as chips under a hairline. The field also takes a drop
+   -- small tables -- and lights up as one while something is held over it. */
+.plx-import-pick {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    text-align: center;
-    transition: border-color var(--duration-fast) var(--ease-standard),
-        background var(--duration-fast) var(--ease-standard);
+    position: relative;
 }
 
-.plx-import-drop.is-over {
-    background: var(--surface-2);
+/* -- File | Folder: a recessed track and a raised thumb that springs to the
+   side chosen. */
+.plx-import-kind {
+    align-self: flex-start;
+    background: rgba(0, 0, 0, 0.30);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 9px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 3px;
+    position: relative;
+}
+
+.plx-import-kind-thumb {
+    background: linear-gradient(180deg, #1c2431 0%, #141b25 100%);
+    border-radius: var(--radius-sm);
+    bottom: 3px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 0 0 1px rgba(56, 189, 248, 0.30),
+        0 1px 2px rgba(0, 0, 0, 0.5),
+        0 4px 12px -4px rgba(0, 0, 0, 0.6);
+    left: 3px;
+    position: absolute;
+    top: 3px;
+    transition: transform 340ms var(--plx-import-spring);
+    width: calc(50% - 3px);
+}
+
+.plx-import-pick[data-kind="directory"] .plx-import-kind-thumb {
+    transform: translateX(100%);
+}
+
+.plx-import-kind-option {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    gap: 7px;
+    height: 32px;
+    justify-content: center;
+    min-width: 96px;
+    padding: 0 14px;
+    position: relative;
+    transition: color var(--plx-import-calm) var(--plx-import-ease-out);
+    z-index: 1;
+}
+
+.plx-import-kind-option:hover:not(:disabled) {
+    color: var(--text-secondary);
+}
+
+.plx-import-kind-option[aria-checked="true"] {
+    color: var(--text-primary);
+}
+
+.plx-import-kind-option svg {
+    font-size: 13px;
+    transition: color var(--plx-import-calm) var(--plx-import-ease-out);
+}
+
+.plx-import-kind-option[aria-checked="true"] svg {
+    color: var(--accent-channel);
+}
+
+.plx-import-kind-option:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-import-kind-option:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+/* -- The field and its one button. */
+.plx-import-pick-row {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: 14px;
+}
+
+.plx-import-field {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex: 1 1 auto;
+    height: 46px;
+    min-width: 0;
+    transition:
+        border-color var(--plx-import-calm) var(--plx-import-ease-out),
+        box-shadow var(--plx-import-calm) var(--plx-import-ease-out),
+        background-color var(--plx-import-calm) var(--plx-import-ease-out);
+}
+
+.plx-import-field:hover {
+    border-color: rgba(255, 255, 255, 0.20);
+}
+
+/* A soft ring OUTSIDE the control plus the accent on its border, on the field
+   rather than the input: the machine chip is part of the box being focused.
+   The same ring while a file is held over the control. */
+.plx-import-field:focus-within,
+.plx-import-pick.is-over .plx-import-field {
+    background: rgba(5, 7, 10, 0.75);
     border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
 }
 
-.plx-import-path {
+.plx-import-pick.is-refused .plx-import-field {
+    border-color: var(--accent-danger);
+}
+
+.plx-import-pick.is-refused .plx-import-field:focus-within {
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
+}
+
+.plx-import-input {
+    background: none;
+    border: 0;
+    caret-color: var(--accent-channel);
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    /* A path is compared character by character, and a mistyped one is found
+       by looking at it. */
+    font-family: var(--plx-import-mono);
+    font-size: 14px;
+    height: 100%;
+    min-width: 0;
+    outline: none;
+    padding: 0 var(--space-3) 0 0;
+}
+
+/* No machine chip in front of it (no location service on this page). */
+.plx-import-input:first-child {
+    padding-left: 14px;
+}
+
+/* The placeholder is an instruction, not a path, so it is in the page's own
+   face. */
+.plx-import-input::placeholder {
+    color: var(--text-muted);
+    font-family: 'Source Sans Pro', sans-serif;
+    font-size: 14.5px;
+    opacity: 1;
+}
+
+/* Which machine: "Local" on a neutral chip, a server's name on a tinted one
+   with a green dot, so the difference reads before the word does. */
+.plx-import-machine {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.055);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    gap: 6px;
+    height: 30px;
+    margin: 0 10px 0 8px;
+    max-width: 200px;
+    padding: 0 7px 0 9px;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-import-machine:hover:not(:disabled),
+.plx-import-machine[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.10);
+    color: var(--text-primary);
+}
+
+.plx-import-machine.is-remote {
+    background: rgba(56, 189, 248, 0.09);
+}
+
+.plx-import-machine.is-remote:hover:not(:disabled),
+.plx-import-machine.is-remote[aria-expanded="true"] {
+    background: rgba(56, 189, 248, 0.16);
+}
+
+.plx-import-machine:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-import-machine-local,
+.plx-import-machine-chevron {
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 12px;
+}
+
+.plx-import-machine-chevron {
+    font-size: 10px;
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.plx-import-machine[aria-expanded="true"] .plx-import-machine-chevron {
+    transform: rotate(180deg);
+}
+
+.plx-import-machine-label {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-import-machine-dot,
+.plx-import-menu-dot {
+    background: var(--accent-success);
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.14);
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+.plx-import-machine-dot {
+    display: none;
+}
+
+.plx-import-machine.is-remote .plx-import-machine-dot {
+    display: block;
+}
+
+.plx-import-machine.is-remote .plx-import-machine-local {
+    display: none;
+}
+
+.plx-import-menu-dot.is-waiting {
+    animation: plx-import-pulse 1.1s ease-in-out infinite;
+    background: var(--accent-warning);
+    box-shadow: 0 0 0 3px var(--accent-warning-soft);
+}
+
+.plx-import-menu-dot.is-off {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+
+@keyframes plx-import-pulse {
+    50% { opacity: 0.35; }
+}
+
+/* Browse -> Add: the same button, a calm glass face that fills with the
+   accent once there is a path to add. */
+.plx-import-browse {
+    background: linear-gradient(180deg, rgba(31, 40, 53, 0.92) 0%, rgba(18, 24, 32, 0.92) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-md);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 1px 2px rgba(0, 0, 0, 0.4),
+        0 8px 18px -10px rgba(0, 0, 0, 0.7);
+    color: var(--text-primary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    height: 46px;
+    isolation: isolate;
+    min-width: 116px;
+    overflow: hidden;
+    padding: 0 18px;
+    position: relative;
+    transition:
+        translate var(--duration-fast) var(--plx-import-ease-out),
+        box-shadow var(--plx-import-calm) var(--plx-import-ease-out),
+        border-color var(--plx-import-calm) var(--plx-import-ease-out),
+        color var(--plx-import-calm) var(--plx-import-ease-out);
+}
+
+.plx-import-browse::before {
+    background: linear-gradient(180deg, #5cc9fb 0%, var(--accent-channel) 100%);
+    content: "";
+    inset: 0;
+    opacity: 0;
+    position: absolute;
+    transition: opacity var(--plx-import-calm) var(--plx-import-ease-out);
+    z-index: -1;
+}
+
+.plx-import-browse svg {
+    color: var(--accent-channel);
+    transition: color var(--plx-import-calm) var(--plx-import-ease-out);
+}
+
+.plx-import-browse:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.24);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.10),
+        0 2px 4px rgba(0, 0, 0, 0.45),
+        0 12px 22px -12px rgba(0, 0, 0, 0.8);
+    translate: 0 -1px;
+}
+
+.plx-import-browse:active:not(:disabled) {
+    translate: 0 0;
+}
+
+.plx-import-browse:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-import-browse:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.plx-import-pick[data-face="add"] .plx-import-browse {
+    border-color: rgba(56, 189, 248, 0.9);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 8px 22px -10px rgba(56, 189, 248, 0.55);
+    color: #05070a;
+}
+
+.plx-import-pick[data-face="add"] .plx-import-browse::before {
+    opacity: 1;
+}
+
+.plx-import-pick[data-face="add"] .plx-import-browse svg {
+    color: #05070a;
+}
+
+.plx-import-browse-face {
+    align-items: center;
+    display: none;
+    gap: 8px;
+    justify-content: center;
+}
+
+.plx-import-pick[data-face="browse"] .plx-import-browse-face.is-browse,
+.plx-import-pick[data-face="add"] .plx-import-browse-face.is-add {
+    display: inline-flex;
+}
+
+.plx-import-browse-arrow {
+    display: inline-flex;
+    transition: translate var(--duration-fast) var(--plx-import-ease-out);
+}
+
+.plx-import-pick[data-face="add"] .plx-import-browse:hover:not(:disabled) .plx-import-browse-arrow {
+    translate: 3px 0;
+}
+
+/* The location service's own line -- "Sharing…", "Not connected to hpc yet"
+   -- at the home card's size. */
+.plx-import-machine-status .data-location-status {
+    font-size: 13px;
+    line-height: 1.45;
+    margin-top: 0;
+    padding-top: 11px;
+}
+
+/* -- Formats: two examples a side, the chosen side lit, "and more", and the
+   way to the whole catalogue. */
+.plx-import-formats {
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    gap: var(--space-3);
+    margin-top: 14px;
+    padding-top: var(--space-3);
+}
+
+.plx-import-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    list-style: none;
+    margin: 0;
+    min-width: 0;
+    padding: 0;
+}
+
+.plx-import-chip {
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 5px;
+    color: rgba(142, 160, 184, 0.62);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 1px var(--space-2);
+    transition:
+        color var(--plx-import-calm) var(--plx-import-ease-out),
+        background-color var(--plx-import-calm) var(--plx-import-ease-out),
+        border-color var(--plx-import-calm) var(--plx-import-ease-out);
+}
+
+.plx-import-pick[data-kind="file"] .plx-import-chip[data-kind="file"],
+.plx-import-pick[data-kind="directory"] .plx-import-chip[data-kind="directory"] {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--text-secondary);
+}
+
+/* The gap between the two sides, so four chips read as two pairs. */
+.plx-import-chip.is-lead {
+    margin-left: 7px;
+}
+
+.plx-import-more {
+    align-self: center;
+    color: rgba(142, 160, 184, 0.62);
+    font-size: 12px;
+    padding: 0 2px 0 5px;
+    white-space: nowrap;
+}
+
+/* Muted until pointed at: the catalogue is for somebody who is unsure. */
+.plx-import-supported {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    color: rgba(142, 160, 184, 0.78);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 12px;
+    gap: 5px;
+    margin: 0 -4px 0 auto;
+    padding: 2px 4px;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-import-supported:hover,
+.plx-import-supported:focus-visible {
+    color: var(--accent-channel);
+}
+
+/* -- The machine menu, fixed under the chip (importSample's `openMenu`). */
+.plx-import-menu {
+    animation: plx-import-menu-in 180ms var(--plx-import-ease-out);
+    background: rgba(15, 20, 28, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 0 1px rgba(0, 0, 0, 0.5),
+        0 22px 44px -14px rgba(0, 0, 0, 0.85);
+    display: flex;
+    flex-direction: column;
+    max-height: min(360px, 60vh);
+    min-width: 280px;
+    overflow-y: auto;
+    padding: 6px;
+    position: fixed;
+    transform-origin: 24px 0;
+    z-index: 30;
+}
+
+/* A class that sets `display` defeats the hidden attribute -- there is no
+   global guard in this app. */
+.plx-import-menu[hidden] {
+    display: none;
+}
+
+@keyframes plx-import-menu-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+}
+
+.plx-import-menu-label {
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 7px 10px 5px;
+    text-transform: uppercase;
+}
+
+.plx-import-menu-item {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    font-size: 13px;
+    gap: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    text-decoration: none;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
     width: 100%;
+}
+
+.plx-import-menu-item:hover,
+.plx-import-menu-item:focus-visible {
+    background: var(--accent-channel-tint);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-import-menu-item:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.plx-import-menu-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 13px;
+    justify-content: center;
+    width: 14px;
+}
+
+.plx-import-menu-item.is-add .plx-import-menu-icon {
+    color: var(--accent-channel);
+}
+
+.plx-import-menu-name {
+    flex: 1 1 auto;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-import-menu-sub {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11.5px;
+}
+
+.plx-import-menu-check {
+    color: var(--accent-channel);
+    display: inline-flex;
+    font-size: 12px;
+}
+
+.plx-import-menu-empty {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    padding: 4px 10px 8px;
+}
+
+.plx-import-menu-sep {
+    background: rgba(255, 255, 255, 0.08);
+    height: 1px;
+    margin: 5px 4px;
 }
 
 .plx-import-path-input {
@@ -5730,19 +6249,8 @@ dialog .file-source .data-location-place {
     overflow-wrap: anywhere;
 }
 
-/* One sentence, under the panel rather than inside it, ending in the way to
-   see the rest. The halves carry their own examples; this used to repeat them
-   underneath at 11px, so the pick state named its formats twice. */
-.plx-import-formats {
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.5;
-    margin: 0;
-}
-
-/* A link, not a button: pressing it does not advance anything, it opens an
-   explanation. The one place on this screen the accent is spent on something
-   that is not the primary action. */
+/* A link, not a button: pressing it does not advance anything, it opens
+   something -- a remote store's endpoint fields. */
 .plx-import-formats-link {
     background: none;
     border: 0;
@@ -6022,27 +6530,6 @@ dialog .file-source .data-location-place {
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-3);
-}
-
-/* The row variant of the split takes its height from a form row
-   (`.import-field-row > .browse-kind-split`, --control-height) and its halves
-   carry no vertical padding for that reason. This is not a form row, so it
-   collapsed to its two text lines -- 29px over a 40px path box, the label and
-   example pressed against both edges. Given the row's height here -- the same
-   40px as the path box under it, so the two read as one question -- and the
-   form row's 280px floor dropped: the card sets the width. */
-.plx-import-inline-pick > .browse-kind-split {
-    flex-shrink: 0;
-    min-height: var(--control-height);
-    min-width: 0;
-}
-
-.plx-import-inline-pick > .browse-kind-split .browse-kind-half {
-    padding: var(--space-1) var(--space-3);
-}
-
-.plx-import-inline-pick.is-over {
-    background: var(--surface-1);
 }
 
 /* The way back to the cards from the pick state. Without it, the only route
