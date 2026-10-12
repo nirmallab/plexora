@@ -741,8 +741,10 @@ def volume_perf(datasource):
     _project_or_404(datasource)
     from plexora.server.models import data_model
     from plexora.server.volume import chunk_cache
+    from plexora.server.volume.prefetch import PREFETCHER
 
     out = {"level_cache": serve.stats(), "chunk_cache": chunk_cache.CACHE.stats(),
+           "plane_prefetch": PREFETCHER.snapshot(),
            "exact_window_queue": len(data_model._exact_window_queue),
            "provisional_windows": sorted(name for (_scope, name)
                                          in list(data_model._provisional_windows))}

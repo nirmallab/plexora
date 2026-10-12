@@ -1343,6 +1343,14 @@ def _spatial_index_manifest(project, signature):
         "library": "scipy.cKDTree",
         "scipy": scipy.__version__,
     }
+    from plexora.server.models import table_correction
+
+    # Only when there is one, so every index built before corrections existed
+    # still reads back: a correction moves every cell without changing the file
+    # the `source` signature describes.
+    correction = table_correction.signature(getattr(project.dataset, "correction", None))
+    if correction:
+        raw["correction"] = correction
     # Through JSON once, so it compares equal to what a manifest file reads back.
     return json.loads(json.dumps(raw, default=str))
 
@@ -2231,8 +2239,100 @@ def get_consistency_report(datasource_name):
     report = consistency.report(
         project, get_datasource_description(datasource_name), mask_size,
         unplaced=unplaced, rows=rows)
+    report = _with_table_fixes(project, report)
     _consistency_cache[datasource_name] = report
     return report
+
+
+def _with_table_fixes(project, findings):
+    """`findings`, with the ones a table correction can answer marked so
+    (`fix: "table"`, or `fix_blocked` saying why it cannot be offered here),
+    and a note of the correction in force, if there is one, with its undo.
+
+    Kept out of consistency.py, which is pure: whether a fix can be offered
+    depends on the machine that holds the table, and asking it is a request.
+    """
+    from plexora.server.models import table_correction
+
+    blocked = None
+    out = []
+    for finding in findings:
+        entry = dict(finding)
+        if entry.get("code") in table_correction.FIXABLE and (
+                entry["code"] != "cells_outside_image" or project.segmentation.available):
+            if blocked is None:
+                blocked = table_correction_blocked(project) or ""
+            if blocked:
+                entry["fix_blocked"] = blocked
+            else:
+                entry["fix"] = "table"
+        out.append(entry)
+    correction = project.dataset.correction if project.dataset else None
+    if table_correction.is_active(correction):
+        out.append(table_correction.applied_finding(correction))
+    return out
+
+
+def table_correction_blocked(project):
+    """None when this project's table can be read with a correction, else the
+    sentence saying why not.
+
+    A local table always can. A node's can only when the node applies it as it
+    reads (operations.TABLE_CORRECTION): one from before corrections would
+    ignore the record and serve the file's values, which is worse than no
+    button. Asked of the node itself rather than of the capabilities recorded
+    when the table was attached, so updating the node is enough.
+    """
+    if not project.has_table:
+        return "This project has no table to correct."
+    binding = project.resource("table")
+    if binding is None:
+        return None
+    from plexora.server.providers import http
+    from plexora.server.providers.node import node_for
+    from plexora.server.providers.operations import TABLE_CORRECTION
+
+    try:
+        capabilities = (http.hello(node_for(binding), timeout=10.0) or {}).get(
+            "capabilities") or []
+    except Exception:
+        return f"Data node {binding.node!r} could not be reached to apply a fix."
+    if TABLE_CORRECTION in capabilities:
+        return None
+    return (f"Update Plexora on data node {binding.node!r} to fix this here: "
+            "the node reads this table, and its version cannot apply a correction.")
+
+
+def propose_table_fix(datasource_name):
+    """The correction that puts this project's cells on its mask and image.
+
+    `{"correction": dict | None, "message": str}` -- table_correction.propose
+    run against the table as loaded, the mask as served (here, or read over the
+    wire from its node) and the image's stated pixel size and z step. Nothing
+    is changed: the caller records the correction and reloads.
+    """
+    from plexora.server.models import table_correction
+    from plexora.server.utils.pixel_scale import to_microns
+
+    _ensure_loaded(datasource_name)
+    project = _project(datasource_name)
+    blocked = table_correction_blocked(project)
+    if blocked:
+        return {"correction": None, "message": blocked}
+    if datasource is None:
+        return {"correction": None, "message": "The table is not loaded."}
+    meta = get_ome_metadata(datasource_name) or {}
+    image = project.image
+    read_window, workers = table_correction.mask_window_reader(project, _providers)
+    reasons = [entry["code"] for entry in get_consistency_report(datasource_name)
+               if entry.get("fix")]
+    return table_correction.propose(
+        datasource, project.roles, width=int(image.width or 0), height=int(image.height or 0),
+        depth=image.depth,
+        pixel_size=to_microns(meta.get("physical_size_x"), meta.get("physical_size_x_unit")),
+        z_step=to_microns(meta.get("physical_size_z"), meta.get("physical_size_z_unit")),
+        read_window=read_window, current=project.dataset.correction, reasons=reasons,
+        workers=workers)
 
 
 def _unplaced_cells(project):
@@ -2707,8 +2807,12 @@ def _exact_window_loop():
         # and a different one loaded since has its own queue.
         if not is_loaded(datasource_name):
             continue
+        from plexora.server.volume import chunk_cache
+
         try:
-            _volume_quantization_window(channel_name, datasource_name)
+            # Behind every tile anybody is waiting on (chunk_cache.background).
+            with chunk_cache.background():
+                _volume_quantization_window(channel_name, datasource_name)
         except Exception as exc:  # noqa: BLE001 -- the provisional window stands
             _log.warning("%s: the exact window of %s failed -- %s",
                          datasource_name, channel_name, exc)
@@ -3062,11 +3166,46 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
                 pyramid = labels.plane(spec.z)
             elif spec.kind == "slab":
                 pyramid = labels.plane((spec.z0 + spec.z1) // 2)
-    return read_tile(
+    array = read_tile(
         pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],
         config[datasource_name]['tileHeight'],
     )
+    if view and not segmentation:
+        _read_ahead(datasource_name, channel_num, level, tile, view)
+    return array
+
+
+def _read_ahead(datasource_name, channel_num, level, tile, view):
+    """Queue the block of planes ahead of a plane tile just read
+    (server/volume/prefetch.py), as a node does for its own: the same tile,
+    read in the background, so stepping across a block's edge is a hit."""
+    from plexora.server.models import views
+    from plexora.server.volume.model import block_depth
+    from plexora.server.volume.prefetch import PREFETCHER
+
+    source = volume_source
+    try:
+        spec = views.resolve(datasource_name, view)
+        if source is None or spec is None or spec.kind != "plane" or spec.default:
+            return
+        block = block_depth(source, 0)
+        depth = int(source.volume.depth)
+    except Exception:  # noqa: BLE001 -- nothing to read ahead of
+        return
+    generation = load_generation
+    width = config[datasource_name]['tileWidth']
+    height = config[datasource_name]['tileHeight']
+    t = int(spec.t)
+
+    def read(z):
+        # Never for a project loaded since: its source has been closed.
+        if load_generation != generation or volume_source is not source:
+            return
+        read_tile(source.plane_pyramid(t, z), channel_num, level, tile, width, height)
+
+    region = (generation, datasource_name, t, channel_num, str(level), str(tile))
+    PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
 
 
 def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):

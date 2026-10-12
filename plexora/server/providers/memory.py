@@ -148,8 +148,11 @@ class MemoryTableProvider(LocalTableProvider):
         ignores it: this always reads the snapshot it holds, and a snapshot is
         replaced wholesale rather than re-read.
         """
+        from plexora.server.models import table_correction
+
         adapter = self._snapshot.adapter(self._spec)
-        self._loaded = adapter.load_table(stage=stage, report=report)
+        self._loaded = table_correction.apply(
+            adapter.load_table(stage=stage, report=report), self._spec)
         self._adapter = adapter
         return self._loaded
 

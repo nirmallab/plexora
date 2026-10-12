@@ -8,20 +8,34 @@ global lock, a file's own) did it one chunk at a time for every thread.
 
 `ChunkCache` keeps decoded chunks by what they are --
 `(source, level, t, channel, chunk coordinates)` -- in one byte-budgeted LRU
-(`PLEXORA_CHUNK_CACHE_MB`, default a quarter of the machine's memory up to
-2 GB), read-only, with ONE load per chunk however many threads want it at
-once. A reader supplies `load_many(keys) -> {key: array}`; the cache asks it
-only for what nobody holds or is loading. `DECODE_POOL` is where readers
-decompress, outside their locks (`PLEXORA_DECODE_THREADS`, default up to 8):
-zlib and libdeflate release the GIL.
+(`PLEXORA_CHUNK_CACHE_MB`, default an eighth of the memory this process was
+given, 256 MB to 8 GB), read-only, with ONE load per chunk however many
+threads want it at once. A reader supplies `load_many(keys) -> {key: array}`;
+the cache asks it only for what nobody holds or is loading. `DECODE_POOL` is
+where readers read and decompress, outside their locks
+(`PLEXORA_DECODE_THREADS`, default twice the allocated cores, 4 to 32): zlib,
+libdeflate and a file read all release the GIL, and a read from a cluster's
+network filesystem spends most of its time waiting rather than computing.
+
+Sized from the ALLOCATION, not the machine (plexora/_resources.py): a 64 GB
+job on a cluster node of several hundred must not plan for the node's memory,
+and an 8-plane-deep Imaris chunk under every 256 px of a plane means a
+viewport of four channels holds about 750 MB of chunks per block of planes --
+2 GB, the old ceiling, held barely two blocks.
 
 A read too big to be worth keeping (a whole-stack scan, a projection over
 every plane) is decoded and handed back without evicting what a viewer is
 using (`keep` false): such reads see the cache and add nothing to it.
+
+BACKGROUND WORK HAS ITS OWN LANE. A window scan, a plane prefetch and a
+node's warm-up read through `background()`, which sends their chunks to
+`BACKGROUND_POOL` (a quarter of the threads) instead of `DECODE_POOL`: a tile
+somebody is waiting for never queues behind work nobody is.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from collections import OrderedDict
@@ -37,12 +51,30 @@ def _env_int(name, default):
         return default
 
 
-def _default_budget_mb() -> int:
+def _allocated_cpus() -> int:
     try:
-        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (AttributeError, ValueError, OSError):
+        from plexora._resources import allocated_cpus
+
+        return allocated_cpus()
+    except Exception:  # noqa: BLE001 -- sizing only; never fatal
+        return os.cpu_count() or 4
+
+
+def _default_budget_mb() -> int:
+    total = None
+    try:
+        from plexora._resources import allocated_memory_bytes
+
+        total = allocated_memory_bytes()
+    except Exception:  # noqa: BLE001 -- sizing only; never fatal
+        total = None
+    if not total:
         total = 8 * 2**30
-    return int(max(256, min(2048, total // 4 // 2**20)))
+    return int(max(256, min(8192, total // 8 // 2**20)))
+
+
+def _default_decode_threads() -> int:
+    return max(4, min(32, 2 * _allocated_cpus()))
 
 
 class ChunkCache:
@@ -149,13 +181,41 @@ class ChunkCache:
         with self._lock:
             return {"entries": len(self._entries), "bytes": self._bytes, "budget": self.budget,
                     "hits": self.hits, "misses": self.misses, "loads": self.loads,
-                    "waits": self.waits, "loading": len(self._loading)}
+                    "waits": self.waits, "loading": len(self._loading),
+                    "decode_threads": DECODE_THREADS,
+                    "background_threads": BACKGROUND_THREADS}
 
 
 CACHE = ChunkCache(_env_int("PLEXORA_CHUNK_CACHE_MB", _default_budget_mb()) * 2**20)
-DECODE_POOL = ThreadPoolExecutor(
-    max_workers=max(1, _env_int("PLEXORA_DECODE_THREADS", min(8, os.cpu_count() or 4))),
-    thread_name_prefix="plexora-decode")
+DECODE_THREADS = max(1, _env_int("PLEXORA_DECODE_THREADS", _default_decode_threads()))
+DECODE_POOL = ThreadPoolExecutor(max_workers=DECODE_THREADS,
+                                 thread_name_prefix="plexora-decode")
+BACKGROUND_THREADS = max(2, DECODE_THREADS // 4)
+BACKGROUND_POOL = ThreadPoolExecutor(max_workers=BACKGROUND_THREADS,
+                                     thread_name_prefix="plexora-decode-bg")
+
+_lane = threading.local()
+
+
+@contextlib.contextmanager
+def background():
+    """Read at background priority for the duration: this thread's chunk
+    loads go to `BACKGROUND_POOL`, behind nothing a viewer is waiting on."""
+    previous = getattr(_lane, "background", False)
+    _lane.background = True
+    try:
+        yield
+    finally:
+        _lane.background = previous
+
+
+def in_background() -> bool:
+    return bool(getattr(_lane, "background", False))
+
+
+def pool() -> ThreadPoolExecutor:
+    """Where this thread's chunk reads run (see `background`)."""
+    return BACKGROUND_POOL if in_background() else DECODE_POOL
 
 
 def keep_for(nbytes: int) -> bool:

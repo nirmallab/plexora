@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_plane_merge"
+VERSION = "20261012_table_fix"
 
 
 def _blueprint():

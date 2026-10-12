@@ -39,6 +39,14 @@ function makeNode(tag) {
         hidden: false,
         attributes: {},
         children: [],
+        listeners: {},
+        classes: new Set(),
+        get classList() {
+            const classes = this.classes;
+            return { add: (name) => classes.add(name), contains: (name) => classes.has(name) };
+        },
+        addEventListener(type, fn) { this.listeners[type] = fn; },
+        click() { return this.disabled ? undefined : this.listeners.click?.(); },
         setAttribute(name, value) { this.attributes[name] = value; },
         append(...items) { this.children.push(...items); },
         set innerHTML(value) {
@@ -57,10 +65,11 @@ function makeNode(tag) {
 
 const target = makeNode("div");
 const sandbox = {
-    window: {},
+    window: { location: { reloads: 0, reload() { this.reloads += 1; } } },
     console,
     document: {
         getElementById: (id) => (id === "gate_consistency" ? target : null),
+        querySelectorAll: () => buttons(),
         createElement: (tag) => makeNode(tag),
         createTextNode: (text) => String(text),
     },
@@ -91,16 +100,33 @@ function panel({ marker = null, markers = [], channels = [], consistency = [] } 
         markerFinding: Controller.prototype.markerFinding,
         markersShareTheImageVocabulary: Controller.prototype.markersShareTheImageVocabulary,
         paintConsistency: Controller.prototype.paintConsistency,
+        consistencyAction: Controller.prototype.consistencyAction,
+        correctTable: Controller.prototype.correctTable,
+        consistencyNotice: null,
+        correctingTable: false,
+        async loadConsistency() { this.paintConsistency(); },
     };
 }
 
 const codes = () => target.children.map((note) => note.dataset.code);
+/** The note's own button, or undefined. */
+const buttonOf = (note) => note.children.find((child) => child?.tagName === "BUTTON");
+const buttons = () => target.children.map(buttonOf).filter(Boolean);
 
 const passed = [];
+const pending = [];
+let queue = Promise.resolve();
+/** Run one check. An async one is queued behind every earlier async one, so
+ *  checks sharing the one `target` never interleave. */
 function check(label, fn) {
+    const finish = () => { passed.push(label); console.log("PASS", label); };
+    if (fn.constructor.name === "AsyncFunction") {
+        queue = queue.then(fn).then(finish);
+        pending.push(queue);
+        return;
+    }
     fn();
-    passed.push(label);
-    console.log("PASS", label);
+    finish();
 }
 
 // ------------------------------------------------------------- the checks
@@ -188,4 +214,83 @@ check("a finding with no code still draws its sentence", () => {
     assert.match(target.children[0].text, /Something else/);
 });
 
+check("a finding core can correct carries a Fix that says the file is not changed", () => {
+    const state = panel({
+        marker: "CD3", markers: ["CD3"], channels: ["CD3"],
+        consistency: [{ code: "ids_below_one", message: "Cell ids start at 0.", fix: "table" },
+                      { code: "mask_size", message: "The mask is a different size." }],
+    });
+    state.paintConsistency();
+
+    const [fix, none] = target.children.map(buttonOf);
+    assert.equal(fix.textContent, "Fix");
+    assert.equal(fix.disabled, undefined);
+    assert.match(fix.title, /table file is not changed/);
+    assert.equal(none, undefined, "a finding nothing can fix grew a button");
+    assert.match(target.children[0].text, /Cell ids start at 0/);
+});
+
+check("...and one a data node cannot apply is offered disabled, with the reason", () => {
+    const state = panel({
+        marker: "CD3", markers: ["CD3"], channels: ["CD3"],
+        consistency: [{ code: "cells_in_a_corner", message: "Cells cover 7%.",
+                        fix_blocked: "Update Plexora on data node 'o2' to fix this here." }],
+    });
+    state.paintConsistency();
+
+    const fix = buttonOf(target.children[0]);
+    assert.equal(fix.disabled, true);
+    assert.match(fix.title, /Update Plexora on data node/);
+});
+
+check("a correction in force is a neutral note with an Undo", () => {
+    const state = panel({
+        marker: "CD3", markers: ["CD3"], channels: ["CD3"],
+        consistency: [{ code: "table_corrected", level: "info", undo: true,
+                        message: "Corrected in Plexora: cell ids +1. Your table file is unchanged." }],
+    });
+    state.paintConsistency();
+
+    const note = target.children[0];
+    assert.match(note.className, /is-info/);
+    assert.equal(note.children[0].className, "fas fa-circle-info");
+    assert.equal(buttonOf(note).textContent, "Undo");
+});
+
+check("a Fix that changes the table reloads the page", async () => {
+    const state = panel({
+        marker: "CD3", markers: ["CD3"], channels: ["CD3"],
+        consistency: [{ code: "ids_below_one", message: "Cell ids start at 0.", fix: "table" }],
+    });
+    let asked = 0;
+    state.dataLayer.fixTable = async () => { asked += 1; return { success: true, applied: true, reloaded: true }; };
+    state.paintConsistency();
+    const before = sandbox.window.location.reloads;
+
+    await state.correctTable("fix", buttonOf(target.children[0]));
+
+    assert.equal(asked, 1);
+    assert.equal(sandbox.window.location.reloads, before + 1);
+});
+
+check("a Fix that applies nothing says why and leaves the page alone", async () => {
+    const state = panel({
+        marker: "CD3", markers: ["CD3"], channels: ["CD3"],
+        consistency: [{ code: "ids_below_one", message: "Cell ids start at 0.", fix: "table" }],
+    });
+    state.dataLayer.fixTable = async () => ({
+        success: true, applied: false, reloaded: false,
+        message: "The table already lines up with the mask." });
+    state.paintConsistency();
+    const before = sandbox.window.location.reloads;
+
+    await state.correctTable("fix", buttonOf(target.children[0]));
+
+    assert.equal(sandbox.window.location.reloads, before);
+    assert.deepEqual(codes(), ["ids_below_one", "table_fix_result"]);
+    assert.match(target.children[1].text, /already lines up/);
+    assert.equal(buttonOf(target.children[0]).disabled, undefined, "Fix stayed disabled");
+});
+
+await Promise.all(pending);
 console.log(`all checks passed (${passed.length})`);

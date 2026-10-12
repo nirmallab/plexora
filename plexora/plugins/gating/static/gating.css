@@ -338,6 +338,53 @@
     line-height: 1.55;
 }
 
+.gate-consistency-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Something done rather than something wrong: a correction in force, or what
+   a Fix found. The same quiet line, in the neutral edge instead of amber. */
+.gate-consistency-note.is-info {
+    border-left-color: var(--border-strong);
+    animation: gate-consistency-arrive var(--duration-normal, 240ms) var(--ease-standard, ease-out);
+}
+
+.gate-consistency-note.is-info .fas {
+    color: var(--text-muted);
+}
+
+/* At the end of the note, at the height of its first line. */
+.gate-consistency-fix {
+    align-self: flex-start;
+    margin-left: var(--space-1);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard);
+}
+
+.gate-consistency-fix:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.gate-consistency-fix.is-busy {
+    opacity: 0.75;
+}
+
+@keyframes gate-consistency-arrive {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gate-consistency-note.is-info { animation: none; }
+}
+
+.plx-reduced-motion .gate-consistency-note.is-info {
+    animation: none;
+}
+
 
 /* ------------------------------------------------------------------------
    Automatic gating: where a gate came from, and a session in progress.
@@ -427,7 +474,8 @@
 .gate-provenance[data-confidence="manual_review"] .gate-provenance-text::before { background: var(--accent-gate); }
 
 .gate-provenance-action,
-.gating-agent-pill-action {
+.gating-agent-pill-action,
+.gate-consistency-fix {
     flex: 0 0 auto;
     border: 1px solid var(--border-strong);
     background: transparent;
@@ -441,13 +489,15 @@
 }
 
 .gate-provenance-action:hover,
-.gating-agent-pill-action:hover {
+.gating-agent-pill-action:hover,
+.gate-consistency-fix:hover:not(:disabled) {
     border-color: var(--accent-channel);
     color: var(--text-primary);
 }
 
 .gate-provenance-action:focus-visible,
-.gating-agent-pill-action:focus-visible {
+.gating-agent-pill-action:focus-visible,
+.gate-consistency-fix:focus-visible {
     outline: 2px solid var(--accent-channel-soft);
     outline-offset: 1px;
 }
