@@ -41,7 +41,11 @@
  * planes of interest is the same gesture as choosing a projection's range.
  *
  * Draws on demand -- a frame only after the camera, the channels or the clip
- * changed. `webglcontextlost` hands the viewer back to Plane mode with a toast.
+ * changed. A channel new to the picture (switched on, its level just arrived,
+ * the view just entered) comes in over a quarter of a second rather than
+ * landing at once: its colour and opacity are scaled up from nothing, at full
+ * quality, and at once with motion off. `webglcontextlost` hands the viewer
+ * back to Plane mode with a toast.
  *
  * MOVING IT. A drag turns the stack under the hand, one frame per display
  * refresh (views/volumeCamera.js holds the orientation and the named views,
@@ -134,6 +138,9 @@
     const SLOW_FRAME_MS = 24;
     const MIN_FAST_SCALE = 0.4;
     const SETTLE_MS = 90;
+    //: A channel drawn that was not drawn the frame before comes in over
+    //: this long, eased out, rather than all at once.
+    const FADE_IN_MS = 240;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -365,11 +372,14 @@ ${sample}`;
         return shader;
     }
 
-    function program(gl, count, detail = false, atlas = false) {
+    function program(gl, count, detail = false, atlas = false, surf = false) {
         const built = gl.createProgram();
+        // [surfaces] The ray caster that stops at surfaces and splits at the
+        // translucent ones (views/surfaceRenderer.js), made from this source.
+        const text = surf ? global.PlexoraSurfaceRenderer.volumeFragment(
+            fragmentSource(count, detail, atlas)) : fragmentSource(count, detail, atlas);
         gl.attachShader(built, compile(gl, gl.VERTEX_SHADER, VERTEX));
-        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER,
-                                       fragmentSource(count, detail, atlas)));
+        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER, text));
         gl.bindAttribLocation(built, 0, "a_position");
         gl.linkProgram(built);
         if (!gl.getProgramParameter(built, gl.LINK_STATUS)) {
@@ -465,6 +475,10 @@ ${sample}`;
             this.fastScale = 1;
             this._fastFrames = { last: 0, average: 0, count: 0 };
             this._settleTimer = 0;
+            //: The channels the last frame drew, and those still coming in:
+            //: name -> when they were first drawn (presence).
+            this._drawn = new Set();
+            this._fades = new Map();
             this.prefs = global.PlexoraViewerPrefs || null;
             this.status = "idle";
             this.level = null;
@@ -524,6 +538,9 @@ ${sample}`;
             });
             this.bindPointer(canvas);
             this.wrapper.appendChild(canvas);
+            // [surfaces] Meshes drawn on this context (views/surfaceRenderer.js).
+            this.surfaces = global.PlexoraSurfaceRenderer
+                ? new global.PlexoraSurfaceRenderer(this) : null;
             if (global.PlexoraOrientationGizmo) {
                 this.gizmo = new global.PlexoraOrientationGizmo({
                     onAxis: (name, options) => this.lookAlong(name, options) });
@@ -553,6 +570,8 @@ ${sample}`;
             clearTimeout(this._detailTimer);
             this.atlas?.destroy();
             this.atlas = null;
+            this.surfaces?.destroy();
+            this.surfaces = null;
             this.canvas?.remove();
             this.gizmo?.root.remove();
             this.gizmo = null;
@@ -563,7 +582,12 @@ ${sample}`;
         show(visible) {
             if (this.canvas) this.canvas.hidden = !visible;
             this.gizmo?.show(visible);
-            if (!visible) this.setLock(null);
+            if (!visible) {
+                this.setLock(null);
+                // Back in 3-D, what is drawn comes in again.
+                this._drawn.clear();
+                this._fades.clear();
+            }
             if (visible) this.invalidate();
         }
 
@@ -604,6 +628,7 @@ ${sample}`;
             this.textureBytes = 0;
             this.detail = null;
             this.atlas?.lost();
+            this.surfaces?.lost();
             this.programs.clear();
             this.status = "lost";
             global.PlexoraToast?.show?.({
@@ -921,6 +946,38 @@ ${sample}`;
             return this.interacting || this.animating();
         }
 
+        /** True while a channel is still coming in (presence): drawn every
+         *  frame, but in full -- nothing is moving. */
+        fading() {
+            return this._fades.size > 0 && Boolean(this.canvas) && !this.canvas.hidden;
+        }
+
+        /**
+         * How far in each of `channels` is, 0..1, at `time`: a channel the
+         * last frame did not draw -- switched on, its level just arrived, the
+         * view just entered -- starts from nothing and comes in over
+         * FADE_IN_MS. All at once with motion off, and for a capture
+         * (`settled`).
+         */
+        presence(channels, time, { settled = false } = {}) {
+            const shown = new Set(channels.map((channel) => channel.name));
+            const fade = !settled && this.smooth();
+            for (const name of shown) {
+                if (fade && !this._drawn.has(name)) this._fades.set(name, time);
+            }
+            for (const name of this._fades.keys()) {
+                if (!fade || !shown.has(name)) this._fades.delete(name);
+            }
+            this._drawn = shown;
+            return channels.map((channel) => {
+                const start = this._fades.get(channel.name);
+                if (start === undefined) return 1;
+                const f = Math.min(1, Math.max(0, (time - start) / FADE_IN_MS));
+                if (f >= 1) this._fades.delete(channel.name);
+                return 1 - (1 - f) ** 3;
+            });
+        }
+
         /** One display frame: move what is moving, draw, and ask for the next
          *  frame while anything still moves. */
         onFrame(time) {
@@ -932,12 +989,15 @@ ${sample}`;
             } else {
                 this.lastStep = 0;
             }
+            if (this.fading()) this.dirty = true;
             if (this.dirty) {
                 this.learnFrame(time, this.animating());
                 this.draw(time);
                 if (!this.moving()) this.scheduleDetail();
             }
-            if (this.animating()) {
+            // [surfaces] The camera at rest is remembered (attach's onRest).
+            if (!this.moving()) this.onRest?.();
+            if (this.animating() || this.fading()) {
                 this.schedule();
             } else if (!this.interacting && this.drawnFast) {
                 // At rest: the full picture, once the hand has had a moment
@@ -1137,7 +1197,7 @@ ${sample}`;
                                    this.frameT(), this.format(), lead.level);
         }
 
-        draw(time = now()) {
+        draw(time = now(), { settled = false } = {}) {
             this.dirty = false;
             const gl = this.gl;
             const canvas = this.canvas;
@@ -1145,8 +1205,9 @@ ${sample}`;
             const fast = this.moving();
             this.drawnFast = fast;
             const ratio = Math.min(global.devicePixelRatio || 1, 1.5) * (fast ? this.fastScale : 1);
-            // A pinned size (pinSize) wins over the canvas's CSS size: a frame
-            // rendered for a video is the video's size, whatever the window.
+            // A pinned size wins over the canvas's CSS size: a frame rendered
+            // for a video is the video's size (pinSize), and so is an export's
+            // (snapshot), whatever the window.
             const pinned = this._pinnedSize;
             const width = pinned ? pinned.width : Math.max(1, Math.round(canvas.clientWidth * ratio));
             const height = pinned ? pinned.height : Math.max(1, Math.round(canvas.clientHeight * ratio));
@@ -1158,9 +1219,22 @@ ${sample}`;
             const at = now();
             const channels = this.channels().map((channel) => ({ ...channel, entry: this.textureOf(channel) }))
                 .filter((channel) => channel.entry);
-            gl.clearColor(0, 0, 0, 1);
+            // [surfaces] "Surfaces only" draws no channel; surfaces draw their
+            // passes first and leave the volume two outputs to fill.
+            if (this.surfaces?.hideVolume) channels.length = 0;
+            const surf = this.surfaces?.begin(channels, { fast }) || null;
+            // A channel new to the picture comes in rather than lands: its
+            // colour and opacity scaled by how far in it is.
+            const presence = this.presence(channels, time, { settled });
+            gl.clearColor(0, 0, 0, surf ? 0 : 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
-            if (!channels.length) return;
+            if (!channels.length) {
+                if (surf) {
+                    surf.finish(false);
+                    this.paintGizmo(fast);
+                }
+                return;
+            }
             // What is drawn sets the box's proportions and the step count:
             // channels may hold different levels (see ensureTextures).
             for (const channel of channels) channel.entry.used = at;
@@ -1179,10 +1253,10 @@ ${sample}`;
             const withAtlas = this.atlasFits(channels, lead) && this.atlas.active();
             const withDetail = !withAtlas && Boolean(detail) && details.length > 0
                 && details.every(Boolean);
-            const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}`;
+            const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}${surf ? "|s" : ""}`;
             let built = this.programs.get(programKey);
             if (!built) {
-                built = program(gl, channels.length, withDetail, withAtlas);
+                built = program(gl, channels.length, withDetail, withAtlas, Boolean(surf));
                 this.programs.set(programKey, built);
             }
             gl.useProgram(built);
@@ -1214,9 +1288,11 @@ ${sample}`;
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
-            gl.uniform3fv(uniform("u_color"), channels.flatMap((channel) => channel.colour));
+            gl.uniform3fv(uniform("u_color"), channels.flatMap(
+                (channel, index) => channel.colour.map((value) => value * presence[index])));
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => channel.window));
-            gl.uniform1fv(uniform("u_opacity"), channels.map((channel) => channel.opacity));
+            gl.uniform1fv(uniform("u_opacity"), channels.map(
+                (channel, index) => channel.opacity * presence[index]));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
             gl.uniform3fv(uniform("u_extent"), this.extent());
             // The revision on screen (attach's surface), not the one asked for.
@@ -1247,10 +1323,12 @@ ${sample}`;
             const steps = Math.min(finest ? 2048 : 1024, Math.max(96, Math.round(longest * 2)));
             gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
+            surf?.bindDepth(uniform);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
             gl.enableVertexAttribArray(0);
             gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            surf?.finish(true);
             this.paintGizmo(fast);
         }
 
@@ -1274,7 +1352,6 @@ ${sample}`;
 
         async refresh() {
             if (!this.gl) return;
-            const channels = this.channels();
             if (!this.atlas && global.PlexoraVolumeAtlas) {
                 this.atlas = new global.PlexoraVolumeAtlas({
                     gl: this.gl, datasource: this.datasource, maxTexture: this.maxTexture,
@@ -1282,6 +1359,15 @@ ${sample}`;
                 this.atlas.load().then(() => this.scheduleDetail());
             }
             try {
+                // The window before the address, as the plane does
+                // (viewerManager.addChannelItems): a level is kept under the
+                // window it is made with, and a channel switched on for the
+                // first time has none yet. Its first answer is announced to
+                // nobody (volumeWindows.adopt), so a level fetched before it
+                // was looked for under another window and never drawn.
+                await global.__plexora?.volumeWindows?.ensure?.(
+                    this.channels().map((channel) => channel.name));
+                const channels = this.channels();
                 await this.ensureTextures(channels);
             } catch (error) {
                 console.error("volumeRenderer:", error);
@@ -1316,6 +1402,7 @@ ${sample}`;
                 const pan = event.shiftKey || event.button === 1;
                 const box = canvas.getBoundingClientRect();
                 drag = { x: event.clientX, y: event.clientY, a: 0, b: 0, pan, box,
+                         x0: event.clientX, y0: event.clientY,
                          // A locked drag's rule is fixed as it starts (volumeCamera).
                          locked: !pan && this.lock
                              ? Camera().lockedDrag(this.camera.q, this.lock) : null,
@@ -1359,6 +1446,15 @@ ${sample}`;
             });
             const end = (event) => {
                 if (!drag) return;
+                // [surfaces] A click (no drag) on a surface picks its object.
+                if (event?.type === "pointerup" && this.surfaces?.active()
+                        && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < 4) {
+                    const box = canvas.getBoundingClientRect();
+                    const hit = this.surfaces.pick(event.clientX - box.left, event.clientY - box.top);
+                    global.dispatchEvent?.(new CustomEvent("plexora:surface-pick", {
+                        detail: { hit, clientX: event.clientX, clientY: event.clientY,
+                                  additive: Boolean(event.shiftKey || event.metaKey) } }));
+                }
                 const turning = !drag.pan && event?.type === "pointerup";
                 const locked = drag.locked ? this.lock : null;
                 drag = null;
@@ -1570,6 +1666,8 @@ ${sample}`;
             if (this.channels().some((channel) => !this.textureOf(channel))) return false;
             const atlas = this.atlas;
             if (atlas && (atlas.status === "loading" || atlas.inflight?.size > 0)) return false;
+            // [surfaces] A visible surface's mesh still on its way.
+            if (global.PlexoraSurfaceLayers?.loading?.()) return false;
             return !this._filling;
         }
 
@@ -1581,7 +1679,8 @@ ${sample}`;
         }
 
         /** The current camera drawn now, at full quality (never the fast
-         *  path), at the pinned size. Stops any motion of its own first. */
+         *  path), at the pinned size, every channel in full (never partway
+         *  in, presence). Stops any motion of its own first. */
         renderFrame() {
             if (!this.canvas) return null;
             this.spin = null;
@@ -1592,7 +1691,7 @@ ${sample}`;
             // if it were this frame's.
             this._drawHidden = true;
             try {
-                this.draw();
+                this.draw(now(), { settled: true });
             } finally {
                 this._drawHidden = false;
             }
@@ -1772,11 +1871,53 @@ ${sample}`;
             this.textureBytes -= entry.bytes;
         }
 
-        /** The current picture as a canvas (captures). */
-        snapshot() {
+        /** The current picture as a canvas (captures): at the canvas's own
+         *  size, or drawn at `{width, height}` device pixels for an export
+         *  (copied out, then the canvas goes back to its size). Every channel
+         *  in full, never partway in. */
+        snapshot({ width = null, height = null } = {}) {
             if (!this.canvas) return null;
-            this.draw();
-            return this.canvas;
+            if (!(width > 0 && height > 0)) {
+                this.draw(now(), { settled: true });
+                return this.canvas;
+            }
+            // A video's pinned size (pinSize) comes back afterwards.
+            const pinned = this._pinnedSize;
+            this._pinnedSize = { width: Math.round(width), height: Math.round(height) };
+            try {
+                this.spin = null;
+                this.tween = null;
+                this.zoomTarget = null;
+                this.interacting = false;
+                this.draw(now(), { settled: true });
+                const copy = document.createElement("canvas");
+                copy.width = this.canvas.width;
+                copy.height = this.canvas.height;
+                copy.getContext("2d").drawImage(this.canvas, 0, 0);
+                return copy;
+            } finally {
+                this._pinnedSize = pinned || null;
+                this.invalidate();
+            }
+        }
+
+        /** The camera as the view state stores it (volume_routes). */
+        cameraState() {
+            const c = this.camera;
+            return { q: c.q.slice(), dist: c.dist, pan: [c.panX, c.panY] };
+        }
+
+        /** Put a stored camera back (`{q, dist, pan}`); false when unusable. */
+        restoreCamera(stored) {
+            const q = stored?.q;
+            if (!Array.isArray(q) || q.length !== 4 || !q.every(Number.isFinite)) return false;
+            this.camera.q = q.slice();
+            if (Number.isFinite(stored.dist)) this.camera.dist = Math.max(MIN_DIST, Math.min(8, stored.dist));
+            if (Array.isArray(stored.pan) && stored.pan.every(Number.isFinite)) {
+                [this.camera.panX, this.camera.panY] = stored.pan;
+            }
+            this.invalidate();
+            return true;
         }
     }
 
@@ -1795,6 +1936,21 @@ ${sample}`;
         let lastT = null;
         let wasOn = false;
         let lastClip = "";
+        // [surfaces] The camera, remembered per project like the plane
+        // (`volume.camera` of the view state), once it has rested a moment.
+        let savedCamera = "";
+        let cameraTimer = 0;
+        const rememberCamera = () => {
+            clearTimeout(cameraTimer);
+            cameraTimer = setTimeout(() => {
+                if (!renderer || !viewState.isVolume()) return;
+                const camera = renderer.cameraState();
+                const text = JSON.stringify(camera);
+                if (text === savedCamera) return;
+                savedCamera = text;
+                viewState.set({ volume: { ...(viewState.get().volume || {}), camera } });
+            }, 800);
+        };
         /** The area on screen, when the plane is zoomed in on part of the image:
          *  the 3-D view draws that, finer, rather than the whole stack coarsely. */
         const areaOnScreen = () => {
@@ -1813,6 +1969,8 @@ ${sample}`;
         };
         const controller = {
             get renderer() { return renderer; },
+            /** The 3-D view's surfaces (views/surfaceRenderer.js), once it exists. */
+            get surfaces() { return renderer?.surfaces || null; },
             sync(state) {
                 if (renderer) renderer.view = state;
                 const on = viewState.isVolume(state);
@@ -1835,7 +1993,16 @@ ${sample}`;
                         viewState.set({ mode: "plane" });
                         return;
                     }
+                    // [surfaces] Back where the camera was, and say the view
+                    // exists (services/surfaceLayers.js loads meshes into it).
+                    if (renderer.restoreCamera(state.volume?.camera)) {
+                        savedCamera = JSON.stringify(renderer.cameraState());
+                    }
+                    renderer.onRest = rememberCamera;
+                    global.dispatchEvent?.(new CustomEvent("plexora:volume-mounted",
+                        { detail: { renderer } }));
                 }
+                renderer.surfaces?.setShow(state.volume?.show || {});
                 document.getElementById("openseadragon_wrapper")?.classList.add("is-volume-mode");
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
@@ -1881,6 +2048,11 @@ ${sample}`;
                 event.preventDefault();
                 event.stopPropagation();
                 if (!event.repeat) renderer.setLock(key);
+            } else if (key === "s" && renderer.engaged()) {
+                // [surfaces] S opens or closes the Quick Surface dock.
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) global.dispatchEvent?.(new CustomEvent("plexora:surface-studio-toggle"));
             }
         }, true);
         // HD swaps the textures for half floats (or back): the same refresh.

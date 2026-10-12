@@ -62,7 +62,7 @@ LAYOUTS = {
            "per_row": 6, "max_width": 1024, "offered": True},
     "t3": {"panels": ("morphology", "merge", "ref"), "grid": (3, 1),
            "per_row": 6, "max_width": 1024, "offered": True},
-    # Hybrid gating's looks (`SessionOptions.hybrid` full): each cell a 2 x 2
+    # The multi-view looks (gating's `SessionOptions.tiles`): each cell a 2 x 2
     # block -- morphology, the context with the judged cell outlined, the
     # expected and the not-expected partner -- at 64 px a panel.
     "t2m": {"panels": ("morphology", "outlined", "co", "anti"), "grid": (2, 2),

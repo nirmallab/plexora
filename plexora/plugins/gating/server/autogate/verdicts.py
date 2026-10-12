@@ -27,6 +27,12 @@ puts the gate in plain background.
 
 Looks at candidates (`MOVES`, `lattice.place`): going up the gate passes each
 row whose cells are not positive, going down each row whose cells are.
+
+`about_right` is the weakest of these readings (wrong 22 of 24 times on
+lsp11385_2 when the human gate lay elsewhere; behind most PCA misses, with
+`near: mixed`). A look at both sides of the gate was tried for it and did
+not help: the rows beside the gate read mixed too (2026-10-11,
+docs/internal/GATING_REPLAN_PLAN.md).
 """
 
 from __future__ import annotations

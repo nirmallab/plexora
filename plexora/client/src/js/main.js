@@ -516,6 +516,15 @@ async function init(config, savedViewTransform = null) {
             viewState.registerSurface("labels", {
                 order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
         }
+        // A 3-D mask a data node finishes converting after this page opened
+        // was read as 2-D until then (the node reports no label volume while
+        // it builds one): track the plane from now on.
+        __plexora.trackLabelPlanes = async () => {
+            if (!(await viewState.refreshLabels()) || !viewState.labelsAre3d()) return;
+            viewState.registerSurface("labels", {
+                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
+            viewerManager.presetLabelPlane(viewState.labelSpec());
+        };
         // A time series' object table (one row per cell per frame): the rows
         // the viewer reads follow the frame on screen -- the cells, their
         // centroids, the nearest cell to a click and every gate.
@@ -524,12 +533,31 @@ async function init(config, savedViewTransform = null) {
             seaDragonViewer.setTableFrame({ column: tableT, t: viewState.get().t });
             viewState.subscribe((state) => seaDragonViewer.setTableFrame({ column: tableT, t: state.t }));
         }
+        // A table that places each cell in depth (an object table, or a CSV
+        // with X, Y and Z): the centroid dots are the planes on screen's
+        // cells, a slab's whole range. The 3-D view draws no dots, so the 2-D
+        // pane keeps the plane it was left on.
+        const tableZ = viewState.info?.table_z;
+        if (tableZ && viewState.depth > 1) {
+            const planesOf = (state) => (state.mode === "slab"
+                ? { column: tableZ, z0: state.slab.z0, z1: state.slab.z1 }
+                : { column: tableZ, z0: state.z, z1: state.z });
+            seaDragonViewer.setCentroidPlanes(planesOf(viewState.get()));
+            viewState.subscribe((state) => {
+                if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(planesOf(state));
+            });
+        }
     }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
     // pyramid, at a new tile address.
-    window.PlexoraResourceStatus?.onMaskReady?.(
-        (version) => viewerManager.reloadLabelLayer(version));
+    window.PlexoraResourceStatus?.onMaskReady?.(async (version) => {
+        try {
+            await __plexora.trackLabelPlanes?.();
+        } finally {
+            viewerManager.reloadLabelLayer(version);
+        }
+    });
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
     // whichever tool (if any) is active, so they work on a plain base viewer too.
@@ -599,6 +627,21 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // Surfaces (plexora/server/surface): layers drawn in the 3-D view,
+            // made in Surface Studio's dock.
+            try {
+                window.PlexoraSurfaceLayers?.init({ datasource,
+                                                    layerStack: seaDragonViewer.layerStack });
+                window.PlexoraSurfaceStudio?.init();
+                window.PlexoraSurfaceInspect?.init();
+                const surfaceButton = document.getElementById("layer_surface_button");
+                if (surfaceButton && window.PlexoraSurfaceStudio && viewState.depth > 1) {
+                    surfaceButton.hidden = false;
+                    surfaceButton.addEventListener("click", () => window.PlexoraSurfaceStudio.toggle());
+                }
+            } catch (error) {
+                console.error("main: surfaces could not be set up", error);
+            }
         } catch (error) {
             console.error("main: could not build the depth strip", error);
         }
@@ -635,19 +678,34 @@ async function init(config, savedViewTransform = null) {
         }
     });
 
-    // HD, if the sample this walk came from had it on. Here and not earlier:
-    // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
-    // checkbox's own handler reaches through. And through `presetHdMode`
-    // rather than `setHdMode`, because the world is still empty -- see that
-    // method for what remembering a viewport of nothing costs.
+    // HD from the start -- 16-bit tiles, the data's own precision -- unless
+    // the tiles cross a network to get here: an image read from a web address
+    // or a data node (page_routes.image_streamed), or this server on another
+    // machine than the browser. There a 16-bit PNG is many times the bytes of
+    // a fast WebP tile on every pan. Channel images only: a brightfield or RGB
+    // picture has no 16-bit to show, and its HD tile is just a bigger one.
+    // A sample walked to from a sibling keeps that sample's choice instead,
+    // on or off.
+    //
+    // Here and not earlier: ImageViewer.init() is what assigns
+    // `viewerManagerVMain`, which the HD checkbox's own handler reaches
+    // through. And through `presetHdMode` rather than `setHdMode`, because the
+    // world is still empty -- see that method for what remembering a viewport
+    // of nothing costs.
     const carriedChannelState = window.PlexoraCarryOver?.current?.()?.components?.channels;
-    if (carriedChannelState?.hd) {
+    const tilesStreamed = Boolean(flaskVariables.image_streamed || flaskVariables.server_is_remote);
+    const hdByDefault = !tilesStreamed
+        && !["rgb", "brightfield", "blank"].includes(config.image_kind)
+        && Boolean(document.querySelector("#viewer_controls_hd"));
+    const startInHd = typeof carriedChannelState?.hd === "boolean"
+        ? carriedChannelState.hd : hdByDefault;
+    if (startInHd) {
         try {
             viewerManager.presetHdMode(true);
             const hdCheckbox = document.querySelector("#viewer_controls_hd");
             if (hdCheckbox) hdCheckbox.checked = true;
         } catch (error) {
-            console.error("main: could not carry HD mode over", error);
+            console.error("main: could not start in HD", error);
         }
     }
     // The dataset handed to every plugin -- same shape as the server's
@@ -1945,6 +2003,13 @@ async function init(config, savedViewTransform = null) {
                     const frame = __plexora.dataLayer?.tableFrame;
                     return frame ? frame.t : null;
                 },
+                /**
+                 * Surfaces in the 3-D view (services/surfaceLayers.js): what is
+                 * shown, captured and put back as part of a scene -- Video
+                 * Studio's frames and Figure Builder's panels.
+                 * `surfaces.captureState()` / `applyState(list, {save})`.
+                 */
+                get surfaces() { return window.PlexoraSurfaceLayers || null; },
                 /** Whether the mask is a 3-D label volume (one id per cell
                  *  across planes): whole cells in depth to work with. */
                 labelsAre3d() {

@@ -147,16 +147,15 @@ def _restore_manifest(registry, manifest, log=print):
     strand every OTHER file it was asked to serve -- and it would do so at the
     exact moment the user is trying to reopen their work.
 
-    A mask that is still there but cannot be made servable is the one failure
-    that must NOT be tolerated quietly. `add` has already registered it, as
-    `ready`, before the conversion is tried -- so swallowing the exception left
-    the raw mask being served. A single-level mask answers every level with
-    full resolution (see `segmentation_pyramid.label_pyramid_gaps`), and the
-    viewer drew the top-left of the slide's cells stretched over the rest of
-    it: a wrong picture and no error anywhere. Marked `error` instead, which
-    the viewer and `dataset create` report with the reason, and which opening
-    the project retries (`POST /resources/<id>/prepare`). Meanwhile the raw
-    mask is still drawn, now at the right scale (`data_model._label_region`).
+    A restored mask is registered and nothing more. Checking it, and converting
+    it when it is a single-level mask, is minutes of work on a whole slide, and
+    doing it here held up the node's announce -- so connecting to a cluster sat
+    behind a progress bar for a mask from last week's project that nobody had
+    opened. It runs instead on the first request that concerns that mask (see
+    `api._prepare_on_first_use`), in the background, exactly as a mask shared
+    while the node runs does. Meanwhile the raw mask is drawn, at the right
+    scale (`data_model.read_tile`). A conversion that fails there is marked
+    `error`, which the viewer reports and opening the project retries.
     """
     if not manifest:
         return
@@ -166,14 +165,8 @@ def _restore_manifest(registry, manifest, log=print):
         except Exception as exc:
             log(f"  not serving {resource_id!r} again: {exc}")
             continue
-        if kind != "segmentation":
-            continue
-        try:
-            _make_mask_servable(resource, log=log)
-        except Exception as exc:
-            resource.state = node_resources.ERROR
-            resource.error = str(exc)
-            log(f"  {resource_id!r} cannot be served as a cell layer: {exc}")
+        if kind == "segmentation" and not resource.prepared:
+            resource.prepare_on_use = True
 
 
 def _make_mask_servable(resource, log=print, progress=None):
@@ -198,6 +191,14 @@ def _make_mask_servable(resource, log=print, progress=None):
                                                  progress=progress)
     resource.prepared = True
     resource.progress = None
+
+
+def _converting(progress):
+    """`progress(done, total)` for a build, reported as this node's
+    (stage, done, total) -- None when nobody is listening."""
+    if progress is None:
+        return None
+    return lambda done, total: progress("converting", done, total)
 
 
 def _node_mask_dir(resource):
@@ -261,6 +262,35 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
     # The source, not `path`: a retry after a failed conversion starts again
     # from what was asked for.
     source = Path(resource.source_path or resource.path)
+    # A format that cannot hold cell ids (a JPEG, a slide scanner's file, a
+    # colour PNG) is said in the same sentence a local import says it in,
+    # rather than as "could not be read".
+    refusal = sp.mask_format_refusal(source)
+    if refusal is not None:
+        raise NodeStartupError(refusal)
+    # A 3-D mask -- (Z, Y, X) or (T, Z, Y, X) ids, a TIFF stack or an Imaris
+    # file -- is stored as a label volume, exactly as the viewer's own machine
+    # stores one (volume_labels.resolve_label_volume), and served plane by
+    # plane (api.seg_tile's `view`). It used to reach the 2-D pyramid below
+    # and come out as its middle plane.
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.is_label_volume(source):
+        return sp.MODE_FILLED
+    if volume_labels.label_volume_shape(source) is not None:
+        fallback = _node_mask_dir(resource)
+        log(f"  {source.name} is a 3-D mask; storing it as a label volume.")
+        try:
+            store = volume_labels.resolve_label_volume(
+                source, [source.parent, fallback],
+                progress=_converting(progress))
+        except OSError as exc:
+            raise NodeStartupError(
+                f"{source} could not be stored as a label volume: {exc}") from exc
+        log(f"    {store}")
+        _note_where(resource, source, store)
+        resource.repoint(store)
+        return sp.MODE_FILLED
     # A mask Plexora produced is servable whatever its level count -- an image
     # small enough to fit in one tile converts to a single tiled level, and
     # there is nothing further to downsample to. This is the same rule
@@ -269,7 +299,8 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
     generated = sp.generated_mask_kind(source)
     if generated is not None:
         return generated
-    if sp.looks_like_outline_mask(source):
+    # A PNG is converted whatever it looks like: the tile route cannot open one.
+    if sp.can_serve_in_place(source) and sp.looks_like_outline_mask(source):
         return sp.MODE_OUTLINES
 
     gaps = sp.label_pyramid_gaps(source)
@@ -363,6 +394,23 @@ def prepare_mask(source, output=None, *, outline=False, log=print, banner=True,
     source = Path(source).expanduser()
     if not source.exists():
         raise NodeStartupError(f"there is nothing at {source}")
+    from plexora.server.volume import labels as volume_labels
+
+    if volume_labels.label_volume_shape(source) is not None:
+        # A 3-D mask is stored as a label volume, which `serve` adopts from
+        # beside the mask (or serves as it is, named on the command line).
+        folder = Path(output).expanduser().parent if output else source.parent
+        if banner:
+            log(f"{source}\n  is a 3-D mask; storing it as a label volume in {folder}")
+        try:
+            written = volume_labels.resolve_label_volume(
+                source, [folder], progress=_converting(progress))
+        except OSError as exc:
+            raise NodeStartupError(str(exc)) from exc
+        if banner:
+            log(f"Ready. Serve it with:\n"
+                f"  plexora node serve --serve segmentation:mask={written} ...")
+        return written
     mode = sp.MODE_OUTLINES if outline else sp.MODE_FILLED
     if output:
         output = Path(output).expanduser()
@@ -483,6 +531,10 @@ def warm_resources(registry, log=print):
             if resource.kind not in ("image", "segmentation"):
                 continue
             if resource.state != node_resources.READY:
+                continue
+            if resource.prepare_on_use:
+                # Restored and not yet asked for; opening the raw mask now
+                # would be reading a file that may be replaced by its pyramid.
                 continue
             try:
                 with node_api._reading(resource):

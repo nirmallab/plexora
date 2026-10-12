@@ -316,6 +316,7 @@ PlexoraPage.register(function () {
         if (/\.tiff?$/.test(name)) return "TIFF";
         if (/\.(svs|ndpi|scn|mrxs|svslide)$/.test(name)) return "slide";
         if (/\.zarr$/.test(name)) return "OME-Zarr";
+        if (/\.ims$/.test(name)) return "Imaris";
         return "";
     }
 
@@ -324,7 +325,7 @@ PlexoraPage.register(function () {
         const name = path.trim().toLowerCase();
         if (!name) return null;
         if (/\.zarr[\\/]?$/.test(name) || /[\\/]$/.test(name)) return "directory";
-        if (/\.(ome\.)?tiff?$/.test(name) || /\.(svs|ndpi|qptiff|mrxs|scn|svslide)$/.test(name)) {
+        if (/\.(ome\.)?tiff?$/.test(name) || /\.(svs|ndpi|qptiff|mrxs|scn|svslide|ims)$/.test(name)) {
             return "file";
         }
         return null;

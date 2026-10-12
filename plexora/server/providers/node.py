@@ -20,7 +20,10 @@ and repeating it is how a refusal turns into a duplicate.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import Any, Mapping
+from urllib.parse import quote
 
 import numpy as np
 
@@ -365,37 +368,224 @@ class NodeSegmentationProvider(_NodeBacked):
         function's to decide.
         """
         try:
-            http.json_request(
+            self._remember(http.json_request(
                 self.node, "GET",
                 f"/node/v1/resources/{self._binding.resource_id}/status",
-                timeout=self.OPEN_TIMEOUT, expected_api=API_VERSION)
+                timeout=self.OPEN_TIMEOUT, expected_api=API_VERSION))
         except ResourceUnavailable:
             raise
         except ResourceError:
             pass
         return None
 
-    def tile(self, level, tile):
+    #: How long a node's account of a mask is reused before it is asked again:
+    #: long enough that `/volume/info`, the objects card and a section render
+    #: in one page load ask once, short enough that a mask the node has just
+    #: finished converting is seen as the volume it now is.
+    STATUS_TTL = 5.0
+    #: (node, resource id) -> (when, the node's resource status).
+    _statuses: dict = {}
+
+    def _remember(self, answer):
+        """Keep the node's `resource` description out of a status answer."""
+        import time
+
+        status = answer.get("resource") if isinstance(answer, Mapping) else None
+        if isinstance(status, Mapping):
+            self._statuses[self._status_key()] = (time.monotonic(), dict(status))
+            return dict(status)
+        return {}
+
+    def _status_key(self):
+        return (getattr(self.node, "name", str(self.node)), self._binding.resource_id)
+
+    def status(self) -> dict:
+        """The node's own account of this mask (`resources.describe`)."""
+        import time
+
+        held = self._statuses.get(self._status_key())
+        if held is not None and time.monotonic() - held[0] < self.STATUS_TTL:
+            return held[1]
+        return self._remember(http.json_request(
+            self.node, "GET", f"/node/v1/resources/{self._binding.resource_id}/status",
+            timeout=self.OPEN_TIMEOUT, expected_api=API_VERSION)) or {}
+
+    def label_volume(self, t: int = 0):
+        """This mask as a `NodeLabelVolume` at frame `t`, or None when the node
+        holds it as a 2-D mask (or is too old to say)."""
+        facts = (self.status() or {}).get("label_volume")
+        if not facts:
+            return None
+        return NodeLabelVolume(self, facts).frame(t)
+
+    def tile(self, level, tile, view=""):
+        """One label tile, as the node encodes it. `view` names the plane of a
+        3-D mask (`LabelVolume.at_view` on the node); a 2-D mask ignores it."""
         width, height = self._tile_size
+        query = f"?tw={width}&th={height}"
+        if view:
+            query += f"&view={quote(str(view), safe='')}"
         data, response = http.bytes_request(
             self.node, "GET",
-            f"/node/v1/seg/{self._binding.resource_id}/tile/{level}/{tile}"
-            f"?tw={width}&th={height}",
+            f"/node/v1/seg/{self._binding.resource_id}/tile/{level}/{tile}{query}",
             expected_api=API_VERSION)
         return data, response.headers.get("Content-Type") or "image/png"
 
-    def read_region(self, level, box, max_pixels=0, timeout=600.0):
+    def read_region(self, level, box, max_pixels=0, timeout=600.0, z=None, t=None):
         """Labels (uint32) for `box` = (x0, y0, x1, y1) at `level`, padded
         with 0 where it runs off the mask -- what `padded_label_region` gives
-        for a local one, computed on the node that has the file."""
+        for a local one, computed on the node that has the file. `z`/`t` pick
+        the plane of a 3-D mask, as `LocalSegmentationProvider.read_region`'s
+        `z` does; None is the node's default plane."""
+        body = {"level": int(level), "box": [int(v) for v in box],
+                "max_pixels": int(max_pixels or 0)}
+        if z is not None:
+            body["z"] = int(z)
+        if t is not None:
+            body["t"] = int(t)
         data, _ = http.bytes_request(
             self.node, "POST",
             f"/node/v1/seg/{self._binding.resource_id}/region",
-            body={"level": int(level), "box": [int(v) for v in box],
-                  "max_pixels": int(max_pixels or 0)},
+            body=body, expected_api=API_VERSION, timeout=timeout)
+        array, _meta = wire.unpack_array(data)
+        return array
+
+    def read_block(self, level, z0, z1, rows, cols, t=0, timeout=600.0):
+        """`(Z, H, W)` label ids for planes z0..z1 inclusive of frame `t` at
+        `level` -- `LabelVolume.read`, on the node that holds the volume."""
+        rows = rows if isinstance(rows, slice) else slice(*rows)
+        cols = cols if isinstance(cols, slice) else slice(*cols)
+        data, _ = http.bytes_request(
+            self.node, "POST",
+            f"/node/v1/seg/{self._binding.resource_id}/block",
+            body={"level": int(level), "t": int(t), "z0": int(z0), "z1": int(z1),
+                  "rows": [rows.start, rows.stop], "cols": [cols.start, cols.stop]},
             expected_api=API_VERSION, timeout=timeout)
         array, _meta = wire.unpack_array(data)
         return array
+
+
+class _NodePlaneLevel:
+    """One level of one plane of a node's label volume, `[rows, cols]`."""
+
+    ndim = 2
+
+    def __init__(self, labels, level: int, z: int, shape):
+        self._labels = labels
+        self._level = int(level)
+        self._z = int(z)
+        self.shape = (int(shape[0]), int(shape[1]))
+        self.dtype = np.dtype(np.uint32)
+        self.chunks = self.shape
+
+    def __getitem__(self, index):
+        if not isinstance(index, tuple):
+            index = (index,)
+        rows = index[0] if index else slice(None)
+        cols = index[1] if len(index) > 1 else slice(None)
+        rows = slice(*rows.indices(self.shape[0])[:2])
+        cols = slice(*cols.indices(self.shape[1])[:2])
+        return self._labels.read(self._level, self._z, self._z, rows, cols)[0]
+
+    def __array__(self, dtype=None, copy=None):
+        plane = self[:, :]
+        return plane.astype(dtype) if dtype is not None else plane
+
+
+class _NodePlanePyramid:
+    """A plane of a node's label volume, shaped like a 2-D mask's zarr group."""
+
+    def __init__(self, labels, z: int):
+        self._labels = labels
+        self.z = int(z)
+
+    def __len__(self):
+        return self._labels.levels
+
+    def __iter__(self):
+        return iter(str(index) for index in range(self._labels.levels))
+
+    def __contains__(self, key):
+        try:
+            return 0 <= int(key) < self._labels.levels
+        except (TypeError, ValueError):
+            return False
+
+    def __getitem__(self, key):
+        try:
+            index = int(key)
+        except (TypeError, ValueError):
+            raise KeyError(key) from None
+        if not 0 <= index < self._labels.levels:
+            raise KeyError(key)
+        return _NodePlaneLevel(self._labels, index, self.z,
+                               self._labels.level_shapes()[index])
+
+    def array_keys(self):
+        return list(iter(self))
+
+    def keys(self):
+        return list(iter(self))
+
+
+class NodeLabelVolume:
+    """A data node's 3-D label volume, read over the wire.
+
+    `volume/labels.LabelVolume`'s face -- `depth`, `height`, `width`,
+    `frames`, `levels`, `level_shapes()`, `plane(z)`, `frame(t)`,
+    `read(level, z0, z1, rows, cols)` -- so measurement, sections and QC in
+    depth take a node's mask exactly as they take a local store, while every
+    id is read on the machine that has the file
+    (`NodeSegmentationProvider.read_block`). `path` is the mask's `node://`
+    locator, for the records that name where labels came from.
+    """
+
+    def __init__(self, provider, facts, t: int = 0):
+        self._provider = provider
+        self._facts = dict(facts)
+        self.path = (f"node://{getattr(provider.node, 'name', provider.node)}/"
+                     f"{provider._binding.resource_id}")
+        self.depth = int(self._facts.get("depth") or 1)
+        self.height = int(self._facts.get("height") or 0)
+        self.width = int(self._facts.get("width") or 0)
+        self.frames = max(1, int(self._facts.get("frames") or 1))
+        self.t = max(0, min(self.frames - 1, int(t))) if self.frames > 1 else 0
+        shapes = self._facts.get("level_shapes") or [[self.height, self.width]]
+        self._shapes = [[int(h), int(w)] for h, w in shapes]
+
+    @property
+    def levels(self) -> int:
+        return len(self._shapes)
+
+    def level_shapes(self):
+        return [list(shape) for shape in self._shapes]
+
+    def plane(self, z: int) -> _NodePlanePyramid:
+        return _NodePlanePyramid(self, max(0, min(self.depth - 1, int(z))))
+
+    def default_plane(self) -> _NodePlanePyramid:
+        return self.plane(self.depth // 2)
+
+    def frame(self, t: int) -> "NodeLabelVolume":
+        if self.frames == 1 or int(t) == self.t:
+            return self
+        return NodeLabelVolume(self._provider, self._facts, t)
+
+    def read(self, level: int, z0: int, z1: int, rows: slice, cols: slice) -> np.ndarray:
+        """`(Z, H, W)` for planes z0..z1 inclusive at `level`."""
+        return self._provider.read_block(level, z0, z1, rows, cols, t=self.t)
+
+    def __getitem__(self, key):
+        return self.default_plane()[key]
+
+    def __len__(self):
+        return self.levels
+
+    def __iter__(self):
+        return iter(self.default_plane())
+
+    def __contains__(self, key):
+        return key in self.default_plane()
 
 
 class NodeVolume:
@@ -592,6 +782,24 @@ class NodeImageProvider(_NodeBacked):
         if self._volumetric and self.volume_source is None and not self._volume_asked:
             self._attach_volume()
         return self.volume_source
+
+    def read_volume_block(self, level, t, channel, z0, z1, rows, cols, timeout=600.0):
+        """`(Z, H, W)` raw values of channel index `channel`: planes z0..z1
+        inclusive of frame `t` at `level`, under the project's z/t reading --
+        a local volume source's `read_block`, on the node that has the file.
+        For the few million voxels a surface preview reads; a whole build runs
+        over there instead (`build_surface_on_node`)."""
+        rows = rows if isinstance(rows, slice) else slice(*rows)
+        cols = cols if isinstance(cols, slice) else slice(*cols)
+        data, _ = http.bytes_request(
+            self.node, "POST", f"/node/v1/image/{self._binding.resource_id}/block",
+            body={"level": int(level), "t": int(t), "c": int(channel), "z0": int(z0),
+                  "z1": int(z1), "rows": [rows.start, rows.stop],
+                  "cols": [cols.start, cols.stop], "zs": self._z_semantics,
+                  "ts": self._t_semantics},
+            expected_api=API_VERSION, timeout=timeout)
+        array, _meta = wire.unpack_array(data)
+        return array
 
     def _view_params(self, view=None) -> dict:
         """The parameters a request about this image carries.
@@ -864,3 +1072,182 @@ def stream_node_operation(binding, operation: str, payload=None):
     return http.stream_request(
         node, "POST", f"/node/v1/table/{binding.resource_id}/stream/{operation}",
         body=dict(payload or {}), headers=_licence_headers(node, operation))
+
+
+#: How often a measurement running on a node is asked how far it has got.
+MEASURE_POLL_SECONDS = 1.0
+
+
+def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indices,
+                            units="physical", z_semantics=None, t_semantics=None,
+                            pixel_size=None, pixel_size_z=None, frame_interval=None,
+                            progress=None, cancelled=None, poll=MEASURE_POLL_SECONDS):
+    """`volume.objects.measure_columns`, run on the node that holds the image
+    and the mask: `(frame, manifest)`, the table exactly as a local
+    measurement makes it (parquet on the wire, so every column keeps its
+    dtype).
+
+    A job over there, not one long request: it is minutes to hours on a whole
+    z-stack, `progress(done, total)` is relayed from it, and `cancelled()`
+    stops it. The project's z/t reading and any pixel size somebody typed are
+    sent, so the node reads the stack the way this machine's viewer does.
+    """
+    import io
+    import time
+
+    import polars as pl
+
+    node = node_for(image_binding)
+    started = http.json_request(
+        node, "POST", "/node/v1/volume/measure",
+        body={"image": image_binding.resource_id, "segmentation": seg_binding.resource_id,
+              "channel_names": list(channel_names), "indices": [int(i) for i in indices],
+              "units": units, "zs": z_semantics, "ts": t_semantics,
+              "pixel_size": pixel_size, "pixel_size_z": pixel_size_z,
+              "frame_interval": frame_interval},
+        expected_api=API_VERSION)
+    job = str(started.get("job") or "")
+    if not job:
+        raise ResourceError("the data node did not start the measurement")
+    try:
+        while True:
+            if cancelled is not None and cancelled():
+                http.json_request(node, "POST", f"/node/v1/volume/measure/{job}/cancel",
+                                  expected_api=API_VERSION)
+                raise InterruptedError("cancelled")
+            status = http.json_request(node, "GET", f"/node/v1/volume/measure/{job}",
+                                       expected_api=API_VERSION)
+            if progress is not None and status.get("total"):
+                progress(int(status.get("done") or 0), int(status["total"]))
+            state = status.get("state")
+            if state == "done":
+                break
+            if state == "error":
+                raise ResourceError(status.get("error") or "the measurement failed on the node")
+            if state == "cancelled":
+                raise InterruptedError("cancelled")
+            time.sleep(poll)
+        data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/measure/{job}/result",
+                                     expected_api=API_VERSION)
+    except ResourceUnavailable:
+        raise
+    return pl.read_parquet(io.BytesIO(data)), dict(status.get("manifest") or {})
+
+
+# -- surfaces of a node-held z-stack ----------------------------------------------
+
+
+class NodeVolumeReader:
+    """A node-held z-stack as a surface reads it: the volume's description
+    (spacing included, as the project states it) and `read_block` over the
+    wire. Enough to plan a surface, preview a threshold and measure a mesh;
+    a build reads the whole stack, so it runs on the node instead."""
+
+    is_local = False
+
+    def __init__(self, provider, volume):
+        self._provider = provider
+        self.volume = volume
+
+    def read_block(self, level, t, c, z0, z1, rows, cols):
+        return self._provider.read_volume_block(level, t, c, z0, z1, rows, cols)
+
+    def close(self) -> None:
+        pass
+
+
+#: (project, node, resource, reading) -> (made at, reader): a preview asks per
+#: slider move, and the volume's description is a round trip.
+_READERS: "OrderedDict[tuple, tuple]" = OrderedDict()
+_READERS_LOCK = threading.Lock()
+READER_TTL = 60.0
+
+
+def project_volume_reader(project):
+    """A `NodeVolumeReader` for a project whose z-stack a data node holds;
+    None when it does not, or when the node cannot describe it as a volume."""
+    import time
+
+    binding = (getattr(project, "resources", None) or {}).get("image")
+    if binding is None or not getattr(binding, "node", None):
+        return None
+    image = project.image
+    # By address too: a node that reconnects comes back on another port.
+    entry = node_for(binding)
+    key = (project.name, binding.node, getattr(entry, "endpoint", None),
+           getattr(entry, "token", None), binding.resource_id, image.z_semantics,
+           image.t_semantics, image.pixel_size, image.pixel_size_z, image.frame_interval,
+           tuple(image.channel_names))
+    now = time.monotonic()
+    with _READERS_LOCK:
+        held = _READERS.get(key)
+        if held is not None and now - held[0] < READER_TTL:
+            return held[1]
+    provider = NodeImageProvider(binding).with_channels(
+        image.channel_names, image.tile_width, image.tile_height).with_volume(image)
+    described = provider.volume()
+    if described is None:
+        return None
+    reader = NodeVolumeReader(provider, described.volume)
+    with _READERS_LOCK:
+        _READERS[key] = (now, reader)
+        while len(_READERS) > 16:
+            _READERS.popitem(last=False)
+    return reader
+
+
+SURFACE_POLL_SECONDS = 1.0
+
+
+def build_surface_on_node(binding, body, *, stage=None, progress=None, cancelled=None,
+                          poll=SURFACE_POLL_SECONDS):
+    """`surface.store.extract_on_node`, run on the node `binding` names:
+    `(mesh, level, info)`, the mesh exactly as a local extraction makes it
+    (every array float-exact on the wire).
+
+    A job over there, like a measurement (`measure_objects_on_node`): the
+    node's stage and progress are relayed to `stage(name)` and
+    `progress(done, total)`, and `cancelled()` stops it."""
+    import io
+    import time
+
+    from plexora.server.surface import mesh as mesh_mod
+
+    node = node_for(binding)
+    started = http.json_request(node, "POST", "/node/v1/volume/surface", body=body,
+                                expected_api=API_VERSION)
+    job = str(started.get("job") or "")
+    if not job:
+        raise ResourceError("the data node did not start the surface build")
+    seen_stage = None
+    while True:
+        if cancelled is not None and cancelled():
+            http.json_request(node, "POST", f"/node/v1/volume/jobs/{job}/cancel",
+                              expected_api=API_VERSION)
+            raise InterruptedError("cancelled")
+        status = http.json_request(node, "GET", f"/node/v1/volume/jobs/{job}",
+                                   expected_api=API_VERSION)
+        if stage is not None and status.get("stage") and status["stage"] != seen_stage:
+            seen_stage = status["stage"]
+            stage(seen_stage)
+        if progress is not None and status.get("total"):
+            progress(int(status.get("done") or 0), int(status["total"]))
+        state = status.get("state")
+        if state == "done":
+            break
+        if state == "error":
+            raise ResourceError(status.get("error") or "the surface build failed on the node")
+        if state == "cancelled":
+            raise InterruptedError("cancelled")
+        time.sleep(poll)
+    data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/jobs/{job}/result",
+                                 expected_api=API_VERSION)
+    arrays = np.load(io.BytesIO(data), allow_pickle=False)
+    surface = mesh_mod.Mesh(
+        positions=arrays["positions"], triangles=arrays["triangles"],
+        object_id=arrays["object_id"],
+        normals=arrays["normals"] if "normals" in arrays.files else None,
+        positions_raw=arrays["positions_raw"] if "positions_raw" in arrays.files else None,
+        objects=arrays["objects"] if "objects" in arrays.files else None)
+    result = status.get("result") or {}
+    return surface, int(result.get("level") or 0), dict(result.get("info") or {})

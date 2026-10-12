@@ -371,10 +371,10 @@ def test_both_surfaces_ask_file_or_folder_up_front_on_every_platform():
     every platform the same page, no round trip on load, and no popup that can
     open away from the click.
 
-    The dialog builds the shared File/Folder control. The home page asks with
-    tabs above its one path box, and its format chips are read from the same
-    table the control's example lines are -- the risk being guarded is two
-    screens that ask the same question saying different things about formats.
+    Both ask with File | Folder tabs above one path box -- the dialog's pick
+    control is the home page's card -- and the format chips are read from the
+    same table the split control's example lines are, so two screens that ask
+    the same question cannot say different things about formats.
     """
     landing = source("src", "js", "views", "quickViewLanding.js")
     index = source("templates", "index.html")
@@ -384,50 +384,47 @@ def test_both_surfaces_ask_file_or_folder_up_front_on_every_platform():
 
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    # Built from the shared control, so the halves, their icons and the format
-    # examples under them stay defined in exactly one place.
-    assert 'buildSplitControl("sample", pickWith,' in dialog
-    assert 'panel.classList.add("is-panel");' in dialog
+    # The home page's tabs, in the dialog's own pick control.
+    assert '[["file", "fa-file", "File"], ["directory", "fa-folder", "Folder"]]' in dialog
+    assert "pickWith(state.kind)" in dialog
+    assert "KIND_EXAMPLES[examples]" in dialog
     # And no longer swapped in by the probe.
     assert "applyCapability" not in dialog
-    assert ".browse-kind-split.is-panel {" in css
-    # A variant of the one control, not a second component: only size and
-    # arrangement are restated.
-    assert ".browse-kind-split.is-panel .browse-kind-half {" in css
+    assert ".plx-import-kind-option[aria-checked=\"true\"] {" in css
 
 
 def test_the_halves_are_a_control_and_the_drop_target_is_separate():
-    """The split control inherited a 2px dashed edge from a dropzone it once
+    """The split control once inherited a 2px dashed edge from a dropzone it
     replaced. A dashed rectangle says "drop something here", and two buttons
     are not that.
 
     The import dialog DOES take a drop -- for small tables, which a browser can
-    hand over as bytes -- and that is a surface of its own (`.plx-import-drop`)
-    with its own dashed edge and its own copy saying what it takes. Two things
-    that look different because they do different things.
+    hand over as bytes -- on its home-style pick control, whose placeholder
+    says what it takes and whose field lights up while something is held over
+    it. The panel-sized variant of the halves it used to be is gone with it.
     """
     import re
 
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    assert "drop.addEventListener(\"dragover\"" in dialog
-    assert ".plx-import-drop {" in css
-    assert "border: 1px dashed var(--border-strong);" in (
-        css.split(".plx-import-drop {")[1].split("}")[0])
-    panel = css.split(".browse-kind-split.is-panel {")[1].split("}")[0]
-    # Declarations only: the comment above them explains the dashed edge this
-    # replaced, and would match the very word being ruled out.
-    panel = re.sub(r"/\*.*?\*/", "", panel, flags=re.S)
-    assert "dashed" not in panel
-    assert "border: 1px solid var(--border-strong);" in panel
+    assert "pick.addEventListener(\"dragover\"" in dialog
+    assert ".plx-import-pick.is-over .plx-import-field" in css
+    split = css.split(".browse-kind-split {")[1].split("}")[0]
+    # Declarations only: a comment may explain the dashed edge it replaced.
+    split = re.sub(r"/\*.*?\*/", "", split, flags=re.S)
+    assert "dashed" not in split
+    assert "border: 1px solid var(--border-strong);" in split
+    for text in (css, dialog, source("src", "js", "services", "browsePicker.js")):
+        assert "is-panel" not in text
 
 
 def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
     """Everywhere else the Local/Remote switch sits inside the row of the one
-    field it governs. In the import dialog it governs two controls -- the
-    File/Folder pair and the path box -- so it is mounted above them both,
-    which is what `mount` and `statusMount` exist for. Two switches on a
-    surface that takes one pick would be the same question asked twice."""
+    field it governs. The home page and the import dialog each take one pick,
+    so each asks once, as a chip at the front of its one path box that it
+    draws itself (`bare`), with the service's status line under the box. Two
+    switches on a surface that takes one pick would be the same question
+    asked twice."""
     # The home page asks it as a chip in its one path box -- the one surface
     # whose single field IS the whole pick -- and draws that chip itself.
     landing = source("src", "js", "views", "quickViewLanding.js")
@@ -436,8 +433,8 @@ def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
 
     dialog = source("src", "js", "views", "importSample.js")
     location = source("src", "js", "services", "dataLocation.js")
-    assert 'mount: part("where-mount"),' in dialog
-    assert 'statusMount: part("where-status"),' in dialog
+    assert "bare: true," in dialog
+    assert "statusMount: machine.status," in dialog
     # The service honours them, and still defaults to the in-row placement
     # every form field depends on.
     assert "if (options.mount) options.mount.appendChild(root);" in location
@@ -454,12 +451,14 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     # The home page's File / Folder tabs, which choose what Browse opens.
     assert "option.disabled = busy();" in landing
     assert ".quick-view-kind-option:disabled {" in source("src", "css", "quickView.css")
-    assert 'panel.querySelectorAll(".browse-kind-half")' in dialog
-    assert "half.disabled = busy;" in dialog
-    # And it has to look disabled: a half that still lights up under the
-    # pointer is inviting exactly the click it will not accept.
+    # The dialog's tabs and its Browse button, held for exactly this.
+    assert "state.pickControls = [...options, go];" in dialog
+    assert "control.disabled = busy;" in dialog
+    # And they have to look disabled: a control that still lights up under
+    # the pointer is inviting exactly the click it will not accept.
+    assert ".plx-import-kind-option:disabled {" in css
+    assert ".plx-import-browse:disabled {" in css
     assert ".browse-kind-half:disabled {" in css
-    assert ".browse-kind-half:disabled:hover {" in css
 
 def test_a_caller_with_no_anchor_still_gets_a_picker():
     """`browseForPath` is callable without a button, and "kinds" must not be a
@@ -483,8 +482,10 @@ def test_the_chooser_says_which_formats_are_which():
     assert ('data: { file: ".csv · .parquet · .h5ad", '
             'directory: "SpatialData (.zarr)" }') in browse
     # And the mask, which shares filter "image" with the image field and must
-    # NOT share its examples: nobody has a segmentation mask in .svs.
-    assert 'mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · DICOM" }' in browse
+    # NOT share its examples: nobody has a segmentation mask in .svs, and a
+    # DICOM folder is a slide (segmentation_pyramid.mask_format_refusal). A
+    # .png is Cellpose's own mask format.
+    assert 'mask: { file: ".ome.tiff · .png", directory: ".ome.zarr · SpatialData" }' in browse
     # Chosen at open time, by a name of its own rather than by the filter.
     assert "chooseKind(anchorEl, examples || filter)" in browse
     assert "KIND_EXAMPLES[examples] || {}" in browse

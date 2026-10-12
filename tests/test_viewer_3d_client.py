@@ -66,8 +66,11 @@ def test_one_scheduler_fetches_and_decodes_each_tile_once():
 def test_the_3d_view_keeps_its_textures():
     """A channel switched off and on in 3-D is a uniform, not a download; HD and
     another area fetch, going back does not; LRU past the GPU budget; zoomed in
-    at rest, the part seen is fetched finer, once (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 15)
+    at rest, the part seen is fetched finer, once; a channel switched on for the
+    first time is fetched under its window and drawn; a channel new to the
+    picture fades in, at once with motion off or for a capture
+    (tests/js/volume_renderer_probe.mjs)."""
+    _passed(_run("volume_renderer_probe.mjs"), 30)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
@@ -82,3 +85,18 @@ def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():
     """services/volumeWindows.js: batched, polled while provisional, a change
     announced once (tests/js/volume_windows_probe.mjs)."""
     _passed(_run("volume_windows_probe.mjs"), 6)
+
+
+def test_surfaces_upload_once_and_composite_with_the_volume():
+    """Surfaces in the 3-D view: one upload per mesh, style changes are
+    uniforms, order-independent glass with one blend state (sorted without
+    float targets), the ray caster's surface variant in every variant,
+    picking and unprojection (tests/js/surface_renderer_probe.mjs)."""
+    _passed(_run("surface_renderer_probe.mjs"), 28)
+
+
+def test_quick_surface_previews_debounced_and_posts_raw_units():
+    """Surface Studio's dock: refused on Free with the Paid modal, a debounced
+    preview, a superseded one aborted, the raw isovalue posted
+    (tests/js/surface_studio_probe.mjs)."""
+    _passed(_run("surface_studio_probe.mjs"), 14)

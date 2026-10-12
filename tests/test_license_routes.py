@@ -38,7 +38,7 @@ def test_status_lists_what_each_root_unlocks(client, license_issuer):
     license_issuer.install()  # ["ai"]
     unlocks = {row["entitlement"]: row["granted"]
                for row in client.get("/license/status").get_json()["license"]["unlocks"]}
-    assert unlocks == {"ai": True, "mcp": False}
+    assert unlocks == {"ai": True, "surfaces": False, "mcp": False}
 
 
 def test_the_page_carries_a_licence_hint_and_nothing_more(client, paid_license):

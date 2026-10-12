@@ -75,7 +75,7 @@ _TK_FILTERS = {
     # ".dcm" IS offered: a DICOM slide is a folder of instances, but picking any
     # one of them selects that slide (dicom_wsi.assemble_slide gathers its
     # siblings), so unlike ".zarr" the file dialog can genuinely return one.
-    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.png *.jpg *.jpeg"), ("All files", "*.*")],
+    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.ims *.png *.jpg *.jpeg"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
     # The single Data input accepts any feature-table format, so its picker
@@ -107,13 +107,13 @@ FILTER_NAMES = frozenset(_TK_FILTERS)
 # type. Left unfiltered (None -> no `of type` clause) rather than chasing a
 # UTI that may not exist on the user's machine.
 _APPLESCRIPT_EXTENSIONS = {
-    # "dcm" is listed here where ".h5ad" was not, because macOS ships a stock
-    # UTI for DICOM (`org.nema.dicom`, which is why Preview opens one) and so it
-    # narrows the panel rather than greying every file in it. Not verifiable
-    # from the machine this was written on: if a Mac ever shows an image picker
-    # with everything greyed out, this entry is the one to drop back to None.
-    "image": ["tif", "tiff", "svs", "ndpi", "scn", "bif", "qptiff", "dcm",
-              "png", "jpg", "jpeg"],
+    # Unfiltered since Imaris (.ims) became an image. A stock Mac has no UTI
+    # for .ims (an Imaris file's type is a `dyn.` one unless Imaris itself is
+    # installed), so the extensions the list used to hold greyed every .ims
+    # out, and adding "ims" to them is the ".h5ad" trap above. The home page
+    # sniffs whatever comes back, the way the file-or-folder panel's callers
+    # do (see _JXA_HYBRID_SCRIPT), so a wrong pick is answered there.
+    "image": None,
     "csv": ["csv"],
     "h5ad": None,
     # Unfiltered for the same reason as "h5ad" above: the set includes .h5ad,

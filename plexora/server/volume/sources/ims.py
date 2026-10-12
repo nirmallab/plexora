@@ -455,3 +455,287 @@ def physical_metadata(source: ImsVolumeSource) -> dict:
         out["time_increment"] = spacing.t.value
         out["time_increment_unit"] = spacing.t.unit
     return out
+
+
+# -- an .ims as a segmentation mask -------------------------------------------
+#
+# An .ims is HDF5, and Imaris itself writes no label images into one -- but the
+# tools that hand segmentations to Imaris users do (a label TIFF run through
+# the Imaris File Converter, PyImarisWriter from a pipeline), so a mask arrives
+# as an .ims with one channel of ids, or with that channel beside the stains.
+# `ImsLabels` reads one channel as a label array: (Z, Y, X), or (T, Z, Y, X)
+# for a time series, which `volume/labels.build_label_volume` stores as a
+# label volume exactly as it does a 3-D TIFF; a single plane takes the 2-D
+# conversion (`segmentation_pyramid._open_level_zero`).
+
+#: Every whole number up to here survives float32 -- and float32 is what a mask
+#: of more than 65,535 cells becomes, because Imaris stores 32-bit data as float.
+FLOAT_ID_LIMIT = 2 ** 24
+
+#: Past this many bytes a chunk-deep slab is not read whole, and planes are
+#: read one at a time (each re-inflating the chunks it crosses).
+SLAB_LIMIT = 1 << 30
+
+#: How a window of ids differs from a window of stain, measured along rows of
+#: labelled pixels. A cell is ONE value across its interior, so its runs are
+#: as long as it is wide (`_MIN_RUN` excludes a stain's pixel-to-pixel noise),
+#: and its id comes back on each row it crosses exactly once -- where a stain's
+#: values recur all along a row (`_MAX_REPEATS`). Neither depends on how big
+#: the cells are, which a share-of-flat-neighbours threshold did: small nuclei
+#: sat right on it. A binary mask fails the second too (every object one
+#: value), and it is not a mask of cells. Measured on a real 6-channel confocal
+#: .ims: its stains repeat a value 13 to 41 times per row; masks drawn from it
+#: 1.0 (round cells) to 1.5 (ragged ones) -- so 3 leaves room both ways.
+_MIN_RUN = 2.0
+_MAX_REPEATS = 3.0
+
+
+def _channel_name(handle, channel: int) -> str:
+    key = f"DataSetInfo/Channel {channel}"
+    name = _text(handle[key].attrs.get("Name")).strip() if key in handle else ""
+    return "" if name == UNNAMED else name
+
+
+def _window(handle, channel: int, levels) -> np.ndarray:
+    """The middle plane's central 512 x 512 of `channel`, frame 0, level 0."""
+    info = levels[0]
+    data = handle[f"DataSet/ResolutionLevel 0/TimePoint 0/Channel {channel}/Data"]
+    z = info["depth"] // 2
+    y0 = max(0, info["height"] // 2 - 256)
+    x0 = max(0, info["width"] // 2 - 256)
+    return np.asarray(data[z, y0:min(info["height"], y0 + 512),
+                           x0:min(info["width"], x0 + 512)])
+
+
+def looks_like_labels(window: np.ndarray) -> bool:
+    """Whether a plane's window is cell ids: whole numbers, a background of
+    zero, more than one value, and flat across each cell."""
+    if window.size == 0 or window.dtype.kind not in "uif":
+        return False
+    if window.dtype.kind == "f":
+        if not np.isfinite(window).all() or not np.array_equal(window, np.floor(window)):
+            return False
+    if window.min() < 0 or not (window == 0).any() or np.unique(window).size < 2:
+        return False
+    values = window.astype(np.int64, copy=False)
+    # A run starts wherever a labelled pixel differs from the one to its left.
+    starts = values != np.pad(values, ((0, 0), (1, 0)), constant_values=-1)[:, :-1]
+    starts &= values != 0
+    pixels = int(np.count_nonzero(values))
+    runs = int(np.count_nonzero(starts))
+    if not runs or pixels / runs < _MIN_RUN:
+        return False
+    rows = np.nonzero(starts)[0]
+    pairs = np.unique(np.stack([values[starts], rows]), axis=1).shape[1]
+    return runs / pairs <= _MAX_REPEATS
+
+
+def _mask_named(name: str) -> bool:
+    from plexora.server.models.import_proposal import MASK_HINTS
+
+    lowered = name.lower()
+    return any(hint in lowered for hint in MASK_HINTS)
+
+
+def label_channels(handle) -> tuple[list[int], list[str]]:
+    """(channels whose middle window reads as ids, every channel's name)."""
+    levels = _levels_of(handle)
+    count = max(1, _count(handle, "DataSet/ResolutionLevel 0/TimePoint 0", "Channel"))
+    names = [_channel_name(handle, c) for c in range(count)]
+    looks = [c for c in range(count) if looks_like_labels(_window(handle, c, levels))]
+    return looks, names
+
+
+def label_channel(handle, path) -> int:
+    """The channel of an .ims mask that holds the ids.
+
+    The only channel; else the one channel that reads as ids, preferring one
+    NAMED as a mask when several do. Anything else is a sentence naming the
+    channels, rather than a guess between a nuclear and a whole-cell mask.
+    """
+    looks, names = label_channels(handle)
+    if len(names) == 1:
+        return 0
+    named = [c for c in looks if _mask_named(names[c])]
+    for pool in (named, looks):
+        if len(pool) == 1:
+            return pool[0]
+    label = lambda c: names[c] or f"channel {c + 1}"  # noqa: E731
+    which = (f"{len(looks)} of them hold ids ({', '.join(label(c) for c in looks)})"
+             if looks else "none of them holds cell ids")
+    raise ValueError(
+        f"{Path(path).name} has {len(names)} channels and {which}, so which one "
+        "is the mask cannot be told. Save the mask channel as an .ims of its "
+        "own, or name it (mask, cells, nuclei...).")
+
+
+def mask_verdict(path):
+    """`import_proposal.looks_like_label_image` for an .ims: True, False, or
+    None to ask. A file of one channel of ids is a mask; a file of stains with
+    one channel of ids beside them is either, and is asked about unless a name
+    -- the file's or the channel's -- says mask."""
+    import h5py
+
+    try:
+        with h5py.File(str(path), "r") as handle:
+            looks, names = label_channels(handle)
+    except Exception:
+        return None
+    if not looks:
+        return False
+    if len(names) == 1:
+        return True
+    if len(looks) == 1 and (_mask_named(names[looks[0]]) or _mask_named(Path(path).name)):
+        return True
+    return None
+
+
+class ImsLabels:
+    """One channel of an .ims as a label array: `shape` (Z, Y, X), or
+    (T, Z, Y, X) for a time series, at the real extent rather than the chunk-
+    padded one. Indexed the way `build_label_volume` reads: `[z]` is a plane,
+    and for a time series `[t]` is a frame whose `[z]` is a plane.
+
+    A float32 channel is read as uint32, every value checked to be a whole
+    number on the way (`FLOAT_ID_LIMIT`) -- a fraction is a stain, not an id.
+    Planes come out of a chunk-deep slab read once (`SLAB_LIMIT`), because a
+    plane alone would inflate every chunk it crosses for one plane of each.
+    """
+
+    def __init__(self, path, channel=None):
+        import h5py
+
+        self.path = str(path)
+        self._file = h5py.File(self.path, "r")
+        try:
+            levels = _levels_of(self._file)
+            self.frames = max(1, _count(self._file, "DataSet/ResolutionLevel 0", "TimePoint"))
+            self.depth = levels[0]["depth"]
+            self.height = levels[0]["height"]
+            self.width = levels[0]["width"]
+            self.channel = (label_channel(self._file, self.path) if channel is None
+                            else int(channel))
+            stored = np.dtype(self._data(0).dtype)
+        except Exception:
+            self._file.close()
+            raise
+        if stored.kind not in "uif":
+            self._file.close()
+            raise TypeError(f"{Path(self.path).name} holds {stored} values, not cell ids.")
+        self._float = stored.kind == "f"
+        self.dtype = np.dtype(np.uint32) if self._float else stored
+        self.shape = (((self.frames,) if self.frames > 1 else ())
+                      + (self.depth, self.height, self.width))
+        self.ndim = len(self.shape)
+        self._slab = None
+
+    def _data(self, t: int):
+        return self._file[f"DataSet/ResolutionLevel 0/TimePoint {int(t)}/Channel {self.channel}/Data"]
+
+    def _ids(self, block: np.ndarray) -> np.ndarray:
+        if not self._float:
+            return block
+        if block.size and (not np.isfinite(block).all()
+                           or not np.array_equal(block, np.floor(block))
+                           or block.min() < 0 or block.max() > FLOAT_ID_LIMIT):
+            raise ValueError(
+                f"{Path(self.path).name}'s mask channel holds values that are "
+                "not whole numbers, so they are not cell ids.")
+        return block.astype(np.uint32)
+
+    def plane(self, t: int, z: int, rows: slice = slice(None),
+              cols: slice = slice(None)) -> np.ndarray:
+        """Frame `t`, plane `z`, `[rows, cols]` of the real extent."""
+        rows = _clip(rows, self.height)
+        cols = _clip(cols, self.width)
+        whole = (rows == slice(0, self.height) and cols == slice(0, self.width))
+        if not whole:
+            return self._ids(np.asarray(self._data(t)[int(z), rows, cols]))
+        data = self._data(t)
+        depth = int((data.chunks or data.shape)[0])
+        if depth > 1 and depth * self.height * self.width * data.dtype.itemsize <= SLAB_LIMIT:
+            z0 = int(z) // depth * depth
+            if self._slab is None or self._slab[:2] != (int(t), z0):
+                block = np.asarray(data[z0:min(self.depth, z0 + depth),
+                                        :self.height, :self.width])
+                self._slab = (int(t), z0, block)
+            return self._ids(self._slab[2][int(z) - z0])
+        return self._ids(np.asarray(data[int(z), :self.height, :self.width]))
+
+    def __getitem__(self, index):
+        if self.frames > 1:
+            return _ImsFrame(self, int(index))
+        return self.plane(0, int(index))
+
+    def close(self):
+        self._slab = None
+        self._file.close()
+
+
+class _ImsFrame:
+    """One frame of a time series of label volumes: `[z]` is a plane."""
+
+    def __init__(self, labels: ImsLabels, t: int):
+        self._labels = labels
+        self._t = int(t)
+        self.shape = labels.shape[1:]
+        self.dtype = labels.dtype
+
+    def __getitem__(self, z):
+        return self._labels.plane(self._t, int(z))
+
+
+class ImsPlane:
+    """An .ims mask's one plane as a 2-D label array, `[rows, cols]` -- the
+    middle plane of frame 0 when there are more (the plane a Z-stack reads as
+    everywhere a 2-D mask is wanted). `close()` closes the file."""
+
+    def __init__(self, path, channel=None):
+        self._labels = ImsLabels(path, channel)
+        self._z = self._labels.depth // 2
+        self.shape = (self._labels.height, self._labels.width)
+        self.ndim = 2
+        self.dtype = self._labels.dtype
+
+    def __getitem__(self, index):
+        rows, cols = index if isinstance(index, tuple) else (index, slice(None))
+        return self._labels.plane(0, self._z, rows, cols)
+
+    def __array__(self, dtype=None, copy=None):
+        plane = self._labels.plane(0, self._z)
+        return plane.astype(dtype) if dtype is not None else plane
+
+    @property
+    def oindex(self):
+        labels, z = self._labels, self._z
+
+        class _Rows:
+            def __getitem__(self, index):
+                rows, cols = (np.asarray(part) for part in index)
+                if not rows.size or not cols.size:
+                    return np.zeros((rows.size, cols.size), dtype=labels.dtype)
+                top, left = int(rows.min()), int(cols.min())
+                block = labels.plane(0, z, slice(top, int(rows.max()) + 1),
+                                     slice(left, int(cols.max()) + 1))
+                return block[np.ix_(rows - top, cols - left)]
+
+        return _Rows()
+
+    def close(self):
+        self._labels.close()
+
+
+def label_shape(path):
+    """`(Z, Y, X)` or `(T, Z, Y, X)` when the .ims at `path` is a mask with
+    depth or frames -- a label volume; None for a single plane, or for a file
+    whose ids cannot be found (the conversion says why)."""
+    try:
+        labels = ImsLabels(path)
+    except Exception:
+        return None
+    try:
+        if labels.depth < 2 and labels.frames < 2:
+            return None
+        return labels.shape
+    finally:
+        labels.close()

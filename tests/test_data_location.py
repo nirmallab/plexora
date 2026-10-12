@@ -389,11 +389,12 @@ def test_the_image_is_offered_the_choice_only_where_it_can_still_move():
 
     On both it governs the whole pick rather than one field: there are no
     role-labelled fields on either, so the question is "which machine are these
-    files on", asked once, above the controls.
+    files on", asked once, by a chip at the front of the one path field.
     """
     dialog = source("src", "js", "views", "importSample.js")
     assert 'kind: "image",' in dialog
-    assert 'mount: part("where-mount"),' in dialog
+    # Drawn by the dialog itself, as the home page's chip in its path field.
+    assert "bare: true," in dialog
 
     landing = source("src", "js", "views", "quickViewLanding.js")
     assert 'kind: "image",' in landing

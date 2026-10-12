@@ -69,11 +69,10 @@ WRITTEN_STATES = ACCEPTED_STATES + EMPTY_GATE_STATES + REVIEW_WRITE_STATES
 SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 
 #: A marker waiting on something: the audit sheet, a look, a check.
-#: `awaiting_correction`: a gate a look approved that the cell model would
-#: move, its few changed cells put to one question (`SessionOptions.hybrid`).
+#: `awaiting_replan`: a marker held for the planning task's `replan` answer.
 WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
                   "awaiting_regression", "regression_confirm", "transfer_check",
-                  "awaiting_correction")
+                  "awaiting_replan")
 
 #: Before any decision: not profiled yet, or (a dataset) waiting for the reference.
 OPEN_STATES = ("pending", "transfer_pending")
@@ -85,8 +84,7 @@ SESSION_STATES = ("created", "needs_setup", "bulk_running", "deciding", "done", 
 FINISHED_STATES = ("done", "cancelled", "rolled_back", "failed")
 
 #: What `gating_next` answers, besides a finished session's own state.
-NEXT_STATES = ("decision", "needs_setup", "bulk_running", "model_running", "decided", "paused",
-               "stopped")
+NEXT_STATES = ("decision", "needs_setup", "bulk_running", "decided", "paused", "stopped")
 
 #: Packet kinds, partitioned by what they are for (a test checks the union is
 #: every packet builder): set-up before any marker (the ones that wait on the
@@ -96,8 +94,11 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
 SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context")
+#: Re-planning after failures (`replan`): the planning task's, out alone,
+#: and asked any time during the run -- not set-up, which comes first.
+PLAN_KINDS = ("replan",)
 LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
-CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check", "correction_check")
+CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
@@ -132,11 +133,10 @@ NARRATION = {
     "regression_confirm": "Checking whether the {marker} threshold is consistent across "
                           "representative tissue regions.",
     "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
-    "correction_check": "Checking the few {marker} cells the cell model says the approved "
-                        "threshold calls wrongly before moving it.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
     "panel_context": "Reading the panel to learn which markers belong together.",
+    "replan": "Re-planning the rest of the panel around the markers that failed.",
     "expression_setup": "Working out which expression values to gate on.",
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
 }
@@ -146,7 +146,6 @@ EVIDENCE_LABELS = {
     "t2_collage": "Cells around the {marker} threshold",
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
-    "correction_collage": "{marker} cells a corrected threshold would change",
     "context_sheet": "{marker} across the tissue",
     "strip": "Markers at their thresholds",
 }
@@ -161,15 +160,12 @@ EVIDENCE_LABELS = {
 #: `manual_review_recommended`, with the best gate reached written and
 #: tagged `needs_review`. `max_extensions` bounds the extra allowances a marker can get.
 LIMIT_POLICIES = ("ask", "extend", "stop")
-#: `hybrid` (`HYBRID_OPTIONS`) is set the same way: `off` until the live
-#: ablation clears its bar (docs/internal/bench/AUTOGATE_STEP_LEDGER.md).
-LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3, "hybrid": "off"}
+LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3}
 #: The environment a command line sets them through (`plexora mcp serve
 #: --gating-on-limit`, `plexora ai bench gating --on-limit`), so automated
 #: runs do not stop on a viewer default.
 LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
-             "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS",
-             "hybrid": "PLEXORA_GATING_HYBRID"}
+             "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS"}
 #: What each limit is called where the user reads it.
 LIMIT_WORDS = {"budget": "its allowance of looks for this marker",
                "rounds": "its rounds of candidate thresholds"}
@@ -247,26 +243,6 @@ ROW_VERDICTS = ("own_stain", "neighbour_only", "unstained", "mixed", "cannot_tel
 #: `COMPARTMENT_POLICY[...]["patterns"]` caps confidence; it never routes.
 PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
             "cannot_tell")
-
-# -- the cell model and hybrid gating ------------------------------------------------
-
-#: Bumped when the cell model's reading or calling rule changes meaning
-#: (`autogate/cellcall.py`): part of every stored run's key.
-CELLCALL_VERSION = "1"
-
-#: Hybrid gating (the cell model beside the vision model), in two parts a
-#: session takes separately or together: `tiles` -- the looks draw each cell
-#: as a 2 x 2 block (morphology, the context with the judged cell outlined,
-#: its expected and its not-expected partner: `collage.LAYOUTS["t2m"]`);
-#: `model` -- the cell model (`cellcall.py`) reads the cells near each looked-at
-#: marker's gate and its calls shape the gate (`HYBRID_FEATURES`); `full` --
-#: both. `off` is a session without it, byte for byte.
-HYBRID_OPTIONS = ("off", "tiles", "model", "full")
-HYBRID_FEATURES = {"off": frozenset(), "tiles": frozenset(("tiles",)),
-                   "model": frozenset(("model",)), "full": frozenset(("tiles", "model"))}
-#: Bumped when what the hybrid does to a session changes meaning: part of a
-#: packet's memo key while it is on.
-HYBRID_VERSION = "1"
 
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
 ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,

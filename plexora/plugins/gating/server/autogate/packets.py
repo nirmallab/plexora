@@ -96,12 +96,6 @@ READING_GUIDE = {
                         "current gate outward: row i1 is the cells between the current gate and "
                         "candidate c1, row i2 between c1 and c2, and so on. Judge every row on "
                         "its own"),
-    "correction_check": ("a check of single cells: each numbered cell (c1, c2, ...) is one "
-                         "the threshold as it stands calls as the question says; judge each "
-                         "on its own pixels, one word -- `own` (the marker's stain on it is "
-                         "its own, even dim), `not_own` (unstained, or the light on it is a "
-                         "neighbour's or the background's), `cannot_tell`. The reference "
-                         "cells (r1, ...) are clear positives, to compare with"),
     "collage_flips": ("each cell is two panels, morphology | context, as in the first look, "
                       "the judged nucleus between four magenta ticks. Rows run from the "
                       "current gate outward: row i1 is the cells between the current gate "
@@ -470,10 +464,30 @@ def _partner_line(numbers) -> list:
 
 def within_eligible(partners) -> list:
     """The partners a `within` answer may name: `subset` partners gated at
-    moderate confidence or better."""
+    moderate confidence or better, that the data agree with -- no more than
+    `bivariate.WITHIN["max_orphan"]` of the marker's positives at the gate
+    negative for the partner. A partner most of the positives sit outside of
+    is a subset in the vocabulary, not in this image (or its gate is wrong),
+    and refitting among its positives drops real cells."""
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    limit = bivariate.WITHIN["max_orphan"]
     return [p["partner"] for p in partners or ()
             if p.get("relation") == "subset"
-            and (p.get("grade") or p.get("partner_confidence")) in ("high", "moderate")]
+            and (p.get("grade") or p.get("partner_confidence")) in ("high", "moderate")
+            and (p.get("orphan_fraction") is None or p["orphan_fraction"] <= limit)]
+
+
+def _row_spans(rows) -> dict:
+    """{row key: [lowest, highest]} of the values a look's rows show: what
+    the look judged, by value (`transitions._judge_rows`)."""
+    out = {}
+    for row in rows:
+        values = [float(c["value"]) for c in row.get("cells") or ()
+                  if c.get("value") is not None]
+        if values:
+            out[row["key"]] = [min(values), max(values)]
+    return out
 
 
 def _compartment_key(unit):
@@ -523,15 +537,24 @@ def plot_partner(unit, refs, numbers=None):
 
 
 def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
-           candidate_fields=None, title=None, numbers=None, rows=None):
+           candidate_fields=None, title=None, numbers=None, rows=None, plot=None):
     """The context sheet for a unit (the second picture of a look, the only
     one of a check); its artifact joins the unit's. With `sheets: trim`, a
     row this reader was already shown with the same inputs is left out
-    (`_sheet_rows`); with none left, no sheet is drawn (`skipped`)."""
+    (`_sheet_rows`); with none left, no sheet is drawn (`skipped`). `plot`
+    names the partner to plot when the caller knows it."""
     from plexora.plugins.gating.server.autogate import sheet
 
     refs = engine.references_ready(unit)
-    partner = plot_partner(unit, refs, numbers)
+    chosen = [r for r in refs if r["marker"] == plot]
+    if plot and not chosen:
+        # Not one of this marker's references (an exclusion the tree derives
+        # across lineages): its gate from the image's ledger.
+        entry = engine.ledger(unit["project"], without=unit).get(plot) or {}
+        if entry.get("gate") is not None and entry.get("grade") != "failed":
+            chosen = [{"marker": plot, "relation": "exclusive", "gate": entry["gate"]}]
+    partner = ({**chosen[0], "why": "the lineage that should exclude this marker"} if chosen
+               else plot_partner(unit, refs, numbers))
     condition = unit.get("condition")
     within = ({"marker": condition["within"], "gate": condition["partner_gate"]}
               if condition else None)
@@ -652,12 +675,12 @@ def _images(packet, pairs):
 
 
 def _multiview(engine, unit, ds, reference=None):
-    """(layout, partners, evidence) for a look's collage with hybrid tiles
-    (`SessionOptions.hybrid`): the 2 x 2 multi-view layout `t2m` and the
+    """(layout, partners, evidence) for a look's collage with tiles on
+    (`SessionOptions.tiles`): the 2 x 2 multi-view layout `t2m` and the
     partner channels its `co` / `anti` panels show -- the reference, when a
     look asked for one, in the panel its relation belongs to. (None, None,
     {}) without tiles: the look is today's."""
-    if not engine.hybrid_has("tiles"):
+    if not engine.tiles_on():
         return None, None, {}
     partners = dict(engine.partner_panels(unit) or {})
     partners.setdefault("markers", {})
@@ -747,6 +770,7 @@ def t2_confirm(engine, units):
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
+        "_row_spans": _row_spans(rows),
     }
     images = _images(packet, (
         (main, "t2_collage", "cells below / at / above the gate"),
@@ -819,6 +843,7 @@ def t3_biological(engine, units):
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
+        "_row_spans": _row_spans(rows),
     }
     images = _images(packet, (
         (main, "t3_collage", "cells with the reference channel"),
@@ -952,12 +977,27 @@ def qc_confirm(engine, units):
     low = unit["candidate"]
     if low is None:
         low = (unit.get("seen") or [None])[0]
+    c = unit.get("lineage_contamination") if unit.get("lineage_check") else None
+    # The lineage suspect's check (`replan.check_whole_image`) draws the
+    # excluding lineage's channel in the fields, in cyan, and plots it: the
+    # question is whether any cell outside that lineage carries the stain.
+    partner_channel = views.image_channel(ds, c["partner"]) if c else None
     view = _sheet(engine, unit, ds, channel, low,
-                  title=f"{unit['marker']}: yellow = stain, blue = nuclei, magenta = cells "
-                        f"above {collage.compact_number(low)}")
+                  references=[partner_channel] if partner_channel else (),
+                  plot=c["partner"] if c else None,
+                  title=f"{unit['marker']}: yellow = stain, blue = nuclei, "
+                        + (f"cyan = {c['partner']}, " if partner_channel else "")
+                        + f"magenta = cells above {collage.compact_number(low)}")
     verdict = unit.get("qc_verdict")
     qc_said = (f" Image QC reviewed this channel and called it {verdict}."
                if verdict in ("usable", "failed") else "")
+    if c:
+        qc_said += (f" Its brightest cells are {c['partner']}+ cells, which should not carry "
+                    f"{unit['marker']}: stain only on those cells (their light in this "
+                    "channel) is no population of its own; real signal means other cells "
+                    "carry it too."
+                    + (f" In the fields, cyan is {c['partner']}: judge the yellow cells that "
+                       "are not cyan." if partner_channel else ""))
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) needs a whole-image check: "
                      f"{', '.join(unit.get('qc_reason') or unit.get('flags') or [])}.{qc_said} "
@@ -1176,6 +1216,18 @@ def panel_context(engine, units):
     return packet, []
 
 
+def replan_packet(engine, units):
+    """The planning task's look at what failed (`replan.packet`). Text only:
+    a picture of each suspect marker's brightest positives beside the
+    excluding partner was tried and made the call worse -- the tiles of a
+    population that is not there read as saturated haze, and the planner
+    kept a PD1 it had called absent from the numbers six times of six
+    (2026-10-11; patch `docs/internal/bench/runs/2026-10-11-replan/`)."""
+    from plexora.plugins.gating.server.autogate import replan
+
+    return replan.packet(engine, units)
+
+
 def expression_setup(engine, units):
     """Which matrix to gate, when the values could not settle it: put to the
     user through the agent (and the viewer's requirements modal)."""
@@ -1208,70 +1260,12 @@ def transfer_check(engine, units):
     return transfer.transfer_packet(engine, units)
 
 
-
-
-def correction_check(engine, units):
-    """The cells a corrected gate would call differently from the gate a look
-    approved (`hybrid.plan_correction`), and a few clear positives to compare
-    with: one word per cell. Names no model and no direction of a move --
-    only what the gate as it stands calls them."""
-    from plexora.agent.evidence import collage
-    from plexora.plugins.gating.server.autogate import cells as cellmod
-
-    unit = units[0]
-    ds, channel = _unit_channel(engine, unit)
-    record = (unit.get("model") or {}).get("correction") or {}
-    c = cellmod.cells(ds)
-    row_of = {int(i): k for k, i in enumerate(c.ids)}
-
-    def drawn(ids, prefix):
-        return [{"cell_id": int(i), "x": float(c.xs[row_of[int(i)]]),
-                 "y": float(c.ys[row_of[int(i)]]), "caption": f"{prefix}{n + 1}"}
-                for n, i in enumerate(ids) if int(i) in row_of]
-
-    asked = drawn(record.get("cells") or [], "c")
-    refs = drawn(record.get("references") or [], "r")
-    rows = [{"label": f"cells {asked[i]['caption']}-{asked[min(i + 5, len(asked) - 1)]['caption']}",
-             "key": "check", "cells": asked[i:i + 6]} for i in range(0, len(asked), 6)]
-    if refs:
-        rows.append({"label": "reference: clear positives", "key": "reference", "cells": refs})
-    layout, partner_panels, multiview = _multiview(engine, unit, ds)
-    calls = "positive" if record.get("direction") == "up" else "negative"
-    main = collage.render_collage(
-        engine.call.session, ds, layout=layout or "t2", rows=rows, marker=channel,
-        gate=record.get("g_v"), high=unit.get("high"), fmt=_fmt(engine),
-        pixel=engine.pixel_for(ds.name), partners=partner_panels,
-        title=f"{unit['marker']} · c-cells: is the stain each one's own? · r-cells: clear "
-              f"positives (each cell: "
-              f"{_panel_words(layout, partner_panels) or 'morphology | context'})")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
-    compartment = (unit.get("context") or {}).get("compartment")
-    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
-    keys = [cell["caption"] for cell in asked]
-    guide = ["correction_check", "collage_t2m" if layout else "collage_t2"]
-    packet = {
-        "question": (f"{unit['marker']} ({ds.name}): the threshold as it stands calls each of "
-                     f"the cells {keys[0]}-{keys[-1]} {calls}. For each of them, is the "
-                     f"{stain} stain its OWN? One word per cell; r-cells are clear positives "
-                     "to compare with."),
-        "evidence": {"marker": unit["marker"], "project": ds.name, "calls": calls,
-                     "cells": keys, "references": [cell["caption"] for cell in refs],
-                     **multiview, **_reading(engine, guide)},
-        "allowed": {"cells": keys, "words": ["own", "not_own", "cannot_tell"]},
-        "_image_meta": [],
-    }
-    images = _images(packet, ((main, "correction_collage", "the cells a corrected threshold "
-                                                            "would change"),))
-    unit["last_manifest"] = main["manifest"]
-    return packet, images
-
-
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
-            "panel_context": panel_context, "transfer_check": transfer_check,
-            "expression_setup": expression_setup, "pixel_setup": pixel_setup,
-            "correction_check": correction_check}
+            "panel_context": panel_context, "replan": replan_packet,
+            "transfer_check": transfer_check,
+            "expression_setup": expression_setup, "pixel_setup": pixel_setup}
 
 
 def narrate(packet) -> str:

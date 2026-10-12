@@ -423,7 +423,16 @@ def _geometry_of(path, rgb=False):
     identically. Never `convertOmeTiff`: that CONVERTS, and inspection must not.
     """
     from plexora.server.providers import local
+    from plexora.server.utils import segmentation_pyramid
 
+    if segmentation_pyramid.is_png(path):
+        # Only a mask asks: a PNG image is a picture, which has no geometry
+        # row. Off the header, one plane, one level.
+        header = segmentation_pyramid.png_header(path)
+        if header is None:
+            return None
+        return {"width": header.width, "height": header.height, "maxLevel": 1,
+                "tileWidth": None, "tileHeight": None, "numChannels": 1}
     try:
         found = local.image_geometry(path, rgb=rgb)
     except Exception:
@@ -454,17 +463,33 @@ def looks_like_label_image(path):
     """
     import numpy as np
 
-    from plexora.server.utils import ome_zarr
+    from plexora.server.utils import ome_zarr, segmentation_pyramid
 
     path = Path(path)
-    if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+    # A format that cannot hold cell ids -- a JPEG, a whole-slide container,
+    # an Imaris file, a colour PNG -- is an image, and asking about one would
+    # be putting a question in front of somebody that has only one answer.
+    if segmentation_pyramid.mask_format_refusal(path) is not None:
         return False
-    # A whole-slide container is a slide. Nobody writes a segmentation as an
-    # .svs, and asking about one would be putting a question in front of
-    # somebody that has only one answer.
-    if path.suffix.lower() in (".svs", ".ndpi", ".scn", ".mrxs", ".svslide",
-                               ".dcm", ".qptiff", ".ims"):
-        return False
+    if segmentation_pyramid.is_ims(path):
+        # Stains, a channel of ids, or both: asked of the channels themselves
+        # (volume/sources/ims.mask_verdict).
+        from plexora.server.volume.sources import ims
+
+        return ims.mask_verdict(path)
+    if segmentation_pyramid.is_png(path):
+        # Greyscale or palette (a colour one was refused above): one plane of
+        # 8- or 16-bit integers, asked the same question a TIFF plane is.
+        header = segmentation_pyramid.png_header(path)
+        if header is None:
+            return False
+        dtype = np.dtype(np.uint16 if header.bit_depth == 16 else np.uint8)
+        try:
+            return _plane_verdict(
+                path, dtype,
+                lambda: segmentation_pyramid.read_png_labels(path)[:512, :512])
+        except Exception:
+            return None
     try:
         if ome_zarr.is_zarr_image_path(path):
             return None
@@ -491,39 +516,50 @@ def looks_like_label_image(path):
                         handle, path, dtype):
                     return True
                 return False
-            if dtype.kind not in "ui":
-                return False
-            if dtype.itemsize >= 2:
-                # 16- or 32-bit, one plane, integer. A single-channel 16-bit
-                # IMAGE exists, but it is almost always one plane of a stack; a
-                # lone one is a mask often enough to be worth looking at.
-                if _name_says_mask(path):
-                    return True
-                page = handle.pages[0]
-                window = page.asarray()[:512, :512]
-                unique = int(np.unique(window).size)
-                # Two things together, because either alone is wrong.
-                #
-                # Ids are SPARSE where intensities are a continuum: a 512x512
-                # window of a mask holds a few hundred distinct values and one
-                # of an image holds thousands. But a flat region of an image --
-                # background, a blank corner, a synthetic fixture -- is sparse
-                # too, and reading that as a mask turns somebody's channel into
-                # a cell-id lookup.
-                #
-                # So a mask must also have BACKGROUND. Zero is what a label
-                # image calls "no cell here", and a 512x512 window with no zero
-                # in it is either a solidly packed mask (rare) or not a mask at
-                # all (common). Neither is certain, so that case is asked
-                # about rather than decided.
-                if unique >= 2048:
-                    return False
-                if unique <= 1 or not bool((window == 0).any()):
-                    return None
-                return True
-            return True if _name_says_mask(path) else None
+            return _plane_verdict(path, dtype,
+                                  lambda: handle.pages[0].asarray()[:512, :512])
     except Exception:
         return None
+
+
+def _plane_verdict(path, dtype, window_of):
+    """`looks_like_label_image` for one plane of `dtype`, True/False/None.
+
+    `window_of()` reads its top-left 512x512 corner, and is only called when
+    the dtype and the name have not already decided.
+    """
+    import numpy as np
+
+    if dtype.kind not in "ui":
+        return False
+    if dtype.itemsize >= 2:
+        # 16- or 32-bit, one plane, integer. A single-channel 16-bit
+        # IMAGE exists, but it is almost always one plane of a stack; a
+        # lone one is a mask often enough to be worth looking at.
+        if _name_says_mask(path):
+            return True
+        window = np.asarray(window_of())
+        unique = int(np.unique(window).size)
+        # Two things together, because either alone is wrong.
+        #
+        # Ids are SPARSE where intensities are a continuum: a 512x512
+        # window of a mask holds a few hundred distinct values and one
+        # of an image holds thousands. But a flat region of an image --
+        # background, a blank corner, a synthetic fixture -- is sparse
+        # too, and reading that as a mask turns somebody's channel into
+        # a cell-id lookup.
+        #
+        # So a mask must also have BACKGROUND. Zero is what a label
+        # image calls "no cell here", and a 512x512 window with no zero
+        # in it is either a solidly packed mask (rare) or not a mask at
+        # all (common). Neither is certain, so that case is asked
+        # about rather than decided.
+        if unique >= 2048:
+            return False
+        if unique <= 1 or not bool((window == 0).any()):
+            return None
+        return True
+    return True if _name_says_mask(path) else None
 
 
 def _volume_looks_like_labels(handle, path, dtype) -> bool:
@@ -1365,7 +1401,7 @@ def _detect_remote(url, answers, declared=None):
     if named == remote_image.DICOM:
         return _dicom_slides(url, answers)
     if named in (remote_image.TIFF, remote_image.PICTURE):
-        return _remote_image_layer(url)
+        return _remote_image_layer(url, answers, declared)
     try:
         remote_image.kind_of(url, probe=False)
     except ValueError as error:
@@ -1413,18 +1449,42 @@ def _detect_remote(url, answers, declared=None):
             image_warnings + warnings)
 
 
-def _remote_image_layer(url):
-    """A TIFF-family file or a picture at a web address, as one image layer.
+def _remote_image_layer(url, answers=None, declared=None):
+    """A TIFF-family file or a picture at a web address, as one layer.
 
-    `_detect_image` without the mask question: a mask at a web address is
-    not something this reads, so the file is the image it names itself as.
+    `_detect_image` with the mask question settled without reading pixels --
+    that would be fetching a slide's tiles to classify it. A file is a mask
+    when the mask-or-image question was answered so, or when it was added as
+    one or is named like one AND its header says it is one plane of integers.
+    Otherwise it is the image it names itself as.
     """
     from plexora.datasource import _sniff_quick_view_kind
     from plexora.server.providers import local
     from plexora.server.providers.base import RemoteUnreachable
-    from plexora.server.utils import remote_store
+    from plexora.server.utils import remote_store, segmentation_pyramid
 
     name = remote_store.url_name(url)
+    answer = _said(answers or {}, "mask-or-image:", url)
+    warnings = []
+    if answer:
+        is_mask = answer == "mask"
+    elif declared == "mask" or _name_says_mask(name):
+        is_mask = _remote_label_plane(url)
+        if declared == "mask" and not is_mask:
+            refusal = segmentation_pyramid.mask_format_refusal(url)
+            warnings.append(
+                f"{refusal} It was added as a segmentation mask, so it is "
+                "proposed as an image instead." if refusal else
+                f"{name} was added as a segmentation mask, but it is not one "
+                "plane of integer labels -- proposed as an image instead.")
+    else:
+        is_mask = False
+    if is_mask:
+        layer = LayerProposal(
+            id=_layer_id(url), kind="labels", role="mask", modality="mask",
+            label="Segmentation mask", src=str(url), geometry=_geometry_of(url))
+        layer.detail = describe(layer)
+        return [layer], [], None, warnings
     try:
         kind = _sniff_quick_view_kind(url)
     except RemoteUnreachable as error:
@@ -1453,7 +1513,28 @@ def _remote_image_layer(url):
     if rgb:
         layer.render = {"rgb": True}
     layer.detail = describe(layer)
-    return [layer], [], None, []
+    return [layer], [], None, warnings
+
+
+def _remote_label_plane(url) -> bool:
+    """Whether the file at `url` is one plane of integers, the shape of a
+    mask. Headers only: a PNG's first bytes, a TIFF's first IFD."""
+    import numpy as np
+
+    from plexora.server.utils import segmentation_pyramid
+
+    if segmentation_pyramid.mask_format_refusal(url) is not None:
+        return False
+    if segmentation_pyramid.is_png(url):
+        return segmentation_pyramid.png_header(url) is not None
+    try:
+        plane, close = segmentation_pyramid._open_level_zero(url)
+    except Exception:  # noqa: BLE001 -- unreadable is not a mask
+        return False
+    try:
+        return len(plane.shape) == 2 and np.dtype(plane.dtype).kind in "ui"
+    finally:
+        close()
 
 
 def _remote_tables(url, answers):
@@ -1723,7 +1804,12 @@ def _detect_image(path, answers, declared=None):
             # already been answered.
             verdict = True
         elif verdict is False:
+            from plexora.server.utils import segmentation_pyramid
+
+            refusal = segmentation_pyramid.mask_format_refusal(path)
             warnings.append(
+                f"{refusal} It was added as a segmentation mask, so it is "
+                "proposed as an image instead." if refusal else
                 f"{path.name} was added as a segmentation mask, but its "
                 "pixels are an image -- proposed as an image instead.")
     elif declared == "table" and verdict is False:

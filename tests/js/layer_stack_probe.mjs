@@ -79,9 +79,12 @@ check("every kind names a surface",
     LAYER_KINDS.every((kind) => ["tiles", "overlay", "gl"].includes(LAYER_KIND_SURFACE[kind])),
     JSON.stringify(LAYER_KIND_SURFACE));
 
-check("there are four kinds, not one per modality",
-    LAYER_KINDS.join(",") === "image,labels,points,shapes",
+check("there are five kinds, not one per modality",
+    LAYER_KINDS.join(",") === "image,labels,points,shapes,surface",
     "a kind is a rendering strategy; a modality is not");
+
+check("a surface is drawn by the 3-D view's mesh renderer (the gl surface)",
+    LAYER_KIND_SURFACE.surface === "gl");
 
 check("an unknown kind falls back to something with a renderer", (() => {
     const stack = new LayerStack();

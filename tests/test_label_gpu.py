@@ -105,9 +105,6 @@ CHECKS = [
     "gate: the mask ends at the largest id",
     "gate: a not-called row is 2, counted apart from the passing ones",
     "gate: not called wins over a pass of the same id, whichever row comes first",
-    "gate: the cell model's codes draw 4 and 5 and never change the count",
-    "gate: a cell the model calls own is drawn only when every other key passes",
-    "gate: the cell model never draws over a not-called cell",
     "gate: float32 rounding of a bound matches numpy's for a halfway value",
     # D. the CPU reference
     "alpha tables match the CPU loop at fill 0",

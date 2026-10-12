@@ -108,6 +108,9 @@ PARAMS = {
     "low_lead_weight": 1.0,      # a low-reliability partner's lead (a reliable one: 2.0)
     "tiles": 3,                  # region check: tiles x tiles over the tissue
     "tile_min_cells": 1500,
+    "floor_edge_bins": 4,        # a background peak this close to the histogram's low end is a floor
+    "floor_smooth_bins": 8,      # the density the floor's valley is read off (of 400 bins)
+    "floor_min_rise": 1.2,       # the mode above a floor must rise this much over the valley
     "weights": {"distribution": 1.0, "coexpression": 2.0, "anti": 1.0},
     "mix": {"purity": 0.45, "retained": 0.35, "region": 0.1, "morphology": 0.1},
 }
@@ -207,9 +210,49 @@ def background(body):
     above = np.flatnonzero((centres > mode) & (lfdr < PARAMS["onset_lfdr"]))
     onset = float(centres[above[0]]) if above.size else None
     ceiling = mode + PARAMS["ceiling_sd"] * sd
-    return {"mode": mode, "sd": sd, "onset": onset,
-            "ceiling": ceiling if ceiling < hi else None,
-            "centres": centres, "lfdr": lfdr, "excess": excess}
+    out = {"mode": mode, "sd": sd, "onset": onset,
+           "ceiling": ceiling if ceiling < hi else None,
+           "centres": centres, "lfdr": lfdr, "excess": excess, "basis": "peak"}
+    valley = floor_valley(counts, i)
+    if valley is not None:
+        # The background is the column's floor, not a peak: background-
+        # subtracted values pile at the smallest value and thin out above
+        # it, so a Gaussian on that pile is a few bins wide and its ceiling
+        # sits in the noise. Where the floor thins out into the main mode
+        # above it -- the density's lowest point between them -- is the
+        # bound instead.
+        out.update(onset=float(centres[valley]), ceiling=float(centres[valley]),
+                   basis="floor_valley")
+    return out
+
+
+def floor_valley(counts, i):
+    """The bin of the density's valley between a floor-shaped background and
+    the main mode above it, or None when the background is an ordinary peak
+    (or no mode stands above the floor).
+
+    A floor: the background peak `i` sits within `floor_edge_bins` of the
+    histogram's lower end (its range starts at the 0.1% quantile, so an
+    ordinary background peak lies several sds inside it). The valley is read
+    off a smoother density (`floor_smooth_bins`) than the peak's, and counts
+    only when the mode above rises `floor_min_rise` over it."""
+    from scipy.ndimage import gaussian_filter1d
+
+    if i > PARAMS["floor_edge_bins"]:
+        return None
+    g = gaussian_filter1d(counts.astype(np.float64), PARAMS["floor_smooth_bins"])
+    j = i
+    while j + 1 < g.size and g[j + 1] <= g[j]:
+        j += 1                            # down the floor's ramp to its first trough
+    if j + 1 >= g.size:
+        return None
+    peak = j + int(np.argmax(g[j:]))
+    if peak <= j:
+        return None
+    valley = i + 1 + int(np.argmin(g[i + 1:peak]))
+    if g[peak] < PARAMS["floor_min_rise"] * max(g[valley], 1e-12):
+        return None
+    return valley
 
 
 def _partner_sd(ds, partner, col_p):
@@ -289,6 +332,10 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
     out["background"] = {"mode": float(col.from_fit(mode)), "sd_fit": sd,
                          "onset": None if onset is None else float(col.from_fit(onset)),
                          "ceiling": None if ceiling is None else float(col.from_fit(ceiling))}
+    if bg.get("basis", "peak") != "peak":
+        # Named only when it is not the usual peak, so an ordinary marker's
+        # scoring (and every packet drawn from it) is as before.
+        out["background"]["basis"] = bg["basis"]
     raw = []   # (id, family, fit value, extra)
     g_fit = None if gmm is None else float(col.to_fit(gmm))
     if g_fit is not None:
@@ -415,6 +462,13 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         # tail, not a background (PCNA's unstained cells).
         w_gmm = 0.1
         out["notes"].append("the Auto gate calls nearly every cell positive; it barely counts")
+    elif bg.get("basis") == "floor_valley" and g_fit is not None and ceiling is not None \
+            and g_fit < ceiling:
+        # Below the floor's valley the mixture split the floor's own ramp,
+        # not background from positives.
+        w_gmm = 0.1
+        out["notes"].append("the background is the column's floor and the Auto gate sits in "
+                            "it; the valley above the floor bounds the gate instead")
     if g_fit is not None:
         groups.append(("gmm", g_fit, w_gmm))
     # The noise ceiling, or the onset when the background is too broad for a

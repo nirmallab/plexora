@@ -204,13 +204,19 @@ def test_the_question_gate_is_still_the_one_line_it_was(dialog):
     assert 'part("go").disabled = !importable;' in dialog
 
 
-def test_the_split_control_is_the_one_the_rest_of_the_app_uses(dialog):
-    """The inline picker inside a card is the same two halves as the pick
-    state's, with the format examples of the slot that opened it -- not a
-    third file-choosing control with its own manners."""
-    opened = re.findall(r"buildSplitControl\((.+?),", dialog)
-    assert len(opened) == 2, opened
-    assert "spec.examples" in opened[1]
+def test_both_pick_surfaces_are_the_one_home_style_control(dialog):
+    """The pick state and the inline picker inside a card are the same
+    control -- the home page's card: File | Folder, one field with the machine
+    chip, Browse/Add -- with the format examples of the slot that opened it,
+    not a second file-choosing control with its own manners."""
+    opened = re.findall(r"buildPickControl\(\{\s*examples: ([^,]+),", dialog)
+    assert opened == ['"sample"', "spec.examples"], opened
+    assert "buildSplitControl(" not in dialog
+    css = _read(MAIN_CSS)
+    for rule in (".plx-import-kind-thumb {", ".plx-import-field {",
+                 ".plx-import-machine {", ".plx-import-browse {",
+                 ".plx-import-chip {", ".plx-import-menu {"):
+        assert rule in css, rule
 
 
 def test_a_pasted_path_that_cannot_be_read_is_said_beside_its_box(dialog):

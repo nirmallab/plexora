@@ -122,7 +122,7 @@ window.PlexoraAgentBridge = (function () {
         "set_channels", "set_channel_color", "set_contrast", "set_hd_mode",
         "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells", "show_shapes",
         "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to", "set_color_by",
-        "set_view", "set_z", "set_slab",
+        "set_view", "set_z", "set_slab", "set_volume_mode", "set_camera", "set_surface",
     ]);
     const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
 
@@ -1801,6 +1801,63 @@ window.PlexoraAgentBridge = (function () {
                 throw new Error(`planes ${slab.z0}-${slab.z1} are not a range inside 0-${vs.depth - 1}`);
             }
             return applyVolumePatch({ mode: "slab", slab, z: Math.round((slab.z0 + slab.z1) / 2) }, call);
+        },
+
+        /** The 3-D view (views/volumeRenderer.js), and what it shows. */
+        async set_volume_mode(args, call) {
+            const vs = volumeViewState();
+            if (!vs) throw unsupported("this image has a single plane");
+            if (args.mode === "volume" && !core().volumeView) {
+                throw unsupported("this browser cannot draw the 3-D view (WebGL2 3-D textures)");
+            }
+            const volume = { ...(vs.get().volume || {}) };
+            if (args.show) volume.show = { ...(volume.show || {}), ...args.show };
+            if (args.composite) volume.composite = args.composite;
+            return applyVolumePatch({ mode: args.mode === "plane" ? "plane" : "volume", volume }, call);
+        },
+
+        async set_camera(args, call) {
+            const renderer = core().volumeView && core().volumeView.renderer;
+            if (!renderer) throw unsupported("the 3-D view is not open (viewer_set_volume_mode first)");
+            if (args.preset) {
+                renderer.stopMotion();
+                const views = window.PlexoraVolumeCamera && window.PlexoraVolumeCamera.VIEWS;
+                renderer.camera.q = ((views && views[args.preset]) || renderer.camera.q).slice();
+                renderer.camera.panX = 0;
+                renderer.camera.panY = 0;
+            }
+            const camera = renderer.cameraState();
+            if (Array.isArray(args.q)) camera.q = args.q.map(Number);
+            if (Number.isFinite(Number(args.dist))) camera.dist = Number(args.dist);
+            if (Array.isArray(args.pan)) camera.pan = args.pan.map(Number);
+            renderer.restoreCamera(camera);
+            renderer.invalidate();
+            await untilDrawn(core().viewState.settled(), call);
+            touch();
+            return { camera: renderer.cameraState() };
+        },
+
+        async set_surface(args) {
+            const surfaces = window.PlexoraSurfaceLayers;
+            const stack = core().seaDragonViewer && core().seaDragonViewer.layerStack;
+            const layer = stack && stack.get(args.surface);
+            if (!surfaces || !layer || layer.kind !== "surface") {
+                throw new Error(`no surface ${args.surface} in this viewer`);
+            }
+            const entry = { id: args.surface };
+            for (const key of ["visible", "opacity", "color", "style"]) {
+                if (args[key] !== undefined) entry[key] = args[key];
+            }
+            if (args.isolate !== undefined) {
+                entry.isolate = Array.isArray(args.isolate) && args.isolate.length ? args.isolate : null;
+            }
+            surfaces.applyState([entry], { save: false });
+            if (args.select !== undefined && args.select !== null) {
+                surfaces.select({ surface: args.surface, object: Number(args.select) });
+            }
+            surfaces.sync();
+            touch();
+            return { surface: args.surface, applied: entry };
         },
 
         async set_hd_mode(args, call) {

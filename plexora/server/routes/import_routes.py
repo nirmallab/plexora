@@ -543,6 +543,12 @@ def attach_segmentation(name, mask_path, mode=None, transform=None):
     if located:
         return node_api.attach_segmentation(name, node=located[0],
                                             resource_id=located[1])
+    # Before anything is recorded: a JPEG or a slide recorded as the mask
+    # fails later, inside the conversion job, with a reader's error about a
+    # file it was never going to understand.
+    refusal = mask_path and segmentation_pyramid.mask_format_refusal(mask_path)
+    if refusal:
+        raise ValueError(refusal)
 
     project = Project.find(name)
     if project is not None and project.resource("segmentation") is not None:

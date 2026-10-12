@@ -6,6 +6,15 @@ what it did to the gates on real tissue, and a verdict. Each entry names its
 evidence; numbers come from recorded sessions or from studies in
 `docs/internal/bench/runs/` (gitignored), never from memory.*
 
+> **2026-10-12: the cell model was removed.** On the PCA benchmark (3 images x
+> 17 markers against the user's gates) its per-cell overrides were worse than
+> the gates. `hybrid` is gone with it; the multi-view look survives as its own
+> off-by-default session option, `tiles` (`--variants baseline,tiles`). The
+> entries below are kept as history: file and option names in them (`hybrid:
+> model`, `cellcall.py`, `correction.py`, `neighbourhood.py`, `correction_check`)
+> no longer exist in the code, and `docs/internal/CELL_CALL_LEARNING.md` is
+> in git history only.
+
 Verdicts: **helped** (moved gates toward the expert more often than away),
 **neutral** (no measurable effect), **hurt**, **untested** (no real-tissue
 evidence yet), and a proposed action: keep / fix / candidate to remove.
@@ -38,6 +47,27 @@ T2/T3 (3-5 a run against 2).
 
 **Default:** `hybrid` stays `off`: two to three runs an arm clear "better",
 not the pre-registered bar (+5 points near on lsp, MAE ≤ 0.136).
+
+## In short (2026-10-11, PCA benchmark and re-planning)
+
+Second human-gated dataset: three PCA images x 17 markers, against the user's
+gates (E12, E13; five corrected by the user on recheck).
+
+- **Helped, kept:**
+  - re-planning when a marker fails (an absent PD1 called absent in every run);
+  - the cross-lineage contamination screen;
+  - no automatic move past cells a look judged, and the data-checked `within`
+    (CD163 8.36 → ~7.9; the user says 7.8);
+  - the floor-valley scored start (a zero-heavy SOX10 3.03 → 3.87; user 4.0).
+- **Did not help, removed:** a look at both sides of the gate after a
+  `mixed` first look. The rows beside the gate read mixed too, and its review
+  savings came from accepting off gates. The patch is archived.
+- **Acted on:** the whole-image look after a repeat purity failure became a
+  confidence cap, and the cell model is withheld from an image with no QC result.
+- **Overall:** accuracy against the human gates is about where it was (MAE
+  0.364 → 0.345-0.367; 0.327 → 0.308-0.328 with the user's rechecks).
+  LSP11321's gates sit ~0.4 below the user's in every arm, old included: an
+  image convention, not a step.
 
 ## Evidence base so far
 
@@ -245,6 +275,45 @@ computed.
   0.651 (mean 0.655, baselines 0.625), MAE 0.158 / 0.174 / 0.133 (mean 0.155,
   baselines 0.158).
 
+- **E12** — the PCA benchmark (2026-10-11), 3 images (LSP11321, LSP11761,
+  LSP11361) x 17 markers, `mode: propose`, `qc: strict` (no image had a QC
+  result), Sonnet workers. Arms:
+  - old (main, hybrid off) and hybrid (`model`);
+  - R0 / R1: re-planning code replaying only the old arm's answers (agent
+    `bench-old-clean`), without / with the bracket;
+  - F1 / F2: fresh looks with the bracket.
+  Scored against the user's gates as points (48 present; PD1, CD20L and PDL1
+  in LSP11761 absent). Scratchpad `bench/phase2/`; plan
+  `docs/internal/GATING_REPLAN_PLAN.md`.
+
+| arm | MAE | within 0.2 | 0.4+ off | accepted | review | absent called |
+|---|---|---|---|---|---|---|
+| old | 0.364 | 18 | 15 | 32 | 19 | 0/3 |
+| hybrid (model) | 0.338 | — | — | — | — | 0/3 |
+| R0 | 0.367 | 20 | 15 | 32 | 19 | 1/3 |
+| R1 (+ bracket) | 0.345 | 21 | 15 | 39 | 12 | 1/3 |
+| F1 (fresh, bracket) | 0.359 | 19 | 15 | 42 | 9 | 2/3 |
+| F2 (fresh, bracket) | 0.356 | 19 | 14 | 40 | 11 | 1/3 |
+
+  - **The bracket.** It fired 87 times over R1, F1 and F2 and stayed on `mixed`
+    63 times. At fixed answers it changed MAE by −0.02, and it accepted
+    several 0.5-1.0-off gates that unsure looks had sent to review.
+  - **Rule B** (passing `mixed` going up) gained only in LSP11321, where the
+    user's gates sit higher everywhere. Without that image, MAE went 0.297 → 0.304.
+  - **Hybrid (old benchmark).** Per-cell overrides lowered agreement with the
+    human-gate calls (κ 0.765 → 0.684, worse on 33 of 46 markers), mostly by
+    promoting whole regions, an artifact edge band in LSP11761 among them.
+    That image had no QC result.
+- **E13** — T3 and the whole-image confirm on every PCA session (old, hybrid,
+  R0-F2; `bench/phase2/steps.py`):
+  - **T3:** 10 looks, 1 sent the gate on (0.33 → 0.11 from the user's), 5 ended
+    in review.
+  - **Whole-image confirms:** 185; 128 said "holds", 25 "too low" (0 toward the
+    user's gate, 4 away), 17 "artifact".
+  - **The confirm after a purity push, with only partners failing:** 62; 42
+    "holds", 14 "too low" (none improved a gate; Ecad 0.01 → 0.37 twice), and
+    4 "artifact", all on CD8a, a real population.
+
 ## The ledger
 
 | step | cost | evidence | verdict | action |
@@ -269,3 +338,13 @@ computed.
 | Hybrid step 3b: the correction's check packet (`correction_check`) | ~1 small packet a corrected marker | E9: took all 10 lsp moves, refused 6 of 8 LN moves that would have gained +12 points | **hurt** | off by default (`HYBRID["confirm"]`); the code path stays for a reader that does better |
 | Hybrid `full` (tiles + correction) | ≈ baseline tokens (+3-6 %) | E9-E11: near +3.0 (lsp, 3 runs), +3.2 (LN, check off: 0.760); final form lsp MAE 0.133 against 0.158 | **helped**, below the pre-registered default-on bar | default stays `off`; more runs and a second human-gated image next |
 | Model speed: int8 / pooled sessions | — | E4: int8 breaks confident calls; pooling ≤ 20 % | neutral | fp32; parallelise the crops, not the model |
+| Re-planning on failure (`replan.py`, the `replan` packet) | a text packet (2-3k chars) per round, 1-3 rounds a session | E12: LSP11761 PD1 called absent in every run; CD20L flagged every run, called absent 1 of 4 from numbers alone; an image finding as a note, never a demotion | **helped** | keep (`SessionOptions.replan`, on) |
+| Lineage contamination screen (cross-lineage only) | code | E12: flags exactly the two absent LSP11761 markers among all 51 pairs; siblings (CD8a vs CD4) excluded after a wrong `absent` | **helped** | keep |
+| Judged-row clamp + `within` orphan guard | code | E12: LSP11761 CD163 8.36 → 7.85-8.00 in every arm; user rechecked 7.8 | **helped** | keep |
+| Floor-valley scored start | code | E12: LSP11361 SOX10 3.03 → 3.87 (user 4.0); fires on no other benchmark column | **helped** | keep |
+| `mixed` first look → bracket (both sides) | +1 T4 a bracketed unit | E12: stays on mixed 63 of 87; MAE −0.02 at fixed answers; accepted off gates | **neutral to hurt** | **removed** 2026-10-11 (patch `runs/2026-10-11-replan/mixed_bracket.patch`) |
+| Whole-image look after a repeat purity failure | ~350 tokens, ~2 a session | E1 32/44 and E13 42/62 "holds"; none of the PCA's other answers helped | **neutral** | **replaced** 2026-10-11: confidence capped at low (`Engine.purity_capped`); with a spatial check failing too, still asked |
+| Cell model on an image with no QC result | — | E12: the model promoted an artifact edge band | **hurt** | withheld from such images (`model_withheld`), said at session start |
+| A picture per suspect marker in the `replan` packet | 1 image a suspect marker | 2 fresh LSP11761 runs: the planner read the tiles as saturated haze and kept PD1 (absent 6/6 from numbers); CD20L 1/2 | **hurt** | **removed** 2026-10-11 (patch `runs/2026-10-11-replan/replan_pictures.patch`) |
+| Lineage re-screen when a partner is accepted | code | live K1: PD1 closed (look settled nothing) before SOX10 was gated and was never asked | fix | `replan.rescreen` |
+

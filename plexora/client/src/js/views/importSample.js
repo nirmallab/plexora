@@ -5,8 +5,9 @@
  * points at files or a folder, sees what Plexora found, and presses Import.
  * There are no format tabs, no role-labelled fields and no second page.
  *
- *   pick       Which machine, Choose a file / Choose a folder, or paste a
- *              path. One sentence names the formats and links to the rest.
+ *   pick       The home page's card: File | Folder, one path field with the
+ *              machine chip at its front, and Browse (Add once a path is
+ *              typed). Format chips under it, and the way to the rest.
  *   proposal   One card per sample, one row per detected layer, each saying
  *              what it becomes. A question appears UNDER the row it concerns,
  *              with its default already chosen, and never blocks Import.
@@ -154,12 +155,6 @@ window.PlexoraImportSample = (function () {
                     </button>
                 </div>
             </div>
-            <div class="plx-import-where" data-role="where">
-                <span class="plx-import-where-label">Data location</span>
-                <span data-role="where-mount"></span>
-                <span class="plx-import-where-caption" data-role="where-caption" hidden></span>
-                <span class="plx-import-where-status" data-role="where-status"></span>
-            </div>
             <div class="plx-import-body" data-role="body"></div>
             <p class="plx-import-status" data-role="status" role="status" aria-live="polite"></p>
             <div class="plx-import-foot">
@@ -193,7 +188,16 @@ window.PlexoraImportSample = (function () {
             // `autofocus` only fires when the dialog OPENS. Coming back here
             // from a proposal, the focus has to be placed by hand or it stays
             // on a button that is no longer on screen.
-            state?.halves?.[0]?.focus();
+            state?.pickFocus?.focus();
+        });
+        // A click anywhere else in the dialog puts the machine menu away, as
+        // every menu in the navbar does.
+        node.addEventListener("click", (event) => {
+            const machine = state && state.machine;
+            if (machine && menuOpen() && !machine.menu.contains(event.target)
+                && !machine.button.contains(event.target)) {
+                closeMenu(false);
+            }
         });
         // Wrapped rather than passed straight in: `submit` takes the name of a
         // sample it is replacing, and a listener would hand it a MouseEvent.
@@ -250,6 +254,7 @@ window.PlexoraImportSample = (function () {
         // Not mid-import (Escape is refused then, but a caller can still
         // close): a resource about to be bound must not be pulled first.
         if (state && state.phase !== "importing") release(state.picks);
+        if (state && state.machine && state.machine.unwatch) state.machine.unwatch();
         state = null;
         try {
             dialog.close();
@@ -307,6 +312,11 @@ window.PlexoraImportSample = (function () {
             adding: null,
             node: null,
             location: null,
+            //: The machine chip, its menu and the location service's status
+            //: line -- built once and moved into whichever field is on screen.
+            machine: null,
+            //: File or Folder: what Browse opens a dialog for.
+            kind: "file",
             onClose: options.onClose || null,
         };
         dialog = build();
@@ -348,51 +358,252 @@ window.PlexoraImportSample = (function () {
     }
 
     /**
-     * The Local/Remote switch, mounted once above the controls.
+     * Which machine, as the home page asks it: a chip at the front of the
+     * path field ("Local", or the server's name) whose menu lists the actual
+     * machines -- `views/quickViewLanding.js`, to the item.
      *
-     * The landing page's arrangement, and for its reason: the switch decides
-     * WHOSE filesystem the pick controls browse, so it belongs above them
-     * rather than inside a row it would qualify.
+     * The service is attached `bare`: it keeps the state (what a path on
+     * another machine submits as) and this draws the switch. The chip, its
+     * menu and the service's status line are built ONCE, because the body is
+     * rebuilt with innerHTML on every render and the service holds the status
+     * element it was given -- so each render moves them into the field on
+     * screen rather than making new ones.
      */
     function mountLocation() {
-        if (!window.PlexoraDataLocation || !window.PlexoraDataLocation.available()) {
-            // Nothing to choose between, so nothing to ask. The row goes
-            // rather than standing empty above the panel.
-            part("where").hidden = true;
-            return;
-        }
+        if (!window.PlexoraDataLocation || !window.PlexoraDataLocation.available()) return;
         const box = document.createElement("input");
         box.type = "hidden";
         dialog.appendChild(box);
+        const machine = buildMachine();
         try {
             state.location = window.PlexoraDataLocation.attach(box, {
                 kind: "image",
-                mount: part("where-mount"),
-                statusMount: part("where-status"),
-                onChange: () => paintCaption(),
+                bare: true,
+                statusMount: machine.status,
+                onChange: () => paintMachine(),
             });
         } catch (error) {
             console.error("importSample: no location switch.", error);
         }
-        paintCaption();
+        if (state.location) state.machine = machine;
+        paintMachine();
+    }
+
+    const Remotes = () => window.PlexoraRemotes;
+
+    function buildMachine() {
+        const button = el("button", "plx-import-machine");
+        button.type = "button";
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        // Every icon in the markup from the start: Font Awesome swaps each
+        // <span> for an <svg> once, so a class changed on the span afterwards
+        // changes nothing. Which one shows is CSS over `.is-remote`.
+        button.innerHTML = `
+            <span class="plx-import-machine-local" aria-hidden="true"><span class="fas fa-laptop"></span></span>
+            <span class="plx-import-machine-dot" aria-hidden="true"></span>
+            <span class="plx-import-machine-label">Local</span>
+            <span class="plx-import-machine-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span></span>`;
+        const menu = el("div", "plx-import-menu");
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Where the files are");
+        menu.hidden = true;
+        // In the dialog rather than in the field: the body scrolls, and a menu
+        // inside it would be clipped by it. Fixed-positioned under the chip.
+        dialog.appendChild(menu);
+        const status = el("div", "plx-import-machine-status");
+
+        button.addEventListener("click", () => {
+            if (menuOpen()) closeMenu(true);
+            else openMenu();
+        });
+        button.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" && !menuOpen()) {
+                event.preventDefault();
+                openMenu();
+            }
+        });
+        menu.addEventListener("keydown", (event) => {
+            const items = menuItems();
+            const at = items.indexOf(document.activeElement);
+            if (event.key === "Escape") {
+                // The dialog's own Escape would close the whole dialog.
+                event.preventDefault();
+                event.stopPropagation();
+                closeMenu(true);
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                items[(at + step + items.length) % items.length]?.focus();
+            } else if (event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+            } else if (event.key === "Tab") {
+                closeMenu(false);
+            }
+        });
+        return {button, menu, status, unwatch: null, key: ""};
+    }
+
+    function paintMachine() {
+        const machine = state && state.machine;
+        if (!machine) return;
+        const remote = !state.location.isLocal();
+        const place = remote ? state.location.place() : null;
+        const name = remote ? ((place && (place.label || place.id)) || "Remote") : "Local";
+        machine.button.classList.toggle("is-remote", remote);
+        machine.button.querySelector(".plx-import-machine-label").textContent = name;
+        machine.button.setAttribute("aria-label",
+            `Files are on ${remote ? name : "this computer"}. Change machine`);
+        machine.button.title = remote ? `Files on ${name}` : "Files on this computer";
+    }
+
+    function menuOpen() {
+        return Boolean(state && state.machine && !state.machine.menu.hidden);
+    }
+
+    function menuItems() {
+        return Array.from(state.machine.menu.querySelectorAll(".plx-import-menu-item:not(:disabled)"));
+    }
+
+    function openMenu() {
+        const machine = state.machine;
+        if (!machine || menuOpen() || machine.button.disabled) return;
+        machine.key = "";
+        drawMenu((Remotes() && Remotes().snapshot().places) || []);
+        const rect = machine.button.getBoundingClientRect();
+        machine.menu.style.left = `${Math.round(rect.left - 2)}px`;
+        machine.menu.style.top = `${Math.round(rect.bottom + 10)}px`;
+        machine.menu.hidden = false;
+        machine.button.setAttribute("aria-expanded", "true");
+        // `active`: the list is on screen, so a machine that comes up while it
+        // is open shows here.
+        if (Remotes()) {
+            machine.unwatch = Remotes().subscribe(
+                (snapshot) => drawMenu(snapshot.places || []), {active: true});
+        }
+        menuItems()[0]?.focus();
+    }
+
+    function closeMenu(refocus) {
+        const machine = state && state.machine;
+        if (!machine || machine.menu.hidden) return;
+        machine.menu.hidden = true;
+        machine.button.setAttribute("aria-expanded", "false");
+        if (machine.unwatch) machine.unwatch();
+        machine.unwatch = null;
+        if (refocus) machine.button.focus();
+    }
+
+    function menuItem({icon, dot, name, sub, checked, onPick, href, role, disabled, add}) {
+        const item = document.createElement(href ? "a" : "button");
+        item.className = "plx-import-menu-item" + (add ? " is-add" : "");
+        item.setAttribute("role", role || "menuitem");
+        if (role === "menuitemradio") item.setAttribute("aria-checked", checked ? "true" : "false");
+        if (href) {
+            item.href = href;
+        } else {
+            item.type = "button";
+            item.disabled = Boolean(disabled);
+            item.addEventListener("click", onPick);
+        }
+        const lead = el("span", dot || "plx-import-menu-icon");
+        lead.setAttribute("aria-hidden", "true");
+        if (!dot) lead.appendChild(el("span", `fas fa-${icon}`));
+        item.append(lead, el("span", "plx-import-menu-name", name));
+        if (sub) item.append(el("span", "plx-import-menu-sub", sub));
+        if (checked) {
+            const tick = el("span", "plx-import-menu-check");
+            tick.setAttribute("aria-hidden", "true");
+            tick.appendChild(el("span", "fas fa-check"));
+            item.append(tick);
+        }
+        return item;
+    }
+
+    function drawMenu(places) {
+        const machine = state && state.machine;
+        if (!machine) return;
+        const remote = !state.location.isLocal();
+        const current = remote && state.location.place() ? state.location.place().id : null;
+        const key = JSON.stringify([current, places.map((place) =>
+            [place.id, place.node, place.state, place.phase])]);
+        // A poll that changes nothing must not rebuild the menu under the
+        // keyboard focus.
+        if (key === machine.key) return;
+        machine.key = key;
+        const focused = machine.menu.contains(document.activeElement)
+            ? document.activeElement.dataset.place : null;
+        const sep = () => {
+            const line = el("div", "plx-import-menu-sep");
+            line.setAttribute("role", "separator");
+            return line;
+        };
+        const rows = [menuItem({
+            icon: "laptop", name: "Local", sub: "This computer", role: "menuitemradio",
+            checked: !remote, onPick: () => choose("local", null),
+        }), sep(), el("div", "plx-import-menu-label", "Remote")];
+        if (!places.length) rows.push(el("div", "plx-import-menu-empty", "No servers yet."));
+        places.forEach((place) => {
+            const up = place.kind === "server" || Boolean(place.node);
+            const waiting = !up && Remotes() && Remotes().isOpening(place.state);
+            const row = menuItem({
+                dot: "plx-import-menu-dot" + (up ? "" : (waiting ? " is-waiting" : " is-off")),
+                name: place.label,
+                sub: up ? "Connected" : (waiting ? (place.phase || "Connecting…") : "Not connected"),
+                role: "menuitemradio",
+                checked: place.id === current,
+                disabled: waiting,
+                onPick: () => (up
+                    ? choose("remote", {id: place.id, kind: place.kind,
+                                        label: place.label, node: place.node || null})
+                    : connect(place)),
+            });
+            row.dataset.place = place.id;
+            rows.push(row);
+        });
+        rows.push(sep());
+        rows.push(menuItem({icon: "plus", name: "Add a server…", add: true,
+                            onPick: () => connect(null)}));
+        rows.push(menuItem({icon: "gear", name: "Manage servers", sub: "Settings",
+                            href: plexoraUrl("settings") + "#remotes"}));
+        machine.menu.replaceChildren(...rows);
+        if (focused) {
+            machine.menu.querySelector(`[data-place="${CSS.escape(focused)}"]`)?.focus();
+        }
+    }
+
+    /** Move the service to a machine, and go back to the box it governs. */
+    function choose(where, place) {
+        closeMenu(false);
+        if (state.location) state.location.setWhere(where, place);
+        paintMachine();
+        state.pickInput?.focus();
     }
 
     /**
-     * The word the two letters do not carry, in the one arrangement that has
-     * room for it.
-     *
-     * The home page's, to the word (`views/quickViewLanding.js`): a label
-     * before the chip and this after it. Local only -- on Remote the switch's
-     * own place button stands here instead and NAMES the machine, and unlike
-     * this caption it is clickable, which is how the machine is changed
-     * without toggling back through Local and losing the pick on the way.
+     * Connect a saved server that is not up yet, or add a new one, through the
+     * connection modal, and use it the moment it is. Cancelling leaves the
+     * machine as it was.
      */
-    function paintCaption() {
-        const caption = part("where-caption");
-        if (!caption) return;
-        const local = !state.location || state.location.isLocal();
-        caption.hidden = !local;
-        caption.textContent = local ? "this computer" : "";
+    async function connect(place) {
+        closeMenu(false);
+        if (!window.PlexoraConnectionModal) return;
+        const outcome = await window.PlexoraConnectionModal.open(place
+            ? {name: place.id, kind: "node",
+               intent: "Opening a data node on this machine, so files on it "
+                       + "can be imported."}
+            : {kind: "node",
+               intent: "Add the machine the files are on. Plexora will handle "
+                       + "the SSH connection."});
+        if (!state) return;
+        if (outcome && outcome.connected) {
+            choose("remote", {id: outcome.name, kind: "remote",
+                              label: outcome.label || (place && place.label) || outcome.name,
+                              node: outcome.node || null});
+        } else {
+            state.machine?.button.focus();
+        }
     }
 
     function browseNode() {
@@ -405,72 +616,23 @@ window.PlexoraImportSample = (function () {
         const body = part("body");
         body.innerHTML = "";
         // Whatever a card was being added to, this is not it: the pick state's
-        // drop zone and paste box add loose files.
+        // field adds loose files.
         state.adding = null;
-        const drop = el("div", "plx-import-drop");
-        // No heading over the panel: the subtitle in the header already said
+        // No heading over the control: the subtitle in the header already said
         // what to do, and saying it twice on one screen is half the clutter
         // this state used to carry.
-        const panel = buildSplitControl("sample", pickWith,
-                                        {file: "Choose a file",
-                                         directory: "Choose a folder"});
-        panel.classList.add("is-panel");
-        panel.addEventListener("keydown", (event) => stepBetweenHalves(panel, event));
-        drop.appendChild(panel);
-        //: The two halves, held so they can be disabled while something is in
-        //: flight. Real buttons, so `disabled` rather than the pointer-events
-        //: trick a dropzone would use -- and it is needed either way: a second
-        //: press while a file dialog is opening opens a second one.
-        state.halves = [...panel.querySelectorAll(".browse-kind-half")];
+        const pick = buildPickControl({
+            examples: "sample",
+            placeholder: "Paste a path, or drop a table here…",
+            onTyped: (typed) => addPick(typed),
+        });
+        body.appendChild(pick);
         // Where `showModal()` puts the keyboard. Without it the browser
         // focuses the first focusable descendant, which is the × -- so the
         // dialog opened with a cyan ring around Close and nothing else.
         // `autofocus` is honoured on open and inert afterwards, which is why
-        // "Add files" focuses the half by hand below.
-        if (state.halves[0]) state.halves[0].autofocus = true;
-
-        const row = el("div", "plx-import-path");
-        const box = el("input", "plx-import-path-input");
-        box.type = "text";
-        box.placeholder = "…or paste a path and press Enter, or drop a table here";
-        box.spellcheck = false;
-        box.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter") return;
-            const typed = box.value.trim();
-            if (typed) {
-                box.value = "";
-                addPick(typed);
-            }
-        });
-        row.appendChild(box);
-        drop.appendChild(row);
-
-        body.appendChild(drop);
-
-        // One sentence, under the panel rather than inside it, and ending in
-        // the way to see the whole list. The two halves already carry their
-        // own examples (KIND_EXAMPLES.sample); this used to repeat them
-        // underneath in a second, longer list saying the same thing again.
-        const formats = el("p", "plx-import-formats",
-            "Works with Xenium, Visium, SpatialData, OME-TIFF, OME-Zarr, "
-            + "H&E slides, masks, AnnData and CSV tables. ");
-        const link = el("button", "plx-import-formats-link", "All formats");
-        link.type = "button";
-        link.addEventListener("click", () => {
-            window.PlexoraImportHelp?.open({tab: "formats", returnTo: link});
-        });
-        formats.appendChild(link);
-        body.appendChild(formats);
-
-        // Files dropped on the dialog. Small tables only, and the copy says so:
-        // a browser cannot give a server the PATH of a 40 GB image, only its
-        // bytes, and uploading a slide through a form is not an import.
-        drop.addEventListener("dragover", (event) => {
-            event.preventDefault();
-            drop.classList.add("is-over");
-        });
-        drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
-        drop.addEventListener("drop", onDrop);
+        // "Add more samples" focuses it by hand.
+        state.pickFocus.autofocus = true;
 
         // Coming back here from a proposal to add another sample. Without a
         // way back, the only route to the cards is to pick a file -- so
@@ -493,6 +655,169 @@ window.PlexoraImportSample = (function () {
         }
         // A disabled primary with nothing beside it reads as a broken button.
         setReason(state.picks.length ? "" : "Choose a file or folder to continue");
+    }
+
+    //: Two examples a side under the pick state's field, the way the home card
+    //: shows two under its own -- formats a SAMPLE arrives in rather than one
+    //: image, so a slide and a table on the file side and the two vendor runs
+    //: somebody most often points at on the folder side. A card's inline
+    //: picker shows its slot's own pair from browsePicker.js's KIND_EXAMPLES.
+    const PICK_CHIPS = {file: [".ome.tiff", ".h5ad"], directory: ["Xenium", "Visium"]};
+
+    function chipsFor(examples) {
+        if (examples === "sample") return PICK_CHIPS;
+        const table = (typeof KIND_EXAMPLES !== "undefined" && KIND_EXAMPLES[examples]) || {};
+        const pair = (text) => String(text || "").split(" · ").filter(Boolean).slice(0, 2);
+        return {file: pair(table.file), directory: pair(table.directory)};
+    }
+
+    /**
+     * The home page's card, as this dialog's pick control: File | Folder, one
+     * field with the machine chip at its front, and one button that is Browse
+     * while the box is empty and Add once a path is typed -- so the typed way
+     * in and the browsed way in never look like two routes. Under them, the
+     * formats as chips with the chosen side lit, and the way to the rest.
+     *
+     * Used by the pick state and by a card's inline "Add ..." row, which is
+     * why it takes its examples and placeholder rather than knowing them. The
+     * whole control takes a drop -- small tables, which a browser can hand
+     * over as bytes.
+     */
+    function buildPickControl({examples, placeholder, onTyped}) {
+        const pick = el("div", "plx-import-pick");
+        pick.dataset.kind = state.kind;
+        pick.dataset.face = "browse";
+
+        const kinds = el("div", "plx-import-kind");
+        kinds.setAttribute("role", "radiogroup");
+        kinds.setAttribute("aria-label", "Browse for a file or a folder");
+        const thumb = el("span", "plx-import-kind-thumb");
+        thumb.setAttribute("aria-hidden", "true");
+        kinds.appendChild(thumb);
+        const options = [["file", "fa-file", "File"], ["directory", "fa-folder", "Folder"]]
+            .map(([kind, icon, word]) => {
+                const option = el("button", "plx-import-kind-option");
+                option.type = "button";
+                option.setAttribute("role", "radio");
+                option.dataset.kind = kind;
+                option.innerHTML = `<span class="fas ${icon}" aria-hidden="true"></span><span>${word}</span>`;
+                option.addEventListener("click", () => setKind(pick, kind));
+                kinds.appendChild(option);
+                return option;
+            });
+        // A radio group is one tab stop, and the arrows move within it.
+        kinds.addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+            event.preventDefault();
+            const next = state.kind === "file" ? "directory" : "file";
+            setKind(pick, next);
+            options.find((option) => option.dataset.kind === next)?.focus();
+        });
+        pick.appendChild(kinds);
+
+        const row = el("div", "plx-import-pick-row");
+        const field = el("div", "plx-import-field");
+        if (state.machine) field.appendChild(state.machine.button);
+        const input = el("input", "plx-import-input");
+        input.type = "text";
+        input.placeholder = placeholder;
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.setAttribute("aria-label", "Path");
+        field.appendChild(input);
+        row.appendChild(field);
+
+        const go = el("button", "plx-import-browse");
+        go.type = "button";
+        go.innerHTML = `
+            <span class="plx-import-browse-face is-browse">
+                <span class="fas fa-folder-open" aria-hidden="true"></span><span>Browse</span>
+            </span>
+            <span class="plx-import-browse-face is-add">
+                <span>Add</span><span class="plx-import-browse-arrow" aria-hidden="true"><span class="fas fa-arrow-right"></span></span>
+            </span>`;
+        row.appendChild(go);
+        pick.appendChild(row);
+
+        const take = () => {
+            const typed = input.value.trim();
+            if (!typed) return false;
+            input.value = "";
+            pick.dataset.face = "browse";
+            onTyped(typed);
+            return true;
+        };
+        input.addEventListener("input", () => {
+            pick.dataset.face = input.value.trim() ? "add" : "browse";
+            if (input.getAttribute("aria-invalid")) {
+                input.removeAttribute("aria-invalid");
+                pick.classList.remove("is-refused");
+            }
+        });
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") take();
+        });
+        go.addEventListener("click", () => {
+            if (!take()) pickWith(state.kind);
+        });
+
+        // The service's own line -- "Sharing…", "Not connected to hpc yet" --
+        // under the row it is about.
+        if (state.machine) pick.appendChild(state.machine.status);
+
+        const foot = el("div", "plx-import-formats");
+        const list = el("ul", "plx-import-chips");
+        list.setAttribute("aria-label", "Example formats");
+        const shown = chipsFor(examples);
+        ["file", "directory"].forEach((side) => {
+            (shown[side] || []).forEach((label, index) => {
+                const chip = el("li", "plx-import-chip"
+                                + (side === "directory" && index === 0 ? " is-lead" : ""), label);
+                chip.dataset.kind = side;
+                list.appendChild(chip);
+            });
+        });
+        list.appendChild(el("li", "plx-import-more", "and more"));
+        const help = el("button", "plx-import-supported");
+        help.type = "button";
+        help.setAttribute("aria-haspopup", "dialog");
+        help.innerHTML = `<span class="fas fa-circle-question" aria-hidden="true"></span><span>What’s supported</span>`;
+        help.addEventListener("click", () => {
+            window.PlexoraImportHelp?.open({tab: "formats", returnTo: help});
+        });
+        foot.append(list, help);
+        pick.appendChild(foot);
+
+        // Files dropped on the control. Small tables only, and the placeholder
+        // says so: a browser cannot give a server the PATH of a 40 GB image,
+        // only its bytes, and uploading a slide through a form is not an
+        // import.
+        pick.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            pick.classList.add("is-over");
+        });
+        pick.addEventListener("dragleave", (event) => {
+            if (!pick.contains(event.relatedTarget)) pick.classList.remove("is-over");
+        });
+        pick.addEventListener("drop", onDrop);
+
+        //: Held so they can be disabled while something is in flight -- a
+        //: second press while a file dialog is opening opens a second one.
+        state.pickControls = [...options, go];
+        state.pickFocus = go;
+        state.pickInput = input;
+        setKind(pick, state.kind);
+        return pick;
+    }
+
+    function setKind(pick, kind) {
+        state.kind = kind;
+        pick.dataset.kind = kind;
+        pick.querySelectorAll(".plx-import-kind-option").forEach((option) => {
+            const on = option.dataset.kind === kind;
+            option.setAttribute("aria-checked", on ? "true" : "false");
+            option.tabIndex = on ? 0 : -1;
+        });
     }
 
     /**
@@ -553,7 +878,7 @@ window.PlexoraImportSample = (function () {
     }
 
     function setBusy(busy) {
-        (state?.halves || []).forEach((half) => { half.disabled = busy; });
+        (state?.pickControls || []).forEach((control) => { control.disabled = busy; });
     }
 
     function pickWith(mode) {
@@ -1017,55 +1342,32 @@ window.PlexoraImportSample = (function () {
      *
      * The card is the context: which sample this file joins is the one thing
      * the user must not have to remember, and a modal picker takes it off the
-     * screen at the moment they choose. The same two halves the pick state
-     * uses, the same paste box, the same drop target -- narrower, and with
-     * format examples that match the slot that opened it.
+     * screen at the moment they choose. The same control the pick state uses
+     * -- File | Folder, the field with its machine chip, Browse -- with the
+     * format examples of the slot that opened it.
      */
     function renderInlinePick(sample) {
         const spec = SLOT[state.adding.role] || SLOT.layer;
         const wrap = el("div", "plx-import-inline-pick");
-
-        const panel = buildSplitControl(spec.examples, pickWith,
-                                        {file: "Choose a file",
-                                         directory: "Choose a folder"});
-        panel.addEventListener("keydown", (event) => stepBetweenHalves(panel, event));
-        wrap.appendChild(panel);
-        // Held so they can be disabled while a file browser is opening: the
-        // same guard the pick state uses, against a second press opening a
-        // second native dialog.
-        state.halves = [...panel.querySelectorAll(".browse-kind-half")];
-
-        const row = el("div", "plx-import-path");
-        const box = el("input", "plx-import-path-input");
-        box.type = "text";
-        box.placeholder = `…or paste a path for ${sample.name || "this sample"}`;
-        box.spellcheck = false;
-        const refused = state.addError;
-        if (refused) box.value = refused.typed;
-        box.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter") return;
-            const typed = box.value.trim();
-            if (!typed) return;
-            const intent = state.adding;
-            box.value = "";
-            addPick(typed, intent);
+        const pick = buildPickControl({
+            examples: spec.examples,
+            placeholder: `Paste a path for ${sample.name || "this sample"}…`,
+            onTyped: (typed) => addPick(typed, state.adding),
         });
-        row.appendChild(box);
-        wrap.appendChild(row);
+        wrap.appendChild(pick);
+
+        const refused = state.addError;
         if (refused) {
+            state.pickInput.value = refused.typed;
+            state.pickInput.setAttribute("aria-invalid", "true");
+            pick.dataset.face = "add";
+            pick.classList.add("is-refused");
             const why = el("p", "plx-import-path-error", refused.reason);
             why.setAttribute("role", "alert");
-            wrap.appendChild(why);
-            box.setAttribute("aria-invalid", "true");
+            pick.insertBefore(why, pick.querySelector(".plx-import-formats"));
+            const box = state.pickInput;
             setTimeout(() => box.focus(), 0);
         }
-
-        wrap.addEventListener("dragover", (event) => {
-            event.preventDefault();
-            wrap.classList.add("is-over");
-        });
-        wrap.addEventListener("dragleave", () => wrap.classList.remove("is-over"));
-        wrap.addEventListener("drop", onDrop);
         return wrap;
     }
 
@@ -2158,11 +2460,11 @@ window.PlexoraImportSample = (function () {
         if (!state) return;
         state.phase = phase;
         dialog.dataset.phase = phase;
-        // The Local/Remote switch is hidden outside `pick`, because there is
-        // nothing to browse from a list of results -- except while a card's
-        // inline picker is open, which browses exactly as the pick state does
-        // and would otherwise reach whichever machine was chosen last with no
-        // way to see or change it.
+        // The chip it opened from is about to be moved or taken off screen.
+        closeMenu(false);
+        // The machine chip lives in the pick control, so it is on screen in
+        // `pick` and while a card's inline picker is open -- which browses
+        // exactly as the pick state does -- and nowhere else.
         if (state.adding && phase === "proposal") dialog.dataset.adding = "1";
         else delete dialog.dataset.adding;
         if (phase === "pick") renderPick();

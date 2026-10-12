@@ -245,6 +245,18 @@ How many 3-D view levels are built at once; further requests wait their turn.
 
 </Param>
 
+<Param name={"PLEXORA_SURFACE_BUDGET_TRIANGLES"} default={"5000000"}>
+
+The most triangles one surface may have (Surface Studio). A request past it is refused with the estimate and what to change -- a lower quality, a smaller region or fewer cells -- rather than built and then not drawable in a browser.
+
+</Param>
+
+<Param name={"PLEXORA_SURFACE_PREVIEW_VOXELS"} default={"2000000"}>
+
+Voxels the Surface Studio threshold preview reads (a coarse level of the area asked for, kept in memory while the slider moves).
+
+</Param>
+
 <Param name={"PLEXORA_PROJECTION_GATE"} default={"half the cores, at least 2"}>
 
 How many projection tiles (MIP, mean and the like) are computed at once.
@@ -260,24 +272,6 @@ How many planes of a z-stack are kept ready to read (their pyramids), for scrubb
 <Param name={"PLEXORA_WINDOW_SCAN"}>
 
 Set to `inline` to compute a z-stack's brightness window before its first tile, as before; by default the first tiles use a provisional window and the exact one is computed in the background.
-
-</Param>
-
-</ParamTable>
-
-## Cell model
-
-<ParamTable>
-
-<Param name={"PLEXORA_CELLCALL_MODEL_DIR"} default={"<data directory>/.models/cellcall"}>
-
-Directory the gating cell model's file is read from and downloaded to (the model that checks, per cell near a gate, whether the stain is the cell's own). For an offline machine, copy `cellcall_v1.onnx` here and nothing is fetched.
-
-</Param>
-
-<Param name={"PLEXORA_CELLCALL_MODEL_URL"}>
-
-Fetch the cell model's file from this address instead of Plexora's release (a mirror inside a firewalled site). The file is checked against the same checksum either way.
 
 </Param>
 

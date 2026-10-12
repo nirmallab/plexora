@@ -26,7 +26,6 @@ PAID = {
     "ai.run_session": "ai", "ai.run_status": "ai", "ai.run_control": "ai", "ai.balance": "ai",
     "gating.session_start": "ai:gating:session",
     "gating.session_bulk": "ai:gating:session",
-    "gating.session_cellcall": "ai:gating:session",
     "gating.next": "ai:gating:session",
     "gating.answer": "ai:gating:session",
     "gating.session_status": "ai:gating:session",
@@ -46,8 +45,6 @@ PAID = {
     "gating.qc": "ai:gating:analytics",
     "gating.score_candidates": "ai:gating:analytics",
     "gating.hierarchy": "ai:gating:analytics",
-    "gating.cell_model_run": "ai:gating:analytics",
-    "gating.cell_model_calls": "ai:gating:analytics",
     "viewer.show_evidence": "ai:evidence",
     "qc.session_start": "ai:qc:session",
     "qc.session_bulk": "ai:qc:session",
@@ -69,6 +66,13 @@ PAID = {
     "ai.chat_approve": "ai:chat",
     "ai.chat_control": "ai:chat",
     "ai.chat_history": "ai:chat",
+    # Surface Studio (plexora/agent/core/surface.py): making and analysing
+    # surfaces. Reading, restyling, exporting and deleting one stay Free.
+    "surface.create": "surfaces",
+    "surface.suggest_threshold": "surfaces",
+    "surface.inspect": "surfaces",
+    "surface.refine": "surfaces",
+    "surface.neighbours": "surfaces",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -130,7 +134,8 @@ def test_manual_gating_stays_free(session):
 
 
 def test_paid_covers_everything_it_should():
-    grants = tuple(manifest.AI_MODULES)
+    # The Paid roots: `ai` (and the modules under it) and Surface Studio.
+    grants = tuple(manifest.AI_MODULES) + ("surfaces",)
     for entitlement in set(PAID.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
