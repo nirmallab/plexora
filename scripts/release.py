@@ -78,8 +78,10 @@ PBS_SHA256 = {
 #: Extras the app ships with. Not `jupyter` (a desktop app is not a notebook
 #: server) and not `dev`. `ai` brings the MCP server for external agents; the
 #: in-app harness (plexora/ai/harness) needs only spatialagents, a core
-#: dependency.
-RUNTIME_EXTRAS = ("spatial", "wsi", "remote", "ai")
+#: dependency. `video` is Video Studio's ffmpeg (imageio-ffmpeg's binary, run
+#: as a subprocess): its licence terms travel with the bundle -- see
+#: THIRD_PARTY_NOTICES.md before releasing.
+RUNTIME_EXTRAS = ("spatial", "wsi", "remote", "ai", "video")
 
 #: Imported from the relocated runtime before it is trusted: every heavy
 #: binary dependency, so a wheel with a hard-coded path fails here rather than
@@ -88,7 +90,7 @@ RUNTIME_IMPORTS = (
     "plexora", "plexora.cli", "numpy", "scipy", "polars", "cv2", "sklearn",
     "shapely", "spatialdata", "zarr", "tifffile", "imagecodecs", "openslide",
     "pydicom", "wsidicom", "pyarrow", "gcsfs", "adlfs", "waitress", "flask",
-    "mcp", "plexora.ai.harness", "spatialagents",
+    "mcp", "plexora.ai.harness", "spatialagents", "imageio_ffmpeg",
 )
 
 #: Friendly platform word per target triple, used in artifact names.

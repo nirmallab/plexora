@@ -56,6 +56,10 @@ WATCHED = (
     "sam2",
     # The segment3d extra's (plugins/segmentation): only when a stack is segmented.
     "cellpose",
+    # Video Studio, and the video extra's ffmpeg finder: only when an export
+    # asks which encoders there are (plugins/video_studio/server/encoders.py).
+    "plexora.plugins.video_studio",
+    "imageio_ffmpeg",
 )
 
 # Which tool the ?tool= page is rendered with. Parameterized because each build

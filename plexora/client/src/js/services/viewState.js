@@ -670,7 +670,14 @@
             this._appliedKey = rev.key;
             global.PlexoraViewPerf?.mark?.("view", "committed", rev.id, rev.spec);
             const late = entries.filter((entry) => !entry.ready);
-            if (late.length) all.then(() => this._commitEntries(rev, late, true));
+            if (late.length) {
+                // Counted (`lateCommits()`), so a caller that captures frames
+                // can wait for the surfaces that commit after the rest.
+                // `settled()` does not: a late surface may never commit.
+                this._late = (this._late || 0) + 1;
+                all.then(() => this._commitEntries(rev, late, true))
+                    .finally(() => { this._late -= 1; });
+            }
             return true;
         }
 
@@ -707,6 +714,11 @@
                 ? new Promise((resolve) => setTimeout(resolve, 20)).then(wait)
                 : Promise.resolve(this.get()));
             return wait();
+        }
+
+        /** How many surfaces of past revisions are still to commit late. */
+        lateCommits() {
+            return this._late || 0;
         }
 
         /** The view token the tiles are at right now ("" when planar). */

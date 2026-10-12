@@ -93,6 +93,12 @@ FIGURES_DIRNAME = ".figures"
 #: figure_builder's captures module.
 CAPTURES_DIRNAME = ".captures"
 
+#: Directory under a root holding every Video Studio project, one directory per
+#: video with its own SQLite file and its exports. Dot-prefixed for the same
+#: reason as FIGURES_DIRNAME; a video, like a figure, references its images and
+#: never copies them. See video_studio's repository module.
+VIDEOS_DIRNAME = ".videos"
+
 #: Where what an external agent did is kept: the audit log of every mutation it
 #: attempted and the rendered evidence it was shown. Dot-prefixed like the two
 #: above, so nothing mistakes it for a project folder, and never on a shared
@@ -780,6 +786,15 @@ def captures_root() -> Path:
     given yet, and the bin is where the capture waits safely until it is.
     """
     return data_root() / CAPTURES_DIRNAME
+
+
+def videos_root() -> Path:
+    """Where this user's Video Studio projects and their exports live.
+
+    Never a shared root, for the reason `figures_root` gives: a video is one
+    person's choreography over an image, and its exports are theirs.
+    """
+    return data_root() / VIDEOS_DIRNAME
 
 
 def agent_root() -> Path:

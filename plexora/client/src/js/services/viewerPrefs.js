@@ -84,7 +84,29 @@
 
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
+            if (this._holds > 0) return false;
             return this.prefs.motion !== "off" && !systemReducedMotion();
+        }
+
+        /**
+         * Hold motion off for a while without touching the saved preference:
+         * `const release = prefs.hold()` ... `release()`. For a caller that
+         * drives the viewer frame by frame (Video Studio's export), where a
+         * plane fade or an eased zoom between "applied" and "captured" would
+         * put a half-finished picture in a frame. Holds count, so two callers
+         * can overlap; `set({motion: "off"}, {save: false})` would instead
+         * queue the change for the next save and write it to disk.
+         */
+        hold() {
+            this._holds = (this._holds || 0) + 1;
+            this._announce();
+            let released = false;
+            return () => {
+                if (released) return;
+                released = true;
+                this._holds = Math.max(0, (this._holds || 0) - 1);
+                this._announce();
+            };
         }
 
         systemReducedMotion() {

@@ -14,6 +14,7 @@ recursive-include plexora/plugins/cell_explorer/static *
 recursive-include plexora/plugins/figure_builder/static *
 recursive-include plexora/plugins/gating/static *
 recursive-include plexora/plugins/roi/static *
+recursive-include plexora/plugins/video_studio/static *
 # The telemetry Worker (Cloudflare) is deployed separately, never shipped.
 prune backend
 # The licence service Worker likewise: deployed separately, never shipped --

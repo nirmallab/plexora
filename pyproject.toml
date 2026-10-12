@@ -230,6 +230,15 @@ segment3d = [
     "cellpose>=4",
     "torch>=2.5.1",
 ]
+# Video Studio's server-side encoder (plexora/plugins/video_studio): an ffmpeg
+# binary, run only as a separate process -- never imported or linked. The
+# browser encodes MP4 itself where it can (WebCodecs); this is what writes MP4,
+# WebM, ProRes and GIF everywhere else. The desktop app bundles it
+# (scripts/release.py RUNTIME_EXTRAS). imageio-ffmpeg's binary is an LGPL/GPL
+# build of FFmpeg with x264; see THIRD_PARTY_NOTICES.md.
+video = [
+    "imageio-ffmpeg>=0.5",
+]
 
 [project.scripts]
 plexora = "plexora.cli:main"
@@ -244,6 +253,7 @@ figure_builder = "plexora.plugins.figure_builder:PLUGIN"
 gating = "plexora.plugins.gating:PLUGIN"
 qc = "plexora.plugins.qc:PLUGIN"
 roi = "plexora.plugins.roi:PLUGIN"
+video_studio = "plexora.plugins.video_studio:PLUGIN"
 
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"

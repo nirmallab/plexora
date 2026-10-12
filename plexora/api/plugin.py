@@ -854,6 +854,14 @@ class Plugin:
     #: they change how the image is shown rather than analyse it.
     menu: str = "tools"
 
+    #: Offer a button for this tool in the viewer's top-right launcher dock,
+    #: beside the dataset navigation -- one click from the image, for a tool
+    #: whose whole point is the image (Video Studio). Data only: core renders
+    #: the button from `icon`, `label` and `shortcut` and wires its click to
+    #: the same `toggleTool` a Tools-menu row uses, so the launcher can never
+    #: open a tool the menu would not (a locked Paid tool explains itself).
+    launcher: bool = False
+
     #: The licence entitlement this WHOLE plugin needs (plexora/licensing/
     #: manifest.py) -- `plugin:<name>` for a plugin sold as a unit. None, the
     #: default and what every plugin shipped today declares, is Free: a
@@ -940,6 +948,8 @@ class Plugin:
         """
         out = {"name": self.name, "label": self.label,
                "icon": self.icon, "shortcut": self.shortcut}
+        if self.launcher:
+            out["launcher"] = True
         if self.entitlement:
             out["entitlement"] = self.entitlement
         return out

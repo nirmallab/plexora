@@ -1,5 +1,6 @@
 """Plugin-level licensing: a Paid plugin, a mixed plugin, and the rule that
-every plugin shipped today is untouched by any of it."""
+every plugin shipped today is untouched by any of it -- except Video Studio,
+the one shipped plugin sold as a unit."""
 
 import pytest
 from flask import Blueprint, Flask, jsonify
@@ -34,13 +35,29 @@ def _blueprint(name):
     return bp
 
 
+#: The shipped plugins that are Paid, and the entitlement each needs. One entry
+#: per deliberate decision: a plugin turning Paid by accident fails below.
+PAID_SHIPPED = {"video_studio": "plugin:video_studio"}
+
+
 def test_every_shipped_plugin_is_free():
+    """Every shipped plugin but one: Video Studio is Paid as a whole, and says
+    so in describe(), which is what the Tools menu badges it from."""
+    paid = {}
     for name in plugin_registry.available_names():
         plugin = plugin_registry.load(name)
-        if plugin is not None:
-            assert plugin.entitlement is None, name
-            assert not plugin.endpoint_entitlements, name
-            assert "entitlement" not in plugin.describe(), name
+        if plugin is None:
+            continue
+        # Nothing shipped is a mixed plugin.
+        assert not plugin.endpoint_entitlements, name
+        if plugin.entitlement is not None:
+            paid[name] = plugin.entitlement
+            assert plugin.describe()["entitlement"] == plugin.entitlement, name
+            continue
+        assert "entitlement" not in plugin.describe(), name
+    # Every other shipped plugin is Free; Video Studio, when installed, is the one Paid.
+    assert paid == {name: ent for name, ent in PAID_SHIPPED.items()
+                    if name in plugin_registry.available_names()}
 
 
 def test_a_malformed_plugin_entitlement_is_refused():

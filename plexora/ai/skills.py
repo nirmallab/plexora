@@ -151,8 +151,8 @@ def render(text: str, values=None) -> str:
 # -- the lint: every name a skill uses comes from the code ------------------------
 
 #: The trees whose code names what a skill may name.
-_VOCABULARY_SOURCES = ("plugins/gating", "plugins/qc", "plugins/roi", "agent", "mcp",
-                       "ai", "cli.py")
+_VOCABULARY_SOURCES = ("plugins/gating", "plugins/qc", "plugins/roi", "plugins/video_studio",
+                       "agent", "mcp", "ai", "cli.py")
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _FENCE = re.compile(r"```.*?```", re.S)
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

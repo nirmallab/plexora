@@ -130,6 +130,12 @@
         }
 
         /** How much of the ghost is showing (0 when no fade is running). */
+        /** Whether no fade is running and no ghost of the last plane is on
+         *  screen: what a frame capture waits for. */
+        idle() {
+            return !this.animation && (!this.ghost || this.ghost.hidden);
+        }
+
         showing() {
             if (!this.animation || !this.ghost || this.ghost.hidden) return 0;
             const value = Number(global.getComputedStyle?.(this.ghost)?.opacity);
@@ -343,7 +349,17 @@
 
         onSettled() {
             clearTimeout(this.timer);
+            if (this.paused) return;
             this.timer = setTimeout(() => this.run(), this.idleMs);
+        }
+
+        /** Stop (or resume) warming neighbouring planes: for a caller that
+         *  knows the planes it will need next better than the direction of
+         *  travel does (Video Studio prepares its own). */
+        pause(on) {
+            this.paused = Boolean(on);
+            if (this.paused) this.abort();
+            else this.onSettled();
         }
 
         abort() {

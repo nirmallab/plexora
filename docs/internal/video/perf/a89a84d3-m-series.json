@@ -1,0 +1,348 @@
+{
+  "started_at": "2026-10-11T18:27:27.937Z",
+  "scenarios": [
+    {
+      "name": "zsweep_small_1080_png",
+      "dataset": "small",
+      "preset": "z_sweep",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "format": "png",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true,
+          "label": true,
+          "legend": true,
+          "axes": true
+        }
+      },
+      "route": "server",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "route_used": "server/pngzip",
+      "wall_s": 13.976,
+      "ok": true,
+      "bytes": 6160792,
+      "kind": "download",
+      "exportId": "exp_3c6c09f606a1",
+      "file": "Z-Stack-Sweep-2026-10-11-1920x1080-30fps.zip",
+      "video_id": "vid_9f7520c3eac5",
+      "restored": true,
+      "console_errors": [],
+      "frames": 24,
+      "timing": {
+        "render_s": 7.31,
+        "per_frame_ms": {
+          "mean": 296,
+          "max": 1115
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 83,
+          "max": 189
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "Z-Stack-Sweep-2026-10-11-1920x1080-30fps.zip",
+        "frames": 24,
+        "distinct": 24,
+        "failing": []
+      }
+    },
+    {
+      "name": "orbit_small_1080_browser",
+      "dataset": "small",
+      "preset": "orbit",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "format": "mp4",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true,
+          "label": true,
+          "legend": true,
+          "axes": true
+        }
+      },
+      "route": "browser",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "preview": {
+        "frames": 360,
+        "fps": 120,
+        "p50_ms": 8.3,
+        "p95_ms": 10.1
+      },
+      "route_used": "browser/webcodecs",
+      "wall_s": 3.641,
+      "ok": true,
+      "bytes": 986496,
+      "kind": "blob",
+      "exportId": "exp_f0cbdc85",
+      "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+      "video_id": "vid_de970e4cd79a",
+      "restored": true,
+      "console_errors": [],
+      "frames": 120,
+      "timing": {
+        "render_s": 3.4,
+        "per_frame_ms": {
+          "mean": 27,
+          "max": 310
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 19,
+          "max": 270
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+        "frames": 120,
+        "distinct": 120,
+        "failing": []
+      }
+    },
+    {
+      "name": "orbit_small_1080_ffmpeg",
+      "dataset": "small",
+      "preset": "orbit",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "format": "mp4",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true,
+          "label": true,
+          "legend": true,
+          "axes": true
+        }
+      },
+      "route": "ffmpeg",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "route_used": "server/ffmpeg",
+      "wall_s": 61.466,
+      "ok": true,
+      "bytes": 474263,
+      "kind": "download",
+      "exportId": "exp_4e3f2238ad96",
+      "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+      "video_id": "vid_583df0ca8544",
+      "restored": true,
+      "console_errors": [],
+      "frames": 120,
+      "timing": {
+        "render_s": 21.168,
+        "per_frame_ms": {
+          "mean": 173,
+          "max": 807
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 18,
+          "max": 100
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+        "frames": 120,
+        "distinct": 120,
+        "failing": []
+      }
+    },
+    {
+      "name": "orbit_small_4k_browser",
+      "dataset": "small",
+      "preset": "orbit",
+      "settings": {
+        "width": 3840,
+        "height": 2160,
+        "fps": 30,
+        "format": "mp4",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true,
+          "label": true,
+          "legend": true,
+          "axes": true
+        }
+      },
+      "route": "browser",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "ok": false,
+      "error": "Error: no route for mp4/browser\n    at file://<repo>/tools/bench_video/bench.mjs:88:27"
+    },
+    {
+      "name": "zoom_flat_1080_browser",
+      "dataset": "flat",
+      "preset": "zoom",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "format": "mp4",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true
+        }
+      },
+      "route": "browser",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "preview": {
+        "frames": 289,
+        "fps": 96,
+        "p50_ms": 8.3,
+        "p95_ms": 10.3
+      },
+      "route_used": "browser/webcodecs",
+      "wall_s": 2.27,
+      "ok": true,
+      "bytes": 1872683,
+      "kind": "blob",
+      "exportId": "exp_c1eff5eb",
+      "file": "Zoom-InOut-2026-10-11-1920x1080-30fps.mp4",
+      "video_id": "vid_4d2249a73f2d",
+      "restored": true,
+      "console_errors": [],
+      "frames": 105,
+      "timing": {
+        "render_s": 2.14,
+        "per_frame_ms": {
+          "mean": 19,
+          "max": 136
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 17,
+          "max": 19
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "Zoom-InOut-2026-10-11-1920x1080-30fps.mp4",
+        "frames": 105,
+        "distinct": 105,
+        "failing": []
+      }
+    },
+    {
+      "name": "rock_small_gif",
+      "dataset": "small",
+      "preset": "rock",
+      "settings": {
+        "width": 640,
+        "height": 360,
+        "fps": 15,
+        "format": "gif",
+        "quality": "good",
+        "overlays": {
+          "scalebar": true
+        }
+      },
+      "route": "ffmpeg",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "route_used": "server/ffmpeg",
+      "wall_s": 3.465,
+      "ok": true,
+      "bytes": 344729,
+      "kind": "download",
+      "exportId": "exp_9436554c6023",
+      "file": "Rock-2026-10-11-640x360-15fps.gif",
+      "video_id": "vid_370bd6f90d23",
+      "restored": true,
+      "console_errors": [],
+      "frames": 30,
+      "timing": {
+        "render_s": 1.349,
+        "per_frame_ms": {
+          "mean": 24,
+          "max": 119
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 19,
+          "max": 83
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "Rock-2026-10-11-640x360-15fps.gif",
+        "frames": 30,
+        "distinct": 15,
+        "failing": []
+      }
+    },
+    {
+      "name": "orbit_ims_1080_browser",
+      "dataset": "ims",
+      "preset": "orbit",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "format": "mp4",
+        "quality": "high",
+        "overlays": {
+          "scalebar": true,
+          "label": true,
+          "legend": true,
+          "axes": true
+        }
+      },
+      "route": "browser",
+      "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+      "preview": {
+        "frames": 352,
+        "fps": 117,
+        "p50_ms": 8.3,
+        "p95_ms": 9.1
+      },
+      "route_used": "browser/webcodecs",
+      "wall_s": 14.165,
+      "ok": true,
+      "bytes": 8959612,
+      "kind": "blob",
+      "exportId": "exp_17f6bf0f",
+      "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+      "video_id": "vid_1f0af18e51df",
+      "restored": true,
+      "console_errors": [],
+      "frames": 240,
+      "timing": {
+        "render_s": 14,
+        "per_frame_ms": {
+          "mean": 57,
+          "max": 1949
+        },
+        "retries": 0,
+        "readiness_waits_ms": {
+          "mean": 39,
+          "max": 1902
+        }
+      },
+      "unresolved": 0,
+      "verified": true,
+      "frame_check": {
+        "file": "360-Rotation-2026-10-11-1920x1080-30fps.mp4",
+        "frames": 240,
+        "distinct": 240,
+        "failing": []
+      }
+    }
+  ],
+  "sha": "a89a84d3",
+  "label": "m-series",
+  "machine": "arm64"
+}

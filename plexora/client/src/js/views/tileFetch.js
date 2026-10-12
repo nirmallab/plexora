@@ -161,6 +161,12 @@
             else if (link.batching && link.wait < BATCH_LEAVE_MS) link.batching = false;
         }
 
+        /** Nothing fetching, decoding or waiting: what a frame capture
+         *  waits for, beside each item's own fully-loaded flag. */
+        idle() {
+            return this.inFlight === 0 && this.queue.length === 0 && this.requests.size === 0;
+        }
+
         /**
          * Route `tileSource`'s downloads through this scheduler. `owner` is
          * "main" or "pane"; `standby` marks a prefetch's items (lowest tier).
@@ -399,6 +405,7 @@
                             try {
                                 request.state = "decoding";
                                 decoded = await this.decode(part.bytes);
+                                decoded.coarse = Boolean(part.steps);
                                 this.stats.decoded += 1;
                             } catch (caught) {
                                 failure = caught;
@@ -453,6 +460,10 @@
                 this.stats.bytes += buffer.byteLength;
                 request.state = "decoding";
                 decoded = await this.decode(buffer);
+                // A coarse stand-in for a section the server has not
+                // prepared yet (volume/plane_view.py, `no-store`): marked on
+                // the tile, so a frame capture can tell it from the real one.
+                decoded.coarse = Boolean(response.headers?.get?.("X-Plexora-Served-Steps"));
                 this.stats.decoded += 1;
             } catch (caught) {
                 error = caught;
@@ -499,7 +510,9 @@
             if (tile) {
                 tile._array = decoded.array;
                 tile._format = decoded.format;
+                tile._plexoraCoarse = Boolean(decoded.coarse);
             }
+            if (decoded.coarse) this.stats.coarse = (this.stats.coarse || 0) + 1;
             try {
                 job.finish(this.context(Math.max(1, decoded.width), Math.max(1, decoded.height)),
                            null, "context2d");
@@ -531,7 +544,7 @@
             // Each its own buffer: an 8-bit tile's is transferred to a decoder.
             const bytes = buffer.slice(at, at + meta.bytes);
             at += meta.bytes;
-            return { status: meta.status, bytes };
+            return { status: meta.status, bytes, steps: meta.steps || null };
         });
     }
 

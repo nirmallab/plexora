@@ -4635,3 +4635,80 @@ body.sidebar-collapsed .viewer-shell,
     width: var(--plx-band-sections-yz, 56px);
     z-index: 211;
 }
+
+/* -- tool launchers (Plugin.launcher) ----------------------------------------
+   One button per tool that asked for one, docked top-right beside the dataset
+   navigation (index.html #viewer_tool_launchers) and styled like it, so the
+   corner reads as one strip of controls. Pressed while the tool is open
+   (toolLoader.js paintMenuRows). */
+.viewer-tool-launchers {
+    align-items: center;
+    background: rgba(11, 15, 21, 0.82);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-tool-launchers:hover,
+.viewer-tool-launchers:focus-within {
+    background: rgba(11, 15, 21, 0.95);
+    border-color: var(--border-strong);
+}
+
+.viewer-launcher {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    height: 24px;
+    justify-content: center;
+    line-height: 1;
+    position: relative;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.viewer-launcher:hover {
+    background: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.viewer-launcher:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.viewer-launcher[aria-pressed="true"] {
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+}
+
+/* A Paid tool the licence does not unlock: a small dot, the Tools menu's badge
+   in miniature. The click explains (tool_routes `locked`). */
+.viewer-launcher-paid {
+    background: var(--accent-warning);
+    border-radius: 50%;
+    height: 5px;
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    width: 5px;
+}
+
+.brightfield-ground ~ .viewer-tool-launchers,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-tool-launchers {
+    background: rgba(255, 255, 255, 0.88);
+}
+
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-launcher {
+    color: rgba(18, 24, 32, 0.75);
+}
