@@ -171,13 +171,34 @@ def _mask_findings(mask_size, width, height) -> list[dict]:
         "so they will not sit on the cells they came from.")]
 
 
+def _unplaced_findings(unplaced: int, rows: int) -> list[dict]:
+    """Cells the table has and the image cannot show.
+
+    A NaN (or empty) x or y is a cell nobody gave a position. It is not an
+    error -- the row is kept, its markers are summarized and gated with the
+    rest -- but it is drawn nowhere and nothing hovers onto it, so a count on
+    screen that is higher than the dots on the image deserves a sentence.
+    """
+    if not unplaced or unplaced >= rows:
+        # None, or every one: the second is "no_cells", said above.
+        return []
+    noun = "cell has" if unplaced == 1 else "cells have"
+    return [_finding(
+        "cells_without_position",
+        f"{_round(unplaced)} of {_round(rows)} {noun} no x/y position (an "
+        "empty or NaN coordinate), so they are not drawn on the image. Their "
+        "other values are still used.")]
+
+
 def report(project, description: Mapping[str, Any],
-           mask_size: tuple | None = None) -> list[dict]:
+           mask_size: tuple | None = None, *, unplaced: int = 0,
+           rows: int = 0) -> list[dict]:
     """Every mismatch these three inputs can be shown to have, worst first.
 
     Pure: `project` is a typed record, `description` is the per-column summary
     and `mask_size` is `(width, height)` or None when there is no mask, it is
-    on another machine, or its dimensions could not be read. Nothing here opens
+    on another machine, or its dimensions could not be read. `unplaced` is how
+    many of the table's `rows` have a non-finite x or y. Nothing here opens
     a file, which is what makes the whole set testable against hand-built
     inputs rather than against fixtures on disk.
 
@@ -199,6 +220,7 @@ def report(project, description: Mapping[str, Any],
 
     if x and y and width and height:
         findings.extend(_coordinate_findings(x, y, width, height))
+        findings.extend(_unplaced_findings(unplaced, rows))
     elif roles.x and roles.y and not (x and y):
         # The columns are named but hold nothing the viewer could summarize:
         # every row null, or the image-id subset selected none of them. Either

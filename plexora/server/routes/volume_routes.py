@@ -159,7 +159,10 @@ def _segmentation_info(project):
     seg = project.segmentation
     if not seg.available:
         return {"ndim": 0}
-    return {"ndim": 3 if volume_labels.is_label_volume(seg.derived) else 2}
+    # Wherever the mask is held: a data node says whether its mask is a label
+    # volume (volume_labels.project_has_label_volume), where a local one is
+    # answered by its path.
+    return {"ndim": 3 if volume_labels.project_has_label_volume(project) else 2}
 
 
 def _int(value, default=0, low=None, high=None):
@@ -800,9 +803,7 @@ def objects_state(project) -> dict:
     from plexora.server.volume import labels as volume_labels
     from plexora.server.volume import objects as volume_objects
 
-    seg = project.segmentation
-    label_volume = bool(seg.available and seg.derived
-                        and volume_labels.is_label_volume(seg.derived))
+    label_volume = volume_labels.project_has_label_volume(project)
     table, manifest_path = volume_objects.object_paths(project)
     manifest = None
     if manifest_path.exists():

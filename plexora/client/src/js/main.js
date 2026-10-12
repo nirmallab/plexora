@@ -516,6 +516,15 @@ async function init(config, savedViewTransform = null) {
             viewState.registerSurface("labels", {
                 order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
         }
+        // A 3-D mask a data node finishes converting after this page opened
+        // was read as 2-D until then (the node reports no label volume while
+        // it builds one): track the plane from now on.
+        __plexora.trackLabelPlanes = async () => {
+            if (!(await viewState.refreshLabels()) || !viewState.labelsAre3d()) return;
+            viewState.registerSurface("labels", {
+                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
+            viewerManager.presetLabelPlane(viewState.labelSpec());
+        };
         // A time series' object table (one row per cell per frame): the rows
         // the viewer reads follow the frame on screen -- the cells, their
         // centroids, the nearest cell to a click and every gate.
@@ -528,8 +537,13 @@ async function init(config, savedViewTransform = null) {
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
     // pyramid, at a new tile address.
-    window.PlexoraResourceStatus?.onMaskReady?.(
-        (version) => viewerManager.reloadLabelLayer(version));
+    window.PlexoraResourceStatus?.onMaskReady?.(async (version) => {
+        try {
+            await __plexora.trackLabelPlanes?.();
+        } finally {
+            viewerManager.reloadLabelLayer(version);
+        }
+    });
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
     // whichever tool (if any) is active, so they work on a plain base viewer too.
