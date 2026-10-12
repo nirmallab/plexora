@@ -126,8 +126,11 @@ window.PlexoraSurfaceInspect = (function () {
         go.type = "button";
         const list = el("ol", "plx-surf-near-list");
         near.append(el("span", null, "Within"), within, el("span", "plx-surf-unit", "µm"), go);
-        card.append(near, list);
-        go.addEventListener("click", () => neighbours(id, object, Number(within.value) || 5, list));
+        // Spatial neighbours are Plexora 3D: absent without it.
+        if (window.PlexoraPaid?.allows?.("volume:surfaces")) {
+            card.append(near, list);
+            go.addEventListener("click", () => neighbours(id, object, Number(within.value) || 5, list));
+        }
 
         place(card, selection.clientX || 0, selection.clientY || 0);
 

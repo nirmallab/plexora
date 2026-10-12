@@ -22,6 +22,10 @@ from plexora.datasource import register_image_datasource
 from plexora.server.models.project import Project
 from plexora.server.volume import labels as volume_labels
 
+#: Plexora 3D's analysis paths (plexora/licensing/manifest.py `volume`): these
+#: tests exercise them, so they run on a Paid test licence.
+pytestmark = pytest.mark.paid
+
 FRAMES, DEPTH, SIZE = 3, 4, 64
 
 

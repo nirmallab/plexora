@@ -499,7 +499,10 @@
             // Surfaces (services/surfaceLayers.js): what the 3-D view shows,
             // once there is a surface, and a new one.
             const surfaces = global.PlexoraSurfaceLayers;
-            if (surfaces) {
+            // Making a surface and importing a mesh are Plexora 3D; showing
+            // and lighting the surfaces that exist is not.
+            const canMake = Boolean(global.PlexoraPaid?.allows?.("volume:surfaces"));
+            if (surfaces && (canMake || surfaces.surfaceLayers().length)) {
                 items.push({ separator: true });
                 if (surfaces.surfaceLayers().length) {
                     const show = surfaces.shown();
@@ -511,21 +514,23 @@
                         { label: "Surfaces only", checked: !show.volume && show.surfaces,
                           onSelect: () => surfaces.setShow({ volume: false, surfaces: true }) });
                 }
-                items.push({ label: "New surface…", title: "Surface Studio (S)",
-                             onSelect: () => global.PlexoraSurfaceStudio?.open() });
-                items.push({ label: "Import mesh…", title: "PLY, OBJ, STL, GLB, or a zip Plexora exported",
-                             onSelect: () => {
-                                 const input = document.createElement("input");
-                                 input.type = "file";
-                                 input.accept = ".ply,.obj,.stl,.glb,.zip";
-                                 input.addEventListener("change", () => {
-                                     const file = input.files?.[0];
-                                     if (!file) return;
-                                     surfaces.importMesh(file).catch((error) => global.PlexoraToast?.show?.(
-                                         { title: error.message, tone: "warning" }));
-                                 });
-                                 input.click();
-                             } });
+                if (canMake) {
+                    items.push({ label: "New surface…", title: "Surface Studio (S)",
+                                 onSelect: () => global.PlexoraSurfaceStudio?.open() });
+                    items.push({ label: "Import mesh…", title: "PLY, OBJ, STL, GLB, or a zip Plexora exported",
+                                 onSelect: () => {
+                                     const input = document.createElement("input");
+                                     input.type = "file";
+                                     input.accept = ".ply,.obj,.stl,.glb,.zip";
+                                     input.addEventListener("change", () => {
+                                         const file = input.files?.[0];
+                                         if (!file) return;
+                                         surfaces.importMesh(file).catch((error) => global.PlexoraToast?.show?.(
+                                             { title: error.message, tone: "warning" }));
+                                     });
+                                     input.click();
+                                 } });
+                }
                 if (surfaces.surfaceLayers().length) {
                     const current = surfaces.lightName();
                     items.push({ label: "Light",

@@ -24,6 +24,7 @@ from plexora import app, paths
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
 from plexora.server.volume import pin, serve
+from plexora.licensing import guards
 from plexora.telemetry import performance
 
 #: What the viewer can be showing a volume as.
@@ -1007,7 +1008,13 @@ def section_cells(datasource):
     return response
 
 
+#: Measuring and tracking whole 3-D cells is Plexora 3D (manifest
+#: `volume:objects`); reading an object table that exists stays Free.
+OBJECTS_ENTITLEMENT = "volume:objects"
+
+
 @app.route('/volume/<string:datasource>/tracks', methods=['POST'])
+@guards.require_entitlement(OBJECTS_ENTITLEMENT)
 def track_objects_route(datasource):
     """Link a time series' measured cells from frame to frame (a `track`
     column in the object table). `{"max_distance": number}` in the table's
@@ -1050,6 +1057,7 @@ def get_objects(datasource):
 
 
 @app.route('/volume/<string:datasource>/objects', methods=['POST'])
+@guards.require_entitlement(OBJECTS_ENTITLEMENT)
 def measure_objects_route(datasource):
     """Measure every cell of the project's 3-D mask once, whole.
 

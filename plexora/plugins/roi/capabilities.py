@@ -23,6 +23,24 @@ from plexora.api.plugin import Requires
 from plexora.plugins.roi import PLUGIN
 
 OWNER = "roi"
+
+#: A region made 3-D -- a shape through the planes, carried, or exactly some
+#: cells of a 3-D mask -- is Plexora 3D (plexora/licensing/manifest.py). Flat
+#: regions, and flattening a 3-D one, stay Free.
+SOLID_ENTITLEMENT = "volume:objects"
+
+
+def _require_3d(name):
+    """Refuse the 3-D half of a Free capability on a licence without it, as
+    the registry refuses an entitled capability (over MCP: `mcp` too)."""
+    from types import SimpleNamespace
+
+    from plexora.agent.registry import CALL_ORIGIN
+    from plexora.licensing import guards
+
+    probe = SimpleNamespace(name=name, entitlement=SOLID_ENTITLEMENT)
+    guards.check_capability(probe)
+    guards.check_origin(probe, CALL_ORIGIN.get())
 STATE = "plugin_store:roi"
 TAGS = ("roi", "region", "regions", "annotation", "annotate", "polygon", "area")
 
@@ -129,6 +147,8 @@ class CreateInput(ProjectInput):
 
 
 def create_roi(call, inp):
+    if inp.solid or inp.cells:
+        _require_3d("roi.create")
     ds = call.session.image_data(inp.project)
     solid = inp.solid.to_solid() if inp.solid else None
     geometry = inp.geometry
@@ -173,6 +193,8 @@ class UpdateInput(RoiInput):
 
 
 def update_roi(call, inp):
+    if inp.solid is not None:
+        _require_3d("roi.update")
     ds = call.session.image_data(inp.project)
     before_rev, after_rev, before, after = _guarded(
         _service().update_roi, ds, inp.roi_id, name=inp.name, notes=inp.notes,
@@ -319,6 +341,7 @@ def capabilities():
             permission="reversible_write", input_model=UpdateInput, handler=update_roi,
             writes=("rois",), persistent=True),
         cap(name="roi.carry", tool_name="carry_roi_through_planes",
+            entitlement=SOLID_ENTITLEMENT,
             purpose="On a z-stack: follow a region's outline up and down the planes until "
                     "the object ends, and keep one outline per plane as the region's 3-D "
                     "shape. Says why each direction stopped. Reversible.",

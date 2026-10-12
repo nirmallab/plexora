@@ -141,7 +141,8 @@
 
     {# A 3-D mask (one id per cell across planes): measure each cell once,
        whole, into an object table (server/volume/objects.py). Shown only
-       when the mask is a label volume. #}
+       when the mask is a label volume, and only with Plexora 3D. #}
+    {% if licensed('volume:objects') %}
     <div class="depth-panel-pin" data-depth-cells hidden>
         <span class="depth-panel-label">Cells in 3-D</span>
         <span class="depth-panel-note" data-depth-cells-note></span>
@@ -168,4 +169,5 @@
             </button>
         </div>
     </div>
+    {% endif %}
 </section>

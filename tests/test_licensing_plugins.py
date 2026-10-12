@@ -36,7 +36,7 @@ def _blueprint(name):
 
 #: The shipped plugins that are Paid, and the entitlement each needs. One entry
 #: per deliberate decision: a plugin turning Paid by accident fails below.
-PAID_SHIPPED = {"video_studio": "plugin:video_studio"}
+PAID_SHIPPED = {"video_studio": "plugin:video_studio", "segmentation": "volume:segmentation"}
 
 
 def test_basic_plugins_are_free_and_paid_ones_name_declared_entitlements():

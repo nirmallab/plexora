@@ -73,6 +73,24 @@ PAID = {
     "surface.inspect": "volume:surfaces",
     "surface.refine": "volume:surfaces",
     "surface.neighbours": "volume:surfaces",
+    # Plexora 3D beyond looking at a stack (agent/core/volume*.py, QC's stack
+    # and object review, ROI carry, the segmentation plugin).
+    "volume.measure_objects": "volume:objects",
+    "volume.track_objects": "volume:objects",
+    "volume.render_object_views": "volume:objects",
+    "volume.object_z_profile": "volume:objects",
+    "volume.check_quality": "volume:analysis",
+    "volume.colocalize_3d": "volume:analysis",
+    "volume.find_regions_of_interest_3d": "volume:analysis",
+    "qc.run_qc_3d": "volume:analysis",
+    "qc.set_qc_plane": "volume:analysis",
+    "qc.write_qc_3d_regions": "volume:analysis",
+    "qc.object_review_start": "volume:objects",
+    "qc.object_review_next": "volume:objects",
+    "qc.object_review_answer": "volume:objects",
+    "qc.object_review_finish": "volume:objects",
+    "roi.carry": "volume:objects",
+    "segmentation.segment_3d": "volume:segmentation",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -88,13 +106,19 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
                 # The image checks' writers: the user's own checks, written on request.
                 "qc.blur_set", "qc.blur_write_regions", "qc.registration_write_regions",
                 "qc.segmentation_write_flags",
-                "roi.create", "roi.update", "roi.delete", "roi.list")
+                "roi.create", "roi.update", "roi.delete", "roi.list",
+                # Looking at a z-stack, and reading what Plexora 3D made.
+                "volume.inspect", "volume.set_z_spacing", "volume.sample_z_planes",
+                "volume.axis_profile", "volume.pin_projection", "volume.render_sections",
+                "volume.render_projection", "viewer.set_volume_mode",
+                "surface.list", "surface.measure", "surface.objects", "surface.update",
+                "surface.export", "surface.delete", "qc.get_qc_3d", "qc.object_review_status")
 
 
 @pytest.fixture
 def session(tmp_path):
     make_synthetic_project(tmp_path)
-    registry.discover(["gating", "roi", "qc"])
+    registry.discover(["gating", "roi", "qc", "segmentation"])
     return AgentSession()
 
 

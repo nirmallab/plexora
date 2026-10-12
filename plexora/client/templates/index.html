@@ -244,12 +244,14 @@
                        same dialog the library page does, scoped to this
                        sample. #}
                     {# Surface Studio: a surface of a z-stack (shown by main.js
-                       for a volume only). Paid; a click on Free explains. #}
+                       for a volume only). Plexora 3D: absent without it. #}
+                    {% if licensed('volume:surfaces') %}
                     <button id="layer_surface_button" class="icon-button" type="button"
                             title="New surface (Surface Studio)"
                             aria-label="New surface" hidden>
                         <span class="fas fa-cubes"></span>
                     </button>
+                    {% endif %}
                     <button id="layer_add_button" class="icon-button" type="button"
                             title="Add a layer to this sample"
                             aria-label="Add a layer to this sample">
@@ -556,8 +558,8 @@
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261011_channel_fade" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261011_depth" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261012_license_tiers" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261011_atlas" defer></script>
@@ -566,9 +568,9 @@
    picked object's card and the objects table. #}
 <script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261012_video_merge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_video_merge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261011_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_license_tiers" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_license_tiers" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_license_tiers" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_main_merge2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_main_merge2" defer></script>

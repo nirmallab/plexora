@@ -19,6 +19,10 @@ from plexora.api.dataset import project_data
 from plexora.datasource import register_image_datasource
 from plexora.server.models.project import Project
 
+#: Plexora 3D's analysis paths (plexora/licensing/manifest.py `volume`): these
+#: tests exercise them, so they run on a Paid test licence.
+pytestmark = pytest.mark.paid
+
 
 @pytest.fixture(autouse=True)
 def _plugins():

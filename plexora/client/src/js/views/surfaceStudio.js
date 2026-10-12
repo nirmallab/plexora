@@ -700,6 +700,9 @@ window.PlexoraSurfaceStudio = (function () {
      * refused (the Paid modal is open instead).
      */
     async function open({ from = null, channel = null, source = null, ids = null } = {}) {
+        // Plexora 3D: without it Surface Studio does not open at all -- the
+        // S key and every menu entry included -- and says nothing.
+        if (!window.PlexoraPaid?.allows?.("volume:surfaces")) return false;
         if (!viewState()?.enabled?.()) {
             window.PlexoraToast?.show?.({ title: "Surfaces are made from a z-stack; this image has one plane.",
                                           tone: "warning" });

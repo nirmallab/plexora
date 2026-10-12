@@ -135,6 +135,7 @@ def _job(name, arguments):
     return job["result"]
 
 
+@pytest.mark.paid  # colocalize_3d is Plexora 3D
 def test_colocalization_is_counted_on_voxels_and_refused_on_a_projection(tmp_path):
     _coloc_project(tmp_path)
     together = _job("colocalize_3d", {"project": "coloc", "channels": ["A", "B"],

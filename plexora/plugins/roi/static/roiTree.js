@@ -741,24 +741,33 @@ class RoiTree {
                 if (live) this.onFeatureSolid(live, action, shown);
             };
             const middle = Math.round((shown[0] + shown[1]) / 2);
+            // Carrying a region through planes and making it an ellipsoid are
+            // Plexora 3D: without it they are not offered. Flattening a 3-D
+            // region, and limiting a flat one to planes, stay.
+            const in3d = Boolean(window.PlexoraPaid?.allows?.("volume:objects"));
             if (feature.solid) {
                 // Its planes come from its shape: reshaped by carrying again,
                 // or made flat -- never limited to planes as a flat one is.
-                items.push({
-                    label: `Carry through planes again (from z ${middle})`,
-                    className: "is-sectioned",
-                    disabled: !editable || locked,
-                    onSelect: solid("carry"),
-                });
+                if (in3d) {
+                    items.push({
+                        label: `Carry through planes again (from z ${middle})`,
+                        className: "is-sectioned",
+                        disabled: !editable || locked,
+                        onSelect: solid("carry"),
+                    });
+                }
                 if (shown[0] === shown[1] && RoiGeometry.sectionAt(feature, shown[0])) {
                     items.push({
                         label: `Flat, only on ${RoiTree.planesText(here, frames)}`,
+                        className: in3d ? "" : "is-sectioned",
                         disabled: !editable || locked,
                         onSelect: solid("flat-here"),
                     });
                 }
                 items.push({
                     label: "Flat, on every plane",
+                    className: in3d || (shown[0] === shown[1]
+                        && RoiGeometry.sectionAt(feature, shown[0])) ? "" : "is-sectioned",
                     disabled: !editable || locked,
                     onSelect: solid("flat-all"),
                 });
@@ -781,13 +790,15 @@ class RoiTree {
                         onSelect: () => act({ extent: here }),
                     });
                 }
-                items.push({
-                    label: `Carry through planes (from z ${middle})`,
-                    className: "is-sectioned",
-                    disabled: !editable || locked,
-                    onSelect: solid("carry"),
-                });
-                if (shown[0] !== shown[1]) {
+                if (in3d) {
+                    items.push({
+                        label: `Carry through planes (from z ${middle})`,
+                        className: "is-sectioned",
+                        disabled: !editable || locked,
+                        onSelect: solid("carry"),
+                    });
+                }
+                if (in3d && shown[0] !== shown[1]) {
                     items.push({
                         label: `Ellipsoid through z ${shown[0]}–${shown[1]}`,
                         disabled: !editable || locked,
