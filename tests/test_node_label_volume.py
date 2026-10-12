@@ -109,6 +109,18 @@ def test_each_plane_is_served_by_its_view(mask_file, node_process):
     assert np.array_equal(ids[:SIZE, :SIZE], labels[DEPTH // 2])
 
 
+def test_a_tile_past_the_mask_edge_is_empty(mask_file, node_process):
+    """An image larger than its mask asks for tiles the mask does not cover:
+    background, not a 500."""
+    path, _labels_ = mask_file
+    node = node_process(f"segmentation:cells={path}")
+    _status(node, "cells")
+
+    for address in ("0/3_3.png?view=z2", "0/0_5.png"):
+        ids = _decode(_get_bytes(node, f"/node/v1/seg/cells/tile/{address}"))
+        assert not ids.any(), address
+
+
 def test_regions_and_blocks_read_the_planes_asked_for(mask_file, node_process):
     path, labels = mask_file
     node = node_process(f"segmentation:cells={path}")

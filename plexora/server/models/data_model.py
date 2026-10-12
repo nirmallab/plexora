@@ -2978,6 +2978,12 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
             slice(iy, iy + tile_height), slice(ix, ix + tile_width))
     if channel_num is None:
         tile = _label_region(pyramid, level, iy, ix, tile_height, tile_width)
+        if not tile.size:
+            # Wholly past the mask's edge, which a viewer asks for when the
+            # mask is smaller than the image it is drawn on. No cells there:
+            # one background pixel, which the browser draws as nothing over
+            # the whole tile, where packing an empty array would raise.
+            return np.zeros((1, 1, 4), dtype=np.uint8)
         if tile.dtype.itemsize != 4:
             tile = tile.astype(np.uint32)
         tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
