@@ -176,3 +176,25 @@ def registered_operations() -> list[str]:
     the work can happen there, not how the bytes come back.
     """
     return sorted(set(_OPERATIONS) | set(_STREAMS))
+
+
+#: The capability a data node advertises when it applies a project's table
+#: correction (server/models/table_correction.py) as it reads the table. A
+#: node from before corrections reads the spec's unknown key as nothing and
+#: serves the file's own values -- silently -- so the primary offers the fix
+#: for a node's table only when the node lists this.
+TABLE_CORRECTION = "table.correction"
+
+
+@table_operation(TABLE_CORRECTION)
+def _table_correction(dataset, payload):
+    """Which correction this machine applied to the table it has loaded.
+
+    Its existence is the capability; its answer is what lets a caller confirm
+    the far end is reading the table the way the project now says to.
+    """
+    from plexora.server.models import table_correction
+
+    project = getattr(getattr(dataset, "table", None), "_project", None)
+    spec = getattr(project, "dataset", None)
+    return {"signature": table_correction.signature(getattr(spec, "correction", None))}

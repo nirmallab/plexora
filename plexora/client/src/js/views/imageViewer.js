@@ -369,6 +369,16 @@ class ImageViewer {
             compositeOperation: "lighter",
             loadTilesWithAjax: true,
             immediateRender: false,
+            // A volume's tiles dissolve in rather than pop. A plane swap hands
+            // over as soon as the new plane covers the view at ANY level
+            // (viewerManager PLANE_SWAP_GRACE_MS), so a cold plane arrives
+            // soft and sharpens as its finer tiles land; OSD draws the
+            // coarsest level present at full strength and blends each finer
+            // tile over it for this long (TiledImage._blendTile), which reads
+            // as the picture coming into focus instead of a checkerboard of
+            // sharp squares. Planar images keep the instant draw they have
+            // always had.
+            blendTime: Number(config?.imageShape?.z) > 1 ? 0.18 : 0,
             // OpenSeadragon 6 creates ONE TileCache on the viewer and hands the
             // same instance to every TiledImage, so this budget has to cover
             // (visible tiles x active channels), not just visible tiles. At

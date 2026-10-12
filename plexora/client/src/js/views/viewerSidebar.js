@@ -76,6 +76,11 @@ async function plexoraMapWithLimit(items, limit, fn) {
 //: they show (prepareContrast) before showing with the contrast there is.
 const CONTRAST_HOLD_MS = 1500;
 
+//: How long an auto-levelled range takes to arrive on screen (easeSlotRange):
+//: the channel fade's own length, so a channel switched on comes in and
+//: develops its contrast in one movement.
+const RANGE_EASE_MS = 240;
+
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {
         this.config = config;
@@ -317,10 +322,13 @@ class ViewerSidebar {
      * cached yet (shouldn't happen for an active/auto-leveled slot).
      */
     toRawRangeForSlot(slot) {
-        if (this.isHdMode()) return slot.range;
+        // Mid-ease (easeSlotRange) the range on screen is on its way: a save
+        // landing now records where it is going, never a frame of the way.
+        const range = slot.rangeEase && slot.rangeEaseTarget ? slot.rangeEaseTarget : slot.range;
+        if (this.isHdMode()) return range;
         const packet = this.quantWindow(slot.name);
-        if (!packet) return slot.range;
-        return this.byteToRawRange(slot.range, packet);
+        if (!packet) return range;
+        return this.byteToRawRange(range, packet);
     }
 
     /**
@@ -1147,9 +1155,8 @@ class ViewerSidebar {
      * and final passes of autoChannel so they cannot drift apart.
      */
     applyAutoRange(slotIndex, slot, rawRange, packet) {
-        slot.range = this.isHdMode() ? rawRange : this.rawToByteRange(rawRange, packet);
-        this.setSlotRange(slotIndex, slot.range, false);
-        this.syncChannelSlider(slot);
+        const target = this.isHdMode() ? rawRange : this.rawToByteRange(rawRange, packet);
+        this.easeSlotRange(slotIndex, slot, target);
         // A channel put here by a launch state or by a walk to the next sample,
         // which auto-levelled because no range was carried for it. The save
         // below is deliberate for every other caller (see the comment under
@@ -1171,6 +1178,73 @@ class ViewerSidebar {
         // every future restore and rescaled into a near-zero sliver of the real range.
         // Re-scheduling a save now that the window exists corrects it.
         this.scheduleSaveChannels();
+    }
+
+    /**
+     * @function easeSlotRange
+     * Bring a slot's range to `target` over RANGE_EASE_MS, eased out, rather
+     * than in one step -- for the two ranges auto-levelling lands on its own
+     * (applyAutoRange), never for the user's hand.
+     *
+     * Both arrive while the channel is already on screen: the provisional
+     * hint within a request, the mixture fit a second or more later. Applied
+     * outright, each is a jump in brightness of the whole channel, and the
+     * second reads as the picture correcting itself. Eased, the channel
+     * develops into its contrast. Each frame is the same range write a drag
+     * of the slider makes (setSlotRange + its readout), so nothing downstream
+     * can tell the difference; a newer target takes over from wherever the
+     * last one had got to, and a hand on the slider ends it at once.
+     *
+     * At once instead: with motion off (services/viewerPrefs.js, or the
+     * system's reduced-motion setting), for a channel not on screen, or when
+     * there is no range to ease from.
+     */
+    easeSlotRange(slotIndex, slot, target) {
+        const finish = () => {
+            slot.rangeEase = null;
+            slot.rangeEaseTarget = null;
+            slot.range = target;
+            this.setSlotRange(slotIndex, target, false);
+            this.syncChannelSlider(slot);
+        };
+        const from = Array.isArray(slot.range) ? slot.range.map(Number) : null;
+        const smooth = globalThis.PlexoraChannelFade?.smooth?.() ?? true;
+        if (!smooth || !slot.enabled || !from || from.length !== 2
+                || !from.every(Number.isFinite) || !target.every((v) => Number.isFinite(Number(v)))
+                || (from[0] === Number(target[0]) && from[1] === Number(target[1]))
+                || typeof requestAnimationFrame !== "function") {
+            finish();
+            return;
+        }
+        const token = {};
+        slot.rangeEase = token;
+        slot.rangeEaseTarget = target;
+        const started = performance.now();
+        const to = [Number(target[0]), Number(target[1])];
+        const marker = slot.name;
+        const hd = this.isHdMode();
+        const step = () => {
+            if (slot.rangeEase !== token) return;
+            // The hand took the slider: what it set stands. And a range in
+            // other units (the HD toggle remapped it) or of another marker is
+            // no longer this ease's to move.
+            if (slot.userRangeChanged || slot.name !== marker || this.isHdMode() !== hd) {
+                slot.rangeEase = null;
+                slot.rangeEaseTarget = null;
+                return;
+            }
+            const f = Math.min(1, (performance.now() - started) / RANGE_EASE_MS);
+            if (f >= 1) {
+                finish();
+                return;
+            }
+            const e = 1 - (1 - f) ** 3;
+            this.setSlotRange(slotIndex, [from[0] + (to[0] - from[0]) * e,
+                                          from[1] + (to[1] - from[1]) * e], false);
+            this.syncChannelSlider(slot);
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
     }
 
     /**

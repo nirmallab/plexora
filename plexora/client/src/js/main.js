@@ -706,9 +706,20 @@ async function init(config, savedViewTransform = null) {
     // through. And through `presetHdMode` rather than `setHdMode`, because the
     // world is still empty -- see that method for what remembering a viewport
     // of nothing costs.
+    //
+    // A VOLUME is HD from the start even when streamed. Its 8-bit tiles are
+    // quantized with a window the address names (`w=`, services/
+    // volumeWindows.js), so a channel's first tiles wait for that window, are
+    // fetched with the provisional one, and are fetched AGAIN when the exact
+    // one lands -- and every step through the planes multiplies it. A 16-bit
+    // tile names no window and is never refetched for one. Measured through
+    // an ssh tunnel to an HMS O2 data node: a 2.1 MB HD tile in ~35 ms, while
+    // the cold read behind any tile is 50-300 ms -- the bytes are not what a
+    // volume waits on.
     const carriedChannelState = window.PlexoraCarryOver?.current?.()?.components?.channels;
     const tilesStreamed = Boolean(flaskVariables.image_streamed || flaskVariables.server_is_remote);
-    const hdByDefault = !tilesStreamed
+    const isVolume = Boolean(viewState?.enabled?.()) && viewState.depth > 1;
+    const hdByDefault = (!tilesStreamed || isVolume)
         && !["rgb", "brightfield", "blank"].includes(config.image_kind)
         && Boolean(document.querySelector("#viewer_controls_hd"));
     const startInHd = typeof carriedChannelState?.hd === "boolean"

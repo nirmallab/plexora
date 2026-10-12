@@ -594,6 +594,14 @@ def warm_resources(registry, log=print):
                     with node_api._reading(resource):
                         node_api._cached(resource, ("qwindow", index),
                                          lambda window=stored: window)
+                # A volume's windows too, one per channel and reading, so a
+                # channel's first request after a restart finds its window in
+                # memory instead of reading the store file on the request path
+                # (`_volume_window_now` falls back to that read).
+                for key, stored in node_api._stored_volume_windows(resource).items():
+                    with node_api._reading(resource):
+                        node_api._cached(resource, ("qwindow", key),
+                                         lambda window=stored: window)
             except Exception as exc:  # pragma: no cover - unreadable at warm time
                 # Never fatal. A resource that cannot be warmed is one that
                 # will report its own failure when something asks for it, and

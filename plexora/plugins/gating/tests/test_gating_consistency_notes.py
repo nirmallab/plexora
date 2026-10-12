@@ -29,6 +29,11 @@ CHECKS = [
     "the overlap is decided once and not per marker",
     "repainting replaces the notes rather than stacking them",
     "a finding with no code still draws its sentence",
+    "a finding core can correct carries a Fix that says the file is not changed",
+    "...and one a data node cannot apply is offered disabled, with the reason",
+    "a correction in force is a neutral note with an Undo",
+    "a Fix that changes the table reloads the page",
+    "a Fix that applies nothing says why and leaves the page alone",
 ]
 
 

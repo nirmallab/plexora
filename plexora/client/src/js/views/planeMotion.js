@@ -32,6 +32,12 @@
  * (ViewerManager.prepareStandby) -- so a step to one is a flip of opacity.
  * Without it, the tiles on screen are asked for at the next plane and the one
  * before at low priority, so the next step is served from the browser's cache.
+ *
+ * And the plane the pointer RESTS on along the Z strip (depthStrip.js raises
+ * `plexora:plane-hover`): a far jump is a click on the rail, and the moment
+ * between the pointer arriving there and the click is time the plane can
+ * spend loading. It joins the neighbours as one more standby plane, last in
+ * line like them, and is let go when the pointer leaves the rail.
  */
 (function (global) {
     "use strict";
@@ -325,6 +331,8 @@
             this.limit = limit;
             this.direction = 1;
             this.lastZ = null;
+            //: The plane the pointer rests on along the Z strip, or null.
+            this.hoverZ = null;
             this.timer = 0;
             this.controller = null;
             this.done = new Set();
@@ -335,7 +343,16 @@
             global.addEventListener?.("plexora:view-changed", () => this.onSettled());
             // A channel or the tile quality changed under prefetched planes.
             global.addEventListener?.("plexora:standby-dropped", () => this.onSettled());
+            global.addEventListener?.("plexora:plane-hover", (event) => this.hover(event?.detail?.z));
             return this;
+        }
+
+        /** The pointer rests on plane `z` of the Z strip (null: it left). */
+        hover(z) {
+            const next = Number.isFinite(z) ? Math.round(z) : null;
+            if (next === this.hoverZ) return;
+            this.hoverZ = next;
+            this.onSettled();
         }
 
         onRequested(event) {
@@ -413,9 +430,13 @@
             const follows = state?.mode === "slab" && state.slab?.follow;
             if (!state || (state.mode !== "plane" && !follows) || vs.depth < 2) return [];
             const dir = this.direction || 1;
+            const planes = [dir, 2 * dir, -dir].map((dz) => state.z + dz);
+            // The plane the pointer rests on along the rail: a click away.
+            if (this.hoverZ !== null && this.hoverZ !== state.z && !planes.includes(this.hoverZ)) {
+                planes.push(this.hoverZ);
+            }
             const out = [];
-            for (const dz of [dir, 2 * dir, -dir]) {
-                const z = state.z + dz;
+            for (const z of planes) {
                 if (z < 0 || z >= vs.depth) continue;
                 out.push(follows && vs.movedTo ? vs.movedTo(z, state) : { ...state, z });
             }

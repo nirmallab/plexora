@@ -40,6 +40,20 @@ shuffle), only the raw chunk bytes are read under the lock
 `chunk_cache.DECODE_POOL` with the lock released, and the decoded chunks kept
 in the process-wide `chunk_cache.CACHE` instead of h5py's per-dataset one. Any
 other filter pipeline reads the way it always did.
+
+AND READ OUTSIDE IT. "A few ms" was a local disk. On a cluster's network
+filesystem the raw bytes are the slow part -- 16 chunks under a 1024 px tile,
+an 8-plane block of a 70-channel stack, measured at 50-300 ms a tile on HMS
+O2 -- and every tile of every channel took its turn at them under the one
+lock: a node with 16 cores answered about 21 cold tiles a second however many
+were asked for. So under the lock HDF5 is asked only WHERE each chunk is
+(`get_chunk_info_by_coord`: its offset and size, out of the chunk index HDF5
+keeps cached), and the bytes are read from the file by offset (`_RawFile`:
+`os.pread`, or a handle per thread where there is none) on the decode pool,
+in parallel, then inflated there as before. The first chunk read this way
+from each dataset is compared with h5py's own `read_direct_chunk` of it; a
+file where they differ (a driver that is not a plain file, say) reads that
+dataset the old way.
 """
 
 from __future__ import annotations
@@ -147,6 +161,81 @@ def _clip(part, size):
     return part
 
 
+class _RawFile:
+    """A file's bytes at an offset, from any number of threads at once.
+
+    `os.pread` where there is one -- no shared position, so no lock -- and on
+    Windows, which has none, a handle per thread. Every handle is closed by
+    `close`: a file held open is one Windows will not let anybody delete."""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self._fd = None
+        self._lock = threading.Lock()
+        self._local = threading.local()
+        self._handles = []
+        self._closed = False
+
+    def read(self, offset: int, size: int) -> bytes:
+        offset, size = int(offset), int(size)
+        if hasattr(os, "pread"):
+            fd = self._fd
+            if fd is None:
+                with self._lock:
+                    if self._closed:
+                        raise OSError(f"{self.path} is closed")
+                    if self._fd is None:
+                        self._fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+                    fd = self._fd
+            parts = []
+            got = 0
+            while got < size:
+                part = os.pread(fd, size - got, offset + got)
+                if not part:
+                    raise EOFError(f"{self.path} ends before byte {offset + size}")
+                parts.append(part)
+                got += len(part)
+            return parts[0] if len(parts) == 1 else b"".join(parts)
+        handle = getattr(self._local, "handle", None)
+        if handle is None or handle.closed:
+            with self._lock:
+                if self._closed:
+                    raise OSError(f"{self.path} is closed")
+                handle = open(self.path, "rb", buffering=0)  # noqa: SIM115 -- closed in close()
+                self._handles.append(handle)
+            self._local.handle = handle
+        handle.seek(offset)
+        parts = []
+        got = 0
+        while got < size:
+            part = handle.read(size - got)
+            if not part:
+                raise EOFError(f"{self.path} ends before byte {offset + size}")
+            parts.append(part)
+            got += len(part)
+        return parts[0] if len(parts) == 1 else b"".join(parts)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            fd, self._fd = self._fd, None
+            handles, self._handles = self._handles, []
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        for handle in handles:
+            try:
+                handle.close()
+            except OSError:
+                pass
+
+
+#: A chunk HDF5 could not say where it is: read it through h5py instead.
+_UNLOCATED = object()
+
+
 class ImsVolumeSource(VolumeSource):
     prefers_block = True
 
@@ -165,6 +254,12 @@ class ImsVolumeSource(VolumeSource):
         #: (level, t, channel) -> how its chunks are read here, or None for
         #: h5py's own path (see the module notes).
         self._layouts = {}
+        #: The file's bytes by offset, read in parallel (see the module notes).
+        self._raw = _RawFile(self.path)
+        #: (level, t, channel) -> whether its chunks are read by offset: True
+        #: once one read that way matched h5py's own, False when it did not
+        #: (or this h5py cannot say where a chunk is); absent until known.
+        self._direct = {}
         try:
             stat = os.stat(self.path)
             self.cache_id = ("ims", self.path, stat.st_size, stat.st_mtime_ns)
@@ -237,20 +332,57 @@ class ImsVolumeSource(VolumeSource):
                 data = np.frombuffer(data, np.uint8).reshape(dtype.itemsize, -1).T.tobytes()
             return np.frombuffer(data, dtype=dtype, count=cz * cy * cx).reshape(cz, cy, cx)
 
+        def origin_of(key):
+            _, _, _, _, zc, yc, xc = key
+            return (zc * cz, yc * cy, xc * cx)
+
+        def read_locked(origin):
+            with self._io:
+                try:
+                    mask, raw = dataset.id.read_direct_chunk(origin)
+                except Exception:  # noqa: BLE001 -- a chunk never written
+                    mask, raw = 0, None
+            return raw, mask
+
+        def load(entry):
+            key, where = entry
+            if where is _UNLOCATED:
+                raw, mask = read_locked(origin_of(key))
+            elif where is None:
+                raw, mask = None, 0
+            else:
+                offset, size, mask = where
+                raw = self._raw.read(offset, size)
+            return decode(raw, mask)
+
         def load_many(missing):
-            raws = []
+            dkey = (int(level), int(t), int(channel))
+            direct = self._direct.get(dkey, True)
+            located = []
             with self._io:
                 for key in missing:
-                    _, _, _, _, zc, yc, xc = key
+                    if not direct:
+                        located.append((key, _UNLOCATED))
+                        continue
                     try:
-                        mask, raw = dataset.id.read_direct_chunk((zc * cz, yc * cy, xc * cx))
-                    except Exception:  # noqa: BLE001 -- a chunk never written
-                        mask, raw = 0, None
-                    raws.append((key, raw, mask))
-            if len(raws) == 1:
-                return {raws[0][0]: decode(raws[0][1], raws[0][2])}
-            futures = [(key, chunk_cache.DECODE_POOL.submit(decode, raw, mask))
-                       for key, raw, mask in raws]
+                        info = dataset.id.get_chunk_info_by_coord(origin_of(key))
+                    except AttributeError:
+                        # An h5py too old to say where a chunk is.
+                        self._direct[dkey] = direct = False
+                        located.append((key, _UNLOCATED))
+                        continue
+                    except Exception:  # noqa: BLE001 -- h5py's own read decides
+                        located.append((key, _UNLOCATED))
+                        continue
+                    offset = getattr(info, "byte_offset", None)
+                    located.append((key, None if offset is None else
+                                    (int(offset), int(info.size), int(info.filter_mask))))
+            if direct and dkey not in self._direct:
+                located = self._check_direct(dkey, located, origin_of, read_locked)
+            work = chunk_cache.pool()
+            if len(located) == 1:
+                return {located[0][0]: load(located[0])}
+            futures = [(entry[0], work.submit(load, entry)) for entry in located]
             return {key: future.result() for key, future in futures}
 
         chunks = chunk_cache.CACHE.fetch(
@@ -258,6 +390,26 @@ class ImsVolumeSource(VolumeSource):
         return chunk_cache.assemble(((z0, z1 + 1), (rows.start, rows.stop), (cols.start, cols.stop)),
                                     (cz, cy, cx), chunks, dtype,
                                     coords_of=lambda key: key[4:7])
+
+    def _check_direct(self, dkey, located, origin_of, read_locked):
+        """Settle whether `dkey`'s chunks can be read by offset: the first
+        one located is read both ways and compared. Returns `located`,
+        re-pointed at h5py's own read when they differ."""
+        for key, where in located:
+            if not isinstance(where, tuple):
+                continue
+            offset, size, mask = where
+            try:
+                ours = self._raw.read(offset, size)
+            except Exception:  # noqa: BLE001 -- unreadable by offset: h5py's way
+                ours = None
+            theirs, their_mask = read_locked(origin_of(key))
+            same = ours is not None and ours == theirs and mask == their_mask
+            self._direct[dkey] = same
+            if same:
+                return located
+            return [(k, _UNLOCATED) for k, _ in located]
+        return located
 
     def _span(self, level, t, channel, z0, z1, rows, cols):
         """Stored planes z0..z1 of the rectangle, by whichever path applies."""
@@ -300,6 +452,8 @@ class ImsVolumeSource(VolumeSource):
         chunk_cache.CACHE.forget(self.cache_id)
         self._layouts.clear()
         self._open.clear()
+        self._direct.clear()
+        self._raw.close()
         try:
             self._file.close()
         except Exception:

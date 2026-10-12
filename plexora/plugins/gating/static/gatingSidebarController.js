@@ -58,6 +58,11 @@ class GatingSidebarController {
         //: mask and image fail to describe the same sample. Null until the
         //: one request lands; an empty array is the answer "they agree".
         this.consistency = null;
+        //: What the last Fix found when it applied nothing ("already lines
+        //: up", "nothing tried fits"), drawn as one more note; and whether a
+        //: Fix or Undo is in flight, so a second click waits for the first.
+        this.consistencyNotice = null;
+        this.correctingTable = false;
         //: Memo for `markersShareTheImageVocabulary()`.
         this.markersAreChannels = null;
         //: marker -> {method, status, confidence, ...}: where each gate came
@@ -1216,21 +1221,105 @@ class GatingSidebarController {
         const findings = [...(this.consistency || [])];
         const marker = this.markerFinding();
         if (marker) findings.push(marker);
+        if (this.consistencyNotice) findings.push(this.consistencyNotice);
         target.innerHTML = "";
         target.hidden = !findings.length;
         for (const finding of findings) {
+            // "info" is a note of something done, not something wrong: a
+            // correction in force, or what a Fix found. Same line, no amber.
+            const info = finding.level === "info";
             const note = document.createElement("p");
-            note.className = "gate-consistency-note";
+            note.className = info ? "gate-consistency-note is-info" : "gate-consistency-note";
             note.dataset.code = finding.code || "";
             const icon = document.createElement("span");
-            icon.className = "fas fa-triangle-exclamation";
+            icon.className = info ? "fas fa-circle-info" : "fas fa-triangle-exclamation";
             // Decorative: the sentence beside it already says everything, and
             // a screen reader announcing "warning" before each of three notes
             // is three interruptions for no added fact.
             icon.setAttribute("aria-hidden", "true");
-            note.append(icon, document.createTextNode(finding.message || ""));
+            const text = document.createElement("span");
+            text.className = "gate-consistency-text";
+            text.append(document.createTextNode(finding.message || ""));
+            note.append(icon, text);
+            const action = this.consistencyAction(finding);
+            if (action) note.append(action);
             target.append(note);
         }
+    }
+
+    /**
+     * The button at the end of a note, or null: Fix where core can correct
+     * how the table is read (`fix: "table"`), the same Fix disabled with the
+     * reason where it cannot here (`fix_blocked` -- a data node too old to
+     * apply one), Undo on the note of a correction in force.
+     *
+     * Every one of them changes how Plexora READS the table and nothing in
+     * the file, which the tooltip says before the click and the note after.
+     */
+    consistencyAction(finding) {
+        let label, title, kind = null;
+        if (finding.fix === "table") {
+            label = "Fix";
+            kind = "fix";
+            title = "Correct how Plexora reads this table, checked against the mask. "
+                + "Your table file is not changed, and Undo puts it back.";
+        } else if (finding.fix_blocked) {
+            label = "Fix";
+            title = finding.fix_blocked;
+        } else if (finding.undo) {
+            label = "Undo";
+            kind = "undo";
+            title = "Read the table exactly as its file says again.";
+        } else {
+            return null;
+        }
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "gate-consistency-fix";
+        button.textContent = label;
+        button.title = title;
+        if (kind) {
+            button.addEventListener("click", () => this.correctTable(kind, button));
+        } else {
+            button.disabled = true;
+        }
+        return button;
+    }
+
+    /**
+     * Fix or undo, then show the result.
+     *
+     * A change reloads the page rather than the panel. The cell ids and
+     * positions the viewer colours the mask by were read once, when the page
+     * was drawn -- the mask layer, the cell dots and hover all hold them -- so
+     * the corrected values reach every one of them only through a reload, and
+     * the viewer's own saved state brings the view back where it was. Nothing
+     * applied (the table already lines up, nothing tried fits) is a sentence
+     * under the notes instead, and the page stays as it is.
+     */
+    async correctTable(kind, button) {
+        if (this.correctingTable) return;
+        this.correctingTable = true;
+        for (const other of document.querySelectorAll("#gate_consistency .gate-consistency-fix")) {
+            other.disabled = true;
+        }
+        button.classList.add("is-busy");
+        button.textContent = kind === "fix" ? "Checking…" : "Undoing…";
+        const reply = kind === "fix"
+            ? await this.dataLayer.fixTable()
+            : await this.dataLayer.undoTableFix();
+        if (reply?.reloaded) {
+            button.textContent = "Reloading…";
+            window.location.reload();
+            return;
+        }
+        this.correctingTable = false;
+        this.consistencyNotice = {
+            code: "table_fix_result",
+            level: "info",
+            message: reply?.error || reply?.message || "Nothing was changed.",
+        };
+        await this.loadConsistency();
     }
 
     // Cheap per-tick update during a drag: reposition the existing threshold lines instead of

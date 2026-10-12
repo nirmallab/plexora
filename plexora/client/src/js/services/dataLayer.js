@@ -231,6 +231,39 @@ class DataLayer {
     }
 
     /**
+     * Correct how this project's table is read, for a finding marked
+     * `fix: "table"` -- found by checking candidates against the mask, applied
+     * on every read, and never written to the file (models/table_correction.py).
+     *
+     * `{success, applied, reloaded, message}`, or `{success: false, error}`
+     * when the request itself failed. `applied: false` with a message is an
+     * answer (the table already lines up; nothing tried does), not an error.
+     */
+    async fixTable() {
+        return this.postTableFix('fix_table');
+    }
+
+    /** Read the table exactly as its file says again. Same reply shape. */
+    async undoTableFix() {
+        return this.postTableFix('undo_table_fix');
+    }
+
+    async postTableFix(route) {
+        try {
+            const response = await fetch(plexoraUrl(route), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ datasource: datasource }),
+            });
+            const reply = await response.json();
+            return reply && typeof reply === 'object' ? reply : { success: false };
+        } catch (e) {
+            console.log("Error Correcting the Table", e);
+            return { success: false, error: "The server could not be reached." };
+        }
+    }
+
+    /**
      * What this sample is still preparing, as one document.
      *
      * `{layers: {id: {status, progress, stage, stage_label, message, error,

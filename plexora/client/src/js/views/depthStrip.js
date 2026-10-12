@@ -68,6 +68,8 @@
             this.badge = null;
             this.playing = null;
             this.drag = null;
+            //: The plane the pointer rests on along the rail, or null.
+            this.hoveredZ = null;
             this._unsubscribe = null;
             this._onKey = (event) => this.onKey(event);
         }
@@ -95,6 +97,7 @@
 
         destroy() {
             this.stop();
+            this.endHover();
             this._unsubscribe?.();
             document.removeEventListener("keydown", this._onKey);
             global.removeEventListener("plexora:view-changed", this._onSettled);
@@ -208,10 +211,20 @@
             this.handleTop = el("span", "depth-strip-handle is-top", { "data-handle": "z0" });
             this.handleBottom = el("span", "depth-strip-handle is-bottom", { "data-handle": "z1" });
             this.band.append(this.handleTop, this.handleBottom);
+            // Where a click would land: a mark on the track and the plane's
+            // number beside the strip, while the pointer is over the rail
+            // and not dragging. Resting there also starts that plane loading
+            // (`plexora:plane-hover`, planeMotion.NeighbourPrefetch), so the
+            // click it is about to get is often a flip.
+            this.hoverMark = el("div", "depth-strip-hover", { "aria-hidden": "true" });
+            this.hoverLabel = el("span", "depth-strip-hover-label");
+            this.hoverMark.appendChild(this.hoverLabel);
             this.thumb = el("div", "depth-strip-thumb");
-            track.append(this.band, this.thumb);
+            track.append(this.band, this.hoverMark, this.thumb);
             rail.appendChild(track);
             this.track = track;
+            rail.addEventListener("pointermove", (event) => this.hover(event));
+            rail.addEventListener("pointerleave", () => this.endHover());
             rail.addEventListener("pointerdown", (event) => this.startDrag(event));
             rail.addEventListener("keydown", (event) => {
                 const steps = { ArrowUp: -1, ArrowDown: 1, PageUp: -10, PageDown: 10 };
@@ -334,6 +347,34 @@
 
         paintLoading(on) {
             this.badge?.classList.toggle("is-loading", Boolean(on));
+            // The thumb sits on the plane asked for as soon as it is asked
+            // for; while that plane is still on its way it breathes
+            // (viewer.css), so a far jump reads as under way, not ignored.
+            this.root?.classList.toggle("is-loading", Boolean(on));
+        }
+
+        /** The pointer over the rail: mark the plane a click would choose. */
+        hover(event) {
+            if (this.drag || event.pointerType === "touch") {
+                this.endHover();
+                return;
+            }
+            const vs = this.viewState;
+            if (vs.depth < 2) return;
+            const z = this.zAt(event.clientY);
+            this.hoverMark.style.top = `${this.fraction(z) * 100}%`;
+            this.hoverLabel.textContent = `z ${z}`;
+            this.rail.classList.add("is-hovering");
+            if (z === this.hoveredZ) return;
+            this.hoveredZ = z;
+            global.dispatchEvent?.(new CustomEvent("plexora:plane-hover", { detail: { z } }));
+        }
+
+        endHover() {
+            this.rail?.classList.remove("is-hovering");
+            if (this.hoveredZ === null || this.hoveredZ === undefined) return;
+            this.hoveredZ = null;
+            global.dispatchEvent?.(new CustomEvent("plexora:plane-hover", { detail: { z: null } }));
         }
 
         // -- interaction -----------------------------------------------------
@@ -387,6 +428,7 @@
             } else {
                 this.drag = { kind: "z" };
                 this.rail.classList.add("is-dragging");
+                this.rail.classList.remove("is-hovering");
                 this.followThumb(event.clientY);
                 vs.set({ z });
             }

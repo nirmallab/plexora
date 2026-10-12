@@ -76,10 +76,16 @@ class LocalTableProvider:
         `stage`/`report` are the progress pair (data_model.table_progress).
         Both optional: a node calls this with neither, and so does every test.
         """
+        from plexora.server.models import table_correction
         from plexora.server.models.adapters import get_adapter
 
         adapter = get_adapter(self._spec.type)(self._spec)
-        self._loaded = adapter.load_table(stage=stage, report=report)
+        # Read as the project says to read it (table_correction.py): here for a
+        # local table, and on the node for one held there -- a node loads its
+        # tables through this same method, so every node route serves the
+        # corrected values without knowing a correction exists.
+        self._loaded = table_correction.apply(
+            adapter.load_table(stage=stage, report=report), self._spec)
         # Kept for a wide table's features, which the frame does not hold and
         # the adapter reads on demand -- see `read_feature_column`.
         self._adapter = adapter
@@ -410,6 +416,12 @@ class LocalImageProvider:
         #: The `VolumeSource` the last `open()` found, or None for a planar
         #: image. Read by data_model right after `open()`.
         self.volume_source = None
+        #: How a volume's default-plane overview is built on open, or None for
+        #: `volume_overview`. A data node sets one that keeps the overview on
+        #: disk (node/api.py `_opened`): it is every channel's dataset opened
+        #: and read, which on a cluster filesystem is tens of seconds a node
+        #: would otherwise pay again on every start.
+        self.overview_builder = None
         #: Read this image as colour even though its own tags do not say so.
         #: The one thing about an image file that cannot be answered by looking
         #: at it: three `minisblack` planes are a legal way to write RGB and a
@@ -622,7 +634,8 @@ class LocalImageProvider:
         # A source whose 2-D reader has its own overview and metadata (DICOM)
         # answers with them, so its default plane opens exactly as before.
         overview = (source.overview(channels) if hasattr(source, "overview")
-                    else (overview or volume_overview)(channels))
+                    else (overview or getattr(self, "overview_builder", None)
+                          or volume_overview)(channels))
         metadata = (source.physical_metadata() if hasattr(source, "physical_metadata")
                     else volume_metadata(source, self._path))
         return channels, overview, metadata

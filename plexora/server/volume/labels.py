@@ -40,6 +40,8 @@ from typing import Callable, Optional
 import numpy as np
 import zarr
 
+from plexora._transient_locks import past_transient_locks
+
 #: The attribute that marks a store as one of these.
 MARKER = "plexora_label_volume"
 
@@ -185,7 +187,9 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
             close()
     if dest.exists():
         shutil.rmtree(dest)
-    os.replace(tmp, dest)
+    # Windows refuses to move a directory while a scanner still has one of the
+    # chunk files just written open (_transient_locks.py); it clears in moments.
+    past_transient_locks(lambda: os.replace(tmp, dest))
     return str(dest)
 
 

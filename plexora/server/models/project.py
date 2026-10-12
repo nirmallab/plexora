@@ -435,6 +435,14 @@ class DataSpec:
     #: Opaque to everything except whoever displays it. It is provenance, not
     #: configuration -- nothing reads it back to decide how to read the table.
     derived: Mapping[str, Any] = field(default_factory=dict)
+    #: How this table is read differently from what its file says, or `{}`:
+    #: cell ids shifted onto the mask's labels, coordinates scaled into the
+    #: image's pixels (server/models/table_correction.py).
+    #:
+    #: Unlike `derived`, this IS configuration: every reader of the table
+    #: applies it on the way in, here and on a data node, and the file itself
+    #: is never written. Removing it is the whole of undoing it.
+    correction: Mapping[str, Any] = field(default_factory=dict)
     #: What this source still needs before it can be read at all, from
     #: ("table", "subset"). Empty for every source that can.
     #:
@@ -476,6 +484,7 @@ class DataSpec:
             row_number_ids=bool(raw.get("rowNumberIds")),
             flat_cells=bool(raw.get("flatCells")),
             derived=dict(raw.get("derived") or {}),
+            correction=dict(raw.get("correction") or {}),
             unresolved=tuple(str(key) for key in (raw.get("unresolved") or ())),
         )
 
@@ -508,6 +517,8 @@ class DataSpec:
             out["obsm"] = [dict(entry) for entry in self.obsm]
         if self.derived:
             out["derived"] = dict(self.derived)
+        if self.correction:
+            out["correction"] = dict(self.correction)
         if self.single_image:
             out["singleImage"] = True
         if self.row_number_ids:

@@ -22,6 +22,14 @@ export const viewSelection = { spec: "", labels: "" };
 //: frame, and a plane that will not load should not hold the one before it on
 //: screen for twenty seconds.
 const PLANE_SWAP_TIMEOUT_MS = 8000;
+//: How long a plane swap holds out for the new plane at full resolution
+//: before handing over to it at whatever level covers the view
+//: (whenItemCanDraw). A plane the tiles are quick for -- a prefetched one, a
+//: step inside a chunk the server has decoded -- still arrives sharp; a far
+//: jump to a cold plane shows up in a beat, soft, and sharpens in place
+//: rather than leaving the old plane frozen on screen for seconds. The
+//: dissolve (planeMotion.js) runs over the swap either way.
+const PLANE_SWAP_GRACE_MS = 140;
 
 //: `tileFormat` for a brightfield/H&E layer: one tiled image carrying all
 //: three colour samples, drawn by OpenSeadragon itself. The other two are 16
@@ -115,7 +123,18 @@ function global_mark(surface, name, rev) {
     globalThis.PlexoraViewPerf?.mark?.(surface, name, rev ? rev.id : null);
 }
 
-function whenItemCanDraw(item, done) {
+/**
+ * `done` once `item` can draw: at full resolution, or -- with `grace` -- that
+ * long after it was asked, at whatever level covers the view
+ * (services/channelFade.js `whenCanDraw` and `covers` say how). A plane swap
+ * passes a grace; a quality swap does not, and waits for the new quality in
+ * full.
+ */
+function whenItemCanDraw(item, done, grace = 0) {
+    const fade = globalThis.PlexoraChannelFade;
+    if (grace > 0 && typeof fade?.whenCanDraw === "function") {
+        return fade.whenCanDraw(item, done, { grace });
+    }
     if (typeof item?.getFullyLoaded !== "function"
         || typeof item?.addHandler !== "function") {
         done();
@@ -799,7 +818,7 @@ export class ViewerManager {
                 if (world?.getIndexOfItem && world.getIndexOfItem(item) < 0) {
                     ready(item);
                 } else {
-                    stops.push(whenItemCanDraw(item, () => ready(item)));
+                    stops.push(whenItemCanDraw(item, () => ready(item), PLANE_SWAP_GRACE_MS));
                 }
             }
             if (!handed) timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
@@ -867,7 +886,9 @@ export class ViewerManager {
     standbyKey() {
         const channels = Object.keys(this.channelList.currentChannels).sort();
         const windows = window.__plexora?.volumeWindows;
-        const stamps = channels.map((srcIdx) => windows?.stamp?.(
+        // An HD tile names no window (getTileUrl), so a window arriving after
+        // a plane was prefetched changes none of its bytes.
+        const stamps = tileQuality.hd ? "" : channels.map((srcIdx) => windows?.stamp?.(
             this.imageViewer.config["imageData"][srcIdx]?.fullname) || "").join(";");
         return `${channels.join(",")}|${tileQuality.hd ? "hd" : "u8"}|${stamps}`;
     }
@@ -1091,7 +1112,10 @@ export class ViewerManager {
             const held = this.takeLabelStandby(next);
             if (held) {
                 item = held;
-                stop = whenItemCanDraw(held, () => answer(commit));
+                // The image's grace (PLANE_SWAP_GRACE_MS): the outlines commit
+                // with the picture, so a full-resolution-only wait here would
+                // hold a plane the picture could already show.
+                stop = whenItemCanDraw(held, () => answer(commit), PLANE_SWAP_GRACE_MS);
                 if (!answered) timer = setTimeout(() => answer(commit), PLANE_SWAP_TIMEOUT_MS);
                 return;
             }
@@ -1109,7 +1133,7 @@ export class ViewerManager {
                     item = e.item;
                     // Draws through the same GL pass; `open` redraws.
                     this.viewer.raiseEvent("open", e.item);
-                    stop = whenItemCanDraw(e.item, () => answer(commit));
+                    stop = whenItemCanDraw(e.item, () => answer(commit), PLANE_SWAP_GRACE_MS);
                     // A plane that never finishes loading still swaps, late,
                     // rather than holding the outlines of the old one forever.
                     if (!answered) timer = setTimeout(() => answer(commit), PLANE_SWAP_TIMEOUT_MS);
@@ -1338,13 +1362,18 @@ export class ViewerManager {
      */
     addChannelItems(srcIdx, outgoing = null, options = {}) {
         const { zombie = false, group = null, standby = null, adopt = null } = options;
-        // A volume's tiles name the window they are quantized with: the
+        // A volume's 8-bit tiles name the window they are quantized with: the
         // channel's must be known before a single address is (it is, but for
-        // the first add of a channel -- one quick request).
+        // the first add of a channel -- one request, which on a data node can
+        // be a read of the plane). A 16-bit tile is the voxels themselves and
+        // names no window, so in HD the window is asked for alongside rather
+        // than waited on: the tiles go out at once.
         const windows = (standby || viewSelection.spec) && !adopt
             ? window.__plexora?.volumeWindows : null;
         const fullName = this.imageViewer.config["imageData"][srcIdx]?.fullname;
-        if (windows && fullName && !windows.peek(fullName) && !options.windowAsked) {
+        if (windows && fullName && !windows.peek(fullName) && tileQuality.hd) {
+            windows.ensure([fullName]).catch?.(() => {});
+        } else if (windows && fullName && !windows.peek(fullName) && !options.windowAsked) {
             return windows.ensure([fullName]).then(() => {
                 if (!(srcIdx in this.channelList.currentChannels)) {
                     group?.leave();

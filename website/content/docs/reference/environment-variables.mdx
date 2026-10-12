@@ -215,15 +215,21 @@ Memory, in MB, for decoded chunks of each Imaris channel read through HDF5's own
 
 </Param>
 
-<Param name={"PLEXORA_CHUNK_CACHE_MB"} default={"a quarter of the memory, at most 2048"}>
+<Param name={"PLEXORA_CHUNK_CACHE_MB"} default={"an eighth of the allocated memory, 256 to 8192"}>
 
-Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, and the 3-D view's level reuse chunks instead of decompressing them again.
+Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, the block of planes read ahead of the one on screen, and the 3-D view's level reuse chunks instead of decompressing them again. Sized from the memory this process was given (a cluster job's allocation, not the node's).
 
 </Param>
 
-<Param name={"PLEXORA_DECODE_THREADS"} default={"the number of cores, at most 8"}>
+<Param name={"PLEXORA_DECODE_THREADS"} default={"twice the allocated cores, 4 to 32"}>
 
-Threads that decompress z-stack chunks, outside the file locks the readers hold.
+Threads that read and decompress z-stack chunks, outside the file locks the readers hold. A quarter as many again read in the background (window scans, the planes read ahead), so they never queue in front of a tile.
+
+</Param>
+
+<Param name={"PLEXORA_NODE_TILE_CACHE_MB"} default={"a sixteenth of the allocated memory, 128 to 2048"}>
+
+Memory, in MB, a data node keeps for tiles it has already encoded, so a plane or view stepped back to is answered without a read. Budgeted in bytes because a 16-bit tile is about 2 MB and an 8-bit one about 100 KB.
 
 </Param>
 
