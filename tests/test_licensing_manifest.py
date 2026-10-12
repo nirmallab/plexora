@@ -23,19 +23,28 @@ def test_manifest_is_well_formed():
 
 
 def test_paid_covers_every_declared_entitlement():
-    # The Paid roots (`ai`, `surfaces`) plus every add-on are what must cover
-    # the manifest: nothing declared may sit outside a root a plan can grant.
-    grants = tuple(manifest.AI_MODULES) + ("surfaces",) + manifest.ADD_ONS
+    # The Paid default plus every add-on is what must cover the manifest:
+    # nothing declared may sit outside a root a plan can grant.
+    grants = manifest.paid_default() + manifest.ADD_ONS
     for name in manifest.ENTITLEMENTS:
         assert ent.any_satisfies(grants, name), name
 
 
-def test_surface_studio_is_its_own_root_outside_ai():
-    assert "surfaces" in manifest.ROOTS and "surfaces" not in manifest.ADD_ONS
-    assert not ent.any_satisfies(tuple(manifest.AI_MODULES), "surfaces")
+def test_the_four_roots_and_the_paid_default():
+    assert manifest.ROOTS == ("ai", "volume", "transcriptomics", "mcp")
+    # Every root but the add-ons: what a purchased licence carries by default.
+    assert manifest.paid_default() == ("ai", "volume", "transcriptomics")
+    assert manifest.label("volume") == "Plexora 3D"
+
+
+def test_surface_studio_is_part_of_plexora_3d_not_ai():
+    assert "volume:surfaces" in manifest.ENTITLEMENTS
+    assert ent.satisfies("volume", "volume:surfaces")
+    assert not ent.any_satisfies(tuple(manifest.AI_MODULES), "volume:surfaces")
+    from plexora.agent.core import surface as agent_surface
     from plexora.server import surface
 
-    assert surface.ENTITLEMENT == "surfaces"
+    assert surface.ENTITLEMENT == agent_surface.ENTITLEMENT == "volume:surfaces"
 
 
 def test_add_ons_are_declared_roots_outside_the_ai_root():
@@ -48,10 +57,10 @@ def test_unlocks_lists_every_root_with_whether_it_is_granted():
     rows = manifest.unlocks(["ai"], paid=True)
     assert [row["entitlement"] for row in rows] == list(manifest.ROOTS)
     assert {row["entitlement"]: row["granted"] for row in rows} == {
-        "ai": True, "surfaces": False, "mcp": False}
-    assert all(row["granted"] for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=True))
-    assert not any(row["granted"]
-                   for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=False))
+        "ai": True, "volume": False, "transcriptomics": False, "mcp": False}
+    everything = [*manifest.paid_default(), "mcp"]
+    assert all(row["granted"] for row in manifest.unlocks(everything, paid=True))
+    assert not any(row["granted"] for row in manifest.unlocks(everything, paid=False))
 
 
 def test_known_accepts_plugin_paths_but_not_typos():

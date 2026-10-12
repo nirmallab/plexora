@@ -68,11 +68,11 @@ PAID = {
     "ai.chat_history": "ai:chat",
     # Surface Studio (plexora/agent/core/surface.py): making and analysing
     # surfaces. Reading, restyling, exporting and deleting one stay Free.
-    "surface.create": "surfaces",
-    "surface.suggest_threshold": "surfaces",
-    "surface.inspect": "surfaces",
-    "surface.refine": "surfaces",
-    "surface.neighbours": "surfaces",
+    "surface.create": "volume:surfaces",
+    "surface.suggest_threshold": "volume:surfaces",
+    "surface.inspect": "volume:surfaces",
+    "surface.refine": "volume:surfaces",
+    "surface.neighbours": "volume:surfaces",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -134,8 +134,8 @@ def test_manual_gating_stays_free(session):
 
 
 def test_paid_covers_everything_it_should():
-    # The Paid roots: `ai` (and the modules under it) and Surface Studio.
-    grants = tuple(manifest.AI_MODULES) + ("surfaces",)
+    # The Paid default: every root but the add-ons.
+    grants = manifest.paid_default()
     for entitlement in set(PAID.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
@@ -302,7 +302,7 @@ def test_scope_says_license_required_on_free(session):
 def test_server_info_names_the_plan(session, paid_license):
     from plexora.mcp.server import _license_info
 
-    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp"],
+    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp", "transcriptomics", "volume"],
                                "mcp": True}
 
 

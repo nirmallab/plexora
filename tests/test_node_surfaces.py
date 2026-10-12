@@ -207,7 +207,7 @@ def test_a_preview_reads_a_node_image_through_the_node(tmp_path, node_process, l
     import plexora
     from plexora.server.models import data_model
 
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     image = _write_stack(tmp_path / "v.ome.tif")
     _local("here", image)
     node = node_process(f"image:img={image}")
@@ -233,7 +233,7 @@ def test_contact_areas_read_a_node_mask(tmp_path, node_process, license_issuer):
     from plexora.server.models.project import Project
     from plexora.server.volume import objects
 
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     image = _write_stack(tmp_path / "v.ome.tif")
     mask = _write_mask(tmp_path / "mask.tif")
     node = node_process(f"image:img={image}", f"segmentation:cells={mask}")

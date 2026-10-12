@@ -97,7 +97,7 @@ const document = {
 
 let licensed = false;
 const requests = [];
-const LICENSE = { code: "license_required", entitlement: "surfaces", label: "Surface Studio",
+const LICENSE = { code: "license_required", entitlement: "volume:surfaces", label: "Surface Studio",
                   summary: "Surfaces in the 3-D view.", state: "free" };
 function respond(status, body, buffer = null) {
     return { ok: status < 400, status, headers: { get: () => null },

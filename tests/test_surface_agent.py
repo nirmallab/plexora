@@ -23,7 +23,7 @@ def _discovered():
 
 @pytest.fixture()
 def surfaces_license(license_issuer):
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     return license_issuer
 
 
@@ -51,7 +51,7 @@ def test_making_a_surface_needs_surface_studio(tmp_path):
     _project(tmp_path)
     ok, error = _job(AgentSession(), "surface_create", CREATE)
     assert not ok and error["code"] == "license_required"
-    assert error["detail"]["entitlement"] == "surfaces"
+    assert error["detail"]["entitlement"] == "volume:surfaces"
     assert _ok(invoke(AgentSession(), "surface_list", {"project": "surf"}))["surfaces"] == []
 
 
