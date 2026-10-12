@@ -14,13 +14,25 @@ The split follows the transcripts plugin's exactly, and for its reason: which
 vendor files Plexora can read is a question that grows, and each answer is a
 plugin rather than a branch in core's importer.
 
+**Paid, as `transcriptomics:visium`** -- a child of the spatial-transcriptomics
+root (plexora/licensing/manifest.py). Not granted means not shown: on a licence
+without it the importer does not detect a Visium or Visium HD run
+(`import_proposal._licensed`), this section is not mounted and its scripts are
+not on the page, and its routes answer 403 with the `license` block (its static
+files still load). A sample imported earlier still opens -- image, cells,
+gating, ROIs, QC -- and its bin or spot layer keeps its card and its built
+tiles, which core's layer route serves whatever the licence (the builder below
+is registered whatever the licence too). Drawing it in the viewer is this
+plugin's script, so on that licence the card stays and the picture does not.
+Nothing is deleted.
+
 Kept import-light, like every descriptor module: building the Blueprint --
 which pulls in the reader -- is left to the factory.
 """
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_docs"
+VERSION = "20261012_transcriptomics"
 
 
 def _blueprint():
@@ -56,4 +68,6 @@ PLUGIN = Plugin(
            "coarse the squares are."),
     # It colours SQUARES and SPOTS of its own, not cells.
     owns_cell_layer=False,
+    # Spatial transcriptomics is Paid (see the module docstring).
+    entitlement="transcriptomics:visium",
 )

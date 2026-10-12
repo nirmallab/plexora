@@ -18,7 +18,9 @@ The ladder, in order, per picked path:
 1. **Bundles.** A folder that is a Xenium run, a SpatialData store, a Visium
    output, a DICOM slide folder or an OME-Zarr image store. A bundle is ONE
    sample and its elements are its layers, which is the whole reason "select a
-   folder" is the primary action.
+   folder" is the primary action. A Xenium, Visium or Visium HD run is spatial
+   transcriptomics, a Paid root: on a licence without it the run is not
+   detected at all (`_licensed`), and neither is a loose transcripts parquet.
 2. **Single files, by content.** An image (by the same sniff quick view used), a
    label mask (by dtype and plane count, with a name hint only as a tie-break),
    a table, a transcript parquet (by its columns), GeoJSON.
@@ -99,6 +101,32 @@ def register_detector(fn) -> None:
     if fn is None:
         raise ValueError("register_detector needs a callable.")
     _DETECTORS.append(fn)
+
+
+#: Which licence entitlement each 10x run layout needs to be detected. The
+#: spatial-transcriptomics modality is a Paid root (plexora/licensing/
+#: manifest.py), and not granted means not shown: without it these runs are
+#: not proposed at all -- no layers, no bundle, and no warning naming a
+#: licence. A project already imported from one still opens; this gates only
+#: making a new one.
+XENIUM_ENTITLEMENT = "transcriptomics:xenium"
+VISIUM_ENTITLEMENT = "transcriptomics:visium"
+
+
+def _licensed(entitlement) -> bool:
+    """Whether this licence grants `entitlement`. Never raises.
+
+    Asked per inspection rather than once at import, so a licence activated in
+    Settings is honoured by the next pick. Imported lazily, like every other
+    caller of licensing: this module is loaded by the CLI and the notebook API,
+    and licensing misbehaving reads as not granted, never as a broken importer.
+    """
+    try:
+        from plexora import licensing
+
+        return bool(licensing.allows(entitlement))
+    except Exception:
+        return False
 
 
 # -- the documents ---------------------------------------------------------
@@ -1259,15 +1287,21 @@ def _detect_directory(path, answers, declared=None):
     if spatial_scene.is_visium_hd_run(path):
         # Before `is_visium_run`: one `square_008um/` folder has the scale
         # factors a standard Visium run is recognised by.
+        if not _licensed(VISIUM_ENTITLEMENT):
+            return _not_offered()
         layers, questions, bundle, warnings = _visium_hd_bundle(path, answers)
         if declared:
             warnings = _a_folder_is_not_one_file(path, layers, warnings)
         return layers, questions, bundle, warnings
     if spatial_scene.is_xenium_run(path):
+        if not _licensed(XENIUM_ENTITLEMENT):
+            return _not_offered()
         layers, questions, bundle, _ = _xenium_bundle(path)
         return layers, questions, bundle, _a_folder_is_not_one_file(
             path, layers, []) if declared else []
     if spatial_scene.is_visium_run(path):
+        if not _licensed(VISIUM_ENTITLEMENT):
+            return _not_offered()
         layers, questions, bundle, warnings = _visium_bundle(path)
         if declared:
             warnings = _a_folder_is_not_one_file(path, layers, warnings)
@@ -1310,6 +1344,18 @@ def _detect_directory(path, answers, declared=None):
     if declared:
         warnings = _a_folder_is_not_one_file(path, found, warnings)
     return found, questions, None, warnings
+
+
+def _not_offered():
+    """A 10x run on a licence without spatial transcriptomics: nothing.
+
+    Returned in place of the bundle, and deliberately not the plain-folder
+    ladder below, which would offer the run's morphology TIFF, its cell table
+    and its transcripts parquet one file at a time -- the modality piecemeal.
+    No warning either: the pick reads as "Nothing Plexora can read here", the
+    same as any folder this plan has no reader for.
+    """
+    return [], [], None, []
 
 
 #: How many entries of an unreadable folder are looked at before giving up on
@@ -1717,6 +1763,10 @@ def _detect_parquet(path):
     from plexora.server.models.adapters import classify
 
     if spatial_scene.is_xenium_transcripts(path):
+        if not _licensed(XENIUM_ENTITLEMENT):
+            # Not offered, and not allowed on to the cell-table test below,
+            # whose x/y guess would read every molecule as a cell.
+            return _not_offered()
         peek = spatial_scene.peek_parquet(path)
         layer = LayerProposal(
             id="transcripts", kind="points", modality="transcripts",

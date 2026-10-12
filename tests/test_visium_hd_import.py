@@ -19,6 +19,10 @@ from plexora.server.utils import ngff_transform, spatial_scene
 from tests.tenx_fixtures import (GRID_TO_FULLRES, HIRES_SCALEF,
                                  MICRONS_PER_PIXEL, write_visium_hd_run)
 
+
+#: A Visium HD run is detected only with `transcriptomics:visium`.
+pytestmark = pytest.mark.paid
+
 pytest.importorskip("pyarrow")
 
 

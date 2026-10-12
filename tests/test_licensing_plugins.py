@@ -36,7 +36,12 @@ def _blueprint(name):
 
 #: The shipped plugins that are Paid, and the entitlement each needs. One entry
 #: per deliberate decision: a plugin turning Paid by accident fails below.
-PAID_SHIPPED = {"video_studio": "plugin:video_studio", "segmentation": "volume:segmentation"}
+PAID_SHIPPED = {"video_studio": "plugin:video_studio",
+                # Plexora 3D: Cellpose over a whole stack.
+                "segmentation": "volume:segmentation",
+                # Spatial transcriptomics, one child per vendor plugin.
+                "transcripts": "transcriptomics:xenium",
+                "visium_hd": "transcriptomics:visium"}
 
 
 def test_basic_plugins_are_free_and_paid_ones_name_declared_entitlements():

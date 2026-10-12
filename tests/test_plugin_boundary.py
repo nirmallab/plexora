@@ -491,6 +491,22 @@ def test_visium_hd_route_inventory_matches_golden(visium_hd):
     _check_golden("visium_hd", visium_hd)
 
 
+def test_the_transcriptomics_sections_are_not_mounted_on_a_free_licence(
+        transcripts, visium_hd):
+    """Spatial transcriptomics is Paid (`transcriptomics:xenium`,
+    `transcriptomics:visium`). The probe's project has a transcripts and a bins
+    layer, so on a licence that granted it both sections would mount; on Free
+    neither does, and neither plugin's scripts or styles are on the page. Their
+    routes are still installed -- they refuse, with the `license` block -- and
+    with the grant the section is there: tests/test_license_transcriptomics.py."""
+    for build, name in ((transcripts, "transcripts"), (visium_hd, "visium_hd")):
+        for page in (build["pages"]["viewer"], build["pages"]["viewer_tool"]):
+            assert page["flask_variables"]["layer_sections"] == [], name
+            assets = _asset_paths(page["scripts"] + page["styles"])
+            assert not [a for a in assets if f"/plugins/{name}/" in a], name
+        assert any(f"/plugins/{name}/" in r for r in build["routes"]), name
+
+
 def test_visium_hd_installs_only_namespaced_routes(core, visium_hd):
     added = set(visium_hd["routes"]) - set(core["routes"])
     assert added and all("/plugins/visium_hd/" in r for r in added), added

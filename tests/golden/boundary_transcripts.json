@@ -188,15 +188,8 @@
       "flask_variables": {
         "active_tool": "",
         "active_tool_panels": {},
-        "active_tool_scripts": [
-          "/plugins/transcripts/static/transcriptsApi.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptPoints.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptLayer.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260928_docs"
-        ],
-        "active_tool_styles": [
-          "/plugins/transcripts/static/transcripts.css?v=20260928_docs"
-        ],
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
         "available_tools": [],
         "base_url": "",
         "client_node": "",
@@ -209,15 +202,7 @@
         "image_streamed": false,
         "is_docker": false,
         "launch": {},
-        "layer_sections": [
-          {
-            "label": "Transcripts",
-            "layer_id": "transcripts",
-            "modality": "transcripts",
-            "name": "transcripts",
-            "panel": "transcripts/panel.html"
-          }
-        ],
+        "layer_sections": [],
         "license": {
           "entitlements": [],
           "paid": false,
@@ -304,34 +289,6 @@
         "tool_panel_legacy_slot",
         "tool_panel_slot",
         "topBar",
-        "transcripts_add",
-        "transcripts_all_eye",
-        "transcripts_bin",
-        "transcripts_bin_ticks",
-        "transcripts_bin_unit",
-        "transcripts_bin_value",
-        "transcripts_body",
-        "transcripts_building",
-        "transcripts_building_label",
-        "transcripts_collapse_all",
-        "transcripts_content",
-        "transcripts_count",
-        "transcripts_counter",
-        "transcripts_density_controls",
-        "transcripts_empty",
-        "transcripts_gene_count",
-        "transcripts_gene_select",
-        "transcripts_meta",
-        "transcripts_minq",
-        "transcripts_none",
-        "transcripts_opacity",
-        "transcripts_point_controls",
-        "transcripts_ramp",
-        "transcripts_size",
-        "transcripts_style_control",
-        "transcripts_style_label",
-        "transcripts_tree",
-        "transcripts_view_control",
         "viewer_controls_hd",
         "viewer_controls_panel",
         "viewer_sidebar"
@@ -416,10 +373,6 @@
         "/client/src/js/views/toolLoader.js?v=20261011_video_studio",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/transcripts/static/transcriptsApi.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptPoints.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptLayer.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260928_docs",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -471,8 +424,7 @@
         "/client/src/css/viewer.css?v=20261012_main_merge2",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
-        "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/transcripts/static/transcripts.css?v=20260928_docs"
+        "/client/src/css/chatPanel.css?v=20261011_fold"
       ],
       "tool_mounts": [
         [
@@ -489,15 +441,8 @@
       "flask_variables": {
         "active_tool": "",
         "active_tool_panels": {},
-        "active_tool_scripts": [
-          "/plugins/transcripts/static/transcriptsApi.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptPoints.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptLayer.js?v=20260928_docs",
-          "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260928_docs"
-        ],
-        "active_tool_styles": [
-          "/plugins/transcripts/static/transcripts.css?v=20260928_docs"
-        ],
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
         "available_tools": [],
         "base_url": "",
         "client_node": "",
@@ -510,15 +455,7 @@
         "image_streamed": false,
         "is_docker": false,
         "launch": {},
-        "layer_sections": [
-          {
-            "label": "Transcripts",
-            "layer_id": "transcripts",
-            "modality": "transcripts",
-            "name": "transcripts",
-            "panel": "transcripts/panel.html"
-          }
-        ],
+        "layer_sections": [],
         "license": {
           "entitlements": [],
           "paid": false,
@@ -605,34 +542,6 @@
         "tool_panel_legacy_slot",
         "tool_panel_slot",
         "topBar",
-        "transcripts_add",
-        "transcripts_all_eye",
-        "transcripts_bin",
-        "transcripts_bin_ticks",
-        "transcripts_bin_unit",
-        "transcripts_bin_value",
-        "transcripts_body",
-        "transcripts_building",
-        "transcripts_building_label",
-        "transcripts_collapse_all",
-        "transcripts_content",
-        "transcripts_count",
-        "transcripts_counter",
-        "transcripts_density_controls",
-        "transcripts_empty",
-        "transcripts_gene_count",
-        "transcripts_gene_select",
-        "transcripts_meta",
-        "transcripts_minq",
-        "transcripts_none",
-        "transcripts_opacity",
-        "transcripts_point_controls",
-        "transcripts_ramp",
-        "transcripts_size",
-        "transcripts_style_control",
-        "transcripts_style_label",
-        "transcripts_tree",
-        "transcripts_view_control",
         "viewer_controls_hd",
         "viewer_controls_panel",
         "viewer_sidebar"
@@ -717,10 +626,6 @@
         "/client/src/js/views/toolLoader.js?v=20261011_video_studio",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/transcripts/static/transcriptsApi.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptPoints.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptLayer.js?v=20260928_docs",
-        "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260928_docs",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -772,8 +677,7 @@
         "/client/src/css/viewer.css?v=20261012_main_merge2",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
-        "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/transcripts/static/transcripts.css?v=20260928_docs"
+        "/client/src/css/chatPanel.css?v=20261011_fold"
       ],
       "tool_mounts": [
         [

@@ -19,7 +19,14 @@ z-stacks and time series beyond looking at them: Surface Studio
 stack, Stack QC and 3-D analysis. Viewing a stack -- planes, projections,
 sections, the volume view, a 3-D mask drawn over it -- is Free.
 `transcriptomics` is the spatial-transcriptomics modality as a whole: without
-it a Xenium or Visium run is not even offered at import. `mcp` is an add-on
+it a Xenium or Visium run is not even offered at import
+(`import_proposal._licensed`), and the transcripts and Visium HD plugins
+(`transcriptomics:xenium`, `transcriptomics:visium`) are not on the page. A
+sample imported from such a run still opens on Free -- image, cell table,
+gating, ROIs, QC, Cell Explorer -- and its transcript or bin layer keeps its
+card and its built tiles, which core's layer route still serves; the gene
+section is not mounted, and the plugin scripts that draw the points and bins
+in the viewer are not loaded with it. Nothing is deleted. `mcp` is an add-on
 (below).
 
 Two principles hold for every root:
