@@ -103,7 +103,7 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
         kind, resource_id, path = node_resources.parse_serve(argument)
         resource = registry.add(kind, resource_id, path)
         if kind == "segmentation":
-            _make_mask_servable(resource, log=log)
+            _make_mask_servable(resource, log=log, registry=registry)
     _restore_manifest(registry, manifest, log=log)
 
     if owned and not len(registry) and not dynamic:
@@ -172,7 +172,7 @@ def _restore_manifest(registry, manifest, log=print):
             resource.prepare_on_use = True
 
 
-def _make_mask_servable(resource, log=print, progress=None):
+def _make_mask_servable(resource, log=print, progress=None, registry=None):
     """`_convert_mask_if_needed`, remembering that it ran and what it decided.
 
     The flag is what stops a mask being put back into `preparing` every time
@@ -190,6 +190,15 @@ def _make_mask_servable(resource, log=print, progress=None):
     `progress`, when given, is called as (stage, done, total) while a
     conversion runs -- the viewer's "Preparing the cell mask" percentage.
     """
+    if registry is not None and resource.image_levels is None:
+        from plexora.server.volume import labels as volume_labels
+
+        source = resource.source_path or resource.path
+        try:
+            shape = volume_labels.label_volume_shape(source)
+        except Exception:  # noqa: BLE001 -- the conversion below says what is wrong
+            shape = None
+        resource.image_levels = _image_levels(registry, shape)
     resource.mask_mode = _convert_mask_if_needed(resource, log=log,
                                                  progress=progress)
     resource.prepared = True
@@ -226,6 +235,38 @@ def _note_where(resource, source, target):
     resource.warning = (
         f"{source.parent} is read-only for this account, so the cell-mask "
         f"pyramid is kept in {target.parent} on {socket.gethostname()}.")
+
+
+def _image_levels(registry, shape):
+    """The level count of an image this node serves at a mask's (Y, X), or
+    None: what a 3-D mask's label pyramid is built down to, as the viewer's
+    own machine builds one down to its project image's
+    (`data_model._resolve_label_volume`'s `image_levels`), so a mask cut on a
+    node and on the viewer's machine has the same levels."""
+    if registry is None or not shape:
+        return None
+    from plexora.server.node.api import _describe_volume
+    from plexora.server.providers import local as local_providers
+    from plexora.server.volume.sources import open_volume
+
+    height, width = int(shape[-2]), int(shape[-1])
+    for image in registry.all():
+        if image.kind != "image" or not image.path:
+            continue
+        try:
+            source = open_volume(image.path, rgb=image.reads_colour)
+            try:
+                described = _describe_volume(source)
+            finally:
+                if source is not None:
+                    source.close()
+            if described is None:
+                described = local_providers.image_geometry(image.path, rgb=image.reads_colour)
+        except Exception:  # noqa: BLE001 -- an unreadable image says nothing here
+            continue
+        if int(described["height"]) == height and int(described["width"]) == width:
+            return int(described["levels"])
+    return None
 
 
 def _convert_mask_if_needed(resource, log=print, progress=None):
@@ -286,7 +327,8 @@ def _convert_mask_if_needed(resource, log=print, progress=None):
         try:
             store = volume_labels.resolve_label_volume(
                 source, [source.parent, fallback],
-                progress=_converting(progress))
+                progress=_converting(progress),
+                min_levels=resource.image_levels)
         except OSError as exc:
             raise NodeStartupError(
                 f"{source} could not be stored as a label volume: {exc}") from exc

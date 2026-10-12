@@ -635,7 +635,7 @@ def test_a_restored_mask_that_cannot_be_prepared_is_refused_not_served_raw(
     mask = tmp_path / "cell.ome.tif"
     tifffile.imwrite(mask, np.zeros((64, 64), dtype=np.uint32))
 
-    def refuse(resource, log=print, progress=None):
+    def refuse(resource, log=print, progress=None, registry=None):
         raise node_app.NodeStartupError(f"{mask.parent} cannot be written to")
 
     monkeypatch.setattr(node_app, "_make_mask_servable", refuse)

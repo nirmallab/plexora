@@ -705,6 +705,7 @@ def _prepare_in_background(resource):
         resource.error = None
         resource.progress = {"stage": "checking", "done": 0, "total": 0}
     app = current_app._get_current_object()
+    registry = app.config.get("PLEXORA_NODE_RESOURCES")
 
     def report(stage, done, total):
         resource.progress = {"stage": stage, "done": int(done), "total": int(total)}
@@ -714,7 +715,7 @@ def _prepare_in_background(resource):
 
         try:
             node_app._make_mask_servable(resource, log=lambda *_a, **_k: None,
-                                         progress=report)
+                                         progress=report, registry=registry)
         except Exception as exc:
             resource.state = node_resources.ERROR
             resource.error = str(exc)

@@ -225,6 +225,11 @@ class Resource:
     #: anything reads enough of the file to know. None until preparation has
     #: run, which `state` already reports as `preparing`.
     mask_mode: str | None = None
+    #: Masks only: the level count of the image this node serves at the
+    #: mask's size (`app._image_levels`), which a 3-D mask's label pyramid is
+    #: built down to, as the viewer's own machine builds one. None when no
+    #: such image is served here.
+    image_levels: int | None = None
     #: Masks only: a sentence about something that worked but is worth knowing,
     #: e.g. that the mask's folder is read-only so its pyramid lives under this
     #: node's data root instead. Shown by the CLI and the viewer; never a refusal.
