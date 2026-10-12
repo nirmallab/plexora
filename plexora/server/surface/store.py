@@ -201,10 +201,34 @@ def is_surface_folder(project_name: str, path) -> bool:
         return False
 
 
-def _identity(path) -> str:
+def _node_binding(project, kind):
+    """The data-node binding of the project's `kind` ("image"/"segmentation"),
+    or None when that file is on this machine."""
+    binding = (getattr(project, "resources", None) or {}).get(kind)
+    return binding if binding is not None and getattr(binding, "node", None) else None
+
+
+def _identity(project, kind) -> str:
+    """What the image or mask is, for the cache key: path, size and time for a
+    file here; for one a data node holds, its locator and the fingerprint the
+    node recorded when it was attached (the file is on the other machine, so
+    a fresh stat would be a round trip per key)."""
     from plexora.server.volume.serve import source_identity
 
+    binding = _node_binding(project, kind)
+    if binding is not None:
+        return (f"node://{binding.node}/{binding.resource_id}|"
+                f"{json.dumps(binding.fingerprint or {}, sort_keys=True, default=str)}")
+    path = project.image.src if kind == "image" else project.segmentation.derived
     return source_identity(path)
+
+
+def _provenance(project, kind) -> str:
+    """Where the image or mask was read from, as the manifest records it."""
+    binding = _node_binding(project, kind)
+    if binding is not None:
+        return f"node://{binding.node}/{binding.resource_id}"
+    return str(project.image.src if kind == "image" else project.segmentation.derived)
 
 
 def cache_key(project, spec: SurfaceSpec) -> str:
@@ -212,10 +236,10 @@ def cache_key(project, spec: SurfaceSpec) -> str:
     mesh (the label shown on the card is not one)."""
     params = spec.to_dict()
     params.pop("label", None)
-    parts = {"image": _identity(project.image.src), "params": params,
+    parts = {"image": _identity(project, "image"), "params": params,
              "manifest": MANIFEST_VERSION}
     if spec.type == "label_surfaces":
-        parts["labels"] = _identity(project.segmentation.derived)
+        parts["labels"] = _identity(project, "segmentation")
     raw = json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
@@ -229,12 +253,18 @@ def check(project, spec: SurfaceSpec, *, source=None) -> dict:
     from plexora.server.providers.base import is_remote_locator
 
     image = project.image
-    if not image.src or not image.is_volumetric:
+    # A node-held image has no src here; its binding says where it is.
+    has_image = bool(image.src) or _node_binding(project, "image") is not None
+    if not has_image or not image.is_volumetric:
         raise SurfaceRefused(f"{project.name}'s image is not a z-stack, so it has no "
                              "surfaces to extract")
+    # A web address is read by this process, a block at a time over the
+    # internet -- not a build to run. A data node is different: it builds the
+    # surface next to its files (`build_layer`), so it is not refused here.
     if is_remote_locator(image.src):
-        raise SurfaceRefused("surfaces are extracted from an image on this machine; this one "
-                             "is on another", code="resource_not_local")
+        raise SurfaceRefused("surfaces are extracted from an image on this machine or on a "
+                             "data node; this one is read from a web address",
+                             code="resource_not_local")
     frames = int(image.frames or 1)
     if not 0 <= spec.t < frames:
         raise SurfaceRefused(f"t {spec.t} is outside this image's {frames} frame(s)")
@@ -251,8 +281,9 @@ def check(project, spec: SurfaceSpec, *, source=None) -> dict:
         return {"plan": plan.to_dict()}
     from plexora.server.volume import labels as volume_labels
 
-    seg = project.segmentation
-    if not seg.available or not seg.derived or not volume_labels.is_label_volume(seg.derived):
+    # Wherever the mask is held: a data node's label volume answers the
+    # planning below from its description (providers/node.NodeLabelVolume).
+    if not volume_labels.project_has_label_volume(project):
         raise SurfaceRefused("surfaces of cells need a 3-D mask (a label volume, one id per "
                              "cell across planes); this project has none")
     table = object_table(project, spec.t)
@@ -263,7 +294,9 @@ def check(project, spec: SurfaceSpec, *, source=None) -> dict:
     if spec.ids is not None and keep.height == 0:
         raise SurfaceRefused("none of those ids is an object of this mask")
     faces = _faces(keep)
-    labels_volume = volume_labels.open_label_volume(seg.derived, spec.t)
+    labels_volume = volume_labels.project_label_volume(project, spec.t)
+    if labels_volume is None:
+        raise SurfaceRefused("this project's 3-D mask could not be opened")
     level, estimate = levels.plan_labels(labels_volume, keep["volume_vox"].to_numpy(),
                                          faces=faces, quality=spec.quality, level=spec.level,
                                          image_width=image.width)
@@ -380,19 +413,45 @@ def _scale(volume):
     return (1.0, 1.0, 1.0), False
 
 
-def build_layer(project, layer, stage, report) -> None:
-    """`layer_jobs` builder for modality `surface`."""
+def open_volume_for(project):
+    """The project's z-stack for a surface: opened here when the file is on
+    this machine; for one a data node holds, its description plus block reads
+    (`providers.node.project_volume_reader`) -- enough to plan, preview and
+    measure, while a build runs on the node. None when it is neither. The
+    caller closes what comes back."""
     from plexora.server.utils.source_image import open_project_volume
 
+    if _node_binding(project, "image") is not None:
+        from plexora.server.providers import node as node_provider
+
+        return node_provider.project_volume_reader(project)
+    return open_project_volume(project)
+
+
+def _builds_on(project, spec):
+    """The data-node binding a build of `spec` runs on, or None for here.
+
+    Where the voxels it reads are: an isosurface reads the image's channel,
+    cell surfaces read only the mask (the image gives the spacing, which is
+    sent along). Both are minutes to hours of reading, and only the mesh
+    should cross the network."""
+    return _node_binding(project, "image" if spec.type == "isosurface" else "segmentation")
+
+
+def build_layer(project, layer, stage, report) -> None:
+    """`layer_jobs` builder for modality `surface`."""
     spec = SurfaceSpec.from_dict((layer.extra or {}).get("surface"))
     with _cancel_lock:
         event = _cancel.setdefault((project.name, layer.id), threading.Event())
     folder = Path(layer.src)
-    source = open_project_volume(project)
+    source = open_volume_for(project)
     if source is None:
         raise SurfaceRefused(f"{project.name}'s image could not be opened as a z-stack")
     try:
-        if spec.type == "isosurface":
+        if _builds_on(project, spec) is not None:
+            surface, level, info = _build_on_node(project, spec, source, stage, report,
+                                                  event.is_set)
+        elif spec.type == "isosurface":
             surface, level, info = _build_isosurface(project, spec, source, stage, report,
                                                      event.is_set)
         else:
@@ -419,12 +478,121 @@ def build_layer(project, layer, stage, report) -> None:
             _cancel.pop((project.name, layer.id), None)
 
 
-def _build_isosurface(project, spec, source, stage, report, cancelled):
-    volume = source.volume
+def _channel_index(project, spec):
     names = list(project.image.channel_names)
     if spec.channel not in names:
         raise SurfaceRefused(f"no channel {spec.channel!r} in this image")
-    channel = names.index(spec.channel)
+    return names.index(spec.channel)
+
+
+def _build_isosurface(project, spec, source, stage, report, cancelled):
+    return extract_isosurface(spec, source, _channel_index(project, spec), stage, report,
+                              cancelled)
+
+
+def _build_label_surfaces(project, spec, source, stage, report, cancelled):
+    from plexora.server.volume import labels as volume_labels
+
+    volume = source.volume
+    if not volume_labels.project_has_label_volume(project):
+        raise SurfaceRefused("this project has no 3-D mask")
+    labels_volume = volume_labels.project_label_volume(project, spec.t)
+    if labels_volume is None:
+        raise SurfaceRefused("this project's 3-D mask could not be opened")
+    return extract_label_surfaces(spec, labels_volume, object_table(project, spec.t),
+                                  image_width=volume.width, scale=_scale(volume)[0],
+                                  stage=stage, report=report, cancelled=cancelled)
+
+
+#: The object-table columns a cell-surface build reads (boxes and sizes).
+TABLE_COLUMNS = ("label", "bbox_x0", "bbox_x1", "bbox_y0", "bbox_y1", "bbox_z0", "bbox_z1",
+                 "volume_vox", "faces_x", "faces_y", "faces_z")
+
+
+def _build_on_node(project, spec, source, stage, report, cancelled):
+    """The extraction, run by the data node that holds the voxels it reads
+    (`extract_on_node`, over there): only the mesh comes back. Measuring and
+    writing the surface happen here, from the same mesh, exactly as for a
+    file on this machine."""
+    import io
+
+    from plexora.server.providers import node as node_provider
+    from plexora.server.providers.base import ResourceError
+
+    volume = source.volume
+    image_spec = project.image
+    body = {"spec": spec.to_dict(), "zs": image_spec.z_semantics,
+            "ts": image_spec.t_semantics, "pixel_size": image_spec.pixel_size,
+            "pixel_size_z": image_spec.pixel_size_z,
+            "frame_interval": image_spec.frame_interval}
+    if spec.type == "isosurface":
+        binding = _node_binding(project, "image")
+        body.update(image=binding.resource_id, channel=_channel_index(project, spec))
+    else:
+        binding = _node_binding(project, "segmentation")
+        body.update(segmentation=binding.resource_id, image_width=int(volume.width),
+                    scale=list(_scale(volume)[0]))
+        table = object_table(project, spec.t)
+        if table is not None:
+            import base64
+
+            buffer = io.BytesIO()
+            table.select([c for c in TABLE_COLUMNS if c in table.columns]).write_parquet(buffer)
+            body["table"] = base64.b64encode(buffer.getvalue()).decode("ascii")
+    try:
+        return node_provider.build_surface_on_node(binding, body, stage=stage, progress=report,
+                                                   cancelled=cancelled)
+    except ResourceError as exc:
+        raise SurfaceRefused(str(exc)) from exc
+
+
+def extract_on_node(body, *, image=None, labels=None, stage, report, cancelled):
+    """A data node's half of `_build_on_node`: `(surface, level, info)` from
+    the files this node holds. `image` is a callable opening the image as a
+    volume under the primary's z/t reading (isosurfaces), `labels` the mask's
+    label volume store path (cell surfaces)."""
+    import base64
+    import io
+
+    from dataclasses import replace
+
+    spec = SurfaceSpec.from_dict(body.get("spec"))
+    if spec.type == "isosurface":
+        source = image(body.get("zs") or None, body.get("ts") or None)
+        if source is None or source.volume.is_planar:
+            raise SurfaceRefused("this node reads the image as a single plane, so it has no "
+                                 "surfaces to extract")
+        try:
+            spacing = source.volume.spacing.overlaid(
+                pixel_size=body.get("pixel_size"), pixel_size_z=body.get("pixel_size_z"),
+                frame_interval=body.get("frame_interval"), frames=source.volume.frames)
+            if spacing is not source.volume.spacing:
+                source.volume = replace(source.volume, spacing=spacing)
+            return extract_isosurface(spec, source, int(body.get("channel") or 0), stage,
+                                      report, cancelled)
+        finally:
+            source.close()
+    from plexora.server.volume import labels as volume_labels
+
+    if not labels or not volume_labels.is_label_volume(labels):
+        raise SurfaceRefused("this node holds the mask as one 2-D segmentation, not a label "
+                             "volume")
+    table = None
+    if body.get("table"):
+        import polars as pl
+
+        table = pl.read_parquet(io.BytesIO(base64.b64decode(body["table"])))
+    scale = tuple(float(v) for v in body.get("scale") or (1.0, 1.0, 1.0))
+    return extract_label_surfaces(spec, volume_labels.open_label_volume(labels, spec.t), table,
+                                  image_width=body.get("image_width"), scale=scale,
+                                  stage=stage, report=report, cancelled=cancelled)
+
+
+def extract_isosurface(spec, source, channel, stage, report, cancelled):
+    """`(surface, level, info)`: the isosurface of channel index `channel` of
+    `source` (anything with `.volume` and `read_block`). Run here for a file
+    on this machine and by a data node for one it holds."""
+    volume = source.volume
     region = levels.Region.from_dict(spec.region, width=volume.width, height=volume.height,
                                      depth=volume.depth)
     plan = levels.plan_isosurface(volume, region, quality=spec.quality, level=spec.level)
@@ -439,16 +607,13 @@ def _build_isosurface(project, spec, source, stage, report, cancelled):
                                  "region": region.to_dict(), "ids_from": "components"}
 
 
-def _build_label_surfaces(project, spec, source, stage, report, cancelled):
-    from plexora.server.volume import labels as volume_labels
-
-    volume = source.volume
-    seg = project.segmentation
-    if not seg.available or not volume_labels.is_label_volume(seg.derived):
-        raise SurfaceRefused("this project has no 3-D mask")
-    labels_volume = volume_labels.open_label_volume(seg.derived, spec.t)
+def extract_label_surfaces(spec, labels_volume, table, *, image_width, scale, stage, report,
+                           cancelled):
+    """`(surface, level, info)`: one surface per object of `labels_volume`
+    (frame `spec.t`'s), sized by the object table `table` when there is one
+    and found by a scan when not. `scale` is the image's voxel size in µm.
+    Run here for a mask on this machine and by a data node for one it holds."""
     shapes = labels_volume.level_shapes()
-    table = object_table(project, spec.t)
     if table is not None:
         keep = table if spec.ids is None else table.filter(
             __import__("polars").col("label").is_in(list(spec.ids)))
@@ -462,7 +627,7 @@ def _build_label_surfaces(project, spec, source, stage, report, cancelled):
             raise SurfaceRefused("none of those ids is an object of this mask")
     level, _estimate = levels.plan_labels(labels_volume, counts, faces=faces,
                                           quality=spec.quality, level=spec.level,
-                                          image_width=volume.width)
+                                          image_width=image_width)
     height_k, width_k = shapes[level]
     fx, fy = labels_volume.width / max(1, width_k), labels_volume.height / max(1, height_k)
     if keep is not None and level == 0:
@@ -473,7 +638,6 @@ def _build_label_surfaces(project, spec, source, stage, report, cancelled):
         ids, boxes, _ = label_surfaces.object_boxes(labels_volume, level, ids=spec.ids,
                                                     progress=report, cancelled=cancelled)
     grid = marching.Grid.of((labels_volume.depth, height_k, width_k), factor_xy=(fx, fy))
-    scale, _ = _scale(volume)
     stage("extracting")
     surface, rep = label_surfaces.extract(
         labels_volume, level, grid, ids, boxes, scale=scale,
@@ -522,9 +686,11 @@ def write_surface(folder: Path, surface, frame, *, project, spec, level, volume,
         "label": spec.default_label(),
         "source": {"kind": "channel" if spec.type == "isosurface" else "labels",
                    "channel": spec.channel, "t": spec.t,
-                   "image": str(project.image.src),
-                   **({"labels": str(project.segmentation.derived)}
+                   "image": _provenance(project, "image"),
+                   **({"labels": _provenance(project, "segmentation")}
                       if spec.type == "label_surfaces" else {}),
+                   **({"built_on": f"node:{_builds_on(project, spec).node}"}
+                      if _builds_on(project, spec) is not None else {}),
                    "objects": list(spec.ids) if spec.ids is not None else "all"},
         "params": spec.to_dict(),
         "smoothing": mesh_mod.Smoothing.preset(spec.smoothing).to_dict(),
@@ -596,11 +762,10 @@ def project_scale(project):
     """`(scale, physical)` of the project's volume: its spacing as the file and
     the project state it (a z step somebody typed included). Opened and closed
     here -- never the viewer's loaded project, which an agent call must not
-    touch (tests/test_agent_architecture.py)."""
-    from plexora.server.utils.source_image import open_project_volume
-
+    touch (tests/test_agent_architecture.py). A data node's image answers
+    from its description."""
     try:
-        source = open_project_volume(project)
+        source = open_volume_for(project)
     except Exception:
         source = None
     if source is None:

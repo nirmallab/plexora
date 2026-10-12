@@ -158,7 +158,15 @@ Rays stop at opaque surfaces, so volume + surfaces is cheaper than volume alone.
   under voxel volumes (cells on the test scene: median 0.945, 5th–95th 0.93–0.96). Report voxel columns.
 - Objects touching the volume's edge are cut there (`touches_bounds`).
 - Distances are geometry, not interaction. Contact area is from the mask, not the mesh.
-- Data on a remote node: surfaces are refused (`resource_not_local`), like pinning.
+- Data on a data node: the extraction runs on the node that holds the voxels it reads
+  (`store._builds_on`: the image for an isosurface, the mask for cell surfaces) as a
+  polled job (`POST /node/v1/volume/surface`, `/volume/jobs/<id>` status, result as an
+  `.npz` of the mesh arrays, cancel); the primary measures the mesh, joins its object
+  table (sent to the node for sizing) and writes the surface, so every read after the
+  build is local. Previews and suggestions read their block through
+  `POST /node/v1/image/<rid>/block` (`providers.node.NodeVolumeReader`); contact areas
+  read one mask block through `NodeLabelVolume`. A stack read from a web address is
+  still refused (`resource_not_local`). `tests/test_node_surfaces.py` pins node = local.
 - Per-cell extraction is a Python loop (~1 ms/cell): fine to ~50 k cells; a one-pass numba
   multi-label kernel is the Phase 3 answer. The full-resolution ceiling is the browser's
   triangle budget; chunked region LOD is Phase 3.
@@ -182,6 +190,6 @@ Rays stop at opaque surfaces, so volume + surfaces is cheaper than volume alone.
 
 One-pass numba multi-label surface nets; chunked out-of-core extraction with halos (the
 strip is already the unit); region surfaces at level 0 with camera-aware LOD and frustum
-culling; a client worker preview for remote nodes; watershed splitting; AO/shadows/
+culling; watershed splitting; AO/shadows/
 supersampling; time-resolved surfaces per frame with tracking-aware colour; SCIMAP Pro
 hand-off of surface measurements.

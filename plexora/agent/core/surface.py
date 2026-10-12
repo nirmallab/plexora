@@ -103,7 +103,6 @@ def surface_create(call, inp):
     from plexora.server.models import layer_jobs
     from plexora.server.models.project import Project
     from plexora.server.surface import store
-    from plexora.server.utils.source_image import open_project_volume
 
     record = call.session.project(inp.project)
     spec = {"type": inp.type, "channel": inp.channel, "iso": inp.iso, "t": inp.t,
@@ -121,7 +120,8 @@ def surface_create(call, inp):
         spec["region"] = region
     if inp.ids:
         spec["ids"] = list(inp.ids)
-    source = open_project_volume(record) if inp.type == "isosurface" else None
+    # A data node's z-stack is described here and built on the node.
+    source = store.open_volume_for(record) if inp.type == "isosurface" else None
     try:
         answer = store.create(record, spec, replace_existing=inp.replace, source=source,
                               render={"color": inp.color} if inp.color else None)
@@ -174,21 +174,22 @@ class SuggestInput(ProjectInput):
 def surface_suggest_threshold(call, inp):
     """Otsu, triangle and mixture thresholds in raw units, over a coarse grid."""
     from plexora.server.surface import levels, preview
+    from plexora.server.surface import store
     from plexora.server.surface.isosurface import Preprocess
-    from plexora.server.utils.source_image import open_project_volume
 
     record = call.session.project(inp.project)
     names = list(record.image.channel_names)
     if inp.channel not in names:
         raise AgentError("invalid_input", f"no channel {inp.channel!r}; the channels are "
                                           f"{', '.join(names)}")
-    source = open_project_volume(record)
+    source = store.open_volume_for(record)
     if source is None:
         raise AgentError("invalid_input", f"{record.name}'s image is not a z-stack")
     try:
         volume = source.volume
         answer = preview.suggest(
-            source, f"agent|{record.image.src}", channel=names.index(inp.channel), t=inp.t,
+            source, f"agent|{store._identity(record, 'image')}",
+            channel=names.index(inp.channel), t=inp.t,
             region=levels.Region(), pre=Preprocess(sigma_um=inp.sigma_um,
                                                    background_um=inp.background_um))
     finally:

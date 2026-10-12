@@ -61,13 +61,26 @@ def _refusal(error):
 
 
 def _source(datasource):
+    """The z-stack a preview, a suggestion or a plan reads: the viewer's own
+    for a file on this machine; for one a data node holds, its description
+    plus block reads over the wire (a preview's few million voxels -- a build
+    runs on the node)."""
     from plexora.server.models import views
 
     source = views.current_source(datasource)
     if source is None or source.volume.is_planar:
         return None
     if not getattr(source, "is_local", True):
-        return None
+        from plexora.server.models.project import Project
+        from plexora.server.providers import node as node_provider
+
+        project = Project.find(datasource)
+        try:
+            source = node_provider.project_volume_reader(project) if project else None
+        except Exception:  # noqa: BLE001 -- a node that is not answering: no z-stack
+            return None
+        if source is None or source.volume.is_planar:
+            return None
     return source
 
 
@@ -89,6 +102,8 @@ def _identity(datasource, project):
     from plexora.server.models import data_model
     from plexora.server.volume import serve
 
+    if surface_store._node_binding(project, "image") is not None:
+        return surface_store._identity(project, "image")
     return serve.source_identity(
         (data_model.config.get(datasource) or {}).get('channelFile') or project.image.src)
 
@@ -592,9 +607,10 @@ def surface_neighbours(datasource, surface_id):
                 r = mine.row(0, named=True)
                 box = (r["bbox_z0"], r["bbox_z1"], r["bbox_y0"], r["bbox_y1"],
                        r["bbox_x0"], r["bbox_x1"])
-        if box is not None and project.segmentation.derived:
-            labels = volume_labels.open_label_volume(project.segmentation.derived,
-                                                     int(spec.get("t") or 0))
+        # A data node's mask is read through it, one block around the cell.
+        labels = volume_labels.project_label_volume(project, int(spec.get("t") or 0)) \
+            if box is not None else None
+        if labels is not None:
             areas = contacts.contact_areas(labels, target, box, spacing=scale)
             for row in rows:
                 row["contact_area"] = round(float(areas.get(row["object"], 0.0)), 4)
