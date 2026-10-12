@@ -188,6 +188,12 @@ class SessionOptions(AgentModel):
                     "and the model file, and runs on this machine's CPU), full (both), or "
                     "off. A marker the model cannot read is gated as without it. Default "
                     "from PLEXORA_GATING_HYBRID, else off.")
+    replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
+                         "reordered and rescored without the failed gates, accepted gates that "
+                         "only a failed one placed go to review, and what only biology can "
+                         "settle (a population that may be absent, an image whose looks keep "
+                         "naming the same artifact) is put to the planning task in a `replan` "
+                         "packet. False keeps the plan made at the start.")
     seed: int = 0
     delegate: bool = Field(True, description="Return the `delegate` block: how to hand the "
                            "packet loop to fresh worker conversations on a cheaper or the "
@@ -342,6 +348,8 @@ def start(call, inp):
         "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
         "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
         "pixel": pixel, "qc_exclusion": qc_blocks,
+        "qc_missing": _qc_missing(qc_blocks),
+        "model_withheld": _model_withheld(qc_blocks, inp.hybrid),
     }
     if expression.get("status") == "pending":
         record["state"] = "needs_setup"
@@ -391,6 +399,7 @@ def start(call, inp):
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(pixel), "state": record["state"],
             "qc_exclusion": qc_blocks,
+            **_qc_warning(qc_blocks, inp.hybrid),
             **_guide(inp.reading, inp.known_guide),
             **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
@@ -461,6 +470,47 @@ def _qc_check(call, images):
                                            "n_exclude", "n_warn", "n_marker", "warning")
                      if k in block}
     return out
+
+
+def _qc_missing(blocks) -> list:
+    """The images whose QC mode leaves cells out, but that have no QC result
+    to leave out: strict (or exclude) there does nothing."""
+    return sorted(name for name, block in (blocks or {}).items()
+                  if block.get("mode") not in (None, "off") and not block.get("applied")
+                  and block.get("reason") == "no QC result for this image")
+
+
+def _model_withheld(blocks, hybrid) -> list:
+    """The images the cell model is not used on (`Engine.hybrid_has`): with
+    the model on, every `_qc_missing` image. With nothing left out, the
+    model's confident calls promote whatever bright artifact the image holds
+    (PCA benchmark 2026-10-11: an edge band in LSP11761, which had no QC)."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    if "model" not in schemas.HYBRID_FEATURES.get(hybrid, frozenset()):
+        return []
+    return _qc_missing(blocks)
+
+
+def _qc_warning(blocks, hybrid="off") -> dict:
+    """A warning in the start output for `_qc_missing` images -- never a
+    silent no-op: artifacts there (an edge band, a fold) reach every marker's
+    fit, sample and look."""
+    missing = _qc_missing(blocks)
+    if not missing:
+        return {}
+    withheld = _model_withheld(blocks, hybrid)
+    return {"qc_warning": {
+        "images": missing,
+        **({"model_withheld": withheld} if withheld else {}),
+        "message": (f"{', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no QC "
+                    "result, so the QC mode leaves nothing out: an artifact there (an edge "
+                    "band, a fold, autofluorescence) reaches every marker. "
+                    + ("The cell model is not used there until QC has run: it would promote "
+                       "such an artifact. " if withheld else "")
+                    + "Tell the user; run QC first if they want it ("
+                    + tool_name_of("qc.session_start") + "), or go on and let re-planning "
+                    "flag an image whose looks keep naming the same artifact.")}}
 
 
 def _expression_check(call, images):
@@ -970,6 +1020,8 @@ def _subject(packet):
         return "expression source"
     if kind == "panel_context":
         return "panel context"
+    if kind == "replan":
+        return "re-planning"
     if kind == "pixel_setup":
         return "pixel size"
     if len(refs) == 1:

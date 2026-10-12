@@ -74,6 +74,14 @@ How to judge (the guide says how to read each picture):
   `checks` say what to look at.
 - `correction_check`: one word per numbered cell (`own`, `not_own`,
   `cannot_tell`), each on its own pixels; r-cells are clear positives.
+- `replan`: failed markers and images, as notes and numbers. Per marker:
+  `absent` only when the positives are artifact (the whole-image view said
+  so, or `lineage_contamination` puts even the brightest on an excluding
+  lineage) and no look saw own stain; `bleed_through`, a real population
+  under another channel's light; `technical_failure`; else
+  `keep_for_review`. Per image: `image_artifact` when the flag is the
+  image's own (edge, fold, autofluorescence), else `not_image_level`.
+  A lineage the tissue surely holds is rarely absent: unsure, keep it.
 - Every look: set `artifact_flags` when segmentation, focus, saturation,
   bleed-through, autofluorescence, folds or edges affect the cells shown.
   `confidence` is `sure`, `fairly_sure` or `unsure`; say `unsure` rather than

@@ -253,11 +253,24 @@ class TruthAgent:
             return {"kind": kind, "per_image": {
                 project: "holds" if direction == "about_right" or self.style == "lazy"
                 else direction}}
+        if kind == "replan":
+            # A simulated reader knows the cells, not the biology: everything
+            # it is asked to re-plan stays with a person.
+            allowed = packet.get("allowed") or {}
+            return {"kind": kind,
+                    "markers": {k: "keep_for_review" for k in allowed.get("markers") or ()},
+                    "images": {p: "not_image_level" for p in allowed.get("images") or ()}}
         return {"kind": "panel_context", "entries": []}
 
 
 
 # -- variants -------------------------------------------------------------------------
+
+#: Synthetic scenes have no QC result, and nothing for QC to find: their
+#: sessions run with QC off, as a user who chose to ignore QC would, so a
+#: hybrid variant keeps its cell model (`Engine.hybrid_has` withholds it from
+#: an image strict QC cannot act on).
+SYNTHETIC_OPTIONS = {"qc": "off"}
 
 #: The ablation's variants: what each sets of a session's options. The hybrid
 #: levels (`schemas.HYBRID_OPTIONS`): the multi-view looks, the cell model's
@@ -472,10 +485,11 @@ def oracle_cell_model(truth, *, cell_truth=None, seed=0, unsure=0.15):
         cellcall.predict, cellcall.predictor = saved
 
 
-def gates_for_arms(session, project, markers, agent, arms, *, variants=("baseline",)):
+def gates_for_arms(session, project, markers, agent, arms, *, variants=("baseline",),
+                   options=None):
     """({arm: {marker: gate}}, {arm: the session's units and costs}). Each
     of `variants` (`VARIANTS`) runs its own session, scored as arm
-    `variant_arm(variant, variants)`."""
+    `variant_arm(variant, variants)`; `options` are added to every one."""
     from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.autogate import profile as profmod
 
@@ -489,13 +503,13 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
     if "session" in arms:
         for variant in check_variants(variants):
             arm = variant_arm(variant, variants)
-            options = {**VARIANTS[variant], "agent": f"bench:{variant}",
-                       "reuse_answers": False}
+            started = {**(options or {}), **VARIANTS[variant],
+                       "agent": f"bench:{variant}", "reuse_answers": False}
             oracle = oracle_cell_model(agent.truth_by_row(), cell_truth=agent.cell_truth_by_row()) \
-                if options.get("hybrid") in ("model", "full") else contextlib.nullcontext()
+                if started.get("hybrid") in ("model", "full") else contextlib.nullcontext()
             with oracle:
                 units, status, seconds, sid = run_session(session, project, markers, agent,
-                                                          mode="propose", options=options)
+                                                          mode="propose", options=started)
                 _drain_model_runs(sid)
             out[arm] = {m: units.get(m, {}).get("final") for m in markers}
             stored = _session_units(sid)
@@ -584,7 +598,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                                    seed=seed + index, cell_truth=made.get("cell_truth"),
                                    ids=made.get("ids"))
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
-                                               variants=variants)
+                                               variants=variants, options=SYNTHETIC_OPTIONS)
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
                                        cell_truth=made.get("cell_truth")):
                     row["scenario"] = scenario
@@ -619,7 +633,7 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
         try:
             registry.discover(["gating"])
             session = AgentSession(table_limit=4)
-            options = dict(VARIANTS[check_variants((variant,))[0]])
+            options = {**SYNTHETIC_OPTIONS, **VARIANTS[check_variants((variant,))[0]]}
             for index, scenario in enumerate(scenarios):
                 name = f"bench_{scenario}"
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,

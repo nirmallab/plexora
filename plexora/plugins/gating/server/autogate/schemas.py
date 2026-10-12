@@ -71,9 +71,10 @@ SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 #: A marker waiting on something: the audit sheet, a look, a check.
 #: `awaiting_correction`: a gate a look approved that the cell model would
 #: move, its few changed cells put to one question (`SessionOptions.hybrid`).
+#: `awaiting_replan`: a marker held for the planning task's `replan` answer.
 WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
                   "awaiting_regression", "regression_confirm", "transfer_check",
-                  "awaiting_correction")
+                  "awaiting_correction", "awaiting_replan")
 
 #: Before any decision: not profiled yet, or (a dataset) waiting for the reference.
 OPEN_STATES = ("pending", "transfer_pending")
@@ -96,6 +97,9 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
 SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context")
+#: Re-planning after failures (`replan`): the planning task's, out alone,
+#: and asked any time during the run -- not set-up, which comes first.
+PLAN_KINDS = ("replan",)
 LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
 CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check", "correction_check")
 
@@ -137,6 +141,7 @@ NARRATION = {
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
     "panel_context": "Reading the panel to learn which markers belong together.",
+    "replan": "Re-planning the rest of the panel around the markers that failed.",
     "expression_setup": "Working out which expression values to gate on.",
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
 }

@@ -94,6 +94,17 @@ PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles"))
 #: move it (`regression_confirm`).
 SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles"))
 
+#: [cal] A population is contaminated (`Engine.lineage_purity`) when this
+#: share of its brightest positives sits on an exclusive partner, and that
+#: share is this many times the partner's share of all cells. On the PCA
+#: benchmark the two markers the user called absent sat at 0.63 and 0.74
+#: (8-10 times); every other immune marker at 0.20 or less (1.2 times).
+#: `min_top`: the brightest cells a share is read off -- fewer than the
+#: purity push calibrates on (`bivariate.THRESHOLDS["control_min_cells"]`): a
+#: share near 0.6 is clear on a few dozen cells, and an absent marker has few
+#: positives.
+LINEAGE = {"contaminated_top": 0.5, "contaminated_vs_prevalence": 3.0, "min_top": 30}
+
 
 def store() -> SessionStore:
     return SessionStore(KIND)
@@ -329,7 +340,7 @@ def compact_scoring(result, partners) -> dict:
     background = result.get("background") or {}
     return {"version": result.get("version"), "proposal": r(result.get("proposal")),
             "basis": result.get("proposal_source"), "leading": result.get("leading"),
-            "background": {k: r(v) for k, v in background.items()},
+            "background": {k: v if isinstance(v, str) else r(v) for k, v in background.items()},
             "region": result.get("region"), "notes": list(result.get("notes") or []),
             "control": None if not result.get("control") else {
                 "value": r(result["control"]["value"]), "by": result["control"]["by"],
@@ -353,7 +364,7 @@ class Engine(BaseEngine):
     SETUP_KINDS = schemas.SETUP_KINDS
     #: Out alone: a set-up answer changes what every packet says, and an audit
     #: strip settles several markers at once.
-    EXCLUSIVE_KINDS = schemas.SETUP_KINDS + ("t1_strip",)
+    EXCLUSIVE_KINDS = schemas.SETUP_KINDS + schemas.PLAN_KINDS + ("t1_strip",)
     INVALID_ANSWERS = ENGINE["invalid_answers"]
     ANSWER_CAPABILITY = "gating.answer"
     NEXT_CAPABILITY = "gating.next"
@@ -379,9 +390,14 @@ class Engine(BaseEngine):
         option = self.options["hybrid"]
         return option if option in schemas.HYBRID_OPTIONS else "off"
 
-    def hybrid_has(self, feature) -> bool:
+    def hybrid_has(self, feature, unit=None) -> bool:
         """Whether the session's `hybrid` level includes `feature` (`tiles`
-        or `model`: `schemas.HYBRID_FEATURES`)."""
+        or `model`: `schemas.HYBRID_FEATURES`) -- for `unit`'s image: the
+        model is withheld from an image with no QC result
+        (`capabilities_session._model_withheld`)."""
+        if feature == "model" and unit is not None \
+                and unit["project"] in (self.record.get("model_withheld") or ()):
+            return False
         return feature in schemas.HYBRID_FEATURES[self.hybrid_option()]
 
     def partner_panels(self, unit):
@@ -415,7 +431,7 @@ class Engine(BaseEngine):
         (`hybrid.waiting`); never with the model off."""
         from plexora.plugins.gating.server.autogate import hybrid
 
-        return self.hybrid_has("model") and hybrid.waiting(unit)
+        return self.hybrid_has("model", unit) and hybrid.waiting(unit)
 
     def model_ahead(self, unit):
         """Read the marker's cells near its start while its first look is out
@@ -424,7 +440,7 @@ class Engine(BaseEngine):
         from plexora.plugins.gating.server.autogate import hybrid
 
         state = unit.get("model") or {}
-        if not self.hybrid_has("model") or not hybrid.HYBRID["correct"] \
+        if not self.hybrid_has("model", unit) or not hybrid.HYBRID["correct"] \
                 or unit.get("no_image_channel") or unit.get("condition") \
                 or state.get("runs") or state.get("ahead") or unit.get("candidate") is None:
             return None
@@ -437,7 +453,7 @@ class Engine(BaseEngine):
         with the model on. Nothing waits for it."""
         from plexora.plugins.gating.server.autogate import hybrid
 
-        if low is None or not self.hybrid_has("model") or not hybrid.HYBRID["layer"] \
+        if low is None or not self.hybrid_has("model", unit) or not hybrid.HYBRID["layer"] \
                 or unit.get("no_image_channel") or not (unit.get("used") or {}).get("packets"):
             return None
         return hybrid.request(self, unit, low, purpose="layer")
@@ -625,7 +641,7 @@ class Engine(BaseEngine):
                   "confidence_notes": unit.get("confidence_notes")}
         if unit.get("condition"):
             detail["condition"] = unit["condition"]
-        if self.hybrid_has("model") and unit.get("model"):
+        if self.hybrid_has("model", unit) and unit.get("model"):
             # What the cell model said and did; absent with it off, so a row
             # is today's.
             from plexora.plugins.gating.server.autogate import hybrid
@@ -702,7 +718,7 @@ class Engine(BaseEngine):
         is written there anyway, tagged `needs_review` with confidence
         `manual_review` (`_review_gate`): every gated marker ends with a value."""
         unit["reason"] = reason
-        if state in schemas.REVIEW_WRITE_STATES and self.hybrid_has("model") \
+        if state in schemas.REVIEW_WRITE_STATES and self.hybrid_has("model", unit) \
                 and not unit.get("user_edited") and (proposed is None or unit.get("candidate") is None
                      or abs(float(proposed) - float(unit["candidate"])) <= 1e-9):
             # The gate written for review, corrected by the cell model first
@@ -792,6 +808,13 @@ class Engine(BaseEngine):
             self.reference_failed(unit)
         except Exception:  # the evidence graph is a guide; closing must not fail on it
             pass
+        try:
+            from plexora.plugins.gating.server.autogate import replan
+
+            replan.after_close(self, unit)
+        except Exception as exc:  # re-planning is a guide too; it is logged, never raised
+            self.log(event="replan_error", unit=unit_key(unit["project"], unit["marker"]),
+                     error=str(exc)[:200])
 
     def finalize(self, unit, *, method):
         """Accept the unit's current final threshold with the rule-table confidence.
@@ -819,6 +842,13 @@ class Engine(BaseEngine):
         unit["reason"] = unit.get("reason") or f"accepted at {tier}"
         self.log(event="accepted", unit=unit_key(unit["project"], unit["marker"]),
                  state=state, confidence=confidence, low=unit.get("final"), tier=tier)
+        try:
+            from plexora.plugins.gating.server.autogate import replan
+
+            replan.after_accept(self, unit)
+        except Exception as exc:
+            self.log(event="replan_error", unit=unit_key(unit["project"], unit["marker"]),
+                     error=str(exc)[:200])
 
     # -- regression (deterministic) --
 
@@ -831,6 +861,7 @@ class Engine(BaseEngine):
         result = tableops.local_or_node(ds, "gating.autogate.regression", {
             "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
             "prior": prior, "partners": partners})
+        result = self._with_lineage(unit, result, {p["partner"] for p in partners})
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],
                               "checks": result["checks"],
@@ -850,9 +881,144 @@ class Engine(BaseEngine):
         unit["delta_fraction"] = (n_final - n_gmm) / col.n_finite if col.n_finite else None
         return result
 
+    def lineage_purity(self, unit, low=None) -> list:
+        """How pure the gate's positives are against every marker that should
+        exclude them -- each exclusive relation the panel's tree gives the
+        marker, stated or derived (`hierarchy.relations`: a subset inherits
+        its parents' exclusions), whose partner this run gated at moderate or
+        better. Computed here, not on the node (`bivariate.purity_excess`
+        reads the columns through the table handle).
+
+        Each row is {partner, derived, cross_lineage, at_gate, at_top, excess,
+        prevalence, contaminated}: `prevalence` is the partner's share of all
+        cells, and `contaminated` says even the brightest positives sit on the
+        partner (`LINEAGE`) -- a population the self-calibrated excess cannot
+        judge, because its top is as impure as its gate. Only across lineages
+        (`cross_lineage`: the two share no parent in the tree -- PD1 within
+        CD45 against SOX10): siblings of one lineage (CD8 and CD4 within CD3)
+        light each other in a dense aggregate, and their overlap is spill, not
+        a population that is not there."""
+        from plexora.plugins.gating.server.autogate import bivariate, context, hierarchy
+
+        ds = _data(self.call, unit["project"])
+        low = unit.get("candidate") if low is None else low
+        if low is None:
+            return []
+        panel = self.panel_for(unit["project"])
+        book = self.ledger(unit["project"], without=unit)
+        markers = set(ds.table.markers)
+
+        def lineage(marker):
+            return {marker} | {r["marker"] for r in hierarchy.relations(panel, marker)
+                               if r["relation"] == "subset" and r["direction"] == "forward"}
+
+        own = lineage(unit["marker"])
+        out = []
+        for rel in hierarchy.relations(panel, unit["marker"]):
+            # Every exclusion the tree gives, low ones too: a low one (PD1, a
+            # moderate subset of CD45, inherits CD45's SOX10 exclusion at low)
+            # only ever raises a question (`replan`), and the push below
+            # takes moderate or better.
+            if rel["relation"] != "exclusive" or rel["direction"] != "forward":
+                continue
+            entry = book.get(rel["marker"]) or {}
+            if entry.get("grade") not in hierarchy.RELIABLE or entry.get("gate") is None \
+                    or rel["marker"] not in markers:
+                continue
+            try:
+                purity = bivariate.purity_excess(ds, unit["marker"], float(low), rel["marker"],
+                                                 float(entry["gate"]), relation="exclusive",
+                                                 min_top=LINEAGE["min_top"])
+            except Exception:
+                purity = None
+            if purity is None:
+                continue
+            prevalence = float(profmod.column(ds, rel["marker"]).fraction(entry["gate"]) or 0.0)
+            cross = not (own & lineage(rel["marker"]))
+            contaminated = cross and purity["at_top"] >= LINEAGE["contaminated_top"] and \
+                purity["at_top"] >= LINEAGE["contaminated_vs_prevalence"] * prevalence
+            out.append({"partner": rel["marker"], "derived": bool(rel["derived"]),
+                        "confidence": rel["confidence"], "cross_lineage": cross,
+                        **{k: round(v, 4) if isinstance(v, float) else v
+                           for k, v in purity.items()},
+                        "prevalence": round(prevalence, 4), "contaminated": bool(contaminated)})
+        return out
+
+    def _with_lineage(self, unit, result, checked):
+        """The regression's result with the lineage rows added: an excess
+        against an exclusive partner the node did not check fails `partners`
+        (so the purity push applies), and a contaminated population fails a
+        `lineage` check of its own."""
+        from plexora.plugins.gating.server.autogate import bivariate, context, regression
+
+        try:
+            rows = self.lineage_purity(unit)
+        except Exception as exc:
+            self.log(event="lineage_error", unit=unit_key(unit["project"], unit["marker"]),
+                     error=str(exc)[:200])
+            return result
+        unit["lineage"] = rows
+        result = {**result, "checks": [dict(c) for c in result.get("checks") or []],
+                  "failed": list(result.get("failed") or [])}
+        worse = [r for r in rows if r["partner"] not in checked
+                 and context.CONFIDENCE_RANK.get(r.get("confidence"), 0) >= 1
+                 and r["n_top"] >= bivariate.THRESHOLDS["control_min_cells"]
+                 and r["excess"] > regression.THRESHOLDS["partner_tolerance"]]
+        if worse:
+            for check in result["checks"]:
+                if check["name"] == "partners":
+                    check["ok"] = False
+                    check["value"] = list(check.get("value") or []) + [
+                        {"relation": "exclusive", **r} for r in worse]
+            if "partners" not in result["failed"]:
+                result["failed"].append("partners")
+        contaminated = [r for r in rows if r["contaminated"]]
+        if contaminated and not unit.get("lineage_ack"):
+            worst = max(contaminated, key=lambda r: r["at_top"])
+            unit["lineage_contamination"] = worst
+            result["checks"].append({"name": "lineage", "ok": False, "value": contaminated,
+                                     "limit": dict(LINEAGE)})
+            result["failed"].append("lineage")
+        result["ok"] = not result["failed"]
+        return result
+
+    def close_contaminated(self, unit):
+        """Close a unit whose brightest positives sit on an exclusive lineage
+        for review, and say so (`replan` puts it to the agent)."""
+        c = unit["lineage_contamination"]
+        self.close(unit, "manual_review_recommended",
+                   f"even the brightest {unit['marker']} positives sit on {c['partner']}, which "
+                   f"should exclude them ({c['at_top']:.0%} of them, against {c['prevalence']:.0%} "
+                   "of all cells): the whole population is suspect",
+                   proposed=unit.get("candidate"))
+
+    def lineage_screen(self, unit) -> bool:
+        """Before the first look: a population whose brightest cells sit on an
+        exclusive lineage is closed for review at once, not looked at. Once
+        per unit; True when it closed it."""
+        if unit.get("lineage_screened") or unit.get("lineage_ack") \
+                or (unit.get("used") or {}).get("packets"):
+            return False
+        unit["lineage_screened"] = True
+        try:
+            rows = self.lineage_purity(unit)
+        except Exception as exc:
+            self.log(event="lineage_error", unit=unit_key(unit["project"], unit["marker"]),
+                     error=str(exc)[:200])
+            return False
+        unit["lineage"] = rows
+        contaminated = [r for r in rows if r["contaminated"]]
+        if not contaminated:
+            return False
+        unit["lineage_contamination"] = max(contaminated, key=lambda r: r["at_top"])
+        self.log(event="lineage_contaminated", unit=unit_key(unit["project"], unit["marker"]),
+                 before_look=True, **unit["lineage_contamination"])
+        self.close_contaminated(unit)
+        return True
+
     def settle(self, unit):
         """Advance a unit through every deterministic step it is waiting on."""
-        if unit["state"] == "awaiting_regression" and self.hybrid_has("model"):
+        if unit["state"] == "awaiting_regression" and self.hybrid_has("model", unit):
             from plexora.plugins.gating.server.autogate import hybrid
 
             if hybrid.plan_correction(self, unit):
@@ -861,21 +1027,42 @@ class Engine(BaseEngine):
                 return
         if unit["state"] == "awaiting_regression":
             result = self.run_regression(unit)
+            if "lineage" in result["failed"]:
+                self.close_contaminated(unit)
+                return
             if result["ok"] or unit.get("regression_confirmed") \
                     or unit.get("no_image_channel"):
                 # Nothing to look at for a column without a channel: the
                 # failed checks cap its confidence instead (confidence_for).
                 self.finalize(unit, method=unit.get("method") or "ai_accepted")
+            elif self.purity_capped(unit, result):
+                self.finalize(unit, method=unit.get("method") or "ai_accepted")
             elif not self.purity_push(unit, result):
                 unit["state"] = "regression_confirm"
+
+    def purity_capped(self, unit, result) -> bool:
+        """After the one purity push, purity failing again and nothing else
+        caps the gate's confidence at low (`confidence_for`: a failed check
+        not confirmed by eye) instead of asking for a whole-image look: on
+        lsp11385_2 32 of 44 such looks said "holds", on the PCA benchmark 42
+        of 62, and none of the PCA's other answers improved a gate (its
+        "too low" moved Ecad away; its "artifact" closed a real CD8a). A
+        spatial check failing too still gets the look: edge bands show there."""
+        if not unit.get("purity_pushed") or set(result.get("failed") or ()) != {"partners"}:
+            return False
+        unit["purity_capped"] = True
+        self.log(event="purity_capped", unit=unit_key(unit["project"], unit["marker"]),
+                 candidate=unit.get("candidate"))
+        return True
 
     def purity_push(self, unit, result) -> bool:
         """A gate whose positives are less pure against a partner than its
         own brightest positives (`regression`'s `partners` check) is too low:
         sent up the lattice once, by code, to the candidates a look then
         judges row by row. Only when nothing but purity (and the spatial
-        checks a purity miss drags along) failed; a second failure goes to the
-        whole-image look as before. Not a look's direction, so the
+        checks a purity miss drags along) failed; a second failure of purity
+        alone caps confidence (`purity_capped`), any other goes to the
+        whole-image look. Not a look's direction, so the
         oscillation guard (`transitions._to_t4`) never counts it."""
         failed = set(result.get("failed") or [])
         if "partners" not in failed or not failed <= PURITY_PUSHABLE \
@@ -1018,6 +1205,10 @@ class Engine(BaseEngine):
         if proposal is None:
             unit["start"] = {"source": "gmm", "low": unit["gmm"]}
             return unit["scoring"]
+        if unit.get("judged") or unit.get("judged_rows"):
+            # A rescore after a look (the marker turned out continuous) never
+            # crosses a row a look judged (`hybrid.judged_limits`).
+            proposal = self.clamp_to_judged(unit, ds, float(proposal), why="rescore")
         unit["start"] = {"source": "scoring", "low": float(proposal),
                          "basis": result.get("proposal_source"),
                          "leading": result.get("leading")}
@@ -1027,6 +1218,30 @@ class Engine(BaseEngine):
                  proposal=float(proposal), gmm=unit["gmm"],
                  basis=result.get("proposal_source"), leading=result.get("leading"))
         return unit["scoring"]
+
+    def clamp_to_judged(self, unit, ds, low, *, why):
+        """`low` clipped so it crosses no row a look judged -- a first look's
+        rows (`judged_rows`) or a look at candidates' intervals (`judged`):
+        one called `own_stain` keeps a gate below it, one called `unstained`
+        or `neighbour_only` above it (`hybrid.judged_limits`, relative to the
+        unit's current candidate) -- and the clip logged. The rule for every
+        refit code makes after a look (a conditional refit, a rescore)."""
+        from plexora.plugins.gating.server.autogate import hybrid
+
+        judged = list(unit.get("judged") or []) + list(unit.get("judged_rows") or [])
+        if not judged or unit.get("candidate") is None:
+            return low
+        col = profmod.column(ds, unit["marker"])
+        lo, hi = hybrid.judged_limits({**unit, "judged": judged}, col)
+        fit = float(col.to_fit(low))
+        clipped = min(max(fit, lo), hi)
+        if clipped == fit:
+            return low
+        out = float(col.from_fit(clipped))
+        unit.setdefault("clamps", []).append({"why": why, "from": float(low), "to": out})
+        self.log(event="clamped", unit=unit_key(unit["project"], unit["marker"]), why=why,
+                 proposed=float(low), to=out)
+        return out
 
     def defer_for_children(self, unit) -> bool:
         """Whether a unit waits, before its first look, for its children.
@@ -1130,6 +1345,8 @@ class Engine(BaseEngine):
         way round, among this session's markers of `project`."""
         from plexora.plugins.gating.server.autogate import context
 
+        from plexora.plugins.gating.server.autogate import hierarchy
+
         panel = self.panel_for(project)
         entries = panel.get("entries") or {}
         markers = {u["marker"] for u in self.units_of(project)}
@@ -1142,6 +1359,18 @@ class Engine(BaseEngine):
                 if context.CONFIDENCE_RANK.get(partner.get("confidence"), 0) < 1:
                     continue
                 if (entries.get(ref) or {}).get("role") in ("state", "signalling"):
+                    continue
+                links[marker].add(ref)
+                links[ref].add(marker)
+            # The exclusions the tree derives (a subset inherits its parents':
+            # CD20 within CD45 excludes what CD45 excludes): the lineage check
+            # needs those partners' gates, so a look waits for them too
+            # (`lineage_screen`).
+            for rel in hierarchy.relations(panel, marker):
+                ref = rel["marker"]
+                if rel["relation"] != "exclusive" or not rel["derived"] or ref not in markers \
+                        or context.CONFIDENCE_RANK.get(rel["confidence"], 0) < 1 \
+                        or (entries.get(ref) or {}).get("role") in ("state", "signalling"):
                     continue
                 links[marker].add(ref)
                 links[ref].add(marker)
@@ -1185,7 +1414,8 @@ class Engine(BaseEngine):
         for kind, pending in (
                 ("expression_setup", (record.get("expression") or {}).get("status") == "pending"),
                 ("pixel_setup", (record.get("pixel") or {}).get("status") == "pending"),
-                ("panel_context", bool(record.get("panel_pending")))):
+                ("panel_context", bool(record.get("panel_pending"))),
+                ("replan", self._replan_due())):
             if pending:
                 return ([], "busy") if held else ([(kind, [])], None)
         bulk_running = record.get("state") == "bulk_running"
@@ -1254,6 +1484,15 @@ class Engine(BaseEngine):
             return [], "wait_user"
         return [], None
 
+    def _replan_due(self) -> bool:
+        """Whether a `replan` packet waits to go out (`replan.pending`): not
+        while the bulk pass runs -- a failure then is a profile's, and the
+        markers it would reorder are not profiled yet."""
+        from plexora.plugins.gating.server.autogate import replan
+
+        return replan.pending(self.record) and replan.enabled(self) \
+            and self.record.get("state") != "bulk_running"
+
     def next_ready(self, reader):
         """The next decision for `reader` beside the packets already out:
         the marker it answered last while that one still needs a look (its
@@ -1301,6 +1540,8 @@ class Engine(BaseEngine):
         kind = ASKS[unit["state"]]
         if kind == "t2_confirm" and unit.get("scoring") is None:
             self.propose(unit)
+        if kind == "t2_confirm" and self.lineage_screen(unit):
+            return None
         if kind == "t2_confirm" and self.defer_for_children(unit):
             return None
         if kind == "t2_confirm":
@@ -1322,6 +1563,8 @@ class Engine(BaseEngine):
             return "pixel_setup", []
         if record.get("panel_pending"):
             return "panel_context", []
+        if self._replan_due():
+            return "replan", []
         # Stay on the marker being refined: its next look follows its last,
         # so the evidence (and a mirrored viewer) does not jump between markers.
         last = self.last_unit()
@@ -1426,7 +1669,7 @@ def phase_for(record, *, mirroring=False) -> str:
     if record.get("state") in schemas.FINISHED_STATES:
         return "summarizing"
     kind = record.get("outstanding_kind")
-    if kind in schemas.SETUP_KINDS or record.get("panel_pending") \
+    if kind in schemas.SETUP_KINDS or kind in schemas.PLAN_KINDS or record.get("panel_pending") \
             or record.get("state") == "needs_setup":
         return "planning"
     if kind in schemas.LOOK_KINDS:

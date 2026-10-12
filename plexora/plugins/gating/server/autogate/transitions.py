@@ -187,14 +187,17 @@ def _within(engine, unit, packet, answer):
                      f"but no conditional gate could be fitted: {result.get('reason')}",
                      proposed=unit.get("candidate"))
         return _outcome(unit, condition=None)
+    low = engine.clamp_to_judged(unit, ds, float(result["low"]), why="within")
     unit["condition"] = {"within": partner, "partner_gate": float(ref["gate"]),
                          "relation": ref["relation"], "method": result["method"],
                          "plain_low": unit.get("candidate"),
                          "n_partner_positive": result["n_partner_positive"],
                          "n_positive_within": result["n_positive_within"],
                          "n_positive_outside": result["n_positive_outside"],
-                         "separation_d": result.get("separation_d")}
-    unit["candidate"] = float(result["low"])
+                         "separation_d": result.get("separation_d"),
+                         **({"refit_low": float(result["low"])}
+                            if low != float(result["low"]) else {})}
+    unit["candidate"] = float(low)
     unit["method"] = "ai_conditional"
     _clear_direction(unit)
     unit.pop("directions", None)
@@ -235,6 +238,28 @@ def _honour_request(engine, unit, answer, direction):
 # -- T2 / T3 ------------------------------------------------------------------------
 
 
+def _judge_rows(unit, packet, answer):
+    """What a confident first look (or look beside a reference) judged, by
+    value: each row's word over the range of values its cells showed
+    (`packets._row_spans`), in `unit["judged_rows"]` -- no refit code makes
+    afterwards crosses it (`Engine.clamp_to_judged`, beside the candidate
+    intervals' `judged`). The cell model's correction keeps to the candidate
+    intervals alone (`hybrid.judged_limits`): its per-cell calls are evidence
+    of their own, and on the PCA benchmark it moved FOXP3 toward the user's
+    gate across a first look's row. And whether a look
+    has ever seen the marker's own stain with confidence (`own_seen`: a
+    population no look saw is what `replan` may call absent)."""
+    if _confidence(answer) < ENGINE["t2_min_confidence"]:
+        return
+    rows = dict(answer.rows or {})
+    if "own_stain" in rows.values():
+        unit["own_seen"] = True
+    spans = packet.get("_row_spans") or {}
+    unit.setdefault("judged_rows", []).extend(
+        [spans[row][0], spans[row][1], word] for row, word in rows.items()
+        if row in spans and word in ("own_stain", "unstained", "neighbour_only"))
+
+
 def _read_look(unit, answer, direction, why):
     """What a look's words say beside the direction, kept on the unit: the
     rows, the pattern, and two flags -- `pattern_mismatch` (a stain pattern
@@ -267,6 +292,7 @@ def _look(engine, packet, answer, *, where):
     unit = _units(engine, packet)[0]
     reference = answer.kind == "t3_biological"
     _note(unit, answer)
+    _judge_rows(unit, packet, answer)
     unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t3" if reference else "t2"
     if reference:
@@ -373,6 +399,9 @@ def apply_t4(engine, packet, answer):
         return _outcome(unit, asked=True)
     if "neighbour_only" in answer.intervals.values():
         unit["look_flags"] = sorted(set(unit.get("look_flags") or []) | {"neighbour_spill"})
+    if "own_stain" in answer.intervals.values() \
+            and unit["ai_confidence"] >= ENGINE["t2_min_confidence"]:
+        unit["own_seen"] = True
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
@@ -495,6 +524,7 @@ def apply_regression(engine, packet, answer):
         _to_t4(engine, unit, answer.verdict)
         return _outcome(unit)
     if answer.verdict == "artifact":
+        unit["artifact_verdict"] = True
         engine.close(unit, "manual_review_recommended",
                      "the whole-image view shows an artifact driving the positives")
         return _outcome(unit)
@@ -554,6 +584,13 @@ def apply_panel(engine, packet, answer):
                                                          "expected_fraction", "source",
                                                          "partners")}
     return {"applied": applied, "refused": refused, "order": engine.record["order"]}
+
+
+def apply_replan(engine, packet, answer):
+    """The planning task's verdicts on what failed (`replan.apply`)."""
+    from plexora.plugins.gating.server.autogate import replan
+
+    return replan.apply(engine, packet, answer)
 
 
 def apply_expression(engine, packet, answer):
@@ -697,6 +734,6 @@ def apply_correction(engine, packet, answer):
 
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
-         "t1_strip": apply_strip, "panel_context": apply_panel,
+         "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "correction_check": apply_correction}

@@ -2899,7 +2899,32 @@ deliberately left out and what should be built next.
   `correction_check` packet (`answers.CorrectionAnswer`, a `CHECK_KINDS`
   member, `tasks.yaml`'s `final_validation`). Which steps earned their place
   is `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`; the default stays `off`
-  until the live ablation clears its bar there.
+  until the live ablation clears its bar there. The cell model is withheld
+  from an image with no QC result (`record["model_withheld"]`,
+  `Engine.hybrid_has(feature, unit)`; the start output's `qc_warning` says
+  so), because strict QC cannot act on such an image; `ai/bench.py`'s
+  `SYNTHETIC_OPTIONS = {"qc": "off"}` runs synthetic scenes without QC for
+  the same reason.
+  `replan.py` re-plans when a marker fails (`docs/internal/GATING_REPLAN_PLAN.md`):
+  every close that fails runs `after_close` (reorder the unstarted markers
+  without the failed one, rescore dependents, close an accepted gate only the
+  failed one led), and only what code cannot call goes to the agent as one
+  session-level `replan` packet (a `schemas.PLAN_KINDS` member, routed to
+  `tasks.yaml`'s planning task; answer `answers.ReplanAnswer`; state
+  `awaiting_replan`, in `WAITING_STATES`; `SessionOptions.replan`, default
+  True). Each marker and image flag is asked at most once, so the loop is
+  bounded by the panel, and it only routes (close, reopen for looks, or a
+  note on an accepted gate, never a demotion): context never moves a gate.
+  `Engine.lineage_purity` is the cross-lineage contamination screen
+  (`LINEAGE` limits), and `replan.rescreen` runs it again when an excluding
+  partner is accepted, because a marker can close for review before that
+  partner is gated. Three guards beside it: `Engine.clamp_to_judged` with
+  `unit["judged_rows"]` keeps any automatic refit from crossing a row a look
+  judged; `within` is offered only when the orphan share is at most
+  `bivariate.WITHIN["max_orphan"]`; and `Engine.purity_capped` caps
+  confidence at low when purity fails again alone after the purity push,
+  instead of spending a second `regression_confirm` look.
+  `scoring.background` uses a floor-valley basis for zero-heavy channels.
   Tools `run_cell_model` (a job) and `get_cell_model_calls`
   (`capabilities_cellcall.py`, chained from `capabilities_autogate`,
   entitlement `ai:gating:analytics`); routes `GET get_cell_model` (bytes

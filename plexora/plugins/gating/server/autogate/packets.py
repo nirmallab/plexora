@@ -470,10 +470,30 @@ def _partner_line(numbers) -> list:
 
 def within_eligible(partners) -> list:
     """The partners a `within` answer may name: `subset` partners gated at
-    moderate confidence or better."""
+    moderate confidence or better, that the data agree with -- no more than
+    `bivariate.WITHIN["max_orphan"]` of the marker's positives at the gate
+    negative for the partner. A partner most of the positives sit outside of
+    is a subset in the vocabulary, not in this image (or its gate is wrong),
+    and refitting among its positives drops real cells."""
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    limit = bivariate.WITHIN["max_orphan"]
     return [p["partner"] for p in partners or ()
             if p.get("relation") == "subset"
-            and (p.get("grade") or p.get("partner_confidence")) in ("high", "moderate")]
+            and (p.get("grade") or p.get("partner_confidence")) in ("high", "moderate")
+            and (p.get("orphan_fraction") is None or p["orphan_fraction"] <= limit)]
+
+
+def _row_spans(rows) -> dict:
+    """{row key: [lowest, highest]} of the values a look's rows show: what
+    the look judged, by value (`transitions._judge_rows`)."""
+    out = {}
+    for row in rows:
+        values = [float(c["value"]) for c in row.get("cells") or ()
+                  if c.get("value") is not None]
+        if values:
+            out[row["key"]] = [min(values), max(values)]
+    return out
 
 
 def _compartment_key(unit):
@@ -747,6 +767,7 @@ def t2_confirm(engine, units):
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
+        "_row_spans": _row_spans(rows),
     }
     images = _images(packet, (
         (main, "t2_collage", "cells below / at / above the gate"),
@@ -819,6 +840,7 @@ def t3_biological(engine, units):
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
         "_image_meta": [],
+        "_row_spans": _row_spans(rows),
     }
     images = _images(packet, (
         (main, "t3_collage", "cells with the reference channel"),
@@ -1176,6 +1198,18 @@ def panel_context(engine, units):
     return packet, []
 
 
+def replan_packet(engine, units):
+    """The planning task's look at what failed (`replan.packet`). Text only:
+    a picture of each suspect marker's brightest positives beside the
+    excluding partner was tried and made the call worse -- the tiles of a
+    population that is not there read as saturated haze, and the planner
+    kept a PD1 it had called absent from the numbers six times of six
+    (2026-10-11; patch `docs/internal/bench/runs/2026-10-11-replan/`)."""
+    from plexora.plugins.gating.server.autogate import replan
+
+    return replan.packet(engine, units)
+
+
 def expression_setup(engine, units):
     """Which matrix to gate, when the values could not settle it: put to the
     user through the agent (and the viewer's requirements modal)."""
@@ -1269,7 +1303,8 @@ def correction_check(engine, units):
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
-            "panel_context": panel_context, "transfer_check": transfer_check,
+            "panel_context": panel_context, "replan": replan_packet,
+            "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
             "correction_check": correction_check}
 

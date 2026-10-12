@@ -460,3 +460,22 @@ def test_an_impure_gate_is_pushed_up_once_by_code():
     other = {"project": "p", "marker": "N", "candidate": 1.0}
     assert not Engine.purity_push(fake, other, {"failed": ["partners", "flip_share"]})
     assert not Engine.purity_push(fake, other, {"failed": ["edge_ratio"]})
+
+
+def test_purity_failing_again_after_the_push_caps_confidence_instead_of_asking():
+    """After the push, purity failing alone is accepted at low confidence,
+    with no whole-image look; a spatial check failing too still gets one."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate.engine import Engine, confidence_for
+
+    logged = []
+    fake = SimpleNamespace(log=lambda **event: logged.append(event))
+    unit = {"project": "p", "marker": "M", "candidate": 1.0, "purity_pushed": True}
+    assert not Engine.purity_capped(fake, {"project": "p", "marker": "N"},
+                                    {"failed": ["partners"]})          # no push yet
+    assert not Engine.purity_capped(fake, unit, {"failed": ["partners", "edge_ratio"]})
+    assert Engine.purity_capped(fake, unit, {"failed": ["partners"]})
+    assert unit["purity_capped"] and logged[-1]["event"] == "purity_capped"
+    unit.update(path="t4", regression={"failed": ["partners"]}, ai_confidence=0.9)
+    assert confidence_for(unit) == "low"

@@ -16,7 +16,7 @@ from pydantic import Field
 
 from plexora.agent.schemas import AgentModel, clipped
 from plexora.ai import vocabulary
-from plexora.plugins.gating.server.autogate import context, pixel_estimate, schemas
+from plexora.plugins.gating.server.autogate import context, pixel_estimate, replan, schemas
 
 Artifact = Literal[schemas.ARTIFACTS]
 
@@ -160,9 +160,24 @@ class PanelContextAnswer(_Base):
     entries: list[PanelEntry] = Field(max_length=context.MAX_ENTRIES)
 
 
+class ReplanAnswer(_Base):
+    kind: Literal["replan"] = "replan"
+    markers: dict[str, Literal[replan.MARKER_VERDICTS]] = Field(
+        default_factory=dict,
+        description="EVERY marker key in `allowed.markers`: `absent` -- the stain worked and "
+                    "this tissue has no positive population (its positives are artifact); "
+                    "`bleed_through` -- a real population under another channel's light; "
+                    "`technical_failure` -- the stain did not work; `keep_for_review`.")
+    images: dict[str, Literal[replan.IMAGE_VERDICTS]] = Field(
+        default_factory=dict,
+        description="EVERY image in `allowed.images`: `image_artifact` -- the artifact the looks "
+                    "name is the image's (an edge band, a fold, tissue autofluorescence) and "
+                    "reaches every marker there; `not_image_level`.")
+
+
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          CorrectionAnswer)
+          CorrectionAnswer, ReplanAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 
