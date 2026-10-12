@@ -30,6 +30,7 @@ from typing import Optional
 import numpy as np
 import zarr
 
+from plexora._transient_locks import past_transient_locks
 from plexora.server.utils import ome_zarr
 from plexora.server.volume.axes import spacing_from
 from plexora.server.volume import chunk_cache
@@ -394,5 +395,6 @@ def build_volume_extension(source: NgffVolumeSource, dest,
     })
     if destination.exists():
         shutil.rmtree(destination)
-    os.replace(building, destination)
+    # Moved past Windows' brief refusals while a scanner reads the new chunks.
+    past_transient_locks(lambda: os.replace(building, destination))
     return str(destination)

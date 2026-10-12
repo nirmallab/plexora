@@ -11272,6 +11272,11 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   `attrs.update({...})` in `build_extension`: that is MutableMapping's, one
   full rewrite of `zarr.json` per key, so four labels were four renames
   milliseconds apart. Use `Group.update_attributes(...)`, which is one.
+  The same refusal meets a whole store moved into place: `labels.py`'s
+  `*.zarr.building -> *.zarr` and `ngff.py`'s extension rename run through
+  `past_transient_locks`. Unwrapped, one run of the label-volume test files
+  here lost 45 of 94 tests to it (and the full suite 9 to 15, varying run to
+  run); wrapped, none.
 - **A human-gates CSV with several columns needs `--truth-column "Human
   gate"`.** `bench.reference_csv` without a column reads only two-column
   lines (the legacy `marker,value` file, value in the second column) and
