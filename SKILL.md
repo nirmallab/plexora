@@ -5245,10 +5245,31 @@ ordering, restyling and deleting one are the generic layer routes.
   `volume_state(panel)` sends such a panel down a client-raster branch — the
   stored preview resampled, reported `client_rendered` with its effective dpi
   — because the server has no 3-D renderer to draw it again.
+- Data nodes: extraction reads a whole channel or a whole label volume, so it
+  runs on the node that holds those voxels — `store._builds_on` picks the
+  image's binding for an isosurface, the mask's for cell surfaces — and only
+  the mesh travels. `_build_on_node` posts the spec, zs/ts and spacing (for
+  cells also `image_width`, scale and the object table's `TABLE_COLUMNS` as
+  base64 parquet) to `POST /node/v1/volume/surface`, where
+  `store.extract_on_node` runs the same pure `extract_isosurface`/
+  `extract_label_surfaces` a local build calls; `providers.node.
+  build_surface_on_node` polls `/volume/jobs/<id>`, relays stage/progress and
+  cancel, and turns the float-exact `.npz` result into a `Mesh`. The primary
+  then measures, joins and writes the surface, so every read after the build
+  is local. `store.open_volume_for(project)` (also used by
+  `agent/core/surface.py`) opens the stack locally or as a
+  `NodeVolumeReader` (`project_volume_reader`, cached per node endpoint+token
+  for `READER_TTL` 60 s, reading through `POST /node/v1/image/<rid>/block`,
+  capped at `BLOCK_MAX_VOXELS`), which is what previews and suggestions read;
+  contact areas read the mask through `project_label_volume`. Cache tokens use
+  `_identity` (for a node image, its locator plus the recorded binding
+  fingerprint) and the manifest records `source.built_on`; `check()` asks
+  `project_has_label_volume` rather than for a local `image.src`.
 - Video Studio is NOT on this branch (it is `feature/video-studio`); the
   seam it will use is `ctx.view.surfaces` (SURFACES.md §8).
 - Tests: `tests/test_surface_engine.py`, `test_surface_layer.py`,
-  `test_surface_phase2.py`, `test_surface_agent.py`,
+  `test_surface_phase2.py`, `test_surface_agent.py`, `test_node_surfaces.py`
+  (node build == local build, mesh and object table),
   `plexora/plugins/figure_builder/tests/test_figure_builder_volume.py`, and
   JS probes `tests/js/{surface_renderer,surface_studio}_probe.mjs` (wrapped in
   `tests/test_viewer_3d_client.py`). The boundary goldens include the
@@ -7244,8 +7265,11 @@ in **5.6 s**.
   `volume/objects.measure_columns` is the pixel-reading half,
   `measure_project_objects` writes the table here, and the job is
   `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,
-  `.../cancel`; `_MEASURES` keeps the last 8), driven by
-  `measure_objects_on_node`. The mask must be on the same node, or
+  `.../cancel`), driven by `measure_objects_on_node`. Its job store is shared
+  with surface builds (`_JOBS` via `_start_job`/`_job`, `JOBS_KEPT` = 8), so
+  the generic `GET /volume/jobs/<job>` (state, stage, done/total, error,
+  manifest, result meta) with `.../result` and `.../cancel` answers for
+  either kind; the measure-specific routes are kept beside it. The mask must be on the same node, or
   `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
   `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
   `tests/test_node_new_formats.py` pin it;
