@@ -1,11 +1,13 @@
 # Licensing
 
 Plexora has two plans. **Free** is everything Plexora does without a licence:
-every image, table and modality, every plugin's manual tools, remote, HPC,
-Open OnDemand, JupyterHub and notebook viewing, and export. It needs no
-account, no network and no activation, and shows no nag. **Paid** unlocks AI
-capabilities today and selected advanced features later. A trial is Paid for
-30 days (`trial: true` on the certificate), not a third plan.
+2-D and 3-D multiplexed images and their tables (z-stacks, time series,
+projections, sections and the volume view included), every basic plugin's
+manual tools, remote, HPC, Open OnDemand, JupyterHub and notebook viewing, and
+export. It needs no account, no network and no activation, and shows no nag.
+**Paid** unlocks Plexora AI, Plexora 3D (analysis of a stack beyond looking at
+it) and spatial transcriptomics; external MCP access is an add-on. A trial is
+Paid for 30 days (`trial: true` on the certificate), not a third plan.
 
 Licences, seats, devices and AI credits live on the BioCognia platform, which
 every BioCognia product (Plexora, SCIMAP Pro) shares. People sign in and buy
@@ -23,17 +25,31 @@ platform is in the `biocognia-platform` repository.
 Entitlements attach to **capabilities and actions**, never to plugins as such
 and never to plan names. They are colon paths; a grant covers everything
 beneath it (`ai` satisfies `ai:gating:session`; `ai:gating` does not satisfy
-`ai:evidence`). The declared set is `plexora/licensing/manifest.py`, and a
-Paid certificate carries `["ai"]`, plus `mcp` when it includes external MCP
-access (see [External MCP access](#external-mcp-access)).
+`ai:evidence`). The declared set is `plexora/licensing/manifest.py`. Its four
+roots:
+
+| Root | Shown as | What it unlocks |
+|---|---|---|
+| `ai` | Plexora AI | Every AI path: gating and QC sessions and their analysis, evidence in the viewer, the chat |
+| `volume` | Plexora 3D | Surface Studio (`volume:surfaces`), measuring, tracking and reviewing 3-D cells and regions made from them or carried through planes (`volume:objects`), Cellpose over a stack (`volume:segmentation`), Stack QC and 3-D analysis (`volume:analysis`) |
+| `transcriptomics` | Spatial transcriptomics | Xenium (`transcriptomics:xenium`), Visium and Visium HD (`transcriptomics:visium`): import, transcript and bin layers, gene lists |
+| `mcp` | External MCP access | An add-on (`manifest.ADD_ONS`): Paid tools from an outside agent |
+
+A purchased or trial licence carries `manifest.paid_default()`, every root but
+the add-ons (`["ai", "volume", "transcriptomics"]`); an administrator adds
+`mcp` by hand (see [External MCP access](#external-mcp-access)) and can switch
+any root on or off per licence on the platform's admin licence page.
 
 `manifest.py` is also the one editable source of Plexora's **product
-manifest** (`manifest.product_manifest()`): the roots `ai`, `mcp` and
-`plugin` (for `plugin:<name>`) with their labels and sentences, the Free tier,
+manifest** (`manifest.product_manifest()`): the roots `ai`, `volume`,
+`transcriptomics`, `mcp` and `plugin` (for `plugin:<name>`) with their labels
+and sentences, the Free tier,
 the AI modules the `ai` root opens (`gating`, `qc`, `chat`, the modules of
 `plexora/ai/tasks.yaml`) and the trial length. `tools/bioc_sync.py` uploads it,
 with the task registry, to the platform; `--check` fails on drift. Plans and
-prices are the platform's to edit, and only there.
+prices are the platform's to edit, and only there; `--check` also fails when
+the `plexora.paid` (or `plexora.trial`) plan does not carry exactly
+`paid_default()`.
 
 | Entitlement | Capabilities |
 |---|---|
@@ -42,6 +58,12 @@ prices are the platform's to edit, and only there.
 | `ai:evidence` | `viewer_show_evidence` |
 | `ai:qc:session` | `qc_session_start`, `qc_session_bulk`, `qc_next`, `qc_answer`, `qc_session_status`, `qc_session_finish`, `qc_report` |
 | `ai:qc:analytics` | `profile_image_qc`, `render_qc_overview`, `refine_qc_roi`, `sample_qc_examples` |
+| `volume:surfaces` | `surface_create`, `surface_suggest_threshold`, `surface_inspect`, `surface_refine`, `surface_neighbours` |
+| `volume:objects` | `measure_objects`, `track_objects`, `render_object_views`, `object_z_profile`, `object_review_start`, `object_review_next`, `object_review_answer`, `object_review_finish`, `carry_roi_through_planes`; `create_roi` / `update_roi` with `cells` or `solid` |
+| `volume:segmentation` | `segment_3d` (the segmentation plugin as a whole) |
+| `volume:analysis` | `check_volume_quality`, `colocalize_3d`, `find_regions_of_interest_3d`, `run_qc_3d`, `set_qc_plane`, `write_qc_3d_regions` |
+| `transcriptomics:xenium` | the transcripts plugin as a whole |
+| `transcriptomics:visium` | the Visium HD plugin as a whole |
 
 Everything else is Free, including all of manual gating (`set_gate`,
 `adjust_gate`, `apply_gate_to_dataset`, `suggest_auto_gate`, export,
@@ -54,7 +76,12 @@ the image checks and their writers (`run_blur_check`, `set_blur_check`,
 `write_registration_regions`, `run_segmentation_qc`,
 `write_segmentation_flags`),
 every read, every viewer primitive (`viewer_show_shapes` included), ROIs,
-jobs, artifacts and the MCP discovery tools. `tests/test_licensing_enforcement.py` pins this table:
+looking at a z-stack (`inspect_volume`, `set_z_spacing`, `sample_z_planes`,
+`axis_profile`, `render_sections`, `render_projection`, `pin_projection`,
+`viewer_set_volume_mode`), reading what Plexora 3D made (`surface_list`,
+`surface_measure`, `surface_objects`, `surface_update`, `surface_export`,
+`surface_delete`, `get_qc_3d`, `object_review_status`), jobs, artifacts and the
+MCP discovery tools. `tests/test_licensing_enforcement.py` pins this table:
 changing it is a product decision, made there on purpose.
 
 ## How it is enforced
@@ -82,10 +109,9 @@ licence file, loads `cryptography` or waits on anything
 
 Other enforcement points:
 
-- **Tools.** A Paid plugin's `/panel` answers `{"locked": {...}}` with 403, the
-  page opens the Paid modal (`PlexoraPaid.explain`) and mounts nothing, and
-  `?tool=` never activates it. It stays listed in the Tools menu with a Paid
-  badge.
+- **Tools.** A Paid plugin the licence does not unlock is not on the page at
+  all (below). A typed `/panel` URL answers `{"locked": {...}}` with 403, the
+  page mounts nothing, and `?tool=` never activates it.
 - **Routes.** `guards.require_entitlement` (a view) and `guard_blueprint` (a
   blueprint, or chosen endpoints) answer 403 with a `license` block.
 - **Data nodes.** Table operations that serve Paid capabilities
@@ -104,6 +130,48 @@ infrastructure), and every read of what Paid features produced. A job admitted
 on a valid licence finishes even if the licence lapses meanwhile, and gates,
 provenance, reports, artifacts and exports stay readable, exportable and
 editable after expiry.
+
+## Not granted means not shown
+
+On a licence that does not carry an entitlement, nothing on the page offers
+it: no Tools-menu row, launcher, button, context-menu item, section, "Paid"
+badge, greyed control or "needs a licence" message. The server still refuses
+a direct call (above), and everything a Paid feature made stays readable. An
+upsell is a later, separate decision; `PlexoraPaid.explain` and `badge` are
+kept for it and nothing calls them today.
+
+- **Plugins.** `plugins.unlocked(plugin)` decides, per request. `tools_for`,
+  `ready_tools`, `layer_sections_for` and `nav_items` leave out a locked
+  plugin, so it has no menu row, launcher, layer section or scripts.
+  `installed()`, `tools()` and `find()` keep it, so its routes still refuse,
+  its `/panel` still says `locked`, its capabilities are still discovered
+  (and refuse), and its `layer_jobs` builders keep serving the layers it made.
+- **Templates.** `licensed(entitlement)` is a template global (a context
+  processor, never raises): a mixed panel wraps a Paid control in
+  `{% if licensed('volume:objects') %}` so the element is absent from the HTML.
+- **The client.** A control built in JavaScript (a context-menu item, the
+  magic bar's Through planes, a card action) is not built when
+  `PlexoraPaid.allows(entitlement)` says no. That is a hint from the page's
+  render-time licence summary; the server decides. A 403 that still arrives
+  (a licence lapsed while the page was open) is a `console.warn` and a quiet
+  close, never a modal.
+- **Core's scripts are never gated by licence**: a surface or a carried
+  region must stay drawable on Free. A locked plugin's own scripts are not
+  emitted (see Import below for what that means for transcripts).
+- **Import.** Without `transcriptomics` a Xenium, Visium or Visium HD run is
+  not detected at all: no layers, no bundle, no warning, and the import
+  screens do not mention the formats. A project imported earlier still opens
+  with its image, cells, gates, ROIs and QC; its transcript or bin layer keeps
+  its card and saved tiles (core's layer route serves them, so exports and
+  agent renders draw them), but the gene section is not mounted and the
+  viewer does not draw the layer, since the plugin's own scripts do that.
+  Nothing is deleted, and the licence brings it all back.
+- **MCP** keeps listing every tool whatever the licence: the list is built
+  once per server, the licence can change under it within 15 minutes, and a
+  Paid tool's description says it is Paid. A call answers `license_required`.
+
+`tests/test_license_visibility.py`, `tests/test_license_volume.py` and
+`tests/test_license_transcriptomics.py` pin this.
 
 ## External MCP access
 
@@ -132,9 +200,10 @@ Tiers are grant sets, named by the platform's plans, never in code:
 | Tier | `entitlements` |
 |---|---|
 | Plexora application only | `[]` |
-| Plexora AI harness (the Paid default) | `["ai"]` |
-| MCP access | `["mcp"]` |
-| AI harness + MCP | `["ai", "mcp"]` |
+| The Paid default (`paid_default()`) | `["ai", "volume", "transcriptomics"]` |
+| The Paid default + MCP | `["ai", "volume", "transcriptomics", "mcp"]` |
+| AI harness only | `["ai"]` |
+| MCP access only | `["mcp"]` |
 
 An `["mcp"]`-only licence runs every Free tool and none of the `ai:*` ones
 (over MCP or in the app), and the AI token carries no Plexora module, so the
@@ -284,13 +353,14 @@ about a licence.
   gives each test its own `BIOCOGNIA_DIR`, sets `BIOCOGNIA_OFFLINE=1`,
   disables the heartbeat, and points the default platform and gateway
   addresses nowhere, so no test can reach the network.
-- `pytest.mark.paid` installs a Paid test licence (`ai` and `mcp`), for suites
-  that exercise AI capabilities in depth.
+- `pytest.mark.paid` installs a Paid test licence (`conftest.PAID_TEST_GRANTS`:
+  the Paid default and `mcp`), for suites that exercise Paid capabilities in
+  depth.
 - `license_issuer` is `biocognia.testing.Issuer` bound to Plexora: a throwaway
   Ed25519 key, the only one trusted during that test. `.issue(**claims)` takes
   `BIOC1` claim names (`ent`, `iat`, `exp`, `offline_until`, ...) and mints the
-  plain Paid default (`ent=["ai"]`); `.install()` writes it as an activation
-  would.
+  narrowest Paid licence (`ent=["ai"]`); `.install()` writes it as an
+  activation would.
 - `license_service` is `biocognia.testing.FakeService`, a stand-in platform
   with the network switched back on for loopback.
 - The certificate format, its vectors and the client's own behaviour
