@@ -28,6 +28,11 @@ from tests import helpers
 from tests.test_visium_import import (BARCODES, COUNTS, GENES, KINDS,
                                       SPOT_DIAMETER, write_visium_run)
 
+
+#: A Visium run is imported and the plugin's routes read it, both of
+#: which need `transcriptomics:visium`.
+pytestmark = pytest.mark.paid
+
 EITHER = "visium_bins|visium_spots"
 
 

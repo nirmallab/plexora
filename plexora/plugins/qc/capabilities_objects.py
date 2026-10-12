@@ -222,10 +222,16 @@ def _write_region(call, project, ids, review):
     return {"roi_id": roi["id"], "revision": revision, "cells": len(ids)}
 
 
+#: Reviewing 3-D cells is Plexora 3D (plexora/licensing/manifest.py); how far
+#: a review got stays Free.
+ENTITLEMENT = "volume:objects"
+
+
 def capabilities(free):
     tags = ("qc", "segmentation", "3d", "objects", "cells", "review", "z-stack")
     return [
         free(name="qc.object_review_start", tool_name="object_review_start",
+             entitlement=ENTITLEMENT,
              purpose="Start reviewing a 3-D mask's suspicious cells (one plane only, cut off "
                      "by the stack's ends, taller than wide, split between planes, odd volume) "
                      "or named cells, one picture each; answers with a `delegate` block for "
@@ -234,12 +240,14 @@ def capabilities(free):
              handler=object_review_start, writes=("qc",), reads=("table", "image"),
              persistent=True, tags=tags),
         free(name="qc.object_review_next", tool_name="object_review_next",
+             entitlement=ENTITLEMENT,
              purpose="The next cell of an object review: its XY, XZ and YZ views through its "
                      "centre, its measured row, and why it is in the queue.",
              permission="read", input_model=ReviewInput, handler=object_review_next,
              visual_output=True, egress="rendered_pixels", reads=("image", "table"),
              tags=tags),
         free(name="qc.object_review_answer", tool_name="object_review_answer",
+             entitlement=ENTITLEMENT,
              purpose="Record a verdict on one cell of an object review: ok, merged, split, "
                      "clipped, debris or unsure.",
              permission="reversible_write", input_model=AnswerInput,
@@ -249,6 +257,7 @@ def capabilities(free):
              permission="read", input_model=ReviewInput, handler=object_review_status,
              egress="aggregates", tags=tags),
         free(name="qc.object_review_finish", tool_name="object_review_finish",
+             entitlement=ENTITLEMENT,
              purpose="Finish an object review: the tally, and the cells judged not one whole "
                      "cell written as one QC segmentation region holding exactly them.",
              permission="reversible_write", input_model=FinishInput,

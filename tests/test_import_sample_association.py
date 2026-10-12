@@ -338,6 +338,7 @@ def test_the_release_route_answers_what_it_released(client, node):
 
 # -- run folders and the questions asked inside one pick --------------------
 
+@pytest.mark.paid
 def test_two_run_folders_are_two_samples(tmp_path):
     """Two Xenium runs, each added as a sample, came back as ONE card named
     after the first -- one run's cell table and transcripts, the other's rows

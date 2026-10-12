@@ -1,7 +1,7 @@
 """A surface as a layer: licensed to make, free to read, built in the background.
 
 The routes end to end through the app: Surface Studio is refused without the
-`surfaces` entitlement and the refusal carries what the Paid modal needs; with
+`volume:surfaces` entitlement and the refusal carries what the Paid modal needs; with
 it, an isosurface and a set of cell surfaces are registered pending, built,
 listed, served (immutable mesh, objects table, manifest), reused for the same
 request, restyled through the generic layer PATCH and removed with their files.
@@ -34,7 +34,7 @@ def client():
 
 @pytest.fixture()
 def surfaces_license(license_issuer):
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     return license_issuer
 
 
@@ -93,15 +93,15 @@ def test_making_a_surface_is_paid_and_says_so(tmp_path, client):
         assert response.status_code == 403, url
         body = response.get_json()
         assert body["license"]["code"] == "license_required"
-        assert body["license"]["entitlement"] == "surfaces"
+        assert body["license"]["entitlement"] == "volume:surfaces"
         assert body["license"]["label"] == "Surface Studio"
     # Listing what exists is a read: open on Free, and it says the plan.
     listing = client.get("/volume/surf/surfaces").get_json()
     assert listing == {"surfaces": [], "licensed": False}
 
 
-def test_a_plain_paid_licence_without_surfaces_does_not_unlock_it(tmp_path, client,
-                                                                  paid_license):
+def test_an_ai_only_licence_does_not_unlock_it(tmp_path, client, license_issuer):
+    license_issuer.install(license_issuer.issue(ent=["ai"]))
     _project(tmp_path)
     assert client.post("/volume/surf/surfaces", json=ISO).status_code == 403
 
@@ -156,7 +156,7 @@ def test_an_isosurface_is_built_served_and_reused(tmp_path, client, surfaces_lic
 
 def test_reading_a_surface_stays_open_after_the_licence_goes(tmp_path, client, license_issuer):
     _project(tmp_path)
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     layer_id = client.post("/volume/surf/surfaces", json=ISO).get_json()["layer"]
     assert _settle("surf", layer_id)["status"] == "ready"
     # A licence without Surface Studio replaces it.

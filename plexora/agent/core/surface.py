@@ -27,7 +27,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.registry import Capability
 from plexora.agent.schemas import AgentModel, ProjectInput
 
-ENTITLEMENT = "surfaces"
+ENTITLEMENT = "volume:surfaces"
 TAGS = ("surface", "surfaces", "mesh", "isosurface", "3d", "volume", "z-stack", "render",
         "segmentation", "cells", "objects", "shape")
 

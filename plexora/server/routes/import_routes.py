@@ -795,10 +795,19 @@ def _tenx_context(name, source, spatial):
     reads THAT, as the AnnData it is. See `server/utils/tenx_matrix.py`.
     Reconverted only when the source changes.
 
+    None, before the file is so much as opened, on a licence without
+    `transcriptomics:visium`: a 10x matrix is how a Visium run's table arrives,
+    and the modality is Paid. The table then reads as whatever else it is --
+    for a 10x `.h5`, nothing -- which is what the importer already said by not
+    detecting the run (`import_proposal._licensed`).
+
     @returns `{"converted", "scale", "obs_id_field"}`
     """
+    from plexora.server.models import import_proposal
     from plexora.server.utils import tenx_matrix
 
+    if not import_proposal._licensed(import_proposal.VISIUM_ENTITLEMENT):
+        return None
     if not tenx_matrix.is_tenx_matrix(source):
         return None
     layout = tenx_matrix.layout_for(source)

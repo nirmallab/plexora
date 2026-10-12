@@ -1,6 +1,5 @@
-"""Plugin-level licensing: a Paid plugin, a mixed plugin, and the rule that
-every plugin shipped today is untouched by any of it -- except Video Studio,
-the one shipped plugin sold as a unit."""
+"""Plugin-level licensing: a Paid plugin, a mixed plugin, and which shipped
+plugins are which. The basic plugins are untouched by any of it."""
 
 import pytest
 from flask import Blueprint, Flask, jsonify
@@ -37,25 +36,32 @@ def _blueprint(name):
 
 #: The shipped plugins that are Paid, and the entitlement each needs. One entry
 #: per deliberate decision: a plugin turning Paid by accident fails below.
-PAID_SHIPPED = {"video_studio": "plugin:video_studio"}
+PAID_SHIPPED = {"video_studio": "plugin:video_studio",
+                # Plexora 3D: Cellpose over a whole stack.
+                "segmentation": "volume:segmentation",
+                # Spatial transcriptomics, one child per vendor plugin.
+                "transcripts": "transcriptomics:xenium",
+                "visium_hd": "transcriptomics:visium"}
 
 
-def test_every_shipped_plugin_is_free():
-    """Every shipped plugin but one: Video Studio is Paid as a whole, and says
-    so in describe(), which is what the Tools menu badges it from."""
+def test_basic_plugins_are_free_and_paid_ones_name_declared_entitlements():
+    """Every shipped plugin is Free unless it is listed above, and a listed one
+    names an entitlement the manifest declares (describe() carries it)."""
+    from plexora.licensing import manifest
+
     paid = {}
     for name in plugin_registry.available_names():
         plugin = plugin_registry.load(name)
         if plugin is None:
             continue
-        # Nothing shipped is a mixed plugin.
-        assert not plugin.endpoint_entitlements, name
+        for needed in plugin.endpoint_entitlements.values():
+            assert manifest.known(needed), (name, needed)
         if plugin.entitlement is not None:
+            assert manifest.known(plugin.entitlement), name
             paid[name] = plugin.entitlement
             assert plugin.describe()["entitlement"] == plugin.entitlement, name
             continue
         assert "entitlement" not in plugin.describe(), name
-    # Every other shipped plugin is Free; Video Studio, when installed, is the one Paid.
     assert paid == {name: ent for name, ent in PAID_SHIPPED.items()
                     if name in plugin_registry.available_names()}
 
@@ -116,13 +122,14 @@ def test_a_free_plugin_gets_no_guard_at_all():
     assert client.post("/plugins/freeplug/analyze").status_code == 200
 
 
-def test_a_paid_plugin_is_described_with_its_entitlement():
+def test_a_paid_plugin_is_described_with_its_entitlement_and_hidden_until_unlocked(
+        license_issuer):
     plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
     assert plugin.describe()["entitlement"] == "plugin:paidplug"
-    from plexora.server.routes.page_routes import _tool_entry
-
-    assert _tool_entry(plugin)["locked"] is True
-    assert "locked" not in _tool_entry(Plugin(name="freeplug", label="Free Plug"))
+    assert "locked" not in plugin.describe()
+    assert plugin_registry.unlocked(plugin) is False
+    license_issuer.install(license_issuer.issue(ent=["plugin:paidplug"]))
+    assert plugin_registry.unlocked(plugin) is True
 
 
 # -- the tool panel -------------------------------------------------------------------

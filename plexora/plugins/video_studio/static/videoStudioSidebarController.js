@@ -216,10 +216,9 @@
                 this.state = await this.api.state(this.env.datasource);
             } catch (error) {
                 if (error.status === 403 && error.payload?.license) {
-                    this.bar.showError("Video Studio is part of Plexora Paid.");
-                    global.PlexoraPaid?.explain?.({ label: "Video Studio",
-                                                    summary: error.payload.license.summary,
-                                                    state: error.payload.license.state });
+                    // Not offered without its licence (plugins.unlocked); a
+                    // licence that lapsed while the page was open lands here.
+                    this.bar.showError("Video Studio is not included in this licence.");
                 } else {
                     this.bar.showError(`Video Studio could not start: ${error.message}`);
                 }

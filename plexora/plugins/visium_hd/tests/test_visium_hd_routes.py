@@ -23,6 +23,10 @@ from tests.helpers import use_data_root
 from tests.tenx_fixtures import GRID_TO_FULLRES, write_visium_hd_run
 
 
+#: The plugin's routes need `transcriptomics:visium`; on Free they 403.
+pytestmark = pytest.mark.paid
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     use_data_root(monkeypatch, tmp_path)

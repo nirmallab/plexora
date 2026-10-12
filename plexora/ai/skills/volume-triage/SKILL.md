@@ -21,6 +21,9 @@ projection -- answers the question. Every picture you show or cite says which it
 
 An image file. Physical depth (µm along z) needs a known z step: `inspect_volume` gives
 `spacing.z.source`; `metadata` (the file states it) or `manual` (someone typed it).
+Looking at a stack is Free; `check_volume_quality`, measuring whole cells and the
+depth-analysis tools need a licence with `volume`, and over MCP also `mcp`. A
+`license_required` refusal's `detail` says so in words to pass on.
 
 ## Decision logic
 

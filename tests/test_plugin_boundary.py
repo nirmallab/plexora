@@ -491,6 +491,22 @@ def test_visium_hd_route_inventory_matches_golden(visium_hd):
     _check_golden("visium_hd", visium_hd)
 
 
+def test_the_transcriptomics_sections_are_not_mounted_on_a_free_licence(
+        transcripts, visium_hd):
+    """Spatial transcriptomics is Paid (`transcriptomics:xenium`,
+    `transcriptomics:visium`). The probe's project has a transcripts and a bins
+    layer, so on a licence that granted it both sections would mount; on Free
+    neither does, and neither plugin's scripts or styles are on the page. Their
+    routes are still installed -- they refuse, with the `license` block -- and
+    with the grant the section is there: tests/test_license_transcriptomics.py."""
+    for build, name in ((transcripts, "transcripts"), (visium_hd, "visium_hd")):
+        for page in (build["pages"]["viewer"], build["pages"]["viewer_tool"]):
+            assert page["flask_variables"]["layer_sections"] == [], name
+            assets = _asset_paths(page["scripts"] + page["styles"])
+            assert not [a for a in assets if f"/plugins/{name}/" in a], name
+        assert any(f"/plugins/{name}/" in r for r in build["routes"]), name
+
+
 def test_visium_hd_installs_only_namespaced_routes(core, visium_hd):
     added = set(visium_hd["routes"]) - set(core["routes"])
     assert added and all("/plugins/visium_hd/" in r for r in added), added
@@ -627,16 +643,18 @@ def test_starting_a_video_studio_build_looks_for_no_encoder(video_studio):
     assert video_studio["imported"]["imageio_ffmpeg"] is False
 
 
-def test_the_launcher_is_offered_from_the_plugin_descriptor(core, video_studio):
-    """Core renders a launcher only for a tool that asked for one: none in a
-    core build, Video Studio's in its own -- named by data, not by core."""
+def test_a_locked_plugins_launcher_is_not_offered(core, video_studio):
+    """Core renders a launcher only for a tool that asked for one and that the
+    licence unlocks: none in a core build, and none for Video Studio on Free
+    (not granted, not shown). With the grant it is drawn from the descriptor:
+    tests/test_license_visibility.py."""
     assert "viewer_tool_launchers" not in core["pages"]["viewer"]["ids"]
-    assert "viewer_tool_launchers" in video_studio["pages"]["viewer"]["ids"]
+    assert "viewer_tool_launchers" not in video_studio["pages"]["viewer"]["ids"]
 
 
 def test_video_studio_is_not_mounted_on_a_free_licence(video_studio):
-    """Paid as a whole: on Free the Tools menu and the launcher still list it,
-    but `?tool=video_studio` mounts nothing -- its scripts stay unloaded."""
+    """Paid as a whole: on Free neither the Tools menu nor the launcher lists
+    it, and `?tool=video_studio` mounts nothing -- its scripts stay unloaded."""
     page = video_studio["pages"]["viewer_tool"]
     assert page["flask_variables"]["active_tool"] in (None, "")
     assert not [s for s in _asset_paths(page["scripts"]) if "/plugins/video_studio/" in s]

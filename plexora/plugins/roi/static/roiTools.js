@@ -1396,11 +1396,15 @@ class RoiInteraction {
     showMagicBar() {
         const bars = window.PlexoraMagicBar;
         if (!bars || !this.armed) return;
+        // Through planes is Plexora 3D: without it the bar has no such button
+        // (magicToolbar.js draws it only for an owner that can carry).
+        const carry = window.PlexoraPaid?.allows?.("volume:objects")
+            ? () => this.carryMagic() : null;
         this.magicBar = bars.show({
             owner: this, mode: this.magicMode,
             onMode: (mode) => this.setMagicMode(mode),
             onClose: () => this.setTool(this.previousTool || "freehand"),
-            onCarry: () => this.carryMagic(),
+            onCarry: carry,
         });
         this.magicBar?.setCanCarry?.(true);
     }

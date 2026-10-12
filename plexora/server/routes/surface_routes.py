@@ -20,7 +20,7 @@ the generic layer routes. What is here is what only a surface has:
     POST /volume/<ds>/surfaces/import             a mesh file as a surface
 
 **Licensed.** Making and analysing surfaces is Surface Studio, the
-`surfaces` entitlement: the POST, the preview, the suggestions and the
+`volume:surfaces` entitlement: the POST, the preview, the suggestions and the
 estimate, refinement, neighbours and import answer the Paid 403 on a
 licence without it, which the page turns into the Paid modal. Reading a
 surface that exists -- its manifest, mesh, objects and sections -- exporting

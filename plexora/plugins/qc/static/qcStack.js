@@ -8,7 +8,8 @@
  * plane every other QC check in the card reads, and sets it to the plane on
  * screen (or back to the default).
  *
- * Hidden on a flat image (`ctx.view.planes()` is null there).
+ * Hidden on a flat image (`ctx.view.planes()` is null there), and not in
+ * the panel at all without Plexora 3D (`volume:analysis`).
  */
 class QcStack {
     static get POLL_MS() { return 800; }
@@ -22,7 +23,8 @@ class QcStack {
         this.job = null;
         this.el = (id) => document.getElementById(id);
         const tool = this.el("qc_tool_stack");
-        this.enabled = Boolean(this.ctx.view?.planes?.());
+        // No section without Plexora 3D (panel.html), and none on a flat image.
+        this.enabled = Boolean(tool && this.ctx.view?.planes?.());
         if (tool) tool.hidden = !this.enabled;
         if (!this.enabled) return;
         this.el("qc_stack_run")?.addEventListener("click", () => this.run());

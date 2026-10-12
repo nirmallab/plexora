@@ -23,7 +23,7 @@ CHECKS = (
     "Enter License goes to Settings > License",
     "with no BioCognia platform, a trial explains itself instead of opening nothing",
     "the badge says Paid",
-    "a locked tool opens the Paid modal and mounts nothing",
+    "a locked tool opens nothing, explains nothing and mounts nothing",
     "a quiet (restore) load of a locked tool opens nothing",
 )
 

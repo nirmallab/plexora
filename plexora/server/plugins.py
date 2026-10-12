@@ -161,7 +161,9 @@ def _guard_licensed_routes(plugin: Plugin, blueprint) -> None:
     """A Paid plugin's routes, or a mixed plugin's Paid endpoints, answer 403
     without the entitlement. Before registration: Flask refuses a
     before_request added to a blueprint that is already registered. A Free
-    plugin -- every one shipped today -- gets nothing added at all."""
+    plugin gets nothing added at all. Every requested plugin is installed
+    whatever the licence; `unlocked` decides, per request, whether a page
+    shows it."""
     if not plugin.entitlement and not plugin.endpoint_entitlements:
         return
     from plexora.licensing import guards
@@ -226,6 +228,29 @@ def find(app, name) -> Plugin | None:
     return next((p for p in tools(app) if p.name == name), None)
 
 
+def unlocked(plugin) -> bool:
+    """Whether this licence unlocks `plugin`, so the page may show it.
+
+    A plugin with no `entitlement` -- every basic one -- returns before the
+    licence is looked at. A Paid plugin the licence does not unlock is still
+    installed (its routes refuse, its `layer_jobs` builders keep serving what
+    it made) but absent from every page-facing list below: no menu row, no
+    launcher, no layer section, no scripts. Asked per request, so a licence
+    activated in Settings shows the plugin on the next page load without a
+    restart. Licensing misbehaving reads as locked, never as a broken page.
+    `endpoint_entitlements` never hide a plugin: a mixed plugin stays, and its
+    panel leaves out the controls it cannot use (`licensed()` in templates).
+    """
+    if not getattr(plugin, "entitlement", None):
+        return True
+    try:
+        from plexora import licensing
+
+        return bool(licensing.allows(plugin.entitlement))
+    except Exception:
+        return False
+
+
 def nav_items(app, base_url="") -> list[dict]:
     """Every installed plugin's core-menu entries, in a stable order.
 
@@ -241,7 +266,8 @@ def nav_items(app, base_url="") -> list[dict]:
     """
     items = []
     for plugin in installed(app):
-        items.extend(plugin.describe_nav(base_url))
+        if unlocked(plugin):
+            items.extend(plugin.describe_nav(base_url))
     items.sort(key=lambda item: (item["menu"], item["order"], item["label"]))
     return items
 
@@ -259,9 +285,11 @@ def tools_for(app, project) -> list[Plugin]:
     screen -- see `layer_sections_for` -- and a Tools entry that opened
     something already open would be a second way to reach one panel with no
     way to tell which one you got.
+
+    A Paid plugin this licence does not unlock is not offered (`unlocked`).
     """
     return [p for p in tools(app)
-            if not p.is_layer_section and p.requires.applies_to(project)]
+            if not p.is_layer_section and p.requires.applies_to(project) and unlocked(p)]
 
 
 def layer_sections_for(app, project) -> list[Plugin]:
@@ -273,9 +301,12 @@ def layer_sections_for(app, project) -> list[Plugin]:
     Requiring readiness would mean the section vanished for exactly as long as
     it had something to say, and the user would watch a sample finish
     importing with no sign that anything was coming.
+
+    A Paid layer plugin this licence does not unlock is not mounted; the
+    layer's card and saved tiles stay, since what it made is a read.
     """
     return [p for p in installed(app)
-            if p.is_layer_section and p.requires.applies_to(project)]
+            if p.is_layer_section and p.requires.applies_to(project) and unlocked(p)]
 
 
 def ready_tools(app, project) -> list[Plugin]:
@@ -288,4 +319,4 @@ def ready_tools(app, project) -> list[Plugin]:
     a second time on a page that had already loaded them for the section.
     """
     return [p for p in tools(app)
-            if not p.is_layer_section and p.requires.satisfied_by(project)]
+            if not p.is_layer_section and p.requires.satisfied_by(project) and unlocked(p)]

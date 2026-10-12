@@ -32,6 +32,9 @@ from plexora.agent.registry import Capability
 from plexora.agent.schemas import ProjectInput
 
 TAGS = ("volume", "z-stack", "3d")
+
+#: Plexora 3D's analysis (plexora/licensing/manifest.py).
+ENTITLEMENT = "volume:analysis"
 #: The most voxels one colocalization reads per channel.
 MAX_COLOC_VOXELS = 30 * 2**20
 #: The most places one search returns.
@@ -388,6 +391,7 @@ def capabilities():
     return [
         Capability(
             name="volume.colocalize_3d", tool_name="colocalize_3d", owner="core",
+            entitlement=ENTITLEMENT,
             purpose="How far two channels share voxels in a z-stack: Pearson's r and Manders' "
                     "M1/M2 (Otsu thresholds) over a range of planes, in a region or a set of "
                     "3-D cells. Never on a projection (refused): overlap in a projection is "
@@ -397,7 +401,7 @@ def capabilities():
             tags=TAGS + ("colocalization", "pearson", "manders", "overlap")),
         Capability(
             name="volume.find_regions_of_interest_3d", tool_name="find_regions_of_interest_3d",
-            owner="core",
+            owner="core", entitlement=ENTITLEMENT,
             purpose="Where in a z-stack to look first: a marker's brightest spots, the most "
                     "crowded cells, 3-D cells a check calls suspicious or cut off by the "
                     "stack's ends, runs of blurred planes -- each a centre (x, y, z), a size "

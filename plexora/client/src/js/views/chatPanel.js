@@ -13,8 +13,8 @@
  * speaks the `/ai/v1/conversations` wire (server/routes/ai_chat_routes.py):
  *
  *   - POST /conversations starts one (with the viewer tools: this tab is the
- *     viewer); a Free licence answers 403 with a `license` block, which opens
- *     the paid-feature modal (PlexoraPaid.explain) instead of the panel;
+ *     viewer); a Free licence answers 403 with a `license` block, and the
+ *     panel closes without a word (nothing offers chat on Free);
  *   - POST /<id>/messages sends the user's turn;
  *   - GET /<id>/events streams the turn's events as server-sent events, and
  *     falls back to a held poll (?after=&wait=20) when the stream errors -- a
@@ -301,8 +301,8 @@ window.PlexoraChatPanel = (function () {
     async function start() {
         const title = (window.flaskVariables && window.flaskVariables.datasource) || "";
         const answer = await post("ai/v1/conversations", { title: String(title), viewer: true });
-        if (answer.status === 403 && answer.body.license && window.PlexoraPaid) {
-            window.PlexoraPaid.explain(answer.body.license);
+        if (answer.status === 403 && answer.body.license) {
+            console.warn("chatPanel: Plexora AI is not included in this licence");
             return false;
         }
         if (!answer.body.ok) {

@@ -51,10 +51,10 @@ PANEL_CHECKS = [
     "text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
     "by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
     "shows its own stage, and check counts appear once it hands off",
-    "Plexora AI on Free: the header AI button is always shown; clicked, it says Plexora AI is under "
-    "development and needs a licence, offers Close and Enter License (no trial), and Enter License goes there",
+    "Plexora AI on Free: the header AI button is not shown, and a click on one left on the page "
+    "opens nothing and explains nothing",
     "Plexora AI on Free: opened anyway, both buttons are disabled with the "
-    "reason, nothing is asked of the gateway, and About Plexora AI explains",
+    "reason, nothing is asked of the gateway, and there is no About Plexora AI",
     "Plexora AI: the launcher's Chat with Plexora AI closes it and opens the chat panel",
     "Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
     'estimate before a start ("~125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '

@@ -29,6 +29,18 @@ Deliberately NOT here: cell boundaries, spots and bins. Those are core rendering
 primitives too, and a plugin that owned them would be a plugin every spatial
 project had to install to see its own data.
 
+**Paid, as `transcriptomics:xenium`** -- a child of the spatial-transcriptomics
+root (plexora/licensing/manifest.py). Not granted means not shown: on a licence
+without it the importer does not detect a Xenium run or a transcripts parquet
+(`import_proposal._licensed`), this section is not mounted and its scripts are
+not on the page, and its routes answer 403 with the `license` block (its static
+files still load). A sample imported earlier still opens -- image, cells,
+gating, ROIs, QC -- and its transcript layer keeps its card and its built
+tiles, which core's layer route serves whatever the licence (the builder below
+is registered whatever the licence too). Drawing it in the viewer is this
+plugin's script, so on that licence the card stays and the picture does not.
+Nothing is deleted.
+
 Kept import-light, like every descriptor module: this is imported whenever the
 plugin is activated, and building the Blueprint -- which pulls in the reader --
 is left to the factory.
@@ -36,7 +48,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_docs"
+VERSION = "20261012_transcriptomics"
 
 
 def _blueprint():
@@ -96,4 +108,6 @@ PLUGIN = Plugin(
     # evict whichever plugin legitimately holds it -- the shader has one range
     # table -- in exchange for nothing.
     owns_cell_layer=False,
+    # Spatial transcriptomics is Paid (see the module docstring).
+    entitlement="transcriptomics:xenium",
 )

@@ -663,9 +663,17 @@ window.PlexoraImportSample = (function () {
     //: somebody most often points at on the folder side. A card's inline
     //: picker shows its slot's own pair from browsePicker.js's KIND_EXAMPLES.
     const PICK_CHIPS = {file: [".ome.tiff", ".h5ad"], directory: ["Xenium", "Visium"]};
+    //: The same on a licence without spatial transcriptomics, which does not
+    //: detect either run at import (import_proposal._licensed) -- so the folder
+    //: side names the run layouts that licence does read. Not greyed, absent.
+    const PICK_CHIPS_WITHOUT_TRANSCRIPTOMICS = {
+        file: [".ome.tiff", ".h5ad"], directory: ["SpatialData", ".zarr"]};
 
     function chipsFor(examples) {
-        if (examples === "sample") return PICK_CHIPS;
+        if (examples === "sample") {
+            return window.PlexoraPaid?.allows?.("transcriptomics")
+                ? PICK_CHIPS : PICK_CHIPS_WITHOUT_TRANSCRIPTOMICS;
+        }
         const table = (typeof KIND_EXAMPLES !== "undefined" && KIND_EXAMPLES[examples]) || {};
         const pair = (text) => String(text || "").split(" · ").filter(Boolean).slice(0, 2);
         return {file: pair(table.file), directory: pair(table.directory)};

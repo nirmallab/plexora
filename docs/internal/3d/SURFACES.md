@@ -13,21 +13,22 @@ driven by the agent. Nothing here ever writes into an image or a mask.
 
 ## 1. Licence
 
-Surface Studio is Paid: a new root entitlement **`surfaces`** in
-`plexora/licensing/manifest.py` (label "Surface Studio"), beside `ai` — not under it, not
-an add-on. A plain `["ai"]` licence does not unlock it.
+Surface Studio is Paid: **`volume:surfaces`** in `plexora/licensing/manifest.py`
+(label "Surface Studio"), under the Plexora 3D root `volume` — not under `ai`, not an
+add-on. A plain `["ai"]` licence does not unlock it; `["volume"]` does.
 
-| Guarded (`guards.require_entitlement("surfaces")`) | Always open (a read, or editing what exists) |
+| Guarded (`guards.require_entitlement("volume:surfaces")`) | Always open (a read, or editing what exists) |
 |---|---|
 | `POST /volume/<ds>/surfaces` (make), `/preview`, `/suggest`, `/estimate` | `GET /surfaces` (list, says `licensed`), `/<id>/manifest`, `/mesh`, `/objects`, `/sections` |
 | `POST /<id>/refine`, `GET /<id>/neighbours`, `POST /surfaces/import` | `GET /<id>/export`, `POST /<id>/cancel`, the generic layer PATCH (render bag) and DELETE |
 | agent: `surface_create`, `surface_suggest_threshold`, `surface_inspect`, `surface_refine`, `surface_neighbours` | agent: `surface_list`, `surface_measure`, `surface_objects`, `surface_update`, `surface_export`, `surface_delete`; viewer commands |
 
-The page never decides: the dock's first request is a Paid one, and a 403's `license`
-block opens `PlexoraPaid.explain` with the server's own words. Over MCP the Paid tools also
-need `mcp`, by the existing rule. **Before it is sellable** the platform must know the root:
-`tools/bioc_sync.py` uploads the product manifest (its `--check` differs until then) and the
-Paid plan must grant `surfaces` — both the owner's actions, not done here.
+Not granted means not shown (docs/LICENSING.md): without `volume:surfaces` the Layers
+header button, the 3-D menu's New surface… / Import mesh…, a card's Edit, the inspector's
+Neighbours and the S key are absent, and the routes still refuse. A 403 that arrives anyway
+(a licence lapsed mid-session) closes the dock quietly. Over MCP the Paid tools also need
+`mcp`, by the existing rule. The platform's `plexora.paid` plan grants `volume`
+(`manifest.paid_default()`, checked by `tools/bioc_sync.py --check`).
 
 ## 2. What existed (assessment)
 

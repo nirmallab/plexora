@@ -86,6 +86,21 @@ const KIND_EXAMPLES = {
               directory: "Xenium · SpatialData · Visium · .zarr" },
 };
 
+//: The examples above that name the spatial-transcriptomics modality. A
+//: licence without `transcriptomics` does not detect such a run at import
+//: (import_proposal._licensed), so it is not offered here either: the words
+//: are left out -- not greyed, not explained.
+const TRANSCRIPTOMICS_EXAMPLES = new Set(["Xenium", "Visium", "transcripts"]);
+
+/** A KIND_EXAMPLES entry as this licence offers it. Asked when the control is
+ *  built, so a licence adopted in Settings shows the words on the next one. */
+function offeredExamples(entry) {
+    if (window.PlexoraPaid?.allows?.("transcriptomics")) return entry;
+    const keep = (text) => String(text || "").split(" · ")
+        .filter((word) => word && !TRANSCRIPTOMICS_EXAMPLES.has(word)).join(" · ");
+    return { file: keep(entry.file), directory: keep(entry.directory) };
+}
+
 /**
  * @function buildSplitControl - the two-half control itself, without deciding
  * where it lives. Used two ways: as the Browse button on a form field, and as
@@ -108,7 +123,7 @@ function buildSplitControl(examples, choose, labels = null) {
     control.setAttribute("role", "group");
     control.setAttribute("aria-label", "Browse for a file or a folder");
 
-    const shown = KIND_EXAMPLES[examples] || {};
+    const shown = offeredExamples(KIND_EXAMPLES[examples] || {});
     [["file", labels?.file || "File", "fa-file"],
      ["directory", labels?.directory || "Folder", "fa-folder"]].forEach(([kind, label, glyph]) => {
         const half = document.createElement("button");
