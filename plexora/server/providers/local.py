@@ -76,10 +76,16 @@ class LocalTableProvider:
         `stage`/`report` are the progress pair (data_model.table_progress).
         Both optional: a node calls this with neither, and so does every test.
         """
+        from plexora.server.models import table_correction
         from plexora.server.models.adapters import get_adapter
 
         adapter = get_adapter(self._spec.type)(self._spec)
-        self._loaded = adapter.load_table(stage=stage, report=report)
+        # Read as the project says to read it (table_correction.py): here for a
+        # local table, and on the node for one held there -- a node loads its
+        # tables through this same method, so every node route serves the
+        # corrected values without knowing a correction exists.
+        self._loaded = table_correction.apply(
+            adapter.load_table(stage=stage, report=report), self._spec)
         # Kept for a wide table's features, which the frame does not hold and
         # the adapter reads on demand -- see `read_feature_column`.
         self._adapter = adapter

@@ -109,7 +109,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261011_depth",
+        "/client/src/js/services/dataLayer.js?v=20261012_table_fix",
         "/client/src/js/services/numericData.js?v=20261007_qc_gating_overlay",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -317,7 +317,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261011_depth",
+        "/client/src/js/services/dataLayer.js?v=20261012_table_fix",
         "/client/src/js/services/numericData.js?v=20261007_qc_gating_overlay",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -454,14 +454,14 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261012_plane_merge",
-          "/plugins/gating/static/csvGatingList.js?v=20261012_plane_merge",
-          "/plugins/gating/static/gatingPlanes.js?v=20261012_plane_merge",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261012_plane_merge",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261012_plane_merge"
+          "/plugins/gating/static/gatingApi.js?v=20261012_table_fix",
+          "/plugins/gating/static/csvGatingList.js?v=20261012_table_fix",
+          "/plugins/gating/static/gatingPlanes.js?v=20261012_table_fix",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261012_table_fix",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261012_table_fix"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261012_plane_merge"
+          "/plugins/gating/static/gating.css?v=20261012_table_fix"
         ],
         "available_tools": [
           {
@@ -624,7 +624,7 @@
         "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "/client/src/js/services/dataLayer.js?v=20261011_depth",
+        "/client/src/js/services/dataLayer.js?v=20261012_table_fix",
         "/client/src/js/services/numericData.js?v=20261007_qc_gating_overlay",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
@@ -689,11 +689,11 @@
         "/client/src/js/views/toolLoader.js?v=20261011_video_studio",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261012_plane_merge",
-        "/plugins/gating/static/csvGatingList.js?v=20261012_plane_merge",
-        "/plugins/gating/static/gatingPlanes.js?v=20261012_plane_merge",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261012_plane_merge",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261012_plane_merge",
+        "/plugins/gating/static/gatingApi.js?v=20261012_table_fix",
+        "/plugins/gating/static/csvGatingList.js?v=20261012_table_fix",
+        "/plugins/gating/static/gatingPlanes.js?v=20261012_table_fix",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261012_table_fix",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261012_table_fix",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -746,7 +746,7 @@
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261012_plane_merge"
+        "/plugins/gating/static/gating.css?v=20261012_table_fix"
       ],
       "tool_mounts": [
         [
@@ -760,7 +760,7 @@
       ]
     }
   },
-  "route_count": 234,
+  "route_count": 236,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -915,6 +915,7 @@
     "POST /desktop/open",
     "POST /detect_image_type",
     "POST /fetch_file",
+    "POST /fix_table",
     "POST /generated/batch",
     "POST /get_centroid_tiles",
     "POST /import/inspect",
@@ -979,6 +980,7 @@
     "POST /telemetry/notice_seen",
     "POST /telemetry/reset",
     "POST /telemetry/send",
+    "POST /undo_table_fix",
     "POST /update/install",
     "POST /update/prefs",
     "POST /update/restart",

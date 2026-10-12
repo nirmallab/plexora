@@ -187,6 +187,62 @@ def get_consistency_report():
     return jsonify(data_model.get_consistency_report(datasource))
 
 
+@app.route('/fix_table', methods=['POST'])
+def fix_table():
+    """Correct how this project's table is read, so its cells sit on the mask.
+
+    The Fix beside a consistency finding (`fix: "table"`). The correction is
+    found by trying candidates against the mask (models/table_correction.py),
+    recorded on the project and applied every time the table is read -- the
+    file is never written, and `/undo_table_fix` removes the record.
+
+    Answers `{success, applied, message, reloaded}`. Finding nothing to apply
+    is a success with `applied: false` and the reason: "the table already lines
+    up" and "nothing tried does" are answers the user should read, not errors.
+    """
+    from plexora.server.models import table_correction
+    from plexora.server.models.project import Project
+    from plexora.server.routes.tool_routes import _reload_or_restore
+
+    payload = request.get_json(silent=True) or {}
+    datasource = payload.get('datasource') or request.args.get('datasource')
+    project = Project.find(datasource)
+    if project is None or not project.has_table:
+        return jsonify(success=False, error="This project has no table to correct."), 404
+    proposal = data_model.propose_table_fix(datasource)
+    correction = proposal.get("correction")
+    if not correction:
+        return jsonify(success=True, applied=False, reloaded=False,
+                       message=proposal.get("message") or "")
+    Project.mutate(datasource, lambda p: table_correction.corrected_project(p, correction))
+    error = _reload_or_restore(datasource, project)
+    if error:
+        return jsonify(success=False, error=error), 400
+    return jsonify(success=True, applied=True, reloaded=True,
+                   message=proposal.get("message") or "", correction=correction)
+
+
+@app.route('/undo_table_fix', methods=['POST'])
+def undo_table_fix():
+    """Read this project's table exactly as its file says again."""
+    from plexora.server.models import table_correction
+    from plexora.server.models.project import Project
+    from plexora.server.routes.tool_routes import _reload_or_restore
+
+    payload = request.get_json(silent=True) or {}
+    datasource = payload.get('datasource') or request.args.get('datasource')
+    project = Project.find(datasource)
+    if project is None or not project.dataset:
+        return jsonify(success=False, error="This project has no table."), 404
+    if not project.dataset.correction:
+        return jsonify(success=True, reloaded=False)
+    Project.mutate(datasource, table_correction.uncorrected_project)
+    error = _reload_or_restore(datasource, project)
+    if error:
+        return jsonify(success=False, error=error), 400
+    return jsonify(success=True, reloaded=True)
+
+
 def _unknown_channel(channel, exc):
     """404 and a sentence, rather than a 500 and a traceback.
 

@@ -80,8 +80,10 @@ def _load_table(config, datasource_name):
         # of the one payload the compact cache exists to avoid repeating.
         data_model._ensure_loaded(datasource_name)
         return data_model.get_datasource_df()
+    from plexora.server.models import table_correction
+
     spec = project.dataset
-    return get_adapter(spec.type)(spec).load_table().table
+    return table_correction.apply(get_adapter(spec.type)(spec).load_table(), spec).table
 
 
 def _source_signature(csv_path):
@@ -127,9 +129,14 @@ def _expected_manifest(config, datasource_name):
     width = int(config[datasource_name]["width"])
     height = int(config[datasource_name]["height"])
     max_level = max(1, int(config[datasource_name].get("maxLevel", 1)))
+    from plexora.server.models import table_correction
+
     return {
         "version": CACHE_VERSION,
         **signature,
+        # The file is the same file after a correction is applied or undone;
+        # the positions are not, so the tiles built from them are not either.
+        "correction": table_correction.signature(project.dataset.correction),
         "id_column": project.roles.cell_id or "id",
         "x_column": project.roles.x,
         "y_column": project.roles.y,
@@ -149,6 +156,7 @@ def _is_manifest_current(manifest, expected):
         "csv_path",
         "csv_size",
         "csv_mtime_ns",
+        "correction",
         "id_column",
         "x_column",
         "y_column",

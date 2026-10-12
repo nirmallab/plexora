@@ -131,7 +131,8 @@ Entry points:
   `load_ball_tree` builds it, cached under
   `derived_root/spatial_index_v1/{manifest.json,index.pickle}` (versioned, so
   an older state is rebuilt rather than read; a legacy `ball_tree.pickle` is
-  deleted when seen), `load_datasource` resets it, and
+  deleted when seen; the manifest gains a `correction` key only while a
+  table correction is active), `load_datasource` resets it, and
   `_spatial_index`/`spatial_index(name)` build lazily.
   `query_for_closest_cell(x, y, name, t=None, planes=None)` is behind
   `/get_nearest_cell`, which takes `z0`/`z1`, the planes on screen.
@@ -1170,6 +1171,35 @@ Entry points:
   `_unplaced_findings`) — silent for none and for all, because all is
   `no_cells`. Core's and not gating's for the reason cell opacity is: every plugin
   that draws per-cell results has the question.
+- `models/table_correction.py` — **reads a table the way its mask and image
+  need it read, without writing the file.** `DataSpec.correction` (config key
+  `correction`: `{cell_id: {from, offset, column}, scale: {x, y, z}, units,
+  checked|estimated, reasons, created}`) is applied by `apply(normalized,
+  spec)` in every table reader — `LocalTableProvider.load` (so a data node
+  serves corrected values too), `MemoryTableProvider.load` and
+  `centroid_tiles._load_table`. The corrected id goes into its own column
+  (`ID_COLUMN`, `mask_label`) and `roles.cell_id` points at it; the positional
+  `id` column is never rewritten, because row lookups use it. x/y/z role
+  columns are scaled in place. `propose(...)` finds the correction against
+  the MASK, not by arithmetic: candidate id offsets × x/y/z scales (stated
+  pixel size × {1, ½, 2, ¼, 4}, pyramid-level factors, the fill-the-image
+  estimate; a candidate reaching < 20% of the image is skipped) are scored by
+  looking a seeded sample of cells (16 per candidate, 64 for the best two) up
+  in a 3×3 window — one plane per look-up for a label volume, whose chunks are
+  one plane each — and wins only if most cells (≥ 50%) sit on their own label
+  and it beats the identity. Without a mask only the coordinates are
+  estimated, and marked `estimated`. `corrected_project`/`uncorrected_project`
+  record and undo it; undo restores the cell-id role only while it still
+  points at the derived column, so a role the user changed since is theirs.
+  `data_model._with_table_fixes` marks `ids_below_one`, `cells_in_a_corner`
+  and `cells_outside_image` (mask only) findings `fix: "table"`, or
+  `fix_blocked` with `table_correction_blocked(project)`'s reason, and adds a
+  `table_corrected` info finding (`undo: true`) while one is in force;
+  `propose_table_fix` runs the search. Routes `POST /fix_table` and
+  `POST /undo_table_fix` (`data_routes.py`) record it and `_reload_or_restore`.
+  The gating panel's consistency notes draw the Fix / Undo buttons
+  (`dataLayer.fixTable`/`undoTableFix`) and a change reloads the page, because
+  the viewer reads cell ids and positions once at page load.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state,
   now also `ViewTransform` (`{degrees, flipH, flipV}` as JSON, one row per
   datasource) — the viewer's own state, not the project's definition, which is
@@ -1197,6 +1227,9 @@ Entry points:
   channel through `dataset.table.columns` rather than `frame()[channel]`.
   `get_tiles` returns an empty `RESPONSE_DTYPE` array, not `[]`, for a project
   without a table or roles, because the route calls `.tobytes()` on it.
+  The manifest carries a `correction` key (`table_correction.signature`,
+  `None` when inactive, so caches built before it stay valid), because a
+  correction changes the records while the file stays the same file.
 - `models/bin_tiles.py` — the store for a counted grid (Visium HD's 2 micron
   squares, and anything shaped like it): a sibling of `transcript_tiles.py`
   copied rather than subclassed, because a bin is already a count and needs no
@@ -1657,6 +1690,10 @@ One authoritative database; nodes are data services with no project state.
   and the loaded frame together (the ROI spatial join, every scientific
   write-back, the CSV export). Payload and result must survive `json.dumps`;
   refusals are returned as data, never raised across the wire.
+  `TABLE_CORRECTION` (`table.correction`) is a core operation whose existence
+  IS the node capability: a node table can be corrected only if the node lists
+  it, asked live through `/hello` (`data_model.table_correction_blocked`),
+  because an older node would serve the uncorrected file.
 - `providers/wire.py` -- length-prefixed frames for arrays. Numbers go raw,
   text goes as JSON: numpy's object dtype only round-trips through pickle.
 - `providers/http.py` -- `request()`'s `raw_body`/`content_type` send a
@@ -7065,6 +7102,11 @@ in **5.6 s**.
 
 ## Key Invariants
 
+- **A table correction never writes the table file and never rewrites `id`.**
+  It lives in `DataSpec.correction` and every reader applies it on load
+  (`table_correction.apply`), so removing the record is the whole of undoing
+  it; the corrected cell id goes in its own column because row lookups key on
+  the positional `id`.
 - **`datasets.json` is a sibling of config.json and never a key in it.** Every
   top-level key of config.json is a project — `Project.load_all` enumerates it
   that way and so does everything downstream — so a `"datasets"` key would
