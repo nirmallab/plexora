@@ -147,16 +147,15 @@ def _restore_manifest(registry, manifest, log=print):
     strand every OTHER file it was asked to serve -- and it would do so at the
     exact moment the user is trying to reopen their work.
 
-    A mask that is still there but cannot be made servable is the one failure
-    that must NOT be tolerated quietly. `add` has already registered it, as
-    `ready`, before the conversion is tried -- so swallowing the exception left
-    the raw mask being served. A single-level mask answers every level with
-    full resolution (see `segmentation_pyramid.label_pyramid_gaps`), and the
-    viewer drew the top-left of the slide's cells stretched over the rest of
-    it: a wrong picture and no error anywhere. Marked `error` instead, which
-    the viewer and `dataset create` report with the reason, and which opening
-    the project retries (`POST /resources/<id>/prepare`). Meanwhile the raw
-    mask is still drawn, now at the right scale (`data_model._label_region`).
+    A restored mask is registered and nothing more. Checking it, and converting
+    it when it is a single-level mask, is minutes of work on a whole slide, and
+    doing it here held up the node's announce -- so connecting to a cluster sat
+    behind a progress bar for a mask from last week's project that nobody had
+    opened. It runs instead on the first request that concerns that mask (see
+    `api._prepare_on_first_use`), in the background, exactly as a mask shared
+    while the node runs does. Meanwhile the raw mask is drawn, at the right
+    scale (`data_model.read_tile`). A conversion that fails there is marked
+    `error`, which the viewer reports and opening the project retries.
     """
     if not manifest:
         return
@@ -166,14 +165,8 @@ def _restore_manifest(registry, manifest, log=print):
         except Exception as exc:
             log(f"  not serving {resource_id!r} again: {exc}")
             continue
-        if kind != "segmentation":
-            continue
-        try:
-            _make_mask_servable(resource, log=log)
-        except Exception as exc:
-            resource.state = node_resources.ERROR
-            resource.error = str(exc)
-            log(f"  {resource_id!r} cannot be served as a cell layer: {exc}")
+        if kind == "segmentation" and not resource.prepared:
+            resource.prepare_on_use = True
 
 
 def _make_mask_servable(resource, log=print, progress=None):
@@ -538,6 +531,10 @@ def warm_resources(registry, log=print):
             if resource.kind not in ("image", "segmentation"):
                 continue
             if resource.state != node_resources.READY:
+                continue
+            if resource.prepare_on_use:
+                # Restored and not yet asked for; opening the raw mask now
+                # would be reading a file that may be replaced by its pyramid.
                 continue
             try:
                 with node_api._reading(resource):

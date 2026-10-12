@@ -42,7 +42,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: low
-        kinds: [panel_context, pixel_setup, expression_setup]
+        kinds: [panel_context, pixel_setup, expression_setup, replan]
       biological_context:
         label: Biological context
         blurb: Turns the user's note on tissue, disease and markers into what the run may assume.
@@ -75,7 +75,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: high
-        kinds: [regression_confirm, transfer_check, correction_check]
+        kinds: [regression_confirm, transfer_check]
   qc:
     label: QC
     tasks:

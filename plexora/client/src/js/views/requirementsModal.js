@@ -45,6 +45,12 @@ window.PlexoraRequirements = (function () {
     // into the payload's `row_number_ids` flag, never sent as it stands.
     const ROW_NUMBER = "\u0000row-number";
 
+    // The Z select's "the cells have no Z" choice, on the same terms: a 2-D
+    // table over a z-stack (cells segmented on a projection, say) has no such
+    // column, and that is an answer rather than a blank. Translated into the
+    // payload's `flat_cells` flag, never sent as it stands.
+    const FLAT_CELLS = "\u0000flat-cells";
+
     function el(tag, className, text) {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -191,6 +197,11 @@ window.PlexoraRequirements = (function () {
         if (isImageId) {
             select.append(new Option("This data has only one image", SINGLE_IMAGE));
         }
+        // Asked only on a z-stack, beside X and Y.
+        const isZ = requirement.role === "z";
+        if (isZ) {
+            select.append(new Option("No Z column (the cells are 2-D)", FLAT_CELLS));
+        }
         // Present only for the formats whose adapter can number the rows
         // itself; a CSV's cell id is always one of its own columns.
         const fallback = (needs.roleDefaults || {})[requirement.role];
@@ -212,6 +223,9 @@ window.PlexoraRequirements = (function () {
         } else if (isImageId && needs.singleImage) {
             select.value = SINGLE_IMAGE;
             state.single_image = true;
+        } else if (isZ && needs.flatCells) {
+            select.value = FLAT_CELLS;
+            state.flat_cells = true;
         } else if (fallback && needs.rowNumberIds) {
             select.value = ROW_NUMBER;
             state.row_number_ids = true;
@@ -223,6 +237,12 @@ window.PlexoraRequirements = (function () {
                 state.single_image = select.value === SINGLE_IMAGE;
                 state.roles[requirement.role] =
                     select.value === SINGLE_IMAGE ? null : (select.value || null);
+                return;
+            }
+            if (isZ) {
+                state.flat_cells = select.value === FLAT_CELLS;
+                state.roles[requirement.role] =
+                    select.value === FLAT_CELLS ? null : (select.value || null);
                 return;
             }
             if (fallback) {

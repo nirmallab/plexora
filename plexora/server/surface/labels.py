@@ -128,19 +128,25 @@ def blur_sigmas(scale, grid_scale, blur=DEFAULT_BLUR):
 
 def extract(label_volume, level, grid: marching.Grid, ids, boxes, *, scale=(1.0, 1.0, 1.0),
             smoothing: mesh_mod.Smoothing | None = None, inset=DEFAULT_INSET,
-            blur=DEFAULT_BLUR, keep_raw=True, progress=None, cancelled=None):
+            blur=DEFAULT_BLUR, keep_raw=True, progress=None, cancelled=None, z_stride=1):
     """Surfaces of the objects `ids` (boxes from `object_boxes`) at `level`.
 
     `grid` maps the level's voxels onto level-0 voxels (`Grid.of` with the
-    level's XY factor and origin 0); `scale` is one level-0 voxel's physical
-    size. Returns `(Mesh, report)`."""
+    level's XY factor, origin 0 and the same `z_stride`); `scale` is one
+    level-0 voxel's physical size. With `z_stride` above 1 every run of that
+    many planes (aligned to plane 0) is pooled into one grid plane -- a voxel
+    is the cell's when any plane of its run is, so nothing thinner than the
+    run vanishes. Returns `(Mesh, report)`."""
     from scipy import ndimage
 
     depth = int(label_volume.depth)
     height, width = (int(v) for v in label_volume.level_shapes()[level])
+    stride = max(1, int(z_stride))
     sigmas = blur_sigmas(scale, grid.scale, blur)
-    # Margin around each box: one voxel, and room for the blur to fall off.
+    # Margin around each box: one voxel, and room for the blur to fall off --
+    # in grid voxels, so `stride` planes per grid plane along z.
     mz, my, mx = ((1 + int(np.ceil(3 * s)) for s in sigmas) if sigmas else (1, 1, 1))
+    mz *= stride
     pieces = []
     missing = []
     total = len(ids)
@@ -151,6 +157,10 @@ def extract(label_volume, level, grid: marching.Grid, ids, boxes, *, scale=(1.0,
         sel = boxes[group]
         z0 = max(0, int(sel[:, 0].min()) - mz)
         z1 = min(depth - 1, int(sel[:, 1].max()) + mz)
+        if stride > 1:
+            # Whole runs, so every object pools the same planes together.
+            z0 = (z0 // stride) * stride
+            z1 = min(depth - 1, (z1 // stride + 1) * stride - 1)
         y0 = max(0, int(sel[:, 2].min()) - my)
         y1 = min(height - 1, int(sel[:, 3].max()) + my)
         x0 = max(0, int(sel[:, 4].min()) - mx)
@@ -162,7 +172,19 @@ def extract(label_volume, level, grid: marching.Grid, ids, boxes, *, scale=(1.0,
             lz0, lz1 = max(0, bz0 - mz - z0), min(block.shape[0] - 1, bz1 + mz - z0)
             ly0, ly1 = max(0, by0 - my - y0), min(block.shape[1] - 1, by1 + my - y0)
             lx0, lx1 = max(0, bx0 - mx - x0), min(block.shape[2] - 1, bx1 + mx - x0)
-            crop = (block[lz0:lz1 + 1, ly0:ly1 + 1, lx0:lx1 + 1] == label).astype(np.float32)
+            if stride > 1:
+                lz0 = (lz0 // stride) * stride
+                lz1 = min(block.shape[0] - 1, (lz1 // stride + 1) * stride - 1)
+            crop = block[lz0:lz1 + 1, ly0:ly1 + 1, lx0:lx1 + 1] == label
+            if stride > 1:
+                # The last run may be short (the volume's end): it pools the
+                # planes there are.
+                short = (-crop.shape[0]) % stride
+                if short:
+                    crop = np.concatenate(
+                        [crop, np.zeros((short,) + crop.shape[1:], dtype=bool)])
+                crop = crop.reshape((-1, stride) + crop.shape[1:]).any(axis=1)
+            crop = crop.astype(np.float32)
             if sigmas:
                 # `nearest`: inside the volume the crop's margin is background
                 # already; at the volume's edge a cut cell is continued past it,
@@ -181,7 +203,8 @@ def extract(label_volume, level, grid: marching.Grid, ids, boxes, *, scale=(1.0,
             except marching.NoSurface:
                 missing.append(label)
                 continue
-            positions = positions + np.asarray([x0 + lx0, y0 + ly0, z0 + lz0], np.float32)
+            positions = positions + np.asarray([x0 + lx0, y0 + ly0, (z0 + lz0) // stride],
+                                               np.float32)
             pieces.append(mesh_mod.Mesh(positions=positions, triangles=triangles,
                                         object_id=np.full(len(positions), label, np.uint32)))
     surface = mesh_mod.concat(pieces)

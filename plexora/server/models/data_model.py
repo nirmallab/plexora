@@ -3772,7 +3772,7 @@ def _image_channel_stem(filePath):
     return re.sub(
         r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
         r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
-        r'|\.dcm|\.dicom',
+        r'|\.dcm|\.dicom|\.ims',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 

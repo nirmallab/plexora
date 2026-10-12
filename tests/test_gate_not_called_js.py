@@ -40,8 +40,6 @@ CHECKS = (
     "the one-key and many-key loops agree on the same cells",
     "a gated key the table lacks is skipped by the gate, not by QC (as the server asks QC)",
     "a repeated id: counted once as positive or as not called, and not called wins",
-    "an uncertain positive is 3 and stays in the count; never over not called or a negative",
-    "without flags the mask is the gate's and QC's alone",
     "getNotCalled asks /get_not_called for the marker on this datasource, through plexoraUrl",
     "...and answers one byte per row",
     "a second ask is the cache's, not another request",
@@ -65,12 +63,6 @@ CHECKS = (
     "without a fit, the not-called count alone",
     "with neither, the note is hidden, as it was",
     "the viewer's word that this layer's gate moved repaints it; another layer's does not",
-    "the cell model's block is hidden for a marker with no gate",
-    "before a run: one button to check the cells, no note, no toggle",
-    "while it runs: its progress and Cancel",
-    "after a run: what it would move, in its colours, and the toggle",
-    "the toggle draws the model's codes, and again stops",
-    "a model that agrees with the gate says so, with nothing to draw",
 )
 
 node = shutil.which("node")

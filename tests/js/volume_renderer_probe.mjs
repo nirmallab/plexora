@@ -238,6 +238,107 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
           && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === before);
 }
 
+// -- a channel switched on for the first time is drawn at once --------------------
+{
+    // The plane asks for a channel's window the moment it is switched on
+    // (viewerManager.addChannelItems), and the window's first answer is
+    // announced to nobody (volumeWindows.adopt). A level fetched before it
+    // is known was kept under one window and looked for under the next: the
+    // channel stayed dark until it was switched off and on again.
+    runInContext(readFileSync(join(JS, "services/volumeWindows.js"), "utf8"), context);
+    const fetchWindow = (url) => {
+        const names = new URLSearchParams(url.split("?")[1]).getAll("channel");
+        const windows = Object.fromEntries(names.map((name) => [name, { qmin: 7, qmax: 900, exact: true }]));
+        return new Promise((resolve) => setTimeout(
+            () => resolve({ ok: true, json: async () => ({ windows }) }), 5));
+    };
+    const windows = new box.PlexoraVolumeWindows("vol", { fetchImpl: fetchWindow });
+    box.__plexora.volumeWindows = windows;
+    hd = false;
+    slots.forEach((slot, i) => { slot.enabled = i === 0; });
+    requests.length = 0;
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl });
+    view.gl = fakeGl();
+    view.maxTexture = 2048;
+    await windows.ensure(["full:DNA"]);          // the plane had it before 3-D
+    await view.refresh();
+    // Switched on in 3-D: the plane's ask and the 3-D view's refresh start
+    // in the same CHANNELS_CHANGE.
+    slots[1].enabled = true;
+    const planeAsk = windows.ensure(["full:CD8"]);
+    await view.refresh();
+    await planeAsk;
+    const drawn = view.channels().filter((channel) => view.textureOf(channel)).map((c) => c.name);
+    check("a channel switched on for the first time is drawn once its level arrives",
+          drawn.length === 2, `drawn: ${drawn.join(", ")}; keys: ${[...view.textures.keys()].join(" ")}`);
+    check("and its level is asked for with the window the plane's tiles use",
+          requests.length === 2 && requests.every((url) => url.includes("w=7%2C900")), requests.join(" "));
+    delete box.__plexora.volumeWindows;
+}
+
+// -- a channel comes in rather than lands -----------------------------------------
+{
+    // A GL that compiles anything and keeps the last value of each uniform.
+    const set = {};
+    const recordingGl = new Proxy({}, {
+        get(target, name) {
+            if (typeof name !== "string") return undefined;
+            if (/^[A-Z_0-9]+$/.test(name)) return name;
+            if (name === "getUniformLocation") return (program, uniform) => uniform;
+            if (name.startsWith("uniform")) return (location, ...values) => { set[location] = values; };
+            if (name === "getShaderParameter" || name === "getProgramParameter") return () => true;
+            if (name === "createTexture" || name === "createProgram") return () => ({});
+            return () => undefined;
+        },
+    });
+    hd = false;
+    slots.forEach((slot, i) => { slot.enabled = i === 0; });
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl });
+    view.gl = recordingGl;
+    view.maxTexture = 2048;
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    await view.refresh();
+    view.draw(1000);
+    view.draw(1000 + 300);                   // DNA's own fade has run its course
+    const opacity = () => [...set.u_opacity[0]];
+    check("a channel already drawn is drawn in full", opacity().length === 1 && opacity()[0] === 0.6
+          && !view.fading(), JSON.stringify(opacity()));
+    slots[1].enabled = true;
+    await view.refresh();
+    view.draw(2000);
+    const first = opacity();
+    view.draw(2000 + 120);
+    const middle = opacity();
+    check("a channel switched on starts from nothing; the one already there is untouched",
+          first[0] === 0.6 && first[1] === 0 && view.fading(), JSON.stringify(first));
+    check("and comes in over the fade, eased out (past half way at half time)",
+          middle[1] > 0.3 && middle[1] < 0.6 && set.u_color[0][4] > 0.5 && set.u_color[0][4] < 1,
+          JSON.stringify({ middle, colour: [...set.u_color[0]] }));
+    view.draw(2000 + 240);
+    check("at the end of the fade it is in full, and nothing more is drawn for it",
+          opacity()[1] === 0.6 && !view.fading(), JSON.stringify(opacity()));
+    slots[2].enabled = true;
+    await view.refresh();
+    view.draw(3000);
+    check("while it comes in, the view asks for every frame", view.fading());
+    view.snapshot();
+    check("a capture draws every channel in full, never partway in",
+          opacity().every((value) => value === 0.6) && !view.fading(), JSON.stringify(opacity()));
+    slots[2].enabled = false;
+    view.draw(4000);
+    slots[2].enabled = true;
+    view.prefs = { smoothMotion: () => false };
+    view.draw(4001);
+    check("with motion off a channel lands at once",
+          opacity().every((value) => value === 0.6) && !view.fading(), JSON.stringify(opacity()));
+    view.prefs = null;
+    view.show(false);
+    view.show(true);
+    view.draw(5000);
+    check("back in 3-D, what is drawn comes in again",
+          opacity().every((value) => value === 0) && view.fading(), JSON.stringify(opacity()));
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

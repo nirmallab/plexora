@@ -41,7 +41,11 @@
  * planes of interest is the same gesture as choosing a projection's range.
  *
  * Draws on demand -- a frame only after the camera, the channels or the clip
- * changed. `webglcontextlost` hands the viewer back to Plane mode with a toast.
+ * changed. A channel new to the picture (switched on, its level just arrived,
+ * the view just entered) comes in over a quarter of a second rather than
+ * landing at once: its colour and opacity are scaled up from nothing, at full
+ * quality, and at once with motion off. `webglcontextlost` hands the viewer
+ * back to Plane mode with a toast.
  *
  * MOVING IT. A drag turns the stack under the hand, one frame per display
  * refresh (views/volumeCamera.js holds the orientation and the named views,
@@ -134,6 +138,9 @@
     const SLOW_FRAME_MS = 24;
     const MIN_FAST_SCALE = 0.4;
     const SETTLE_MS = 90;
+    //: A channel drawn that was not drawn the frame before comes in over
+    //: this long, eased out, rather than all at once.
+    const FADE_IN_MS = 240;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -467,6 +474,10 @@ ${sample}`;
             this.fastScale = 1;
             this._fastFrames = { last: 0, average: 0, count: 0 };
             this._settleTimer = 0;
+            //: The channels the last frame drew, and those still coming in:
+            //: name -> when they were first drawn (presence).
+            this._drawn = new Set();
+            this._fades = new Map();
             this.prefs = global.PlexoraViewerPrefs || null;
             this.status = "idle";
             this.level = null;
@@ -570,7 +581,12 @@ ${sample}`;
         show(visible) {
             if (this.canvas) this.canvas.hidden = !visible;
             this.gizmo?.show(visible);
-            if (!visible) this.setLock(null);
+            if (!visible) {
+                this.setLock(null);
+                // Back in 3-D, what is drawn comes in again.
+                this._drawn.clear();
+                this._fades.clear();
+            }
             if (visible) this.invalidate();
         }
 
@@ -929,6 +945,38 @@ ${sample}`;
             return this.interacting || this.animating();
         }
 
+        /** True while a channel is still coming in (presence): drawn every
+         *  frame, but in full -- nothing is moving. */
+        fading() {
+            return this._fades.size > 0 && Boolean(this.canvas) && !this.canvas.hidden;
+        }
+
+        /**
+         * How far in each of `channels` is, 0..1, at `time`: a channel the
+         * last frame did not draw -- switched on, its level just arrived, the
+         * view just entered -- starts from nothing and comes in over
+         * FADE_IN_MS. All at once with motion off, and for a capture
+         * (`settled`).
+         */
+        presence(channels, time, { settled = false } = {}) {
+            const shown = new Set(channels.map((channel) => channel.name));
+            const fade = !settled && this.smooth();
+            for (const name of shown) {
+                if (fade && !this._drawn.has(name)) this._fades.set(name, time);
+            }
+            for (const name of this._fades.keys()) {
+                if (!fade || !shown.has(name)) this._fades.delete(name);
+            }
+            this._drawn = shown;
+            return channels.map((channel) => {
+                const start = this._fades.get(channel.name);
+                if (start === undefined) return 1;
+                const f = Math.min(1, Math.max(0, (time - start) / FADE_IN_MS));
+                if (f >= 1) this._fades.delete(channel.name);
+                return 1 - (1 - f) ** 3;
+            });
+        }
+
         /** One display frame: move what is moving, draw, and ask for the next
          *  frame while anything still moves. */
         onFrame(time) {
@@ -940,6 +988,7 @@ ${sample}`;
             } else {
                 this.lastStep = 0;
             }
+            if (this.fading()) this.dirty = true;
             if (this.dirty) {
                 this.learnFrame(time, this.animating());
                 this.draw(time);
@@ -947,7 +996,7 @@ ${sample}`;
             }
             // [surfaces] The camera at rest is remembered (attach's onRest).
             if (!this.moving()) this.onRest?.();
-            if (this.animating()) {
+            if (this.animating() || this.fading()) {
                 this.schedule();
             } else if (!this.interacting && this.drawnFast) {
                 // At rest: the full picture, once the hand has had a moment
@@ -1147,7 +1196,7 @@ ${sample}`;
                                    this.frameT(), this.format(), lead.level);
         }
 
-        draw(time = now()) {
+        draw(time = now(), { settled = false } = {}) {
             this.dirty = false;
             const gl = this.gl;
             const canvas = this.canvas;
@@ -1171,6 +1220,9 @@ ${sample}`;
             // passes first and leave the volume two outputs to fill.
             if (this.surfaces?.hideVolume) channels.length = 0;
             const surf = this.surfaces?.begin(channels, { fast }) || null;
+            // A channel new to the picture comes in rather than lands: its
+            // colour and opacity scaled by how far in it is.
+            const presence = this.presence(channels, time, { settled });
             gl.clearColor(0, 0, 0, surf ? 0 : 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
             if (!channels.length) {
@@ -1233,9 +1285,11 @@ ${sample}`;
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
-            gl.uniform3fv(uniform("u_color"), channels.flatMap((channel) => channel.colour));
+            gl.uniform3fv(uniform("u_color"), channels.flatMap(
+                (channel, index) => channel.colour.map((value) => value * presence[index])));
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => channel.window));
-            gl.uniform1fv(uniform("u_opacity"), channels.map((channel) => channel.opacity));
+            gl.uniform1fv(uniform("u_opacity"), channels.map(
+                (channel, index) => channel.opacity * presence[index]));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
             gl.uniform3fv(uniform("u_extent"), this.extent());
             // The revision on screen (attach's surface), not the one asked for.
@@ -1293,7 +1347,6 @@ ${sample}`;
 
         async refresh() {
             if (!this.gl) return;
-            const channels = this.channels();
             if (!this.atlas && global.PlexoraVolumeAtlas) {
                 this.atlas = new global.PlexoraVolumeAtlas({
                     gl: this.gl, datasource: this.datasource, maxTexture: this.maxTexture,
@@ -1301,6 +1354,15 @@ ${sample}`;
                 this.atlas.load().then(() => this.scheduleDetail());
             }
             try {
+                // The window before the address, as the plane does
+                // (viewerManager.addChannelItems): a level is kept under the
+                // window it is made with, and a channel switched on for the
+                // first time has none yet. Its first answer is announced to
+                // nobody (volumeWindows.adopt), so a level fetched before it
+                // was looked for under another window and never drawn.
+                await global.__plexora?.volumeWindows?.ensure?.(
+                    this.channels().map((channel) => channel.name));
+                const channels = this.channels();
                 await this.ensureTextures(channels);
             } catch (error) {
                 console.error("volumeRenderer:", error);
@@ -1704,11 +1766,12 @@ ${sample}`;
 
         /** The current picture as a canvas (captures): at the canvas's own
          *  size, or drawn at `{width, height}` device pixels for an export
-         *  (copied out, then the canvas goes back to its size). */
+         *  (copied out, then the canvas goes back to its size). Every channel
+         *  in full, never partway in. */
         snapshot({ width = null, height = null } = {}) {
             if (!this.canvas) return null;
             if (!(width > 0 && height > 0)) {
-                this.draw();
+                this.draw(now(), { settled: true });
                 return this.canvas;
             }
             this._pinnedSize = { width: Math.round(width), height: Math.round(height) };
@@ -1717,7 +1780,7 @@ ${sample}`;
                 this.tween = null;
                 this.zoomTarget = null;
                 this.interacting = false;
-                this.draw();
+                this.draw(now(), { settled: true });
                 const copy = document.createElement("canvas");
                 copy.width = this.canvas.width;
                 copy.height = this.canvas.height;

@@ -50,7 +50,7 @@ window.PlexoraPathPicker = (function () {
         // the same "Use this folder" button an OME-Zarr store uses.
         image: [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".svs", ".ndpi",
                 ".scn", ".bif", ".qptiff", ".dcm", ".png", ".jpg", ".jpeg",
-                ".zarr", ".ome.zarr", ".mrxs"],
+                ".zarr", ".ome.zarr", ".mrxs", ".ims"],
         csv: [".csv"],
         h5ad: [".h5ad"],
         data: [".csv", ".tsv", ".txt", ".parquet", ".h5ad"],
@@ -88,7 +88,7 @@ window.PlexoraPathPicker = (function () {
         [".qptiff", "QPTIFF"], [".tiff", "TIFF"], [".tif", "TIFF"],
         [".svs", "Aperio SVS"], [".ndpi", "Hamamatsu NDPI"], [".scn", "Leica SCN"],
         [".mrxs", "MIRAX slide"], [".bif", "Ventana BIF"],
-        [".dcm", "DICOM"],
+        [".dcm", "DICOM"], [".ims", "Imaris"],
         [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
         [".h5ad", "AnnData"], [".zarr", "Zarr store"],
         [".csv", "CSV"], [".tsv", "TSV"], [".txt", "Text"],

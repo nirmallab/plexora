@@ -561,6 +561,69 @@ def test_a_manifest_entry_whose_file_is_gone_is_skipped(tmp_path, node_process):
     assert [r["id"] for r in node.get("/node/v1/hello")["resources"]] == ["cells"]
 
 
+def _mask_manifest(tmp_path, mask):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"resources": [
+        {"kind": "segmentation", "id": "cells", "path": str(mask)},
+    ]}), encoding="utf-8")
+    return manifest
+
+
+def _settled(client, resource_id, timeout=120):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = client.get(f"/node/v1/resources/{resource_id}/status",
+                           headers=TOKEN_HEADER).get_json()["resource"]
+        if state["state"] != "preparing":
+            return state
+        time.sleep(0.05)
+    return state
+
+
+def test_a_restored_mask_is_not_converted_until_it_is_asked_for(tmp_path):
+    """Connecting to a cluster sat behind a mask conversion for a project
+    nobody had opened: the manifest's masks were converted before the node
+    announced. Restoring registers them; the first status probe -- what
+    opening the project sends -- starts the conversion in the background."""
+    from plexora.server.node.app import create_node_app
+
+    flat = _flat_mask(tmp_path)
+    lines = []
+    app = create_node_app([], token="x", dynamic=True,
+                          manifest=_mask_manifest(tmp_path, flat),
+                          log=lambda *a, **_k: lines.append(" ".join(map(str, a))))
+    restored = app.config["PLEXORA_NODE_RESOURCES"].get("cells")
+    assert restored.path == str(flat)
+    assert not restored.prepared
+    assert restored.prepare_on_use
+    assert not any("Converting" in line for line in lines)
+
+    client = app.test_client()
+    first = client.get("/node/v1/resources/cells/status", headers=TOKEN_HEADER)
+    assert first.get_json()["resource"]["state"] in ("preparing", "ready")
+    state = _settled(client, "cells")
+    assert state["state"] == "ready", state.get("error")
+    assert state["mask_mode"] == "filled"
+    assert Path(restored.path) != flat
+
+
+def test_a_tile_of_a_restored_mask_starts_its_conversion(tmp_path):
+    """An older primary never probes status on open; its first tile is the
+    first use. The tile is answered from the raw mask meanwhile."""
+    from plexora.server.node.app import create_node_app
+
+    flat = _flat_mask(tmp_path)
+    app = create_node_app([], token="x", dynamic=True,
+                          manifest=_mask_manifest(tmp_path, flat), log=_quiet)
+    client = app.test_client()
+    tile = client.get("/node/v1/seg/cells/tile/0/0_0", headers=TOKEN_HEADER)
+    assert tile.status_code == 200, tile.get_data(as_text=True)
+    assert not app.config["PLEXORA_NODE_RESOURCES"].get("cells").prepare_on_use
+    assert _settled(client, "cells")["state"] == "ready"
+
+
 def test_a_restored_mask_that_cannot_be_prepared_is_refused_not_served_raw(
         tmp_path, monkeypatch):
     """`add` registers a mask as ready before the conversion is tried, so a
@@ -568,25 +631,20 @@ def test_a_restored_mask_that_cannot_be_prepared_is_refused_not_served_raw(
     being served -- full resolution at every level, drawn at the wrong scale
     when zoomed out. It has to come back as an error the viewer can show."""
     from plexora.server.node import app as node_app
-    from plexora.server.node import resources as node_resources
 
     mask = tmp_path / "cell.ome.tif"
     tifffile.imwrite(mask, np.zeros((64, 64), dtype=np.uint32))
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"resources": [
-        {"kind": "segmentation", "id": "cells", "path": str(mask)},
-    ]}), encoding="utf-8")
 
     def refuse(resource, log=print, progress=None):
         raise node_app.NodeStartupError(f"{mask.parent} cannot be written to")
 
     monkeypatch.setattr(node_app, "_make_mask_servable", refuse)
-    registry = node_resources.Registry()
-    node_app._restore_manifest(registry, manifest, log=lambda *_a, **_k: None)
-
-    restored = registry.get("cells")
-    assert restored.state == node_resources.ERROR
-    assert "cannot be written to" in restored.error
+    app = node_app.create_node_app([], token="x", dynamic=True,
+                                   manifest=_mask_manifest(tmp_path, mask),
+                                   log=_quiet)
+    state = _settled(app.test_client(), "cells")
+    assert state["state"] == "error"
+    assert "cannot be written to" in state["error"]
 
 
 # -- the viewer relaying a share on the browser's behalf -------------------

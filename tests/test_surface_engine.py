@@ -230,6 +230,60 @@ def test_neighbours_that_touch_stay_two_surfaces():
     assert a < b                     # the inset parts them
 
 
+def test_a_coarse_level_of_a_fine_z_stack_pools_planes():
+    """A label volume's levels are XY-only: at a level whose pixel is wider
+    than the z step, planes are pooled so the grid's voxels are about cubic."""
+    assert levels.label_z_stride(32, (0.14, 0.14, 0.28)) == 16
+    assert levels.label_z_stride(1, (0.14, 0.14, 0.28)) == 1
+    assert levels.label_z_stride(4, (0.5, 0.5, 1.5)) == 1
+    assert levels.label_z_stride(8, (0.5, 0.5, 1.5)) == 3
+    assert levels.label_z_stride(32, None) == 1
+    assert levels.label_z_stride(64, (1.0, 1.0, 0.1), depth=20) == 20
+
+
+def test_pooled_planes_keep_each_cell_closed_and_in_place():
+    labels = np.zeros((40, 64, 64), np.uint16)
+    counts = {1: _ellipsoid(labels, (14, 20, 20), (10, 6, 6), 1),
+              2: _ellipsoid(labels, (26, 44, 40), (12, 7, 9), 2)}
+    labels[33, 50:58, 6:14] = 9          # one plane thick: pooled, not lost
+    volume = _Labels(labels)
+    ids, boxes, _ = label_surfaces.object_boxes(volume, 0)
+    full, _ = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids, boxes)
+    pooled, report = label_surfaces.extract(
+        volume, 0, marching.Grid.of((10, 64, 64), z_stride=4), ids, boxes, z_stride=4)
+    assert pooled.ids().tolist() == [1, 2, 9] and report["missing_count"] == 0
+    assert pooled.n_triangles < full.n_triangles / 2
+    columns = mesh_mod.measure(pooled, dims=(64, 64, 40))
+    assert columns["closed"].all()
+    for label in (1, 2):
+        mine = pooled.positions[pooled.object_id == label]
+        ref = full.positions[full.object_id == label]
+        # In level-0 voxels, where the full-resolution surface is: z within
+        # one pooled run of it.
+        assert np.abs(mine.mean(axis=0) - ref.mean(axis=0)).max() < 2.0, label
+        assert ref[:, 2].min() - 4 <= mine[:, 2].min() <= ref[:, 2].min() + 4, label
+        assert ref[:, 2].max() - 4 <= mine[:, 2].max() <= ref[:, 2].max() + 4, label
+    sizes = dict(zip(columns["object"].tolist(), columns["mesh_volume_vox3"].tolist()))
+    assert sizes[1] == pytest.approx(counts[1], rel=0.35)
+
+
+def test_the_planner_counts_pooled_planes_and_fits_a_fine_z_stack():
+    """10 000 nuclei of a 200-plane stack at 0.14 um pixels and a 0.28 um z
+    step outgrew the browser at every XY-only level; pooling planes fits them."""
+    class Stack(_Labels):
+        def level_shapes(self):
+            return [[4096 // 2 ** k, 4096 // 2 ** k] for k in range(6)]
+
+    stack = Stack(np.zeros((200, 2, 2), np.uint16))
+    counts = np.full(10_000, 140_000)
+    with pytest.raises(levels.SurfaceRefused):
+        levels.plan_labels(stack, counts, quality="standard")
+    level, estimate = levels.plan_labels(stack, counts, quality="standard",
+                                         scale=(0.14, 0.14, 0.28))
+    assert estimate <= levels.QUALITY["standard"][1]
+    assert levels.label_z_stride(4096 / (4096 // 2 ** level), (0.14, 0.14, 0.28)) > 1
+
+
 # -- levels and suggestions ------------------------------------------------------------
 
 

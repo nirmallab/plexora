@@ -125,11 +125,22 @@ except one additive hunk each in `agent/cell_gallery.py` and `autogate/sheet.py`
 - A measured object table is attached as one image (`single_image`), so gating no longer asks
   for an image-id column it cannot have.
 - Field sampling with every cell left out says so (`precondition_missing`) instead of failing.
+- **A user's CSV with X, Y and Z** (2026-10-11): the viewer's centroid dots are the planes on
+  screen's cells (`/volume/<ds>/info` `table_z` → `ImageViewer.setCentroidPlanes`, a z range
+  added to the centroid tile filter; a slab's whole range; old dots stay until the new
+  plane's land); `read_cell_crops` reads each cell at its own plane, pixels and 3-D mask
+  (`crops.cell_planes`), so session collages, per-cell calls, cell windows and the pixel
+  estimate stop reading the default plane; pixel-estimate snapshots draw at `field_plane`;
+  `flat_table_spec` (Python/notebook registration) keeps the guessed z role; `zplane`,
+  `zslice`, `zindex` and `plane` are z names and metadata. Z is read as a plane index, like
+  every z role. Tests: `tests/test_csv_xyz.py`, `tests/js/centroid_planes_probe.mjs`.
+  Not done: `sample_gating_cells` rows carry no z; the legacy centroid path (no manifest) is
+  unfiltered; the sidebar's positive counts are the whole volume's.
 
 Not done, on purpose: display calibration per view kind (gating draws planes only, never a
-projection, so there is one kind of window); the 3-D neighbourhood for the hybrid cell model
-(the 2-D one is uncommitted work in the gating session's tree); the gating packets' z-profile
-sparkline (`autogate/packets.py` is the gating branch's).
+projection, so there is one kind of window); the gating packets' z-profile sparkline
+(`autogate/packets.py` is the gating branch's). (A 3-D neighbourhood for gating's per-cell
+model was planned here; the model was removed on 2026-10-12.)
 
 Agent tools (2026-10-11): `colocalize_3d` (core `agent/core/volume_analysis.py`: voxels at the
 finest level under 30 M per channel, ROI by its extent / cells by id, Otsu Manders, refuses a

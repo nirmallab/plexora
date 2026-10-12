@@ -339,6 +339,18 @@ def test_an_imaris_file_is_a_volume(tmp_path):
         source.close()
 
 
+def test_an_imaris_files_channel_keys_drop_the_extension(tmp_path):
+    """`stack_0`, not `stack.ims_0`, as every other format's keys drop theirs.
+    Only the trailing `_<N>` is ever parsed (`_parse_channel`), so a stack
+    imported before this keeps the keys it recorded and still serves."""
+    from plexora.server.models.data_model import _convert_ims_image, _parse_channel
+
+    path, _ = vf.write_ims(tmp_path / "stack.ims", channels=2, depth=3)
+    names = _convert_ims_image(str(path))["channel_names"]
+    assert names == ["stack_0", "stack_1"]
+    assert _parse_channel("stack.ims_1") == (1, False)
+
+
 def test_a_planar_imaris_file_still_opens(tmp_path):
     path, data = vf.write_ims(tmp_path / "p.ims", depth=1)
     source = open_volume(path)

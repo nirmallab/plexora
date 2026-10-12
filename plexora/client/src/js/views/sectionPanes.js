@@ -312,6 +312,11 @@
             const world = this.osd.world;
             const channels = this.owner.channels();
             const outgoing = [...this.items.values()];
+            //: A channel the pane is not drawing yet comes in rather than lands
+            //: (services/channelFade.js); the others hand over as they are.
+            const Fade = global.PlexoraChannelFade;
+            const before = new Set(this.items.keys());
+            const fresh = (srcIdx) => Boolean(Fade) && !before.has(srcIdx);
             const added = new Map();
             let pending = channels.length;
             let settled = false;
@@ -346,7 +351,13 @@
                 if (this.loading?.generation === generation) this.loading = null;
                 this.token = token;
                 this.items = new Map(added);
-                for (const item of added.values()) item.setOpacity(1);
+                const arriving = [];
+                for (const [srcIdx, item] of added) {
+                    if (fresh(srcIdx)) arriving.push(item);
+                    else item.setOpacity(1);
+                }
+                // Together, once every one of them can draw.
+                if (arriving.length) Fade.fadeIn(arriving);
                 for (const item of outgoing) {
                     if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
                 }
@@ -382,8 +393,8 @@
                     tileSource: this.tileSource(srcIdx, channel, token),
                     compositeOperation: "lighter",
                     // Hidden until the handover, unless there is nothing on
-                    // screen to hand over from.
-                    opacity: outgoing.length || defer ? 0 : 1,
+                    // screen to hand over from -- or it is coming in.
+                    opacity: outgoing.length || defer || fresh(srcIdx) ? 0 : 1,
                     preload: true,
                     success: (event) => {
                         if (!live()) {
@@ -393,7 +404,8 @@
                         if (finished) {
                             // Late, after its handover (the deadline): part of
                             // what is on screen now.
-                            event.item.setOpacity(1);
+                            if (fresh(srcIdx)) Fade.fadeIn([event.item]);
+                            else event.item.setOpacity(1);
                             this.items.set(srcIdx, event.item);
                             event.item.addHandler("fully-loaded-change", () => {
                                 if (live()) requestAnimationFrame(() => this.redraw());

@@ -101,7 +101,19 @@ def _coordinate_keys(project, roles) -> list[str]:
         return []
     if project.columns_are_structural:
         return [COORDINATES_KEY]
-    return [f"role:{role}" for role in wanted]
+    return [f"role:{role}" for role in wanted] + _depth_keys(project, wanted)
+
+
+def _depth_keys(project, wanted) -> list[str]:
+    """`["role:z"]` where X and Y are asked for as columns of a z-stack's
+    table: there a cell's plane is a coordinate too, and is asked for with
+    them. "The cells have no Z" is an answer (DataSpec.flat_cells), so a 2-D
+    table over a stack is not stuck. Nothing for a flat image, and nothing for
+    AnnData or SpatialData, whose coordinates are one question about two axes.
+    """
+    if set(wanted) != set(_COORDINATE_ROLES) or project.columns_are_structural:
+        return []
+    return ["role:z"] if int(getattr(project.image, "depth", 1) or 1) > 1 else []
 
 
 def _layer_matches(layer, wanted: str) -> bool:
@@ -385,7 +397,16 @@ class Requires:
         this project's format can actually answer (see `_coordinate_keys`)."""
         keys = [f"role:{role}" for role in self.roles
                 if role not in _COORDINATE_ROLES]
-        return keys + _coordinate_keys(project, self.roles)
+        return keys + [key for key in _coordinate_keys(project, self.roles)
+                       if key not in keys]
+
+    def _optional_keys(self, project) -> tuple[str, ...]:
+        """`optional`, with Z beside an optional X and Y on a z-stack -- the
+        same question `_coordinate_keys` adds beside a required pair."""
+        wanted = [role for role in _COORDINATE_ROLES if f"role:{role}" in self.optional]
+        extra = tuple(key for key in _depth_keys(project, wanted)
+                      if key not in self.optional and key.split(":", 1)[1] not in self.roles)
+        return tuple(self.optional) + extra
 
     def declared_keys(self, project) -> list[str]:
         """Every input this plugin names, required and optional, in ask order.
@@ -408,7 +429,7 @@ class Requires:
             keys.append("markers")
         keys.extend(self._column_keys(project))
         keys.extend(f"layer:{wanted}" for wanted in self.layers)
-        keys.extend(key for key in self.optional if key not in keys)
+        keys.extend(key for key in self._optional_keys(project) if key not in keys)
         return keys
 
     def unconfirmed_from(self, project) -> list[Requirement]:
@@ -424,8 +445,9 @@ class Requires:
         same field twice in one form.
         """
         project = _as_project(project)
+        optional = self._optional_keys(project)
         return [
-            requirement(key, optional=key in self.optional)
+            requirement(key, optional=key in optional)
             for key in project.unconfirmed(self.declared_keys(project))
             if not _never_confirmed(project, key) and _answered(project, key)
         ]
@@ -442,7 +464,7 @@ class Requires:
         """
         project = _as_project(project)
         missing = []
-        for key in project.unconfirmed(self.optional):
+        for key in project.unconfirmed(self._optional_keys(project)):
             if key == "table" and project.has_table:
                 continue
             if key == "segmentation" and project.segmentation.requested:
@@ -475,7 +497,8 @@ class Requires:
         """
         project = _as_project(project)
         declared = set(self.declared_keys(project))
-        return [requirement(key, optional=key in self.optional)
+        optional = self._optional_keys(project)
+        return [requirement(key, optional=key in optional)
                 for key in keys
                 if key in declared and not _answered(project, key)]
 

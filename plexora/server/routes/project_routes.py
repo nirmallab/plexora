@@ -352,6 +352,7 @@ def _describe(project):
         "coordinateOptions": project.coordinate_options,
         "singleImage": bool(spec and spec.single_image),
         "rowNumberIds": bool(spec and spec.row_number_ids),
+        "flatCells": bool(spec and spec.flat_cells),
         "editableRoles": _editable_roles(project),
         "columns": {
             "markers": list(project.columns.markers),
@@ -923,13 +924,14 @@ def _apply_edit(project, payload):
     coordinates = payload.get("coordinates")
     single_image = payload.get("single_image")
     row_number_ids = payload.get("row_number_ids")
+    flat_cells = payload.get("flat_cells")
     # Presence, not truth: "" is the client saying "no override, draw whatever
     # this project resolves to", which is a change worth applying and would be
     # dropped by a plain truthiness test.
     chose_layer = "cellLayer" in payload
     cell_layer = payload.get("cellLayer")
     confirm = payload.get("confirm")
-    if (roles or columns or coordinates or single_image or row_number_ids
+    if (roles or columns or coordinates or single_image or row_number_ids or flat_cells
             or chose_layer or confirm):
         def _apply(current):
             if columns:

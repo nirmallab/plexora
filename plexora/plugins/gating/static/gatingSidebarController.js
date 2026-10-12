@@ -65,16 +65,6 @@ class GatingSidebarController {
         //: lands, and it only ever adds a line under the gate and a clause to
         //: the marker list's tooltips.
         this.provenance = {};
-        //: The cell model's reading of the marker on screen (refreshCellModel):
-        //: {marker, state, own, notOwn, uncertain, bytes}, null until it lands.
-        this.cellModel = null;
-        //: The marker whose cell-model calls the viewer draws now (toggleCellModel).
-        this.cellModelShown = null;
-        //: A cell-model run in flight: {jobId, marker, message}.
-        this.cellModelJob = null;
-        //: What stopped the last run, for the marker it was for: {marker, message}.
-        this.cellModelError = null;
-        this._cellModelRequest = 0;
         //: {fullName, stored} while an agent's candidate gate is shown on the
         //: slider (gatingAgentBridge.js preview_gate) -- never saved: see
         //: persistGatingList. Cleared by anything the user does to the gate.
@@ -505,7 +495,6 @@ class GatingSidebarController {
         if (!name) return;
         if (name === this.gateMarker && !options.force) return;
         const enableSlot = options.enableSlot !== false;
-        this.clearCellModel();
         this.gateMarker = name;
         if (this.gateMarkerSelect) {
             this.gateMarkerSelect.setValue(name);
@@ -519,7 +508,6 @@ class GatingSidebarController {
         this.paintConsistency();
         this.paintProvenance();
         this.paintQcNote();
-        this.refreshCellModel();
         // The plane on screen's cells, read for this marker.
         this.planes?.follow();
         // Gating always works off the feature-table column (ensureGateSelection
@@ -709,15 +697,6 @@ class GatingSidebarController {
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
         this.planes?.paintReadout();
-        // The cell model's calls were the old gate's: a moved gate stops
-        // drawing them, and has not been checked yet.
-        if (eventName === CSVGatingList.events.SELECTION_CHANGED) {
-            this.clearCellModel();
-            if (this.cellModel && this.cellModel.marker === this.gateMarker) {
-                this.cellModel = { marker: this.gateMarker, state: "not_run" };
-            }
-            this.paintCellModel();
-        }
         // Counted, never with the marker or the values (optional telemetry).
         window.PlexoraTelemetry?.feature(
             eventName === CSVGatingList.events.SELECTION_CHANGED ? "gate.commit" : "gate.brush",
@@ -886,200 +865,6 @@ class GatingSidebarController {
         node.title = tips.join(" ");
         node.dataset.heavy = fitted && qc.warning ? "true" : "false";
         node.hidden = false;
-    }
-
-    /** Ask what the cell model said about the gate on screen, then paint. */
-    async refreshCellModel() {
-        const marker = this.gateMarker;
-        const request = ++this._cellModelRequest;
-        if (!marker) {
-            this.cellModel = null;
-            this.paintCellModel();
-            return;
-        }
-        const found = await this.api.getCellModel(marker);
-        if (request !== this._cellModelRequest || marker !== this.gateMarker) return;
-        this.cellModel = found ? { marker, ...found } : null;
-        this.paintCellModel();
-    }
-
-    /**
-     * The cell model's block under the gate: a button to check the cells near
-     * the gate; while a run is going, its progress and Cancel; after, what it
-     * would move (one line, its colours as swatches) and a toggle that draws
-     * it. Hidden for a marker with no gate. Never applied -- every count on
-     * this panel stays the gate's.
-     */
-    paintCellModel() {
-        const box = document.getElementById("gate_cell_model");
-        const note = document.getElementById("gate_cell_model_note");
-        const run = document.getElementById("gate_cell_model_run");
-        const toggle = document.getElementById("gate_cell_model_toggle");
-        const cancel = document.getElementById("gate_cell_model_cancel");
-        if (!box || !note || !run || !toggle || !cancel) return;
-        if (!box.dataset.wired) {
-            box.dataset.wired = "true";
-            run.addEventListener("click", () => this.startCellModel());
-            toggle.addEventListener("click", () => this.toggleCellModel());
-            cancel.addEventListener("click", () => this.cancelCellModel());
-        }
-        const marker = this.gateMarker;
-        const job = this.cellModelJob && this.cellModelJob.marker === marker ? this.cellModelJob : null;
-        const found = this.cellModel && this.cellModel.marker === marker ? this.cellModel : null;
-        const error = this.cellModelError && this.cellModelError.marker === marker
-            ? this.cellModelError : null;
-        const state = found ? found.state : null;
-        if (!job && (!state || state === "not_gated")) {
-            box.hidden = true;
-            return;
-        }
-        box.hidden = false;
-        const ready = !job && state === "ready";
-        run.hidden = Boolean(job) || ready;
-        run.disabled = Boolean(this.cellModelJob);
-        run.title = this.cellModelJob && !job
-            ? "The cell model is checking another marker; one at a time."
-            : "Read every cell near this gate with the cell model (about a minute): whether "
-              + "each one's stain is its own, a neighbour's glow or background. Nothing about "
-              + "the gate changes.";
-        cancel.hidden = !job;
-        toggle.hidden = !ready || !(found.own || found.notOwn || found.uncertain);
-        const on = Boolean(this.cellModelShown);
-        toggle.setAttribute("aria-pressed", on ? "true" : "false");
-        toggle.textContent = `${on ? "Hide" : "Show"} model calls`;
-        toggle.title = "Draw the cells the model disagrees with the gate on: sky blue below the "
-            + "gate where it reads the stain as the cell's own, magenta above it where it "
-            + "reads the stain as a neighbour's or background, amber where it leans that way "
-            + "without being sure. Every count stays the gate's.";
-        note.replaceChildren();
-        note.dataset.tone = "";
-        note.title = "";
-        if (job) {
-            const spinner = document.createElement("span");
-            spinner.className = "fas fa-circle-notch fa-spin gate-cell-model-spinner";
-            spinner.setAttribute("aria-hidden", "true");
-            note.append(spinner, job.message || "Checking cells with the model\u2026");
-            note.hidden = false;
-        } else if (error && !ready) {
-            note.textContent = error.message;
-            note.dataset.tone = "error";
-            note.hidden = false;
-        } else if (ready) {
-            const fmt = (n) => Number(n || 0).toLocaleString();
-            const parts = [["own", found.own, "own below the gate"],
-                ["not-own", found.notOwn, "not own above"],
-                ["uncertain", found.uncertain, "uncertain"]].filter(([, n]) => n > 0);
-            if (!parts.length) {
-                note.textContent = "The cell model agrees with the gate";
-            } else {
-                note.dataset.tone = "counts";
-                for (const [kind, n, words] of parts) {
-                    const part = document.createElement("span");
-                    part.className = "gate-cell-model-part";
-                    const swatch = document.createElement("span");
-                    swatch.className = "gate-cell-model-swatch";
-                    swatch.dataset.kind = kind;
-                    part.append(swatch, `${fmt(n)} ${words}`);
-                    note.append(part);
-                }
-            }
-            note.title = `Near this gate the cell model reads ${fmt(found.own)} cells below it `
-                + `as stained by their own ${marker} and ${fmt(found.notOwn)} above it as lit by `
-                + `a neighbour or background, and leans against ${fmt(found.uncertain)} `
-                + "positives without being sure. The gate's call stands unless the model is "
-                + "confident; nothing here changes the gate, its counts or exports.";
-            note.hidden = false;
-        } else {
-            note.hidden = true;
-        }
-    }
-
-    /** Check the marker on screen with the cell model (a job), then follow it. */
-    async startCellModel() {
-        const marker = this.gateMarker;
-        if (!marker || this.cellModelJob) return;
-        this.cellModelError = null;
-        this.cellModelJob = { jobId: null, marker, message: "Starting the cell model\u2026" };
-        this.paintCellModel();
-        const answer = await this.api.runCellModel([marker]);
-        if (!answer?.ok || !answer.job_id) {
-            this.cellModelJob = null;
-            this.cellModelError = { marker, message: answer?.error?.message
-                || "The cell model could not start." };
-            this.paintCellModel();
-            return;
-        }
-        this.cellModelJob.jobId = answer.job_id;
-        this.followCellModel(this.cellModelJob, 150);
-    }
-
-    /** Poll a cell-model job until it ends; repaint as it reports. */
-    async followCellModel(job, delay) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        if (this.cellModelJob !== job) return;
-        const record = await this.api.cellModelJob(job.jobId);
-        if (this.cellModelJob !== job) return;
-        if (!record) {
-            this.followCellModel(job, Math.min(delay * 2, 6000));
-            return;
-        }
-        if (record.status === "done") {
-            this.cellModelJob = null;
-            const row = record.result?.markers?.[job.marker];
-            if (row && row.state === "unavailable") {
-                this.cellModelError = { marker: job.marker,
-                    message: `The cell model cannot read this marker: ${row.why}` };
-            }
-            if (job.marker === this.gateMarker) await this.refreshCellModel();
-            else this.paintCellModel();
-            return;
-        }
-        if (record.status === "failed" || record.status === "cancelled") {
-            this.cellModelJob = null;
-            if (record.status === "failed") {
-                const error = record.error;
-                this.cellModelError = { marker: job.marker, message: (typeof error === "string"
-                    ? error : error?.message) || "The cell model stopped." };
-            }
-            this.paintCellModel();
-            return;
-        }
-        job.message = record.progress?.message && record.progress.message !== "running"
-            ? record.progress.message : "Checking cells with the model\u2026";
-        this.paintCellModel();
-        this.followCellModel(job, 750);
-    }
-
-    async cancelCellModel() {
-        const job = this.cellModelJob;
-        if (!job) return;
-        if (job.jobId) await this.api.cancelCellModelJob(job.jobId);
-        this.cellModelJob = null;
-        this.paintCellModel();
-    }
-
-    /** Draw the marker's cell-model calls over its gate, or stop. */
-    toggleCellModel() {
-        if (this.cellModelShown) {
-            this.clearCellModel();
-            this.paintCellModel();
-            return;
-        }
-        const found = this.cellModel;
-        if (!found || found.marker !== this.gateMarker || found.state !== "ready" || !found.bytes) return;
-        const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
-        if (!fullName) return;
-        this.cellModelShown = fullName;
-        this.ctx.viewer?.setCellFlagMask?.(fullName, found.bytes);
-        this.paintCellModel();
-    }
-
-    /** Stop drawing the cell model's calls (a new marker, or the gate moved). */
-    clearCellModel() {
-        if (!this.cellModelShown) return;
-        const shown = this.cellModelShown;
-        this.cellModelShown = null;
-        this.ctx.viewer?.setCellFlagMask?.(shown, null);
     }
 
     /**

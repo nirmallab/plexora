@@ -44,16 +44,6 @@ const SMALL_CELL_TINT = 0.45;
 //: neither positive nor negative, so grey -- #7a7a7a, the grey
 //: agent/render.py draws QC's left-out cells in -- at the plain layer's alpha.
 const NOT_CALLED_RGB = [122, 122, 122];
-//: A positive cell a plugin marked uncertain (a gate mask's 3: gating's
-//: cell model leans against its stain without being sure): still positive,
-//: drawn amber at full alpha -- the shader's UNCERTAIN.
-const UNCERTAIN_RGB = [255, 176, 32];
-//: The cell model's confident disagreements with the gate (a gate mask's 4
-//: and 5): a cell below the gate it reads as stained, sky blue; a positive it
-//: reads as lit by something else, magenta -- at full alpha, the
-//: shader's MODEL_OWN and MODEL_NOT_OWN.
-const MODEL_OWN_RGB = [86, 180, 233];
-const MODEL_NOT_OWN_RGB = [255, 70, 230];
 
 /** Eight-neighbour boundary test on unpacked ids; the tile's own border counts
  *  as "same" (see the comment at the call site in renderLabelTile). */
@@ -210,16 +200,6 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
             // Not called: grey whatever the colour table says, so a hidden
             // category does not hide it either -- the shader's NOT_CALLED.
             [red, green, blue] = NOT_CALLED_RGB;
-        } else if (gateMask && gateMask[cellId] === 3) {
-            // Uncertain: amber, opaque -- the shader's UNCERTAIN.
-            [red, green, blue] = UNCERTAIN_RGB;
-            alpha = 255;
-        } else if (gateMask && gateMask[cellId] === 4) {
-            [red, green, blue] = MODEL_OWN_RGB;
-            alpha = 255;
-        } else if (gateMask && gateMask[cellId] === 5) {
-            [red, green, blue] = MODEL_NOT_OWN_RGB;
-            alpha = 255;
         } else if (lutColors) {
             // Above maxId means the LUT simply does not describe this
             // cell -- a segmentation object with no row in the table.
@@ -285,9 +265,6 @@ function cellColour(layer, cellId) {
     const gateMask = layer.gateMask || null;
     if (gateMask && !gateMask[cellId]) return null;
     if (gateMask && gateMask[cellId] === 2) return [...NOT_CALLED_RGB, 220];
-    if (gateMask && gateMask[cellId] === 3) return [...UNCERTAIN_RGB, 255];
-    if (gateMask && gateMask[cellId] === 4) return [...MODEL_OWN_RGB, 255];
-    if (gateMask && gateMask[cellId] === 5) return [...MODEL_NOT_OWN_RGB, 255];
     const lut = layer.lut;
     if (lut?.colors) {
         if (cellId > lut.maxId) return null;
@@ -310,7 +287,6 @@ const PLEXORA_LABEL_TILE = {
     renderLabelTile, isBoundary, smallCellWeight, fillWeightOf, alphaTables, labelIds,
     cellColour,
     NOT_CALLED_RGB,
-    UNCERTAIN_RGB,
 };
 if (typeof window !== "undefined") {
     window.PlexoraLabelTile = PLEXORA_LABEL_TILE;

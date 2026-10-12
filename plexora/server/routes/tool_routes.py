@@ -182,6 +182,9 @@ def _needs_payload(project, *, tool, label, intro, missing, confirm, optional):
         # The same thing for the cell id: whether the user has said to number
         # the rows, which is an answer and not a blank left alone.
         "rowNumberIds": bool(project.dataset and project.dataset.row_number_ids),
+        # And for a z-stack's Z column: whether the user has said the table's
+        # cells have none (a 2-D table over the stack).
+        "flatCells": bool(project.dataset and project.dataset.flat_cells),
         # What the "Expression values" field is made of: every matrix the file
         # carries, which one is read now, and whether it is log1p'd on the way
         # in. Same three keys the edit page renders from.
@@ -370,11 +373,12 @@ def satisfy_requirements(datasource):
             reload_needed = apply_feature_choice(
                 Project.find(datasource) or project, payload)
         answers = ("roles", "columns", "confirm", "coordinates", "single_image",
-                   "row_number_ids")
+                   "row_number_ids", "flat_cells")
         if any(payload.get(key) for key in answers):
             Project.mutate(datasource, lambda p: _apply(p, payload))
-            # `single_image` is absent here on purpose: it records what the
-            # table already was, so nothing about how it is read has changed.
+            # `single_image` and `flat_cells` are absent here on purpose: they
+            # record what the table already was, so nothing about how it is
+            # read has changed.
             # `coordinates` very much has -- it repoints the adapter at a
             # different array -- and so does `row_number_ids`, which clears the
             # obs column the identifier was being read from.
@@ -503,6 +507,8 @@ def apply_column_answers(project, payload):
         project = project.with_single_image(True)
     if payload.get("row_number_ids"):
         project = project.with_row_number_ids(True)
+    if payload.get("flat_cells"):
+        project = project.with_flat_cells(True)
     return project
 
 
@@ -541,4 +547,7 @@ def _supplied_keys(payload, project=None):
     if payload.get("row_number_ids"):
         # Likewise for the cell id.
         keys.append("role:cell_id")
+    if payload.get("flat_cells"):
+        # And for a z-stack's Z column.
+        keys.append("role:z")
     return keys

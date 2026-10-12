@@ -36,13 +36,6 @@ set (older gates show as manual).
    `session_id`) shows which gates failed as evidence and which markers
    leaned on them: a marker with `stood_on_failed` in the report rests on a
    reference that later failed -- review it after that reference.
-   `get_cell_model_calls` says what the cell model read near each gate as it
-   stands: cells below it whose stain it reads as their own, positives above
-   it it reads as a neighbour's glow or background, and positives it leans
-   against unconfidently -- or `not_run`. `run_cell_model` (a job, about a
-   minute a marker) reads a gate it has not. A layer beside the gate, never a
-   reason to move it on its own: with `marker` and `cells`, look at those
-   cells (`render_cell_gallery`) and let the user judge.
 3. For a gate the user questions: `render_gating_collage` (`layout: "t2"`) at
    the stored gate, and `bivariate_evidence` against its partner. Where its
    looks started is in the session report (the scored proposal or the Auto
@@ -63,8 +56,8 @@ set (older gates show as manual).
 ## Tools
 
 `get_all_gates`, `gating_qc`, `get_gate_provenance`, `render_gating_collage`,
-`bivariate_evidence`, `get_cell_model_calls`, `run_cell_model`,
-`render_cell_gallery`, `set_gate_status`, `undo_operation`, `gating_report`.
+`bivariate_evidence`, `render_cell_gallery`, `set_gate_status`, `undo_operation`,
+`gating_report`.
 
 ## Evidence
 

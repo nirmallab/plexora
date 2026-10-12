@@ -533,6 +533,20 @@ async function init(config, savedViewTransform = null) {
             seaDragonViewer.setTableFrame({ column: tableT, t: viewState.get().t });
             viewState.subscribe((state) => seaDragonViewer.setTableFrame({ column: tableT, t: state.t }));
         }
+        // A table that places each cell in depth (an object table, or a CSV
+        // with X, Y and Z): the centroid dots are the planes on screen's
+        // cells, a slab's whole range. The 3-D view draws no dots, so the 2-D
+        // pane keeps the plane it was left on.
+        const tableZ = viewState.info?.table_z;
+        if (tableZ && viewState.depth > 1) {
+            const planesOf = (state) => (state.mode === "slab"
+                ? { column: tableZ, z0: state.slab.z0, z1: state.slab.z1 }
+                : { column: tableZ, z0: state.z, z1: state.z });
+            seaDragonViewer.setCentroidPlanes(planesOf(viewState.get()));
+            viewState.subscribe((state) => {
+                if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(planesOf(state));
+            });
+        }
     }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
@@ -672,19 +686,34 @@ async function init(config, savedViewTransform = null) {
         }
     });
 
-    // HD, if the sample this walk came from had it on. Here and not earlier:
-    // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
-    // checkbox's own handler reaches through. And through `presetHdMode`
-    // rather than `setHdMode`, because the world is still empty -- see that
-    // method for what remembering a viewport of nothing costs.
+    // HD from the start -- 16-bit tiles, the data's own precision -- unless
+    // the tiles cross a network to get here: an image read from a web address
+    // or a data node (page_routes.image_streamed), or this server on another
+    // machine than the browser. There a 16-bit PNG is many times the bytes of
+    // a fast WebP tile on every pan. Channel images only: a brightfield or RGB
+    // picture has no 16-bit to show, and its HD tile is just a bigger one.
+    // A sample walked to from a sibling keeps that sample's choice instead,
+    // on or off.
+    //
+    // Here and not earlier: ImageViewer.init() is what assigns
+    // `viewerManagerVMain`, which the HD checkbox's own handler reaches
+    // through. And through `presetHdMode` rather than `setHdMode`, because the
+    // world is still empty -- see that method for what remembering a viewport
+    // of nothing costs.
     const carriedChannelState = window.PlexoraCarryOver?.current?.()?.components?.channels;
-    if (carriedChannelState?.hd) {
+    const tilesStreamed = Boolean(flaskVariables.image_streamed || flaskVariables.server_is_remote);
+    const hdByDefault = !tilesStreamed
+        && !["rgb", "brightfield", "blank"].includes(config.image_kind)
+        && Boolean(document.querySelector("#viewer_controls_hd"));
+    const startInHd = typeof carriedChannelState?.hd === "boolean"
+        ? carriedChannelState.hd : hdByDefault;
+    if (startInHd) {
         try {
             viewerManager.presetHdMode(true);
             const hdCheckbox = document.querySelector("#viewer_controls_hd");
             if (hdCheckbox) hdCheckbox.checked = true;
         } catch (error) {
-            console.error("main: could not carry HD mode over", error);
+            console.error("main: could not start in HD", error);
         }
     }
     // The dataset handed to every plugin -- same shape as the server's

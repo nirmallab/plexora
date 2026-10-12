@@ -190,27 +190,53 @@ def iso_estimate(preview_triangles: int, preview_level: int, level: int) -> int:
     return int(preview_triangles * ISO_LEVEL_RATIO ** max(0, preview_level - level))
 
 
-def label_triangles(counts, faces=None, *, level=0, level_factor=1.0) -> int:
+def label_triangles(counts, faces=None, *, level=0, level_factor=1.0, z_stride=1) -> int:
     """Estimated triangles for label surfaces of objects with voxel `counts`
     at level 0 (or exact face counts `faces` = (fx, fy, fz) arrays), at a
-    level whose XY voxels are `level_factor` level-0 voxels wide."""
+    level whose XY voxels are `level_factor` level-0 voxels wide, read every
+    `z_stride` planes (`label_z_stride`)."""
     f = float(level_factor)
+    s = float(max(1, int(z_stride)))
     if faces is not None:
         fx, fy, fz = (np.asarray(a, dtype=np.float64) for a in faces)
-        # Exposed voxel faces over-count a smooth surface by about 1.5x.
-        total = (fz / (f * f) + (fx + fy) / f).sum() / 1.5
+        # Exposed voxel faces over-count a smooth surface by about 1.5x. A face
+        # across x or y spans one pixel and one plane; across z, two pixels.
+        total = (fz / (f * f) + (fx + fy) / (f * s)).sum() / 1.5
     else:
         counts = np.asarray(counts, dtype=np.float64)
         # A sphere's area per V^(2/3): (36 pi)^(1/3); about a third faces z.
         area = (36 * math.pi) ** (1 / 3) * np.cbrt(counts) ** 2
-        total = (area / 3.0 / (f * f) + 2.0 * area / 3.0 / f).sum() * 1.15
+        total = (area / 3.0 / (f * f) + 2.0 * area / 3.0 / (f * s)).sum() * 1.15
     return int(total * TRIANGLES_PER_AREA)
 
 
+def label_z_stride(level_factor, scale=None, depth=None) -> int:
+    """How many planes one grid plane of a cell surface pools at a level
+    whose XY voxels are `level_factor` level-0 voxels wide: as many as make
+    the grid's voxels about as deep as they are wide.
+
+    A label volume's levels are XY-only, so without this a coarse level of a
+    finely stepped stack keeps every plane: cells stay hundreds of voxels
+    tall and their sides alone outgrow any triangle budget (a 194-plane stack
+    at 0.28 um under 0.14 um pixels was 7 M triangles at its coarsest level).
+    1 while the pixel is no wider than the z step -- every stack whose z step
+    is the coarser one, at the levels it is drawn at today -- and 1 when the
+    spacing is not known (`scale` None)."""
+    if not scale:
+        return 1
+    sx, sy, sz = (float(v) for v in scale)
+    if not sz > 0:
+        return 1
+    stride = int(round(float(level_factor) * min(sx, sy) / sz))
+    stride = max(1, stride)
+    return min(stride, int(depth)) if depth else stride
+
+
 def plan_labels(label_volume, counts, *, faces=None, quality="standard", level=None,
-                image_width=None):
+                image_width=None, scale=None):
     """The finest level of the label volume whose surfaces fit `quality`:
-    `(level, estimated triangles)`, or SurfaceRefused."""
+    `(level, estimated triangles)`, or SurfaceRefused. `scale` (level-0
+    voxel size, µm) lets a coarse level pool planes (`label_z_stride`)."""
     if quality not in QUALITY:
         raise SurfaceRefused(f"quality is one of {', '.join(QUALITIES)}")
     ceiling = QUALITY[quality][1]
@@ -222,7 +248,9 @@ def plan_labels(label_volume, counts, *, faces=None, quality="standard", level=N
         if not 0 <= k < len(shapes):
             raise SurfaceRefused(f"level {k} does not exist")
         factor = width0 / max(1, shapes[k][1])
-        estimate = label_triangles(counts, faces, level=k, level_factor=factor)
+        stride = label_z_stride(factor, scale, getattr(label_volume, "depth", None))
+        estimate = label_triangles(counts, faces, level=k, level_factor=factor,
+                                   z_stride=stride)
         best = (k, estimate)
         if estimate <= ceiling:
             return best

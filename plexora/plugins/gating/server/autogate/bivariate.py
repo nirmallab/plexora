@@ -187,7 +187,7 @@ PURITY_TOP = 0.10
 
 
 def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None,
-                  high_b=None):
+                  high_b=None, min_top=None):
     """How much less pure a gate's positives are than its brightest ones.
 
     Impure = positive for the marker and on the wrong side of the partner:
@@ -202,7 +202,8 @@ def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None
     left-out cells are not counted (`cells.values`).
 
     {at_gate, at_top, excess, n_positive, n_top}, or None for an independent
-    partner or too few positives to calibrate on."""
+    partner or too few positives to calibrate on (`min_top` of the brightest,
+    `control_min_cells` unless given)."""
     if relation not in CONTROL_POPULATION:
         return None
     col_a, col_b = profmod.column(ds, marker), profmod.column(ds, partner)
@@ -215,7 +216,7 @@ def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None
     impure = pb if relation == "exclusive" else ~pb
     rows = np.flatnonzero(pa)
     n_top = int(np.ceil(PURITY_TOP * rows.size))
-    if n_top < THRESHOLDS["control_min_cells"]:
+    if n_top < (THRESHOLDS["control_min_cells"] if min_top is None else int(min_top)):
         return None
     # The brightest positives, ties broken by row so the set never depends
     # on the sort's whim.
@@ -229,7 +230,9 @@ def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None
 
 #: [cal] a conditional gate ("positive only within the partner's positives"):
 #: how many partner-positive cells a fit needs, and the mixtures tried.
-WITHIN = {"min_cells": 200, "components": (3, 2)}
+#: `max_orphan`: a `within` partner is offered only when no more than this
+#: share of the marker's positives are negative for it (`packets.within_eligible`).
+WITHIN = {"min_cells": 200, "components": (3, 2), "max_orphan": 0.5}
 
 
 def within_partner(ds, marker, partner, partner_gate, *, current=None, seed=0) -> dict:
