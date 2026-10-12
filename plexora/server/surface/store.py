@@ -297,9 +297,11 @@ def check(project, spec: SurfaceSpec, *, source=None) -> dict:
     labels_volume = volume_labels.project_label_volume(project, spec.t)
     if labels_volume is None:
         raise SurfaceRefused("this project's 3-D mask could not be opened")
+    scale, physical = project_scale(project)
     level, estimate = levels.plan_labels(labels_volume, keep["volume_vox"].to_numpy(),
                                          faces=faces, quality=spec.quality, level=spec.level,
-                                         image_width=image.width)
+                                         image_width=image.width,
+                                         scale=scale if physical else None)
     return {"objects": int(keep.height), "level": level, "triangles": estimate}
 
 
@@ -499,8 +501,9 @@ def _build_label_surfaces(project, spec, source, stage, report, cancelled):
     labels_volume = volume_labels.project_label_volume(project, spec.t)
     if labels_volume is None:
         raise SurfaceRefused("this project's 3-D mask could not be opened")
+    scale, physical = _scale(volume)
     return extract_label_surfaces(spec, labels_volume, object_table(project, spec.t),
-                                  image_width=volume.width, scale=_scale(volume)[0],
+                                  image_width=volume.width, scale=scale, physical=physical,
                                   stage=stage, report=report, cancelled=cancelled)
 
 
@@ -530,8 +533,9 @@ def _build_on_node(project, spec, source, stage, report, cancelled):
         body.update(image=binding.resource_id, channel=_channel_index(project, spec))
     else:
         binding = _node_binding(project, "segmentation")
+        scale, physical = _scale(volume)
         body.update(segmentation=binding.resource_id, image_width=int(volume.width),
-                    scale=list(_scale(volume)[0]))
+                    scale=list(scale), physical=bool(physical))
         table = object_table(project, spec.t)
         if table is not None:
             import base64
@@ -585,6 +589,7 @@ def extract_on_node(body, *, image=None, labels=None, stage, report, cancelled):
     scale = tuple(float(v) for v in body.get("scale") or (1.0, 1.0, 1.0))
     return extract_label_surfaces(spec, volume_labels.open_label_volume(labels, spec.t), table,
                                   image_width=body.get("image_width"), scale=scale,
+                                  physical=bool(body.get("physical", True)),
                                   stage=stage, report=report, cancelled=cancelled)
 
 
@@ -608,12 +613,15 @@ def extract_isosurface(spec, source, channel, stage, report, cancelled):
 
 
 def extract_label_surfaces(spec, labels_volume, table, *, image_width, scale, stage, report,
-                           cancelled):
+                           cancelled, physical=True):
     """`(surface, level, info)`: one surface per object of `labels_volume`
     (frame `spec.t`'s), sized by the object table `table` when there is one
-    and found by a scan when not. `scale` is the image's voxel size in µm.
-    Run here for a mask on this machine and by a data node for one it holds."""
+    and found by a scan when not. `scale` is the image's voxel size in µm
+    (`physical` False when the spacing is not known: then no level pools
+    planes). Run here for a mask on this machine and by a data node for one
+    it holds."""
     shapes = labels_volume.level_shapes()
+    spacing = scale if physical else None
     if table is not None:
         keep = table if spec.ids is None else table.filter(
             __import__("polars").col("label").is_in(list(spec.ids)))
@@ -627,7 +635,7 @@ def extract_label_surfaces(spec, labels_volume, table, *, image_width, scale, st
             raise SurfaceRefused("none of those ids is an object of this mask")
     level, _estimate = levels.plan_labels(labels_volume, counts, faces=faces,
                                           quality=spec.quality, level=spec.level,
-                                          image_width=image_width)
+                                          image_width=image_width, scale=spacing)
     height_k, width_k = shapes[level]
     fx, fy = labels_volume.width / max(1, width_k), labels_volume.height / max(1, height_k)
     if keep is not None and level == 0:
@@ -637,16 +645,20 @@ def extract_label_surfaces(spec, labels_volume, table, *, image_width, scale, st
         stage("scanning")
         ids, boxes, _ = label_surfaces.object_boxes(labels_volume, level, ids=spec.ids,
                                                     progress=report, cancelled=cancelled)
-    grid = marching.Grid.of((labels_volume.depth, height_k, width_k), factor_xy=(fx, fy))
+    # The planner's own rule, so the build pools the planes it was sized for.
+    stride = levels.label_z_stride((image_width or shapes[0][1]) / max(1, width_k), spacing,
+                                   labels_volume.depth)
+    grid = marching.Grid.of((-(-labels_volume.depth // stride), height_k, width_k),
+                            factor_xy=(fx, fy), z_stride=stride)
     stage("extracting")
     surface, rep = label_surfaces.extract(
         labels_volume, level, grid, ids, boxes, scale=scale,
         smoothing=mesh_mod.Smoothing.preset(spec.smoothing), inset=spec.inset * min(fx, fy),
-        progress=report, cancelled=cancelled)
+        progress=report, cancelled=cancelled, z_stride=stride)
     if not surface.n_triangles:
         raise SurfaceRefused("no object of the mask produced a surface")
-    return surface, level, {"plan": {"level": level, "grid": grid.to_dict()}, "report": rep,
-                            "ids_from": "labels"}
+    return surface, level, {"plan": {"level": level, "grid": grid.to_dict(), "z_stride": stride},
+                            "report": rep, "ids_from": "labels"}
 
 
 def _objects_frame(project, spec, columns):

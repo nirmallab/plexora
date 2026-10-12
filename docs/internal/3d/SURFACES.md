@@ -83,7 +83,11 @@ centres on integers), `normals i8 (N,4)` in the voxel frame, `object_id u32 (N)`
   each axis (each axis's own voxel — this is what removes the terraces between planes on
   anisotropic stacks) and marched at 0.5, padded with 0 (cut cells capped on their voxel
   faces); Taubin (capped at half a voxel) and a 0.1-voxel inset so touching cells do not
-  z-fight.
+  z-fight. A label volume's levels are XY-only, so at a level whose pixel is wider than
+  the z step runs of planes are pooled (`levels.label_z_stride`: about cubic grid voxels;
+  a voxel is the cell's when any plane of its run is). Without it a finely stepped stack
+  (194 planes at 0.28 µm under 0.14 µm pixels, 11 k cells) was 7 M triangles even at its
+  coarsest level.
 - `levels.py`: quality presets (preview 4 M grid voxels / 300 k triangles; standard 48 M /
   3 M; full 512 M / `PLEXORA_SURFACE_BUDGET_TRIANGLES`), regions, `z_stride` (mean-pooled
   planes), cell triangle estimate (calibrated 2.7 triangles per voxel² of sphere-equivalent
