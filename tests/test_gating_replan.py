@@ -272,7 +272,7 @@ def test_a_suspect_population_is_queued_once_and_its_answer_routes_it():
 
     contaminated = {"partner": "SOX10", "at_top": 0.63, "prevalence": 0.08, "at_gate": 0.5}
     pd1 = _u("PD1", "manual_review_recommended", needs_review=True, candidate=7.69,
-             lineage_contamination=contaminated)
+             lineage_contamination=contaminated, qc_done=True)
     cd20 = _u("CD20", "manual_review_recommended", needs_review=True, candidate=7.12,
               artifact_verdict=True)
     engine = _Engine([_u("CD45", "accepted", confidence="high"),
@@ -391,8 +391,8 @@ def test_a_look_that_went_out_before_the_lineage_partner_is_still_caught_at_the_
     engine = _Screening([_u("SOX10", "accepted", confidence="high"), cd20])
     replan.after_close(engine, cd20)
     assert cd20["lineage_contamination"]["partner"] == "SOX10"
-    assert engine.record["replan"]["pending"]["markers"]["p::CD20"]["why"] == \
-        "lineage_contamination"
+    assert cd20["state"] == "qc_confirm" and cd20["lineage_check"]
+    assert not replan.pending(engine.record)
 
 
 def test_a_marker_closed_before_its_lineage_partner_is_screened_when_the_partner_lands():
@@ -416,12 +416,41 @@ def test_a_marker_closed_before_its_lineage_partner_is_screened_when_the_partner
     assert "SOX10" in replan.excluded_by(engine, pd1)
     sox10.update(state="accepted", confidence="high")
     replan.after_accept(engine, sox10)
-    assert engine.record["replan"]["pending"]["markers"]["p::PD1"]["why"] == \
-        "lineage_contamination"
-    assert pd1["state"] == replan.HELD
+    assert pd1["state"] == "qc_confirm" and pd1["replan_from"] == "manual_review_recommended"
     # Another partner landing asks nothing again.
     replan.after_accept(engine, engine.record["units"]["p::CD45"])
-    assert list(engine.record["replan"]["pending"]["markers"]) == ["p::PD1"]
+    assert pd1["state"] == "qc_confirm" and not replan.pending(engine.record)
+
+
+@pytest.mark.parametrize("verdict, state, planner", [
+    ("no_positive_population", "no_positive_population", False),
+    ("technical_failure", "technically_failed", False),
+    ("real_signal", "awaiting_replan", True),
+    ("cannot_tell", "awaiting_replan", True)])
+def test_a_lineage_suspect_gets_a_whole_image_check_before_the_planner(verdict, state, planner):
+    """The planner calls absent on a picture's verdict, not on numbers: a
+    lineage suspect is shown on the whole image first. An empty or failed
+    answer closes it there; anything else goes to the planner with the
+    verdict beside the numbers."""
+    from plexora.plugins.gating.server.autogate import answers, replan, transitions
+
+    class _Checking(_Engine):
+        def close(self, unit, state, reason, *, proposed=None, confidence=None, write=False):
+            super().close(unit, state, reason, proposed=proposed, confidence=confidence)
+
+    contaminated = {"partner": "SOX10", "at_top": 0.63, "prevalence": 0.08, "at_gate": 0.5}
+    pd1 = _u("PD1", "manual_review_recommended", needs_review=True, candidate=7.69,
+             lineage_contamination=contaminated)
+    engine = _Checking([_u("SOX10", "accepted", confidence="high"), pd1])
+    replan.after_close(engine, pd1)
+    assert pd1["state"] == "qc_confirm" and "SOX10+" in pd1["qc_reason"][0]
+    packet = {"units": [{"project": "p", "marker": "PD1"}]}
+    transitions.apply_qc(engine, packet, answers.QCAnswer(verdict=verdict))
+    assert pd1["state"] == state and pd1["whole_image"] == verdict
+    assert replan.pending(engine.record) is planner
+    if planner:
+        shown = replan.packet(engine, [])[0]["evidence"]["markers"][0]
+        assert shown["whole_image"] == verdict and shown["state"] == "manual_review_recommended"
 
 
 def test_a_look_waits_for_the_exclusions_the_tree_derives():

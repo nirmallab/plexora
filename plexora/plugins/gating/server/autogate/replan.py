@@ -32,6 +32,14 @@ The agent, through one `replan` packet (the planning task's, beside
   stain with confidence (`own_seen`);
 - an image whose looks keep naming the same artifact.
 
+A lineage suspect the whole-image view has not judged gets that check
+first (`check_whole_image`, a `qc_confirm` packet): the planner calls a
+population absent on a picture's verdict and keeps it on numbers alone
+(LSP11761 PD1: absent 6 of 6 after a whole-image look said artifact, 0 of 3
+on the lineage numbers, live 2026-10-11). Its no-positive-population or
+failed answer closes the marker; any other answer puts it to the planner
+with that verdict beside the numbers (`whole_image`).
+
 Its answer is closed words (`answers.ReplanAnswer`); `apply` acts on them and
 the closes it makes run the deterministic part again -- the loop. Each marker
 and each image flag is asked about at most once, so the rounds are bounded
@@ -115,8 +123,7 @@ def after_close(engine, unit):
         demote_led(engine, unit)
         why = suspicion(unit)
         if why and key not in rp["asked"] and unit.get("state") in _REVIEW:
-            rp["pending"]["markers"][key] = why
-            hold(engine, unit)
+            queue(engine, unit, why)
     image_patterns(engine, unit["project"])
 
 
@@ -158,8 +165,48 @@ def rescreen(engine, accepted):
         why = suspicion(other)
         if why:
             rp["failed"][key] = why
-            rp["pending"]["markers"][key] = why
-            hold(engine, other)
+            queue(engine, other, why)
+
+
+def queue(engine, unit, why):
+    """Put a suspect marker to the planner -- after the whole-image check,
+    for a lineage suspect no whole-image view has judged."""
+    if why["why"] == "lineage_contamination" and not unit.get("qc_done") \
+            and not unit.get("whole_image") and check_whole_image(engine, unit):
+        return
+    state(engine.record)["pending"]["markers"][_key(unit)] = why
+    hold(engine, unit)
+
+
+def check_whole_image(engine, unit) -> bool:
+    """Reopen a lineage suspect for one whole-image check (`qc_confirm`);
+    `after_whole_image` routes its answer. False when there is no gate to
+    show it at."""
+    if unit.get("candidate") is None and not unit.get("seen"):
+        return False
+    c = unit["lineage_contamination"]
+    unit["replan_from"] = unit["state"]
+    unit["lineage_check"] = True
+    unit["qc_reason"] = [f"{c['at_top']:.0%} of its brightest positives are {c['partner']}+, "
+                         f"which should exclude them ({c['prevalence']:.0%} of all cells are)"]
+    unit["state"] = "qc_confirm"
+    engine.log(event="replan_whole_image", unit=_key(unit), partner=c["partner"])
+    return True
+
+
+def after_whole_image(engine, unit, verdict) -> bool:
+    """Route a lineage suspect's whole-image answer: `no_positive_population`
+    and `technical_failure` close it as for any marker (False: the caller
+    closes); `real_signal` and `cannot_tell` put it to the planner with the
+    verdict beside the numbers (True)."""
+    unit.pop("lineage_check", None)
+    unit["whole_image"] = verdict
+    if verdict in ("no_positive_population", "technical_failure"):
+        unit.pop("replan_from", None)
+        return False
+    unit["state"] = unit.pop("replan_from", "manual_review_recommended")
+    queue(engine, unit, suspicion(unit) or {"why": "lineage_contamination"})
+    return True
 
 
 def tag_image_finding(unit, finding):
@@ -355,6 +402,7 @@ def packet(engine, units):
             "look_notes": (unit.get("notes") or [])[-3:],
             "artifact_flags": unit.get("artifact_flags") or [],
             "own_stain_seen": bool(unit.get("own_seen")),
+            "whole_image": unit.get("whole_image"),
             "gate": unit.get("final") if unit.get("final") is not None else unit.get("candidate"),
             "dependents": dependents})
     images = [{"project": project, "flags": entry["flags"],

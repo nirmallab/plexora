@@ -77,7 +77,9 @@ How to judge (the guide says how to read each picture):
 - `replan`: failed markers and images, as notes and numbers. Per marker:
   `absent` only when the positives are artifact (the whole-image view said
   so, or `lineage_contamination` puts even the brightest on an excluding
-  lineage) and no look saw own stain; `bleed_through`, a real population
+  lineage) and no look saw own stain; `whole_image` is the whole-image
+  check's answer on a lineage suspect (`real_signal`: some cells carry it
+  apart from that lineage, so not absent); `bleed_through`, a real population
   under another channel's light; `technical_failure`; else
   `keep_for_review`. Per image: `image_artifact` when the flag is the
   image's own (edge, fold, autofluorescence), else `not_image_level`.

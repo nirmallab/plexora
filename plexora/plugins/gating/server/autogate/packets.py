@@ -543,15 +543,24 @@ def plot_partner(unit, refs, numbers=None):
 
 
 def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
-           candidate_fields=None, title=None, numbers=None, rows=None):
+           candidate_fields=None, title=None, numbers=None, rows=None, plot=None):
     """The context sheet for a unit (the second picture of a look, the only
     one of a check); its artifact joins the unit's. With `sheets: trim`, a
     row this reader was already shown with the same inputs is left out
-    (`_sheet_rows`); with none left, no sheet is drawn (`skipped`)."""
+    (`_sheet_rows`); with none left, no sheet is drawn (`skipped`). `plot`
+    names the partner to plot when the caller knows it."""
     from plexora.plugins.gating.server.autogate import sheet
 
     refs = engine.references_ready(unit)
-    partner = plot_partner(unit, refs, numbers)
+    chosen = [r for r in refs if r["marker"] == plot]
+    if plot and not chosen:
+        # Not one of this marker's references (an exclusion the tree derives
+        # across lineages): its gate from the image's ledger.
+        entry = engine.ledger(unit["project"], without=unit).get(plot) or {}
+        if entry.get("gate") is not None and entry.get("grade") != "failed":
+            chosen = [{"marker": plot, "relation": "exclusive", "gate": entry["gate"]}]
+    partner = ({**chosen[0], "why": "the lineage that should exclude this marker"} if chosen
+               else plot_partner(unit, refs, numbers))
     condition = unit.get("condition")
     within = ({"marker": condition["within"], "gate": condition["partner_gate"]}
               if condition else None)
@@ -974,12 +983,27 @@ def qc_confirm(engine, units):
     low = unit["candidate"]
     if low is None:
         low = (unit.get("seen") or [None])[0]
+    c = unit.get("lineage_contamination") if unit.get("lineage_check") else None
+    # The lineage suspect's check (`replan.check_whole_image`) draws the
+    # excluding lineage's channel in the fields, in cyan, and plots it: the
+    # question is whether any cell outside that lineage carries the stain.
+    partner_channel = views.image_channel(ds, c["partner"]) if c else None
     view = _sheet(engine, unit, ds, channel, low,
-                  title=f"{unit['marker']}: yellow = stain, blue = nuclei, magenta = cells "
-                        f"above {collage.compact_number(low)}")
+                  references=[partner_channel] if partner_channel else (),
+                  plot=c["partner"] if c else None,
+                  title=f"{unit['marker']}: yellow = stain, blue = nuclei, "
+                        + (f"cyan = {c['partner']}, " if partner_channel else "")
+                        + f"magenta = cells above {collage.compact_number(low)}")
     verdict = unit.get("qc_verdict")
     qc_said = (f" Image QC reviewed this channel and called it {verdict}."
                if verdict in ("usable", "failed") else "")
+    if c:
+        qc_said += (f" Its brightest cells are {c['partner']}+ cells, which should not carry "
+                    f"{unit['marker']}: stain only on those cells (their light in this "
+                    "channel) is no population of its own; real signal means other cells "
+                    "carry it too."
+                    + (f" In the fields, cyan is {c['partner']}: judge the yellow cells that "
+                       "are not cyan." if partner_channel else ""))
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) needs a whole-image check: "
                      f"{', '.join(unit.get('qc_reason') or unit.get('flags') or [])}.{qc_said} "

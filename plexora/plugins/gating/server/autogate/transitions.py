@@ -454,6 +454,11 @@ def apply_qc(engine, packet, answer):
     unit = _units(engine, packet)[0]
     _note(unit, answer)
     unit["qc_done"] = True
+    if unit.get("lineage_check"):
+        from plexora.plugins.gating.server.autogate import replan
+
+        if replan.after_whole_image(engine, unit, answer.verdict):
+            return _outcome(unit, whole_image=answer.verdict)
     if answer.verdict == "technical_failure":
         engine.close(unit, "technically_failed",
                      "confirmed by eye: no usable staining (" +
