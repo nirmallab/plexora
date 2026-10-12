@@ -173,6 +173,14 @@ gate does not).
   provisional picture and the exact one never share an address in any cache (user's choice,
   2026-10-10).
 - 3-D detail is a sub-volume over the whole level, not a brick atlas (`PERF.md` says why).
+- The right-click pick on a z-stack keeps to the planes on screen (2026-10-11): a 2-D index
+  over x/y with each cell's plane extent (`bbox_z0..bbox_z1`) beside it, not a 3-D tree, so a
+  tall cell clicked far from its centroid plane is still the cell under the cursor. A filtered
+  pick looks a few cell diameters out and no further; a flat project's pick is unchanged.
+- A large OME-Zarr stack's missing coarse levels are derived in the background, not while the
+  project opens (2026-10-11); meanwhile a plane serves them as subsamples of the store's
+  coarsest level rather than failing, and the 3-D view refuses with its sentence until they
+  exist. The finished levels are taken up without a reload; the 3-D copy waits for the next one.
 
 - ROI schema stays at version 1: a version bump would make main refuse every ROI document
   drawn on this branch if the user goes back to main after testing; at version 1 main simply

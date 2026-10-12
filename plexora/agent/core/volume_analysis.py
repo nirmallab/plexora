@@ -368,11 +368,15 @@ def _densest(frame, volume, size_px, n):
         px = ((spacing.get("x") or {}).get("value")) or 1.0
         radius = size_px * px / 2.0
     else:
-        points = np.column_stack([frame[c].to_numpy() for c in ("X", "Y", "Z")])
+        # Planes are not pixels: a plane counts as the z step over the pixel
+        # size, so two cells two planes apart on a 4:1 stack are 8 px apart.
+        anisotropy = float(volume.get("anisotropy") or 1.0)
+        points = np.column_stack([frame["X"].to_numpy(), frame["Y"].to_numpy(),
+                                  frame["Z"].to_numpy() * anisotropy])
         radius = size_px / 2.0
     if not len(points):
         return []
-    counts = np.array([len(v) for v in cKDTree(points).query_ball_point(points, radius)])
+    counts = np.asarray(cKDTree(points).query_ball_point(points, radius, return_length=True))
     xs, ys, zs = (frame[c].to_numpy() for c in ("X", "Y", "Z"))
     candidates = [(float(counts[i]), float(xs[i]), float(ys[i]), int(round(zs[i])),
                    f"{int(counts[i])} cells within {size_px // 2} px", None)

@@ -1122,6 +1122,12 @@ def build_parser(command=None):
              "per-launch token, one JSON ready line on stdout, and exit when "
              "stdin closes. Started by the app; not meant to be typed.",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show what Plexora is doing as it loads and serves (debug messages, on "
+             "stderr). PLEXORA_LOG_LEVEL=info is a quieter middle ground.",
+    )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
         "--browser",
@@ -2851,21 +2857,15 @@ def _announce_channel():
 
 
 def _desktop_logging():
-    """Logging to stderr, which `waitress.serve` would have set up.
+    """Logging to stderr (plexora/_logging.py), for every library at once.
 
-    `serve()` is not used here -- binding comes first -- and it was the only
-    `basicConfig` anywhere in the process. Warnings by default, because every
-    line lands in a log file the user never reads unless something went wrong;
-    PLEXORA_LOG_LEVEL raises it.
+    Warnings by default, because every line lands in a log file the user never
+    reads unless something went wrong; PLEXORA_LOG_LEVEL raises it. Never on
+    stdout, which carries the one JSON ready line the app waits for.
     """
-    import logging
+    from plexora import _logging
 
-    level_name = (os.environ.get("PLEXORA_LOG_LEVEL") or "WARNING").upper()
-    level = getattr(logging, level_name, logging.WARNING)
-    if not isinstance(level, int):
-        level = logging.WARNING
-    logging.basicConfig(stream=sys.stderr, level=level,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _logging.configure(fmt=_logging.DESKTOP_FORMAT, everything=True)
 
 
 def _announce_server(app, port, *, mode, host="127.0.0.1", base_url="", detected=None):
@@ -3210,6 +3210,11 @@ def main(argv=None):
         os.environ["PLEXORA_BASE_URL"] = args.base_url
     if args.plugins is not None:
         os.environ["PLEXORA_PLUGINS"] = args.plugins
+
+    # Before waitress: its serve() calls logging.basicConfig(), which adds a
+    # handler of its own only when the root logger has none.
+    from plexora import _logging
+    _logging.configure(verbose=getattr(args, "verbose", False))
 
     from waitress import serve
     from plexora import app, paths, _clean_base_url as app_clean_base_url

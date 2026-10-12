@@ -78,10 +78,12 @@ def write_imagej_volume(path, *, frames=1, channels=3, depth=5, height=64, width
 
 
 def write_ngff_volume(path, *, frames=1, channels=3, depth=5, height=96, width=80,
-                      levels=2, z_scale=2.0, chunks_z=1, version="0.4"):
+                      levels=2, z_scale=2.0, chunks_z=1, version="0.4", z_factor=1):
     """An OME-Zarr image of `stack(...)` with axes tczyx (or czyx at frames=1).
 
-    Returns `(path, stack)` with the stack as written (czyx at frames=1)."""
+    `z_factor=2` halves z in each coarser level too (taking every other plane),
+    as some writers do. Returns `(path, stack)` with the stack as written
+    (czyx at frames=1)."""
     import zarr
 
     data = stack(frames, channels, depth, height, width)
@@ -102,10 +104,13 @@ def write_ngff_volume(path, *, frames=1, channels=3, depth=5, height=96, width=8
         step = 2 ** level
         scale = []
         for axis in axes:
-            scale.append(0.5 * step if axis in "xy" else (z_scale if axis == "z" else 1.0))
+            scale.append(0.5 * step if axis in "xy"
+                         else (z_scale * z_factor ** level if axis == "z" else 1.0))
         datasets.append({"path": str(level),
                          "coordinateTransformations": [{"type": "scale", "scale": scale}]})
         current = current[..., ::2, ::2]
+        if z_factor > 1:
+            current = current[..., ::z_factor, :, :]
     types = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
     axis_meta = []
     for axis in axes:
@@ -131,8 +136,11 @@ def _attr(text):
 
 def write_ims(path, *, frames=1, channels=2, depth=6, height=96, width=80,
               levels=2, step_xy=0.5, step_z=2.0, names=None, pad=8, compression=None,
-              shuffle=False, chunks=None):
-    """An Imaris 5.5 file of `stack(...)`, with chunk padding like Imaris writes."""
+              shuffle=False, chunks=None, z_levels=False):
+    """An Imaris 5.5 file of `stack(...)`, with chunk padding like Imaris writes.
+
+    `z_levels`: each coarser level also takes every other plane, as a real
+    Imaris file's coarse levels do."""
     import h5py
 
     data = stack(frames, channels, depth, height, width)
@@ -168,4 +176,6 @@ def write_ims(path, *, frames=1, channels=2, depth=6, height=96, width=80,
                     group.attrs["ImageSizeY"] = _attr(h)
                     group.attrs["ImageSizeZ"] = _attr(d)
             current = current[..., ::2, ::2]
+            if z_levels:
+                current = current[:, :, ::2]
     return Path(path), data

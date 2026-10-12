@@ -220,6 +220,12 @@ class NodeTableProvider(_NodeBacked):
                   described.get("celltype_column")]
         roles = self._spec.roles.to_dict() if self._spec is not None else {}
         wanted.extend(roles.values())
+        # A measured 3-D object table's plane extent, so a pick on a z-stack
+        # keeps to the cells on screen (server/utils/spatial_index.py).
+        from plexora.server.utils.spatial_index import DEPTH_COLUMN, EXTENT_COLUMNS
+
+        if roles.get("z"):
+            wanted.extend((*EXTENT_COLUMNS, DEPTH_COLUMN))
         seen, columns = set(), []
         for name in wanted:
             if name and name in available and name not in seen:

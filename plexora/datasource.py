@@ -235,7 +235,7 @@ def _segmentation_channel_name(segmentation_path):
 
 
 def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_async,
-                                segmentation_mode=None):
+                                segmentation_mode=None, image_levels=None):
     """Build the segmentation-related config keys for a registration.
 
     Returns (fields, source_needing_generation). A returned source means the
@@ -251,6 +251,10 @@ def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_asy
     one -- and leaves boundary-finding to renderLabelTile. "outlines" bakes the
     boundaries into the file instead; nothing in the UI asks for it any more,
     but it stays supported for callers that pass it explicitly.
+
+    `image_levels` (the image's level count) lets a 3-D label volume built
+    here go as coarse as the image; an asynchronous job reads it off the
+    project instead.
     """
     from plexora.server.models import data_model
     from plexora.server.utils import segmentation_pyramid
@@ -281,6 +285,7 @@ def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_asy
         dataDirectory=str(dataset_dir),
         isLabelImg=True,
         segmentation_mode_=mode,
+        image_levels=image_levels,
     )
     fields["segmentation"] = label_info["segmentation"]
     fields["segmentation_status"] = "ready"
@@ -1003,7 +1008,8 @@ def register_datasource(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
         image_type=image_type, pyramidize=pyramidize)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
-        segmentation_path, dataset_dir, segmentation_async, segmentation_mode
+        segmentation_path, dataset_dir, segmentation_async, segmentation_mode,
+        image_levels=channel_info.get("maxLevel"),
     )
 
     n_channels = _layer_count(channel_info)
@@ -1533,7 +1539,8 @@ def register_anndata_datasource(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
         image_type=image_type, pyramidize=pyramidize)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
-        segmentation_path, dataset_dir, segmentation_async, segmentation_mode
+        segmentation_path, dataset_dir, segmentation_async, segmentation_mode,
+        image_levels=channel_info.get("maxLevel"),
     )
 
     n_channels = _layer_count(channel_info)

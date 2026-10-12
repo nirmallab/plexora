@@ -800,7 +800,7 @@ def _tenx_context(name, source, spatial):
               / f"{source.parent.name}_{source.stem}.h5ad")
     from plexora.server.models import layer_jobs
 
-    print(f"Converting {source.name} for {name} (one-time)...")
+    logging.getLogger(__name__).info("Converting %s for %s (one-time)", source.name, name)
     labels = {"positions": "Reading positions",
               "converting": "Converting the 10x matrix (one-time)"}
     tenx_matrix.ensure_converted(

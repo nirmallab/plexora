@@ -579,7 +579,8 @@ class LocalImageProvider:
         `volume_overview` when not given."""
         from plexora.server.volume.sources import is_volume_only_path, open_volume
         from plexora.server.volume.sources.ngff import (
-            build_volume_extension, needs_volume_extension)
+            FOREGROUND_EXTENSION_BYTES, build_volume_extension, extension_read_bytes,
+            needs_volume_extension)
 
         from plexora.server.utils import dicom_wsi
 
@@ -601,13 +602,20 @@ class LocalImageProvider:
             # A volumetric OME-Zarr store's derived coarse levels, rebuilt when
             # they have gone -- `_missing_pyramid`'s rule, for every plane --
             # or when what is there is a 2-D extension of one plane, which a
-            # project registered before volumes has.
-            try:
-                build_volume_extension(source, self._pyramid)
-                source.close()
-                source = open_volume(self._path, extension=self._pyramid)
-            except Exception:
-                pass
+            # project registered before volumes has. A large one is derived in
+            # the background (data_model._with_volume_extension); a plane's
+            # coarse levels subsample the store's coarsest until it is done.
+            if extension_read_bytes(source) > FOREGROUND_EXTENSION_BYTES:
+                source.plan_extension(self._pyramid)
+            else:
+                try:
+                    build_volume_extension(source, self._pyramid)
+                    source.close()
+                    source = open_volume(self._path, extension=self._pyramid)
+                except Exception:
+                    # Read-only project directory, a full disk: the levels the
+                    # project records are still served, as subsamples.
+                    source.plan_extension(None)
         self.volume_source = source
         default = source.volume.default_view
         channels = source.plane_pyramid(default.t, default.z)

@@ -1,8 +1,11 @@
 from plexora import paths
 
+import logging
 import sqlite3
 import threading
 import time
+
+_log = logging.getLogger(__name__)
 
 
 class ChannelList:
@@ -118,8 +121,8 @@ def _ensure_healthy(db_file):
     if not db_file.exists():
         return
     backup_path = db_file.with_name(f"{db_file.name}.corrupt-{int(time.time())}")
-    print(f"WARNING: {db_file} appears corrupted; moving it to {backup_path} "
-          f"and recreating a fresh database.")
+    _log.warning("%s appears corrupted; moving it to %s and recreating a fresh database.",
+                 db_file, backup_path)
     db_file.rename(backup_path)
 
 

@@ -31,7 +31,6 @@ connections to a server, and a brick is too small to be worth one of them.
 from __future__ import annotations
 
 import json
-import math
 import struct
 import threading
 from collections import OrderedDict
@@ -55,22 +54,13 @@ class BadBricks(ValueError):
     pass
 
 
-def _microns(axis):
-    try:
-        value = axis.microns() if axis is not None else None
-    except Exception:
-        value = None
-    return value if value and value > 0 else None
-
-
 def pool_for(volume, level: int) -> int:
-    """Planes max-pooled into one voxel at `level`: the largest power of two
-    whose pooled depth is at most the level's pixel width. A stack with no
+    """Planes max-pooled into one voxel at `level`: `model.pool_for`, the one
+    rule the level route and the stored pooled levels share. A stack with no
     stated z step is drawn one pixel per plane, as the renderer draws it."""
-    sx = _microns(volume.spacing.x) or 1.0
-    sz = (_microns(volume.spacing.z) if volume.spacing.z.known else None) or sx
-    ratio = (2 ** level) * sx / sz
-    return 1 if ratio < 2 else 2 ** int(math.floor(math.log2(ratio)))
+    from plexora.server.volume.model import pool_for as rule
+
+    return rule(volume, level, assume_square=True)
 
 
 def levels(volume) -> list[dict]:
@@ -142,20 +132,16 @@ def _window(entry, at):
 
 
 def _read(source, entry, t, channel, z0, z1, y0, y1, x0, x1) -> np.ndarray:
-    """Pooled planes z0..z1 (half-open) of a level's rows and columns, raw."""
+    """Pooled planes z0..z1 (half-open) of a level's rows and columns, raw:
+    `model.read_pooled`, so a level the stack's 3-D copy holds pooled
+    (volume/bricks.py) is read from that, and the last pool may be short."""
+    from plexora.server.volume.model import read_pooled
+
     pool = entry["pool"]
     planes = source.volume.depth
-    raw = np.asarray(source.read_block(entry["level"], t, channel, z0 * pool,
-                                       min(planes, z1 * pool) - 1, slice(y0, y1),
-                                       slice(x0, x1)))
-    if pool > 1:
-        count = z1 - z0
-        short = count * pool - raw.shape[0]
-        if short:
-            # The stack's last pool is short: its missing planes repeat its last.
-            raw = np.concatenate([raw, np.repeat(raw[-1:], short, axis=0)], axis=0)
-        raw = raw.reshape(count, pool, raw.shape[1], raw.shape[2]).max(axis=1)
-    return raw
+    return np.asarray(read_pooled(source, entry["level"], t, channel, z0 * pool,
+                                  min(planes, z1 * pool) - 1, pool, slice(y0, y1),
+                                  slice(x0, x1)))
 
 
 def _cut(region, origin, entry, at) -> np.ndarray:

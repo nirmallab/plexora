@@ -15,6 +15,11 @@ class DataLayer {
         //: carries -- the cells, centroids, nearest cell and gated ids of that
         //: frame only. Null for every other table (set by ImageViewer.setTableFrame).
         this.tableFrame = null;
+        //: A z-stack's measured object table (one row per cell, with its plane
+        //: extent): the planes on screen, `[first, last]` inclusive, which the
+        //: nearest-cell pick carries so it keeps to the cells on them. Null for
+        //: every other table, and in the 3-D view (set by main.js).
+        this.tablePlanes = null;
         //selections
         this.currentSelection = new Map();
         // Roles, not literal column names -- see services/datasetContext.js.
@@ -101,6 +106,12 @@ class DataLayer {
     /** `{t}` for a request of rows while a frame is on screen (tableFrame). */
     frameQuery() {
         return this.tableFrame ? { t: String(this.tableFrame.t) } : {};
+    }
+
+    /** `{z0, z1}` for the nearest-cell pick while planes are on screen (tablePlanes). */
+    planeQuery() {
+        const planes = this.tablePlanes;
+        return planes ? { z0: String(planes[0]), z1: String(planes[1]) } : {};
     }
 
     /** `filter` (column -> [low, high], low < value <= high) narrowed to the
@@ -311,6 +322,7 @@ class DataLayer {
                 point_y: point_y,
                 datasource: datasource,
                 ...this.frameQuery(),
+                ...this.planeQuery(),
             }))
             let cell = await response.json();
             return cell;

@@ -188,3 +188,45 @@ def assemble(region, chunk_shape, chunks: dict, dtype, coords_of=None):
         out[sz0 - z0:sz1 - z0, sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = \
             array[sz0 - bz:sz1 - bz, sy0 - by:sy1 - by, sx0 - bx:sx1 - bx]
     return out
+
+
+def read_through(source_id, name, t, channel, read_box, chunk_shape, region, dtype):
+    """The voxels of `region` -- `((z0, z1), (y0, y1), (x0, x1))`, half-open --
+    of one channel's (Z, Y, X) array, in whole chunks through `CACHE`.
+
+    `read_box(z0, z1, y0, y1, x0, x1)` reads a half-open box of the array (one
+    store read: zarr decodes its chunks in parallel). Chunks are keyed
+    `(source_id, name, t, channel, zc, yc, xc)`, so a chunk decoded for one
+    section tile is not decoded again for its neighbour. A read too large to
+    keep (`keep_for`) bypasses the cache: cut into chunks and put back
+    together, a whole level would be copied twice for nothing."""
+    (z0, z1), (y0, y1), (x0, x1) = region
+    cz, cy, cx = (max(1, int(v)) for v in chunk_shape)
+    dtype = np.dtype(dtype)
+    keys = [(source_id, name, int(t), int(channel), zc, yc, xc)
+            for zc in chunk_ranges(z0, z1, cz)
+            for yc in chunk_ranges(y0, y1, cy)
+            for xc in chunk_ranges(x0, x1, cx)]
+    nbytes = len(keys) * cz * cy * cx * dtype.itemsize
+    if not keep_for(nbytes):
+        return np.asarray(read_box(z0, z1, y0, y1, x0, x1))
+
+    def load_many(missing):
+        zcs = [key[4] for key in missing]
+        ycs = [key[5] for key in missing]
+        xcs = [key[6] for key in missing]
+        bz0, by0, bx0 = min(zcs) * cz, min(ycs) * cy, min(xcs) * cx
+        block = np.asarray(read_box(bz0, (max(zcs) + 1) * cz, by0, (max(ycs) + 1) * cy,
+                                    bx0, (max(xcs) + 1) * cx))
+        out = {}
+        for key in missing:
+            zc, yc, xc = key[4:7]
+            piece = np.zeros((cz, cy, cx), dtype=dtype)
+            part = block[zc * cz - bz0:(zc + 1) * cz - bz0, yc * cy - by0:(yc + 1) * cy - by0,
+                         xc * cx - bx0:(xc + 1) * cx - bx0]
+            piece[:part.shape[0], :part.shape[1], :part.shape[2]] = part
+            out[key] = piece
+        return out
+
+    chunks = CACHE.fetch(keys, load_many)
+    return assemble(region, (cz, cy, cx), chunks, dtype, coords_of=lambda key: key[4:7])

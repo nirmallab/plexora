@@ -12,7 +12,10 @@ Storage: an OME-Zarr image of axes (z, y, x), uint32, one plane per chunk row
 (chunks (1, 1024, 1024)), with XY levels made by taking every other row and
 column of each plane -- labels are SUBSAMPLED, never averaged (the mean of two
 cell ids is a third cell's id), the rule `segmentation_pyramid` follows in 2-D.
-Z is never downsampled.
+Z is never downsampled. The levels go down to 512 px a side, or further when
+the builder is told the image's level count (`min_levels`), so the mask has a
+level for every level of the image it is drawn on; a store built without it
+is served past its coarsest level by striding (`label_overlay`).
 
 Built once at registration by `build_label_volume`; opened by
 `open_label_volume`, which returns a `LabelVolume`. Its `plane(z)` is the
@@ -46,9 +49,11 @@ TARGET = 512
 CHUNK = 1024
 
 
-def _level_shapes(height: int, width: int, target: int = TARGET):
+def _level_shapes(height: int, width: int, target: int = TARGET,
+                  min_levels: Optional[int] = None):
     shapes = [(height, width)]
-    while max(shapes[-1]) > target:
+    while max(shapes[-1]) > target or (min_levels and len(shapes) < int(min_levels)
+                                       and max(shapes[-1]) > 1):
         h, w = shapes[-1]
         shapes.append((-(-h // 2), -(-w // 2)))
     return shapes
@@ -98,9 +103,12 @@ def _write_frame(group, array, shapes, progress, done, total):
 
 
 def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
-                       target: int = TARGET) -> str:
+                       target: int = TARGET, min_levels: Optional[int] = None) -> str:
     """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF or
     array) to `dest`.
+
+    `min_levels` is the level count of the image the mask is drawn on: the
+    pyramid goes on halving past `target` until it has that many levels.
 
     Written to a sibling temp directory and renamed into place, so a reader
     never finds a half-built store under the final name.
@@ -134,7 +142,7 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
         dtype = np.dtype(array.dtype)
         if dtype.kind not in "ui":
             raise TypeError(f"a label volume has integer ids, not {dtype}")
-        shapes = _level_shapes(height, width, target)
+        shapes = _level_shapes(height, width, target, min_levels)
         group = zarr.open_group(str(tmp), mode="w")
         total = frames * depth * len(shapes)
         if frames == 1:
@@ -208,6 +216,24 @@ class _PlaneLevel:
         plane = np.asarray(self._array[self._z])
         return plane.astype(dtype) if dtype is not None else plane
 
+    @property
+    def oindex(self):
+        """Orthogonal indexing, `[rows, cols]` by integer arrays, as a 2-D
+        mask level's zarr array has it: what `label_overlay.label_region`
+        strides a finer level with when the pyramid is shorter than the
+        image's."""
+        return _PlaneOindex(self._array, self._z)
+
+
+class _PlaneOindex:
+    def __init__(self, array, z):
+        self._array = array
+        self._z = z
+
+    def __getitem__(self, index):
+        rows, cols = index if isinstance(index, tuple) else (index, slice(None))
+        return np.asarray(self._array.oindex[self._z, rows, cols])
+
 
 class _PlanePyramid:
     """A plane of the volume, shaped like a 2-D mask's zarr group."""
@@ -239,6 +265,11 @@ class _PlanePyramid:
 
     def keys(self):
         return list(iter(self))
+
+    # A 2-D mask's zarr group's name for the same thing: label_overlay asks it
+    # when the image has more levels than the label pyramid (a 3-D mask stops
+    # at 512 px a side; the image may go coarser).
+    array_keys = keys
 
 
 class LabelVolume:
@@ -310,6 +341,9 @@ class LabelVolume:
 
     def __contains__(self, key):
         return key in self.default_plane()
+
+    def array_keys(self):
+        return self.default_plane().array_keys()
 
 
 def open_label_volume(path, t: int = 0) -> LabelVolume:

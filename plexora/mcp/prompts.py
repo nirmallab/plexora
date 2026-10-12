@@ -11,6 +11,10 @@ skill manifest's (`prompt:`); this module only says what each one asks.
 
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 
 def _skill(name):
     from plexora.ai import skills
@@ -97,7 +101,7 @@ def plugin_contributions() -> list:
         try:
             out.append((name, factory() or {}))
         except Exception as exc:  # pragma: no cover
-            print(f"WARNING: plugin {name!r} MCP contributions failed to load: {exc}")
+            _log.warning("plugin %r MCP contributions failed to load: %s", name, exc)
     return out
 
 

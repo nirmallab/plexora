@@ -52,6 +52,7 @@ import email.utils
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -72,6 +73,8 @@ from zarr.abc.store import (
 from zarr.storage import WrapperStore
 
 from plexora.server.providers.base import RemoteUnreachable, is_remote_locator
+
+_log = logging.getLogger(__name__)
 
 #: Extra packages a scheme needs, beyond fsspec and aiohttp (https) and s3fs.
 _SCHEME_MODULES = {"gs": "gcsfs", "abfs": "adlfs"}
@@ -934,7 +937,7 @@ class CacheIndex:
                 self._total = self._read_total()
                 self._evict_to(self.budget)
         except Exception as exc:  # noqa: BLE001 -- reconciliation is best effort
-            print(f"remote cache: reconcile stopped early -- {exc}")
+            _log.warning("remote cache: reconcile stopped early -- %s", exc)
 
     def _reconcile_store(self, directory: Path, started: float) -> None:
         store_id = directory.name
@@ -1027,8 +1030,8 @@ def _report_write_failure(path: Path, exc: OSError) -> None:
     if _write_failure_reported:
         return
     _write_failure_reported = True
-    print(f"remote cache: could not write {path} ({exc}); bytes read from the "
-          "web are being served without being kept")
+    _log.warning("remote cache: could not write %s (%s); bytes read from the web are "
+                 "being served without being kept", path, exc)
 
 
 def _remove_all(directories: Iterable[Path]) -> None:

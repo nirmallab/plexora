@@ -17,6 +17,7 @@ A source holds file handles and is closed with `close()`. Sources are built by
 
 from __future__ import annotations
 
+import math
 import os
 
 import threading
@@ -303,3 +304,128 @@ def level_infos(level_shapes: Sequence[Sequence[int]],
                            depth=(int(depths[i]) if depths and int(depths[i]) < full
                                   else None))
                  for i, (h, w) in enumerate(level_shapes))
+
+
+# -- levels in depth ---------------------------------------------------------------
+#
+# A level of the XY pyramid may store fewer planes than the stack has: an
+# Imaris file halves z in its coarse levels, and so may an OME-Zarr store. Its
+# plane `s` then stands for the stack's planes z with `stored_plane(z) == s`.
+# Every read across planes at such a level reads each stored plane once (a
+# texture of 95 planes, not 190 with each one twice), and every budget counts
+# the planes stored rather than the planes of the stack.
+
+
+def stored_depth(volume, level: int) -> int:
+    """Planes `level` stores: the stack's depth unless the level holds fewer."""
+    info = volume.levels[level]
+    return int(info.depth) if info.depth is not None else int(volume.depth)
+
+
+def z_scale(volume, level: int) -> int:
+    """The stack's planes per stored plane at `level` (1: it keeps them all)."""
+    return max(1, int(round(volume.depth / max(1, stored_depth(volume, level)))))
+
+
+def stored_plane(volume, level: int, z: int) -> int:
+    """The stored plane of `level` that the stack's plane `z` reads from."""
+    depth = stored_depth(volume, level)
+    if depth >= volume.depth:
+        return int(z)
+    return min(depth - 1, int(int(z) * depth / max(1, volume.depth)))
+
+
+def stored_span(volume, level: int, z0: int, z1: int) -> tuple[int, int]:
+    """(first, last) stored planes of `level` that planes z0..z1 read from."""
+    return stored_plane(volume, level, z0), stored_plane(volume, level, z1)
+
+
+def _microns(axis):
+    try:
+        value = axis.microns() if axis is not None else None
+    except Exception:
+        value = None
+    return value if value and value > 0 else None
+
+
+def pool_for(volume, level: int, *, assume_square=False) -> int:
+    """The stack's planes max-pooled into one voxel at `level`, so that its
+    voxels are about as deep as they are wide: the largest power of two whose
+    pooled depth is at most the level's pixel width (both in µm).
+
+    One rule for every 3-D read -- the level route, its hint, the bricks and
+    the stored pooled levels (volume/bricks.py) -- and a power of two so a
+    level's pool is always a multiple of a finer level's, and one stored
+    pooled array serves them all. Without a stated z step: 1, or with
+    `assume_square` the x step stands in for it (a plane drawn one
+    full-resolution pixel deep, as the renderer draws such a stack).
+    """
+    spacing = volume.spacing
+    sx = _microns(spacing.x)
+    sz = _microns(spacing.z) if spacing.z.known else None
+    if sz is None or sx is None:
+        if not assume_square:
+            return 1
+    # A level's pixel is 2**level full-resolution pixels wide (the pyramids
+    # are dyadic), which keeps each level's pool a multiple of the last.
+    ratio = float(2 ** int(level)) if sz is None else (2 ** int(level)) * (sx or 1.0) / sz
+    return 1 if ratio < 2 else 2 ** int(math.floor(math.log2(ratio) + 1e-9))
+
+
+def stored_pool(volume, level: int, pool: int) -> int:
+    """`pool` planes of the stack, in stored planes of `level` (at least 1)."""
+    return max(1, int(pool) // z_scale(volume, level))
+
+
+def read_stored(source, level: int, t: int, channel: int, s0: int, s1: int,
+                rows, cols) -> np.ndarray:
+    """`(S, H, W)`: stored planes s0..s1 (inclusive) of `level`, each once.
+
+    A level that keeps every plane is `read_block`; one that stores fewer is
+    the source's own `read_stored` when it has one, else plane by plane
+    through the first stack plane each stored plane stands for."""
+    volume = source.volume
+    if stored_depth(volume, level) >= volume.depth:
+        return source.read_block(level, t, channel, s0, s1, rows, cols)
+    own = getattr(source, "read_stored", None)
+    if callable(own):
+        return own(level, t, channel, s0, s1, rows, cols)
+    depth = stored_depth(volume, level)
+    planes = []
+    for s in range(int(s0), int(s1) + 1):
+        z = min(volume.depth - 1, -(-s * volume.depth // depth))
+        while z > 0 and stored_plane(volume, level, z) > s:
+            z -= 1
+        planes.append(source.read_plane(level, t, z, channel, rows, cols))
+    return np.stack(planes) if planes else np.zeros((0, 0, 0), dtype=volume.dtype)
+
+
+def read_pooled(source, level: int, t: int, channel: int, s0: int, s1: int, pool: int,
+                rows, cols, run_bytes: int = 64 * 2**20) -> np.ndarray:
+    """`(ceil(S / pool), H, W)`: stored planes s0..s1 of `level`, max-pooled
+    `pool` at a time (the last pool may be short), each stored plane read once.
+
+    A source with stored pooled planes (`BrickedSource.read_pooled`) answers
+    from them; otherwise the planes are read in runs of whole pools of about
+    `run_bytes` -- a store read is a fixed cost however few planes it covers --
+    into one preallocated stack."""
+    if pool <= 1:
+        return read_stored(source, level, t, channel, s0, s1, rows, cols)
+    own = getattr(source, "read_pooled", None)
+    if callable(own):
+        held = own(level, t, channel, s0, s1, pool, rows, cols)
+        if held is not None:
+            return held
+    volume = source.volume
+    height = rows.stop - rows.start
+    width = cols.stop - cols.start
+    plane = max(1, height * width * np.dtype(volume.dtype).itemsize)
+    run_planes = max(pool, (run_bytes // plane) // pool * pool)
+    count = int(s1) - int(s0) + 1
+    block = np.empty((-(-count // pool), height, width), dtype=volume.dtype)
+    for start in range(int(s0), int(s1) + 1, run_planes):
+        stop = min(int(s1) + 1, start + run_planes)
+        run = np.asarray(read_stored(source, level, t, channel, start, stop - 1, rows, cols))
+        for k, first in enumerate(range(0, stop - start, pool)):
+            np.max(run[first:first + pool], axis=0, out=block[(start - s0) // pool + k])
+    return block

@@ -636,6 +636,7 @@ class QcHoverProbe {
         this.viewer = null;
         this._handlers = [];
         this._offViewport = null;
+        this._offView = null;
         this.position = null;     // the pointer, in canvas pixels (an OSD Point)
         this.point = null;        // ... and in full-resolution image pixels
         this.region = null;
@@ -687,7 +688,18 @@ class QcHoverProbe {
         on("canvas-scroll", () => this.clear({ keepPosition: true }));
         on("canvas-click", (event) => this.click(event));
         this._offViewport = this.ctx.layers?.onViewportChange?.(() => this.viewportMoved()) || null;
+        // Another plane of a z-stack: the cells held are another plane's.
+        this._offView = this.ctx.view?.onChange?.(() => this.revalidate()) || null;
         return true;
+    }
+
+    /** The planes on screen of a z-stack, `[first, last]`; null when flat. */
+    planes() {
+        try {
+            return this.ctx.view?.planes?.() || null;
+        } catch (error) {
+            return null;
+        }
     }
 
     disarm() {
@@ -698,6 +710,8 @@ class QcHoverProbe {
         this._handlers = [];
         this._offViewport?.();
         this._offViewport = null;
+        this._offView?.();
+        this._offView = null;
         this.viewer = null;
     }
 
@@ -835,7 +849,7 @@ class QcHoverProbe {
         const radius = Math.min(64, Math.max(1, scale * 5));
         let request;
         try {
-            request = Promise.resolve(this.deps.api.cellAt(x, y, radius));
+            request = Promise.resolve(this.deps.api.cellAt(x, y, radius, this.planes()));
         } catch (error) {
             request = Promise.resolve(null);
         }

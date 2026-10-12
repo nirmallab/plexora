@@ -44,11 +44,14 @@ import base64
 import contextlib
 import contextvars
 import hashlib
+import logging
 import threading
 import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 #: The modes, strictest first. One vocabulary for every input that takes `qc`.
 MODES = ("strict", "exclude", "off")
@@ -212,7 +215,7 @@ def _load_providers() -> list:
         try:
             provider = factory()
         except Exception as exc:  # pragma: no cover - a broken third-party plugin
-            print(f"WARNING: plugin {name!r} cell exclusions failed to load: {exc}")
+            _log.warning("plugin %r cell exclusions failed to load: %s", name, exc)
             continue
         if provider is not None:
             found.append((name, provider))

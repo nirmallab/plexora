@@ -4306,6 +4306,30 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
+/* Why the 3-D view has nothing to draw (volumeRenderer.say): one sentence,
+   centred over the black canvas, under the furniture like the canvas. */
+.viewer-volume-note {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    left: 50%;
+    line-height: 1.45;
+    margin: 0;
+    max-width: min(420px, calc(100% - 2 * var(--space-6)));
+    padding: var(--space-3) var(--space-4);
+    pointer-events: none;
+    position: absolute;
+    text-align: center;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 201;
+}
+
+.viewer-volume-note[hidden] {
+    display: none;
+}
+
 /* Which way the stack faces (views/orientationGizmo.js), docked top-right by
    the canvas layout: no background, a third opaque at rest, solid under the
    pointer, while the view moves, or while an axis is locked. */

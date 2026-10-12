@@ -166,3 +166,16 @@ def _probe_sources():
     body = re.sub(r"(\w+):", r'"\1":', body)
     body = re.sub(r",(\s*[\]}])", r"\1", body)
     return body
+
+
+def test_the_nearest_cell_pick_carries_the_planes_on_screen():
+    """`getNearestCell` sends `z0`/`z1` while a z-stack's object table has
+    planes on screen, `t` on a time series, and nothing new for a flat
+    project (tests/js/nearest_cell_query_probe.mjs)."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    probe = REPO_ROOT / "tests" / "js" / "nearest_cell_query_probe.mjs"
+    proc = subprocess.run([node, str(probe)], capture_output=True, text=True,
+                          cwd=REPO_ROOT, timeout=60)
+    assert proc.returncode == 0, proc.stderr or proc.stdout

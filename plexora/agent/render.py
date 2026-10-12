@@ -623,7 +623,10 @@ def render_region(session, spec, *, store=True, pixel_size=None):
     # (SourceImage(view=)); everything else -- every planar image, and a
     # volume's default plane -- through the shelf, exactly as before.
     view_token = _view_token(spec, record)
-    reader = (source_image.SourceImage(image_data, view=view_token)
+    # Budgeted: a projection through 1937 planes at full resolution would read
+    # them all; past the tile routes' budget it is computed coarser and drawn
+    # up, and the manifest says so (`coarsened_levels`).
+    reader = (source_image.SourceImage(image_data, view=view_token, budgeted=True)
               if view_token else source_image.SHELF.reader(image_data))
     with reader as source:
         view_provenance = None
@@ -866,6 +869,8 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "scale_bar": scale_bar,
         "egress": "rendered_pixels",
         **_view_manifest(spec, view_provenance),
+        **({"coarsened_levels": source.coarsened}
+           if getattr(source, "coarsened", 0) else {}),
         "provenance": {
             "image": api.ImageHandle(record).locator.to_dict(),
             "mask_path": (record.segmentation.derived

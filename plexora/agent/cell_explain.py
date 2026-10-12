@@ -90,8 +90,22 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
     pixel = pixel_scale.pixel_size(record)
     scale = pixel["value"] if pixel else None
     distances = np.hypot(xs - x, ys - y)
+    rule = "centroid to centroid"
+    depth = _depth_of(data, keep)
+    if depth is not None:
+        # A z-stack's object table: a cell two planes up is not beside this
+        # one, however close in x/y. Planes count as the z step over the pixel
+        # size, in pixels (1 when either is unknown, as the viewer draws it).
+        zs, anisotropy = depth
+        distances = np.sqrt(distances ** 2 + ((zs - zs[index]) * anisotropy) ** 2)
+        rule = "centroid to centroid, in 3-D (a plane is the z step over the pixel size)"
     order = np.argsort(distances, kind="stable")
     order = order[order != index]
+    frames = _column_of(data, keep, "t")
+    if frames is not None:
+        # A time series' object table holds every cell once per frame: its
+        # neighbours are the ones beside it at the same moment.
+        order = order[frames[order] == frames[index]]
     if within_um is not None:
         if scale is None:
             raise AgentError("precondition_missing",
@@ -123,8 +137,7 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
         "metadata": metadata,
         "regions": render.rois_containing(record.name, x, y),
         "neighbours": neighbours,
-        "neighbour_rule": {"k": k, "within_um": within_um,
-                           "distance": "centroid to centroid"},
+        "neighbour_rule": {"k": k, "within_um": within_um, "distance": rule},
         "log_transformed": data.table.log_transformed,
     }
     png = None
@@ -168,3 +181,36 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
                        "segmentation_status": rendered["manifest"]["segmentation"]["status"],
                        "outline_drawn": rendered["manifest"]["cells"]["highlight_rendering"]}
     return out, png
+
+
+def _column_of(data, keep, role):
+    """The table's `role` column (a role name such as "z" or "t") over the
+    rows `keep` holds, as floats; None when the table has no such role."""
+    schema = data.schema
+    column = schema.get(role) if schema is not None else None
+    if not column:
+        return None
+    try:
+        frame = data.table.geometry()
+        if frame is None or column not in frame.columns:
+            return None
+        import polars as pl
+
+        return frame[column].cast(pl.Float64, strict=False).to_numpy()[keep]
+    except Exception:
+        return None
+
+
+def _depth_of(data, keep):
+    """(each kept row's plane, the stack's anisotropy) for a table with a z
+    role, else None."""
+    zs = _column_of(data, keep, "z")
+    if zs is None:
+        return None
+    anisotropy = 1.0
+    try:
+        volume = data.image.volume()
+        anisotropy = float((volume or {}).get("anisotropy") or 1.0)
+    except Exception:
+        pass
+    return np.nan_to_num(zs, nan=0.0), anisotropy

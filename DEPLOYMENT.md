@@ -1748,7 +1748,7 @@ all.
 | `PLEXORA_NODE_HOST` | Default bind address for `plexora node serve` |
 | `PLEXORA_DESKTOP` | Marks the process as the desktop app's server (set by `--desktop`) |
 | `PLEXORA_DESKTOP_LOG` | Where the desktop shell writes the server's log (set by the shell; reported by `/desktop/info`) |
-| `PLEXORA_LOG_LEVEL` | Logging level for `--desktop` (default `WARNING`) |
+| `PLEXORA_LOG_LEVEL` | How much the server logs to stderr: `warning` (default), `info` (what it loads and builds, once each), `debug` (`plexora -v`). Every mode; `--desktop` applies it to every library's messages too |
 | `PLEXORA_DESKTOP_PYTHON`, `PLEXORA_DESKTOP_CWD` | Shell only: run the server with this interpreter, from this directory -- for developing the shell against a source checkout |
 | `PLEXORA_BUILD_DIR`, `PLEXORA_RUNTIME_DIR` | `scripts/release.py`: where build products and the embedded runtime go |
 | `PLEXORA_UPDATE_INDEX` | Where Help → Check for Updates reads published versions: a URL or a local file shaped like PyPI's JSON API (default `https://pypi.org/pypi/plexora/json`). For testing |
@@ -1802,6 +1802,11 @@ probably still in the other directory; point Plexora back with
 
 **The browser opens but the page never loads.** Check the port in the address
 bar against the one Plexora printed — if 8000 was busy it moved.
+
+**The terminal says nothing while a project opens.** That is the default: the
+terminal shows the address and any warnings, not progress. Run `plexora -v`
+(or set `PLEXORA_LOG_LEVEL=info`) to see what is loaded and built — the table,
+the image, the cell index — on stderr.
 
 **A blank box where the viewer should be, in a notebook.** The URL is pointing
 somewhere your browser cannot reach. Try `plexora.view("name", proxy=True)`; if

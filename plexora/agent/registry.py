@@ -16,6 +16,7 @@ audit log happen in one place and cannot be skipped by a transport that forgot.
 from __future__ import annotations
 
 import contextvars
+import logging
 import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
@@ -25,6 +26,8 @@ from pydantic import BaseModel
 from plexora.agent.errors import AgentError, as_agent_error
 from plexora.agent.policy import PERMISSIONS, EGRESS, Policy
 from plexora.licensing import guards as license_guards
+
+_log = logging.getLogger(__name__)
 
 EXECUTIONS = ("immediate", "job")
 
@@ -283,7 +286,7 @@ def discover(names=None, *, loader=None) -> list:
                 register(capability)
                 registered.append(capability.name)
         except Exception as exc:  # pragma: no cover - a broken third-party plugin
-            print(f"WARNING: plugin {name!r} capabilities failed to load: {exc}")
+            _log.warning("plugin %r capabilities failed to load: %s", name, exc)
     return registered
 
 

@@ -55,14 +55,14 @@ AUTH_COOKIE = "plexora_auth"
 #: What the unavailable-resource handler has already said, and the load it said
 #: it for. One screenful of the viewer is dozens of tile requests and every one
 #: of them fails the same way against the same absent machine, so the sentence
-#: is printed once and the rest are quiet.
+#: is logged once and the rest are quiet.
 _said_unavailable = set()
 _said_for_generation = None
 _said_lock = threading.Lock()
 
 
 def _say_unavailable_once(message, context=""):
-    """Print `message` unless this load of a project has already printed it.
+    """Log `message` (a warning) unless this load of a project already has.
 
     Keyed on `data_model.load_generation` rather than cleared on a timer:
     reloading is the only thing that re-reads a project's bindings, so it is
@@ -86,7 +86,9 @@ def _say_unavailable_once(message, context=""):
         if message in _said_unavailable:
             return
         _said_unavailable.add(message)
-    print(f"{context} -- {message}" if context else message)
+    import logging
+
+    logging.getLogger(__name__).warning("%s", f"{context} -- {message}" if context else message)
 
 
 app = None

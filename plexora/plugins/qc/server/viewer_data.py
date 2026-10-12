@@ -669,9 +669,11 @@ def _shape(labels, label, x0, y0):
             "bits": base64.b64encode(np.packbits(patch.ravel())).decode("ascii")}
 
 
-def _label_at(ds, x, y, radius):
+def _label_at(ds, x, y, radius, planes=None):
     """(label or None, "mask", shape or None) from the mask, or (None, None,
-    None) when there is no mask to read or it could not be read."""
+    None) when there is no mask to read or it could not be read. `planes`
+    (first, last) of a 3-D mask: read the middle one, the plane the viewer
+    draws the labels of (a provider that reads one plane only ignores it)."""
     import inspect
 
     import numpy as np
@@ -697,10 +699,13 @@ def _label_at(ds, x, y, radius):
         return None, "mask", None
     kwargs = {"max_pixels": (x1 - x0) * (y1 - y0)}
     try:
-        if "timeout" in inspect.signature(provider.read_region).parameters:
-            kwargs["timeout"] = HOVER_READ_TIMEOUT_S
+        accepts = inspect.signature(provider.read_region).parameters
     except (TypeError, ValueError):
-        pass
+        accepts = {}
+    if "timeout" in accepts:
+        kwargs["timeout"] = HOVER_READ_TIMEOUT_S
+    if planes is not None and "z" in accepts:
+        kwargs["z"] = (int(min(planes)) + int(max(planes))) // 2
     try:
         labels = np.asarray(provider.read_region(extra, (x0, y0, x1, y1), **kwargs))
     except Exception:
@@ -731,9 +736,16 @@ def _label_at(ds, x, y, radius):
 
 
 def _centroids(ds, project):
-    """(ids, KD-tree, reach) of the table's centroids, held per project and
-    table; None without coordinates."""
+    """(ids, index, reach) of the table's centroids, held per project and
+    table; None without coordinates. `index` is the viewer's own cell index
+    (`server/utils/spatial_index.SpatialIndex`), with each cell's plane extent
+    when the table is a z-stack's measured object table; `ids` are the mask
+    labels of the rows it was built over."""
     import numpy as np
+    import polars as pl
+
+    from plexora.server.utils.label_overlay import cell_ids
+    from plexora.server.utils.spatial_index import SpatialIndex
 
     try:
         from plexora.agent.session import _identity
@@ -746,37 +758,42 @@ def _centroids(ds, project):
         held = _CENTROIDS.get(key)
     if held is not None:
         return held
-    positions = _positions(ds)
-    if positions is None or not positions.height:
+    schema = ds.schema
+    if schema is None or not getattr(ds.table, "available", False):
         return None
-    from scipy.spatial import cKDTree
-
-    xs, ys = positions["x"].to_numpy(), positions["y"].to_numpy()
-    finite = np.isfinite(xs) & np.isfinite(ys)
-    ids = positions["cell_id"].to_numpy()[finite]
-    points = np.column_stack([xs[finite], ys[finite]])
+    frame = ds.table.geometry()
+    if frame is None or not schema.x or not schema.y \
+            or schema.x not in frame.columns or schema.y not in frame.columns:
+        return None
+    ids, keep = cell_ids(frame, schema.cell_id)
     if not ids.size:
         return None
-    extent = max(1.0, float(np.ptp(points[:, 0]) * np.ptp(points[:, 1])))
-    spacing = math.sqrt(extent / ids.size)
-    reach = min(MAX_CENTROID_PX, CENTROID_SHARE * spacing)
-    held = (ids, cKDTree(points), reach)
+    z = schema.get("z")
+    index = SpatialIndex.build(frame.filter(pl.Series(keep)), x=schema.x, y=schema.y,
+                               z=z if z in frame.columns else None)
+    if index is None:
+        return None
+    reach = min(MAX_CENTROID_PX, CENTROID_SHARE * index.spacing)
+    held = (ids.astype(np.int64), index, reach)
     _held_put(_CENTROIDS, key, held, cap=4)
     return held
 
 
-def _nearest_centroid(ds, project, x, y, radius):
+def _nearest_centroid(ds, project, x, y, radius, planes=None):
     held = _centroids(ds, project)
     if held is None:
         return None
-    ids, tree, reach = held
-    distance, at = tree.query([x, y], k=1)
+    ids, index, reach = held
+    found = index.nearest(x, y, planes=planes, radius=max(radius, reach, 1.0))
+    if found is None:
+        return None
+    row, distance = found
     if not distance <= max(radius, reach, 1.0):
         return None
-    return int(ids[int(at)])
+    return int(ids[row])
 
 
-def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
+def cell_at(ds, project, x, y, *, radius=0.0, planes=None) -> dict:
     """{cell, method, result_id}: QC's record of the cell at full-resolution
     pixel (x, y) (`provenance.cell_record`), or None. `method` is "mask" (the
     label there, or the nearest within `radius`), "centroid" (no mask, or it
@@ -791,10 +808,10 @@ def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
     if x < 0 or y < 0 or (width and x >= width) or (height and y >= height):
         return {"cell": None, "method": "out_of_bounds", "result_id": None}
     radius = max(0.0, min(float(radius or 0.0), float(MAX_HOVER_RADIUS_PX)))
-    cell_id, method, shape = _label_at(ds, x, y, radius)
+    cell_id, method, shape = _label_at(ds, x, y, radius, planes)
     if method is None:
         try:
-            cell_id = _nearest_centroid(ds, project, x, y, radius)
+            cell_id = _nearest_centroid(ds, project, x, y, radius, planes)
         except Exception:  # a table on a node that is asleep
             cell_id = None
             method = "none"

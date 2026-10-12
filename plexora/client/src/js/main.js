@@ -524,6 +524,17 @@ async function init(config, savedViewTransform = null) {
             seaDragonViewer.setTableFrame({ column: tableT, t: viewState.get().t });
             viewState.subscribe((state) => seaDragonViewer.setTableFrame({ column: tableT, t: state.t }));
         }
+        // A z-stack's measured object table (one row per cell, with its plane
+        // extent): a right-click keeps to the cells on the planes on screen.
+        // The 3-D view hands the tiles no click, and a rotated view has no
+        // image x/y to pick at, so it sends none.
+        const tableZ = viewState.info?.table_z;
+        if (tableZ && viewState.depth > 1) {
+            const planesOf = (state) => state.mode === "slab" ? [state.slab.z0, state.slab.z1]
+                : state.mode === "plane" ? [state.z, state.z] : null;
+            dataLayer.tablePlanes = planesOf(viewState.get());
+            viewState.subscribe((state) => { dataLayer.tablePlanes = planesOf(state); });
+        }
     }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the

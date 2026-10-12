@@ -35,11 +35,14 @@ that is arbitrated client-side.
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import pkgutil
 
 from plexora.api.plugin import Plugin
 from plexora.server import core_tools
+
+_log = logging.getLogger(__name__)
 
 ENTRY_POINT_GROUP = "plexora.plugins"
 
@@ -99,17 +102,15 @@ def load(name: str) -> Plugin | None:
             entry_point = _entry_points_by_name().get(name)
             plugin = entry_point.load() if entry_point is not None else None
     except Exception as exc:
-        print(f"WARNING: plugin {name!r} failed to load: {exc}")
+        _log.warning("plugin %r failed to load: %s", name, exc)
         return None
 
     if not isinstance(plugin, Plugin):
-        print(f"WARNING: plugin {name!r} exposes no PLUGIN descriptor; ignoring")
+        _log.warning("plugin %r exposes no PLUGIN descriptor; ignoring", name)
         return None
     if plugin.name != name:
-        print(
-            f"WARNING: plugin package {name!r} declares PLUGIN.name={plugin.name!r}; "
-            "they must match, ignoring"
-        )
+        _log.warning("plugin package %r declares PLUGIN.name=%r; they must match, ignoring",
+                     name, plugin.name)
         return None
     return plugin
 
@@ -138,7 +139,7 @@ def install(app, names=None) -> list[Plugin]:
     else:
         wanted = [name for name in names if name in available]
         for missing in [name for name in names if name not in available]:
-            print(f"WARNING: {ENV_VAR} names unknown plugin {missing!r}; ignoring")
+            _log.warning("%s names unknown plugin %r; ignoring", ENV_VAR, missing)
 
     chosen = []
     for name in wanted:
@@ -196,8 +197,8 @@ def _warn_shortcut_clashes(chosen: list[Plugin]) -> None:
                     f"{plugin.name!r}'s {item.label!r}")
     for spec, owners in sorted(claims.items()):
         if len(owners) > 1:
-            print(f"WARNING: shortcut {spec!r} claimed by {' and '.join(owners)}; "
-                  f"only the first will fire")
+            _log.warning("shortcut %r claimed by %s; only the first will fire",
+                         spec, " and ".join(owners))
 
 
 #: Core's own tools (Rotate, Flip). Module-level and read at call time, never

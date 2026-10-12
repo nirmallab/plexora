@@ -37,6 +37,8 @@ class MiniMap {
      *  thread), so a wider fan-out only competes with tile requests for the
      *  connection pool while the user is panning. */
     static FETCH_CONCURRENCY = 3;
+    /** How long the plane must stay put before the map fetches it. */
+    static VIEW_SETTLE_MS = 250;
 
     /** The open map's size as a fraction of the viewer's -- which is also what
      *  gives it the viewer's aspect ratio: a wide canvas gets a wide map. 0.2
@@ -83,6 +85,11 @@ class MiniMap {
         /** srcIdx -> HTTP status of its last failed fetch. Read by _updateNote
          *  to tell a missing route from a transient error. */
         this._failed = new Map();
+        /** The z-stack view the greyscale is of (`viewState.spec()`): the
+         *  plane or projection on screen, "" for the default plane and for a
+         *  planar image. Another one empties `_gray`. */
+        this._grayView = this._viewToken();
+        this._viewTimer = null;
         /** The rebuild currently in flight, if any. Exposed so a caller --
          *  or a test -- can wait for the map to settle. */
         this._loading = null;
@@ -220,6 +227,31 @@ class MiniMap {
         // domains (viewerSidebar.onHdModeChanged), so the cached greyscale is
         // still good but every LUT built from a range is not.
         window.addEventListener("plexora:hd-mode-changed", () => this.invalidate());
+        // Another plane or projection of a z-stack: the map shows what is on
+        // screen, fetched once the stepping stops.
+        window.addEventListener("plexora:view-changed", () => this._viewChanged());
+    }
+
+    /** The view on screen of a z-stack, canonical; "" for a planar image. */
+    _viewToken() {
+        try {
+            const state = window.__plexora?.viewState;
+            return state?.enabled?.() ? String(state.spec?.() || "") : "";
+        } catch (error) {
+            return "";
+        }
+    }
+
+    _viewChanged() {
+        const token = this._viewToken();
+        if (token === this._grayView) return;
+        clearTimeout(this._viewTimer);
+        this._viewTimer = setTimeout(() => {
+            this._grayView = this._viewToken();
+            this._gray.clear();
+            this._failed.clear();
+            this.invalidate({ refetch: true });
+        }, MiniMap.VIEW_SETTLE_MS);
     }
 
     _bindPointer() {
@@ -587,12 +619,13 @@ class MiniMap {
         return channels;
     }
 
-    _overviewUrl(fullName) {
+    _overviewUrl(fullName, view = this._grayView) {
         const name = typeof datasource !== "undefined" && datasource
             ? datasource
             : (window.flaskVariables && window.flaskVariables.datasource) || "";
         return plexoraUrl(
             `generated/overview/${encodeURIComponent(name)}/${encodeURIComponent(fullName)}`
+            + (view ? `?view=${encodeURIComponent(view)}` : "")
         );
     }
 
@@ -644,14 +677,19 @@ class MiniMap {
         }
 
         let cursor = 0;
+        let stale = false;
         const drain = async () => {
             while (cursor < missing.length) {
                 const channel = missing[cursor];
                 cursor += 1;
                 this._pending.add(channel.srcIdx);
+                const view = this._grayView;
                 try {
-                    const gray = await this._fetchOverview(channel.fullName);
-                    if (gray) {
+                    const gray = await this._fetchOverview(channel.fullName, view);
+                    if (view !== this._grayView) {
+                        // Another plane arrived meanwhile: this one is not it.
+                        stale = true;
+                    } else if (gray) {
                         this._gray.set(channel.srcIdx, gray);
                         this._failed.delete(channel.srcIdx);
                     }
@@ -674,6 +712,7 @@ class MiniMap {
 
         const workers = Math.min(MiniMap.FETCH_CONCURRENCY, missing.length);
         await Promise.all(Array.from({ length: workers }, drain));
+        if (stale) this.invalidate({ refetch: true });
     }
 
     /**
@@ -711,8 +750,8 @@ class MiniMap {
         return createImageBitmap(await response.blob());
     }
 
-    async _fetchOverview(fullName) {
-        const response = await fetch(this._overviewUrl(fullName));
+    async _fetchOverview(fullName, view = this._grayView) {
+        const response = await fetch(this._overviewUrl(fullName, view));
         if (!response.ok) {
             const error = new Error(`HTTP ${response.status}`);
             // Carried so _updateNote can tell "this Plexora has no overview

@@ -23,6 +23,7 @@ node is obviously the user's own.
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import socket
@@ -40,6 +41,8 @@ from plexora.server.node.api import API_VERSION, node_bp
 #: parses it (connect.parse_node_announce); nothing else depends on it, and the
 #: human-readable banner below is unchanged.
 NODE_ANNOUNCE_PREFIX = "[plexora-node]"
+
+_log = logging.getLogger(__name__)
 
 
 class NodeStartupError(RuntimeError):
@@ -433,8 +436,8 @@ def _load_plugin_operations(plugins=None):
             # image, and Cell Explorer reads columns through the provider.
             continue
         except Exception as exc:  # pragma: no cover - a broken third-party plugin
-            print(f"Plugin {name!r} has table operations that would not load, "
-                  f"so this node cannot run them: {exc}")
+            _log.warning("plugin %r has table operations that would not load, so this node "
+                         "cannot run them: %s", name, exc)
 
 
 def warm_resources(registry, log=print):
@@ -527,7 +530,11 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     """Start a node and block, printing what a primary needs to register it."""
     from waitress import serve as waitress_serve
 
+    from plexora import _logging
     from plexora._resources import platform_word, worker_threads
+
+    # Warnings to stderr; stdout stays the announce `plexora connect` parses.
+    _logging.configure()
 
     # Hex rather than token_urlsafe: the printed registration line is meant to
     # be copied and pasted, and a token that begins with '-' is read as a flag

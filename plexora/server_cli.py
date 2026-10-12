@@ -29,6 +29,10 @@ def main(argv=None):
     if args.plugins is not None:
         os.environ["PLEXORA_PLUGINS"] = args.plugins
 
+    # Before waitress, whose serve() adds a handler only to a root that has none.
+    from plexora import _logging
+    _logging.configure()
+
     from waitress import serve
     from plexora import app, _clean_base_url
     from plexora._resources import worker_threads

@@ -1,8 +1,9 @@
 """Stacks for the 3-D benchmark, and their registration as projects.
 
     python tools/bench3d/fixtures.py make small twoplane flat [--out DIR]
-    python tools/bench3d/fixtures.py make medium large
-    python tools/bench3d/fixtures.py register [--data DIR] [--ims PATH] [--meso PATH] [--prescan]
+    python tools/bench3d/fixtures.py make medium large mediumz flatstack
+    python tools/bench3d/fixtures.py register [--data DIR] [--tree DIR] [--ims PATH] [--meso PATH]
+                                              [--prescan]
 
 Fixtures (written under $PLEXORA_BENCH_HOME, default ~/plexora-bench -- never
 inside Dropbox):
@@ -18,6 +19,10 @@ inside Dropbox):
   0-5, inner chunk z = 8; only a 128-plane core is written at each level --
   zarr returns the fill value for shards that were never written. Anything that
   materialises a whole declared level allocates terabytes: that is the test.
+- mediumz: 3 x 128 x 2048^2 OME-Zarr v3 whose coarse levels halve z as well
+  as x and y (128, 64, 32, 16 planes), as some writers store them;
+- flatstack: 3 x 100 x 2048^2 uint16 OME-TIFF with ONE level: no pyramid of
+  its own, under the 2-D rule's 4096 px, over the stack rule's voxels.
 
 The real stacks (an Imaris file, a light-sheet OME-Zarr) are registered from
 paths given on the command line or in PLEXORA_BENCH_IMS / PLEXORA_BENCH_MESO /
@@ -26,6 +31,10 @@ PLEXORA_BENCH_XENIUM; nothing machine-specific lives in the repository.
 `--prescan` starts a scratch server once and asks each volume for a tile per
 channel and its info, so the window scan and any background 3-D copy are done
 before a "cold" run measures anything.
+
+`--tree` registers (and prescans) with another checkout's code: a before/after
+comparison needs a data root per tree, since what an import derives -- a
+pyramid copy, the levels it records -- is part of what changed.
 """
 
 from __future__ import annotations
@@ -36,6 +45,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -108,8 +118,10 @@ def make_flat(out: Path) -> Path:
     return path
 
 
-def _ngff_group(path: Path, shape, levels, scale_z, names, chunks, shards, dtype="uint16"):
-    """An empty OME-Zarr 0.5 (zarr v3) image: (c, z, y, x), XY halving per level."""
+def _ngff_group(path: Path, shape, levels, scale_z, names, chunks, shards, dtype="uint16",
+                z_halving=False):
+    """An empty OME-Zarr 0.5 (zarr v3) image: (c, z, y, x), XY halving per level
+    (and z too, with `z_halving`)."""
     import numpy as np  # noqa: F401
     import zarr
     from zarr.codecs import ZstdCodec
@@ -120,7 +132,8 @@ def _ngff_group(path: Path, shape, levels, scale_z, names, chunks, shards, dtype
     c, z, y, x = shape
     for level in range(levels):
         f = 2 ** level
-        level_shape = (c, z, -(-y // f), -(-x // f))
+        fz = f if z_halving else 1
+        level_shape = (c, -(-z // fz), -(-y // f), -(-x // f))
         level_chunks = tuple(min(a, b) for a, b in zip(chunks, level_shape))
         level_shards = tuple(max(cs, min(s, ls)) for cs, s, ls in zip(level_chunks, shards, level_shape))
         level_shards = tuple(-(-ls // cs) * cs if ls < s else s
@@ -130,7 +143,7 @@ def _ngff_group(path: Path, shape, levels, scale_z, names, chunks, shards, dtype
                                 dimension_names=("c", "z", "y", "x"))
         arrays.append(arr)
         datasets.append({"path": str(level), "coordinateTransformations": [
-            {"type": "scale", "scale": [1.0, scale_z, 0.5 * f, 0.5 * f]}]})
+            {"type": "scale", "scale": [1.0, scale_z * fz, 0.5 * f, 0.5 * f]}]})
     root.attrs["ome"] = {
         "version": "0.5",
         "multiscales": [{
@@ -219,15 +232,69 @@ def make_large(out: Path) -> Path:
     return path
 
 
+def make_mediumz(out: Path) -> Path:
+    """3 x 128 x 2048^2 whose levels halve z with x and y, written 32 planes at a time."""
+    import numpy as np
+
+    path = out / "mediumz.ome.zarr"
+    if (path / "zarr.json").exists() and (path / "done").exists():
+        return path
+    shape = (3, 128, 2048, 2048)
+    arrays = _ngff_group(path, shape, 4, 2.0, ["DNA", "Membrane", "CD8"],
+                         chunks=(1, 8, 128, 128), shards=(1, 32, 512, 512), z_halving=True)
+    rng = np.random.default_rng(13)
+    for z0 in range(0, 128, 32):
+        block = _cells(rng, 32, 2048, 2048, 2600)
+        for level, arr in enumerate(arrays):
+            f = 2 ** level
+            arr[:, z0 // f:(z0 + 32) // f] = block[:, ::f, ::f, ::f]
+        print(f"mediumz: planes {z0}-{z0 + 32}", flush=True)
+    (path / "done").write_text("ok")
+    return path
+
+
+def make_flatstack(out: Path) -> Path:
+    """3 x 100 x 2048^2, one level, tiled; built in a scratch memmap 20 planes
+    at a time so memory stays small."""
+    import numpy as np
+    import tifffile
+
+    path = out / "flatstack.ome.tif"
+    if path.exists():
+        return path
+    shape = (3, 100, 2048, 2048)
+    scratch = out / "flatstack.scratch"
+    stack = np.lib.format.open_memmap(scratch, mode="w+", dtype=np.uint16, shape=shape)
+    rng = np.random.default_rng(17)
+    try:
+        for z0 in range(0, 100, 20):
+            stack[:, z0:z0 + 20] = _cells(rng, 20, 2048, 2048, 1600)
+            print(f"flatstack: planes {z0}-{z0 + 20}", flush=True)
+        stack.flush()
+        md = {"axes": "CZYX", "PhysicalSizeX": 0.5, "PhysicalSizeY": 0.5, "PhysicalSizeZ": 2.0,
+              "Channel": {"Name": ["DNA", "Membrane", "CD8"]}}
+        partial = path.with_name(path.name + ".partial")
+        with tifffile.TiffWriter(partial, bigtiff=True, ome=True) as writer:
+            writer.write(stack, tile=(256, 256), metadata=md, compression="zlib",
+                         buffersize=64 * 2**20)
+        partial.replace(path)
+    finally:
+        del stack
+        scratch.unlink(missing_ok=True)
+    return path
+
+
 MAKERS = {"small": make_small, "twoplane": make_twoplane, "flat": make_flat,
-          "medium": make_medium, "large": make_large}
+          "medium": make_medium, "large": make_large, "mediumz": make_mediumz,
+          "flatstack": make_flatstack}
 
 
 # -- registration ------------------------------------------------------------------
 
 
-def register(data: Path, entries: dict) -> dict:
-    """Register `{name: path}` under `data` in a child process with the bench's env."""
+def register(data: Path, entries: dict, tree: Path | None = None) -> dict:
+    """Register `{name: path}` under `data` in a child process with the bench's env,
+    importing the checkout at `tree` (default: this one)."""
     script = (
         "import json, sys\n"
         "from plexora.datasource import register_image_datasource\n"
@@ -240,9 +307,10 @@ def register(data: Path, entries: dict) -> dict:
         "    except Exception as error:\n"
         "        out[name] = {'error': repr(error)}\n"
         "print(json.dumps(out))\n")
-    env = server_env(data)
+    root = Path(tree).expanduser().resolve() if tree else ROOT
+    env = server_env(data, root=root)
     result = subprocess.run([sys.executable, "-c", script, json.dumps({k: str(v) for k, v in entries.items()}),
-                             str(data)], cwd=str(ROOT), env=env, capture_output=True, text=True)
+                             str(data)], cwd=str(root), env=env, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stderr[-4000:])
     return json.loads(result.stdout.strip().splitlines()[-1])
@@ -253,27 +321,38 @@ def _get(port, path, timeout=600):
         return reply.status, reply.read()
 
 
-def prescan(data: Path, names) -> None:
+def prescan(data: Path, names, tree: Path | None = None) -> None:
     """Window scans and 3-D copies, done once before anything is measured."""
-    server = start(data)
+    server = start(data, root=tree)
     try:
         config = json.loads((data / "config.json").read_text())
         for name in names:
             entry = config.get(name) or {}
             t0 = time.time()
             view = entry.get("imageDefaultView") or ""
-            for channel in entry.get("imageData") or []:
-                # Any tile starts the channel's window scan; the finest
-                # level's first tile exists at every size.
-                query = f"?view={view}" if view else ""
-                _get(server["port"], f"{channel['src']}0/0_0.png{query}")
+            try:
+                for channel in entry.get("imageData") or []:
+                    # Any tile starts the channel's window scan; the finest
+                    # level's first tile exists at every size.
+                    query = f"?view={view}" if view else ""
+                    _get(server["port"], f"{channel['src']}0/0_0.png{query}")
+            except urllib.error.HTTPError as error:
+                # A build that cannot serve this stack: what the run measures,
+                # not a reason to leave the others unscanned.
+                print(f"prescan {name}: HTTP {error.code} on its first tile", flush=True)
+                continue
             if view:
                 status, body = _get(server["port"], f"/volume/{name}/info")
                 state = json.loads(body).get("bricks", {}).get("state")
-                while state not in (None, "not_needed", "ready", "error", "failed"):
+                bricks = json.loads(body).get("bricks", {})
+                # A copy still filling, or an OME-Zarr stack's coarse levels
+                # still being derived (`levels`, a tree that has them).
+                while (bricks.get("state") not in (None, "not_needed", "ready", "error", "failed")
+                       or (bricks.get("levels") or {}).get("status") == "pending"):
                     time.sleep(2)
                     _, body = _get(server["port"], f"/volume/{name}/info")
-                    state = json.loads(body).get("bricks", {}).get("state")
+                    bricks = json.loads(body).get("bricks", {})
+                state = bricks.get("state")
                 print(f"prescan {name}: {time.time() - t0:.1f} s (bricks: {state})", flush=True)
     finally:
         stop(server["pid"])
@@ -287,12 +366,16 @@ def main(argv=None):
     mk.add_argument("--out")
     rg = sub.add_parser("register")
     rg.add_argument("--data", default=str(bench_home() / "data"))
+    rg.add_argument("--tree", default=None,
+                    help="register with this checkout (a detached worktree of an older commit)")
     rg.add_argument("--fixtures", default=None)
     rg.add_argument("--ims", default=os.environ.get("PLEXORA_BENCH_IMS"))
     rg.add_argument("--meso", default=os.environ.get("PLEXORA_BENCH_MESO"))
     rg.add_argument("--xenium", default=os.environ.get("PLEXORA_BENCH_XENIUM"))
     rg.add_argument("--only", nargs="*")
     rg.add_argument("--prescan", action="store_true")
+    rg.add_argument("--prescan-only", action="store_true",
+                    help="prescan what --data already holds, registering nothing")
     args = parser.parse_args(argv)
     if args.cmd == "make":
         out = out_dir(args.out)
@@ -307,7 +390,8 @@ def main(argv=None):
     entries = {}
     for name, file in (("small", "small.ome.tif"), ("twoplane", "twoplane.ome.tif"),
                        ("flat", "flat.ome.tif"), ("medium", "medium.ome.zarr"),
-                       ("large", "large.ome.zarr")):
+                       ("large", "large.ome.zarr"), ("mediumz", "mediumz.ome.zarr"),
+                       ("flatstack", "flatstack.ome.tif")):
         if (fixtures / file).exists():
             entries[name] = fixtures / file
     for name, path in (("ims", args.ims), ("meso", args.meso), ("xenium", args.xenium)):
@@ -315,11 +399,14 @@ def main(argv=None):
             entries[name] = Path(path)
     if args.only:
         entries = {k: v for k, v in entries.items() if k in args.only}
+    if args.prescan_only:
+        prescan(data, [n for n in entries if n != "flat"], args.tree)
+        return
     t0 = time.time()
-    print(json.dumps(register(data, entries), indent=1))
+    print(json.dumps(register(data, entries, args.tree), indent=1))
     print(f"registered in {time.time() - t0:.1f} s")
     if args.prescan:
-        prescan(data, [n for n in entries if n != "flat"])
+        prescan(data, [n for n in entries if n != "flat"], args.tree)
 
 
 if __name__ == "__main__":

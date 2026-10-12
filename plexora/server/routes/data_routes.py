@@ -16,9 +16,12 @@ import gzip
 import json
 import orjson
 import threading
+import logging
 from collections import OrderedDict
 from os import walk
 from urllib.parse import quote
+
+_log = logging.getLogger(__name__)
 
 
 @app.route('/init_database', methods=['GET'])
@@ -62,8 +65,18 @@ def get_nearest_cell():
     datasource = request.args.get('datasource')
     # The frame on screen, for a time series' object table: its cells only.
     t = request.args.get('t')
+    # The planes on screen of a z-stack (inclusive; equal for one plane):
+    # the cells whose extent overlaps them.
+    z0, z1 = request.args.get('z0'), request.args.get('z1')
+    planes = None
+    if z0 not in (None, "") and z1 not in (None, ""):
+        try:
+            planes = tuple(sorted((int(z0), int(z1))))
+        except ValueError:
+            return jsonify({'error': 'z0 and z1 are plane numbers'}), 400
     resp = data_model.query_for_closest_cell(x, y, datasource,
-                                             t=int(t) if t not in (None, "") else None)
+                                             t=int(t) if t not in (None, "") else None,
+                                             planes=planes)
     return serialize_and_submit_json(resp)
 
 
@@ -392,8 +405,8 @@ def resource_status():
             # is the version that leaves a blank page unexplained. Whatever is
             # known below -- the previous load's record, and the registry --
             # is still worth answering with.
-            print(f"{datasource}: could not reload while reporting its "
-                  f"resources -- {exc}")
+            _log.warning("%s: could not reload while reporting its resources -- %s",
+                         datasource, exc)
     errors = {
         kind: data_model.resource_unavailable(datasource, kind)
         for kind in ("image", "segmentation", "table")
@@ -993,6 +1006,11 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
     # without cross-module cache access. `quality` is part of the key so
     # default/hd/legacy variants of the same tile don't collide.
     generation = data_model.ensure_loaded(datasource)
+    from plexora.server.volume.plane_view import served_final, served_steps
+
+    # This thread's previous tile is not this one's -- a cached tile included,
+    # which would otherwise be sent with the last section's drawn-up flags.
+    served_steps()
     # The view only when there is one, so a planar project's key is the tuple
     # it has always been.
     key = ((generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
@@ -1005,17 +1023,15 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
             return cached
 
     _perf.note("cache", "miss")
-    from plexora.server.volume.plane_view import served_steps
-
-    served_steps()   # this thread's previous tile is not this one's
     encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
                                                view, window=window)
-    # A section drawn up from a coarser level (its read was over budget):
-    # neither kept here nor by the browser -- the sharp one replaces it once
-    # the area is prepared in 3-D.
     if served_steps(reset=False):
         _perf.note("served", str(served_steps(reset=False)))
-        return encoded, mimetype
+        # A section drawn up from a coarser level (its read was over budget):
+        # neither kept here nor by the browser -- the sharp one replaces it
+        # once the area is prepared in 3-D. A drawn-up projection is final.
+        if not served_final():
+            return encoded, mimetype
 
     with _tile_png_cache_lock:
         _tile_png_cache[key] = (encoded, mimetype)
@@ -1102,10 +1118,11 @@ def generate_png(datasource, channel, level, tile):
     # a 200 with fresh bytes instead of a wrong 304.
     etag = _tile_etag(data_model.load_generation, datasource, channel, level, tile, quality,
                       view, window)
-    from plexora.server.volume.plane_view import served_steps
+    from plexora.server.volume.plane_view import served_final, served_steps
 
+    final = served_final()
     steps = served_steps()
-    if steps:
+    if steps and not final:
         response = send_file(io.BytesIO(encoded), mimetype=mimetype)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Plexora-Served-Steps'] = str(steps)
@@ -1117,6 +1134,11 @@ def generate_png(datasource, channel, level, tile):
         response = send_file(io.BytesIO(encoded), mimetype=mimetype)
     response.headers['ETag'] = etag
     response.headers['Cache-Control'] = 'private, max-age=31536000'
+    if steps:
+        # A projection computed coarser and drawn up: final, so cached, and
+        # said all the same.
+        response.headers['X-Plexora-Served-Steps'] = str(steps)
+        response.headers['Access-Control-Expose-Headers'] = 'X-Plexora-Served-Steps'
     return response
 
 
@@ -1306,12 +1328,23 @@ def generate_overview(datasource, channel):
     # Before sampling load_generation, for the same reason as the tile path:
     # loading is what bumps the generation.
     generation = data_model.ensure_loaded(datasource)
+    # `view=`: the plane or projection of a z-stack on screen, so the map
+    # shows what is being looked at. Canonical, so one view is one address.
+    view = request.args.get('view') or ''
+    if view:
+        from plexora.server.models import views
+        from plexora.server.volume.viewspec import BadView
 
-    etag = f'"{generation}-overview-{datasource}-{channel}"'
+        try:
+            view = views.canonical(datasource, view)
+        except BadView:
+            view = ''
+
+    etag = f'"{generation}-overview-{datasource}-{channel}' + (f'-{view}"' if view else '"')
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:
-        encoded = data_model.generate_channel_overview(datasource, channel)
+        encoded = data_model.generate_channel_overview(datasource, channel, view or None)
         if encoded is None:
             abort(404)
         response = send_file(io.BytesIO(encoded), mimetype='image/webp')
