@@ -121,7 +121,7 @@ window.PlexoraImportHelp = (function () {
         {
             name: "Multiplex image", shape: "file",
             pointAt: "the image",
-            marker: ".ome.tif · .tif · .tiff · .qptiff",
+            marker: ".ome.tif · .tif · .tiff · .qptiff · .ims",
             produces: ["multiplex"],
             mayAsk: ["pyramidize"],
             note: "Channel names come from the file's own metadata.",

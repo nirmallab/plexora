@@ -1418,6 +1418,15 @@ export class ViewerManager {
             return settled;
         }
 
+        //: AN ORDINARY ADD COMES IN rather than lands (services/channelFade.js):
+        //: both halves join one fade, held at nothing until every tile in view
+        //: can draw and then brought up together to the base card's opacity --
+        //: rather than appearing tile by tile at full strength. A replacement
+        //: already has its handover, and a swap is not a channel arriving.
+        const Fade = globalThis.PlexoraChannelFade;
+        const fade = !replacing && !adopt && Fade
+            ? Fade.group(2, { target: () => this.referenceOpacity() }) : null;
+
         const claim = (e, z) => {
             this.restoreView();
             // "open" is what wires up the GL colorize pipeline (see
@@ -1431,6 +1440,10 @@ export class ViewerManager {
             // label image is also present) is harmless.
             this.viewer.raiseEvent("open", e.item);
             if (!replacing) {
+                // Held at nothing before it is claimed: a stack change that
+                // pushes the base card's opacity onto the layer's items is
+                // put back by the fade.
+                fade?.join(e.item);
                 this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item, z);
                 this.applyWorldOrder();
                 settle();
@@ -1500,8 +1513,9 @@ export class ViewerManager {
                 //: which with `lighter` would read as a bright flash. OSD
                 //: skips drawing an item at opacity 0 entirely (Drawer.draw),
                 //: so the held pair costs the fetch and the decode and not
-                //: the colorize pass.
-                opacity: replacing ? 0 : opacity,
+                //: the colorize pass. A fresh channel starts there too, for
+                //: its fade.
+                opacity: replacing || fade ? 0 : opacity,
                 //: What keeps an invisible item loading at all --
                 //: TiledImage.getDrawArea answers `false` for opacity 0
                 //: unless this is set, and a replacement that never fetches
@@ -1511,7 +1525,14 @@ export class ViewerManager {
                 //: A half that never arrives still has to close the swap, or
                 //: the pair it was replacing is held on screen until the
                 //: deadline and the chip says HD for twenty seconds.
-                error: () => { if (replacing) settleOne(); else settle(); },
+                error: () => {
+                    if (replacing) {
+                        settleOne();
+                        return;
+                    }
+                    fade?.join(null);
+                    settle();
+                },
             });
         }
         return settled;
@@ -1855,6 +1876,11 @@ export class ViewerManager {
         //: (see `prepareStyle`). Without it a layer switched off mid-swap
         //: keeps paying for a viewport of tiles until the swap's deadline.
         let pending = null;
+        //: The fade this item comes in with (services/channelFade.js) -- a
+        //: layer channel switched on, whose cover and paint share one. The
+        //: first add only: a quality swap or an eye opened again is not a
+        //: channel arriving.
+        let fade = spec.fade || null;
         const self = this;
 
         /**
@@ -1871,6 +1897,8 @@ export class ViewerManager {
             generation += 1;
             const mine = generation;
             const holding = replacing || null;
+            const joining = holding ? null : fade;
+            fade = null;
             const answer = (arrived, commit) => onReady?.(arrived, commit || (() => {}));
             self.viewer.addTiledImage({
                 tileSource: {
@@ -1939,9 +1967,10 @@ export class ViewerManager {
                 //: and `preload` is what keeps an invisible item loading at
                 //: all (TiledImage.getDrawArea). Both are turned off again at
                 //: handover: a layer faded to zero with the opacity slider is
-                //: still on, and must go back to costing nothing.
-                opacity: holding ? 0 : opacity,
-                preload: Boolean(holding),
+                //: still on, and must go back to costing nothing. A channel
+                //: coming in is held the same way until its fade has run.
+                opacity: holding || joining ? 0 : opacity,
+                preload: Boolean(holding || joining),
                 success: (e) => {
                     // Before anything else, and for the reason every other add
                     // in this class does it: an item landing in an emptied
@@ -1956,6 +1985,7 @@ export class ViewerManager {
                         // invisible: an item nobody asked for still fetches
                         // every tile in view.
                         self.viewer.world.removeItem(e.item);
+                        joining?.join(null);
                         answer(null);
                         return;
                     }
@@ -1979,6 +2009,7 @@ export class ViewerManager {
                     if (spec.channel) e.item.source.channel = spec.channel;
                     if (!holding) {
                         item = e.item;
+                        joining?.join(e.item);
                         self.claimWorldItem(layerId, e.item, spec.z);
                         self.applyWorldOrder();
                         answer(null);
@@ -2011,7 +2042,10 @@ export class ViewerManager {
                 },
                 //: An add that fails still has to answer, or a pair waiting on
                 //: it is held at the old quality until the deadline.
-                error: () => answer(null),
+                error: () => {
+                    joining?.join(null);
+                    answer(null);
+                },
             });
         }
 
@@ -2328,6 +2362,15 @@ export class ViewerManager {
             const src = sources[name];
             if (!src) return;
             const record = { color: colour, range: range };
+            // One fade for the pair (services/channelFade.js): the channel
+            // comes in at the layer's opacity once it can draw. `preload`
+            // held it loading at nothing; off again after, so a layer faded
+            // to zero with its slider goes back to costing nothing.
+            const Fade = globalThis.PlexoraChannelFade;
+            const fade = Fade && shown ? Fade.group(2, {
+                target: () => opacity,
+                onDone: (items) => { for (const item of items) item.setPreload?.(false); },
+            }) : null;
             const common = {
                 layerId,
                 src,
@@ -2347,6 +2390,7 @@ export class ViewerManager {
                 //: `addTiledLayer`. The two items want the same texture.
                 srcIdx: `${layerId}:${name}`,
                 opacity,
+                fade,
                 geometry,
                 // Never added while the layer's eye is off -- see the note on
                 // `shown` in addTiledLayer. `setVisible(true)` brings every

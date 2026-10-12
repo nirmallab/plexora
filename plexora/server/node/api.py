@@ -407,8 +407,12 @@ def resource_status(resource_id):
     Not behind `--dynamic`: describing what this node already serves is what
     `/hello` does for every resource at once, and a caller that has just been
     handed a `preparing` needs somewhere to ask again.
+
+    Also what opening a project asks about its node-served mask, which makes it
+    the moment a mask restored at startup starts being prepared.
     """
     resource = _registry().get(resource_id)
+    _prepare_on_first_use(resource)
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
 
 
@@ -689,6 +693,7 @@ def _prepare_in_background(resource):
     import threading
 
     with resource.lock:
+        resource.prepare_on_use = False
         if resource.prepared or resource.state == node_resources.PREPARING:
             # Two shares of the same mask racing. One conversion is enough, and
             # two writing the same pyramid would be worse than wasteful.
@@ -724,6 +729,19 @@ def _prepare_in_background(resource):
 
     threading.Thread(target=run, name=f"prepare-{resource.id}",
                      daemon=True).start()
+
+
+def _prepare_on_first_use(resource):
+    """Start preparing a mask restored from the manifest, now that something
+    has asked about it (see `app._restore_manifest`).
+
+    A flag check on every other call, which is what lets the tile routes call
+    it: tiles are the first use when the primary is too old to probe status on
+    open. Two requests racing here are settled by `_prepare_in_background`'s
+    own guard.
+    """
+    if resource.prepare_on_use:
+        _prepare_in_background(resource)
 
 
 # -- table ----------------------------------------------------------------
@@ -948,6 +966,7 @@ def seg_tile(resource_id, level, tile):
     as the conversion took, and forever when it failed.
     """
     resource = _registry().get(resource_id, kind="segmentation")
+    _prepare_on_first_use(resource)
     # The plane of a 3-D mask (a label volume): the same `view` token the
     # viewer puts on every label tile, whether it asks the primary (which
     # forwards it) or this node directly. A 2-D mask has one plane for every
@@ -1026,6 +1045,7 @@ def seg_region(resource_id):
     from plexora.server.utils.label_overlay import padded_label_region
 
     resource = _registry().get(resource_id, kind="segmentation")
+    _prepare_on_first_use(resource)
     body = request.get_json(silent=True) or {}
     level = int(body.get("level") or 0)
     box = [int(value) for value in body.get("box") or (0, 0, 0, 0)]
@@ -1065,6 +1085,7 @@ def seg_block(resource_id):
     import numpy as np
 
     resource = _registry().get(resource_id, kind="segmentation")
+    _prepare_on_first_use(resource)
     body = request.get_json(silent=True) or {}
     level = int(body.get("level") or 0)
     with _reading(resource) as pyramid:

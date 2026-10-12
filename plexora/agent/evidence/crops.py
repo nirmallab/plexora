@@ -37,13 +37,16 @@ DEFAULT_UM_PER_PX = 0.5
 class Crop:
     """One cell's square crop: raw planes by channel name, labels, geometry."""
 
-    __slots__ = ("cell_id", "x", "y", "planes", "labels", "box", "level", "mask_stats")
+    __slots__ = ("cell_id", "x", "y", "planes", "labels", "box", "level", "mask_stats", "z")
 
-    def __init__(self, cell_id, x, y, box, level):
+    def __init__(self, cell_id, x, y, box, level, z=None):
         self.cell_id, self.x, self.y, self.box, self.level = cell_id, x, y, box, level
         self.planes = {}
         self.labels = None
         self.mask_stats = None
+        #: The z-stack plane the crop was read on; None for a flat image (or a
+        #: table that does not place cells in depth: the stack's default plane).
+        self.z = z
 
 
 def crop_side_px(record, crop_um=None, crop_px=None, default_um=24.0, default_px=48.0,
@@ -95,24 +98,85 @@ def in_disc(crop, name, radius_px):
     return plane[disc_mask(crop, radius_px)]
 
 
+def cell_planes(session, record, cells):
+    """{cell_id: plane} for `cells` of a z-stack whose cell table places each
+    cell in depth (a `z` role, in planes -- an object table, or a CSV with X,
+    Y and Z); {} for anything else, whose crops are read on the image's one
+    plane, or a stack's default one."""
+    if not cells or not getattr(record.image, "is_volumetric", False):
+        return {}
+    from plexora.agent.sections import plane_of, table_planes
+    from plexora.server.utils.label_overlay import cell_ids
+
+    try:
+        data = session.data(record.name)
+    except AgentError:  # no table to place them: the default plane, as before
+        return {}
+    schema = data.schema
+    frame = data.table.geometry() if data.table.available else None
+    if frame is None or schema is None:
+        return {}
+    ids, keep = cell_ids(frame, schema.cell_id)
+    zs, depth, _solid = table_planes(data, keep)
+    if zs is None or not ids.size:
+        return {}
+    order = np.argsort(ids, kind="stable")
+    sorted_ids = ids[order]
+    wanted = np.array([int(cell["cell_id"]) for cell in cells], dtype=np.int64)
+    at = np.clip(np.searchsorted(sorted_ids, wanted), 0, sorted_ids.size - 1)
+    found = sorted_ids[at] == wanted
+    out = {}
+    for cid, hit, index in zip(wanted.tolist(), found.tolist(), at.tolist()):
+        plane = plane_of(zs[order[index]], depth) if hit else None
+        if plane is not None:
+            out[cid] = plane
+    return out
+
+
 def read_cell_crops(session, record, cells, *, channels, crop_px, tile_px, mask=True,
                     level=None):
     """({cell_id: Crop}, info) for `cells` = [{cell_id, x, y}].
 
     `channels` maps a channel NAME to its record key (`source_image.channel_key`).
     Crops are padded with zeros (and label 0) where they run off the image.
+    On a z-stack whose table places cells in depth, each cell is read on its
+    own plane (`cell_planes`), pixels and mask alike.
     """
+    if not cells:
+        return {}, {"reads": 0, "groups": 0, "level": 0}
+    planes = cell_planes(session, record, cells)
+    by_plane = {}
+    for cell in cells:
+        by_plane.setdefault(planes.get(int(cell["cell_id"])), []).append(cell)
+    crops, info = {}, None
+    for plane, members in by_plane.items():
+        got, got_info = _read_plane_crops(session, record, members, channels=channels,
+                                          crop_px=crop_px, tile_px=tile_px, mask=mask,
+                                          level=level, z=plane)
+        crops.update(got)
+        if info is None:
+            info = got_info
+        else:
+            info["reads"] += got_info["reads"]
+            info["groups"] += got_info["groups"]
+    if planes:
+        info["planes"] = sorted({p for p in planes.values()})
+    return crops, info
+
+
+def _read_plane_crops(session, record, cells, *, channels, crop_px, tile_px, mask, level, z):
+    """`read_cell_crops` for cells on one plane of a z-stack (`z` None: the
+    default plane)."""
     from plexora.agent import render
     from plexora.server.utils import source_image
 
-    if not cells:
-        return {}, {"reads": 0, "groups": 0, "level": 0}
     image_data = session.image_data(record.name)
     tile_w = int(record.image.tile_width or 1024)
     tile_h = int(record.image.tile_height or 1024)
     crops = {}
     reads = 0
-    with source_image.SHELF.reader(image_data) as source:
+    view = f"z{z}" if z is not None else None
+    with source_image.SHELF.reader(image_data, view=view) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "cell crops are drawn per channel; this image is brightfield")
@@ -131,7 +195,8 @@ def read_cell_crops(session, record, cells, *, channels, crop_px, tile_px, mask=
             x0 = int(math.floor(cx - side / 2))
             y0 = int(math.floor(cy - side / 2))
             box = (x0, y0, x0 + side, y0 + side)
-            crop = Crop(int(cell["cell_id"]), float(cell["x"]), float(cell["y"]), box, level)
+            crop = Crop(int(cell["cell_id"]), float(cell["x"]), float(cell["y"]), box, level,
+                        z=z)
             crops[crop.cell_id] = crop
             key = (int(cx // tile_w), int(cy // tile_h))
             groups.setdefault(key, []).append(crop)
@@ -169,7 +234,10 @@ def read_cell_crops(session, record, cells, *, channels, crop_px, tile_px, mask=
                     gy0 = min(c.box[1] for c in members)
                     gx1 = max(c.box[2] for c in members)
                     gy1 = max(c.box[3] for c in members)
-                    labels = provider.read_region(mask_level, (gx0, gy0, gx1, gy1))
+                    box = (gx0, gy0, gx1, gy1)
+                    # A 3-D mask is cut at the cells' plane, like the pixels.
+                    labels = (provider.read_region(mask_level, box) if z is None else
+                              render._read_mask(provider, mask_level, box, max_pixels=0, z=z))
                     reads += 1
                     for crop in members:
                         oy, ox = crop.box[1] - gy0, crop.box[0] - gx0

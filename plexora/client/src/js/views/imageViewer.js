@@ -311,6 +311,12 @@ class ImageViewer {
         this.centroidTiles = new Map();
         this.centroidFilter = {};
         this.centroidFilterSignature = "{}";
+        //: `{column, z0, z1}` while a z-stack's table places cells in depth:
+        //: the dots drawn are those planes' cells (setCentroidPlanes).
+        this.centroidPlanes = null;
+        //: True from a plane change until the new planes' tiles land; the
+        //: old ones stay drawn meanwhile, so stepping through z never blinks.
+        this.centroidTilesStale = false;
         this.centroidTileTimer = null;
         this.centroidTileRequest = 0;
         this.centroidFirstLoad = true;
@@ -2416,7 +2422,8 @@ class ImageViewer {
                 this.centroidTiles.delete(key);
             }
         }
-        const missing = tiles.filter((tile) => !this.centroidTiles.has(tile.key));
+        const stale = this.centroidTilesStale;
+        const missing = stale ? tiles : tiles.filter((tile) => !this.centroidTiles.has(tile.key));
         if (!missing.length) {
             this.refreshCentroidOverlay();
             return;
@@ -2428,8 +2435,13 @@ class ImageViewer {
         }
         try {
             const payload = missing.map(({ x, y }) => ({ x, y }));
-            const buffer = await this.dataLayer.getCentroidTiles(level, payload, this.centroidFilter, 50000);
+            const buffer = await this.dataLayer.getCentroidTiles(
+                level, payload, this.centroidRequestFilter(), 50000);
             if (requestId !== this.centroidTileRequest || !buffer) return;
+            if (stale) {
+                this.centroidTiles.clear();
+                this.centroidTilesStale = false;
+            }
             const grouped = this.decodeCentroidTileBuffer(buffer, level);
             for (const tile of missing) {
                 this.centroidTiles.set(tile.key, grouped.get(tile.key) || {
@@ -2702,6 +2714,34 @@ class ImageViewer {
         }
         this.rerenderSegmentationTiles?.(null);
         this.viewer?.forceRedraw?.();
+    }
+
+    /**
+     * Follow the planes on screen with the centroid dots, for a z-stack whose
+     * cell table places each cell in depth (`planes` is `{column, z0, z1}`,
+     * inclusive, or null): plane k shows the cells centred on plane k, not
+     * every cell of the stack flattened onto it. Only the dots -- a 3-D mask's
+     * outlines follow the plane already, and gates, counts and the cells' rows
+     * stay the whole volume's.
+     */
+    setCentroidPlanes(planes) {
+        const z0 = Number(planes?.z0);
+        const z1 = Number(planes?.z1);
+        const next = planes && planes.column && Number.isFinite(z0) && Number.isFinite(z1)
+            ? { column: String(planes.column), z0: Math.min(z0, z1), z1: Math.max(z0, z1) } : null;
+        if (JSON.stringify(this.centroidPlanes) === JSON.stringify(next)) return;
+        this.centroidPlanes = next;
+        this.centroidTilesStale = this.centroidTiles.size > 0;
+        this.centroidTileRequest += 1;
+        this.scheduleCentroidTileUpdate(0, false);
+    }
+
+    /** The centroid filter narrowed to the planes on screen: z within half a
+     *  plane of them (low < z <= high, the rule `withFrame` uses for t). */
+    centroidRequestFilter() {
+        const planes = this.centroidPlanes;
+        if (!planes) return this.centroidFilter;
+        return { ...this.centroidFilter, [planes.column]: [planes.z0 - 0.5, planes.z1 + 0.5] };
     }
 
     /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,

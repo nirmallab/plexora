@@ -788,6 +788,8 @@ _PROJECT_OPTIONS = (
     ("--cell-id", {"help": "The column holding the cell identifier."}),
     ("--x", {"help": "The column holding the X coordinate."}),
     ("--y", {"help": "The column holding the Y coordinate."}),
+    ("--z", {"help": "The column holding the Z coordinate (each cell's plane), "
+                     "for a table over a z-stack."}),
     ("--sample", {"help": "The column holding the image or sample id."}),
     ("--celltype", {"help": "The column holding a phenotype or cell type."}),
     ("--markers", {"nargs": "+", "metavar": "COLUMN",

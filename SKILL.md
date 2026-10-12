@@ -5149,6 +5149,21 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   window until it is exact and announces `plexora:volume-window`;
   `services/perfProbe.js` (`window.PlexoraViewPerf`) holds the marks and
   counters the benchmark reads. Both are loaded from `index.html`.
+- Channel fade: `services/channelFade.js` (`window.PlexoraChannelFade`,
+  classic script loaded from `index.html` before `main.js`) fades a channel
+  switched on in over 240 ms, eased out, on every surface the image channel
+  section drives. Callers add the channel's OSD items at opacity 0 with
+  `preload` and join them to one fade (`group(count, {target, onDone})` /
+  `fadeIn(items)`); it holds until every item is fully loaded (ceiling
+  800 ms) and brings them up together. Hooks: `viewerManager.addChannelItems`
+  (an ordinary add only -- not HD swaps, plane steps or standby),
+  `addTiledLayer` via `spec.fade` (a layer's channel pairs, from
+  `addLayerChannelSet`), and `sectionPanes.js`'s `Pane.show` (channels new to
+  the pane). The 3-D view fades by a per-channel `presence()` uniform in
+  `volumeRenderer.js` instead, whose `refresh()` awaits
+  `volumeWindows.ensure` before fetching levels (a channel switched on in 3-D
+  used to not draw until toggled twice). Motion off (viewerPrefs or
+  reduced-motion) lands at once.
 - Server: `server/volume/serve.py` — the level payload builder
   (`parse_level`, `read_level`, `level_payload`, `forwarded_payload`, an
   LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
@@ -5177,6 +5192,10 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, and node level parity in
   `test_volume_backend.py`.
+  The fade has `tests/js/channel_fade_probe.mjs` wrapped by
+  `test_channel_fade_client.py`; `section_panes_probe.mjs` and
+  `volume_renderer_probe.mjs` carry its hook checks, and the
+  `test_viewer_3d_client.py` wrapper now expects at least 30 checks.
 
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
 licence split, renderer passes, measurements, merge notes — is
@@ -6374,6 +6393,15 @@ and reports the wait through `PlexoraStatus.begin("HD tiles"/"Fast tiles")` —
 the swap is no longer instant, and the navbar chip is what says the click was
 heard.
 
+**HD is on by default, decided once at boot.** `main.js` presets HD before the
+first channel is added unless `flaskVariables.image_streamed` or
+`flaskVariables.server_is_remote` is set. Channel image kinds only
+(not rgb, brightfield or blank), and a Prev/Next carry-over's `hd` wins over
+the preset. `image_streamed` comes from `page_routes.image_streamed(project)`:
+true when the image's src is a web or node address, or the image resource is
+bound to a node.
+`tests/test_hd_default.py` pins the rule.
+
 ### Brightfield draws none of that
 
 A project with `image_kind == "brightfield"` (H&E and every other transmitted
@@ -7167,34 +7195,6 @@ in **5.6 s**.
   or stem. Callers with a recorded `segmentationSourceKey` still use it
   (`refresh_segmentation_ mapping`); the ones without — a fresh import, a node
   — fall back to "ours, of this mode, not older than the source".
-- **A remote mask is never served directly — always converted into the
-  project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
-  skips beside-the-source entirely: there is no folder beside a URL to write
-  into, and `Path()` of one would create a pyramid under the working
-  directory (`https:/host/...` after `Path` folds the double slash). It
-  requires `data_directory` and names the target under it
-  (`_remote_derived_path`, e.g. `labels/cells` inside `sample.zarr` becomes
-  `sample_cells`). Staleness has no mtime to compare, so `_is_adoptable`
-  trusts the recorded ETag/Last-Modified instead (`source_fingerprint` via
-  `remote_store.fingerprint_key`, checked on every load) and answers "still
-  good" outright. `_open_level_zero`'s remote branch reads through
-  `ome_zarr._open_group`/the chunk cache, and `_Plane2D` pins any leading
-  axes (t=0, c=0, z=middle) to the one (rows, cols) plane the pyramidizer
-  wants — an NGFF label image can be anything from (y, x) to (t, c, z, y, x).
-- **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
-  `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
-  against `"filled"`, so an absent key greys Filled out ("stored as outlines,
-  nothing to fill") and paints a filled label pyramid as solid blobs with
-  Outlines selected — wrong picture, no error anywhere. Every path that records
-  a mask must therefore record a mode. Locally `refresh_segmentation_mapping`
-  backfills it; for a mask on a NODE that refresh is skipped wholesale (nothing
-  here to fingerprint or convert), so the mode comes from the node's
-  `/hello` `mask_mode`, which is `Resource.mask_mode` — decided once by
-  `app._convert_mask_if_needed`, which returns the mode of whatever is left
-  being served in every branch. It cannot be re-derived from the file: the two
-  branches that skip conversion because the user's own mask is already fine (a
-  servable label pyramid; a mask that already looks like outlines) leave no OME
-  marker for `generated_mask_kind` to read. `load_config` backfills node-backed
 - **A mask is any format that can hold an integer id, and everything else is
   refused up front with a sentence.** `segmentation_pyramid.mask_format_refusal(path)`
   returns that sentence or None: JPEG (lossy, so ids are not preserved), slide
@@ -7274,6 +7274,34 @@ in **5.6 s**.
   `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
   `tests/test_node_new_formats.py` pin it;
   `tests/test_nan_tables.py` pins the NaN-position rules above.
+- **A remote mask is never served directly — always converted into the
+  project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
+  skips beside-the-source entirely: there is no folder beside a URL to write
+  into, and `Path()` of one would create a pyramid under the working
+  directory (`https:/host/...` after `Path` folds the double slash). It
+  requires `data_directory` and names the target under it
+  (`_remote_derived_path`, e.g. `labels/cells` inside `sample.zarr` becomes
+  `sample_cells`). Staleness has no mtime to compare, so `_is_adoptable`
+  trusts the recorded ETag/Last-Modified instead (`source_fingerprint` via
+  `remote_store.fingerprint_key`, checked on every load) and answers "still
+  good" outright. `_open_level_zero`'s remote branch reads through
+  `ome_zarr._open_group`/the chunk cache, and `_Plane2D` pins any leading
+  axes (t=0, c=0, z=middle) to the one (rows, cols) plane the pyramidizer
+  wants — an NGFF label image can be anything from (y, x) to (t, c, z, y, x).
+- **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
+  `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
+  against `"filled"`, so an absent key greys Filled out ("stored as outlines,
+  nothing to fill") and paints a filled label pyramid as solid blobs with
+  Outlines selected — wrong picture, no error anywhere. Every path that records
+  a mask must therefore record a mode. Locally `refresh_segmentation_mapping`
+  backfills it; for a mask on a NODE that refresh is skipped wholesale (nothing
+  here to fingerprint or convert), so the mode comes from the node's
+  `/hello` `mask_mode`, which is `Resource.mask_mode` — decided once by
+  `app._convert_mask_if_needed`, which returns the mode of whatever is left
+  being served in every branch. It cannot be re-derived from the file: the two
+  branches that skip conversion because the user's own mask is already fine (a
+  servable label pyramid; a mask that already looks like outlines) leave no OME
+  marker for `generated_mask_kind` to read. `load_config` backfills node-backed
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
 - **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_source`
@@ -8042,9 +8070,21 @@ in **5.6 s**.
   Spacing is applied when something is measured, never stored, so a z step
   corrected later re-measures a surface without re-extracting it.
 - **Agent surface tools never load the viewer's project.** They open the
-  volume themselves with `source_image.open_project_volume(record)` and close
-  it, because an agent call must not touch the viewer's loaded project
+  volume themselves with `surface.store.open_volume_for(record)` (the file
+  here, or a data node's `NodeVolumeReader`) and close it, because an agent
+  call must not touch the viewer's loaded project
   (`tests/test_agent_architecture.py`).
+- **A channel's items are added at opacity 0 and owned by one fade.** While
+  `PlexoraChannelFade` runs it owns their opacity -- an `opacity-change` guard
+  re-applies it and `target()` is read every frame -- so anything that sets
+  those items' opacity mid-fade is overridden, and a caller that wants a
+  different level changes what `target()` returns instead. Items join the
+  fade only through an ordinary add; HD swaps, plane steps and standby build
+  their own items and must not, or a swap would fade out and in.
+- **The HD default rule lives in `main.js`'s boot, and `image_streamed` is
+  golden-pinned.** The key is in the viewer page's `flask_variables`, so it
+  is part of the boundary goldens' `pages` record; renaming or dropping it
+  fails all of them, not just `tests/test_hd_default.py`.
 
 ## Validation
 

@@ -61,6 +61,10 @@ def volume_info(datasource):
     # A time series' object table names each row's frame: the viewer then
     # reads only the frame on screen's rows (ImageViewer.setTableFrame).
     info["table_t"] = project.roles.get("t") if project.has_table else None
+    # A table that places each cell in depth (an object table, or a CSV with
+    # X, Y and Z): the viewer draws each plane's own cells as centroids
+    # (ImageViewer.setCentroidPlanes) instead of the whole stack's.
+    info["table_z"] = project.roles.get("z") if project.has_table else None
     return jsonify(info)
 
 

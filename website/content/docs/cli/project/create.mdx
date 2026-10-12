@@ -20,7 +20,7 @@ tool needs when it needs it.
 ```bash
 plexora project create [-h] [--name NAME] [--segmentation SEGMENTATION] [--data DATA]
                               [--table TABLE] [--subset COLUMN=VALUE] [--cell-id CELL_ID] [--x X]
-                              [--y Y] [--sample SAMPLE] [--celltype CELLTYPE]
+                              [--y Y] [--z Z] [--sample SAMPLE] [--celltype CELLTYPE]
                               [--markers COLUMN [COLUMN ...]] [--metadata COLUMN [COLUMN ...]]
                               [--layer LAYER] [--log1p] [--single-image] [--row-number-ids]
                               [--channel-names NAME [NAME ...]]
@@ -86,6 +86,12 @@ The column holding the X coordinate.
 <Param name={"--y Y"}>
 
 The column holding the Y coordinate.
+
+</Param>
+
+<Param name={"--z Z"}>
+
+The column holding the Z coordinate (each cell's plane), for a table over a z-stack.
 
 </Param>
 

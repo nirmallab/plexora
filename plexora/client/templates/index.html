@@ -534,6 +534,10 @@
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261010_motion" defer></script>
+{# A channel switched on comes in rather than lands, on every surface the
+   channel section drives (the plane, layers, section panes). Before main.js,
+   whose boot adds the first channels. #}
+<script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261011_channel_fade" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261011_stack_qc" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
@@ -548,8 +552,8 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261011_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261011_surface_fade" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261011_surface_fade" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261010_standby" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
@@ -569,7 +573,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261011_surface_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261011_surface_centroid" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.
@@ -752,6 +756,6 @@
         {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261010_home_redesign" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261011_import_home" defer></script>
 {% endif %}
 {% endblock %}

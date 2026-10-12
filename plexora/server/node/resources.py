@@ -215,6 +215,11 @@ class Resource:
     #: such a mask twice would put it back into `preparing` and make the caller
     #: poll for a conversion that is not going to happen.
     prepared: bool = False
+    #: Masks only: restored from the manifest and not yet checked. Preparing it
+    #: waits for the first thing that asks about it -- a status probe when a
+    #: project opens, or a tile -- so a node coming back is never held up
+    #: converting a mask nobody is looking at (see `api._prepare_on_first_use`).
+    prepare_on_use: bool = False
     #: Masks only: "filled"/"outlines" for what `path` now holds, decided by
     #: `app._convert_mask_if_needed` and kept because that is the only moment
     #: anything reads enough of the file to know. None until preparation has

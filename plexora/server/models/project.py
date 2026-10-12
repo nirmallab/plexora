@@ -411,6 +411,16 @@ class DataSpec:
     #: that was never looked at, which is how a project came to keep a
     #: positional cell id while its mask was labelled by an obs column.
     row_number_ids: bool = False
+    #: The user's explicit answer that this table places no cell in depth: a
+    #: 2-D table over a z-stack (cells segmented on a projection, say), whose
+    #: cells belong to every plane.
+    #:
+    #: The same distinction `single_image` draws, for the same reason. On a
+    #: z-stack the Z column is asked for with X and Y, and an unset `roles.z`
+    #: is also the state of a question nobody has put -- so "there is no Z"
+    #: needs somewhere to be recorded, or it could only be said by leaving the
+    #: question blank and would be asked again every time.
+    flat_cells: bool = False
     #: What the IMPORTER changed about this table on the way in, or `{}`.
     #:
     #: A flat table is copied into the project directory, and a Xenium cell
@@ -464,6 +474,7 @@ class DataSpec:
             obsm=tuple(dict(entry) for entry in (raw.get("obsm") or ())),
             single_image=bool(raw.get("singleImage")),
             row_number_ids=bool(raw.get("rowNumberIds")),
+            flat_cells=bool(raw.get("flatCells")),
             derived=dict(raw.get("derived") or {}),
             unresolved=tuple(str(key) for key in (raw.get("unresolved") or ())),
         )
@@ -501,6 +512,8 @@ class DataSpec:
             out["singleImage"] = True
         if self.row_number_ids:
             out["rowNumberIds"] = True
+        if self.flat_cells:
+            out["flatCells"] = True
         # Written only when there is something outstanding, so an ordinary
         # project's entry is byte-identical to what it was before this field
         # existed.
@@ -2089,6 +2102,9 @@ class Project:
         project = self
         if values.get("image_id"):
             project = project.patch(dataset=replace(project.dataset, single_image=False))
+        # Likewise naming a Z column retracts "the cells have no Z".
+        if values.get("z"):
+            project = project.patch(dataset=replace(project.dataset, flat_cells=False))
         if not project.columns_are_structural:
             return project.with_roles(values)
 
@@ -2164,6 +2180,20 @@ class Project:
         if flag:
             spec = replace(spec, roles=spec.roles.with_values({"image_id": None}))
         return self.patch(dataset=replace(spec, single_image=bool(flag)))
+
+    def with_flat_cells(self, flag: bool = True) -> "Project":
+        """Record the user's answer that this table places no cell in depth.
+
+        Kept apart from `roles.z` on purpose -- see DataSpec.flat_cells.
+        Setting it clears any Z column, since the two are alternative answers
+        to one question.
+        """
+        if not self.dataset:
+            return self
+        spec = self.dataset
+        if flag:
+            spec = replace(spec, roles=spec.roles.with_values({"z": None}))
+        return self.patch(dataset=replace(spec, flat_cells=bool(flag)))
 
     def with_row_number_ids(self, flag: bool = True) -> "Project":
         """Record the user's answer that no obs column holds the cell id.

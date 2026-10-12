@@ -399,6 +399,15 @@ def _role_state(project: Project, role: str) -> tuple:
             return (PRESENT, "Single image")
         return (MISSING, None)
 
+    if role == "z":
+        # On a z-stack, "this table's cells have no Z" is the same kind of
+        # answer (DataSpec.flat_cells).
+        if project.roles.z:
+            return (PRESENT, project.roles.z)
+        if project.dataset.flat_cells:
+            return (PRESENT, "No Z (2-D cells)")
+        return (MISSING, None)
+
     column = project.roles.get(role)
     return (PRESENT, column) if column else (MISSING, None)
 

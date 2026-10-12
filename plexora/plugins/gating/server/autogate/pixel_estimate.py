@@ -164,7 +164,7 @@ def render_snapshots(session, ds, found, *, seed=0, fmt="webp", store=True):
     estimate (`found["microns_per_pixel"]`), or a bar in pixels without one."""
     from PIL import Image, ImageDraw
 
-    from plexora.agent import artifacts, render
+    from plexora.agent import artifacts, render, sections
     from plexora.agent.evidence import collage
     from plexora.agent.presets import nuclear_channel
     from plexora.agent.render_spec import Bounds, ChannelSpec, OutputSpec, RenderInput
@@ -188,7 +188,10 @@ def render_snapshots(session, ds, found, *, seed=0, fmt="webp", store=True):
     draw.text((4, 2), title, fill=collage.TEXT, font=font)
     shown = []
     for index, field in enumerate(fields):
+        # On a z-stack, the plane the field's cells are on (agent/sections.py).
+        plane = sections.field_plane(ds, field["bounds"])
         spec = RenderInput(project=record.name, bounds=Bounds(**field["bounds"]),
+                           **({"view": f"z{plane}"} if plane is not None else {}),
                            channels=[ChannelSpec(name=nuclear, color="#8fb4ff",
                                                  window=list(window))],
                            segmentation="outlines", output=OutputSpec(width=out_px,
@@ -219,7 +222,8 @@ def render_snapshots(session, ds, found, *, seed=0, fmt="webp", store=True):
         draw.text((x + 2, TITLE_H + out_px + 1), f"{field['name']} cells", fill=collage.DIM,
                   font=small)
         shown.append({**field, "scale_bar": bar, "ring": ring,
-                      "image_px_per_screen_px": image_px_per_screen})
+                      "image_px_per_screen_px": image_px_per_screen,
+                      **({"z": plane} if plane is not None else {})})
     png = fast_png.encode_rgb8_png(np.asarray(canvas))
     transported, transport_fmt = collage.encode(canvas, fmt)
     manifest = {"kind": "plexora.gating_pixel_snapshots", "project": record.name,

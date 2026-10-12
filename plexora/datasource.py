@@ -303,7 +303,7 @@ def _derive_dataset_name_from_path(path):
         stem = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
-        r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom)$",
+        r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom|ims)$",
         "",
         stem,
         flags=re.IGNORECASE,
@@ -1283,6 +1283,9 @@ def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,
         y=y or guessed.get("y"),
         celltype=celltype_column or guessed.get("celltype"),
         image_id=guessed.get("image_id"),
+        # A table with X, Y and Z: the plane each cell is on, as the UI's
+        # import records it (classify_columns guesses it like x and y).
+        z=guessed.get("z"),
     )
     names = [entry["name"] for entry in schema]
     named = set(roles.to_dict().values())

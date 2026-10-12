@@ -48,7 +48,7 @@ PROJECT_SPEC_KEYS = (
     # Which part of the data file.
     "table", "subset", "layer", "log1p",
     # What the columns mean.
-    "cell_id", "x", "y", "sample", "celltype", "markers", "metadata",
+    "cell_id", "x", "y", "z", "sample", "celltype", "markers", "metadata",
     "coordinates", "single_image", "row_number_ids",
     # The image itself.
     "channel_names", "image_type", "copy",
@@ -643,7 +643,7 @@ def _wait_for_layers(name, timeout=3600):
 
 
 def create_project(image, *, name=None, segmentation=None, data=None,
-                   table=None, subset=None, cell_id=None, x=None, y=None,
+                   table=None, subset=None, cell_id=None, x=None, y=None, z=None,
                    sample=None, celltype=None, markers=None, metadata=None,
                    coordinates=None, layer=None, log1p=None,
                    single_image=None, row_number_ids=None, channel_names=None,
@@ -695,6 +695,8 @@ def create_project(image, *, name=None, segmentation=None, data=None,
         cell_id (str, optional): The column that holds each cell's id.
         x (str, optional): The column that holds each cell's X coordinate.
         y (str, optional): The column that holds each cell's Y coordinate.
+        z (str, optional): The column that holds each cell's plane, for a
+            table over a z-stack that places its cells in depth.
         sample (str, optional): The column that says which image a row
             belongs to, for a `data` table that covers more than one image.
         celltype (str, optional): The column that holds a cell type or
@@ -1068,7 +1070,7 @@ def _answers(scope) -> dict:
     Read off the frame rather than listed again, so a new argument on
     `create_project` is one edit rather than two that can disagree.
     """
-    keys = ("data", "table", "subset", "cell_id", "x", "y", "sample", "celltype",
+    keys = ("data", "table", "subset", "cell_id", "x", "y", "z", "sample", "celltype",
             "markers", "metadata", "coordinates", "layer", "log1p",
             "single_image", "row_number_ids")
     # `data`, `table` and `subset` were consumed by the registration above --
@@ -1113,7 +1115,7 @@ def _column_payload(answers) -> dict:
     because all three go through `apply_column_answers`.
     """
     roles = {}
-    for key, role in (("cell_id", "cell_id"), ("x", "x"), ("y", "y"),
+    for key, role in (("cell_id", "cell_id"), ("x", "x"), ("y", "y"), ("z", "z"),
                       ("sample", "image_id"), ("celltype", "celltype")):
         if answers.get(key):
             roles[role] = answers[key]
