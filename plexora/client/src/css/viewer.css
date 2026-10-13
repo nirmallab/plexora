@@ -4030,47 +4030,6 @@ body.sidebar-collapsed .viewer-shell,
     letter-spacing: -0.02em;
 }
 
-/* The badge: what the picture is, in words, under the sample's name. Amber
-   whenever it is not a plane the image holds -- a projection reads as a
-   plane, and this is the line that says it is not. */
-.viewer-depth-badge {
-    align-items: center;
-    color: var(--text-secondary);
-    display: flex;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    gap: 6px;
-    padding: 0 10px;
-}
-
-.viewer-depth-badge.is-derived {
-    color: var(--accent-warning);
-}
-
-.viewer-depth-badge-spin {
-    border: 2px solid var(--border-strong);
-    border-radius: 50%;
-    border-top-color: var(--text-secondary);
-    display: none;
-    height: 10px;
-    width: 10px;
-}
-
-.viewer-depth-badge.is-loading .viewer-depth-badge-spin {
-    animation: depth-badge-spin 0.9s linear infinite;
-    display: inline-block;
-}
-
-@keyframes depth-badge-spin {
-    to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .viewer-depth-badge.is-loading .viewer-depth-badge-spin {
-        animation: none;
-    }
-}
-
 /* The Depth card. Labels left, fields right, one baseline per row. */
 .depth-panel {
     display: flex;
@@ -4212,9 +4171,8 @@ body.sidebar-collapsed .viewer-shell,
 
 /* Several rules above set `display`, which beats the `hidden` attribute's
    user-agent `display: none` -- a hidden play button or frame row would stay
-   on screen. Scoped to these two surfaces rather than global. */
+   on screen. Scoped to these surfaces rather than global. */
 .viewer-depth-strip [hidden],
-.viewer-depth-badge [hidden],
 .depth-panel [hidden] {
     display: none !important;
 }

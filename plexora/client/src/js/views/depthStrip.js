@@ -10,11 +10,11 @@
  *     ┊ rail ┊                  z 0 at the top, as a section's rows are
  *     [12 / 40]                 the readout; click it for the operation
  *
- * and a line in the canvas caption -- the BADGE -- that says what the picture
- * is in words ("z 12/40 · 24.0 µm", "MIP z 8–20 · 13 planes"), amber whenever
- * it is not a plane the image holds. The badge is drawn into every capture
- * too (imageViewer's renderCurrentViewCanvas), so a projection can never pass
- * for a plane.
+ * What the picture is in words ("z 12/40 · 24.0 µm", "MIP z 8–20 · 13
+ * planes", viewState.label) is not on the canvas -- the caption is the
+ * project's name alone -- but it is drawn into every capture (imageViewer's
+ * renderCurrentViewCanvas), so a projection can never pass for a plane in
+ * one, and the rail's readout and the Depth card say it on screen.
  *
  * Everything less frequent lives in the Depth card (views/depthTools.js).
  *
@@ -65,7 +65,6 @@
             //: or null for a stack too thin to cut.
             this.sections = sections;
             this.root = null;
-            this.badge = null;
             this.playing = null;
             this.drag = null;
             //: The plane the pointer rests on along the rail, or null.
@@ -86,7 +85,6 @@
             // the 36px strip, 8px of air. Nothing docked is placed under it.
             this._band = global.PlexoraCanvasLayout?.reserve?.("depth-strip",
                 { edge: "right", size: 56, order: 0 }) || null;
-            this.mountBadge();
             this._unsubscribe = vs.subscribe(() => this.paint());
             global.addEventListener("plexora:view-changed", this._onSettled = () => this.paintLoading(false));
             document.addEventListener("keydown", this._onKey);
@@ -102,7 +100,6 @@
             document.removeEventListener("keydown", this._onKey);
             global.removeEventListener("plexora:view-changed", this._onSettled);
             this.root?.remove();
-            this.badge?.remove();
             this._band?.();
             this._band = null;
             document.getElementById("openseadragon_wrapper")?.classList.remove("has-depth-strip");
@@ -246,17 +243,6 @@
             return rail;
         }
 
-        mountBadge() {
-            const caption = document.querySelector(".viewer-canvas-caption");
-            if (!caption || this.badge) return;
-            this.badge = el("div", "viewer-depth-badge", { id: "viewer_depth_badge",
-                                                            "aria-live": "polite" });
-            this.badgeText = el("span", "viewer-depth-badge-text");
-            this.badgeSpin = el("span", "viewer-depth-badge-spin", { "aria-hidden": "true" });
-            this.badge.append(this.badgeText, this.badgeSpin);
-            caption.appendChild(this.badge);
-        }
-
         // -- painting --------------------------------------------------------
 
         fraction(z) {
@@ -265,7 +251,7 @@
         }
 
         /** Said once, the first time a projection is chosen: a projection
-         *  looks like a plane, and the badge alone is easy to miss. */
+         *  looks like a plane. */
         noticeProjection(state) {
             if (state.mode !== "slab" || this._noticed) return;
             this._noticed = true;
@@ -335,18 +321,10 @@
                 this.framePrev.disabled = state.t <= 0;
                 this.frameNext.disabled = state.t >= vs.frames - 1;
             }
-            if (this.badgeText) {
-                this.badgeText.textContent = vs.label();
-                this.badge.classList.toggle("is-derived", vs.isDerived());
-                this.badge.title = vs.isDerived()
-                    ? "A projection combines planes: overlap in it is not colocalization."
-                    : "";
-            }
             this.paintLoading(vs.spec() !== vs.appliedSpec());
         }
 
         paintLoading(on) {
-            this.badge?.classList.toggle("is-loading", Boolean(on));
             // The thumb sits on the plane asked for as soon as it is asked
             // for; while that plane is still on its way it breathes
             // (viewer.css), so a far jump reads as under way, not ignored.
