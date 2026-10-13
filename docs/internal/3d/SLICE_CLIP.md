@@ -130,7 +130,8 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
   capability, so they are gone over "Surfaces only".
 - **The cog popover** sits left of the panel when the panel is out; it no longer carries the
   cut.
-- **The Depth card** hides its projection rows in 3-D (`card.projection`).
+- **The Depth card** has no projection rows (2026-10-13: the gear's alone, VIEW_CONTROLS.md); in
+  3-D it hides the plane and the sections' sizes.
 - **The handles** (`views/volumeHandles.js`) are an SVG over the canvas, z-index 204. Each face the
   cut puts in the stack is outlined in its axis's gizmo colour with a grip at its centre: both
   faces of a crop plus its body, a cutaway's cut.

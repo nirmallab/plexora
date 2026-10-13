@@ -5,24 +5,31 @@
  * applies to the mode on screen, as services/viewControls.js resolves it for
  * the "popover" surface:
  *
- *     one plane    Show: one plane or a projection's operation
- *     projection   the operation, its percentile, the planes combined, Follow
- *     3-D          MIP / Additive, the view, how Play turns the stack, the
- *                  grid, the surfaces (the cut is the strip's Cut and Crop,
- *                  and the panel they open, views/volumeDock.js)
+ *     one plane    Show: one plane or a projection's operation; Motion
+ *     projection   the operation, its percentile, the planes combined,
+ *                  Follow; Motion
+ *     3-D          Render (MIP / Additive), Motion; how Play turns the stack;
+ *                  the grid; the surfaces (the cut is the strip's Cut and
+ *                  Crop, and the panel they open, views/volumeDock.js)
  *
- * and the Depth card at its foot for everything less frequent. Nothing in it
- * is permanent furniture: it opens on the cog and closes on the next click
- * elsewhere, Escape, a resize or a scroll outside it. Open, it follows the
- * view: a mode changed by the strip, a key or an agent rebuilds its rows in
- * place, keeping focus on a control that is still there; values move with
- * the state but a field being typed in is never overwritten.
+ * ONE LINE A SETTING. A row is a quiet label in a gutter and its controls
+ * beside it; a hairline between groups is the only heading (a group's name
+ * is its aria-label), and what a control does is its tooltip, not a note
+ * under it. Controls that mean nothing in the state on screen -- the grid's
+ * options while it is off -- are hidden, not greyed.
  *
- * Where each value lives is unchanged by it: the projection, the clip range
- * and the composite in the view state (per image, services/viewState.js);
- * how Play turns and the grid in the viewer prefs (per user,
+ * Nothing in it is permanent furniture: it opens on the cog and closes on the
+ * next click elsewhere, Escape, a resize or a scroll outside it. Open, it
+ * follows the view: a mode changed by the strip, a key or an agent rebuilds
+ * its rows in place, keeping focus on a control that is still there; values
+ * move with the state but a field being typed in is never overwritten.
+ *
+ * Where each value lives is unchanged by it: the projection and the
+ * composite in the view state (per image, services/viewState.js); Motion, how
+ * Play turns and the grid in the viewer prefs (per user,
  * services/viewerPrefs.js). A value set in one mode is there when that mode
- * comes back.
+ * comes back. What is set less often -- an exact plane, the z step, a
+ * projection added as a layer -- is the Depth card's (views/depthTools.js).
  *
  * A plugin's popover row: `ctx.view.controls.register(entry, {row})` with
  * `row(ctx, config, popover) -> {node, update(ctx, config)}` (main.js).
@@ -32,17 +39,22 @@
 (function (global) {
     "use strict";
 
-    //: The heading over each group of rows; "" for none.
-    const GROUP_TITLES = {
-        projection: "Projection", volume: "3-D view", clip: "Cut",
-        rotate: "Play turns the stack", grid: "Grid", surfaces: "Surfaces",
-        plugins: "", footer: "",
+    //: Each group's name, for assistive tech: on screen a hairline parts
+    //: the groups and the rows' labels say the rest.
+    const GROUP_NAMES = {
+        projection: "Projection", volume: "View", rotate: "Play turns the stack",
+        grid: "Grid", surfaces: "Surfaces",
     };
     const OPS = [["plane", "One plane"], ["max", "Maximum (MIP)"], ["mean", "Mean"],
                  ["min", "Minimum"], ["std", "Std. deviation"], ["med", "Median"],
                  ["pct", "Percentile"]];
-    const AXES = [["screen", "The screen's vertical"], ["x", "The image's X axis"],
-                  ["y", "The image's Y axis"], ["z", "The image's Z axis"]];
+    //: What Play turns the stack about, and which way: [value, text, glyph, title].
+    const AXES = [["screen", "", "arrows-up-down", "About the screen's vertical"],
+                  ["x", "X", null, "About the image's X axis"],
+                  ["y", "Y", null, "About the image's Y axis"],
+                  ["z", "Z", null, "About the image's Z axis"]];
+    const DIRECTIONS = [[1, "", "rotate-right", "Clockwise, seen from above"],
+                        [-1, "", "rotate-left", "Anticlockwise, seen from above"]];
     //: The grid's line strengths, faintest first (the 3-D view's grid).
     const GRID_STRENGTHS = [[0.18, "faint"], [0.32, "medium"], [0.5, "strong"]];
     const GAP = 8;
@@ -84,17 +96,17 @@
             && (active.tagName === "INPUT" || active.tagName === "SELECT");
     }
 
-    /** A labelled row: the label left, the control right. */
-    function field(label, control, { id = null, title = null } = {}) {
+    /** A row: the label in the gutter, the controls beside it. The label
+     *  names the control `id` where there is one. */
+    function field(label, controls, { id = null, title = null } = {}) {
         const row = el("div", "plx-popover-field", { title });
-        const name = el(control.tagName === "INPUT" || control.tagName === "SELECT" ? "label" : "span",
-                        "plx-popover-label", { text: label });
-        if (id && control.id === id) name.setAttribute("for", id);
-        row.append(name, control);
+        const cell = el("div", "plx-popover-controls");
+        cell.append(...[controls].flat());
+        row.append(el(id ? "label" : "span", "plx-popover-label", { text: label, for: id }), cell);
         return row;
     }
 
-    /** One of a few, as pressed buttons: `[[value, text, icon?, title?]]`. */
+    /** One of a few, as pressed buttons: `[[value, text, glyph?, title?]]`. */
     function segmented(label, choices, onPick) {
         const group = el("div", "plx-popover-segmented", { role: "radiogroup", "aria-label": label });
         const buttons = new Map();
@@ -111,6 +123,7 @@
         }
         return {
             node: group,
+            buttons,
             set(value) {
                 for (const [key, button] of buttons) {
                     const on = key === value;
@@ -122,25 +135,25 @@
     }
 
     function select(id, choices, onChange) {
-        const node = el("select", "depth-panel-select plx-popover-select", { id });
+        const node = el("select", "plx-popover-select", { id });
         for (const [value, text] of choices) node.appendChild(el("option", null, { value, text }));
         node.addEventListener("change", () => onChange(node.value));
         return node;
     }
 
     function number(id, { min = 0, max = 0, label = "" } = {}) {
-        return el("input", "depth-panel-number is-short", {
+        return el("input", "plx-popover-number", {
             id, type: "number", min: String(min), max: String(max), step: "1",
             inputmode: "numeric", "aria-label": label,
         });
     }
 
-    function toggle(label, onChange, title = null) {
-        const node = el("label", "depth-panel-toggle plx-popover-toggle", { title });
-        const input = el("input", null, { type: "checkbox" });
+    /** An on/off switch (DESIGN.md's 28x16, `.channel-toggle-switch`). */
+    function switchInput(id, label, onChange, title = null) {
+        const input = el("input", "channel-toggle-switch", {
+            id, type: "checkbox", role: "switch", "aria-label": label, title });
         input.addEventListener("change", () => onChange(input.checked));
-        node.append(input, el("span", null, { text: label }));
-        return { node, input };
+        return input;
     }
 
     function button(text, onClick, { title = null, glyph = null, className = "" } = {}) {
@@ -152,6 +165,16 @@
         return node;
     }
 
+    /** A glyph button's name, said on hover and to assistive tech. */
+    function name(node, text) {
+        node.title = text;
+        node.setAttribute("aria-label", text);
+    }
+
+    function press(node, on) {
+        node.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
     /** "13 planes · 26.0 µm" for planes z0..z1. */
     function planesNote(vs, z0, z1) {
         const planes = z1 - z0 + 1;
@@ -160,13 +183,14 @@
         return `${planes} plane${planes === 1 ? "" : "s"}${thick}`;
     }
 
-    /** A z0..z1 pair of number fields, committed on change, with a note. */
+    /** A z0..z1 pair of number fields, committed on change, and what they
+     *  come to after them. */
     function rangeRow(popover, prefix, label, commit) {
         const vs = popover.viewState;
         const top = Math.max(0, vs.depth - 1);
         const z0 = number(`${prefix}_z0`, { max: top, label: `${label}: first plane` });
         const z1 = number(`${prefix}_z1`, { max: top, label: `${label}: last plane` });
-        const note = el("span", "depth-panel-unit plx-popover-note");
+        const note = el("span", "plx-popover-note");
         const apply = () => {
             const state = vs.get();
             const a = Math.max(0, Math.min(top, int(z0.value, state.slab.z0)));
@@ -175,18 +199,24 @@
         };
         z0.addEventListener("change", apply);
         z1.addEventListener("change", apply);
-        const pair = el("div", "plx-popover-range");
-        pair.append(z0, el("span", "depth-panel-unit", { text: "–" }), z1);
-        const node = el("div", "plx-popover-stack");
-        node.append(field(label, pair), note);
         return {
-            node,
+            node: field(label, [z0, el("span", "plx-popover-note", { text: "–", "aria-hidden": "true" }), z1, note]),
             update(ctx) {
                 if (!editing(z0)) z0.value = String(ctx.z0);
                 if (!editing(z1)) z1.value = String(ctx.z1);
                 note.textContent = planesNote(vs, ctx.z0, ctx.z1);
+                note.title = note.textContent;
             },
         };
+    }
+
+    /** The index in GRID_STRENGTHS nearest `opacity`. */
+    function strengthAt(opacity) {
+        let index = 0;
+        GRID_STRENGTHS.forEach(([value], i) => {
+            if (Math.abs(value - opacity) < Math.abs(GRID_STRENGTHS[index][0] - opacity)) index = i;
+        });
+        return index;
     }
 
     /**
@@ -224,41 +254,71 @@
         },
         "projection.follow"(ctx, config, popover) {
             const vs = popover.viewState;
-            const { node, input } = toggle("Follow the plane",
+            const input = switchInput("depth_settings_follow", "Follow the plane",
                 (on) => vs.set({ slab: { follow: on } }),
                 "Keep the projection centred on the current plane, at the same thickness");
-            return { node, update(now) { input.checked = Boolean(now.follow); } };
+            return {
+                node: field("Follow", input, { id: input.id }),
+                update(now) { input.checked = Boolean(now.follow); },
+            };
         },
         "volume.composite"(ctx, config, popover) {
             const vs = popover.viewState;
-            const choice = segmented("Composite", [
+            const choice = segmented("Render", [
                 ["mip", "MIP", null, "Maximum intensity along each ray"],
                 ["additive", "Additive", null, "Emission and absorption: nearer tissue covers what is behind"],
             ], (value) => vs.set({ volume: { composite: value } }));
             return {
-                node: field("Composite", choice.node),
+                node: field("Render", choice.node),
                 update() { choice.set(vs.get().volume?.composite === "additive" ? "additive" : "mip"); },
             };
         },
-        "volume.view"(ctx, config, popover) {
-            const preset = (name) => popover.strip.volume?.renderer?.preset?.(name);
-            const row = el("div", "plx-popover-actions", { role: "group", "aria-label": "View" });
-            for (const [name, glyph, title] of [["xy", "arrows-to-dot", "Looking down onto XY"],
-                                                ["xz", "grip-lines", "From the side, XZ"],
-                                                ["yz", "grip-lines-vertical", "From the side, YZ"],
-                                                ["iso", "cube", "Three-quarter view"]]) {
-                row.appendChild(button("", () => preset(name), { title, glyph, className: "is-glyph" }));
-            }
-            return { node: field("View", row), update() {} };
+        "view.motion"(ctx, config, popover) {
+            const prefs = ctx.prefs;
+            const input = switchInput("depth_settings_motion", "Motion",
+                (on) => prefs.set({ motion: on ? "on" : "off" }));
+            return {
+                node: field("Motion", input, { id: input.id }),
+                update() {
+                    // The preference, not smoothMotion(): an export holding
+                    // motion off for a while has not turned it off.
+                    const system = Boolean(prefs.systemReducedMotion?.());
+                    input.disabled = system;
+                    input.checked = !system && prefs.get?.().motion !== "off";
+                    input.title = system ? "Off: the system asks for reduced motion"
+                        : "Planes fade into each other, and the 3-D view coasts after a drag. "
+                          + "For every image; Play turns either way.";
+                },
+            };
+        },
+        "rotate.axis"(ctx, config, popover) {
+            const prefs = ctx.prefs;
+            const turn = (patch) => {
+                prefs.set({ rotate: patch });
+                popover.retune();
+            };
+            const axis = segmented("About", AXES, (value) => turn({ axis: value }));
+            for (const key of ["x", "y", "z"]) axis.buttons.get(key).classList.add("is-axis", `is-${key}`);
+            const direction = segmented("Direction", DIRECTIONS, (value) => turn({ direction: value }));
+            direction.node.classList.add("is-end");
+            return {
+                node: field("Turn", [axis.node, direction.node]),
+                update() {
+                    const rotate = prefs.rotate();
+                    axis.set(rotate.axis);
+                    direction.set(rotate.direction);
+                },
+            };
         },
         "rotate.speed"(ctx, config, popover) {
             const prefs = ctx.prefs;
             const limits = global.PlexoraVolumeRenderer?.MOTION || {};
             const min = limits.ROTATE_MIN_DPS || 5;
             const max = limits.ROTATE_MAX_DPS || 90;
-            const note = el("span", "depth-panel-unit plx-popover-note");
+            let row = null;
+            // What the old note under the slider said, now its tooltip.
             const say = (speed) => {
-                note.textContent = `${Math.round(360 / Math.max(1, speed))} s a turn · turns with Motion off too`;
+                if (row) row.title = `${Math.round(360 / Math.max(1, speed))} s a turn`;
             };
             const apply = (speed, save) => {
                 prefs.set({ rotate: { speed } }, { save });
@@ -283,10 +343,9 @@
                 input.addEventListener("change", () => apply(Number(input.value), true));
                 holder.appendChild(input);
             }
-            const node = el("div", "plx-popover-stack");
-            node.append(field("Speed", holder), note);
+            row = field("Speed", holder);
             return {
-                node,
+                node: row,
                 update() {
                     const speed = prefs.rotate().speed;
                     // Silent: set() otherwise reports the value as the user's,
@@ -297,146 +356,91 @@
                 },
             };
         },
-        "rotate.axis"(ctx, config, popover) {
-            const prefs = ctx.prefs;
-            const control = select("depth_settings_axis", AXES, (axis) => {
-                prefs.set({ rotate: { axis } });
-                popover.retune();
-            });
-            return {
-                node: field("About", control, { id: control.id }),
-                update() { if (!editing(control)) control.value = prefs.rotate().axis; },
-            };
-        },
-        "rotate.direction"(ctx, config, popover) {
-            const prefs = ctx.prefs;
-            const choice = segmented("Direction", [
-                [1, "", "rotate-right", "Clockwise, seen from above"],
-                [-1, "", "rotate-left", "Anticlockwise, seen from above"],
-            ], (direction) => {
-                prefs.set({ rotate: { direction } });
-                popover.retune();
-            });
-            return { node: field("Direction", choice.node), update() { choice.set(prefs.rotate().direction); } };
-        },
         "grid.on"(ctx, config, popover) {
             const prefs = ctx.prefs;
-            const { node, input } = toggle("Grid", (on) => prefs.set({ grid: { on } }),
-                                           "Lines on the far walls of the box, behind the tissue");
-            return { node, update() { input.checked = Boolean(prefs.grid?.()?.on); } };
+            const set = (patch) => prefs.set({ grid: patch });
+            const input = switchInput("depth_settings_grid", "Grid", (on) => set({ on }),
+                                      "Lines on the far walls of the box, behind the tissue");
+            const faces = segmented("Where", [
+                ["walls", "Walls", null, "On the far walls"],
+                ["floor", "Floor", null, "Only on the far face across z"],
+            ], (value) => set({ faces: value }));
+            const labels = button("", () => set({ labels: !prefs.grid().labels }), {
+                glyph: "ruler-combined", className: "is-glyph is-end",
+                title: "Axis labels: numbers along three edges of the box" });
+            return {
+                node: field("Grid", [input, faces.node, labels], { id: input.id }),
+                update() {
+                    const grid = prefs.grid();
+                    input.checked = Boolean(grid.on);
+                    faces.node.hidden = !grid.on;
+                    labels.hidden = !grid.on;
+                    faces.set(grid.faces);
+                    press(labels, grid.labels);
+                },
+            };
         },
         "grid.options"(ctx, config, popover) {
             const prefs = ctx.prefs;
             const helpers = global.PlexoraVolumeRenderer?.grid;
             const set = (patch) => prefs.set({ grid: patch });
-            const faces = segmented("Where", [
-                ["walls", "Walls", null, "On the far walls"],
-                ["floor", "Floor", null, "Only on the far face across z"],
-            ], (value) => set({ faces: value }));
-            const spacingText = el("span", "plx-popover-value");
-            const finer = button("", () => step(-1), { glyph: "minus", className: "is-glyph" });
-            const coarser = button("", () => step(1), { glyph: "plus", className: "is-glyph" });
-            const auto = button("", () => set({ step: "auto" }), { glyph: "rotate-left", className: "is-glyph" });
-            const spacing = el("div", "plx-popover-actions");
-            spacing.append(spacingText, finer, coarser, auto);
-            const strengthText = el("span", "plx-popover-value");
-            const fainter = button("", () => strength(-1), { glyph: "minus", className: "is-glyph",
-                                                              title: "Fainter" });
-            const stronger = button("", () => strength(1), { glyph: "plus", className: "is-glyph",
-                                                              title: "Stronger" });
-            const lines = el("div", "plx-popover-actions");
-            lines.append(strengthText, fainter, stronger);
-            const labels = toggle("Axis labels", (on) => set({ labels: on }),
-                                  "Numbers along three edges of the box");
             const axes = () => popover.strip.volume?.renderer?.gridAxes?.(prefs.grid().step) || null;
             const step = (direction) => {
                 const now = axes();
-                if (!now || !helpers) return;
-                set({ step: helpers.niceNeighbour(now.step[0], direction) });
+                if (now && helpers) set({ step: helpers.niceNeighbour(now.step[0], direction) });
             };
-            const at = () => {
-                const opacity = prefs.grid().opacity;
-                let index = 0;
-                GRID_STRENGTHS.forEach(([value], i) => {
-                    if (Math.abs(value - opacity) < Math.abs(GRID_STRENGTHS[index][0] - opacity)) index = i;
-                });
-                return index;
-            };
-            const strength = (direction) => {
-                const next = GRID_STRENGTHS[Math.max(0, Math.min(GRID_STRENGTHS.length - 1, at() + direction))];
-                set({ opacity: next[0] });
-            };
-            const node = el("div", "plx-popover-stack");
-            node.append(field("Where", faces.node), field("Spacing", spacing), field("Lines", lines), labels.node);
+            const spacing = el("span", "plx-popover-value");
+            const finer = button("", () => step(-1), { glyph: "minus", className: "is-glyph", title: "Finer grid" });
+            const coarser = button("", () => step(1), { glyph: "plus", className: "is-glyph", title: "Coarser grid" });
+            // Auto on: the spacing follows the box. Off: it stays where auto
+            // had it, so letting go changes nothing on screen.
+            const auto = button("Auto", () => {
+                const now = axes();
+                if (prefs.grid().step !== "auto") set({ step: "auto" });
+                else if (now) set({ step: now.step[0] });
+            }, { title: "Automatic spacing" });
+            const steps = el("span", "plx-popover-actions");
+            steps.append(finer, coarser);
+            const strength = segmented("Line strength", GRID_STRENGTHS.map(([value, word]) => [
+                value, "", null, `${word[0].toUpperCase()}${word.slice(1)} lines`]), (value) => set({ opacity: value }));
+            GRID_STRENGTHS.forEach(([value], index) => strength.buttons.get(value).appendChild(
+                el("span", "plx-popover-line", { "data-strength": String(index), "aria-hidden": "true" })));
+            strength.node.classList.add("is-end");
             return {
-                node,
+                node: field("Lines", [spacing, steps, auto, strength.node]),
                 update() {
                     const grid = prefs.grid();
-                    faces.set(grid.faces);
-                    labels.input.checked = Boolean(grid.labels);
+                    press(auto, grid.step === "auto");
                     const now = axes();
                     if (now && helpers) {
                         const unit = now.units[0];
                         const say = (value) => `${helpers.formatTick(value)} ${unit}`;
                         const down = helpers.niceNeighbour(now.step[0], -1);
-                        const up = helpers.niceNeighbour(now.step[0], 1);
-                        spacingText.textContent = `${say(now.step[0])}${grid.step === "auto" ? " (auto)" : ""}`;
-                        finer.title = `Finer: ${say(down)}`;
-                        finer.setAttribute("aria-label", finer.title);
+                        spacing.textContent = say(now.step[0]);
+                        name(finer, `Finer grid: ${say(down)}`);
+                        name(coarser, `Coarser grid: ${say(helpers.niceNeighbour(now.step[0], 1))}`);
+                        auto.title = `Automatic spacing: ${say(now.auto)}`;
                         // Finer than the grid allows draws the same lines.
                         finer.disabled = popover.strip.volume.renderer.gridAxes(down).step[0] >= now.step[0];
-                        coarser.title = `Coarser: ${say(up)}`;
-                        coarser.setAttribute("aria-label", coarser.title);
-                        auto.title = `Automatic: ${say(now.auto)}`;
-                        auto.setAttribute("aria-label", auto.title);
-                        auto.disabled = grid.step === "auto";
                     } else {
-                        spacingText.textContent = grid.step === "auto" ? "auto" : String(grid.step);
+                        spacing.textContent = grid.step === "auto" ? "auto" : String(grid.step);
                     }
-                    const index = at();
-                    strengthText.textContent = GRID_STRENGTHS[index][1];
-                    fainter.disabled = index <= 0;
-                    stronger.disabled = index >= GRID_STRENGTHS.length - 1;
+                    strength.set(GRID_STRENGTHS[strengthAt(grid.opacity)][0]);
                 },
             };
         },
-        "surfaces.show"(ctx, config, popover) {
-            const surfaces = global.PlexoraSurfaceLayers;
-            const choice = segmented("Show", [
+        surfaces(ctx, config, popover) {
+            const layers = global.PlexoraSurfaceLayers;
+            const show = segmented("Show", [
                 ["both", "Both", null, "Volume and surfaces"],
                 ["volume", "Volume", null, "Volume only"],
                 ["surfaces", "Surfaces", null, "Surfaces only"],
-            ], (value) => surfaces?.setShow?.({ volume: value !== "surfaces", surfaces: value !== "volume" }));
-            return {
-                node: field("Show", choice.node),
-                update() {
-                    const show = surfaces?.shown?.() || { volume: true, surfaces: true };
-                    choice.set(show.volume && show.surfaces ? "both" : (show.volume ? "volume" : "surfaces"));
-                },
-            };
-        },
-        "surfaces.light"(ctx, config, popover) {
-            const surfaces = global.PlexoraSurfaceLayers;
-            const choice = segmented("Light", [
-                ["left", "", "arrow-left", "Light from the left"],
-                ["above", "", "arrow-up", "Light from above"],
-                ["right", "", "arrow-right", "Light from the right"],
-                ["front", "", "circle-dot", "Light from the front"],
-            ], (name) => {
-                surfaces?.setLight?.(name);
-                popover.refresh({ force: true });
-            });
-            return { node: field("Light", choice.node), update() { choice.set(surfaces?.lightName?.()); } };
-        },
-        "surfaces.new"(ctx, config, popover) {
-            const node = button("New surface…", () => {
+            ], (value) => layers?.setShow?.({ volume: value !== "surfaces", surfaces: value !== "volume" }));
+            const make = button("", () => {
                 popover.close({ refocus: false });
                 global.PlexoraSurfaceStudio?.open?.();
-            }, { title: "Surface Studio (S)", className: "is-link" });
-            return { node, update() {} };
-        },
-        "surfaces.import"(ctx, config, popover) {
-            const node = button("Import mesh…", () => {
+            }, { glyph: "cubes", className: "is-glyph", title: "New surface: Surface Studio (S)" });
+            const load = button("", () => {
                 popover.close({ refocus: false });
                 const input = document.createElement("input");
                 input.type = "file";
@@ -444,19 +448,37 @@
                 input.addEventListener("change", () => {
                     const file = input.files?.[0];
                     if (!file) return;
-                    global.PlexoraSurfaceLayers?.importMesh?.(file).catch((error) => global.PlexoraToast?.show?.(
+                    layers?.importMesh?.(file).catch((error) => global.PlexoraToast?.show?.(
                         { title: error.message, tone: "warning" }));
                 });
                 input.click();
-            }, { title: "PLY, OBJ, STL, GLB, or a zip Plexora exported", className: "is-link" });
-            return { node, update() {} };
+            }, { glyph: "file-arrow-up", className: "is-glyph",
+                 title: "Import a mesh: PLY, OBJ, STL, GLB, or a zip Plexora exported" });
+            const actions = el("span", "plx-popover-actions is-end");
+            actions.append(make, load);
+            return {
+                node: field("Surfaces", [show.node, actions]),
+                update(now, cfg = {}) {
+                    show.node.hidden = !cfg.show;
+                    make.hidden = !(cfg.make && cfg.studio);
+                    load.hidden = !cfg.make;
+                    const shown = layers?.shown?.() || { volume: true, surfaces: true };
+                    show.set(shown.volume && shown.surfaces ? "both" : (shown.volume ? "volume" : "surfaces"));
+                },
+            };
         },
-        card(ctx, config, popover) {
-            const node = button("Depth card…", () => {
-                popover.close({ refocus: false });
-                ctx.openCard?.();
-            }, { title: "Everything else about depth: spacing, motion, section sizes", className: "is-link" });
-            return { node, update() {} };
+        "surfaces.light"(ctx, config, popover) {
+            const layers = global.PlexoraSurfaceLayers;
+            const choice = segmented("Light", [
+                ["left", "", "arrow-left", "Light from the left"],
+                ["above", "", "arrow-up", "Light from above"],
+                ["right", "", "arrow-right", "Light from the right"],
+                ["front", "", "circle-dot", "Light from the front"],
+            ], (light) => {
+                layers?.setLight?.(light);
+                choice.set(layers?.lightName?.() ?? light);
+            });
+            return { node: field("Light", choice.node), update() { choice.set(layers?.lightName?.()); } };
         },
     };
 
@@ -501,7 +523,8 @@
             anchor?.setAttribute?.("aria-expanded", "true");
             const onKey = (event) => {
                 // Capture, and stopped: Escape here shuts the popover and
-                // nothing else (the 3-D view's Escape stops a turn).
+                // nothing else (the 3-D view's Escape, which stops a turn,
+                // stands aside while a popover is open: volumeRenderer.js).
                 if (event.key !== "Escape") return;
                 event.stopPropagation();
                 event.preventDefault?.();
@@ -570,13 +593,8 @@
             for (const entry of entries) {
                 if (entry.group !== group) {
                     group = entry.group;
-                    section = el("div", "plx-popover-group", { "data-group": group, role: "group" });
-                    const title = GROUP_TITLES[group] ?? "";
-                    if (title) {
-                        const heading = el("div", "plx-popover-heading", { text: title });
-                        section.appendChild(heading);
-                        section.setAttribute("aria-label", title);
-                    }
+                    section = el("div", "plx-popover-group", {
+                        "data-group": group, role: "group", "aria-label": GROUP_NAMES[group] || null });
                     node.appendChild(section);
                 }
                 const builder = ROWS[entry.id] || extraRows.get(entry.id);

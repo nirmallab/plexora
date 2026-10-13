@@ -33,7 +33,8 @@ PlexoraViewControls.register({
   - `depth` (two or more planes), `frames`, `depthOrFrames`;
   - `colourless` (not an RGB stack), `webgl2` (the 3-D view can be drawn), `sections` (the
     panes exist), `zStep`, `labels3d`;
-  - `surfaces`, `surfacesPresent`, `surfaceStudio`, `prefs`, `card`, `grid`;
+  - `surfaces`, `surfacesPresent`, `surfaceStudio`, `surfaceMaking` (Plexora 3D), `surfaceRow`
+    (a surface to show or one to make), `prefs`, `grid`;
   - `cut` (the 3-D view can be cut: services/inspectState.js is on the page), `volumeDrawn`
     (the voxels are drawn, not "surfaces only").
 - **State flags (`FLAGS`)** describe what the user chose:
@@ -91,18 +92,28 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Popover: Show (one plane, or an operation) | ✓ | ✓ | ✓ | – | not colour |
 | Popover: Percentile | – | when pct | when pct | – | |
 | Popover: Planes z0–z1, Follow | – | ✓ | ✓ | – | |
-| Popover: Composite, View | – | – | – | ✓ | WebGL2 |
-| Popover: Speed, About, Direction (Play's turn) | – | – | – | ✓ | prefs |
-| Popover: Grid, its options while on | – | – | – | ✓ | the 3-D view's grid |
-| Popover: Surfaces (show, light) / New / Import | – | – | – | ✓ | a surface / Surface Studio / the layers |
-| Popover: Depth card… | ✓ | ✓ | ✓ | ✓ | the card |
+| Popover: Render (MIP / Additive) | – | – | – | ✓ | WebGL2 |
+| Popover: Motion | ✓ | ✓ | ✓ | ✓ | depth or frames, prefs |
+| Popover: Turn (axis and direction), Speed | – | – | – | ✓ | prefs |
+| Popover: Grid (on, where, labels); Lines (spacing, strength) while on | – | – | – | ✓ | the 3-D view's grid |
+| Popover: Surfaces (show once there is one; New, Import with Plexora 3D), Light | – | – | – | ✓ | `surfaceRow`; Light: a surface |
 | Thresholding's View Plane/Slab row (`gating.view`) | ✓ | ✓ | ✓ | – | registered by the plugin |
-| Depth card: projection rows (`card.projection`) | ✓ | ✓ | ✓ | – | depth, not colour |
 
 In 3-D the strip has no rail (2026-10-13) and is only as tall as its buttons: the mode
 buttons, Cut and Crop, Play and the cog. `]`/`[` and Shift+wheel still move a cut along Z.
-There is no readout in any mode: what is drawn is said in the Depth card and in every
-capture.
+There is no readout in any mode: every capture says what is drawn, and over a plane or a
+projection so does the rail's `aria-valuetext`.
+
+The popover is one line a setting: a label in a gutter as wide as the longest label, then
+the controls. A hairline parts the groups, whose names are their `aria-label`s, not
+headings, and what a control does is its tooltip. A control that means nothing in the state
+on screen is hidden (the grid's Where and labels while it is off), not greyed. There are no
+view presets: the gizmo's axes, a double-click and `0` already turn the view.
+
+The Depth card (View > Depth, views/depthTools.js) holds what is set less often and nowhere
+else: the plane or frame typed exactly (the plane not in 3-D), Add as a layer, the z step,
+the 3-D copy, Cells in 3-D and the sections' default sizes (not in 3-D). It repeats nothing
+the strip or the popover has, and the popover does not link to it.
 
 The cut panel (views/volumeDock.js) is the `dock` surface. It opens to the strip's left from
 Cut or Crop and stays out until its › or ×, also while `O` hides the cut. Its rows are the

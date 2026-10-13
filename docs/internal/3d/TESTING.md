@@ -64,9 +64,9 @@ and the light-sheet stack, with the section panes on:
   seconds that part sharpens (a finer level drawn inside its box); turning keeps the frame rate.
 - *A project whose image is on a data node* behaves the same: 3-D levels, windows and sections.
 
-**Projections.** The strip's second button, or the Depth card (View menu → Depth). Maximum,
-mean, minimum, standard deviation, median, percentile, over a range you set. The badge turns
-amber and names the range (`MIP z 0–13 · 14 planes · 42 µm`). "Add as a layer" computes it
+**Projections.** The strip's second button, or Show under its gear. Maximum, mean, minimum,
+standard deviation, median, percentile, over a range you set (the gear's Planes). The badge
+turns amber and names the range (`MIP z 0–13 · 14 planes · 42 µm`). "Add as a layer" computes it
 exactly at full resolution and adds it to Layers; removing that layer deletes the file. A
 projection too deep to compute at the zoom on screen (about 1 GB of planes per tile, e.g. all
 1937 planes of a 2048² light-sheet stack) is drawn from a coarser level: a thinner range is
@@ -97,14 +97,24 @@ and restarts.
 something now. In 3-D the plane rail and the Sections button go (the plane under the view is
 frozen there), and Cut and Crop come; the strip is only as tall as its buttons. `]` / `[` and
 Shift+wheel move whatever is cut along Z. There is no readout under the rail in any mode. The
-cog opens the settings for the mode on screen:
-- on a plane, Show (one plane or a projection's operation);
-- in a projection, the operation, the percentile, the planes and Follow;
-- in 3-D, MIP/Additive, the view, the cut (in words, Whole stack, Cut… for the dock), how Play
-  turns the stack, the grid (when on) and the surfaces.
+cog opens the settings for the mode on screen, one line each:
+- on a plane, Show (one plane or a projection's operation) and Motion;
+- in a projection, the operation, the percentile, the planes, Follow and Motion;
+- in 3-D, Render (MIP/Additive) and Motion; Turn (the axis, X Y Z in the gizmo's colours, and
+  the direction) and Speed; Grid (on, walls or floor, the labels) and, while it is on, Lines
+  (spacing, Auto, strength); Surfaces (what is drawn once there is one, New and Import as icons)
+  and Light.
 
-Change the mode with the popover open and its rows change in place. Escape, a click elsewhere,
-a resize or a scroll closes it. The full matrix is in `VIEW_CONTROLS.md`.
+No headings and no notes: hover a control for what it does (Speed says how long a turn takes).
+With the grid off its row is the switch alone. Change the mode with the popover open and its
+rows change in place. Escape, a click elsewhere, a resize or a scroll closes it; with Play
+turning, the first Escape closes the popover and the second stops the turn. Nothing you change
+there moves the camera. The full matrix is in `VIEW_CONTROLS.md`.
+
+**The Depth card** (View → Depth) opens the sidebar if it is collapsed and scrolls to the card.
+It holds what the strip and its gear do not: the plane or frame typed exactly, Add as a layer,
+the z step, the 3-D copy, Cells in 3-D and the sections' default sizes. In 3-D the plane and the
+sizes go.
 
 **Play in 3-D turns the stack.** In 3-D, Play turns the stack about the screen's vertical at
 30°/s from where the camera is, keeping its zoom and pan, until you press it again, press on the
@@ -183,14 +193,14 @@ button sits above the caption instead of on it, and a running AI session's chip 
 caption. Figure Builder's capture frame stays out from under the strip and the section panes,
 and steps clear when one opens.
 
-**Motion off.** The Depth card's Motion switch stops the plane fades, the thumb's glide, the
+**Motion off.** Motion, under the strip's gear, stops the plane fades, the thumb's glide, the
 3-D coast and every eased turn or zoom, for every image. The system's reduced-motion setting
 does the same (the switch then says so).
 
 **A colour (brightfield) DICOM slide with several focal planes** now opens as a stack: the strip
 steps through its planes (each the RGB picture scanned at that depth, swapped in only once it has
 drawn), but offers no projection, sections or 3-D -- a maximum or mean of colour samples is not a
-picture anybody stained. The Depth card hides those controls for it. The same slide read as
+picture anybody stained. The strip and its gear hide those controls for it. The same slide read as
 fluorescence (the edit page's override) is three channels through z and projects like any stack.
 
 **How a stack's Z axis is read.** A multi-channel stack whose file states no z step imports as

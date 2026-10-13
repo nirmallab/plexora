@@ -259,7 +259,6 @@ function depthControlExtras() {
         prefs: prefs || null,
         grid: Boolean(prefs?.grid && window.PlexoraVolumeRenderer?.grid),
         gridOn: Boolean(prefs?.grid?.()?.on),
-        openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
     };
 }
 
@@ -684,7 +683,6 @@ async function init(config, savedViewTransform = null) {
             }
             const strip = new PlexoraDepthStrip(viewState, {
                 viewer: seaDragonViewer.viewer,
-                openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
                 volume,
                 sections,
                 extras: depthControlExtras,

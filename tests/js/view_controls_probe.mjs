@@ -57,7 +57,7 @@ function stack({ mode = "plane", follow = true, op = "max", z0 = 3, z1 = 9, dept
         set: () => { sets += 1; },
     };
 }
-const page = { volumeSupported: true, sectionsSupported: true, prefs: {}, openCard: () => {}, cutSupported: true };
+const page = { volumeSupported: true, sectionsSupported: true, prefs: {}, cutSupported: true };
 const ids = (vs, surface, extras = page) => R.resolve(R.context(vs, extras), { surface }).map((e) => e.id);
 const strip = (vs, extras) => ids(vs, "strip", extras);
 const popover = (vs, extras) => ids(vs, "popover", extras);
@@ -105,26 +105,36 @@ check("a following projection's band is resized, not moved; a fixed one's is mov
 
 // -- the popover --------------------------------------------------------------------
 
-check("one plane: the operation (to make a projection) and the Depth card",
-      same(popover(stack()), ["projection.op", "card"]), popover(stack()).join());
-check("a projection: the operation, the planes, Follow",
-      same(popover(stack({ mode: "slab" })), ["projection.op", "projection.range", "projection.follow", "card"]));
+check("one plane: the operation (to make a projection) and Motion",
+      same(popover(stack()), ["projection.op", "view.motion"]), popover(stack()).join());
+check("a projection: the operation, the planes, Follow; Motion",
+      same(popover(stack({ mode: "slab" })), ["projection.op", "projection.range", "projection.follow",
+                                              "view.motion"]));
 check("...and the percentile only when it is one",
       popover(stack({ mode: "slab", op: "pct" })).includes("projection.percentile")
       && !popover(stack({ mode: "slab", op: "mean" })).includes("projection.percentile"));
 const vol = popover(stack({ mode: "volume" }));
-check("3-D: composite, view, how Play turns -- and no projection",
-      same(vol, ["volume.composite", "volume.view", "rotate.speed", "rotate.axis",
-                 "rotate.direction", "card"]), vol.join());
-check("surfaces once there is one; a new one wherever Surface Studio is",
-      popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 2, surfaceStudio: true })
-          .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.show,surfaces.light,surfaces.new,surfaces.import"
-      && popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 0 })
-          .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.import");
-check("without Plexora 3D there is no new surface or mesh import, but surfaces still show",
-      popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 1, surfaceStudio: true,
-                                           surfaceMaking: false })
-          .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.show,surfaces.light");
+check("3-D: Render, Motion, how Play turns (about, then speed) -- and no projection",
+      same(vol, ["volume.composite", "view.motion", "rotate.axis", "rotate.speed"]), vol.join());
+const surfacesIn = (extras) => popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, ...extras })
+    .filter((id) => id.startsWith("surfaces"));
+const surfacesConfig = (extras) => R.configOf("surfaces", R.context(stack({ mode: "volume" }),
+                                                                    { ...page, surfacesAvailable: true, ...extras }));
+check("one Surfaces row: what is drawn once there is a surface, its light below it",
+      surfacesIn({ surfaceCount: 2, surfaceStudio: true }).join() === "surfaces,surfaces.light"
+      && surfacesConfig({ surfaceCount: 2, surfaceStudio: true }).show === true
+      && surfacesConfig({ surfaceCount: 2, surfaceStudio: true }).studio === true);
+check("...before the first, only making one: a mesh to import (Surface Studio where it is)",
+      surfacesIn({ surfaceCount: 0 }).join() === "surfaces"
+      && surfacesConfig({ surfaceCount: 0 }).show === false && surfacesConfig({ surfaceCount: 0 }).make === true
+      && surfacesConfig({ surfaceCount: 0 }).studio === false);
+check("without Plexora 3D nothing is made, but surfaces still show; with none, no row at all",
+      surfacesIn({ surfaceCount: 1, surfaceStudio: true, surfaceMaking: false }).join() === "surfaces,surfaces.light"
+      && surfacesConfig({ surfaceCount: 1, surfaceMaking: false }).make === false
+      && surfacesIn({ surfaceCount: 0, surfaceMaking: false }).length === 0);
+check("Motion wherever there is something to move through, and the prefs to keep it",
+      popover(stack({ depth: 1, frames: 12 })).join() === "view.motion"
+      && !popover(stack(), { ...page, prefs: null }).includes("view.motion"));
 check("the grid where the 3-D view has one, its options while it is on",
       popover(stack({ mode: "volume" }), { ...page, grid: true }).includes("grid.on")
       && !popover(stack({ mode: "volume" }), { ...page, grid: true }).includes("grid.options")

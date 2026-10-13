@@ -162,11 +162,15 @@ def test_the_depth_panel_has_every_control_the_controller_binds():
     panel = (CLIENT / "templates" / "tools" / "depth_panel.html").read_text(encoding="utf-8")
     controller = (CLIENT / "src" / "js" / "views" / "depthTools.js").read_text(encoding="utf-8")
     for element_id in ("depth_panel_section", "depth_plane_input", "depth_frame_input",
-                       "depth_op_select", "depth_q_input", "depth_z0_input", "depth_z1_input",
-                       "depth_follow_input", "depth_spacing_input", "depth_spacing_save",
-                       "depth_spacing_button", "depth_motion_input", "depth_sections_reset"):
+                       "depth_spacing_input", "depth_spacing_save", "depth_spacing_button",
+                       "depth_sections_reset"):
         assert f'id="{element_id}"' in panel, element_id
         assert element_id in controller, element_id
+    # The projection and Motion live under the strip's gear
+    # (views/depthSettings.js), and only there: one home for each setting.
+    for gone in ("depth_op_select", "depth_z0_input", "depth_follow_input", "depth_motion_input",
+                 "data-depth-mode"):
+        assert gone not in panel and gone not in controller, gone
 
 
 def test_the_depth_ui_uses_icons_font_awesome_ships():
@@ -188,8 +192,8 @@ def test_the_depth_ui_uses_icons_font_awesome_ships():
     # choices table: [value, text, glyph, title].
     used |= set(re.findall(r'glyph: "([a-z-]+)"', settings))
     used |= set(re.findall(r'\[(?:-?1|"[a-z]+"), "[^"]*", "([a-z-]+)", "', settings))
-    used |= set(re.findall(r'\["(?:xy|xz|yz|iso)", "([a-z-]+)"', settings))
     # The mode buttons name theirs in a table: [mode, glyph, title].
     used |= set(re.findall(r'\["(?:plane|slab|sections|volume)", "([a-z-]+)"', strip))
-    assert {"square", "layer-group", "play", "pause", "gear", "rotate-left", "arrows-to-dot"} <= used
+    assert {"square", "layer-group", "play", "pause", "gear", "rotate-left", "arrows-up-down",
+            "ruler-combined", "cubes", "file-arrow-up"} <= used
     assert used <= shipped, used - shipped

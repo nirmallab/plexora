@@ -3059,6 +3059,9 @@ ${sample}`;
             if (typing() || document.querySelector("dialog[open]")
                 || global.PlexoraConfirm?.modalOpen?.()) return;
             if (event.key === "Escape") {
+                // An open popover (the cog's) takes Escape first: this runs
+                // before its own listener, so it stands aside.
+                if (document.querySelector(".plx-popover")) return;
                 if (renderer.autoRotate) renderer.setAutoRotate(false);
                 else if (renderer.lock) renderer.setLock(null);
                 return;

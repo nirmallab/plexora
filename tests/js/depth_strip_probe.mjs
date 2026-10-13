@@ -179,17 +179,24 @@ const volume = {
     },
 };
 const prefSets = [];
+let gridPrefs = { on: false, faces: "walls", step: "auto", opacity: 0.32, labels: true };
 box.PlexoraViewerPrefs = {
     rotate: () => ({ speed: 45, axis: "z", direction: -1 }),
+    grid: () => ({ ...gridPrefs }),
+    get: () => ({ motion: "on" }),
+    systemReducedMotion: () => false,
     set(patch, options) {
         prefSets.push(patch);
+        if (patch.grid) gridPrefs = { ...gridPrefs, ...patch.grid };
         // As the real one does: every change is announced.
         box.dispatchEvent(new box.CustomEvent("plexora:viewer-prefs-changed", { detail: patch }));
     },
 };
 
 box.PlexoraInspect = new box.PlexoraInspectState(vs);
-const strip = new box.PlexoraDepthStrip(vs, { volume, sections: {}, openCard: () => {} });
+// What the page has (main.js depthControlExtras): a 3-D grid, on as the prefs say.
+const strip = new box.PlexoraDepthStrip(vs, { volume, sections: {},
+                                             extras: () => ({ grid: true, gridOn: gridPrefs.on }) });
 strip.mount();
 const shownIds = () => Object.entries(strip.nodes).filter(([, node]) => !node.hidden).map(([id]) => id);
 
@@ -263,14 +270,50 @@ check("a turn stopped by the view (a press, Esc) gives Play back its play glyph"
 strip.cog.fire("click");
 const popover = strip.settings;
 const rowIds = () => [...popover.el.querySelectorAll("[data-control]")].map((n) => n.getAttribute("data-control"));
-check("the cog opens the settings for 3-D: composite, view, rotation, the Depth card",
-      popover.isOpen() && ["volume.composite", "volume.view", "rotate.speed", "rotate.axis",
-                           "rotate.direction", "card"].every((id) => rowIds().includes(id))
-      && !rowIds().some((id) => id.startsWith("projection.")), rowIds().join());
+check("the cog opens the settings for 3-D, one row each: Render, Motion, Turn, Speed, Grid",
+      popover.isOpen() && rowIds().join() === "volume.composite,view.motion,rotate.axis,rotate.speed,grid.on",
+      rowIds().join());
+check("...under no headings: each group is named for assistive tech instead",
+      popover.el.querySelectorAll(".plx-popover-heading").length === 0
+      && popover.el.querySelectorAll(".plx-popover-group").every((g) => g.getAttribute("aria-label")));
 check("the cog says the popover is open", strip.cog.getAttribute("aria-expanded") === "true");
 box.dispatchEvent(new box.CustomEvent("plexora:viewer-prefs-changed", {}));
 check("opening it, and a prefs change while it is open, writes no preference (no echo loop)",
       prefSets.length === 0, JSON.stringify(prefSets));
+const rowOf = (id) => popover.el.querySelector(`[data-control="${id}"]`);
+const gridRow = rowOf("grid.on");
+const where = () => rowOf("grid.on").querySelector('[aria-label="Where"]');
+const axisLabels = () => rowOf("grid.on").querySelector('[aria-label="Axis labels: numbers along three edges of the box"]');
+check("the grid off: its switch alone -- where it is drawn and its labels hidden, no Lines row",
+      gridRow.querySelector("input").checked === false && where().hidden && axisLabels().hidden
+      && !rowIds().includes("grid.options"));
+check("the speed says how long a turn takes on hover, not in a note under it",
+      rowOf("rotate.speed").title === "8 s a turn" && !popover.el.querySelector(".plx-popover-stack"));
+const motion = rowOf("view.motion").querySelector("input");
+check("Motion is a switch, on as the prefs say", motion.getAttribute("role") === "switch" && motion.checked);
+motion.checked = false;
+motion.fire("change");
+check("...and switching it off is the prefs' motion", JSON.stringify(prefSets.at(-1)) === '{"motion":"off"}',
+      JSON.stringify(prefSets.at(-1)));
+const xChip = rowOf("rotate.axis").querySelector(`[aria-label="About the image's X axis"]`);
+check("Turn's axes wear the gizmo's colours, the one Play turns about lit",
+      xChip.classList.contains("is-axis") && xChip.classList.contains("is-x")
+      && rowOf("rotate.axis").querySelector(`[aria-label="About the image's Z axis"]`).getAttribute("aria-checked") === "true");
+xChip.fire("click");
+check("...and a press is the prefs' axis", JSON.stringify(prefSets.at(-1)) === '{"rotate":{"axis":"x"}}');
+const gridSwitch = gridRow.querySelector("input");
+gridSwitch.focus();
+gridSwitch.checked = true;
+gridSwitch.fire("change");
+check("the grid on: where, its labels and the Lines row come, the switch still focused",
+      JSON.stringify(prefSets.at(-1)) === '{"grid":{"on":true}}' && rowIds().includes("grid.options")
+      && !where().hidden && !axisLabels().hidden
+      && axisLabels().getAttribute("aria-pressed") === "true"
+      && active === rowOf("grid.on").querySelector("input"));
+const lines = rowOf("grid.options");
+check("...whose buttons are named before the 3-D view has measured the box",
+      ["Finer grid", "Coarser grid"].every((name) => lines.querySelector(`[aria-label="${name}"]`))
+      && lines.querySelector('[aria-label="Medium lines"]').getAttribute("aria-checked") === "true");
 check("it sits left of the strip, inside the window",
       parseFloat(popover.el.style.left) === 900 - 8 - 260 && parseFloat(popover.el.style.top) >= 8);
 asked.length = 0;

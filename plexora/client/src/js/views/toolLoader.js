@@ -973,6 +973,7 @@ window.PlexoraToolLoader = (function () {
     async function openTool(toolName, linkEl, options = {}) {
         if (loadedTools.has(toolName)) {
             show(toolName);
+            if (!options.quiet) reveal(toolName);
             return { loaded: true };
         }
 
@@ -984,11 +985,24 @@ window.PlexoraToolLoader = (function () {
             if (!outcome.loaded) return outcome;
             collapseForNewTool(toolName);
             show(toolName);
+            if (!options.quiet) reveal(toolName);
             return outcome;
         } finally {
             linkEl?.classList.remove("tool-loading");
             placeholder?.done(Boolean(outcome?.loaded));
         }
+    }
+
+    /**
+     * A tool someone opened, brought into sight: a collapsed sidebar opens
+     * and the card scrolls into view. Without it a card that lands in a
+     * closed sidebar, or below the fold, reads as a click that did nothing.
+     * Not for a quiet open (the agent bridge's), which leaves the layout to
+     * the user.
+     */
+    function reveal(toolName) {
+        document.getElementById?.("bodyDiv")?.classList?.remove("sidebar-collapsed");
+        cardFor(toolName)?.scrollIntoView?.({ block: "nearest" });
     }
 
     /**

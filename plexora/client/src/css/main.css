@@ -1487,78 +1487,105 @@ html.is-native-dragging body::after {
     width: 4px;
 }
 
-/* A small settings popover (views/depthSettings.js): the menu's surface, but
-   a dialog of labelled fields in groups rather than a list of actions.
-   Fields read label-left, control-right on one baseline, like the cards. */
+/* A small settings popover (views/depthSettings.js): the menu's surface,
+   holding rows of controls in groups. A row is one line: a quiet label in a
+   gutter as wide as the popover's longest label -- the groups and rows are
+   subgrids of the popover, so every row's controls start on one edge -- then
+   its controls. A hairline between groups is the only heading. */
 .plx-popover {
-    gap: 2px;
+    box-sizing: border-box;
+    column-gap: var(--space-2);
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
     max-height: calc(100vh - 16px);
-    min-width: 248px;
     overflow-y: auto;
-    padding: var(--space-2) var(--space-3);
-    width: 272px;
+    padding: 0 10px;
+    width: 296px;
 }
 
 .plx-popover-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    padding: var(--space-1) 0;
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    padding: 6px 0;
+    row-gap: 4px;
 }
 
 .plx-popover-group + .plx-popover-group {
     border-top: 1px solid var(--border-subtle);
-    margin-top: var(--space-1);
-    padding-top: var(--space-2);
 }
 
-.plx-popover-heading {
-    color: var(--text-muted);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding-bottom: 2px;
-    text-transform: uppercase;
+/* A plugin's row that is not a field spans the popover. */
+.plx-popover-group > *,
+.plx-popover-empty {
+    grid-column: 1 / -1;
 }
 
 .plx-popover-field {
     align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    justify-content: space-between;
-    min-height: 28px;
+    display: grid;
+    grid-template-columns: subgrid;
+    min-height: 26px;
 }
 
 .plx-popover-label {
-    color: var(--text-secondary);
-    flex: 0 0 auto;
-    font-size: 12px;
-}
-
-.plx-popover-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.plx-popover-note {
-    align-self: flex-end;
+    color: var(--text-muted);
     font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
-.plx-popover-range,
+.plx-popover-controls {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* A row's second cluster, against its right edge -- or on the controls'
+   edge with the others, when the first is hidden. */
+.plx-popover-controls > .is-end {
+    margin-left: auto;
+}
+
+.plx-popover-controls > [hidden]:first-child + .is-end {
+    margin-left: 0;
+}
+
+/* What a range comes to, after its fields: "11 planes · 22 µm". */
+.plx-popover-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .plx-popover-actions {
     align-items: center;
     display: flex;
-    gap: var(--space-1);
+    gap: 2px;
 }
 
 .plx-popover-value {
     color: var(--text-secondary);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    margin-right: var(--space-1);
+    min-width: 36px;
     white-space: nowrap;
+}
+
+.plx-popover-select,
+.plx-popover-number {
+    background-color: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    height: 26px;
 }
 
 .plx-popover-select {
@@ -1566,18 +1593,19 @@ html.is-native-dragging body::after {
     background: var(--surface-2)
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238ea0b8' stroke-width='1.5'/%3E%3C/svg%3E")
         no-repeat right 8px center;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
     cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    height: 28px;
     max-width: 168px;
     padding: 0 24px 0 8px;
 }
 
-.plx-popover-select:focus-visible {
+.plx-popover-number {
+    font-variant-numeric: tabular-nums;
+    padding: 0 6px;
+    width: 52px;
+}
+
+.plx-popover-select:focus-visible,
+.plx-popover-number:focus-visible {
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
     outline: none;
@@ -1585,7 +1613,6 @@ html.is-native-dragging body::after {
 
 .plx-popover-slider {
     flex: 1 1 auto;
-    max-width: 176px;
     min-width: 0;
 }
 
@@ -1616,13 +1643,21 @@ html.is-native-dragging body::after {
     padding: 0 var(--space-2);
 }
 
+/* In the popover's rows a pill is as tall as a field (26px). */
+.plx-popover .plx-popover-segment {
+    height: 20px;
+    min-width: 22px;
+    padding: 0 5px;
+}
+
 .plx-popover-segment:hover,
 .plx-popover-button:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
 
-.plx-popover-segment.is-active {
+.plx-popover-segment.is-active,
+.plx-popover-button[aria-pressed="true"] {
     background: var(--accent-channel-tint);
     border-color: var(--accent-channel-soft);
     color: var(--accent-channel);
@@ -1630,13 +1665,7 @@ html.is-native-dragging body::after {
 
 .plx-popover-button.is-glyph {
     padding: 0;
-    width: 26px;
-}
-
-.plx-popover-button.is-link {
-    align-self: flex-start;
-    color: var(--accent-channel);
-    padding: 0 var(--space-1);
+    width: 24px;
 }
 
 .plx-popover-button:disabled {
@@ -1645,15 +1674,43 @@ html.is-native-dragging body::after {
 }
 
 .plx-popover-segment:focus-visible,
-.plx-popover-button:focus-visible {
+.plx-popover-button:focus-visible,
+.plx-popover .channel-toggle-switch:focus-visible {
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
     outline: none;
+}
+
+.plx-popover .channel-toggle-switch {
+    flex: 0 0 auto;
+}
+
+.plx-popover .channel-toggle-switch:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+/* The grid's strengths, drawn as the line itself: thin and faint to full. */
+.plx-popover-line {
+    background: currentColor;
+    border-radius: 1px;
+    height: 3px;
+    width: 12px;
+}
+
+.plx-popover-line[data-strength="0"] {
+    height: 1px;
+    opacity: 0.55;
+}
+
+.plx-popover-line[data-strength="1"] {
+    height: 2px;
+    opacity: 0.8;
 }
 
 .plx-popover-empty {
     color: var(--text-muted);
     font-size: 12px;
-    margin: var(--space-1) 0;
+    margin: var(--space-2) 0;
 }
 
 /* A row of glyph actions under one quiet label: "Channel names  [copy]

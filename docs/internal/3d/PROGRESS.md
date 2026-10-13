@@ -269,4 +269,19 @@ main. Design and the full list: `SLICE_CLIP.md`. Plan:
 | Figure Builder round trip and `cut` in the report; Video Studio frames carry the cut, slab narrows z via the clip; `viewer_set_inspect`, `viewer_set_z mode=keep`, lease restore | done |
 | 2026-10-13: sections and slabs removed (with `linkPanes`, the pinned crosshair, the panes' cut guides and `state.section`); the dock became the cut panel beside the strip's new Cut and Crop; each tool keeps its own axes (`inspect.tool`, `axesBy`); `O` (and the panel's Show/Hide) hides and shows the cut with the panel left out, × alone closes it | done |
 | Oblique planes; voxel-label 3-D masks | not done (seams kept) |
+
+## The cog popover, compact (2026-10-13)
+
+Plan: `~/.claude/plans/pasted-content-id-2dc6-redesign-keen-frost.md`. Measured live on a
+24-plane stack at 1440×900: 3-D 455 → 217 px (grid on 569 → 247), projection 191 → 139, plane
+118 → 79; no headings, one 26 px line a setting.
+
+| Item | State |
+|---|---|
+| Rows: a label gutter (subgrids of the popover), hairlines for groups, tooltips for notes; Turn = axis + direction, Lines = spacing + strength, Surfaces = show + New + Import | done |
+| Removed: view presets (the gizmo, double-click and `0` do it), the Depth card link, `card`, `card.projection`, `openCard`, group headings | done |
+| Motion moved from the Depth card to the popover (`view.motion`, every mode) | done |
+| Depth card: no mode buttons, projection rows or Motion; plane and sizes hidden in 3-D; `openTool` reveals the card (sidebar expanded, scrolled to) | done |
+| Escape with the popover open no longer also stops Play's turn (the 3-D view's capture listener stands aside) | done |
+| Surface light kept across a reload | not done (`surfaceLayers.js`, in memory) |
 | Bench scenario `clip` | see tools/bench3d |

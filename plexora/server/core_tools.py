@@ -45,11 +45,11 @@ ROTATE = Plugin(
     requires=_REQUIRES,
 )
 
-#: The Depth card: everything about moving through a volume that the Z strip
-#: (views/depthStrip.js) does not do itself -- the projection's operation and
-#: range typed exactly, playback, the z step. Offered only on a volume
-#: (`dims=("3d",)`), never on a flat image or a picture.
-DEPTH_VERSION = "20261009_depth_card"
+#: The Depth card: what the Z strip (views/depthStrip.js) and its gear do not
+#: do -- the plane or frame typed exactly, a projection added as a layer, the
+#: z step, the cells of a 3-D mask. Offered only on a volume (`dims=("3d",)`),
+#: never on a flat image or a picture.
+DEPTH_VERSION = "20261013_compact_popover"
 
 DEPTH = Plugin(
     name="depth",

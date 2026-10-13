@@ -5235,7 +5235,7 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
 - Depth controls: `services/viewControls.js` (`window.PlexoraViewControls`)
   is the declarative registry of which control shows in which mode (plane,
   slab, volume), under which capabilities (`depth`, `webgl2`,
-  `surfaceMaking`, `grid`) and state flags. **A control that does nothing in
+  `surfaceMaking`, `surfaceRow`, `grid`) and state flags. **A control that does nothing in
   a mode is hidden, never disabled.** An unknown capability or flag throws at
   `register`, so a typo fails at load rather than as a control that never
   shows. Plugins register through `ctx.view.controls.register(entry, {row})`
@@ -5244,11 +5244,41 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `docs/internal/3d/VIEW_CONTROLS.md`. `views/depthSettings.js`
   (`window.PlexoraDepthSettings`) is the cog popover on the depth strip and
   replaced the readout's menu. The strip has no readout in any mode any
-  more (what is drawn is said in the Depth card and every capture), and no
-  rail in 3-D, where it shrinks to its buttons (`is-volume`).
+  more (what is drawn is said in every capture, and over a plane or a
+  projection by the rail's `aria-valuetext`), and no rail in 3-D, where it shrinks to its buttons
+  (`is-volume`).
   Rows come from its `ROWS` builder table plus `defineRow`. Script order in
   `index.html`: `viewControls.js`, then `depthStrip.js`, then
-  `depthSettings.js`.
+  `depthSettings.js`. **The popover is one 26px line a setting**: a label
+  gutter and the controls beside it, aligned across rows by CSS subgrids
+  (`.plx-popover-field` / `.plx-popover-label` / `.plx-popover-controls` in
+  `main.css`); a hairline between groups is the only heading (a group's name
+  is its `aria-label`, from `GROUP_NAMES`), and what a control does is its
+  tooltip, not a note under it. Its rows, by mode: plane
+  `projection.op`, `view.motion`; slab `projection.op`, `projection.range`,
+  `projection.follow`, `view.motion`; 3-D `volume.composite`, `view.motion`,
+  `rotate.axis` (axis and direction in one row), `rotate.speed`, then
+  `grid.on` (`grid.options` only while it is on), `surfaces` (one row, config
+  `{show, make, studio}`: what is drawn, a new surface, an imported mesh) and
+  `surfaces.light`. There are no view presets, because the gizmo's axes, a
+  double-click and `0` already turn the view; and no "Depth card…" link (nor
+  `openCard` in the context). **Motion (`view.motion`, in every mode)
+  lives only in the popover.** The Depth card (`views/depthTools.js`,
+  `templates/tools/depth_panel.html`) holds only what is set less often and
+  nowhere else -- the plane or frame typed exactly, a projection added as a
+  layer, the z step, the 3-D copy, the cells of a 3-D mask, the sections'
+  default sizes -- and repeats nothing the strip or the popover has, so it
+  has no mode buttons and no projection rows; in 3-D its plane row (`data-depth-plane-row`, frozen
+  there) and the sections' sizes (`data-depth-sizes-row`) hide, and
+  `data-depth-entry` hides the plane/frame grid when neither row is left.
+  Escape while the popover is open closes the popover only:
+  `volumeRenderer.js`'s window-capture keydown runs before the popover's own
+  listener, so it stands aside while a `.plx-popover` is in the DOM, and only
+  the next Escape stops Play's turn. `toolLoader.openTool` now `reveal()`s
+  the card on a non-quiet open (drops `sidebar-collapsed` from `#bodyDiv`,
+  scrolls the card into view), because a card landing in a closed sidebar or
+  below the fold reads as a click that did nothing; a quiet open (the agent
+  bridge's) leaves the layout alone.
 - Play in 3-D auto-rotates the stack (`volumeRenderer.setAutoRotate`, the
   controller's `rotate(on, opts)`). Speed, axis and direction are the per-user
   `rotate` pref in `/viewer_prefs` (`normalize_rotate` in
@@ -5485,9 +5515,8 @@ cut saved as a section or slab opens as the whole stack.
   `cut.axes` (config `{flip}`), `cut.face`, `cut.handles`, `cut.reset`,
   `cut.history`, `cut.interpolation`, `cut.handleOpacity`, `cut.toggle`
   (group `toggle`), shown in 3-D whether the cut is on or hidden (no `when`;
-  they follow `ctx.cutTool`, the live tool or else the one last chosen);
-  `card.projection`. The rail, band, thumb and hover are
-  plane/slab only. `transition()` no longer rewrites the slab on entering
+  they follow `ctx.cutTool`, the live tool or else the one last chosen). The
+  rail, band, thumb and hover are plane/slab only. `transition()` no longer rewrites the slab on entering
   3-D.
 - Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`: `mode`
   full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only;
@@ -7973,7 +8002,8 @@ in **5.6 s**.
   anything else — because a frame between two planes would show tissue nobody
   imaged; what may change smoothly is how the data is shown (camera, clip,
   channel window and opacity — `TRACK_KINDS` says which is which). Every export carries a manifest saying what each frame shows.
-- **`loadTool()` is `openTool()` minus the one `show()` at the end.** Extracted
+- **`loadTool()` is `openTool()` minus the one `show()` (and, on a non-quiet
+  open, `reveal()`) at the end.** Extracted
   so a walk to the next dataset sample (`services/carryOver.js`,
   `views/datasetNav.js`) can restore several tools and arrange them once —
   going through `openTool` per tool would mean a `show()` each, and `show()`

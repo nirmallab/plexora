@@ -4070,16 +4070,10 @@ body.sidebar-collapsed .viewer-shell,
     width: 56px;
 }
 
-.depth-panel-number:focus,
-.depth-panel-select:focus {
+.depth-panel-number:focus {
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
     outline: none;
-}
-
-.depth-panel-select {
-    font-size: 12px;
-    height: 28px;
 }
 
 .depth-panel-unit {
@@ -4089,28 +4083,10 @@ body.sidebar-collapsed .viewer-shell,
     white-space: nowrap;
 }
 
-.depth-panel-toggle {
-    align-items: center;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    font-size: 12px;
-    gap: var(--space-2);
-}
-
-/* Motion and section sizes: the user's, for every image. */
+/* The sections' sizes: the user's, for every image. */
 .depth-panel-viewer {
     border-top: 1px solid var(--border-subtle);
     padding-top: var(--space-3);
-}
-
-.depth-panel-viewer [hidden] {
-    display: none !important;
-}
-
-.depth-panel-toggle:has(input:disabled) {
-    cursor: default;
-    opacity: 0.7;
 }
 
 .depth-panel-spacing {
@@ -4120,6 +4096,13 @@ body.sidebar-collapsed .viewer-shell,
     gap: var(--space-3);
     grid-template-columns: 76px minmax(0, 1fr) auto;
     padding-top: var(--space-3);
+}
+
+/* In 3-D with no frames, nothing is typed in above it: the z step opens the
+   card, without a rule over it. */
+.depth-panel:has([data-depth-entry][hidden]):has([data-depth-pin][hidden]) .depth-panel-spacing {
+    border-top: 0;
+    padding-top: 0;
 }
 
 .depth-panel-spacing-value {
@@ -4462,9 +4445,12 @@ body.sidebar-collapsed .viewer-shell,
     gap: 2px;
 }
 
-.volume-dock-axis.is-x { --axis: #e5484d; }
-.volume-dock-axis.is-y { --axis: #46a758; }
-.volume-dock-axis.is-z { --axis: #4c7cf0; }
+.volume-dock-axis.is-x,
+.plx-popover-segment.is-x { --axis: #e5484d; }
+.volume-dock-axis.is-y,
+.plx-popover-segment.is-y { --axis: #46a758; }
+.volume-dock-axis.is-z,
+.plx-popover-segment.is-z { --axis: #4c7cf0; }
 
 /* An axis chip wears the colour the handles draw that axis in. */
 .volume-dock-chip {
@@ -4480,10 +4466,17 @@ body.sidebar-collapsed .viewer-shell,
     color: var(--text-primary);
 }
 
-.volume-dock-chip.is-active {
+/* ...and so does the axis Play turns the stack about (views/depthSettings.js). */
+.volume-dock-chip.is-active,
+.plx-popover-segment.is-axis.is-active {
     background: color-mix(in srgb, var(--axis) 18%, transparent);
     border-color: color-mix(in srgb, var(--axis) 60%, transparent);
     color: var(--axis);
+}
+
+.plx-popover-segment.is-axis {
+    font-size: 11px;
+    font-weight: 600;
 }
 
 /* A Cut's kept side, beside its axis: the half drawn full is the side kept

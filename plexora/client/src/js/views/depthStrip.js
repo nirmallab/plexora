@@ -23,11 +23,11 @@
  * What the picture is in words ("z 12/40 · 24.0 µm", "MIP z 8–20 · 13
  * planes", viewState.label) is drawn into every capture (imageViewer's
  * renderCurrentViewCanvas), so a projection can never pass for a plane in
- * one; on screen the Depth card says it.
+ * one; on screen the rail says it to assistive tech (its aria-valuetext).
  *
  * The cog opens the settings that apply to the mode on screen
- * (views/depthSettings.js); everything less frequent lives in the Depth card
- * (views/depthTools.js).
+ * (views/depthSettings.js); what is set less often -- an exact plane, the z
+ * step -- is the Depth card's (views/depthTools.js, View > Depth).
  *
  * Keys, only on a volume and never while typing: `]` / `[` one plane (in 3-D
  * and in a fixed projection, the range one plane), Shift ten, Alt to the last
@@ -74,11 +74,9 @@
     }
 
     class DepthStrip {
-        constructor(viewState, { viewer = null, openCard = null, volume = null,
-                                 sections = null, extras = null } = {}) {
+        constructor(viewState, { viewer = null, volume = null, sections = null, extras = null } = {}) {
             this.viewState = viewState;
             this.viewer = viewer;
-            this.openCard = openCard;
             //: The volume renderer's controller (views/volumeRenderer.js), or
             //: null where this browser cannot draw one -- then no 3-D button.
             this.volume = volume;
@@ -157,7 +155,6 @@
                 sectionsSupported: Boolean(this.sections),
                 rotating: Boolean(this.volume?.rotating),
                 prefs: global.PlexoraViewerPrefs || null,
-                openCard: typeof this.openCard === "function" ? this.openCard : null,
                 ...(this.extras ? this.extras() : {}),
             };
         }

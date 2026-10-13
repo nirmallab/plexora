@@ -65,8 +65,9 @@
         // Making a surface or importing a mesh is Plexora 3D; showing and
         // lighting the surfaces that exist is not (services/paidFeature.js).
         surfaceMaking: (ctx) => ctx.surfaceMaking !== false,
+        // The popover's Surfaces row: surfaces to show, or one to make.
+        surfaceRow: (ctx) => Boolean(ctx.surfacesAvailable) && (ctx.surfaceCount > 0 || ctx.surfaceMaking !== false),
         prefs: (ctx) => Boolean(ctx.prefs),
-        card: (ctx) => typeof ctx.openCard === "function",
         grid: (ctx) => Boolean(ctx.grid),
         // The 3-D view can be cut (services/inspectState.js on the page).
         cut: (ctx) => Boolean(ctx.cutSupported),
@@ -104,7 +105,7 @@
         // The cut panel beside the strip, top to bottom (views/volumeDock.js):
         // the axes, the actions to their right, then a row each.
         axes: 200, actions: 210, voxels: 220, handles: 230, toggle: 240,
-        plugins: 800, footer: 900,
+        plugins: 800,
     };
 
     const entries = new Map();
@@ -221,7 +222,6 @@
             grid: false,
             gridOn: false,
             prefs: null,
-            openCard: null,
             ...more,
         };
     }
@@ -378,33 +378,28 @@
         { id: "projection.follow", surfaces: ["popover"], modes: ["slab"], needs: ["depth", "colourless"],
           group: "projection", order: 40, doc: "Keep the range centred on the plane as it moves." },
         { id: "volume.composite", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2"],
-          group: "volume", order: 10, doc: "Maximum intensity or additive." },
-        { id: "volume.view", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2"],
-          group: "volume", order: 20, doc: "Look along an axis, or the three-quarter view." },
-        { id: "rotate.speed", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
-          group: "rotate", order: 10, doc: "How fast Play turns the stack." },
+          group: "volume", order: 10, doc: "Render: maximum intensity or additive." },
+        // How the viewer moves, for every image: in every mode, as it is
+        // the plane fades' and the 3-D view's coasting alike.
+        { id: "view.motion", surfaces: ["popover"], needs: ["depthOrFrames", "prefs"],
+          group: "volume", order: 20, doc: "Motion: planes fade into each other, the 3-D view coasts after a drag." },
         { id: "rotate.axis", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
-          group: "rotate", order: 20, doc: "What Play turns the stack about." },
-        { id: "rotate.direction", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
-          group: "rotate", order: 30, doc: "Which way it turns." },
+          group: "rotate", order: 10, doc: "What Play turns the stack about, and which way." },
+        { id: "rotate.speed", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
+          group: "rotate", order: 20, doc: "How fast Play turns the stack." },
         { id: "grid.on", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "grid"],
-          group: "grid", order: 10, doc: "A reference grid on the box's far walls." },
+          group: "grid", order: 10, doc: "A reference grid on the box's far walls: where, and its numbers." },
         { id: "grid.options", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "grid"],
-          when: ["gridOn"], group: "grid", order: 20, doc: "Where the grid is drawn, its spacing, strength and numbers." },
-        { id: "surfaces.show", surfaces: ["popover"], modes: ["volume"], needs: ["surfaces", "surfacesPresent"],
-          group: "surfaces", order: 10, doc: "Volume, surfaces, or both." },
+          when: ["gridOn"], group: "grid", order: 20, doc: "The grid's spacing and line strength." },
+        // One row: what is drawn (once there is a surface), and a new
+        // surface or a mesh where Plexora 3D allows making one.
+        { id: "surfaces", surfaces: ["popover"], modes: ["volume"], needs: ["surfaceRow"],
+          group: "surfaces", order: 10,
+          config: (ctx) => ({ show: ctx.surfaceCount > 0, make: ctx.surfaceMaking !== false,
+                              studio: Boolean(ctx.surfaceStudio) }),
+          doc: "Volume, surfaces or both; a new surface (Surface Studio) or an imported mesh." },
         { id: "surfaces.light", surfaces: ["popover"], modes: ["volume"], needs: ["surfaces", "surfacesPresent"],
           group: "surfaces", order: 20, doc: "Where the light on the surfaces comes from." },
-        { id: "surfaces.new", surfaces: ["popover"], modes: ["volume"],
-          needs: ["surfaceStudio", "surfaceMaking"],
-          group: "surfaces", order: 30, doc: "Make a surface (Surface Studio)." },
-        { id: "surfaces.import", surfaces: ["popover"], modes: ["volume"],
-          needs: ["surfaces", "surfaceMaking"],
-          group: "surfaces", order: 40, doc: "Import a mesh." },
-        { id: "card", surfaces: ["popover"], needs: ["card"], group: "footer",
-          doc: "The Depth card, for everything less frequent." },
-        { id: "card.projection", surfaces: ["card"], modes: ["plane", "slab"], needs: ["depth", "colourless"],
-          group: "projection", doc: "The Depth card's projection rows: the operation, the planes, Follow." },
 
         // The cut panel (views/volumeDock.js), for the tool last chosen,
         // whether its cut is shown or hidden (O): the panel stays out until

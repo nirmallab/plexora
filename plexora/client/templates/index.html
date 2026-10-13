@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261013_show_hide">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261013_compact_popover">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -566,10 +566,10 @@
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261012_fluid_planes" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261013_cut_show" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261013_cut_show" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261013_cut_panel" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261013_slice_clip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261013_compact_popover" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261013_compact_popover" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261013_compact_popover" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261013_compact_popover" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261013_cut_panel" defer></script>
@@ -582,7 +582,7 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261013_cut_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261013_compact_popover" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
 <script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261013_cut_show" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261013_cut_panel" defer></script>
@@ -607,7 +607,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261013_cut_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261013_compact_popover" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

@@ -6,11 +6,14 @@
  * services/viewState.js and writes to it, so the card, the strip on the canvas
  * and the keyboard are three handles on one value and cannot drift.
  *
- * What lives here rather than on the strip: the projection's operation and
- * its exact range typed in, the frame of a time series, and the z step -- the
- * one number a physical 3-D measurement needs and many stacks never state.
- * Setting it posts `/set_pixel_size` with `axis: "z"`, the same route the
- * scale bar's calibration uses for x/y.
+ * What lives here rather than on the strip or under its cog
+ * (views/depthSettings.js, which holds the projection and Motion): the plane
+ * or frame typed exactly, a projection added as a layer, the 3-D copy of a
+ * large stack, the cells of a 3-D mask, and the z step -- the one number a
+ * physical 3-D measurement needs and many stacks never state. Setting it
+ * posts `/set_pixel_size` with `axis: "z"`, the same route the scale bar's
+ * calibration uses for x/y. A row that does nothing in the mode on screen is
+ * hidden: in 3-D, the plane (frozen there) and the sections' sizes.
  */
 (function (global) {
     "use strict";
@@ -40,11 +43,9 @@
             const vs = viewStateOf();
             const state = vs?.get();
             if (!root || !state) return;
-            for (const button of root.querySelectorAll("[data-depth-mode]")) {
-                const on = state.mode === button.dataset.depthMode;
-                button.classList.toggle("is-active", on);
-                button.setAttribute("aria-checked", on ? "true" : "false");
-            }
+            // In 3-D the plane under the view is frozen: typing one moves nothing.
+            const volume = state.mode === "volume";
+            for (const row of root.querySelectorAll("[data-depth-plane-row]")) row.hidden = volume;
             const top = vs.depth - 1;
             const plane = q("#depth_plane_input");
             if (plane && document.activeElement !== plane) {
@@ -55,6 +56,8 @@
             if (of) of.textContent = `of ${vs.depth}`;
             const framesRows = root.querySelectorAll("[data-depth-frames-row]");
             framesRows.forEach((row) => { row.hidden = vs.frames < 2; });
+            const entry = q("[data-depth-entry]");
+            if (entry) entry.hidden = volume && vs.frames < 2;
             const frame = q("#depth_frame_input");
             if (frame && document.activeElement !== frame) {
                 frame.max = String(vs.frames);
@@ -62,43 +65,22 @@
             }
             const framesOf = q("[data-depth-frames-of]");
             if (framesOf) framesOf.textContent = `of ${vs.frames}`;
-            // A colour slide's planes are shown one at a time: nothing here
-            // combines or cuts them (viewState keeps it in plane mode). In
-            // 3-D the projection's rows are not what is drawn -- the 3-D view
-            // keeps its own cut -- and go (viewControls "card.projection").
-            const controls = global.PlexoraViewControls;
-            const projection = controls
-                ? controls.visible("card.projection", controls.context(vs, global.depthControlExtras || {}))
-                : state.mode !== "volume";
-            for (const node of root.querySelectorAll("[data-depth-combine]")) {
-                node.hidden = vs.color || (!projection && node.hasAttribute("data-depth-projection"));
-            }
-
-            const op = q("#depth_op_select");
-            if (op && document.activeElement !== op) op.value = state.slab.op;
-            const pct = q("#depth_q_input");
-            if (pct) {
-                pct.hidden = state.slab.op !== "pct";
-                if (document.activeElement !== pct) pct.value = String(state.slab.q ?? 95);
-            }
-            for (const [selector, key] of [["#depth_z0_input", "z0"], ["#depth_z1_input", "z1"]]) {
-                const input = q(selector);
-                if (input && document.activeElement !== input) {
-                    input.max = String(top);
-                    input.value = String(state.slab[key]);
-                }
-            }
-            const thickness = q("[data-depth-thickness]");
-            if (thickness) {
-                const planes = state.slab.z1 - state.slab.z0 + 1;
-                const step = vs.zStep();
-                thickness.textContent = `${planes} plane${planes === 1 ? "" : "s"}`
-                    + (step ? ` · ${formatLength(planes * step.value, step.unit)}` : "");
-            }
-            const follow = q("#depth_follow_input");
-            if (follow) follow.checked = Boolean(state.slab.follow);
             paintPin(vs, state);
             paintSpacing(vs);
+            paintSizes(vs, state);
+        }
+
+        /** The sections' default sizes: theirs only beside a plane -- a
+         *  colour slide's stack has no sections, and 3-D is its own view. */
+        function paintSizes(vs, state) {
+            const prefs = global.PlexoraViewerPrefs;
+            for (const row of root.querySelectorAll("[data-depth-sizes-row]")) {
+                row.hidden = !prefs || vs.depth < 2 || vs.color || state.mode === "volume";
+            }
+            const reset = q("#depth_sections_reset");
+            if (reset && prefs) {
+                reset.disabled = !["xz", "yz"].some((axis) => prefs.sectionShare(axis) !== null);
+            }
         }
 
         //: The projection layers this card started, by layer id -> label, so
@@ -471,33 +453,11 @@
                 const vs = viewStateOf();
                 root = document.getElementById("depth_panel_section");
                 if (!root || !vs?.enabled()) return;
-                for (const button of root.querySelectorAll("[data-depth-mode]")) {
-                    button.addEventListener("click", () => vs.set({ mode: button.dataset.depthMode }));
-                }
                 q("#depth_plane_input")?.addEventListener("change", (event) => {
                     vs.set({ z: number(event.target.value, vs.get().z) });
                 });
                 q("#depth_frame_input")?.addEventListener("change", (event) => {
                     vs.set({ t: number(event.target.value, vs.get().t + 1) - 1 });
-                });
-                q("#depth_op_select")?.addEventListener("change", (event) => {
-                    vs.set({ mode: "slab", slab: { op: event.target.value } });
-                });
-                q("#depth_q_input")?.addEventListener("change", (event) => {
-                    vs.set({ mode: "slab", slab: { op: "pct", q: number(event.target.value, 95) } });
-                });
-                const range = () => {
-                    const z0 = number(q("#depth_z0_input")?.value, vs.get().slab.z0);
-                    const z1 = number(q("#depth_z1_input")?.value, vs.get().slab.z1);
-                    const lo = Math.min(z0, z1);
-                    const hi = Math.max(z0, z1);
-                    vs.set({ mode: "slab", z: Math.round((lo + hi) / 2),
-                             slab: { z0: lo, z1: hi, thickness: hi - lo + 1, follow: false } });
-                };
-                q("#depth_z0_input")?.addEventListener("change", range);
-                q("#depth_z1_input")?.addEventListener("change", range);
-                q("#depth_follow_input")?.addEventListener("change", (event) => {
-                    vs.set({ slab: { follow: event.target.checked } });
                 });
                 q("#depth_pin_button")?.addEventListener("click", pin);
                 q("#depth_measure_button")?.addEventListener("click", () => measure("physical"));
@@ -515,44 +475,15 @@
                     if (event.key === "Enter") saveSpacing();
                     if (event.key === "Escape") setEditing(false);
                 });
-                const prefs = global.PlexoraViewerPrefs;
-                const paintViewer = () => {
-                    const block = q("[data-depth-viewer]");
-                    if (!block) return;
-                    block.hidden = !prefs;
-                    if (!prefs) return;
-                    const system = prefs.systemReducedMotion();
-                    const input = q("#depth_motion_input");
-                    if (input) {
-                        input.checked = prefs.smoothMotion();
-                        input.disabled = system;
-                    }
-                    const text = q("[data-depth-motion-text]");
-                    if (text) {
-                        text.textContent = system
-                            ? "Off: the system asks for reduced motion"
-                            : "Fade planes, coast in 3-D";
-                    }
-                    for (const row of root.querySelectorAll("[data-depth-sizes-row]")) {
-                        row.hidden = vs.depth < 2 || vs.color;
-                    }
-                    const reset = q("#depth_sections_reset");
-                    if (reset) {
-                        reset.disabled = !["xz", "yz"].some((axis) => prefs.sectionShare(axis) !== null);
-                    }
-                };
-                q("#depth_motion_input")?.addEventListener("change", (event) => {
-                    prefs?.set({ motion: event.target.checked ? "on" : "off" });
-                });
                 q("#depth_sections_reset")?.addEventListener("click", () => {
-                    prefs?.set({ sections: { xz: null, yz: null } });
+                    global.PlexoraViewerPrefs?.set({ sections: { xz: null, yz: null } });
                 });
-                global.addEventListener("plexora:viewer-prefs-changed", paintViewer);
-                paintViewer();
+                const onPrefs = () => { if (root) paintSizes(vs, vs.get()); };
+                global.addEventListener("plexora:viewer-prefs-changed", onPrefs);
                 unsubscribe = vs.subscribe(paint);
                 paint();
                 ctx?.onCleanup?.(() => {
-                    global.removeEventListener("plexora:viewer-prefs-changed", paintViewer);
+                    global.removeEventListener("plexora:viewer-prefs-changed", onPrefs);
                     unsubscribe?.();
                     unsubscribe = null;
                     global.removeEventListener("plexora:layer-ready", onLayerSettled);
@@ -573,9 +504,10 @@
             help: {
                 summary: "Moves through the planes of a z-stack and combines a range of "
                     + "planes into one picture. The strip at the right edge of the image "
-                    + "does the common part -- drag its rail, or press ] and [ -- and this "
-                    + "card holds the rest: the projection's operation and exact range, "
-                    + "the frame of a time series, and the distance between planes.\n\n"
+                    + "does the common part -- drag its rail, or press ] and [ -- and its "
+                    + "gear holds the settings for what is drawn: the projection, 3-D, "
+                    + "Motion. This card holds the rest: the plane or frame typed exactly, "
+                    + "a projection added as a layer, and the distance between planes.\n\n"
                     + "Saved with this image, so it reopens on the same plane.",
                 notes: [
                     "A projection combines planes: two markers overlapping in it may "
@@ -590,24 +522,25 @@
                     + "zoomed-out projection combines planes that were already shrunk, "
                     + "which is right for looking but not for numbers. Removing the layer "
                     + "deletes the file it made.",
-                    "Moving between planes fades one into the next on screen only: once "
-                    + "the fade ends the picture is the plane the readout names, and "
-                    + "captures never include a fade. Motion turns the fades, and the 3-D "
-                    + "view's coasting, off for every image; the system's reduced-motion "
-                    + "setting does the same.",
+                    "Moving between planes fades one into the next on screen only; "
+                    + "captures never include a fade. Motion, under the strip's gear, turns "
+                    + "the fades and the 3-D view's coasting off for every image; the "
+                    + "system's reduced-motion setting does the same.",
                     "Drag the inner edge of the XZ or YZ section to resize it, or "
                     + "double-click the edge for its default size. Sizes are kept for every "
                     + "image.",
                     "In 3-D, the X Y Z in the corner shows which way the stack faces: click an "
-                    + "axis to look along it (again for its far side). With the pointer over "
-                    + "the 3-D view, X, Y or Z turns the stack about that axis of the image "
-                    + "only; the same key or Esc lets go.",
+                    + "axis to look along it (again for its far side); double-click the view, "
+                    + "or press 0, for the three-quarter view. With the pointer over the 3-D "
+                    + "view, X, Y or Z turns the stack about that axis of the image only; the "
+                    + "same key or Esc lets go.",
                 ],
                 shortcuts: [
                     { keys: ["]", "["], label: "Next / previous plane (with Shift, ten)" },
                     { keys: ["Shift", "Wheel"], label: "Scrub through the planes, over the image" },
                     { keys: ["X", "Y", "Z"], label: "3-D, pointer over it: turn about that image axis only; again to let go" },
-                    { keys: ["Esc"], label: "3-D: let go of the axis" },
+                    { keys: ["Esc"], label: "3-D: stop a turn, or let go of the axis" },
+                    { keys: ["S"], label: "3-D, pointer over it: Surface Studio" },
                     { keys: ["←", "→", "↑", "↓"], label: "3-D view focused: turn a step" },
                     { keys: ["+", "−", "0"], label: "3-D view focused: zoom in, out, three-quarter view" },
                 ],
