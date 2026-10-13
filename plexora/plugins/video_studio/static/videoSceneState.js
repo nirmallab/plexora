@@ -108,6 +108,11 @@
             slab: state.slab ? { z0: state.slab.z0, z1: state.slab.z1, op: state.slab.op || "max" }
                 : null,
             clip: { x: [0, 1], y: [0, 1], z: [0, 1] },
+            // How the 3-D view is cut (core's services/inspectGeometry.js),
+            // and where its X and Y sections are: the video's cut, frame to
+            // frame. The clip track cuts on top of it.
+            inspect: state.inspect ? JSON.parse(JSON.stringify(state.inspect)) : null,
+            section: state.section ? { x: state.section.x, y: state.section.y } : null,
         };
     }
 
@@ -227,6 +232,12 @@
         }
         if (view.composite && current.volume?.composite !== view.composite) {
             patch.volume = { composite: view.composite };
+        }
+        if (view.inspect && JSON.stringify(current.inspect || null) !== JSON.stringify(view.inspect)) {
+            patch.inspect = view.inspect;
+        }
+        if (view.section && (current.section?.x !== view.section.x || current.section?.y !== view.section.y)) {
+            patch.section = { x: view.section.x, y: view.section.y };
         }
         return Object.keys(patch).length ? patch : null;
     }
@@ -363,11 +374,23 @@
      * when `settle` is true -- the camera or the 2-D view, the channels, the
      * layers. Returns `{missingChannels}`.
      */
-    /** A frame's clip (x, y, z in [0, 1]) onto the 3-D renderer. */
-    function applyClip(env, clip) {
+    /** A frame's clip (x, y, z in [0, 1]) onto the 3-D renderer. In 3-D a
+     *  frame's slab still narrows z, as it always has in a video: the viewer's
+     *  own projection range no longer cuts its 3-D view (core's inspect does),
+     *  so the slab is laid into the clip here. */
+    function applyClip(env, clip, view = null) {
         const renderer = env.renderer;
         if (!renderer?.setClip) return false;
-        return renderer.setClip(clip || null);
+        let out = clip || null;
+        const depth = Math.max(1, env.vs?.depth || 1);
+        const slab = view?.mode === "volume" ? view.slab : null;
+        if (slab && (slab.z0 > 0 || slab.z1 < depth - 1)) {
+            out = JSON.parse(JSON.stringify(out || { x: [0, 1], y: [0, 1], z: [0, 1] }));
+            const z = out.z || [0, 1];
+            const lo = Math.max(z[0], slab.z0 / depth);
+            out.z = [lo, Math.max(lo, Math.min(z[1], (slab.z1 + 1) / depth))];
+        }
+        return renderer.setClip(out);
     }
 
     async function apply(env, state, { aspect = 16 / 9, settle = true } = {}) {
@@ -376,7 +399,7 @@
         const volume = state.view.mode === "volume";
         if (volume) {
             applyCamera(env, state.camera3d, state.box === undefined ? undefined : state.box);
-            applyClip(env, state.view.clip);
+            applyClip(env, state.view.clip, state.view);
         } else if (state.viewport) applyViewport(env, state.viewport, aspect);
         const missingChannels = applyChannels(env, state.channels);
         applyLayers(env, state);
@@ -390,7 +413,7 @@
         applyView(env, state.view);
         if (state.view.mode === "volume") {
             applyCamera(env, state.camera3d);
-            applyClip(env, state.view.clip);
+            applyClip(env, state.view.clip, state.view);
         } else if (state.viewport) applyViewport(env, state.viewport, aspect);
         applyChannels(env, state.channels);
         applyLayers(env, state);

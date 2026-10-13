@@ -7,8 +7,9 @@
  *
  *     one plane    Show: one plane or a projection's operation
  *     projection   the operation, its percentile, the planes combined, Follow
- *     3-D          MIP / Additive, the view, the planes drawn, how Play turns
- *                  the stack, the grid, the surfaces
+ *     3-D          MIP / Additive, the view, how the stack is cut (and the
+ *                  3-D dock that cuts it), how Play turns the stack, the
+ *                  grid, the surfaces
  *
  * and the Depth card at its foot for everything less frequent. Nothing in it
  * is permanent furniture: it opens on the cog and closes on the next click
@@ -33,7 +34,7 @@
 
     //: The heading over each group of rows; "" for none.
     const GROUP_TITLES = {
-        projection: "Projection", volume: "3-D view", clip: "Planes drawn",
+        projection: "Projection", volume: "3-D view", clip: "Cut",
         rotate: "Play turns the stack", grid: "Grid", surfaces: "Surfaces",
         plugins: "", footer: "",
     };
@@ -251,18 +252,25 @@
             return { node: field("View", row), update() {} };
         },
         "volume.clip"(ctx, config, popover) {
-            const vs = popover.viewState;
-            const range = rangeRow(popover, "depth_settings_clip", "Planes", (z0, z1) => vs.set({
-                slab: { z0, z1, thickness: z1 - z0 + 1, follow: false } }));
-            const all = button("All planes", () => vs.set({
-                slab: { z0: 0, z1: vs.depth - 1, follow: false, thickness: vs.depth } }),
-                { title: "Draw every plane of the stack", className: "is-link" });
-            range.node.appendChild(all);
+            // How the 3-D view is cut (services/inspectState.js), in words;
+            // the 3-D dock (views/volumeDock.js) is where it is cut.
+            const cutter = () => global.PlexoraInspect;
+            const summary = el("span", "depth-panel-unit plx-popover-note", { "data-cut-summary": "" });
+            const whole = button("Whole stack", () => cutter()?.reset?.("full"),
+                                 { title: "Draw every voxel of the stack", className: "is-link" });
+            const open = button("Cut…", () => {
+                popover.close({ refocus: false });
+                global.PlexoraVolumeDock?.open?.();
+            }, { title: "The 3-D dock: a cutaway, sections, slabs or a crop", className: "is-link" });
+            const links = el("div", "plx-popover-actions");
+            links.append(whole, open);
+            const node = el("div", "plx-popover-stack");
+            node.append(field("Cut", summary), links);
             return {
-                node: range.node,
+                node,
                 update(now) {
-                    range.update(now);
-                    all.hidden = Boolean(now.allPlanes);
+                    summary.textContent = cutter()?.describe?.() || "the whole stack";
+                    whole.hidden = now.cut === "full";
                 },
             };
         },

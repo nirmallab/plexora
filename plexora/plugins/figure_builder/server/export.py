@@ -149,7 +149,8 @@ def preflight(document, options):
                     w_in = max(1e-6, float(panel["placement"]["w_mm"]) / 25.4)
                     reports.append((panel, {"client_rendered": True, "missing_channels": [],
                                             "missing_overlays": [], "requested_dpi": dpi,
-                                            "effective_dpi": int(round(native / w_in))}))
+                                            "effective_dpi": int(round(native / w_in)),
+                                            "cut": volume_cut(panel)}))
                     continue
                 source = _source_for(document, panel, sources)
                 if source is None:
@@ -245,6 +246,16 @@ def volume_state(panel):
     return state if isinstance(state, dict) and state.get("mode") == "volume" else None
 
 
+def volume_cut(panel) -> str:
+    """How a 3-D panel's stack was cut, in the words the viewer used ("crop X
+    100-600 µm, Z planes 4-9"), or "" for the whole stack or a panel that is
+    not 3-D. The words are the viewer's (services/inspectGeometry.js
+    describe): lengths in microns only where the image states its spacing."""
+    state = volume_state(panel) or {}
+    cut = state.get("cut")
+    return str(cut)[:200] if isinstance(cut, str) else ""
+
+
 def _preview_width(found) -> int:
     if not found:
         return 0
@@ -324,7 +335,8 @@ def _render_unflipped(document, panel, sources, dpi):
             w_in = max(1e-6, float(panel["placement"]["w_mm"]) / 25.4)
             return image, {"client_rendered": True, "missing_channels": [],
                            "missing_overlays": [], "requested_dpi": dpi,
-                           "effective_dpi": int(round(native / w_in))}
+                           "effective_dpi": int(round(native / w_in)),
+                           "cut": volume_cut(panel)}
 
     source = _source_for(document, panel, sources)
     if source is None:

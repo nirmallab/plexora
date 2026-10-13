@@ -32,6 +32,12 @@ MODES = ("plane", "slab", "sections", "volume")
 LAYOUTS = ("single", "split-h", "quad", "strip", "sections")
 COMPOSITES = ("mip", "additive")
 VIEW_STATE_VERSION = 1
+#: How the 3-D view may be cut, and how a slab's voxels are combined
+#: (client services/inspectGeometry.js MODES / COMPOSITES).
+INSPECT_MODES = ("full", "cutaway", "section", "slab", "crop")
+INSPECT_COMPOSITES = ("single", "max", "mean", "min", "sum")
+#: How the 3-D view's textures are read between voxels.
+INTERPOLATIONS = ("linear", "nearest")
 
 
 def _project_or_404(datasource):
@@ -274,6 +280,81 @@ def normalize_view_state(value, depth=None, frames=None):
         "show": {"volume": show.get("volume") is not False,
                  "surfaces": show.get("surfaces") is not False},
     }
+    interpolation = volume.get("interpolation")
+    if interpolation in INTERPOLATIONS:
+        out["volume"]["interpolation"] = interpolation
+    # How the 3-D view is cut (client services/inspectGeometry.js). Kept only
+    # when one was saved: a state without it opens whole, or -- saved before
+    # the view could be cut -- cut to its old clip range (viewState._migrate).
+    if isinstance(value.get("inspect"), dict):
+        out["inspect"] = normalize_inspect(value["inspect"], depth)
+    return out
+
+
+def _float(value, default=0.0, low=None, high=None):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    if not math.isfinite(number):
+        number = default
+    if low is not None:
+        number = max(low, number)
+    if high is not None:
+        number = min(high, number)
+    return number
+
+
+def normalize_inspect(value, depth=None):
+    """How the 3-D view is cut, repaired: image units -- pixels across x and
+    y (boundaries), plane indices along z.
+
+    The same rules as the client's `inspectGeometry.clean`, as far as the
+    server knows the image: z against the depth, x and y only kept
+    non-negative (the browser clamps them to the plane it draws). Lenient:
+    what does not parse reads as its default.
+    """
+    value = value if isinstance(value, dict) else {}
+    top_z = (depth - 1) if depth else None
+    out = {"mode": value.get("mode") if value.get("mode") in INSPECT_MODES else "full"}
+    axes = value.get("axes") if isinstance(value.get("axes"), dict) else {}
+    out["axes"] = {axis: axes.get(axis) is True for axis in ("x", "y", "z")}
+    if not any(out["axes"].values()):
+        out["axes"]["z"] = True
+
+    def pair(raw, integer, high):
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            return None
+        read = (lambda v: _int(v, 0, 0, high)) if integer else (lambda v: _float(v, 0.0, 0.0, high))
+        a, b = read(raw[0]), read(raw[1])
+        return [min(a, b), max(a, b)]
+
+    crop = value.get("crop") if isinstance(value.get("crop"), dict) else {}
+    out["crop"] = {}
+    for axis in ("x", "y", "z"):
+        kept = pair(crop.get(axis), axis == "z", top_z if axis == "z" else None)
+        if kept is not None:
+            out["crop"][axis] = kept
+    cutaway = value.get("cutaway") if isinstance(value.get("cutaway"), dict) else {}
+    out["cutaway"] = {}
+    for axis in ("x", "y", "z"):
+        entry = cutaway.get(axis) if isinstance(cutaway.get(axis), dict) else None
+        if entry is None:
+            continue
+        at = (_int(entry.get("at"), 0, 0, top_z) if axis == "z"
+              else _float(entry.get("at"), 0.0, 0.0))
+        out["cutaway"][axis] = {"at": at, "keep": "lo" if entry.get("keep") == "lo" else "hi"}
+    slab = value.get("slab") if isinstance(value.get("slab"), dict) else {}
+    thickness = slab.get("thickness") if isinstance(slab.get("thickness"), dict) else {}
+    out["slab"] = {
+        "thickness": {axis: _int(thickness.get(axis), 1, 1, depth if axis == "z" else None)
+                      for axis in ("x", "y", "z") if thickness.get(axis) is not None},
+        "composite": slab.get("composite") if slab.get("composite") in INSPECT_COMPOSITES else "max",
+    }
+    out["opacity"] = _float(value.get("opacity"), 1.0, 0.05, 1.0)
+    out["context"] = _float(value.get("context"), 0.15, 0.0, 1.0)
+    out["face"] = value.get("face") is True
+    out["linkPanes"] = value.get("linkPanes") is True
     return out
 
 
@@ -411,6 +492,28 @@ def normalize_rotate(value):
     }
 
 
+#: The 3-D view's plane handles (views/volumeHandles.js): shown or not, and
+#: how strongly their outlines are drawn.
+HANDLES_DEFAULTS = {"visible": True, "opacity": 0.55}
+HANDLE_OPACITY = (0.15, 1.0)
+
+
+def normalize_handles(value):
+    """The handles preference, repaired field by field (viewerPrefs.js's
+    `mergeHandles` keeps the same bounds)."""
+    handles = value if isinstance(value, dict) else {}
+    opacity = handles.get("opacity")
+    try:
+        opacity = None if isinstance(opacity, bool) else float(opacity)
+    except (TypeError, ValueError):
+        opacity = None
+    return {
+        "visible": handles.get("visible") is not False,
+        "opacity": (min(HANDLE_OPACITY[1], max(HANDLE_OPACITY[0], opacity))
+                    if opacity is not None and math.isfinite(opacity) else HANDLES_DEFAULTS["opacity"]),
+    }
+
+
 def normalize_viewer_prefs(value):
     """The viewer's preferences, repaired: a share outside its bounds is
     clamped, and anything that does not parse reads as its default."""
@@ -429,7 +532,8 @@ def normalize_viewer_prefs(value):
     motion = value.get("motion")
     return {"sections": out_sections, "motion": motion if motion in MOTION else "on",
             "grid": normalize_grid(value.get("grid")),
-            "rotate": normalize_rotate(value.get("rotate"))}
+            "rotate": normalize_rotate(value.get("rotate")),
+            "handles": normalize_handles(value.get("handles"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
@@ -461,8 +565,11 @@ def put_viewer_prefs():
     rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
     if isinstance(payload.get("rotate"), dict):
         rotate = {**rotate, **payload["rotate"]}
+    handles = current.get("handles") if isinstance(current.get("handles"), dict) else {}
+    if isinstance(payload.get("handles"), dict):
+        handles = {**handles, **payload["handles"]}
     stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
-                                     "rotate": rotate})
+                                     "rotate": rotate, "handles": handles})
     settings["viewer"] = stored
     paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)
@@ -864,7 +971,8 @@ def section_geometry(datasource):
     return jsonify(geometry(views.current_source(datasource).volume, spec))
 
 
-__all__ = ["normalize_view_state", "get_view_state", "save_view_state", "choose_level"]
+__all__ = ["normalize_view_state", "normalize_inspect", "get_view_state", "save_view_state",
+           "choose_level"]
 
 
 # -- pinned projections (plexora/server/volume/pin.py) -----------------------

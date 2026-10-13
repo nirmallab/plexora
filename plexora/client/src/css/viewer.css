@@ -4323,6 +4323,350 @@ body.sidebar-collapsed .viewer-shell,
     cursor: grabbing;
 }
 
+/* The 3-D dock (views/volumeDock.js): cutting the stack, in the canvas
+   layout's top-right column under the gizmo, only while the 3-D view is.
+   Its rows are the popover's (main.css .plx-popover-*), so the two read as
+   one family. */
+.volume-dock {
+    background: rgba(11, 15, 21, 0.9);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    box-sizing: border-box;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    max-height: 100%;
+    min-height: 0;
+    width: 248px;
+}
+
+/* `display` above beats the `hidden` attribute. */
+.volume-dock[hidden],
+.volume-dock [hidden] {
+    display: none !important;
+}
+
+.volume-dock.is-folded {
+    width: auto;
+}
+
+.volume-dock-head {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+    padding: 6px 8px 6px 4px;
+}
+
+.volume-dock-fold {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 10px;
+    height: 22px;
+    justify-content: center;
+    padding: 0;
+    width: 22px;
+}
+
+.volume-dock-fold:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.volume-dock-fold:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.volume-dock-title {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.volume-dock-summary {
+    color: var(--text-muted);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.volume-dock.is-folded .volume-dock-summary {
+    flex: 0 1 auto;
+    max-width: 150px;
+}
+
+/* The cut's exact planes still on their way (volumeRenderer.resolved). */
+.volume-dock-refining {
+    animation: volume-dock-breathe 1.2s var(--ease-standard) infinite;
+    background: var(--accent-channel);
+    border-radius: 50%;
+    flex: 0 0 auto;
+    height: 6px;
+    width: 6px;
+}
+
+@keyframes volume-dock-breathe {
+    50% { opacity: 0.25; }
+}
+
+.plx-reduced-motion .volume-dock-refining {
+    animation: none;
+}
+
+.volume-dock-body {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.volume-dock-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.volume-dock-field {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-height: 26px;
+}
+
+.volume-dock-label {
+    color: var(--text-secondary);
+    flex: 0 0 44px;
+    font-size: 12px;
+}
+
+.volume-dock-mode {
+    display: flex;
+    width: 100%;
+}
+
+.volume-dock-mode .plx-popover-segment {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0;
+}
+
+.volume-dock-segmented .plx-popover-segment {
+    font-weight: 600;
+    min-width: 30px;
+}
+
+.volume-dock-axis {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.volume-dock-axis-line {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+}
+
+.volume-dock-axis-name {
+    color: var(--text-primary);
+    flex: 0 0 14px;
+    font-weight: 700;
+}
+
+.volume-dock-slider {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.volume-dock-axis-under {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    justify-content: space-between;
+    padding-left: 20px;
+}
+
+.volume-dock-axis-under > .volume-dock-note {
+    margin-left: auto;
+}
+
+.volume-dock-fields {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+}
+
+.volume-dock-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.volume-dock-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.volume-dock-stack > .volume-dock-note {
+    align-self: flex-end;
+}
+
+.volume-dock-select {
+    flex: 1 1 auto;
+    max-width: none;
+}
+
+.volume-dock-tools {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    gap: 4px;
+    padding-top: 6px;
+}
+
+.volume-dock-spacer {
+    flex: 1 1 auto;
+}
+
+.volume-dock-more {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 4px;
+}
+
+.volume-dock-more-summary {
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    list-style: none;
+    padding: 2px 0;
+    user-select: none;
+}
+
+.volume-dock-more-summary::-webkit-details-marker {
+    display: none;
+}
+
+.volume-dock-more-summary::before {
+    content: "\25B8";
+    display: inline-block;
+    margin-right: 6px;
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.volume-dock-more[open] > .volume-dock-more-summary::before {
+    transform: rotate(90deg);
+}
+
+.volume-dock-more > .volume-dock-rows {
+    padding-top: 6px;
+}
+
+/* The handles (views/volumeHandles.js): the cut's planes outlined in the 3-D
+   view, a grip on each to drag it. Over the canvas (200), under the
+   furniture (220); only the grips take the pointer, so a drag anywhere else
+   still turns the stack. The axes wear the gizmo's colours. */
+.volume-handles {
+    --handle-x: #e5484d;
+    --handle-y: #46a758;
+    --handle-z: #4c7cf0;
+    height: 100%;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
+    z-index: 204;
+}
+
+.volume-handles[hidden] {
+    display: none;
+}
+
+.volume-handles .handle-face {
+    fill: none;
+    stroke-linejoin: round;
+    stroke-width: 1.25;
+}
+
+.volume-handles .is-x {
+    color: var(--handle-x);
+}
+
+.volume-handles .is-y {
+    color: var(--handle-y);
+}
+
+.volume-handles .is-z {
+    color: var(--handle-z);
+}
+
+.volume-handles .handle-face {
+    stroke: currentColor;
+}
+
+.volume-handles .handle-face.is-faint {
+    stroke-dasharray: 4 3;
+}
+
+.volume-handles .handle-grip {
+    cursor: grab;
+    outline: none;
+    pointer-events: auto;
+}
+
+.volume-handles .handle-grip.is-dragging {
+    cursor: grabbing;
+}
+
+.volume-handles .handle-grip .grip-disc {
+    fill: rgba(11, 15, 21, 0.88);
+    stroke: currentColor;
+    stroke-width: 1.5;
+    transition: stroke-width var(--duration-fast) var(--ease-standard);
+}
+
+.volume-handles .handle-grip .grip-dot {
+    fill: currentColor;
+}
+
+.volume-handles .handle-grip:hover .grip-disc,
+.volume-handles .handle-grip:focus-visible .grip-disc,
+.volume-handles .handle-grip.is-dragging .grip-disc {
+    stroke-width: 3;
+}
+
+.volume-handles .handle-grip:focus-visible .grip-disc {
+    stroke: var(--text-primary);
+}
+
+.volume-handles .handle-grip.is-body {
+    color: var(--text-secondary);
+    cursor: move;
+}
+
+.plx-reduced-motion .volume-handles .handle-grip .grip-disc {
+    transition: none;
+}
+
 /* The plane just left, fading over the new one (views/planeMotion.js): a copy
    of the picture laid directly over the tiles and under every overlay. It
    never takes a click and is never in a capture. */
@@ -4600,6 +4944,40 @@ body.sidebar-collapsed .viewer-shell,
     height: 0;
     left: 0;
     right: 0;
+}
+
+/* Pinned to the 3-D view's X or Y section (sectionPanes.pinned): drawn in
+   the accent, and taken by the pointer -- a 9px band -- to move it. */
+.viewer-section-crosshair.is-pinned {
+    border-color: var(--accent-channel);
+    pointer-events: auto;
+}
+
+.viewer-section-crosshair.is-pinned::after {
+    content: "";
+    position: absolute;
+}
+
+.viewer-section-crosshair.is-vertical.is-pinned {
+    cursor: ew-resize;
+}
+
+.viewer-section-crosshair.is-vertical.is-pinned::after {
+    bottom: 0;
+    left: -5px;
+    top: 0;
+    width: 9px;
+}
+
+.viewer-section-crosshair.is-horizontal.is-pinned {
+    cursor: ns-resize;
+}
+
+.viewer-section-crosshair.is-horizontal.is-pinned::after {
+    height: 9px;
+    left: 0;
+    right: 0;
+    top: -5px;
 }
 
 .viewer-section-pane[hidden],

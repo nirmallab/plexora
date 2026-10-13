@@ -91,6 +91,7 @@ PROFILES: dict[str, tuple | None] = {
         "surface_export",
         "surface_update", "surface_delete",
         "viewer_set_volume_mode", "viewer_set_camera", "viewer_set_surface",
+        "viewer_set_inspect",
     ),
 }
 

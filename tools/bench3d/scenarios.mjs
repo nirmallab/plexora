@@ -1410,6 +1410,137 @@ async function panesResize(ctx) {
     return { metrics, F, extra };
 }
 
+// -- 3-D Slice & Clip (docs/internal/3d/SLICE_CLIP.md) -----------------------------
+
+/**
+ * Cutting the 3-D view: a crop face dragged by its handle with the real mouse
+ * (frames, dropped frames, requests -- a cut is uniforms, so none -- and
+ * whether the camera moved, which it must not), the same with two axes
+ * previewed at once, and a Z section moved through the stack with nothing
+ * else drawn: how long until its exact planes are in (`renderer.resolved()`).
+ * A build without the cut (no PlexoraInspect) is skipped.
+ */
+async function clip(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx);
+    const F = await period(ctx);
+    const first = await enterVolume(ctx);
+    if (first.ended) return { metrics, F, skipped: first.ended };
+    const can = await ctx.browser.eval(() => Boolean(window.PlexoraInspect && window.PlexoraVolumeHandles));
+    if (!can) {
+        await leaveVolume(ctx);
+        return { metrics, F, skipped: "no cut in this build" };
+    }
+    // One axis: an X crop's far face, by its grip.
+    const start = await ctx.browser.eval(async () => {
+        const k = __bench.k;
+        const vs = k.vs();
+        const info = vs.info || {};
+        window.PlexoraInspect.set({ inspect: { mode: "crop", axes: { x: true, y: false, z: false },
+                                               crop: { x: [0, Math.round((info.width || 1000) * 0.8)] } } });
+        window.PlexoraViewerPrefs?.set?.({ handles: { visible: true } }, { save: false });
+        await k.sleep(300);
+        const grip = window.PlexoraVolumeHandles.instance?.grips?.get("x:hi")?.group;
+        const box = grip?.getBoundingClientRect?.();
+        return box && box.width ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null;
+    });
+    if (start) {
+        for (let rep = 0; rep < Math.min(ctx.reps, 5); rep += 1) {
+            const before = await ctx.browser.eval(() => {
+                __bench.reset({ counters: false });
+                __bench.start();
+                const r = __bench.k.P().volumeView.renderer;
+                return { t0: performance.now(), c0: __bench.k.counters(), camera: JSON.stringify(r.cameraState()) };
+            });
+            const moves = [["press", start.x, start.y, 8]];
+            for (let i = 1; i <= 60; i += 1) moves.push(["move", start.x - 2 * i, start.y + (i % 2), 8]);
+            moves.push(["release", start.x - 120, start.y, 0]);
+            await ctx.browser.mouse(moves);
+            const r = await ctx.browser.eval(async (t0, c0, camera, F) => {
+                const k = __bench.k;
+                const t1 = performance.now();
+                await k.sleep(200);
+                __bench.stop();
+                const renderer = k.P().volumeView.renderer;
+                const counts = k.delta(c0, k.counters());
+                const out = { fs: k.frameStats(t0, t1, F), fetches: (counts["fetch:level"] || 0) + (counts["fetch:brick"] || 0),
+                              turned: JSON.stringify(renderer.cameraState()) !== camera ? 1 : 0 };
+                window.PlexoraInspect.undo();
+                await k.sleep(150);
+                return out;
+            }, before.t0, before.c0, before.camera, F);
+            put(metrics, "clip_drag_fps", r.fs.fps);
+            put(metrics, "clip_drag_frameP95", r.fs.p95);
+            put(metrics, "clip_drag_frameP99", r.fs.p99);
+            put(metrics, "clip_drag_dropped", r.fs.dropped);
+            put(metrics, "clip_drag_fetches", r.fetches);
+            put(metrics, "clip_drag_turned", r.turned);
+        }
+    }
+    // Two axes at once (X and Y ranges previewed every frame), against one.
+    for (const [name, axes] of [["clip_one", ["x"]], ["clip_two", ["x", "y"]]]) {
+        const r = await ctx.browser.eval(async (axes, F) => {
+            const k = __bench.k;
+            const info = k.vs().info || {};
+            const size = { x: info.width || 1000, y: info.height || 1000 };
+            const cutter = window.PlexoraInspect;
+            cutter.set({ inspect: { mode: "crop", axes: { x: axes.includes("x"), y: axes.includes("y"), z: false } } });
+            await k.sleep(200);
+            __bench.reset({ counters: false });
+            __bench.start();
+            const t0 = performance.now();
+            for (let i = 0; i < 90; i += 1) {
+                const f = 0.5 + 0.4 * Math.sin(i / 10);
+                const crop = {};
+                for (const axis of axes) crop[axis] = [0, Math.round(size[axis] * f)];
+                cutter.preview({ inspect: { crop } });
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+            }
+            const t1 = performance.now();
+            cutter.cancel();
+            await k.sleep(150);
+            __bench.stop();
+            return k.frameStats(t0, t1, F);
+        }, axes, F);
+        put(metrics, `${name}_frameP95`, r.p95);
+        put(metrics, `${name}_dropped`, r.dropped);
+    }
+    // A Z section drawn alone, moved: until its exact planes are in.
+    for (let rep = 0; rep < Math.min(ctx.reps, 4); rep += 1) {
+        const r = await ctx.browser.eval(async (rep) => {
+            const k = __bench.k;
+            const vs = k.vs();
+            const renderer = k.P().volumeView.renderer;
+            const cutter = window.PlexoraInspect;
+            const c0 = k.counters();
+            const z = Math.max(0, Math.min(vs.depth - 1, Math.round(vs.depth * (0.2 + 0.15 * rep))));
+            const t0 = performance.now();
+            cutter.set({ inspect: { mode: "section", axes: { x: false, y: false, z: true }, context: 0 }, z });
+            await k.sleep(50);
+            const end = performance.now() + 30000;
+            // The detail (or the bricks) for the plane, once the camera rests.
+            while (performance.now() < end) {
+                renderer.refine?.();
+                if (renderer.resolved() && (renderer.detail?.lo || renderer.atlas?.active?.()
+                        || renderer.level === 0)) break;
+                await k.sleep(25);
+            }
+            return { ms: performance.now() - t0, counters: k.delta(c0, k.counters()) };
+        }, rep);
+        put(metrics, "clip_sectionResolved", r.ms);
+        put(metrics, "clip_sectionLevelFetches", r.counters["fetch:level"] || 0);
+    }
+    await ctx.browser.eval(async () => {
+        window.PlexoraInspect.reset("full");
+        await __bench.k.sleep(100);
+        return true;
+    });
+    await leaveVolume(ctx);
+    return { metrics, F };
+}
+
 export const SCENARIOS = {
     open: { run: open },
     channels: { run: channels },
@@ -1426,4 +1557,5 @@ export const SCENARIOS = {
     held: { run: held },
     volume_flash: { run: volumeFlash },
     panes_resize: { run: panesResize },
+    clip: { run: clip },
 };

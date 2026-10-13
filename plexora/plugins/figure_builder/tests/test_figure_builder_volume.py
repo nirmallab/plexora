@@ -18,7 +18,7 @@ from plexora.plugins.figure_builder.server import export, repository
 from plexora.plugins.figure_builder.tests.test_figure_builder_export import figure  # noqa: F401
 
 
-def _volume_panel(figure_id, version=1, preview_px=(480, 360)):
+def _volume_panel(figure_id, version=1, preview_px=(480, 360), extra=None):
     from PIL import Image
 
     repository.apply(figure_id, version, [
@@ -30,7 +30,8 @@ def _volume_panel(figure_id, version=1, preview_px=(480, 360)):
                 "channels": [],
                 "plugins": {"volume": {"version": "1", "state": {
                     "mode": "volume", "camera": {"q": [0, 0, 0, 1], "dist": 2.2, "pan": [0, 0]},
-                    "surfaces": [{"id": "surf-abc", "visible": True, "style": "glass"}]}}},
+                    "surfaces": [{"id": "surf-abc", "visible": True, "style": "glass"}],
+                    **(extra or {})}}},
             },
             "placement": {"page_id": "pg_1", "x_mm": 80, "y_mm": 20,
                           "w_mm": 40, "h_mm": 30, "z": 1},
@@ -90,3 +91,27 @@ def test_a_3d_panel_reaches_the_exported_page(figure, tmp_path):
     x = int((100 / 25.4) * 150)
     y = int((35 / 25.4) * 150)
     assert int(pixels[y, x, 1]) == pytest.approx(180, abs=6) and int(pixels[y, x, 0]) < 20
+
+
+def test_a_cut_3d_panel_says_how_it_was_cut(figure):
+    """The cut the 3-D view drew (the viewer's inspect, in its own words) is in
+    the panel's report: a cropped or sectioned picture never passes for the
+    whole stack."""
+    cut = "crop X 100–600 µm, Z planes 4–9 · 12.0 µm"
+    _volume_panel(figure, extra={"cut": cut, "inspect": {"mode": "crop", "axes": {"x": True, "z": True}},
+                                 "z": 12, "section": {"x": 500, "y": 250}})
+    document = repository.load(figure)
+    panel = document["panels"]["pnl_3d"]
+    assert export.volume_state(panel)["inspect"]["mode"] == "crop"
+    assert export.volume_cut(panel) == cut
+    row = next(p for p in export.preflight(document, {"dpi": 300})["per_panel"] if p["panel_id"] == "pnl_3d")
+    assert row["cut"] == cut
+    _, report = export._render_unflipped(document, panel, {}, 300)
+    assert report["cut"] == cut
+
+
+def test_a_whole_stack_says_nothing_about_a_cut(figure):
+    _volume_panel(figure)
+    panel = repository.load(figure)["panels"]["pnl_3d"]
+    assert export.volume_cut(panel) == ""
+    assert export.volume_cut(repository.load(figure)["panels"]["pnl_1"]) == ""

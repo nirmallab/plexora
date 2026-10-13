@@ -526,6 +526,11 @@ async function init(config, savedViewTransform = null) {
     // image -- its tile addresses stay exactly what they were.
     if (viewState?.enabled()) {
         __plexora.viewState = viewState;
+        // How the 3-D view is cut, changed (services/inspectState.js): the
+        // dock, the strip, the handles, the keys and the agent go through it.
+        if (window.PlexoraInspectState && viewState.get()?.inspect) {
+            window.PlexoraInspect = new window.PlexoraInspectState(viewState);
+        }
         viewerManager.presetView(viewState.spec());
         viewerManager.presetLabelPlane(viewState.labelSpec());
         // The window each channel's tiles are quantized with -- provisional
@@ -686,6 +691,20 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // The 3-D view's dock (cutting the stack) and the handles that
+            // drag its cuts in the view (views/volumeDock.js, volumeHandles.js).
+            if (volume && window.PlexoraInspect) {
+                try {
+                    __plexora.volumeDock = window.PlexoraVolumeDock?.attach?.({
+                        viewState, volume, cutter: window.PlexoraInspect, extras: depthControlExtras,
+                    }) || null;
+                    __plexora.volumeHandles = window.PlexoraVolumeHandles?.attach?.({
+                        viewState, volume, cutter: window.PlexoraInspect,
+                    }) || null;
+                } catch (error) {
+                    console.error("main: the 3-D dock could not be set up", error);
+                }
+            }
             // Surfaces (plexora/server/surface): layers drawn in the 3-D view,
             // made in Surface Studio's dock.
             try {

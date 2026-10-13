@@ -16,6 +16,8 @@
  *               setAutoRotate): {speed: degrees a second, ROTATE_SPEED;
  *               axis: "screen" | "x" | "y" | "z"; direction: 1 | -1}. Whether
  *               it is turning is never stored: a page never opens mid-motion.
+ *     handles   the 3-D view's plane handles (views/volumeHandles.js):
+ *               {visible, opacity of their outlines}
  *
  * `smoothMotion()` is what every animation asks. It is false when either the
  * user turned motion off here or the system asks for reduced motion
@@ -36,8 +38,23 @@
     //: Degrees a second (server/routes/volume_routes.py ROTATE_SPEED).
     const ROTATE_SPEED = [5, 90];
     const ROTATE_AXES = ["screen", "x", "y", "z"];
+    //: The 3-D view's plane handles (server/routes/volume_routes.py HANDLES_DEFAULTS).
+    const HANDLES = { visible: true, opacity: 0.55 };
+    const HANDLE_OPACITY = [0.15, 1];
     const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID,
-                       rotate: ROTATE };
+                       rotate: ROTATE, handles: HANDLES };
+
+    /** A handles preference, repaired over `base` (the server's
+     *  `normalize_handles` keeps the same bounds). */
+    function mergeHandles(base, patch) {
+        const out = { ...base };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.visible === "boolean") out.visible = patch.visible;
+        if (typeof patch.opacity === "number" && Number.isFinite(patch.opacity)) {
+            out.opacity = Math.min(HANDLE_OPACITY[1], Math.max(HANDLE_OPACITY[0], patch.opacity));
+        }
+        return out;
+    }
 
     /** A grid preference, repaired over `base`: what does not parse keeps
      *  the value it had (the server's `normalize_grid` keeps the same bounds). */
@@ -136,6 +153,11 @@
             return { ...this.prefs.rotate };
         }
 
+        /** The 3-D view's plane handles: `{visible, opacity}`. */
+        handles() {
+            return { ...this.prefs.handles };
+        }
+
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
             if (this._holds > 0) return false;
@@ -169,8 +191,9 @@
 
         /**
          * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`,
-         * `{grid: {on: true}}` (merged over the grid as it is).
-         * `{rotate: {speed: 45}}` (merged over the rotation as it is).
+         * `{grid: {on: true}}` (merged over the grid as it is),
+         * `{rotate: {speed: 45}}` (merged over the rotation as it is),
+         * `{handles: {visible: false}}`.
          * `save: false` while a drag is still moving; the drag's end saves.
          */
         set(patch, { save = true } = {}) {
@@ -180,11 +203,14 @@
                 ? { grid: { ...(this._pending.grid || {}), ...(patch.grid || {}) } } : {};
             const rotate = patch.rotate || this._pending.rotate
                 ? { rotate: { ...(this._pending.rotate || {}), ...(patch.rotate || {}) } } : {};
+            const handles = patch.handles || this._pending.handles
+                ? { handles: { ...(this._pending.handles || {}), ...(patch.handles || {}) } } : {};
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
                 ...grid,
                 ...rotate,
+                ...handles,
             };
             this._paintRoot();
             this._announce();
@@ -205,6 +231,7 @@
                     ? patch.motion : this.prefs.motion,
                 grid: mergeGrid(this.prefs.grid || GRID, patch?.grid),
                 rotate: mergeRotate(this.prefs.rotate || ROTATE, patch?.rotate),
+                handles: mergeHandles(this.prefs.handles || HANDLES, patch?.handles),
             };
         }
 

@@ -251,19 +251,21 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
     from plexora import paths
 
     turn = {"speed": 30.0, "axis": "screen", "direction": 1}
+    handles = {"visible": True, "opacity": 0.55}
     paths.write_settings({"data_dir": "/somewhere"})
     grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {
-        "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn}
+        "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn,
+        "handles": handles}
     client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
     stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid,
-                      "rotate": turn}
+                      "rotate": turn, "handles": handles}
     # Out of bounds is clamped; nonsense reads as the default.
     stored = client.put("/viewer_prefs", json={
         "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "grid": grid,
-                      "rotate": turn}
+                      "rotate": turn, "handles": handles}
     client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
     assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
     # The rest of the settings file is left alone.
@@ -315,6 +317,56 @@ def test_the_rotation_preference_is_merged_and_clamped(client):
     stored = client.put("/viewer_prefs", json={"rotate": {"speed": 1}}).get_json()["prefs"]
     assert stored["rotate"]["speed"] == 5.0
     assert "on" not in client.get("/viewer_prefs").get_json()["rotate"]
+
+
+def test_the_handles_preference_is_merged_and_clamped(client):
+    """The 3-D view's cut handles: shown or not, their strength -- the
+    user's, for every image, merged field by field."""
+    from plexora import paths
+
+    paths.write_settings({})
+    stored = client.put("/viewer_prefs", json={"handles": {"visible": False}}).get_json()["prefs"]
+    assert stored["handles"] == {"visible": False, "opacity": 0.55}
+    stored = client.put("/viewer_prefs", json={"handles": {"opacity": 0.9}}).get_json()["prefs"]
+    assert stored["handles"] == {"visible": False, "opacity": 0.9}
+    stored = client.put("/viewer_prefs", json={"handles": {"opacity": 7, "visible": "no"}}).get_json()["prefs"]
+    assert stored["handles"] == {"visible": True, "opacity": 1.0}
+    stored = client.put("/viewer_prefs", json={"handles": {"opacity": 0}}).get_json()["prefs"]
+    assert stored["handles"]["opacity"] == 0.15
+
+
+def test_the_3d_cut_is_kept_and_repaired(tmp_path, client):
+    """How the 3-D view is cut (`inspect`, image units) round-trips through
+    the view state, repaired: a known mode, axes with one on, ranges ordered,
+    z inside the stack, a slab a voxel or more -- and a state saved without
+    one comes back without one (the client then opens whole, or migrates an
+    old clip range)."""
+    _register_volume(tmp_path)
+    plain = client.put("/view_state/vol", json={"z": 2, "mode": "volume"}).get_json()["state"]
+    assert "inspect" not in plain
+    stored = client.put("/view_state/vol", json={
+        "z": 2, "mode": "volume", "volume": {"interpolation": "nearest"},
+        "inspect": {"mode": "crop", "axes": {"x": True, "z": True, "y": "yes"},
+                    "crop": {"x": [600, 100], "z": [9, -2], "y": [1, 2, 3]},
+                    "cutaway": {"z": {"at": 99, "keep": "sideways"}},
+                    "slab": {"thickness": {"z": 0, "x": 12}, "composite": "median"},
+                    "opacity": 4, "context": -1, "face": "true", "linkPanes": True}}).get_json()["state"]
+    inspect = stored["inspect"]
+    assert inspect["mode"] == "crop"
+    assert inspect["axes"] == {"x": True, "y": False, "z": True}
+    assert inspect["crop"]["x"] == [100.0, 600.0]
+    assert inspect["crop"]["z"] == [0, 4]              # the stack's 5 planes
+    assert "y" not in inspect["crop"]
+    assert inspect["cutaway"]["z"] == {"at": 4, "keep": "hi"}
+    assert inspect["slab"]["thickness"]["z"] == 1 and inspect["slab"]["thickness"]["x"] == 12
+    assert inspect["slab"]["composite"] == "max"
+    assert inspect["opacity"] == 1.0 and inspect["context"] == 0.0
+    assert inspect["face"] is False and inspect["linkPanes"] is True
+    assert stored["volume"]["interpolation"] == "nearest"
+    again = client.get("/view_state/vol").get_json()
+    assert again["inspect"] == inspect
+    nothing = client.put("/view_state/vol", json={"mode": "volume", "inspect": {"axes": {}}}).get_json()["state"]
+    assert nothing["inspect"]["mode"] == "full" and nothing["inspect"]["axes"]["z"] is True
 
 
 # -- whole levels and section geometry -------------------------------------

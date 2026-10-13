@@ -71,7 +71,7 @@ def test_the_3d_view_keeps_its_textures():
     picture fades in, at once with motion off or for a capture; the reference
     grid's steps, units, numbers on screen, preference and uniforms
     (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 66)
+    _passed(_run("volume_renderer_probe.mjs"), 70)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():

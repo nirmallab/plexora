@@ -248,3 +248,24 @@ Branch `feature/3d-controls` (worktree `../plexora-3d-controls`). Plan:
 | Thresholding's View row through `ctx.view.controls` (`gating.view`), gating plane-cells following the committed plane | with the gating session's commit |
 | Decision: no synthesized intermediate planes; the plane fade dissolves two measured planes on screen only | recorded |
 
+
+## Slice & Clip (feature/slice-clip, 2026-10-12)
+
+Branch `feature/slice-clip` (worktree `../plexora-slice`), on `feature/3d-controls`, merged with
+main. Design and the full list: `SLICE_CLIP.md`. Plan:
+`~/.claude/plans/pasted-content-id-1ea9-implementation-transient-anchor.md`.
+
+| Item | State |
+|---|---|
+| Cut modes over any axes: cutaway (several axes: a corner), sections (union), slabs single/max/mean/min/sum (union), crop (intersection); context, cut faces | done |
+| State `inspect` (image units) in the view state and `/view_state`; positions are `z` / `section.x/y`; old 3-D clip ranges migrate to a Z crop; `state.slab` no longer clips 3-D | done |
+| `services/inspectGeometry.js` (pure), `services/inspectState.js` (preview, commit, undo/redo, reset) | done |
+| Ray caster: box + corner + analytic section planes + slab pass + cut faces, uniforms only; surface variant swap; grid kept | done; every variant compiled on the GPU |
+| Surfaces cut with the voxels (box, corner, section band, slabs), flat caps | done |
+| Registry: cut flags/caps, the `dock` surface, the 3-D rail config, `card.projection` | done |
+| 3-D dock (`views/volumeDock.js`), handles (`views/volumeHandles.js`), strip rail in 3-D, popover Cut row, Depth card rows | done |
+| Fidelity: thin-region detail for a lone section/slab, atlas bricks of the cut only, `resolved()` and the dock's dot, contrast over kept planes | done |
+| Panes pinned to the X/Y sections (`linkPanes`), draggable crosshair | done |
+| Figure Builder round trip and `cut` in the report; Video Studio frames carry the cut, slab narrows z via the clip; `viewer_set_inspect`, `viewer_set_z mode=keep`, lease restore | done |
+| Oblique planes; voxel-label 3-D masks | not done (seams kept) |
+| Bench scenario `clip` | see tools/bench3d |

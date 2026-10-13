@@ -132,25 +132,29 @@ const box = {
 box.window = box;
 box.globalThis = box;
 const context = createContext(box);
-for (const file of ["views/slider.js", "services/viewControls.js", "views/depthStrip.js",
-                    "views/depthSettings.js"]) {
+for (const file of ["views/slider.js", "services/inspectGeometry.js", "services/inspectState.js",
+                    "services/viewControls.js", "views/depthStrip.js", "views/depthSettings.js"]) {
     runInContext(readFileSync(join(JS, file), "utf8"), context);
 }
+const G = box.PlexoraInspectGeometry;
+const DIMS = G.dims({ width: 400, height: 300 }, 40);
 
 // -- a view state that records what is asked of it -------------------------------
 
 const asked = [];
 let state = { mode: "plane", z: 10, t: 0, layout: "single",
-              slab: { z0: 5, z1: 15, op: "max", follow: true, thickness: 11 }, volume: {} };
+              slab: { z0: 5, z1: 15, op: "max", follow: true, thickness: 11 }, volume: {},
+              section: { x: 200, y: 150 }, inspect: G.clean({}, DIMS) };
 const subscribers = new Set();
 const vs = {
-    depth: 40, frames: 1, color: false,
+    depth: 40, frames: 1, color: false, info: { width: 400, height: 300 },
     enabled: () => true,
     get: () => JSON.parse(JSON.stringify(state)),
     set(patch) {
         asked.push(patch);
         state = { ...state, ...patch, slab: { ...state.slab, ...(patch.slab || {}) },
-                  volume: { ...state.volume, ...(patch.volume || {}) } };
+                  volume: { ...state.volume, ...(patch.volume || {}) },
+                  inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), DIMS) };
         for (const fn of subscribers) fn(state);
         return state;
     },
@@ -184,6 +188,7 @@ box.PlexoraViewerPrefs = {
     },
 };
 
+box.PlexoraInspect = new box.PlexoraInspectState(vs);
 const strip = new box.PlexoraDepthStrip(vs, { volume, sections: {}, openCard: () => {} });
 strip.mount();
 const shownIds = () => Object.entries(strip.nodes).filter(([, node]) => !node.hidden).map(([id]) => id);
@@ -196,40 +201,82 @@ check("one plane: the plane rail, its thumb and hover mark, Sections",
 strip.play();
 const stepping = intervals.size;
 asked.length = 0;
-vs.set({ mode: "volume", slab: { z0: 0, z1: 39, follow: false } });
+vs.set({ mode: "volume" });
 const afterEnter = asked.length;
 check("entering 3-D while stepping planes stops the stepper without touching the view state",
       stepping === 1 && intervals.size === 0 && afterEnter === 1 && !asked.some((p) => p.persist),
       JSON.stringify(asked));
-check("in 3-D: no plane thumb, no hover mark, no Sections; the band (the clip range) is there",
+check("in 3-D, whole: no plane thumb, no hover mark, no Sections; the band (every plane) is there",
       !shownIds().includes("thumb") && !shownIds().includes("hover") && !shownIds().includes("sections")
-      && shownIds().includes("band") && shownIds().includes("rail"), shownIds().join());
+      && shownIds().includes("band") && shownIds().includes("rail") && strip.readoutBottom.textContent === "all",
+      shownIds().join());
 
-// The rail in 3-D: a press outside the clip range does nothing.
-vs.set({ slab: { z0: 10, z1: 20 } });
-asked.length = 0;
 const press = (clientY, extra = {}) => strip.rail.fire("pointerdown", { button: 0, clientY, ...extra });
-press(100 + 400 * (35 / 39));
-check("a press on the rail outside the clip range sets nothing in 3-D", asked.length === 0 && !strip.drag);
-press(100 + 400 * (15 / 39));
-box.dispatchEvent({ type: "pointermove", clientY: 100 + 400 * (18 / 39) });
-check("a press inside it drags the clip range, the plane left alone",
-      asked.length === 1 && asked[0].slab?.z0 === 13 && asked[0].slab?.z1 === 23 && asked[0].z === undefined,
-      JSON.stringify(asked));
-box.dispatchEvent({ type: "pointerup" });
+const at = (z) => 100 + 400 * (z / 39);
+const handle = (name) => { const node = fakeElement("span"); node.dataset.handle = name; return node; };
+// The whole stack's band end: dragged, the stack is cropped along Z.
 asked.length = 0;
-const handle = fakeElement("span");
-handle.dataset.handle = "z1";
-strip.rail.fire("pointerdown", { button: 0, clientY: 100 + 400 * (23 / 39), target: handle });
-box.dispatchEvent({ type: "pointermove", clientY: 100 + 400 * (30 / 39) });
+press(at(39), { target: handle("z1") });
+box.dispatchEvent({ type: "pointermove", clientY: at(30) });
+check("while the hand is on it, nothing is saved: the cut is previewed",
+      asked.length === 0 && box.PlexoraInspect.previewing && strip.band.style.height !== "100%");
+box.dispatchEvent({ type: "pointerup" });
+check("let go, the whole stack's end makes one Z crop, the plane left alone",
+      asked.length === 1 && asked[0].inspect?.mode === "crop" && asked[0].inspect.crop.z.join() === "0,30"
+      && asked[0].inspect.axes.x === false && asked[0].z === undefined, JSON.stringify(asked));
+
+// The rail in 3-D: a press outside the planes drawn does nothing.
+vs.set({ inspect: { crop: { z: [10, 20] } } });
+asked.length = 0;
+press(at(35));
+check("a press on the rail outside the planes drawn sets nothing in 3-D", asked.length === 0 && !strip.drag);
+press(at(15));
+box.dispatchEvent({ type: "pointermove", clientY: at(18) });
+box.dispatchEvent({ type: "pointerup" });
+check("a press inside drags the Z crop whole, the plane left alone",
+      asked.length === 1 && asked[0].inspect?.crop?.z?.join() === "13,23" && asked[0].z === undefined,
+      JSON.stringify(asked));
+asked.length = 0;
+press(at(23), { target: handle("z1") });
+box.dispatchEvent({ type: "pointermove", clientY: at(30) });
 box.dispatchEvent({ type: "pointerup" });
 check("its end resizes it, still without moving the plane",
-      asked.length === 1 && asked[0].slab?.z1 === 30 && asked[0].z === undefined, JSON.stringify(asked));
+      asked.length === 1 && asked[0].inspect?.crop?.z?.join() === "13,30" && asked[0].z === undefined,
+      JSON.stringify(asked));
+check("the readout says the planes kept", strip.readoutBottom.textContent === "13–30");
+check("one gesture, one undo", box.PlexoraInspect.undo() && vs.get().inspect.crop.z.join() === "13,23");
 
-// `]` in 3-D moves the clip range (viewState.step does), never a frozen plane.
+// A Z section: the thumb is its plane; the rail picks it.
+vs.set({ inspect: { mode: "section" } });
+check("a Z section: the thumb and hover mark, no band", shownIds().includes("thumb")
+      && shownIds().includes("hover") && !shownIds().includes("band"), shownIds().join());
+asked.length = 0;
+press(at(25));
+box.dispatchEvent({ type: "pointermove", clientY: at(27) });
+box.dispatchEvent({ type: "pointerup" });
+check("a press and drag move the Z section (the plane), as one change",
+      asked.length === 1 && asked[0].z === 27 && !asked[0].inspect, JSON.stringify(asked));
+// A Z cutaway: one end moves.
+vs.set({ inspect: { mode: "cutaway", cutaway: { z: { at: 20, keep: "hi" } } } });
+check("a Z cutaway keeping the deep side: only its top end is a handle",
+      !strip.handleTop.hidden && strip.handleBottom.hidden && shownIds().includes("band"));
+asked.length = 0;
+press(at(20), { target: handle("z0") });
+box.dispatchEvent({ type: "pointermove", clientY: at(8) });
+box.dispatchEvent({ type: "pointerup" });
+check("dragging it moves the cut", asked.length === 1 && asked[0].inspect?.cutaway?.z?.at === 8, JSON.stringify(asked));
+// Only X cut: nothing along Z for the rail.
+vs.set({ inspect: { mode: "section", axes: { x: true, z: false } } });
+asked.length = 0;
+press(at(10));
+check("an X section only: the rail is not the cut's, a press does nothing",
+      asked.length === 0 && !shownIds().includes("band") && !shownIds().includes("thumb"));
+vs.set({ inspect: { mode: "crop", axes: { x: false, z: true }, crop: { z: [10, 20] } } });
+
+// `]` in 3-D moves what is cut along Z (viewState.step does), never a frozen plane.
 asked.length = 0;
 strip.onKey({ code: "BracketRight", shiftKey: false, altKey: false, preventDefault() {} });
-check("] in 3-D asks for a step (the clip range moves)", asked.length === 1 && asked[0].step === 1);
+check("] in 3-D asks for a step (the cut along Z moves)", asked.length === 1 && asked[0].step === 1);
 
 // Play turns the stack.
 asked.length = 0;
@@ -253,7 +300,7 @@ check("a turn stopped by the view (a press, Esc) gives Play back its play glyph"
 strip.cog.fire("click");
 const popover = strip.settings;
 const rowIds = () => [...popover.el.querySelectorAll("[data-control]")].map((n) => n.getAttribute("data-control"));
-check("the cog opens the settings for 3-D: composite, view, planes, rotation, the Depth card",
+check("the cog opens the settings for 3-D: composite, view, the cut, rotation, the Depth card",
       popover.isOpen() && ["volume.composite", "volume.view", "volume.clip", "rotate.speed", "rotate.axis",
                            "rotate.direction", "card"].every((id) => rowIds().includes(id))
       && !rowIds().some((id) => id.startsWith("projection.")), rowIds().join());

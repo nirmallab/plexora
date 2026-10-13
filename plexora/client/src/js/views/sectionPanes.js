@@ -42,7 +42,12 @@
  * while it moves).
  *
  * The cut runs through the centre of the part of the plane NOT under a pane,
- * so a pane made large never hides the line it is a section along.
+ * so a pane made large never hides the line it is a section along -- unless
+ * it is PINNED: with the 3-D view's "panes follow the sections" on
+ * (`inspect.linkPanes`) and an X or Y section or slab cut there, that pane
+ * cuts at the section (`state.section.x/y`), the crosshair says so in the
+ * accent, and dragging the crosshair moves the section, as one change
+ * (services/inspectState.js).
  */
 (function (global) {
     "use strict";
@@ -940,6 +945,8 @@
                 this.bindDivider(pane);
             }
             this.wrapper.append(this.crossX, this.crossY);
+            this.bindCrosshair(this.crossX, "x");
+            this.bindCrosshair(this.crossY, "y");
             this.panes = panes;
             const viewer = imageViewer.viewer;
             viewer.addHandler("animation", () => this.follow(false));
@@ -993,12 +1000,37 @@
                 if (yz.width > 0) right = Math.min(right, yz.left);
                 if (xz.height > 0) bottom = Math.min(bottom, xz.top);
             }
-            const cutX = Math.max(0, (right - box.left) / 2);
-            const cutY = Math.max(0, (bottom - box.top) / 2);
+            let cutX = Math.max(0, (right - box.left) / 2);
+            let cutY = Math.max(0, (bottom - box.top) / 2);
             const point = item.viewportToImageCoordinates(
                 viewer.viewport.pointFromPixel(new OpenSeadragon.Point(cutX, cutY), !target));
             if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+            // [inspect] A pane pinned to the 3-D view's section cuts there.
+            const pinned = this.pinned();
+            if (pinned.x !== null || pinned.y !== null) {
+                const at = viewer.viewport.pixelFromPoint(item.imageToViewportCoordinates(
+                    new OpenSeadragon.Point(pinned.x ?? point.x, pinned.y ?? point.y)), !target);
+                if (pinned.x !== null && Number.isFinite(at?.x)) { point.x = pinned.x; cutX = at.x; }
+                if (pinned.y !== null && Number.isFinite(at?.y)) { point.y = pinned.y; cutY = at.y; }
+            }
             Object.assign(frame, { cx: point.x, cy: point.y, cutX, cutY });
+        }
+
+        /**
+         * [inspect] Where a pane is pinned: `{x, y}` image pixels, each null
+         * when that pane cuts at the view's centre. Pinned while the 3-D
+         * view's cut links the panes and sections or slabs cut along that
+         * axis: the YZ pane at the X section, the XZ pane at the Y section.
+         */
+        pinned() {
+            const state = this.viewState.get();
+            const inspect = state?.inspect;
+            const out = { x: null, y: null };
+            if (!inspect?.linkPanes || !["section", "slab"].includes(inspect.mode)) return out;
+            for (const axis of ["x", "y"]) {
+                if (inspect.axes?.[axis] && Number.isFinite(state.section?.[axis])) out[axis] = state.section[axis];
+            }
+            return out;
         }
 
         /**
@@ -1192,8 +1224,65 @@
             if (!host || !this.frame) return;
             const box = host.getBoundingClientRect();
             const outer = this.wrapper.getBoundingClientRect();
-            this.crossX.style.left = `${box.left - outer.left + this.frame.cutX}px`;
-            this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
+            if (this.crossDrag?.axis !== "x") this.crossX.style.left = `${box.left - outer.left + this.frame.cutX}px`;
+            if (this.crossDrag?.axis !== "y") this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
+            const pinned = this.pinned();
+            this.crossX.classList.toggle("is-pinned", pinned.x !== null);
+            this.crossY.classList.toggle("is-pinned", pinned.y !== null);
+            this.crossX.title = pinned.x !== null ? "The X section (drag to move it)" : "";
+            this.crossY.title = pinned.y !== null ? "The Y section (drag to move it)" : "";
+        }
+
+        /**
+         * [inspect] A pinned crosshair dragged: the section under it moves,
+         * previewed while the hand moves and committed on release; the panes
+         * follow the committed section.
+         */
+        bindCrosshair(node, axis) {
+            node.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0 || !node.classList.contains("is-pinned")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                node.setPointerCapture?.(event.pointerId);
+                const cutter = global.PlexoraInspect;
+                this.crossDrag = { axis };
+                const at = (e) => {
+                    const viewer = this.imageViewer?.viewer;
+                    const item = viewer?.world?.getItemAt?.(0);
+                    const host = this.mainElement?.getBoundingClientRect();
+                    if (!item || !host || typeof OpenSeadragon !== "function") return null;
+                    const point = item.viewportToImageCoordinates(viewer.viewport.pointFromPixel(
+                        new OpenSeadragon.Point(e.clientX - host.left, e.clientY - host.top), true));
+                    const info = this.viewState.info || {};
+                    const top = (axis === "x" ? Number(info.width) : Number(info.height)) || 1;
+                    return Math.max(0, Math.min(top - 1, Math.round(axis === "x" ? point.x : point.y)));
+                };
+                const move = (e) => {
+                    const value = at(e);
+                    if (value === null) return;
+                    const outer = this.wrapper.getBoundingClientRect();
+                    if (axis === "x") node.style.left = `${e.clientX - outer.left}px`;
+                    else node.style.top = `${e.clientY - outer.top}px`;
+                    if (cutter) cutter.preview({ section: { [axis]: value } });
+                };
+                const up = (e) => {
+                    node.removeEventListener("pointermove", move);
+                    node.removeEventListener("pointerup", up);
+                    node.removeEventListener("pointercancel", up);
+                    this.crossDrag = null;
+                    const value = at(e);
+                    if (cutter) {
+                        if (e.type === "pointercancel") cutter.cancel();
+                        else cutter.commit();
+                    } else if (value !== null && e.type !== "pointercancel") {
+                        this.viewState.set({ section: { [axis]: value } });
+                    }
+                    this.follow(true);
+                };
+                node.addEventListener("pointermove", move);
+                node.addEventListener("pointerup", up);
+                node.addEventListener("pointercancel", up);
+            });
         }
 
         paintLabels(tokens) {
@@ -1243,6 +1332,18 @@
                 this.setEnabled(wanted);
                 return;
             }
+            // [inspect] A pinned pane follows its section; the cut's guides
+            // follow the cut.
+            const pinned = JSON.stringify(this.pinned());
+            if (this.enabled && this.panes && pinned !== this._lastPinned) {
+                this._lastPinned = pinned;
+                this.follow(true);
+            }
+            const cut = JSON.stringify([state.inspect || null, state.section || null]);
+            if (this.enabled && this.panes && cut !== this._lastCut) {
+                this._lastCut = cut;
+                this.paintOverlays();
+            }
             // Planes and frames reach the panes as revisions (prepare): the
             // z-line moves with the picture, not with the hand.
             if (this.surface || !this.enabled || !this.panes) return;
@@ -1269,6 +1370,52 @@
         }
     }
 
+    //: The cut's axes in the gizmo's colours (views/orientationGizmo.js).
+    const CUT_COLOURS = { x: "#e5484d", y: "#46a758", z: "#4c7cf0" };
+
+    /**
+     * [inspect] The 3-D view's cut drawn where a pane cuts it, while the panes
+     * follow the sections (`inspect.linkPanes`): a crop's or cutaway's box as
+     * a dashed outline, an X or Y section's plane (or a slab's two faces) as
+     * a line through every plane, a Z slab's faces across the pane. A Z
+     * section is the pane's own z-line already.
+     */
+    function cutGuides(viewState) {
+        return (query) => {
+            const state = viewState.get();
+            const inspect = state?.inspect;
+            const G = global.PlexoraInspectGeometry;
+            if (!G || !inspect?.linkPanes || !inspect.mode || inspect.mode === "full") return [];
+            const d = G.dims(viewState.info, viewState.depth);
+            const resolved = G.resolve(inspect, G.positions(state, d), d);
+            const along = query.axis === "xz" ? "x" : "y";
+            const width = along === "x" ? d.width : d.height;
+            // A plane boundary k in the painter's rows (it adds half a plane).
+            const row = (z) => z - 0.5;
+            const shapes = [];
+            if ((resolved.mode === "crop" || resolved.mode === "cutaway")
+                    && (resolved.axes.includes(along) || resolved.axes.includes("z"))) {
+                const [a0, a1] = resolved.box[along];
+                const [z0, z1] = resolved.box.z;
+                shapes.push({ color: "#f8fafc", lines: [[a0, row(z0), a1, row(z0), a1, row(z1), a0, row(z1),
+                                                         a0, row(z0)]] });
+            }
+            for (const plane of resolved.planes) {
+                const faces = plane.hi > plane.lo ? [plane.lo, plane.hi] : [plane.at];
+                if (plane.axis === along) {
+                    for (const v of faces) {
+                        shapes.push({ color: CUT_COLOURS[along], lines: [[v, row(0), v, row(d.depth)]] });
+                    }
+                } else if (plane.axis === "z" && plane.hi > plane.lo) {
+                    for (const v of faces) {
+                        shapes.push({ color: CUT_COLOURS.z, lines: [[0, row(v), width, row(v)]] });
+                    }
+                }
+            }
+            return shapes;
+        };
+    }
+
     /** Wire the panes to the viewer. Null for a single-plane stack (a time
      *  series of planes has no sections to cut). */
     function attach(viewState, options) {
@@ -1288,11 +1435,12 @@
             // only need drawing again -- in the same frame as the plane.
             handler.bind(lists.events.BRUSH_MOVE, () => panes.scheduleRedraw());
         }
+        panes.addOverlay("core:cut", cutGuides(viewState));
         panes.onState(viewState.get());
         return panes;
     }
 
-    global.PlexoraSectionPanes = { attach, SectionPanes, Pane };
+    global.PlexoraSectionPanes = { attach, SectionPanes, Pane, cutGuides };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraSectionPanes;
     }

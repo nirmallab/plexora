@@ -183,7 +183,9 @@
         // built later by a video is reset to its opening view on restore).
         const camera = saved.view?.mode === "volume" ? saved.camera : null;
         return clean({ view: saved.view && { t: saved.view.t, z: saved.view.z, mode: saved.view.mode,
-                                            layout: saved.view.layout, slab: saved.view.slab },
+                                            layout: saved.view.layout, slab: saved.view.slab,
+                                            inspect: saved.view.inspect || null,
+                                            section: saved.view.section || null },
                        viewport: saved.viewport, transform: saved.transform, camera,
                        slots: saved.slots.map((s) => ({ name: s.name, colorHex: s.colorHex,
                                                         enabled: s.enabled })),
