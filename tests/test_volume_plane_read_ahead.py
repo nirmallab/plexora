@@ -287,6 +287,7 @@ def test_after_plane_tile_follows_the_hand_nearest_first():
         assert ahead.after_plane_tile("tile", 9, 20, encode) == []
         assert ahead.after_tile("block", 9, 40, 8, encode) == []
     assert ahead.after_plane_tile("flat", 0, 1, encode) == [], "a single plane"
+    assert ahead.after_plane_tile("tile", 12, 20, encode, ahead=0) == [], "no planes ahead"
 
 
 def _plane_major(tmp_path, name="pm", depth=8):

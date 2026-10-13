@@ -146,7 +146,7 @@ class PlanePrefetcher:
         came from that cache, for the hit rate. Returns the planes queued
         nearest first (for a test to read)."""
         z, depth = int(z), int(depth)
-        if depth <= 1 or chunk_cache.in_background():
+        if depth <= 1 or int(ahead) <= 0 or chunk_cache.in_background():
             return []
         last = self._moved(region, z)
         with self._lock:
