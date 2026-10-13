@@ -603,6 +603,12 @@ window.PlexoraAgentBridge = (function () {
             const adopted = await core().adoptChannelNames(names);
             if (adopted === false) await hardReload();
         },
+        /** The project was given a display name, here or in another tab
+         *  (project_routes._retitle). Only what is shown changes: the name
+         *  this page is keyed by does not, so there is nothing to reload. */
+        async "project.renamed"(payload) {
+            window.PlexoraProjectTitle?.adopt?.({ name: payload.name, title: payload.title });
+        },
         /** The cell table changed underneath this page -- SCIMAP Pro wrote a
          *  column, a notebook rewrote the gates (server/models/dataset_events.py).
          *  `payload.sections` names what, in the shared protocol's words. The

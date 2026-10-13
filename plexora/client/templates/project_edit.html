@@ -3,7 +3,7 @@
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260920_path_wrap">
 {% endblock %}
 {% block content %}
-<title>Plexora - Edit {{ data.datasetName }}</title>
+<title>Plexora - Edit {{ data.project.displayName or data.datasetName }}</title>
 {#
   Generated from the project record: every section below is gated on
   `project.has`, so a project sees only the fields it actually has. The old
@@ -24,9 +24,20 @@
              data-project='{{ project|tojson }}'
              {% if data.needs %}data-needs='{{ data.needs|tojson }}'{% endif %}>
             <span class="import-kicker">Edit Project</span>
-            <h1>{{ data.datasetName }}</h1>
+            <h1>{{ project.displayName or data.datasetName }}</h1>
 
             <div id="edit_needs" class="import-alert" role="status" hidden></div>
+
+            {# The display name. The project's name is its key -- folder, links,
+               database -- and never changes; this is only what is shown. #}
+            <div class="config-section">
+                <div class="config-section-title">Display Name</div>
+                <div class="import-field">
+                    <input type="text" id="edit_title" class="form-control" maxlength="120"
+                           value="{{ project.title or '' }}" placeholder="{{ project.name }}">
+                    <span class="field-hint">Shown in place of {{ project.name }}. The project's folder and links keep that name. Leave empty to show it.</span>
+                </div>
+            </div>
 
             {# Image: read-only. Everything the project derives is keyed to it. #}
             <div class="config-section">
@@ -412,7 +423,7 @@
    import pages that used to overlay a progress card over a form are gone --
    the import dialog reports progress inline and opens the sample as soon as
    its record exists. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261009_zsemantics" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261012_project_title" defer></script>
 {# `alwaysShow`, unlike the viewer's: this page is where a physical size the
    FILE states is meant to be correctable. No viewer to tell -- the scale bar
    is on the other page, and it re-reads the endpoint when it loads. Deferred

@@ -83,9 +83,9 @@
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261011_fold"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261012_fluid_planes"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261012_project_title"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261012_main_merge2"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar"></script>
@@ -255,8 +255,10 @@
 
 {# `data-plexora-datasource` is how appRouter.js decides whether this document
    has a live viewer worth preserving. Empty on every page that is not one, and
-   that emptiness is the router's own off switch -- see limit 1 in its header. #}
-<body data-plexora-datasource="{{ data.datasource }}" data-plexora-docs-url="{{ docs_url }}">
+   that emptiness is the router's own off switch -- see limit 1 in its header.
+   `data-plexora-title` is the project's display name -- what to SHOW; the
+   datasource stays the key (projectTitle.js). #}
+<body data-plexora-datasource="{{ data.datasource }}" data-plexora-title="{{ project_title or data.datasource }}" data-plexora-docs-url="{{ docs_url }}">
 <nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
     <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
     <img src="{{ data.base_url }}/client/src/img/logo.svg" alt="" id="navbar-logo">

@@ -82,6 +82,11 @@ window.PlexoraDatasetNav = (function () {
         return new Set(Array.isArray(names) ? names : []);
     }
 
+    /** What to call a member: its display title, else its name. */
+    function shownName(name) {
+        return (place && place.titles && place.titles[name]) || name;
+    }
+
     /** The dataset holding this sample, and where in it this sample sits. */
     async function resolve() {
         const here = datasource();
@@ -90,6 +95,9 @@ window.PlexoraDatasetNav = (function () {
         if (!response.ok) return null;
         const payload = await response.json();
         const datasets = (payload && payload.datasets) || [];
+        // Display titles, by name. Members stay names: that is what a walk
+        // navigates to; the title is only what a tooltip or a tile says.
+        const titles = Object.assign({}, (payload && payload.titles) || {});
         const openable = known();
         for (const dataset of datasets) {
             const members = (dataset.projects || []).filter(
@@ -100,6 +108,7 @@ window.PlexoraDatasetNav = (function () {
                 datasetId: dataset.id,
                 datasetName: dataset.name,
                 members,
+                titles,
                 index,
                 previous: index > 0 ? members[index - 1] : null,
                 next: index < members.length - 1 ? members[index + 1] : null,
@@ -210,7 +219,7 @@ window.PlexoraDatasetNav = (function () {
         element.disabled = !target;
         const name = direction === "previous" ? "Previous sample" : "Next sample";
         element.title = target
-            ? name + ": " + target + " (" + KEY_CAP[direction] + ")"
+            ? name + ": " + shownName(target) + " (" + KEY_CAP[direction] + ")"
             : "No " + label + " sample in this dataset";
         element.setAttribute("aria-label", element.title);
         element.addEventListener("click", () => go(target));
@@ -252,7 +261,7 @@ window.PlexoraDatasetNav = (function () {
             if (strip.isOpen()) { strip.close(); return; }
             strip.open({
                 anchor: counter, chip, members: place.members, current: datasource(),
-                label: place.datasetName, onPick: go,
+                label: place.datasetName, onPick: go, titles: place.titles,
             });
         });
         root.appendChild(counter);
@@ -281,6 +290,14 @@ window.PlexoraDatasetNav = (function () {
         }
         if (!place) return;
         render();
+        // This sample renamed (here or in another tab): the strip reads the
+        // map when it opens, so keeping the map current is all it takes.
+        window.addEventListener("plexora:project-renamed", (event) => {
+            const detail = event.detail || {};
+            if (!place || !detail.name) return;
+            if (detail.title && detail.title !== detail.name) place.titles[detail.name] = detail.title;
+            else delete place.titles[detail.name];
+        });
         document.addEventListener("keydown", onKeyDown);
         window.addEventListener("plexora:viewer-hidden", () => { keysArmed = false; });
         window.addEventListener("plexora:viewer-shown", () => { keysArmed = true; });

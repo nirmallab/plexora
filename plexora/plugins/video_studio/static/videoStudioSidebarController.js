@@ -705,7 +705,10 @@
                     signal: abort.signal, remote: this.isRemote(),
                     pluginVersion: plugin?.version || "",
                     onCancel: () => abort.abort(),
-                    extra: { datasetName: this.env.datasource, attribution: choice.settings.attribution,
+                    // Burned into the frames, so the name a person reads,
+                    // not the project's key.
+                    extra: { datasetName: global.PlexoraProjectTitle?.current?.() || this.env.datasource,
+                             attribution: choice.settings.attribution,
                              disclose: true },
                     onProgress: ({ done, total }) => {
                         this.bar.setHint(`Rendering frame ${done} of ${total}`);

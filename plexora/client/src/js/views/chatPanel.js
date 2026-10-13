@@ -299,7 +299,9 @@ window.PlexoraChatPanel = (function () {
     }
 
     async function start() {
-        const title = (window.flaskVariables && window.flaskVariables.datasource) || "";
+        // What the user calls the project, not its key -- this is a heading.
+        const title = window.PlexoraProjectTitle?.current?.()
+            || (window.flaskVariables && window.flaskVariables.datasource) || "";
         const answer = await post("ai/v1/conversations", { title: String(title), viewer: true });
         if (answer.status === 403 && answer.body.license && window.PlexoraPaid) {
             window.PlexoraPaid.explain(answer.body.license);

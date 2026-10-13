@@ -547,6 +547,8 @@ def _recent_rows(limit=3):
             tone, icon = "channels", "fa-layer-group"
         rows.append({
             "name": card["name"],
+            # What the row says; `name` is still what it links to.
+            "title": card.get("displayName") or card["name"],
             "meta": " · ".join(facts),
             "opened": card.get("lastOpenedAt") or "",
             "when": _opened_phrase(card.get("lastOpenedAt")),
@@ -669,6 +671,10 @@ def image_viewer(datasource):
             layer_sections=section_entries,
             launch=_parse_launch(request.args.get('launch', ''), datasource),
         ),
+        # The display name, beside `data` rather than in it: `datasource`
+        # stays the key every script fetches by, and this is only what the
+        # page's title and the canvas's corner label say.
+        project_title=project.display_name,
     ), {DATASOURCE_HEADER: datasource}
 
 

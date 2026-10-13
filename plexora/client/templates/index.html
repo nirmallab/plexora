@@ -1,7 +1,10 @@
 {% extends layout|default('base.html', true) %}
 
+{# The viewer's tab says which project it is: the display name, else the name. #}
+{% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
+
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261012_fluid_planes">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261012_grid3d">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -536,8 +539,8 @@
    independent of main.js: a sample whose image will not open has no viewer at
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
-<script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261012_project_title" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261012_project_title" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260927_docs" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -587,8 +590,8 @@
 <script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261011_fold" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
-<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261011_fold" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_video_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_project_title" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_project_title" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
@@ -758,7 +761,7 @@
                     <a class="quick-view-recent-open" href="{{ data.base_url }}/{{ row.name | urlencode }}">
                         <span class="quick-view-tile tone-{{ row.tone }}" aria-hidden="true"><span class="fas {{ row.icon }}"></span></span>
                         <span class="quick-view-recent-main">
-                            <span class="quick-view-recent-name">{{ row.name }}</span>
+                            <span class="quick-view-recent-name">{{ row.title or row.name }}</span>
                             <span class="quick-view-recent-meta">{{ row.meta }}</span>
                         </span>
                         {% if row.remote %}

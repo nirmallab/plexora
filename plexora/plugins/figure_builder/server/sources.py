@@ -59,7 +59,9 @@ def describe(datasource) -> dict:
     return {
         "kind": "plexora_project",
         "datasource": datasource,
-        "display_name": datasource,
+        # What the user calls the project at capture: its title, else its
+        # name. `datasource` stays the key the panel is resolved by.
+        "display_name": handle.project.display_name,
         "image": {"width": int(width or 0), "height": int(height or 0)},
         "channels": channels,
         "fingerprint": fingerprint(datasource),

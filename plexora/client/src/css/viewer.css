@@ -5497,3 +5497,37 @@ body.sidebar-collapsed .viewer-shell,
         animation: none;
     }
 }
+
+/* The project label renames in place (imageViewer.js, PlexoraProjectTitle).
+   The caption round it stays click-through; only the name takes the pointer.
+   No box at any point: a text cursor and a faint underline say it can be
+   edited, and while it is, the underline turns the accent colour and the
+   ellipsis gives way so the caret can reach the end of what is typed. */
+/* No underline until it is pointed at: even a transparent one picks up the
+   caption's text-shadow and draws a dark bar under the name. */
+.viewer-project-label.is-renamable {
+    cursor: text;
+    pointer-events: auto;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.viewer-project-label.is-renamable:hover,
+.viewer-project-label.is-renamable:focus-visible {
+    outline: none;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+}
+
+.viewer-project-label.is-renamable.is-editing {
+    min-width: 4ch;
+    outline: none;
+    text-decoration-color: var(--accent-channel);
+    text-decoration-line: underline;
+    text-decoration-style: solid;
+    text-overflow: clip;
+}
+
+.viewer-project-label.is-renamable.is-saving {
+    opacity: 0.7;
+}
