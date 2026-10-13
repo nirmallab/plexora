@@ -272,13 +272,24 @@
                 node.group.removeAttribute("display");
                 node.grip = grip;
                 if (!at) {
+                    node.at = null;
                     node.group.setAttribute("display", "none");
                     continue;
                 }
+                node.at = at;
                 node.group.setAttribute("transform", `translate(${at.x.toFixed(1)} ${at.y.toFixed(1)})`);
             }
             for (const [key, node] of this.grips) {
                 if (!kept.has(key)) node.group.setAttribute("display", "none");
+            }
+            // A crop's body grip gives way to a face's when they meet on
+            // screen (looking straight along an axis puts both its faces'
+            // grips at the box's middle): the faces are what a hand reaches for.
+            const body = this.grips.get("body");
+            if (body && kept.has("body") && body.at) {
+                const crowded = [...this.grips.entries()].some(([key, node]) => key !== "body" && kept.has(key)
+                    && node.at && Math.hypot(node.at.x - body.at.x, node.at.y - body.at.y) < GRIP_R * 2.5);
+                if (crowded) body.group.setAttribute("display", "none");
             }
         }
 

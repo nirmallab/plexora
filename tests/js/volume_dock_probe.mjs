@@ -198,9 +198,11 @@ check("dragging previews: nothing saved, the cut on screen moves",
       asked.length === 0 && cutter.previewing && cutter.resolved().box.x.join() === "200,1200");
 slider("cut.x").handlers.onChange([200, 1200]);
 check("let go: one change", asked.length === 1 && state.inspect.crop.x.join() === "200,1200" && !cutter.previewing);
-check("the row says it in microns (the image states its pixel size)",
-      dock.rows.get("cut.x").node.querySelector(".volume-dock-note").textContent === "100–600 µm",
-      dock.rows.get("cut.x").node.querySelector(".volume-dock-note").textContent);
+check("its fields are in microns (the image states its pixel size)",
+      slider("cut.x").unit === "µm" && slider("cut.x").formatValue(200) === "100.0", slider("cut.x").unit);
+check("a Z range says how many planes and how thick",
+      dock.rows.get("cut.z") && (() => { chip("z").fire("click"); const t = dock.rows.get("cut.z").node
+          .querySelector(".volume-dock-note").textContent; chip("z").fire("click"); return /planes · .*µm$/.test(t); })());
 
 modeButton("slab").fire("click");
 check("Slab: how it combines and how thick, the surroundings",
@@ -248,8 +250,8 @@ check("not while the user works elsewhere", state.inspect.mode === before);
 // No stated spacing: pixels, never invented microns.
 vs.info = { width: 2000, height: 1000 };
 modeButton("crop").fire("click");
-const note = dock.rows.get("cut.x").node.querySelector(".volume-dock-note").textContent;
-check("with no stated spacing, pixels", note === "200–1200 px", note);
+check("with no stated spacing, pixels, never invented microns",
+      slider("cut.x").unit === "px" && slider("cut.x").formatValue(200) === "200", slider("cut.x").unit);
 vs.info = INFO;
 
 // Folding.

@@ -4494,9 +4494,14 @@ body.sidebar-collapsed .viewer-shell,
 .volume-dock-axis-under {
     align-items: center;
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 2px 6px;
     justify-content: space-between;
     padding-left: 20px;
+}
+
+.volume-dock-axis-under > .volume-dock-note {
+    margin-left: auto;
 }
 
 .volume-dock-fields {

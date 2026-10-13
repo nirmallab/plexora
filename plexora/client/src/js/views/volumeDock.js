@@ -367,6 +367,7 @@
                 if (typeof Slider !== "function") return;
                 row.kind = kind;
                 row.bounds = `${lo},${hi}`;
+                row.unit = units.unit;
                 row.slider = new Slider(holder, {
                     mode: kind === "range" ? "range" : "single",
                     min: lo, max: axis === "z" ? hi : hi - (kind === "plane" ? 1 : 0), step: 1, integer: true,
@@ -386,7 +387,9 @@
                 const kind = this.G && global.PlexoraViewControls
                     ? global.PlexoraViewControls.configOf(`cut.${axis}`, ctx).kind : "plane";
                 const [lo, hi] = this.bounds(axis);
-                if (kind !== row.kind || row.bounds !== `${lo},${hi}`) build(kind);
+                // Built again for another kind, area or unit (a spacing typed
+                // in the Depth card turns pixels into microns).
+                if (kind !== row.kind || row.bounds !== `${lo},${hi}` || row.unit !== this.units(axis).unit) build(kind);
                 flip.hidden = kind !== "cut";
                 const inspect = state.inspect;
                 let value;
@@ -407,19 +410,24 @@
             return row;
         }
 
-        /** What an axis row's numbers mean, in words. */
+        /** What an axis row's fields do not say themselves: how many planes a
+         *  Z range is and how thick, which side a cut keeps, how deep a Z
+         *  plane is. Nothing where the fields say it all. */
         axisNote(axis, kind, state) {
             const space = this.spacing();
             if (kind === "range") {
-                const range = state.inspect.crop[axis];
-                return axis === "z" ? this.G.label("z", range, space) : this.G.label(axis, range, space);
+                if (axis !== "z") return "";
+                const [z0, z1] = state.inspect.crop.z;
+                const planes = z1 - z0 + 1;
+                const step = space.z;
+                return `${planes} plane${planes === 1 ? "" : "s"}`
+                    + (step ? ` · ${this.G.thicknessLabel("z", planes, space)}` : "");
             }
             if (kind === "cut") {
-                const { at, keep } = state.inspect.cutaway[axis];
-                return `${keep === "hi" ? "keeps from" : "keeps to"} ${this.G.label(axis, at, space)}`;
+                return state.inspect.cutaway[axis].keep === "hi" ? "far side kept" : "near side kept";
             }
-            const at = axis === "z" ? state.z : state.section?.[axis] ?? 0;
-            return this.G.label(axis, at, space);
+            if (axis === "z" && space.z) return `${(state.z * space.z.value).toFixed(1)} ${space.z.unit} deep`;
+            return "";
         }
 
         combineRow() {
