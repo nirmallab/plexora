@@ -42,7 +42,7 @@
  * mode: what is rendered is planes z0..z1, so cutting the stack down to the
  * planes of interest is the same gesture as choosing a projection's range.
  *
- * THE GRID. An optional reference grid (the readout menu's Grid; a per-user
+ * THE GRID. An optional reference grid (the depth popover's Grid row; a per-user
  * preference, services/viewerPrefs.js `grid`) is drawn by the ray caster
  * itself, not as geometry: each ray that crosses the box finds the face it
  * leaves by and draws lines there, at round values counted from the image's
@@ -170,6 +170,12 @@
     //: resolution, down to MIN_FAST_SCALE of full; at rest it is always full,
     //: drawn SETTLE_MS after the last movement.
     const SLOW_FRAME_MS = 24;
+    //: ... or when, of MISSED_WINDOW moving frames, MISSED_FRAMES came later
+    //: than 1.5 display periods (the shortest interval seen): on a 120 Hz
+    //: screen a full-step MIP coast could average under SLOW_FRAME_MS and
+    //: still drop one frame in five.
+    const MISSED_WINDOW = 12;
+    const MISSED_FRAMES = 2;
     const MIN_FAST_SCALE = 0.4;
     const SETTLE_MS = 90;
     //: A channel drawn that was not drawn the frame before comes in over
@@ -814,7 +820,7 @@ ${sample}`;
             this.lastStep = 0;
             //: Resolution while moving, as a share of full; learnt (see draw).
             this.fastScale = 1;
-            this._fastFrames = { last: 0, average: 0, count: 0 };
+            this._fastFrames = { last: 0, average: 0, count: 0, window: 0, missed: 0, period: 0 };
             this._settleTimer = 0;
             //: The channels the last frame drew, and those still coming in:
             //: name -> when they were first drawn (presence).
@@ -1670,16 +1676,28 @@ ${sample}`;
             if (!fast) {
                 frames.last = 0;
                 frames.count = 0;
+                frames.window = 0;
+                frames.missed = 0;
                 return;
             }
             const interval = frames.last ? time - frames.last : 0;
             frames.last = time;
             if (!(interval > 0 && interval < 100)) return;
+            // The display's period: no frame comes sooner (4 ms: 240 Hz).
+            frames.period = Math.max(4, Math.min(frames.period || Infinity, interval));
             frames.average = frames.count ? frames.average * 0.7 + interval * 0.3 : interval;
             frames.count += 1;
-            if (frames.count >= 6 && frames.average > SLOW_FRAME_MS) {
+            frames.window = (frames.window || 0) + 1;
+            if (interval > 1.5 * frames.period) frames.missed = (frames.missed || 0) + 1;
+            const slow = frames.count >= 6 && frames.average > SLOW_FRAME_MS;
+            const missing = frames.window >= MISSED_WINDOW && frames.missed >= MISSED_FRAMES;
+            if (slow || missing) {
                 this.fastScale = Math.max(MIN_FAST_SCALE, this.fastScale * 0.8);
                 frames.count = 0;
+            }
+            if (slow || missing || frames.window >= MISSED_WINDOW) {
+                frames.window = 0;
+                frames.missed = 0;
             }
         }
 
