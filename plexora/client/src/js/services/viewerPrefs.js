@@ -1,14 +1,18 @@
 /**
  * viewerPrefs.js - how this user likes the viewer, for every image.
  *
- * Two things, both a matter of taste rather than of the image, so they are
- * stored once for the user (`/viewer_prefs`, in the settings file) and not
- * per project the way the plane and the projection are (viewState.js):
+ * Matters of taste rather than of the image, so they are stored once for
+ * the user (`/viewer_prefs`, in the settings file) and not per project the
+ * way the plane and the projection are (viewState.js):
  *
  *     sections  the XZ and YZ panes' sizes, as a share of the plane's height
  *               and width; null = sized to fit, up to the default
  *     motion    "on" | "off": planes fade into each other and the 3-D view
  *               coasts after a drag, or neither
+ *     rotate    how Play turns the stack in 3-D (views/volumeRenderer.js
+ *               setAutoRotate): {speed: degrees a second, ROTATE_SPEED;
+ *               axis: "screen" | "x" | "y" | "z"; direction: 1 | -1}. Whether
+ *               it is turning is never stored: a page never opens mid-motion.
  *
  * `smoothMotion()` is what every animation asks. It is false when either the
  * user turned motion off here or the system asks for reduced motion
@@ -24,7 +28,24 @@
     "use strict";
 
     const SAVE_DELAY_MS = 400;
-    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on" };
+    const ROTATE = { speed: 30, axis: "screen", direction: 1 };
+    //: Degrees a second (server/routes/volume_routes.py ROTATE_SPEED).
+    const ROTATE_SPEED = [5, 90];
+    const ROTATE_AXES = ["screen", "x", "y", "z"];
+    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", rotate: ROTATE };
+
+    /** A rotate preference, repaired over `base`: what does not parse keeps
+     *  the value it had (the server's `normalize_rotate` keeps the same bounds). */
+    function mergeRotate(base, patch) {
+        const out = { ...base };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.speed === "number" && Number.isFinite(patch.speed)) {
+            out.speed = Math.min(ROTATE_SPEED[1], Math.max(ROTATE_SPEED[0], patch.speed));
+        }
+        if (ROTATE_AXES.includes(patch.axis)) out.axis = patch.axis;
+        if (patch.direction === 1 || patch.direction === -1) out.direction = patch.direction;
+        return out;
+    }
 
     function url(path) {
         return typeof global.plexoraUrl === "function" ? global.plexoraUrl(path) : `/${path}`;
@@ -82,6 +103,11 @@
             return Number.isFinite(share) ? share : null;
         }
 
+        /** How Play turns the stack in 3-D: `{speed, axis, direction}`. */
+        rotate() {
+            return { ...this.prefs.rotate };
+        }
+
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
             if (this._holds > 0) return false;
@@ -114,15 +140,19 @@
         }
 
         /**
-         * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`.
+         * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`,
+         * `{rotate: {speed: 45}}` (merged over the rotation as it is).
          * `save: false` while a drag is still moving; the drag's end saves.
          */
         set(patch, { save = true } = {}) {
             if (!patch || typeof patch !== "object") return this.get();
             this._merge(patch);
+            const rotate = patch.rotate || this._pending.rotate
+                ? { rotate: { ...(this._pending.rotate || {}), ...(patch.rotate || {}) } } : {};
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
+                ...rotate,
             };
             this._paintRoot();
             this._announce();
@@ -141,6 +171,7 @@
                 sections,
                 motion: patch?.motion === "off" || patch?.motion === "on"
                     ? patch.motion : this.prefs.motion,
+                rotate: mergeRotate(this.prefs.rotate || ROTATE, patch?.rotate),
             };
         }
 

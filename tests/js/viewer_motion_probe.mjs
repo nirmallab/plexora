@@ -16,8 +16,13 @@
  *                     and 120 frames a second, never from a hand that stopped
  *                     first; a press stops it dead; presets turn the short
  *                     way round; with motion off nothing coasts or eases.
- *   sectionPanes.js   a pane is never bigger than its stack at the plane's
- *                     scale, honours the size chosen, and a drag saves once.
+ *                     Play's turn keeps its speed at any frame rate, never
+ *                     ends on its own, and stops on a press, a preset, a
+ *                     lock, a restored camera, a rendered frame, leaving 3-D.
+ *   sectionPanes.js   a pane is the size chosen, either way: past its stack's
+ *                     height z is stretched to fill it; it never covers the
+ *                     plane's last MIN_XY_PX; a drag reloads nothing until it
+ *                     ends, then saves once.
  *
  * Run directly:  node tests/js/viewer_motion_probe.mjs
  */
@@ -166,6 +171,33 @@ function advanceTimers(box, ms) {
         "a pane dragged through a hundred sizes must not be a hundred writes");
     check("a change is announced", (box.events || []).some(
         (event) => event.type === "plexora:viewer-prefs-changed"));
+}
+
+{
+    // How Play turns the stack: the user's, merged and held to its bounds.
+    const puts = [];
+    const box = sandbox();
+    box.fetch = async (url, options) => {
+        if (options?.method === "PUT") {
+            puts.push(JSON.parse(options.body));
+            return { ok: true, json: async () => ({}) };
+        }
+        return { ok: true, json: async () => ({ rotate: { speed: 60, axis: "x", direction: -1 } }) };
+    };
+    load(box, "services/viewerPrefs.js");
+    const prefs = box.PlexoraViewerPrefs;
+    await prefs.load();
+    check("the turning speed, axis and direction are read back",
+        prefs.rotate().speed === 60 && prefs.rotate().axis === "x" && prefs.rotate().direction === -1);
+    prefs.set({ rotate: { speed: 500 } });
+    prefs.set({ rotate: { axis: "sideways", direction: 1 } });
+    check("a speed past the bounds is held to them; nonsense keeps what was there",
+        prefs.rotate().speed === 90 && prefs.rotate().axis === "x" && prefs.rotate().direction === 1);
+    advanceTimers(box, 500);
+    await Promise.resolve();
+    check("and the changes are saved as one, merged",
+        puts.length === 1 && puts[0].rotate.speed === 500 && puts[0].rotate.direction === 1,
+        JSON.stringify(puts));
 }
 
 {
@@ -337,6 +369,30 @@ function fadeBox({ motion = true } = {}) {
     check("nothing is warmed for a projection", prefetch.plan().length === 0);
 }
 
+{
+    // How far ahead follows the hand: two planes for a step now and then, more
+    // for a held key, back to two once it has been still.
+    const box = sandbox();
+    load(box, "views/planeMotion.js");
+    const { NeighbourPrefetch, STANDBY_AHEAD } = box.PlexoraPlaneMotion;
+    const state = { mode: "plane", z: 10, t: 0 };
+    const viewState = { depth: 40, get: () => ({ ...state }), spec: (s) => `z${s.z}` };
+    const prefetch = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState);
+    const planes = () => prefetch.neighbourStates().map((s) => s.z);
+    check("a plane at rest: the next two and the one behind", planes().join() === "11,12,9");
+    for (let z = 10; z <= 20; z += 1) {     // a held key at 12 planes a second
+        state.z = z;
+        prefetch.onRequested({ detail: { state: { z } } });
+        box.clock.now += 83;
+    }
+    const held = planes();
+    check("a held key: as many ahead as it reaches in 0.4 s, within the bound",
+        held.length === 6 && held[0] === 21 && held[4] === 25 && held[5] === 19
+        && prefetch.ahead() === 5 && STANDBY_AHEAD[1] === 6, held.join());
+    box.clock.now += 1500;
+    check("still again: two ahead", prefetch.ahead() === 2);
+}
+
 // == volumeCamera.js: views and locked turns ==================================
 
 {
@@ -382,6 +438,37 @@ function fadeBox({ motion = true } = {}) {
     check("a free drag turns about the screen's axes, the near side following",
         C.quat.rotate(C.turnFree(C.VIEWS.xy, 20, 0), nearPoint)[0] > 0.1
         && C.quat.rotate(C.turnFree(C.VIEWS.xy, 0, 20), nearPoint)[1] < -0.1);
+}
+
+// == planeMotion.js: the 3-D view's ghost ====================================
+
+{
+    const { box, source, draws } = fadeBox();
+    const { VolumeGhost } = box.PlexoraPlaneMotion;
+    source._background = "rgb(0, 0, 0)";
+    let key = "cam-1";
+    let motion = true;
+    const renderer = { canvas: source, cameraKey: () => key, _pinnedSize: null };
+    const ghost = new VolumeGhost(renderer, { prefs: { smoothMotion: () => motion } });
+    const marks = [];
+    box.PlexoraViewPerf = { mark: (...args) => marks.push(args) };
+    const held = ghost.capture();
+    check("the 3-D ghost holds the volume's canvas, opaque on its ground, laid over it",
+        held === true && ghost.ghost.className === "viewer-volume-ghost"
+        && source.nextSibling === ghost.ghost && draws.some((d) => d.fill === "rgb(0, 0, 0)")
+        && marks.some((m) => m[0] === "vghost" && m[1] === "captured"),
+        "its own mark, so the plane's fade count is not muddied");
+    ghost.release();
+    ghost.sync("cam-1");
+    check("the same camera keeps the fade running", !ghost.idle());
+    key = "cam-2";
+    ghost.sync("cam-2");
+    check("another camera ends it at once: the ghost would no longer line up", ghost.idle());
+    renderer._pinnedSize = { width: 10, height: 10 };
+    check("a pinned size (a video being rendered) never holds one", ghost.capture() === false);
+    renderer._pinnedSize = null;
+    motion = false;
+    check("nor does motion off", ghost.capture() === false);
 }
 
 // == volumeRenderer.js: moving the 3-D view =================================
@@ -454,6 +541,88 @@ function runFrames(box, renderer, ms, hz) {
         `60 Hz ${at60.angle.toFixed(4)} rad vs 120 Hz ${at120.angle.toFixed(4)} rad`);
     check("and as far as the release was fast (speed x decay time)",
         near(at60.angle, expected, 0.02), `${at60.angle.toFixed(4)} vs ${expected.toFixed(4)}`);
+}
+
+{
+    // Play in 3-D: the stack turns at the speed asked, the same at 60 and 120
+    // frames a second, and never stops on its own.
+    const turned = (hz, motion = true) => {
+        const { box, renderer, C } = volumeBox({ motion });
+        const start = renderer.camera.q.slice();
+        renderer.setAutoRotate(true, { speed: 30, axis: "screen", direction: 1 });
+        renderer.lastStep = box.clock.now;
+        runFrames(box, renderer, 1000, hz);
+        return { angle: C.quat.angleBetween(start, renderer.camera.q), on: Boolean(renderer.autoRotate) };
+    };
+    const at60 = turned(60);
+    const at120 = turned(120);
+    const quiet = turned(60, false);
+    const expected = (30 * Math.PI) / 180;
+    check("Play turns the stack at its speed: 30 degrees in a second",
+        near(at60.angle, expected, 0.01), `${at60.angle.toFixed(4)} vs ${expected.toFixed(4)}`);
+    check("...the same at 60 and 120 frames a second", near(at60.angle, at120.angle, 0.005));
+    check("...and keeps turning: it never slows or ends on its own", at60.on && at120.on);
+    check("it is the user's action, so it turns with motion off too", quiet.on && near(quiet.angle, expected, 0.01));
+}
+
+{
+    const { box, renderer, canvas, C } = volumeBox();
+    const events = [];
+    box.dispatchEvent = (event) => { events.push(event); return true; };
+    let rested = 0;
+    renderer.onRest = () => { rested += 1; };
+    renderer.setAutoRotate(true, { speed: 45, axis: "z" });
+    const zBefore = C.axisOnScreen(renderer.camera.q, "z");
+    renderer.lastStep = box.clock.now;
+    runFrames(box, renderer, 500, 60);
+    const zAfter = C.axisOnScreen(renderer.camera.q, "z");
+    check("about an image axis, that axis holds still on screen while the stack turns",
+        zBefore.every((v, i) => near(v, zAfter[i], 1e-6)), JSON.stringify({ zBefore, zAfter }));
+    check("the camera is not remembered while it turns (one save, once it stops)", rested === 0);
+    check("starting is announced", events.some((e) => e.type === "plexora:volume-rotate" && e.detail.on === true));
+    canvas.fire("pointerdown", { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
+    check("a press stops it, and that is announced", renderer.autoRotate === null
+        && events.some((e) => e.type === "plexora:volume-rotate" && e.detail.on === false));
+    canvas.fire("pointerup", { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
+    const stops = {
+        turnTo: () => renderer.turnTo({ q: C.VIEWS.xy.slice() }),
+        setLock: () => renderer.setLock("x"),
+        restoreCamera: () => renderer.restoreCamera({ q: C.VIEWS.iso.slice(), dist: 2 }),
+        renderFrame: () => { renderer.canvas = canvas; renderer.draw = () => {}; renderer.renderFrame(); },
+        "leaving 3-D": () => renderer.show(false),
+    };
+    for (const [name, stop] of Object.entries(stops)) {
+        renderer.setLock(null);
+        renderer.setAutoRotate(true, { speed: 30 });
+        stop();
+        check(`${name} stops it`, renderer.autoRotate === null);
+    }
+    renderer.canvas = canvas;
+    renderer.draw = () => {};
+    renderer.setAutoRotate(true, { speed: 30 });
+    renderer.snapshot();
+    check("a plain capture records the pose and leaves it turning", renderer.autoRotate !== null);
+    renderer.setAutoRotate(true, { speed: 500, direction: -1 });
+    check("its speed is held to the bounds, its direction kept",
+        near(renderer.autoRotate.rate, -((90 * Math.PI) / 180 / 1000), 1e-12));
+}
+
+{
+    // The frame a coast ends in is drawn as the moving ones were: the full
+    // picture follows at that same camera, so it can dissolve in (draw).
+    const { box, renderer } = volumeBox();
+    const drawn = [];
+    renderer.draw = function draw() {
+        this.drawnFast = this.moving() || Boolean(this._motionTail);
+        drawn.push(this.drawnFast);
+    };
+    renderer.spin = { screen: [0, 0.003] };
+    renderer.lastStep = box.clock.now;
+    runFrames(box, renderer, 3000, 60);
+    check("the frame a coast ends in is drawn as a moving one",
+        renderer.spin === null && drawn.length > 2 && drawn.every(Boolean));
+    check("...and the full frame is asked for once the view rests",
+        box.timers.some((timer) => !timer.done && timer.at > box.clock.now));
 }
 
 {
@@ -583,7 +752,9 @@ function runFrames(box, renderer, ms, hz) {
     };
     load(box, "views/sectionPanes.js");
     const { SectionPanes, Pane } = box.PlexoraSectionPanes;
-    const owner = new SectionPanes({ viewState: { get: () => ({ z: 20, t: 0 }), depth: 40 } });
+    const asked = [];
+    const owner = new SectionPanes({ viewState: { get: () => ({ z: 20, t: 0 }), depth: 40,
+                                                  set: (patch) => asked.push(patch) } });
     owner.wrapper = fakeElement("div");
     const followed = [];
     owner.follow = (settled) => followed.push(settled);
@@ -592,7 +763,7 @@ function runFrames(box, renderer, ms, hz) {
     owner.frame = { width: 1000, height: 800, scale: 2 };
     let view = pane.layout();
     check("by default a pane is as tall as its stack",
-        view.size === 200 && view.rows === 100 && view.top === 0 && view.whole === true);
+        view.size === 200 && view.rows === 100 && view.top === 0 && view.whole === true && view.factor === 1);
     owner.frame.scale = 6;
     view = pane.layout();
     check("...up to its default share of the plane, scrolled to the plane on screen",
@@ -600,14 +771,34 @@ function runFrames(box, renderer, ms, hz) {
         "plane 20 of 40 is row 51.25 of 100: the pane is centred on it");
     shares.xz = 0.5;
     view = pane.layout();
-    check("a chosen size is honoured", view.size === 400);
+    check("a chosen size is honoured", view.size === 400 && view.factor === 1);
     owner.frame.scale = 2;
     view = pane.layout();
-    check("but a pane is never bigger than its stack at the plane's scale",
-        view.size === 200, "the section keeps the plane's proportions: more planes, never stretched ones");
+    check("a pane bigger than its stack shows every plane, stretched along z to fill it",
+        view.size === 400 && near(view.factor, 2) && view.inner === 200 && view.rows === 100
+        && view.top === 0 && view.whole === true,
+        "the size chosen is the size shown: no dead drag past the stack's height");
+    check("...by a transform on the pane's own viewer, which keeps its natural size",
+        pane.canvasHost.style.height === "200px" && pane.canvasHost.style.transform === "scaleY(2)"
+        && pane.root.style.height === "400px" && pane.root.classList.contains("is-stretched"));
     check("the divider says how big the pane is",
-        pane.divider.getAttribute("aria-valuenow") === "25"
+        pane.divider.getAttribute("aria-valuenow") === "50"
         && pane.divider.getAttribute("role") === "separator");
+    pane.paintZLine();
+    check("the plane's line is drawn on the stretched rows",
+        near(parseFloat(pane.zline.style.top), 51.25 * 2 * 2, 1e-6), String(pane.zline.style.top));
+    pane.onClick({ clientY: 300 });
+    check("a click reads the row under the pointer through the stretch",
+        asked.at(-1)?.z === 30, "300 px down a 2x stretch at scale 2 is row 75 of 100: plane 30 of 40");
+    shares.xz = 202 / 800;
+    view = pane.layout();
+    check("a size within a few pixels of the stack's height snaps to it",
+        view.size === 200 && view.factor === 1 && !pane.root.classList.contains("is-stretched"));
+    shares.xz = 0.5;
+    owner.panes = { xz: pane, yz: pane };
+    pane.layout();
+    owner.paintLabels({ x: 10, y: 20 });
+    check("the label says how far z is stretched", /z ×2\.0/.test(pane.label.textContent));
 
     saved.length = 0;
     followed.length = 0;
@@ -619,9 +810,58 @@ function runFrames(box, renderer, ms, hz) {
     check("...and its end saves the size once",
         saved.length === 1 && saved[0].sections.xz === 0.6 && followed.at(-1) === true);
     owner.resize("xz", 5000, { save: true });
-    check("a size past the bounds is clamped", shares.xz === 0.75);
+    check("a size past what leaves the plane room is clamped before it is saved",
+        near(shares.xz, (800 - 240) / 800), "the share saved is one that was on screen");
     owner.resetSize("xz");
     check("double-click gives the default back", shares.xz === null && owner.shareOf("xz") === null);
+}
+
+{
+    // A divider dragged: the cut holds still, nothing is asked for while the
+    // hand moves, and the sections are asked for once when it lets go.
+    const box = sandbox();
+    const shares = { xz: null, yz: null };
+    box.PlexoraViewerPrefs = {
+        sectionShare: (axis) => shares[axis],
+        set(patch) { Object.assign(shares, patch.sections || {}); },
+    };
+    load(box, "views/sectionPanes.js");
+    const { SectionPanes, Pane } = box.PlexoraSectionPanes;
+    const owner = new SectionPanes({ viewState: { get: () => ({ z: 20, t: 0 }), depth: 40 } });
+    owner.wrapper = fakeElement("div");
+    owner.enabled = true;
+    const panes = { xz: new Pane(owner, "xz"), yz: new Pane(owner, "yz") };
+    for (const pane of Object.values(panes)) {
+        pane.geometry = { height: 100, width: 2000 };
+        pane.apply = () => {};
+    }
+    owner.panes = panes;
+    let cuts = 0;
+    owner.measure = () => ({ width: 1000, height: 800, scale: 2, x0: 0, x1: 500, y0: 0, y1: 400,
+                             cx: 250, cy: 200, cutX: 500, cutY: 400 });
+    owner.locateCut = () => {
+        cuts += 1;
+        Object.assign(owner.frame, { cy: 200 - cuts, cutY: 400 - cuts });
+    };
+    owner.paintCrosshair = () => {};
+    owner.prepareArea = () => {};
+    const shows = [];
+    owner.showAt = (frame) => shows.push(frame.cy);
+    owner.follow(true);
+    shows.length = 0;
+    owner.bindDivider(panes.xz);
+    const divider = panes.xz.divider;
+    const startSize = panes.xz.view.size;
+    divider.fire("pointerdown", { button: 0, clientY: 600, pointerId: 1 });
+    const heldCut = owner.frame.cy;
+    for (let i = 1; i <= 10; i += 1) divider.fire("pointermove", { clientY: 600 - i * 20 });
+    check("a divider drag asks for no section while it moves, the cut held still",
+        shows.length === 0 && owner.frame.cy === heldCut, `${shows.length} show(s) during the drag`);
+    check("...while the pane follows the hand, either way",
+        panes.xz.view.size === startSize + 200);
+    divider.fire("pointerup", {});
+    check("...and once let go, the sections are asked for once, where the cut ends up",
+        shows.length === 1 && owner.resizing === null && near(shares.xz, (startSize + 200) / 800));
 }
 
 console.log(failures.length ? `\n${failures.length} of ${checks} check(s) failed`

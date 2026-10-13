@@ -1487,6 +1487,175 @@ html.is-native-dragging body::after {
     width: 4px;
 }
 
+/* A small settings popover (views/depthSettings.js): the menu's surface, but
+   a dialog of labelled fields in groups rather than a list of actions.
+   Fields read label-left, control-right on one baseline, like the cards. */
+.plx-popover {
+    gap: 2px;
+    max-height: calc(100vh - 16px);
+    min-width: 248px;
+    overflow-y: auto;
+    padding: var(--space-2) var(--space-3);
+    width: 272px;
+}
+
+.plx-popover-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-1) 0;
+}
+
+.plx-popover-group + .plx-popover-group {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-1);
+    padding-top: var(--space-2);
+}
+
+.plx-popover-heading {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding-bottom: 2px;
+    text-transform: uppercase;
+}
+
+.plx-popover-field {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+    min-height: 28px;
+}
+
+.plx-popover-label {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 12px;
+}
+
+.plx-popover-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.plx-popover-note {
+    align-self: flex-end;
+    font-size: 11px;
+}
+
+.plx-popover-range,
+.plx-popover-actions {
+    align-items: center;
+    display: flex;
+    gap: var(--space-1);
+}
+
+.plx-popover-value {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    margin-right: var(--space-1);
+    white-space: nowrap;
+}
+
+.plx-popover-select {
+    appearance: none;
+    background: var(--surface-2)
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238ea0b8' stroke-width='1.5'/%3E%3C/svg%3E")
+        no-repeat right 8px center;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    height: 28px;
+    max-width: 168px;
+    padding: 0 24px 0 8px;
+}
+
+.plx-popover-select:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-popover-slider {
+    flex: 1 1 auto;
+    max-width: 176px;
+    min-width: 0;
+}
+
+/* One of a few: pressed buttons in a pill, the current one lit. */
+.plx-popover-segmented {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    padding: 2px;
+}
+
+.plx-popover-segment,
+.plx-popover-button {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: 12px;
+    gap: var(--space-1);
+    height: 24px;
+    justify-content: center;
+    min-width: 28px;
+    padding: 0 var(--space-2);
+}
+
+.plx-popover-segment:hover,
+.plx-popover-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.plx-popover-segment.is-active {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.plx-popover-button.is-glyph {
+    padding: 0;
+    width: 26px;
+}
+
+.plx-popover-button.is-link {
+    align-self: flex-start;
+    color: var(--accent-channel);
+    padding: 0 var(--space-1);
+}
+
+.plx-popover-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.plx-popover-segment:focus-visible,
+.plx-popover-button:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-popover-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: var(--space-1) 0;
+}
+
 /* A row of glyph actions under one quiet label: "Channel names  [copy]
    [paste]". The label is not a control and is drawn a step quieter than an
    item; the glyphs are the card header's -- no box, muted until hovered --

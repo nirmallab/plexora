@@ -25,11 +25,14 @@
  * motion off -- the system's reduced-motion setting, or the Depth card's
  * switch (services/viewerPrefs.js) -- there is no ghost at all.
  *
- * NeighbourPrefetch: once a plane has settled and the hand is still, the planes
- * the hand is heading to are made ready. With the tile scheduler
- * (tileFetch.js) they are BUILT -- every channel's pair at the next plane, the
- * one after it and the one behind, loaded invisibly and last in line
- * (ViewerManager.prepareStandby) -- so a step to one is a flip of opacity.
+ * NeighbourPrefetch: once a plane covers the view, the planes the hand is
+ * heading to are made ready. With the tile scheduler (tileFetch.js) they are
+ * BUILT -- every channel's pair at the next planes and the one behind, loaded
+ * invisibly and last in line (ViewerManager.prepareStandby) -- so a step to
+ * one is a flip of opacity. How far ahead follows the hand's pace: two planes
+ * for a step now and then, up to six for a held key (k = the planes it covers
+ * in STANDBY_LOOKAHEAD_MS), and while it moves they are asked for as soon as
+ * each plane lands rather than after the hand has been still.
  * Without it, the tiles on screen are asked for at the next plane and the one
  * before at low priority, so the next step is served from the browser's cache.
  *
@@ -38,6 +41,10 @@
  * between the pointer arriving there and the click is time the plane can
  * spend loading. It joins the neighbours as one more standby plane, last in
  * line like them, and is let go when the pointer leaves the rail.
+ *
+ * VolumeGhost: the same opaque crossfade for the 3-D view's canvas
+ * (views/volumeRenderer.js draw), held when what the volume is drawn WITH
+ * changes under a still camera, never across a camera move.
  */
 (function (global) {
     "use strict";
@@ -55,6 +62,16 @@
     const EASING = "cubic-bezier(0, 0, 0.2, 1)";
 
     const PREFETCH_IDLE_MS = 150;
+    //: While the hand moves (STANDBY_FAST_RATE planes a second or more), the
+    //: next planes are asked for this soon after each lands.
+    const PREFETCH_MOVING_MS = 30;
+    const STANDBY_FAST_RATE = 3;
+    //: Planes ahead: those the hand reaches in this long at its pace, within
+    //: STANDBY_AHEAD.
+    const STANDBY_LOOKAHEAD_MS = 400;
+    const STANDBY_AHEAD = [2, 6];
+    //: Requests further apart than this are not one movement.
+    const RATE_GAP_MS = 1000;
     const PREFETCH_LIMIT = 48;
     const PREFETCH_PARALLEL = 4;
 
@@ -74,6 +91,8 @@
             this._freeTimer = 0;
             //: Where the view was when the picture was held (see moved).
             this.heldView = null;
+            //: The view-perf mark a capture leaves (the benchmark's count).
+            this.perfKey = "ghost";
             // OSD raises "animation" for more than pans and zooms -- adding
             // and removing items, which every swap does, starts one with
             // nothing moving -- so a fade ends only if the view really moved.
@@ -245,7 +264,7 @@
             }
             ghost.style.opacity = "1";
             ghost.hidden = false;
-            global.PlexoraViewPerf?.mark?.("ghost", "captured");
+            global.PlexoraViewPerf?.mark?.(this.perfKey, "captured");
             this.heldView = this.viewNow();
             clearTimeout(this._freeTimer);
             const at = now();
@@ -312,6 +331,68 @@
         }
     }
 
+    /**
+     * The 3-D view's crossfade (views/volumeRenderer.js draw): the picture on
+     * the volume's canvas held, opaque, on a ghost laid over it, and faded out
+     * over the next frame -- when the next frame is the same camera drawn with
+     * something new (the full frame after a turn stops, a texture, a detail or
+     * a batch of bricks landing, a channel switched off), so a refinement
+     * dissolves in instead of jumping. `sync` with a different camera ends it
+     * at once; a pinned size (a video being rendered) never holds one, nor
+     * does motion off. Captures read the canvas underneath, never the ghost.
+     */
+    class VolumeGhost extends PlaneFade {
+        constructor(renderer, { prefs = null } = {}) {
+            super(null, { prefs });
+            this.renderer = renderer;
+            this.perfKey = "vghost";
+        }
+
+        enabled() {
+            if (this.prefs && !this.prefs.smoothMotion()) return false;
+            return Boolean(this.renderer) && !this.renderer._pinnedSize;
+        }
+
+        source() {
+            return this.renderer?.canvas || null;
+        }
+
+        /** The volume canvas's own CSS ground (black): the GL picture is
+         *  drawn over it wherever it is not opaque (surfaces). */
+        ground(source) {
+            const colour = global.getComputedStyle?.(source)?.backgroundColor;
+            return colour && colour !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(colour) ? colour : "#000";
+        }
+
+        ensureGhost(source) {
+            if (this.ghost?.isConnected) return this.ghost;
+            const ghost = document.createElement("canvas");
+            ghost.className = "viewer-volume-ghost";
+            ghost.setAttribute("aria-hidden", "true");
+            ghost.hidden = true;
+            // Over the volume's canvas, under its gizmo, note and everything
+            // else in the viewer.
+            source.after(ghost);
+            this.ghost = ghost;
+            return ghost;
+        }
+
+        /** The camera key (volumeRenderer.cameraKey): equal keys line up. */
+        viewNow() {
+            return this.renderer?.cameraKey?.() ?? null;
+        }
+
+        moved() {
+            return Boolean(this.animation) && this.viewNow() !== this.heldView;
+        }
+
+        /** The camera of the frame about to be drawn: a ghost held at
+         *  another one no longer lines up, and ends now. */
+        sync(key) {
+            if (!this.idle() && key !== this.heldView) this.cancel();
+        }
+    }
+
     /** The view token in a tile address, swapped for another. */
     function withView(address, token) {
         const value = `view=${encodeURIComponent(token)}`;
@@ -331,6 +412,10 @@
             this.limit = limit;
             this.direction = 1;
             this.lastZ = null;
+            //: The hand's pace, planes a second (a moving average), and when
+            //: it last asked for a plane.
+            this.rate = 0;
+            this.lastAt = null;
             //: The plane the pointer rests on along the Z strip, or null.
             this.hoverZ = null;
             this.timer = 0;
@@ -358,16 +443,42 @@
         onRequested(event) {
             const z = event?.detail?.state?.z;
             if (Number.isFinite(z)) {
-                if (this.lastZ !== null && z !== this.lastZ) this.direction = Math.sign(z - this.lastZ);
+                if (this.lastZ !== null && z !== this.lastZ) {
+                    this.direction = Math.sign(z - this.lastZ);
+                    const at = now();
+                    const gap = this.lastAt === null ? Infinity : at - this.lastAt;
+                    if (gap < RATE_GAP_MS && gap > 0) {
+                        const pace = (Math.abs(z - this.lastZ) * 1000) / gap;
+                        this.rate = this.rate ? this.rate * 0.6 + pace * 0.4 : pace;
+                    } else {
+                        this.rate = 0;
+                    }
+                    this.lastAt = at;
+                }
                 this.lastZ = z;
             }
             this.abort();
         }
 
+        /** The hand's pace now: none once it has been still a while. */
+        pace() {
+            if (this.lastAt === null || now() - this.lastAt > RATE_GAP_MS) return 0;
+            return this.rate;
+        }
+
+        /** Planes to have ready ahead of the hand at its pace. */
+        ahead() {
+            const [least, most] = STANDBY_AHEAD;
+            const reach = Math.ceil((this.pace() * STANDBY_LOOKAHEAD_MS) / 1000);
+            return Math.max(least, Math.min(most, reach));
+        }
+
         onSettled() {
             clearTimeout(this.timer);
             if (this.paused) return;
-            this.timer = setTimeout(() => this.run(), this.idleMs);
+            const wait = this.pace() >= STANDBY_FAST_RATE ? Math.min(this.idleMs, PREFETCH_MOVING_MS)
+                : this.idleMs;
+            this.timer = setTimeout(() => this.run(), wait);
         }
 
         /** Stop (or resume) warming neighbouring planes: for a caller that
@@ -422,15 +533,19 @@
             return out;
         }
 
-        /** The views worth having ready: ahead twice, behind once -- planes,
-         *  or a projection that follows the plane (it moves with every step). */
+        /** The views worth having ready: ahead as far as the hand's pace
+         *  reaches (ahead()), behind once -- planes, or a projection that
+         *  follows the plane (it moves with every step). */
         neighbourStates() {
             const vs = this.viewState;
             const state = vs?.get?.();
             const follows = state?.mode === "slab" && state.slab?.follow;
             if (!state || (state.mode !== "plane" && !follows) || vs.depth < 2) return [];
             const dir = this.direction || 1;
-            const planes = [dir, 2 * dir, -dir].map((dz) => state.z + dz);
+            const steps = [];
+            for (let k = 1; k <= this.ahead(); k += 1) steps.push(k * dir);
+            steps.push(-dir);
+            const planes = steps.map((dz) => state.z + dz);
             // The plane the pointer rests on along the rail: a click away.
             if (this.hoverZ !== null && this.hoverZ !== state.z && !planes.includes(this.hoverZ)) {
                 planes.push(this.hoverZ);
@@ -448,13 +563,18 @@
             return this.neighbourStates().map((state) => this.viewState.spec(state));
         }
 
-        /** Whether every item of the plane on screen has what it needs. */
+        /** Whether every item of the plane on screen has what it needs --
+         *  covers the view at some level (channelFade.covers) is enough: its
+         *  sharpening outranks a prefetch anyway (tileFetch.js). */
         planeLoaded() {
             const world = this.viewer?.world;
+            const covers = global.PlexoraChannelFade?.covers;
             for (let i = 0; world && i < world.getItemCount(); i += 1) {
                 const item = world.getItemAt(i);
                 if (item?.source?.plexoraStandby || !(item?.getOpacity?.() > 0)) continue;
-                if (typeof item.getFullyLoaded === "function" && !item.getFullyLoaded()) return false;
+                if (typeof item.getFullyLoaded !== "function" || item.getFullyLoaded()) continue;
+                if (typeof covers === "function" && covers(item)) continue;
+                return false;
             }
             return true;
         }
@@ -512,8 +632,8 @@
         return { fade, prefetch };
     }
 
-    global.PlexoraPlaneMotion = { attach, PlaneFade, NeighbourPrefetch, withView,
-                                  FADE_MS, MIN_FADE_MS };
+    global.PlexoraPlaneMotion = { attach, PlaneFade, VolumeGhost, NeighbourPrefetch, withView,
+                                  FADE_MS, MIN_FADE_MS, STANDBY_AHEAD, STANDBY_LOOKAHEAD_MS };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraPlaneMotion;
     }

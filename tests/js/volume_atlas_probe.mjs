@@ -159,6 +159,15 @@ check("the manifest is asked once and the atlas is ready", atlas.status === "rea
 const channels = [{ name: "DNA", stamp: "0,4095" }, { name: "CD8", stamp: "0,1000" }];
 check("configured for two channels over base level 3",
       atlas.configure(channels, 0, "u8", 3) && atlas.textures.length === 2 && atlas.active());
+{
+    // What the 3-D view's crossfade keys on (volumeRenderer.draw).
+    const version = atlas.pagesVersion;
+    atlas.uploadPages();
+    check("each page-table upload is a new version of what is drawn", atlas.pagesVersion === version + 1);
+    const generation = atlas.generation;
+    check("the same channels, windows, frame, format and level keep the atlas as it is",
+          atlas.configure(channels, 0, "u8", 3) && atlas.generation === generation);
+}
 
 // The box: 1024 x 1024 px x 64 planes of 0.5/0.5/2 µm = 512 x 512 x 128 µm,
 // longest side 1 -> extent [1, 1, 0.25]. Looking straight down z from above

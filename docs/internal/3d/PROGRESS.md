@@ -230,3 +230,21 @@ Design, measurements, limits and merge notes: [SURFACES.md](SURFACES.md).
 | Figure Builder 3-D capture + client-raster export | done, figure_builder/tests/test_figure_builder_volume.py |
 | Video Studio | not rebuilt (feature/video-studio); scene seam `ctx.view.surfaces` ready |
 | Bench scenario `surfaces` in tools/bench3d | not done; numbers from the e2e in SURFACES.md §6 |
+
+## Context-aware controls, pane resizing, flash-free 3-D, faster Z (2026-10-12)
+
+Branch `feature/3d-controls` (worktree `../plexora-3d-controls`). Plan:
+`~/.claude/plans/pasted-content-id-84cc-plexora-sprightly-naur.md`.
+
+| Item | State |
+|---|---|
+| `services/viewControls.js`: a declarative registry of which depth control is offered in which mode (`VIEW_CONTROLS.md`). The strip and the cog popover resolve it; plugins register through `ctx.view.controls` | done |
+| Strip: hidden rather than inert in 3-D (thumb, hover mark, Sections); the rail is the clip range there (band drag, `]`/`[` via `viewState.step`); the readout is a label; cog → `views/depthSettings.js` popover (the readout menus removed) | done |
+| Play in 3-D turns the stack (`volumeRenderer.setAutoRotate`, prefs `rotate` {speed, axis, direction}); stopped by any press, preset, lock, restore, render, leaving 3-D | done |
+| Panes: the share is the size shown; past the stack's height z is stretched by a CSS transform on the pane's viewer (label "z ×2.4", 4 px detent); clamp leaves 240 px of plane; no reload during a drag; `SECTION_SHARE` 0.9 | done |
+| 3-D flash: last texture per channel kept and drawn in its own window while a replacement loads (`entryFor`/`windowFor`); MIP keeps its steps moving; jitter on the full-quality grid; `VolumeGhost` crossfade at a still camera (rest frame, texture, detail, bricks, channel off); motion's last frame drawn fast so the rest frame dissolves in | done |
+| Z: a far jump supersedes the revision in flight at once (scrub/held key keep the 1 s rule); coverage before sharpness in the tile scheduler; standby ahead by the hand's pace (2–6) as soon as a plane covers; a second standby request only when nothing else is on the wire; a following projection's step not held for its contrast; centroid tiles follow the committed plane | done |
+| Server Z: zarr planes through the chunk cache when chunks are deeper than a plane; encoded tiles made ahead for plane-major sources (TIFF, one-deep zarr) into the tile cache, node too; tile cache budgeted in bytes (`PLEXORA_TILE_CACHE_MB`); Server-Timing `read` split into open/chunk/io/inflate; `/volume/<ds>/perf` reports the tile cache and read-ahead hit rates | done |
+| Thresholding's View row through `ctx.view.controls` (`gating.view`), gating plane-cells following the committed plane | with the gating session's commit |
+| Decision: no synthesized intermediate planes; the plane fade dissolves two measured planes on screen only | recorded |
+

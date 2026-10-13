@@ -230,6 +230,37 @@ async function restoreCarriedState() {
     window.PlexoraCarryOver.flush();
 }
 
+/**
+ * What the page has, for the depth controls (services/viewControls.js
+ * `context` extras): one function, so the depth strip, its settings popover
+ * and a plugin asking `ctx.view.controls.visible(id)` can never disagree
+ * about what is offered.
+ */
+function depthControlExtras() {
+    const volume = __plexora.volumeView;
+    const surfaces = window.PlexoraSurfaceLayers;
+    const prefs = window.PlexoraViewerPrefs;
+    let surfaceCount = 0;
+    try {
+        surfaceCount = surfaces?.surfaceLayers?.().length || 0;
+    } catch (error) {
+        surfaceCount = 0;
+    }
+    return {
+        volumeSupported: Boolean(volume),
+        sectionsSupported: Boolean(__plexora.sectionPanes),
+        rotating: Boolean(volume?.rotating),
+        labelsAre3d: Boolean(__plexora.viewState?.labelsAre3d?.()),
+        surfacesAvailable: Boolean(surfaces && volume),
+        surfaceCount,
+        surfaceStudio: Boolean(window.PlexoraSurfaceStudio && volume),
+        prefs: prefs || null,
+        grid: Boolean(prefs?.grid && window.PlexoraVolumeRenderer?.grid),
+        gridOn: Boolean(prefs?.grid?.()?.on),
+        openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
+    };
+}
+
 /** How cells were drawn next door, where this sample can draw them that way. */
 function restoreCarriedCells(cells) {
     if (!cells || !__plexora.viewerControls) return;
@@ -538,9 +569,13 @@ async function init(config, savedViewTransform = null) {
         // cells, a slab's whole range, and a right-click keeps to the cells
         // on those planes. The 3-D view draws no dots and hands the tiles no
         // click (a rotated view has no image x/y to pick at, so it sends no
-        // planes); the 2-D pane keeps the plane it was left on.
+        // planes); the 2-D pane keeps the plane it was left on. The dots
+        // follow the plane ON SCREEN once it has been there a moment
+        // (CENTROID_SETTLE_MS): a held key or a scrub asks for no tiles for
+        // the planes it passes, which competed with the planes themselves.
         const tableZ = viewState.info?.table_z;
         if (tableZ && viewState.depth > 1) {
+            const CENTROID_SETTLE_MS = 120;
             const centroidPlanesOf = (state) => (state.mode === "slab"
                 ? { column: tableZ, z0: state.slab.z0, z1: state.slab.z1 }
                 : { column: tableZ, z0: state.z, z1: state.z });
@@ -550,7 +585,14 @@ async function init(config, savedViewTransform = null) {
             dataLayer.tablePlanes = pickPlanesOf(viewState.get());
             viewState.subscribe((state) => {
                 dataLayer.tablePlanes = pickPlanesOf(state);
-                if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(centroidPlanesOf(state));
+            });
+            let centroidTimer = 0;
+            window.addEventListener("plexora:view-changed", () => {
+                clearTimeout(centroidTimer);
+                centroidTimer = setTimeout(() => {
+                    const state = viewState.revision?.()?.state || viewState.get();
+                    if (state.mode !== "volume") seaDragonViewer.setCentroidPlanes(centroidPlanesOf(state));
+                }, CENTROID_SETTLE_MS);
             });
         }
     }
@@ -638,6 +680,7 @@ async function init(config, savedViewTransform = null) {
                 openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
                 volume,
                 sections,
+                extras: depthControlExtras,
             });
             strip.mount();
             __plexora.depthStrip = strip;
@@ -1936,7 +1979,9 @@ async function init(config, savedViewTransform = null) {
      *   as appending it to #openseadragon_wrapper with `data-canvas-dock`);
      *   `reserve(id, {edge, size})` takes a band along an edge for a panel of
      *   the plugin's own, and docked controls step clear of it; `insets()`
-     *   says what the bands take. All undone with the plugin.
+     *   says what the bands take; `controls` declares a depth control of the
+     *   plugin's own and asks which are offered (services/viewControls.js).
+     *   All undone with the plugin.
      * @property {(fn: Function) => void} onCleanup - Register a function to
      *   run when the plugin is torn down.
      * @property {?Object} instance - What `createInstance` returned.
@@ -2117,6 +2162,50 @@ async function init(config, savedViewTransform = null) {
                 insets() {
                     return window.PlexoraCanvasLayout?.insets?.()
                         || { top: 0, right: 0, bottom: 0, left: 0 };
+                },
+                /**
+                 * Which depth controls are offered now (services/viewControls.js;
+                 * docs/internal/3d/VIEW_CONTROLS.md). `register(entry, {row})`
+                 * declares one of the plugin's own -- its id is prefixed
+                 * "<plugin>." -- with the modes and capabilities it needs, so
+                 * it shows only where it does something; `row` builds it in the
+                 * depth settings popover when it is on that surface.
+                 * `visible(id)` answers for core's ids and the plugin's own
+                 * (unprefixed), `context()` is what they are resolved
+                 * against, and `onChange(fn)` hears controls come and go.
+                 * Taken out with the plugin.
+                 */
+                controls: {
+                    register(entry, { row = null } = {}) {
+                        const registry = window.PlexoraViewControls;
+                        if (!registry || !entry?.id) return () => {};
+                        const prefix = `${record.definition?.name || "plugin"}.`;
+                        const id = String(entry.id).startsWith(prefix) ? String(entry.id) : `${prefix}${entry.id}`;
+                        const off = registry.register({ ...entry, id });
+                        const unrow = row ? (window.PlexoraDepthSettings?.defineRow?.(id, row) || (() => {}))
+                            : () => {};
+                        const undo = () => {
+                            unrow();
+                            off();
+                        };
+                        record.cleanups.push(undo);
+                        return undo;
+                    },
+                    visible(id) {
+                        const registry = window.PlexoraViewControls;
+                        if (!registry) return true;
+                        const ctx = registry.context(__plexora.viewState, depthControlExtras);
+                        const own = `${record.definition?.name || "plugin"}.${id}`;
+                        return registry.visible(id, ctx) || registry.visible(own, ctx);
+                    },
+                    context() {
+                        return window.PlexoraViewControls?.context(__plexora.viewState, depthControlExtras) || null;
+                    },
+                    onChange(fn) {
+                        const off = window.PlexoraViewControls?.onChange?.(fn) || (() => {});
+                        record.cleanups.push(off);
+                        return off;
+                    },
                 },
             },
             onCleanup: (fn) => record.cleanups.push(fn),

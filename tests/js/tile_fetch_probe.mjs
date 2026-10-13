@@ -7,7 +7,8 @@
  *
  * - one request per address, however many items ask for it (a channel's
  *   cover and paint, a handover, a prefetch); every job gets the plane;
- * - in order of need: on screen before a handover before a prefetch, the
+ * - in order of need: on screen before a handover before a prefetch -- the
+ *   next plane covering the view before the plane on screen sharpening -- the
  *   plane before the panes, coarse levels before fine, near before far;
  *   never more than MAX_IN_FLIGHT at once;
  * - decoded once, the response's buffer TRANSFERRED to the worker (8-bit) and
@@ -172,6 +173,31 @@ function scheduler(extra = {}) {
 }
 
 {
+    // Coverage before sharpness: the plane on screen already covers the view
+    // (channelFade.covers), so its finer tiles only sharpen it; the next
+    // plane's tiles that would cover the view go first.
+    box.PlexoraChannelFade = { covers: (it) => Boolean(it.covering) };
+    const { s, net } = scheduler();
+    for (let i = 0; i < MAX_IN_FLIGHT; i += 1) s.start(job(`/t/blocker/${i}`, item()));
+    const onScreen = item();
+    onScreen.covering = true;
+    const coming = item({ opacity: 0 });
+    const comingCovered = item({ opacity: 0 });
+    comingCovered.covering = true;
+    const sharpen = job("/t/sharpen", onScreen, { level: 5 });
+    const cover = job("/t/next-cover", coming, { level: 2 });
+    const nextSharpen = job("/t/next-sharpen", comingCovered, { level: 5 });
+    const prefetch = job("/t/prefetch", item({ opacity: 0, standby: true }), { level: 0 });
+    for (const j of [prefetch, nextSharpen, sharpen, cover]) s.start(j);
+    for (const call of net.calls.slice(0, MAX_IN_FLIGHT)) call.respond();
+    for (let i = 0; i < 6; i += 1) await tick();
+    const order = net.calls.slice(MAX_IN_FLIGHT).map((call) => call.url.split("/").pop());
+    check("the next plane covering the view goes before the plane on screen sharpening",
+        order.join() === "next-cover,sharpen,next-sharpen,prefetch", order.join());
+    delete box.PlexoraChannelFade;
+}
+
+{
     // A prefetched item that became visible (adopted by a step) is visible.
     const { s, net } = scheduler({ maxInFlight: 1 });
     s.start(job("/t/first", item()));
@@ -190,11 +216,15 @@ function scheduler(extra = {}) {
     // Prefetches never fill the wire: a tile on screen must not wait behind one.
     const { s, net } = scheduler();
     for (let i = 0; i < 4; i += 1) s.start(job(`/t/standby/${i}`, item({ opacity: 0, standby: true })));
-    check("at most one prefetch request on the wire, however many are queued",
-        net.calls.length === 1);
+    check("at most two prefetch requests on the wire, and only while nothing else is",
+        net.calls.length === 2);
     s.start(job("/t/visible", item()));
-    check("and a tile on screen goes out at once beside it",
-        net.calls.length === 2 && net.calls[1].url === "/t/visible");
+    check("and a tile on screen goes out at once beside them",
+        net.calls.length === 3 && net.calls[2].url === "/t/visible");
+    net.calls[0].respond();
+    for (let i = 0; i < 4; i += 1) await tick();
+    check("with a tile on screen on the wire, prefetches are back to one",
+        net.calls.length === 3, net.calls.map((c) => c.url).join());
 }
 
 // -- cancelled with the item that wanted it ----------------------------------------

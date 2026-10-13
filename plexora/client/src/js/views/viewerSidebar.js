@@ -75,6 +75,20 @@ async function plexoraMapWithLimit(items, limit, fn) {
 //: How long a navigation revision's tiles wait for the statistics of the view
 //: they show (prepareContrast) before showing with the contrast there is.
 const CONTRAST_HOLD_MS = 1500;
+//: A step of the same projection (a following slab, a range dragged) is not
+//: held for its statistics: it shows at once, and its contrast is asked for
+//: once the hand has been still this long, then eased in.
+const CONTRAST_STILL_MS = 150;
+
+/** Whether projection `next` is `shown` moved along the stack: the same
+ *  operation, thickness and frame, other planes. */
+function sameProjectionMoved(shown, next) {
+    const parse = (spec) => /^(t\d+)?z(\d+)-(\d+)(.+)$/.exec(spec || "");
+    const a = parse(shown);
+    const b = parse(next);
+    return Boolean(a && b) && (a[1] || "") === (b[1] || "") && a[4] === b[4]
+        && Number(a[3]) - Number(a[2]) === Number(b[3]) - Number(b[2]);
+}
 
 //: How long an auto-levelled range takes to arrive on screen (easeSlotRange):
 //: the channel fade's own length, so a channel switched on comes in and
@@ -210,6 +224,7 @@ class ViewerSidebar {
             this._volumeHintListener = null;
             this._volumeWindowListener = null;
             clearTimeout(this._contrastTimer);
+            clearTimeout(this._contrastStillTimer);
         }
         if (this._viewClassListener) {
             window.removeEventListener("plexora:view-class-changed", this._viewClassListener);
@@ -1361,6 +1376,13 @@ class ViewerSidebar {
     prepareContrast(rev) {
         const view = this.contrastView(rev.state);
         if (view === this._contrastViewShown) return null;
+        // The same projection a plane or two on: what is on screen is the
+        // right contrast to within a step, and holding the step for its
+        // statistics is what made a following projection slow to step.
+        if (sameProjectionMoved(this._contrastViewShown, view)) {
+            return () => this.relevelWhenStill(view);
+        }
+        clearTimeout(this._contrastStillTimer);
         const auto = this.channelSlots.filter((slot) => slot.enabled && slot.name
                                               && !slot.userRangeChanged);
         const commit = () => {
@@ -1375,6 +1397,21 @@ class ViewerSidebar {
         return Promise.all(auto.map((slot) => this.channelList.ensureChannelStats(slot.name)
             .then(() => this.viewStats(slot.name, view)).catch(() => null)))
             .then(() => (rev.superseded ? null : commit));
+    }
+
+    /** A step's contrast (prepareContrast): asked for once the hand has
+     *  been still CONTRAST_STILL_MS on `view`, eased in (applyAutoRange). */
+    relevelWhenStill(view) {
+        clearTimeout(this._contrastStillTimer);
+        this._contrastStillTimer = setTimeout(() => {
+            if (this.contrastView() !== view) return;     // moved on: its own step follows
+            this._contrastViewShown = view;
+            for (const slot of this.channelSlots) {
+                if (slot.enabled && slot.name && !slot.userRangeChanged) {
+                    this.autoChannel(slot.index, { force: true, view });
+                }
+            }
+        }, CONTRAST_STILL_MS);
     }
 
     /**

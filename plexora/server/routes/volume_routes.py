@@ -333,12 +333,39 @@ def put_view_state(datasource):
 # -- how this user likes the viewer, for every image ----------------------
 
 #: A section pane's saved size, as a share of the plane's height (XZ) or width
-#: (YZ). The panes lie over the plane, so past the upper bound too little of
-#: it is left to cut through; `None` sizes a pane to fit, up to its default.
-SECTION_SHARE = (0.05, 0.75)
+#: (YZ). The panes lie over the plane; the browser keeps a fixed number of
+#: pixels of it uncovered (sectionPanes.js MIN_XY_PX), which is the real bound,
+#: so this one only stops nonsense. `None` sizes a pane to fit, up to its
+#: default.
+SECTION_SHARE = (0.05, 0.9)
 #: "off" stops planes fading into each other and the 3-D view coasting after
 #: a drag, on top of the system's own reduced-motion setting.
 MOTION = ("on", "off")
+#: How Play turns the stack in 3-D (views/volumeRenderer.js setAutoRotate):
+#: degrees a second within ROTATE_SPEED, about the screen's vertical or an
+#: image axis, one way or the other. Whether it is turning is never stored.
+ROTATE_DEFAULTS = {"speed": 30.0, "axis": "screen", "direction": 1}
+ROTATE_SPEED = (5.0, 90.0)
+ROTATE_AXES = ("screen", "x", "y", "z")
+
+
+def normalize_rotate(value):
+    """The rotate preference, repaired field by field: what does not parse
+    reads as its default (viewerPrefs.js's `mergeRotate` keeps the same bounds)."""
+    rotate = value if isinstance(value, dict) else {}
+    speed = rotate.get("speed")
+    try:
+        speed = None if isinstance(speed, bool) else float(speed)
+    except (TypeError, ValueError):
+        speed = None
+    direction = rotate.get("direction")
+    return {
+        "speed": (min(ROTATE_SPEED[1], max(ROTATE_SPEED[0], speed))
+                  if speed is not None and math.isfinite(speed) else ROTATE_DEFAULTS["speed"]),
+        "axis": rotate["axis"] if rotate.get("axis") in ROTATE_AXES else ROTATE_DEFAULTS["axis"],
+        "direction": (direction if direction in (1, -1) and not isinstance(direction, bool)
+                      else ROTATE_DEFAULTS["direction"]),
+    }
 
 
 def normalize_viewer_prefs(value):
@@ -357,13 +384,14 @@ def normalize_viewer_prefs(value):
         out_sections[axis] = (min(SECTION_SHARE[1], max(SECTION_SHARE[0], share))
                               if share is not None and math.isfinite(share) else None)
     motion = value.get("motion")
-    return {"sections": out_sections, "motion": motion if motion in MOTION else "on"}
+    return {"sections": out_sections, "motion": motion if motion in MOTION else "on",
+            "rotate": normalize_rotate(value.get("rotate"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
 def get_viewer_prefs():
-    """The section panes' sizes and whether the viewer animates, for every
-    image. Kept in the settings file rather than the browser: the desktop
+    """The section panes' sizes, whether the viewer animates and how Play
+    turns the stack in 3-D, for every image. Kept in the settings file rather than the browser: the desktop
     app's port -- and so the page's origin, and its storage -- can change
     from one run to the next."""
     stored = paths.read_settings().get("viewer")
@@ -382,7 +410,10 @@ def put_viewer_prefs():
     sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
     if isinstance(payload.get("sections"), dict):
         sections = {**sections, **payload["sections"]}
-    stored = normalize_viewer_prefs({**current, **payload, "sections": sections})
+    rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
+    if isinstance(payload.get("rotate"), dict):
+        rotate = {**rotate, **payload["rotate"]}
+    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "rotate": rotate})
     settings["viewer"] = stored
     paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)
