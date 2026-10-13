@@ -1,0 +1,419 @@
+{
+ "label": "fix-noahead",
+ "sha": "76fecffa7ead",
+ "dirty": true,
+ "headed": false,
+ "date": "2026-10-13T00:04:10",
+ "reps": 3,
+ "machine": {
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "processor": "arm",
+  "python": "3.13.14"
+ },
+ "results": {
+  "flatstack": {
+   "jump": {
+    "scenario": "jump",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T04:04:13.047Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "jump_commit": [
+      124.89999961853027,
+      112.69999980926514,
+      12.599999904632568,
+      87.90000009536743,
+      70.40000009536743,
+      17.799999713897705,
+      85.2000002861023,
+      72.40000009536743,
+      17.800000190734863
+     ],
+     "jump_full": [
+      149.19999980926514,
+      139.59999990463257,
+      22.699999809265137,
+      111.7000002861023,
+      92.19999980926514,
+      22.5,
+      109.60000038146973,
+      98.69999980926514,
+      22.40000009536743
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      5.399999618530273,
+      3.4000000953674316,
+      2.1999998092651367,
+      3.700000286102295,
+      3.6999998092651367,
+      4.799999713897705,
+      3.8000001907348633,
+      4.199999809265137,
+      4.599999904632568
+     ],
+     "jumpBusy_commit": [
+      113.5,
+      81.10000038146973,
+      104.90000009536743
+     ],
+     "jumpBusy_full": [
+      133.90000009536743,
+      108.60000038146973,
+      120.80000019073486
+     ],
+     "jumpBusy_wastedTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      5.599999904632568,
+      5,
+      6.700000286102295
+     ],
+     "jumpBusy_inFlight": [
+      1,
+      0,
+      1
+     ],
+     "jump_commit_L0": [
+      85.59999990463257,
+      83.19999980926514,
+      17.100000381469727,
+      89.5,
+      83,
+      18.299999713897705,
+      88,
+      77.90000009536743,
+      14.700000286102295
+     ],
+     "jump_full_L0": [
+      112,
+      104.40000009536743,
+      22.700000286102295,
+      112.5,
+      102.59999990463257,
+      23.799999713897705,
+      110.7999997138977,
+      101.40000009536743,
+      24.800000190734863
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      2.700000286102295,
+      5.400000095367432,
+      4.800000190734863,
+      3.6999998092651367,
+      6.199999809265137,
+      4,
+      4.400000095367432,
+      3.5,
+      2.8000001907348633
+     ],
+     "jumpBusy_commit_L0": [
+      72,
+      68.80000019073486,
+      72.80000019073486
+     ],
+     "jumpBusy_full_L0": [
+      92.80000019073486,
+      86.19999980926514,
+      91.7000002861023
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      3.700000286102295,
+      1.5,
+      3.3000001907348633
+     ],
+     "jumpBusy_inFlight_L0": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "route": [
+      99,
+      0,
+      50
+     ],
+     "o": 50,
+     "o2": 25,
+     "busyDest": 75,
+     "l0": {
+      "zoom": 1.9320754716981132,
+      "maxLevel": 2,
+      "finest": 2
+     },
+     "tiles": {
+      "home": {
+       "origin": 50,
+       "dest": 99,
+       "tiles": {
+        "99": 10
+       }
+      },
+      "L0": {
+       "origin": 50,
+       "dest": 99,
+       "tiles": {
+        "99": 10
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_0/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_0/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 43.6
+   },
+   "held": {
+    "scenario": "held",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T04:04:56.565Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "held_lag": [
+      0,
+      0,
+      0
+     ],
+     "held_settle": [
+      421.1000003814697,
+      1.1000003814697266,
+      1.8000001907348633
+     ],
+     "held_standbyAdopted": [
+      40,
+      40,
+      40
+     ],
+     "held_painted": [
+      40,
+      41,
+      40
+     ],
+     "held15_lag": [
+      2,
+      1,
+      1
+     ],
+     "held15_settle": [
+      36.60000038146973,
+      68.2000002861023,
+      70.69999980926514
+     ],
+     "held15_standbyAdopted": [
+      12,
+      10,
+      13
+     ],
+     "held15_painted": [
+      34,
+      32,
+      37
+     ],
+     "held_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held_settle_L0": [
+      1.0999999046325684,
+      1.1000003814697266,
+      1.3000001907348633
+     ],
+     "held_standbyAdopted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held_painted_L0": [
+      40,
+      41,
+      40
+     ],
+     "held15_lag_L0": [
+      2,
+      2,
+      2
+     ],
+     "held15_settle_L0": [
+      268.90000009536743,
+      109.7000002861023,
+      230.59999990463257
+     ],
+     "held15_standbyAdopted_L0": [
+      11,
+      8,
+      11
+     ],
+     "held15_painted_L0": [
+      38,
+      38,
+      38
+     ]
+    },
+    "F": 8.299999999999955,
+    "extra": {
+     "input": "key",
+     "planes": 40,
+     "start": 50,
+     "held": {
+      "requested": 90,
+      "committed": 90,
+      "final": 90
+     },
+     "held15": {
+      "requested": 90,
+      "committed": 88,
+      "final": 90
+     },
+     "held_L0": {
+      "requested": 90,
+      "committed": 90,
+      "final": 90
+     },
+     "held15_L0": {
+      "requested": 90,
+      "committed": 88,
+      "final": 90
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z93 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z93 [tileFetch] Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] Tile %s failed to load: %s - error: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z92 [tileFetch] Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[error] Tile %s failed to load: %s - error: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z91 [tileFetch] Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 168.2
+   },
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      378.3
+     ]
+    }
+   }
+  }
+ },
+ "server_env": [],
+ "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+ "F": {
+  "flatstack": 8.299999999999955
+ }
+}

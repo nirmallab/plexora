@@ -104,7 +104,8 @@ wrong numbers:
   the automatic contrast mid-view (a brightness jump — the very symptom being fixed).
 - **Prefetch never fills the wire.** Standby planes take at most one request at a time and start
   only once the plane on screen has loaded: a cold channel enable had regressed to 2.9 s while
-  standby tiles held the server.
+  standby tiles held the server. (2026-10-12: two at a time while nothing else is on the wire,
+  and once the plane merely covers the view while the hand is moving; below.)
 
 ## Results
 
@@ -196,14 +197,117 @@ are still to do. What changed, code-traced:
 - **3-D label volumes go as coarse as the image** (`build_label_volume(min_levels=)`, given the
   image's level count at import and by 3-D segmentation); one built before strides a finer level.
 
+## Controls, panes, no 3-D flash, faster Z (2026-10-12, branch feature/3d-controls)
+
+Plan: `~/.claude/plans/pasted-content-id-84cc-plexora-sprightly-naur.md`. The registry and the
+cog popover are described in `VIEW_CONTROLS.md`. Measured with the same harness build on
+these trees:
+
+- **pre:** `29de11ad`, main before the branch.
+- **post:** `ff5b2b7d`, the branch as first committed.
+- **fix:** `76fecffa`, main after the merge plus the two fixes below. Its files say `dirty`
+  because `prefetch.py`'s `ahead <= 0` guard was not yet committed. That guard changes
+  nothing at the default.
+
+All runs: M2 Pro, Chrome with the GPU (Metal), 120 Hz, 3 reps. Datasets as above, plus `mediumz`
+(OME-Zarr chunked 8 planes deep), `flatstack` (plane-major OME-TIFF) and `medium`, all under
+`~/plexora-bench/dev/data`.
+
+Two warnings about these numbers:
+
+- **The first pre pass on `small` overlapped a full pytest run.** It was re-run on a quiet
+  machine (`29de11adb848-pre-small.json`), and that run is what is quoted. The busy run had
+  shown 244 → 0 dropped frames and similar figures, and none of them were real.
+- **A single step's commit lands in the first or the second frame after the request**,
+  depending on where in the frame the step falls. A median of 5 therefore reads about 6 or
+  about 10 ms by chance. 17 steps on `small`: pre 7.6, post 7.9, main 8.2 ms (spread 2–15 ms
+  in all three). There is no change.
+
+### Z navigation (pre → fix, p50)
+
+| | small | ims | meso | medium | mediumz | flatstack |
+|---|---|---|---|---|---|---|
+| plane painted after a scrub step (`scrub_paintLatency`, ms) | 36 → 4.5 | 71 → 6.7 | 82 → 6.5 | 18.5 → 12.7 | 15.5 → 10.9 | 19.1 → 9.5 |
+| planes adopted from standby, key held at 8/s | 2 → 23 of 23 | 2 → 40 of 40 | 2 → 40 | 2 → 40 | 2 → 40 | 2 → 40 |
+| planes behind the hand at release, 8/s (`held_lag`) | 0 → 0 | 0 → 0 | 0 → 0 | 2 → 0 | 2 → 0 | 0 → 0 |
+| settled after release, 8/s (ms) | 2.3 → 1.7 | 2.6 → 1.6 | 3.6 → 9.0 | 315 → 116 | 253 → 25 | 5.3 → 13.8 |
+| 50-plane jump, commit (ms) | 42 → 39 | 76 → 55 | 62 → 53 | 124 → 90 | 95 → 83 | 89 → 85 |
+| the same jump 100 ms into a cold step, commit (ms) | 13 → 12 | 49 → 48 | 49 → 47 | 122 → 72 | 99 → 79 | 94 → 100 |
+| tiles fetched for planes other than the jump's two | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 |
+| tile requests during a 20-step scrub | 18 → 22 | 126 → 180 | 65 → 100 | 80 → 174 | 70 → 172 | 100 → 173 |
+
+The last row is the cost. Standby now looks ahead by the hand's pace, up to six planes, so a scrub
+asks for more planes than it shows. That is the reason every plane of a held key is already
+built when the hand reaches it.
+
+### What the first measurement caught (post, fixed in `76fecffa`)
+
+- **A jump read as a held key.** The standby pace was planes per second over any two requests,
+  so a 50-plane jump read as 500 planes/s. Six planes ahead of the destination were then asked
+  for 30 ms after it first covered the view, alongside its own sharpening. The jump made
+  100 ms into a cold step was hit hardest:
+  - ims: commit 49 → 262 ms, full load 65 → 598 ms, 115 tiles fetched for other planes;
+  - meso: commit 49 → 195 ms;
+  - flatstack: full load 116 → 765 ms.
+
+  Now a jump (more than `JUMP_PLANES`, 2) sets no pace, and neither does the step after it.
+  Standby starts once the plane on screen merely covers the view only while the hand is moving
+  (`STANDBY_FAST_RATE`). After a step or a jump the plane loads fully first, which was the
+  earlier rule ("Prefetch never fills the wire", above).
+- **A 3-D coast dropped frames on ims.** In MIP the moving frames now keep the step count, so
+  brightness doesn't change when the hand stops. On a 120 Hz screen the ims coast then ran
+  at 95 fps and dropped 17 frames, while averaging under the 24 ms that lowers the moving
+  resolution. `learnFrame` now also steps down when 2 of 12 moving frames come later than 1.5
+  display periods. Result: coast 0 dropped at p50, 120 fps. Resolution doesn't change MIP
+  brightness; fewer steps did.
+
+**The server's tile read-ahead, A/B on flatstack** (`fix-dev` against `fix-noahead`, where
+`TILE_AHEAD = 0`). With it off:
+- jumps differ by about 10% either way;
+- the 15/s settle is 18% worse;
+- the 8/s settle's p50 drops from 13.8 to 1.8 ms, but its p95 rises to 421 ms.
+
+It is not what slowed anything, so it stays at 2.
+
+### 3-D (pre → post, p50; the fix touched only moving frames)
+
+| | ims | meso | medium | mediumz | flatstack |
+|---|---|---|---|---|---|
+| bright or dark frames at a window handover (`v3d_handoverFlash`) | 27 → 0 | 40 → 0 | 23 → 0 | 21 → 0 | 34 → 0 |
+| black frames at a handover | 0 → 0 | 27 → 0 | 0 → 0 | 0 → 0 | 0 → 0 |
+| brightness jump from release to rest (`v3d_settleJump`, of 255) | 3.7 → 0.27 | 3.6 → 0.42 | 8.7 → 0.59 | 2.2 → 0.26 | 2.0 → 0.26 |
+| ghost crossfade, capture to release (`v3d_ghostMs` p95) | 1.1 | 1.7 | 1.1 | 1.2 | 1.3 |
+| rotate, dropped frames (p50) | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 |
+
+The panes: a 200 px divider drag is honoured on every dataset. Before, it stopped at the
+stack's height: 0 px on `small` and `flatstack`, 140 on `medium`, 152 on ims. No section is
+asked for while the drag moves (before: one, on ims, meso and medium), and one is asked for
+after it. Planar projects are
+unchanged (`parity2d`: identical tile URLs, screenshot difference 0.000).
+
+### Open
+
+- **`detail_dropped`**, frames dropped while a wheel-zoom waits for the detail sub-volume, a
+  single sample per run:
+  - ims 0 → 27 after the fix (70 before it);
+  - medium 0 → 42 (post, not re-run after the fix);
+  - meso 121 → 116, already over the target before the branch.
+- **`reenter`**, 3-D re-entry with the textures cached: ims 12.8 → 16.9 ms, meso 13.1 → 13.4 ms.
+- **`first_tile_read` on `small`'s first tour**: 6.6 → 72 ms. That is the 3 tiles the server
+  read itself; the other 23 came from the read-ahead's cache. Not investigated.
+
+Every run is under `perf/` as `<sha>-<label>.json`: pre, pre-dev, pre-small, post, post-dev, fix,
+fix-dev, fix-noahead, step15-pre/post/main. Regenerate the tables with
+`python tools/bench3d/report.py perf/<before>.json perf/<after>.json`.
+
 ## Beyond 2 TB: what is left
 
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;
   levels still go through the primary (which caches and revalidates them).
 - ~~Pooled coarse brick levels built once~~ (done, above); remote (http) OME-Zarr shard-index
   caching under the chunk cache.
-- **Predictive prefetch from velocity** (standby is direction-aware only), and a residency
-  ledger across the main viewer and the panes if a dataset shows tile-cache churn.
+- ~~Predictive prefetch from velocity~~ (done 2026-10-12, above); a residency ledger across
+  the main viewer and the panes if a dataset shows tile-cache churn.
 
 ## Sources borrowed from
 
