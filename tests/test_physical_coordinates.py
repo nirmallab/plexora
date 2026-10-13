@@ -155,6 +155,7 @@ def test_colocalization_is_counted_on_voxels_and_refused_on_a_projection(tmp_pat
     assert error.get("code") == "inference_forbidden", error
 
 
+@pytest.mark.paid  # find_regions_of_interest_3d is Plexora 3D
 def test_the_places_to_look_come_with_a_centre_and_a_reason(tmp_path):
     _coloc_project(tmp_path, "where")
     found = _job("find_regions_of_interest_3d", {"project": "where",
