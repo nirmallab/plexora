@@ -128,8 +128,11 @@ export class Browser {
             this.logs.push("[exception] " + (p.exceptionDetails?.exception?.description || p.exceptionDetails?.text));
             break;
         case "Network.requestWillBeSent": {
+            // `wall` (epoch seconds) is comparable with the page's
+            // performance.timeOrigin + now(); `seen` is when this process heard of it.
             const record = { id: p.requestId, url: p.request.url, kind: kindOf(p.request.url),
-                             start: p.timestamp, status: 0, bytes: 0, disk: false, timing: null,
+                             start: p.timestamp, wall: p.wallTime ?? null, seen: Date.now(),
+                             status: 0, bytes: 0, disk: false, timing: null,
                              failed: false, canceled: false, end: null };
             this.requests.set(p.requestId, record);
             this.net.push(record);
@@ -200,7 +203,37 @@ export class Browser {
 
     async navigate(address) {
         this.requests.clear();
+        // Requests of the page left behind never finish: netIdle looks past them.
+        this.navMark = this.net.length;
         await this.send("Page.navigate", { url: address });
+    }
+
+    /** Wait until no tile, section, level or brick request of this page is in
+     *  flight and none has started for `quietMs` (at most `ms`). False on time-out. */
+    async netIdle(quietMs = 300, ms = 8000) {
+        const kinds = new Set(["tile", "section", "level", "brick"]);
+        const end = Date.now() + ms;
+        while (Date.now() < end) {
+            const live = this.net.slice(this.navMark || 0).filter((r) => kinds.has(r.kind));
+            const pending = live.some((r) => r.end === null);
+            const last = live.reduce((most, r) => Math.max(most, r.seen || 0), 0);
+            if (!pending && Date.now() - last >= quietMs) return true;
+            await sleep(25);
+        }
+        return false;
+    }
+
+    /** A PNG (base64) of the element `selector` as composited on screen, or null. */
+    async shot(selector = "#openseadragon_wrapper") {
+        const clip = await this.eval((sel) => {
+            const node = document.querySelector(sel);
+            if (!node) return null;
+            const r = node.getBoundingClientRect();
+            return { x: r.left, y: r.top, width: r.width, height: r.height, scale: 1 };
+        }, selector);
+        if (!clip || !(clip.width > 0) || !(clip.height > 0)) return null;
+        const shot = await this.send("Page.captureScreenshot", { format: "png", clip });
+        return shot.result?.data || null;
     }
 
     async setCache(enabled) {
