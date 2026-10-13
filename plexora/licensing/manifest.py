@@ -143,6 +143,18 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
 #: than a list, because a plugin that does not exist yet cannot be listed.
 PLUGIN_ROOT = "plugin"
 
+#: The plugins that exist and are sold one by one: name -> (label, sentence),
+#: granted as `plugin:<name>`. The product manifest lists them, so the
+#: platform's licence page shows a switch for each; a first-party capability
+#: naming a `plugin:<name>` missing here fails `tests/test_licensing_manifest.py`.
+PLUGINS: dict[str, tuple[str, str]] = {
+    "video_studio": (
+        "Video Studio",
+        "Scientific videos made from the viewer, frame-exact and reproducible: "
+        "z-stack rotations, plane sweeps, time-lapses, zooms and channel "
+        "reveals, refined as camera paths on a timeline and exported."),
+}
+
 #: Roots sold separately from the Paid default: an administrator adds them to
 #: a licence or a seat.
 ADD_ONS: tuple[str, ...] = ("mcp",)
@@ -177,7 +189,8 @@ def label(entitlement) -> str:
         if candidate in ENTITLEMENTS:
             return ENTITLEMENTS[candidate][0]
     if isinstance(entitlement, str) and entitlement.startswith(PLUGIN_ROOT + ":"):
-        return entitlement.split(":", 1)[1].replace("_", " ").title()
+        name = entitlement.split(":", 1)[1]
+        return PLUGINS[name][0] if name in PLUGINS else name.replace("_", " ").title()
     return str(entitlement)
 
 
@@ -186,6 +199,10 @@ def summary(entitlement) -> str:
     for candidate in (entitlement, *ancestors(str(entitlement or ""))):
         if candidate in ENTITLEMENTS:
             return ENTITLEMENTS[candidate][1]
+    if isinstance(entitlement, str) and entitlement.startswith(PLUGIN_ROOT + ":"):
+        name = entitlement.split(":", 1)[1]
+        if name in PLUGINS:
+            return PLUGINS[name][1]
     return "A Paid Plexora feature."
 
 
@@ -197,13 +214,15 @@ def plan_for(entitlement) -> str:
 
 
 def unlocks(entitlements, *, paid: bool) -> list[dict]:
-    """One row per root: what it is called, what it does and whether this
-    licence grants it. Settings, `plexora license status` and `server_info`
-    show these, so an "Included / Not included" list has one source."""
+    """One row per root, then one per plugin sold on its own: what it is
+    called, what it does and whether this licence grants it. Settings,
+    `plexora license status` and `server_info` show these, so an "Included /
+    Not included" list has one source."""
     grants = tuple(entitlements or ()) if paid else ()
-    return [{"entitlement": root, "label": ENTITLEMENTS[root][0], "summary": ENTITLEMENTS[root][1],
-             "granted": any_satisfies(grants, root)}
-            for root in ROOTS]
+    rows = [(root, *ENTITLEMENTS[root]) for root in ROOTS]
+    rows += [(f"{PLUGIN_ROOT}:{name}", *PLUGINS[name]) for name in PLUGINS]
+    return [{"entitlement": name, "label": label, "summary": sentence, "granted": any_satisfies(grants, name)}
+            for name, label, sentence in rows]
 
 
 # -- the product manifest -----------------------------------------------------------
@@ -243,6 +262,7 @@ def product_manifest() -> dict:
         "cli": "plexora",
         "free": {"label": "Free", "description": FREE_DESCRIPTION, "limits": {}},
         "entitlements": roots,
+        "plugins": {name: {"label": label, "sentence": sentence} for name, (label, sentence) in PLUGINS.items()},
         "limits": {},
         "ai": {"modules": {root: list(modules) for root, modules in AI_MODULES.items()}},
         "trial_days": TRIAL_DAYS,

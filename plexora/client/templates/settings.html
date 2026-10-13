@@ -615,8 +615,9 @@
 
             {# License: the plan (plexora/licensing) from /license/status, and
                the three ways to add Paid -- connect this device (a code the
-               person approves at account.biocognia.com), an activation code
-               or token from the portal, or an offline licence file -- behind
+               person approves at account.biocognia.com), the licence key
+               shown under Licences in the portal (or an activation code or
+               token), or an offline licence file -- behind
                one switch, so the page shows one form at a time. Nothing here
                is needed for Free, the page never asks the BioCognia platform
                anything until a button does, and Plexora never sees a
@@ -673,7 +674,7 @@
                             <button type="button" class="license-switch-option is-active"
                                     data-license-mode="connect" aria-pressed="true">Connect</button>
                             <button type="button" class="license-switch-option"
-                                    data-license-mode="key" aria-pressed="false">Code or token</button>
+                                    data-license-mode="key" aria-pressed="false">Licence key</button>
                             <button type="button" class="license-switch-option"
                                     data-license-mode="file" aria-pressed="false">Offline file</button>
                         </div>
@@ -718,17 +719,18 @@
 
                     <div class="license-mode" data-license-mode="key" hidden>
                         <label class="license-label" for="settings_license_key">
-                            Activation code or token
+                            Licence key
                         </label>
                         <div class="license-key-field">
                             <span class="fas fa-key" aria-hidden="true"></span>
                             <input type="text" id="settings_license_key" class="license-input license-input-key"
-                                   placeholder="BIOC-XXXX-XXXX or BIOCT1_…" autocomplete="off"
+                                   placeholder="BIOC-XXXX-XXXX-XXXX-XXXX" autocomplete="off"
                                    spellcheck="false">
                         </div>
                         <span class="license-help">
-                            For a machine you are not sitting at: make a code in the portal
-                            at account.biocognia.com, or use a token.
+                            Your key comes by email with your seat, and is always under
+                            Licences at account.biocognia.com; it works on each of your
+                            devices. An activation code or a BIOCT1_ token goes here too.
                         </span>
                         <label class="license-field">
                             <span class="license-label">Name <span class="settings-optional">(optional)</span></span>

@@ -2,7 +2,7 @@
 
     plexora license                        status (the default)
     plexora license status [--json]
-    plexora license activate [CODE | -] [--cluster | --container-host] [--name NAME] [--trial]
+    plexora license activate [KEY | -] [--cluster | --container-host] [--name NAME] [--trial]
     plexora license install FILE|CERTIFICATE
     plexora license refresh
     plexora license deactivate
@@ -75,10 +75,11 @@ def build_parser():
 
     activate = sub.add_parser("activate", help="Connect this device.")
     activate.add_argument("credential", nargs="?",
-                          help="An activation code from account.biocognia.com (BIOC-...), a "
-                               "BIOCT1_ token, or - to read one from stdin. Omit it to get a "
-                               "code to approve in the browser.")
-    activate.add_argument("--key-file", dest="key_file", help="Read the code from a file.")
+                          help="Your licence key from account.biocognia.com "
+                               "(BIOC-XXXX-XXXX-XXXX-XXXX), an activation code, a BIOCT1_ token, "
+                               "or - to read one from stdin. Omit it to get a code to approve in "
+                               "the browser.")
+    activate.add_argument("--key-file", dest="key_file", help="Read the key or code from a file.")
     activate.add_argument("--name", help="What the portal calls this device.")
     activate.add_argument("--cluster", action="store_true",
                           help="Register this as a whole HPC cluster (run on a login node).")

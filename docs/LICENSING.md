@@ -38,12 +38,15 @@ roots:
 A purchased or trial licence carries `manifest.paid_default()`, every root but
 the add-ons (`["ai", "volume", "transcriptomics"]`); an administrator adds
 `mcp` by hand (see [External MCP access](#external-mcp-access)) and can switch
-any root on or off per licence on the platform's admin licence page.
+any root, or any plugin sold on its own, on or off per licence on the
+platform's admin licence page.
 
 `manifest.py` is also the one editable source of Plexora's **product
 manifest** (`manifest.product_manifest()`): the roots `ai`, `volume`,
 `transcriptomics`, `mcp` and `plugin` (for `plugin:<name>`) with their labels
-and sentences, the Free tier,
+and sentences, the plugins sold one by one (`manifest.PLUGINS`, today Video
+Studio as `plugin:video_studio`; the platform shows a switch for each), the
+Free tier,
 the AI modules the `ai` root opens (`gating`, `qc`, `chat`, the modules of
 `plexora/ai/tasks.yaml`) and the trial length. `tools/bioc_sync.py` uploads it,
 with the task registry, to the platform; `--check` fails on drift. Plans and
@@ -249,8 +252,9 @@ Capability(name="spatial_stats.view", ..., entitlement="free")  # opt back out
 
 A plugin's entitlement is the default for its capabilities; a capability that
 names its own (or `"free"`) keeps it: the capability-level answer wins. Declare
-new first-party entitlements in `manifest.py`; `plugin:<name>` paths need no
-declaration.
+new first-party entitlements in `manifest.py`. A shipped plugin sold on its own
+(`plugin:<name>`) is listed in `manifest.PLUGINS`, so staff can grant it; a
+third-party `plugin:<name>` path needs no declaration.
 
 ## The licence on a machine
 
@@ -282,10 +286,16 @@ before the licence does.
 code, shows it with the link to `account.biocognia.com/activate`, and polls.
 The person signs in there, approves, and the platform answers with one
 certificate per product they hold a seat for, so connecting from Plexora also
-connects SCIMAP Pro on the same machine. An activation code minted in the
-portal (`BIOC-...`, for a machine you are not sitting at) or a `BIOCT1_` token
-works without a browser: paste it in Settings or pass it to `plexora license
-activate`.
+connects SCIMAP Pro on the same machine.
+
+Without a browser, use the seat's **licence key** (`BIOC-XXXX-XXXX-XXXX-XXXX`):
+it is emailed to you when you are given the seat (and again if it is replaced),
+is under Licences at account.biocognia.com, can be shown there again at any
+time, works on each of the seat's devices up to its device limit, and keeps
+working through renewals. Replacing it there stops the old key; devices already
+connected stay connected. Paste it in Settings › License › Licence key or pass
+it to `plexora license activate`. A one-time activation code (`BIOC-XXXX-XXXX`)
+or a `BIOCT1_` token goes in the same places.
 
 Resolution is lazy and fails open to Free. It runs in this order:
 
