@@ -118,6 +118,234 @@ function keepTileCanvasesOnGpu() {
 }
 
 
+/**
+ * The project's display name, and the corner label that shows and edits it.
+ *
+ * A project's NAME is its key -- config.json, its folder, `<name>.db`, every
+ * URL -- and never changes. What a person reads is its title, which defaults
+ * to the name and is stored beside it (POST /project/<name> {title}). This is
+ * the one place the page asks "what is this project called": both viewers'
+ * corner labels, the tab title, exports and the panels that print it.
+ *
+ * Here rather than in a file of its own because both viewers need it and
+ * this file is the one base.html loads ahead of them both; nothing in it runs
+ * until something asks.
+ *
+ * The page learns of a rename three ways and every one lands in `adopt`: a
+ * save made here, a save made in another tab (agentBridge.js's
+ * `project.renamed`), and the server-rendered `data-plexora-title` on load.
+ * Each announces `plexora:project-renamed` {name, title}, where `title` is
+ * what to show -- the name again once a title is cleared.
+ */
+const PlexoraProjectTitle = (function () {
+    const EVENT = "plexora:project-renamed";
+    //: The server's own limit (project.MAX_TITLE); refused there regardless.
+    const MAX_LENGTH = 120;
+    const HINT = "Click to rename";
+    //: Labels being edited, and how to end each edit.
+    const editing = new WeakMap();
+
+    function body() {
+        return typeof document !== "undefined" ? document.body : null;
+    }
+
+    /** The project's key: what URLs and requests are built from. */
+    function key() {
+        return body()?.dataset.plexoraDatasource
+            || (typeof datasource !== "undefined" ? datasource : "") || "";
+    }
+
+    /** What to show for this project: its title, else its name. */
+    function current() {
+        return body()?.dataset.plexoraTitle || key();
+    }
+
+    function tidy(text) {
+        return String(text || "").trim().split(/\s+/).join(" ");
+    }
+
+    function labels() {
+        return typeof document !== "undefined"
+            ? document.querySelectorAll(".viewer-project-label.is-renamable") : [];
+    }
+
+    function describe(label) {
+        label.setAttribute("aria-label", `Project: ${current()}. Press Enter to rename.`);
+    }
+
+    /** Take on a display name decided elsewhere. `title` null or "" is the
+     *  name again. Ignores another project's rename. */
+    function adopt({ name, title } = {}) {
+        if (!name || name !== key()) return;
+        const shown = tidy(title) || name;
+        const changed = shown !== current();
+        const page = body();
+        if (page) page.dataset.plexoraTitle = shown;
+        if (typeof document !== "undefined") document.title = shown;
+        labels().forEach((label) => {
+            // An edit in progress keeps its text; it will be saved over this.
+            if (editing.has(label)) return;
+            label.textContent = shown;
+            describe(label);
+        });
+        if (changed) {
+            window.dispatchEvent(new CustomEvent(EVENT, { detail: { name, title: shown } }));
+        }
+    }
+
+    async function save(title) {
+        const name = key();
+        const response = await fetch(plexoraUrl(`project/${encodeURIComponent(name)}`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ title }),
+        });
+        let result = {};
+        try {
+            result = await response.json();
+        } catch (error) {
+            result = {};
+        }
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || "The project could not be renamed.");
+        }
+        adopt({ name, title: result.title });
+    }
+
+    function selectAll(label) {
+        const selection = window.getSelection?.();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+    /** Edit in place: the label itself becomes editable, so it is the same
+     *  text in the same font at the same size, and everything that asks
+     *  whether the user is typing (`isContentEditable`) says yes. */
+    function start(label) {
+        if (editing.has(label) || !key()) return;
+        const before = current();
+        try {
+            label.contentEditable = "plaintext-only";
+        } catch (error) {
+            label.contentEditable = "true";
+        }
+        if (!label.isContentEditable) label.contentEditable = "true";
+        label.classList.add("is-editing");
+        label.setAttribute("role", "textbox");
+        label.setAttribute("aria-label", "Project name");
+        label.removeAttribute("title");
+
+        const stop = () => {
+            editing.delete(label);
+            label.removeEventListener("keydown", onKey);
+            label.removeEventListener("blur", onBlur);
+            label.removeEventListener("paste", onPaste);
+            label.contentEditable = "false";
+            label.classList.remove("is-editing");
+            label.setAttribute("role", "button");
+            label.title = HINT;
+            label.scrollLeft = 0;
+            window.getSelection?.()?.removeAllRanges();
+        };
+        const cancel = () => {
+            stop();
+            label.textContent = current();
+            describe(label);
+        };
+        const commit = async () => {
+            const wanted = tidy(label.textContent);
+            stop();
+            // Nothing typed is the name again; the same text is no edit at all.
+            if (wanted === before || (!wanted && before === key())) {
+                label.textContent = before;
+                describe(label);
+                return;
+            }
+            label.textContent = wanted || key();
+            label.classList.add("is-saving");
+            try {
+                await save(wanted);
+            } catch (error) {
+                label.textContent = current();
+                window.PlexoraToast?.show?.({ title: error.message, tone: "warning" });
+            } finally {
+                label.classList.remove("is-saving");
+                describe(label);
+            }
+        };
+        // Every key stays here while editing: Enter and Escape end the edit,
+        // and no canvas shortcut listening further up should hear a letter.
+        const onKey = (event) => {
+            event.stopPropagation();
+            if (event.key === "Enter") {
+                event.preventDefault();
+                label.blur();
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                cancel();
+                label.blur();
+            } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey
+                       && tidy(label.textContent).length >= MAX_LENGTH
+                       && !window.getSelection?.()?.toString()) {
+                event.preventDefault();
+            }
+        };
+        const onBlur = () => { commit(); };
+        // One line of plain text, whatever was copied.
+        const onPaste = (event) => {
+            event.preventDefault();
+            const text = (event.clipboardData?.getData("text/plain") || "").replace(/\s+/g, " ");
+            if (!document.execCommand?.("insertText", false, text)) {
+                const selection = window.getSelection?.();
+                if (!selection || !selection.rangeCount) return;
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(text));
+                range.collapse(false);
+            }
+        };
+        editing.set(label, cancel);
+        label.addEventListener("keydown", onKey);
+        label.addEventListener("blur", onBlur);
+        label.addEventListener("paste", onPaste);
+        label.focus();
+        selectAll(label);
+    }
+
+    /** Make a corner label show the display name and rename on click. Its
+     *  id and class are the caller's; this adds behaviour, never structure. */
+    function attach(label) {
+        label.textContent = current();
+        if (!key()) return label;
+        label.classList.add("is-renamable");
+        label.tabIndex = 0;
+        label.setAttribute("role", "button");
+        label.title = HINT;
+        describe(label);
+        label.addEventListener("click", () => start(label));
+        label.addEventListener("keydown", (event) => {
+            if (editing.has(label)) return;
+            if (event.key === "Enter" || event.key === "F2") {
+                event.preventDefault();
+                event.stopPropagation();
+                start(label);
+            }
+        });
+        if (typeof document !== "undefined" && document.title !== current()) {
+            document.title = current();
+        }
+        return label;
+    }
+
+    return { EVENT, key, current, adopt, attach, save };
+})();
+if (typeof window !== "undefined") window.PlexoraProjectTitle = PlexoraProjectTitle;
+
+
 class ImageViewer {
     // Vars
     viewerManagers = [];
@@ -3049,7 +3277,8 @@ class ImageViewer {
         const label = document.createElement("div");
         label.id = "viewer_project_label";
         label.className = "viewer-project-label";
-        label.textContent = datasource || "";
+        // The display name, and a click renames it (PlexoraProjectTitle).
+        PlexoraProjectTitle.attach(label);
         const hint = document.createElement("div");
         hint.id = "viewer_overlay_hint";
         hint.className = "viewer-overlay-hint";
@@ -3253,7 +3482,9 @@ class ImageViewer {
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(Math.max(6, fontPx * rect.scale));
         pdf.setTextColor(241, 245, 249);
-        pdf.text(labelEl.textContent || "", rect.x + rect.width / 2, rect.y + rect.height / 2, {
+        // The display name, not whatever the label holds: mid-edit it is
+        // half-typed.
+        pdf.text(PlexoraProjectTitle.current(), rect.x + rect.width / 2, rect.y + rect.height / 2, {
             align: "center",
             baseline: "middle",
         });

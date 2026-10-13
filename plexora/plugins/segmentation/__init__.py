@@ -11,14 +11,16 @@ files and points the project at it (server/run.py).
 Cellpose and PyTorch come with the optional extra `plexora[segment3d]` and are
 imported only when a stack is segmented; without them the card says how to
 install them and the agent's `segment_3d` answers `precondition_missing`.
-Offered only on a z-stack (`Requires(dims=("3d",))`).
+Offered only on a z-stack (`Requires(dims=("3d",))`), and only on a licence
+with Plexora 3D (`volume:segmentation`): without it the tool is not shown and
+its routes and `segment_3d` refuse.
 
 Kept import-light, like every descriptor module.
 """
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261011_segment3d"
+VERSION = "20261012_license_tiers"
 
 
 def _blueprint():
@@ -38,6 +40,7 @@ PLUGIN = Plugin(
     label="Segment in 3-D",
     version=VERSION,
     blueprint_factory=_blueprint,
+    entitlement="volume:segmentation",
     icon="cubes",
     panels={"tool_panel_slot": "segmentation/panel.html"},
     scripts=("segmentation3d.js",),

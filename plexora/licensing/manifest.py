@@ -13,10 +13,33 @@ be narrower without a schema change, not because any licence is sold that way
 today. Which grants a plan carries is the BioCognia platform's to say (plans
 and prices are edited only there); what the roots ARE is said here.
 
-`surfaces` is Surface Studio (plexora/server/surface): making, refining and
-analysing surfaces. A surface that exists is a read -- drawn, exported,
-measured, deleted -- and stays open on any plan, like everything else a Paid
-feature produced.
+Four roots. `ai` is every AI path. `volume` ("Plexora 3D") is working with
+z-stacks and time series beyond looking at them: Surface Studio
+(plexora/server/surface), measuring and tracking 3-D cells, Cellpose over a
+stack, Stack QC and 3-D analysis. Viewing a stack -- planes, projections,
+sections, the volume view, a 3-D mask drawn over it -- is Free.
+`transcriptomics` is the spatial-transcriptomics modality as a whole: without
+it a Xenium or Visium run is not even offered at import
+(`import_proposal._licensed`), and the transcripts and Visium HD plugins
+(`transcriptomics:xenium`, `transcriptomics:visium`) are not on the page. A
+sample imported from such a run still opens on Free -- image, cell table,
+gating, ROIs, QC, Cell Explorer -- and its transcript or bin layer keeps its
+card and its built tiles, which core's layer route still serves; the gene
+section is not mounted, and the plugin scripts that draw the points and bins
+in the viewer are not loaded with it. Nothing is deleted. `mcp` is an add-on
+(below).
+
+Two principles hold for every root:
+
+- Not granted means not shown. A tool, button, menu row or card action whose
+  entitlement this licence does not carry is absent from the page -- not
+  greyed, not badged, not explained (`plugins.unlocked`, the `licensed()`
+  template global, `PlexoraPaid.allows` in the client). The server still
+  refuses a direct call, with the `license` block (`guards`).
+- What a Paid feature produced stays readable on any plan. A surface, a 3-D
+  object table, a region carried through planes, an imported transcript or
+  bin layer is drawn, exported, measured and deleted on Free, like everything
+  else; only making more of them is Paid.
 
 Add-ons are roots sold separately from the Paid default. `mcp` is the first:
 it lets an outside coding agent (Claude Code, Codex, Cursor) reach the Paid
@@ -75,11 +98,39 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
         "The image scans, channel profiles and evidence sheets an agent "
         "gathers before judging an artifact, including the example sheets "
         "sampled across a QC check's scores."),
-    "surfaces": (
+    "volume": (
+        "Plexora 3D",
+        "Working with z-stacks and time series beyond looking at them: "
+        "surfaces, 3-D cells measured and tracked, segmentation over a stack, "
+        "Stack QC and 3-D analysis."),
+    "volume:surfaces": (
         "Surface Studio",
         "Surfaces in the 3-D view: isosurfaces of a channel with live "
         "thresholding, a surface for every cell of a 3-D mask, their mesh "
         "measurements and spatial neighbours, and mesh refinement."),
+    "volume:objects": (
+        "Cells in 3-D",
+        "Measuring the objects of a 3-D mask, tracking them across time "
+        "points, reviewing them plane by plane, and regions made from cells "
+        "or carried through planes."),
+    "volume:segmentation": (
+        "3-D segmentation",
+        "Segmenting cells over a whole z-stack with Cellpose in 3-D."),
+    "volume:analysis": (
+        "3-D analysis",
+        "Stack QC across planes, 3-D colocalisation and finding regions of "
+        "interest in a volume."),
+    "transcriptomics": (
+        "Spatial transcriptomics",
+        "Importing Xenium, Visium and Visium HD runs: transcript and bin "
+        "layers, gene lists and the 10x conversion."),
+    "transcriptomics:xenium": (
+        "Xenium",
+        "Xenium runs: the transcript layer, gene lists and gene groups."),
+    "transcriptomics:visium": (
+        "Visium",
+        "Visium and Visium HD runs: spot and bin layers, gene expression "
+        "per bin and the 10x conversion."),
     "mcp": (
         "External MCP access",
         "Using Plexora's Paid features from an outside coding agent such as "
@@ -92,12 +143,31 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
 #: than a list, because a plugin that does not exist yet cannot be listed.
 PLUGIN_ROOT = "plugin"
 
-#: Roots sold separately from the Paid default (`ai`): an administrator adds
-#: them to a licence or a seat.
+#: The plugins that exist and are sold one by one: name -> (label, sentence),
+#: granted as `plugin:<name>`. The product manifest lists them, so the
+#: platform's licence page shows a switch for each; a first-party capability
+#: naming a `plugin:<name>` missing here fails `tests/test_licensing_manifest.py`.
+PLUGINS: dict[str, tuple[str, str]] = {
+    "video_studio": (
+        "Video Studio",
+        "Scientific videos made from the viewer, frame-exact and reproducible: "
+        "z-stack rotations, plane sweeps, time-lapses, zooms and channel "
+        "reveals, refined as camera paths on a timeline and exported."),
+}
+
+#: Roots sold separately from the Paid default: an administrator adds them to
+#: a licence or a seat.
 ADD_ONS: tuple[str, ...] = ("mcp",)
 
 #: The top-level entitlements, in the order a person is shown them.
 ROOTS: tuple[str, ...] = tuple(name for name in ENTITLEMENTS if ":" not in name)
+
+
+def paid_default() -> tuple[str, ...]:
+    """Every root except the add-ons: what the platform's `plexora.paid` (and
+    `plexora.trial`) plan is expected to carry. The platform stays the source
+    of truth for plans; `tools/bioc_sync.py --check` fails when it disagrees."""
+    return tuple(root for root in ROOTS if root not in ADD_ONS)
 
 
 def known(entitlement) -> bool:
@@ -119,7 +189,8 @@ def label(entitlement) -> str:
         if candidate in ENTITLEMENTS:
             return ENTITLEMENTS[candidate][0]
     if isinstance(entitlement, str) and entitlement.startswith(PLUGIN_ROOT + ":"):
-        return entitlement.split(":", 1)[1].replace("_", " ").title()
+        name = entitlement.split(":", 1)[1]
+        return PLUGINS[name][0] if name in PLUGINS else name.replace("_", " ").title()
     return str(entitlement)
 
 
@@ -128,6 +199,10 @@ def summary(entitlement) -> str:
     for candidate in (entitlement, *ancestors(str(entitlement or ""))):
         if candidate in ENTITLEMENTS:
             return ENTITLEMENTS[candidate][1]
+    if isinstance(entitlement, str) and entitlement.startswith(PLUGIN_ROOT + ":"):
+        name = entitlement.split(":", 1)[1]
+        if name in PLUGINS:
+            return PLUGINS[name][1]
     return "A Paid Plexora feature."
 
 
@@ -139,13 +214,15 @@ def plan_for(entitlement) -> str:
 
 
 def unlocks(entitlements, *, paid: bool) -> list[dict]:
-    """One row per root: what it is called, what it does and whether this
-    licence grants it. Settings, `plexora license status` and `server_info`
-    show these, so an "Included / Not included" list has one source."""
+    """One row per root, then one per plugin sold on its own: what it is
+    called, what it does and whether this licence grants it. Settings,
+    `plexora license status` and `server_info` show these, so an "Included /
+    Not included" list has one source."""
     grants = tuple(entitlements or ()) if paid else ()
-    return [{"entitlement": root, "label": ENTITLEMENTS[root][0], "summary": ENTITLEMENTS[root][1],
-             "granted": any_satisfies(grants, root)}
-            for root in ROOTS]
+    rows = [(root, *ENTITLEMENTS[root]) for root in ROOTS]
+    rows += [(f"{PLUGIN_ROOT}:{name}", *PLUGINS[name]) for name in PLUGINS]
+    return [{"entitlement": name, "label": label, "summary": sentence, "granted": any_satisfies(grants, name)}
+            for name, label, sentence in rows]
 
 
 # -- the product manifest -----------------------------------------------------------
@@ -161,9 +238,10 @@ AI_MODULES: dict[str, tuple[str, ...]] = {
 #: How long a trial lasts. A trial is Paid with `trial: true`, not a third plan.
 TRIAL_DAYS = 30
 
-FREE_DESCRIPTION = ("Everything Plexora does without a licence: every image, table and "
-                    "modality, every tool's manual features, remote and HPC viewing, "
-                    "notebooks and export.")
+FREE_DESCRIPTION = ("Everything Plexora does without a licence: 2-D and 3-D multiplexed "
+                    "images and their tables -- z-stacks, time series, projections, "
+                    "sections and the volume view -- every basic tool's manual features, "
+                    "remote and HPC viewing, notebooks and export.")
 
 
 def product_manifest() -> dict:
@@ -184,6 +262,7 @@ def product_manifest() -> dict:
         "cli": "plexora",
         "free": {"label": "Free", "description": FREE_DESCRIPTION, "limits": {}},
         "entitlements": roots,
+        "plugins": {name: {"label": label, "sentence": sentence} for name, (label, sentence) in PLUGINS.items()},
         "limits": {},
         "ai": {"modules": {root: list(modules) for root, modules in AI_MODULES.items()}},
         "trial_days": TRIAL_DAYS,

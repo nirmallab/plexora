@@ -24,6 +24,7 @@ from plexora import app, paths
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
 from plexora.server.volume import pin, serve
+from plexora.licensing import guards
 from plexora.telemetry import performance
 
 #: What the viewer can be showing a volume as.
@@ -422,6 +423,48 @@ SECTION_SHARE = (0.05, 0.9)
 #: "off" stops planes fading into each other and the 3-D view coasting after
 #: a drag, on top of the system's own reduced-motion setting.
 MOTION = ("on", "off")
+#: The 3-D view's reference grid (views/volumeRenderer.js), off until asked
+#: for: on the far walls or the far z face only ("floor"), lines every `step`
+#: in x and y's units or at an automatic one, at `opacity`, with numbers.
+GRID_DEFAULTS = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18,
+                 "labels": True}
+GRID_FACES = ("walls", "floor")
+GRID_STEP = (1e-3, 1e6)
+GRID_OPACITY = (0.05, 1.0)
+
+
+def _grid_number(value, bounds):
+    """`value` as a float clamped to `bounds`, or None when it is not one."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(bounds[1], max(bounds[0], number))
+
+
+def normalize_grid(value):
+    """The grid preference, repaired field by field: what does not parse
+    reads as its default (viewerPrefs.js's `mergeGrid` keeps the same bounds)."""
+    grid = value if isinstance(value, dict) else {}
+    step = grid.get("step")
+    # Not a length unless above nothing: a negative step is not a tiny one.
+    raw = None if step == "auto" else _grid_number(step, (-math.inf, math.inf))
+    number = _grid_number(raw, GRID_STEP) if raw is not None and raw > 0 else None
+    opacity = _grid_number(grid.get("opacity"), GRID_OPACITY)
+    return {
+        "on": grid["on"] if isinstance(grid.get("on"), bool) else GRID_DEFAULTS["on"],
+        "faces": grid["faces"] if grid.get("faces") in GRID_FACES else GRID_DEFAULTS["faces"],
+        "step": number if number is not None else "auto",
+        "opacity": opacity if opacity is not None else GRID_DEFAULTS["opacity"],
+        "labels": (grid["labels"] if isinstance(grid.get("labels"), bool)
+                   else GRID_DEFAULTS["labels"]),
+    }
+
+
 #: How Play turns the stack in 3-D (views/volumeRenderer.js setAutoRotate):
 #: degrees a second within ROTATE_SPEED, about the screen's vertical or an
 #: image axis, one way or the other. Whether it is turning is never stored.
@@ -488,14 +531,16 @@ def normalize_viewer_prefs(value):
                               if share is not None and math.isfinite(share) else None)
     motion = value.get("motion")
     return {"sections": out_sections, "motion": motion if motion in MOTION else "on",
+            "grid": normalize_grid(value.get("grid")),
             "rotate": normalize_rotate(value.get("rotate")),
             "handles": normalize_handles(value.get("handles"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
 def get_viewer_prefs():
-    """The section panes' sizes, whether the viewer animates and how Play
-    turns the stack in 3-D, for every image. Kept in the settings file rather than the browser: the desktop
+    """The section panes' sizes, whether the viewer animates, the 3-D grid and
+    how Play turns the stack in 3-D, for every image. Kept in the settings file
+    rather than the browser: the desktop
     app's port -- and so the page's origin, and its storage -- can change
     from one run to the next."""
     stored = paths.read_settings().get("viewer")
@@ -514,14 +559,17 @@ def put_viewer_prefs():
     sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
     if isinstance(payload.get("sections"), dict):
         sections = {**sections, **payload["sections"]}
+    grid = current.get("grid") if isinstance(current.get("grid"), dict) else {}
+    if isinstance(payload.get("grid"), dict):
+        grid = {**grid, **payload["grid"]}
     rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
     if isinstance(payload.get("rotate"), dict):
         rotate = {**rotate, **payload["rotate"]}
     handles = current.get("handles") if isinstance(current.get("handles"), dict) else {}
     if isinstance(payload.get("handles"), dict):
         handles = {**handles, **payload["handles"]}
-    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "rotate": rotate,
-                                     "handles": handles})
+    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
+                                     "rotate": rotate, "handles": handles})
     settings["viewer"] = stored
     paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)
@@ -1156,7 +1204,13 @@ def section_cells(datasource):
     return response
 
 
+#: Measuring and tracking whole 3-D cells is Plexora 3D (manifest
+#: `volume:objects`); reading an object table that exists stays Free.
+OBJECTS_ENTITLEMENT = "volume:objects"
+
+
 @app.route('/volume/<string:datasource>/tracks', methods=['POST'])
+@guards.require_entitlement(OBJECTS_ENTITLEMENT)
 def track_objects_route(datasource):
     """Link a time series' measured cells from frame to frame (a `track`
     column in the object table). `{"max_distance": number}` in the table's
@@ -1199,6 +1253,7 @@ def get_objects(datasource):
 
 
 @app.route('/volume/<string:datasource>/objects', methods=['POST'])
+@guards.require_entitlement(OBJECTS_ENTITLEMENT)
 def measure_objects_route(datasource):
     """Measure every cell of the project's 3-D mask once, whole.
 

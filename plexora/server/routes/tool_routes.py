@@ -64,12 +64,9 @@ def _resolve(datasource, tool_name):
 
 def _locked(plugin) -> bool:
     """Whether a Paid plugin's tool is locked on this licence. A Free plugin
-    returns before the licence is looked at."""
-    if not getattr(plugin, "entitlement", None):
-        return False
-    from plexora import licensing
-
-    return not licensing.allows(plugin.entitlement)
+    returns before the licence is looked at. The page never offers a locked
+    tool (plugins.unlocked); this answers a URL typed by hand."""
+    return not plugin_registry.unlocked(plugin)
 
 
 def _needs(plugin, project):
@@ -220,7 +217,7 @@ def open_tool(datasource, tool_name):
 
     if plugin is not None and _locked(plugin):
         # Back to the viewer rather than into a tool the licence does not
-        # unlock; the Tools menu's own click explains why (see tool_panel).
+        # unlock. The page never links here for one (plugins.unlocked).
         return redirect(f"{base_url}/{datasource}")
     if outcome == COLLECT:
         return redirect(f"{base_url}/edit_config/{datasource}?needs={tool_name}")

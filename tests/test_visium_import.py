@@ -22,6 +22,10 @@ from plexora.server.utils import brightfield, tenx_matrix
 
 from tests.tenx_fixtures import write_tenx_h5
 
+
+#: A Visium run is detected only with `transcriptomics:visium`.
+pytestmark = pytest.mark.paid
+
 HIRES_SCALEF = 0.1
 REGIST_SCALEF = 0.25
 SPOT_DIAMETER = 100.0

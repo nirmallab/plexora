@@ -27,6 +27,13 @@ from plexora.agent.schemas import ProjectInput
 TAGS = ("volume", "3d", "z-stack", "zstack", "z", "plane", "planes", "depth", "focus",
         "projection", "mip", "confocal", "section", "stack", "time", "frame")
 
+#: Plexora 3D (plexora/licensing/manifest.py). Looking at a stack -- its
+#: planes, profiles, sections, projections, a pinned projection -- is Free;
+#: measuring, tracking and judging whole 3-D cells, and the stack's quality
+#: check, are Paid.
+OBJECTS_ENTITLEMENT = "volume:objects"
+ANALYSIS_ENTITLEMENT = "volume:analysis"
+
 #: The longest side a profile reads each plane at. A focus or intensity
 #: profile compares planes with each other, so the coarse level that keeps
 #: about this much detail is enough, and a 40-plane stack costs 40 small reads.
@@ -790,6 +797,7 @@ def capabilities():
             egress="aggregates", reads=("image",), tags=TAGS),
         Capability(
             name="volume.check_quality", tool_name="check_volume_quality", owner="core",
+            entitlement=ANALYSIS_ENTITLEMENT,
             purpose="Which planes of a z-stack are usable: runs of planes much less sharp "
                     "than the sharpest, signal fading with depth, and empty, repeated or "
                     "outlier planes -- as plane ranges with reasons, per channel.",
@@ -797,6 +805,7 @@ def capabilities():
             egress="aggregates", reads=("image",), tags=TAGS + ("qc", "quality", "blur")),
         Capability(
             name="volume.measure_objects", tool_name="measure_objects", owner="core",
+            entitlement=OBJECTS_ENTITLEMENT,
             purpose="Measure every cell of a 3-D segmentation once, whole: volume, centroid "
                     "in pixels and µm, bounding box, surface area, sphericity, and each "
                     "channel's mean and integrated intensity. Writes an object table (and "
@@ -807,6 +816,7 @@ def capabilities():
             tags=TAGS + ("measure", "objects", "cells", "segmentation", "volume")),
         Capability(
             name="volume.track_objects", tool_name="track_objects", owner="core",
+            entitlement=OBJECTS_ENTITLEMENT,
             purpose="Link a time series' measured cells from frame to frame, so the same cell "
                     "has the same `track` number in every frame: each pair of frames matched "
                     "one to one on centroid distance (least total distance, none farther than "
@@ -836,6 +846,7 @@ def capabilities():
             tags=TAGS + ("orthogonal", "section", "xz", "yz")),
         Capability(
             name="volume.render_object_views", tool_name="render_object_views", owner="core",
+            entitlement=OBJECTS_ENTITLEMENT,
             purpose="One cell of a 3-D segmentation in depth: XY at its centre plane, XZ and "
                     "YZ through its centre, its outline in yellow among the others, beside "
                     "its measured row (volume, sphericity, planes, whether it is cut off by "
@@ -847,6 +858,7 @@ def capabilities():
             tags=TAGS + ("object", "cell", "segmentation", "orthogonal")),
         Capability(
             name="volume.object_z_profile", tool_name="object_z_profile", owner="core",
+            entitlement=OBJECTS_ENTITLEMENT,
             purpose="Where in depth a 3-D cell's markers sit: each channel's mean plane by "
                     "plane inside the cell and over its footprint just past its ends, the "
                     "peak plane, the width at half height, and whether the signal carries "

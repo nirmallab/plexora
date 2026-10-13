@@ -179,11 +179,11 @@ window.PlexoraDatasetStrip = (function () {
         grid.style.gridTemplateRows = "repeat(" + placed.rows + ", " + placed.tile.height + "px)";
     }
 
-    function tile(name, isCurrent, onChoose) {
+    function tile(name, isCurrent, onChoose, shown = name) {
         const item = document.createElement("button");
         item.type = "button";
         item.className = "dataset-nav-strip-item" + (isCurrent ? " is-current" : "");
-        item.title = name;
+        item.title = shown;
         item.setAttribute("data-sample", name);
         if (isCurrent) item.setAttribute("aria-current", "true");
 
@@ -211,7 +211,7 @@ window.PlexoraDatasetStrip = (function () {
 
         const label = document.createElement("span");
         label.className = "dataset-nav-strip-name";
-        label.textContent = name;
+        label.textContent = shown;
         item.appendChild(label);
 
         item.addEventListener("click", () => onChoose(name, isCurrent));
@@ -279,8 +279,10 @@ window.PlexoraDatasetStrip = (function () {
      * @param members sample names, in the dataset's own order.
      * @param current the sample on screen, marked and inert.
      * @param onPick  called with a name AFTER the strip has closed.
+     * @param titles  name -> display title, for members that have one; a
+     *                tile shows that and is still picked by its name.
      */
-    function open({ anchor, chip, members, current, label, onPick }) {
+    function open({ anchor, chip, members, current, label, onPick, titles = {} }) {
         close();
         const host = document.getElementById("openseadragon_wrapper");
         if (!host || !anchor || !members || !members.length) return false;
@@ -299,7 +301,8 @@ window.PlexoraDatasetStrip = (function () {
             close();
             if (!isCurrent && onPick) onPick(name);
         };
-        const tiles = members.map((name) => tile(name, name === current, choose));
+        const tiles = members.map((name) => tile(name, name === current, choose,
+                                                   (titles && titles[name]) || name));
         for (const item of tiles) grid.appendChild(item);
         grid.addEventListener("keydown", onGridKey);
         grid.addEventListener("wheel", onWheel, { passive: false });

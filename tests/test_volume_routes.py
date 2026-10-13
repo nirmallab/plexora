@@ -253,23 +253,51 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
     turn = {"speed": 30.0, "axis": "screen", "direction": 1}
     handles = {"visible": True, "opacity": 0.55}
     paths.write_settings({"data_dir": "/somewhere"})
+    grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {
-        "sections": {"xz": None, "yz": None}, "motion": "on", "rotate": turn, "handles": handles}
+        "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn,
+        "handles": handles}
     client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
     stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
-    assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "rotate": turn,
-                      "handles": handles}
+    assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid,
+                      "rotate": turn, "handles": handles}
     # Out of bounds is clamped; nonsense reads as the default.
     stored = client.put("/viewer_prefs", json={
         "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
-    assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "rotate": turn,
-                      "handles": handles}
+    assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "grid": grid,
+                      "rotate": turn, "handles": handles}
     client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
     assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
     # The rest of the settings file is left alone.
     assert paths.read_settings()["data_dir"] == "/somewhere"
     assert client.put("/viewer_prefs", data="nope",
                       content_type="application/json").status_code == 400
+
+
+def test_the_3d_grid_preference_is_merged_and_repaired(client):
+    """The 3-D view's grid (views/volumeRenderer.js): one field at a time
+    merged over what is stored, each checked on its own."""
+    from plexora import paths
+    from plexora.server.routes.volume_routes import normalize_grid
+
+    paths.write_settings({})
+    client.put("/viewer_prefs", json={"grid": {"on": True}})
+    stored = client.put("/viewer_prefs", json={"grid": {"faces": "floor", "step": 25}}).get_json()["prefs"]
+    assert stored["grid"] == {"on": True, "faces": "floor", "step": 25.0, "opacity": 0.18,
+                              "labels": True}
+    # Another preference leaves the grid as it was.
+    client.put("/viewer_prefs", json={"motion": "off"})
+    assert client.get("/viewer_prefs").get_json()["grid"]["faces"] == "floor"
+    # Bounds are clamped; what does not parse reads as the default.
+    assert normalize_grid({"opacity": 7, "step": 1e9})["opacity"] == 1.0
+    assert normalize_grid({"step": 1e9})["step"] == 1e6
+    assert normalize_grid({"opacity": 0.0})["opacity"] == 0.05
+    assert normalize_grid({"on": "yes", "faces": "ceiling", "step": -5, "opacity": True,
+                           "labels": 1}) == {
+        "on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
+    assert normalize_grid({"step": "auto"})["step"] == "auto"
+    assert normalize_grid({"step": float("nan")})["step"] == "auto"
+    assert normalize_grid("nonsense")["on"] is False
 
 
 def test_the_rotation_preference_is_merged_and_clamped(client):

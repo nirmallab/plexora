@@ -50,7 +50,8 @@ class RgbImageViewer {
         const label = document.createElement("div");
         label.id = "viewer_project_label";
         label.className = "viewer-project-label";
-        label.textContent = datasource || "";
+        // The same display name and in-place rename as ImageViewer's.
+        PlexoraProjectTitle.attach(label);
         wrapper.appendChild(label);
     }
 
@@ -137,7 +138,7 @@ class RgbImageViewer {
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(Math.max(6, 13 * rect.scale));
         pdf.setTextColor(241, 245, 249);
-        pdf.text(labelEl.textContent || "", rect.x + rect.width / 2, rect.y + rect.height / 2, {
+        pdf.text(PlexoraProjectTitle.current(), rect.x + rect.width / 2, rect.y + rect.height / 2, {
             align: "center",
             baseline: "middle",
         });

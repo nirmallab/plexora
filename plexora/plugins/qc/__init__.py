@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261011_depth"
+VERSION = "20261012_license_tiers"
 
 
 def _blueprint():
@@ -52,6 +52,11 @@ PLUGIN = Plugin(
     label="Quality Control",
     version=VERSION,
     blueprint_factory=_blueprint,
+    # Stack QC is Plexora 3D (capabilities_stack.py); reading the last stack
+    # check (GET /stack) and every 2-D check stay Free.
+    endpoint_entitlements={"stack_run": "volume:analysis",
+                           "stack_write": "volume:analysis",
+                           "stack_plane": "volume:analysis"},
     icon="clipboard-check",
     # Not Q: mod+q quits a Mac browser and ctrl+shift+q quits Chrome elsewhere.
     # X for "exclude", which is what a QC region mostly says.

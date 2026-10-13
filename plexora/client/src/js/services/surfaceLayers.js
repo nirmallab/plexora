@@ -13,8 +13,9 @@
  *   - the stack's eye and opacity, and the card's style, reach the renderer as
  *     uniforms (`setStyle`), never as a new upload;
  *   - `create()` posts a surface and takes the new layer on; Surface Studio is
- *     Paid (`surfaces`), and a refusal opens the Paid modal with the server's
- *     own words (PlexoraPaid.explain), never a broken panel;
+ *     Plexora 3D (`volume:surfaces`), not offered without it, and a refusal
+ *     that still arrives (a licence lapsed mid-session) is quiet: the caller
+ *     closes, never a broken panel;
  *   - a click on a surface in 3-D picks its object (`plexora:surface-pick`
  *     from the renderer) and says so as `plexora:surface-selected`.
  *
@@ -48,12 +49,13 @@ window.PlexoraSurfaceLayers = (function () {
         return (stack?.layers?.() || []).filter((layer) => layer.kind === KIND);
     }
 
-    /** The answer of a Paid route that refused: open the modal, return true. */
+    /** Whether a Paid route refused (403 with a `license` block). Quiet: the
+     *  caller closes what it opened, and nothing explains or upsells. */
     async function refused(response) {
         if (response.status !== 403) return false;
         const body = await response.clone().json().catch(() => ({}));
-        if (body?.license && window.PlexoraPaid) {
-            window.PlexoraPaid.explain(body.license);
+        if (body?.license) {
+            console.warn(`surfaceLayers: ${body.license.label || "this"} is not included in this licence`);
             return true;
         }
         return false;

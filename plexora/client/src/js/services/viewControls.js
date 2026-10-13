@@ -61,6 +61,9 @@
         surfaces: (ctx) => Boolean(ctx.surfacesAvailable),
         surfacesPresent: (ctx) => ctx.surfaceCount > 0,
         surfaceStudio: (ctx) => Boolean(ctx.surfaceStudio),
+        // Making a surface or importing a mesh is Plexora 3D; showing and
+        // lighting the surfaces that exist is not (services/paidFeature.js).
+        surfaceMaking: (ctx) => ctx.surfaceMaking !== false,
         prefs: (ctx) => Boolean(ctx.prefs),
         card: (ctx) => typeof ctx.openCard === "function",
         grid: (ctx) => Boolean(ctx.grid),
@@ -428,9 +431,11 @@
           group: "surfaces", order: 10, doc: "Volume, surfaces, or both." },
         { id: "surfaces.light", surfaces: ["popover"], modes: ["volume"], needs: ["surfaces", "surfacesPresent"],
           group: "surfaces", order: 20, doc: "Where the light on the surfaces comes from." },
-        { id: "surfaces.new", surfaces: ["popover"], modes: ["volume"], needs: ["surfaceStudio"],
+        { id: "surfaces.new", surfaces: ["popover"], modes: ["volume"],
+          needs: ["surfaceStudio", "surfaceMaking"],
           group: "surfaces", order: 30, doc: "Make a surface (Surface Studio)." },
-        { id: "surfaces.import", surfaces: ["popover"], modes: ["volume"], needs: ["surfaces"],
+        { id: "surfaces.import", surfaces: ["popover"], modes: ["volume"],
+          needs: ["surfaces", "surfaceMaking"],
           group: "surfaces", order: 40, doc: "Import a mesh." },
         { id: "card", surfaces: ["popover"], needs: ["card"], group: "footer",
           doc: "The Depth card, for everything less frequent." },

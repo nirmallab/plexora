@@ -3,8 +3,9 @@
  * (services/surfaceLayers.js), with a stubbed page and server.
  *
  * Pinned:
- * - on a licence without Surface Studio the dock does not open: the server's
- *   refusal opens the Paid modal with its own words;
+ * - on a licence without Surface Studio the dock does not open and asks the
+ *   server nothing (not granted, not shown); on a licence that lapsed while
+ *   the page was open, the server's refusal closes it quietly, never a modal;
  * - the slider starts at the server's suggestion, over the histogram's range;
  * - dragging asks for ONE preview after the debounce, and a newer preview
  *   aborts the one still in flight;
@@ -97,7 +98,7 @@ const document = {
 
 let licensed = false;
 const requests = [];
-const LICENSE = { code: "license_required", entitlement: "surfaces", label: "Surface Studio",
+const LICENSE = { code: "license_required", entitlement: "volume:surfaces", label: "Surface Studio",
                   summary: "Surfaces in the 3-D view.", state: "free" };
 function respond(status, body, buffer = null) {
     return { ok: status < 400, status, headers: { get: () => null },
@@ -143,6 +144,7 @@ function fetchImpl(url, options = {}) {
 // -- the page's globals ----------------------------------------------------------------
 
 const explained = [];
+let hinted = false;
 let adopted = 0;
 const viewState = {
     enabled: () => true, depth: 20, isVolume: () => true, labelsAre3d: () => false,
@@ -157,7 +159,9 @@ const box = {
     dispatchEvent: () => true, addEventListener() {},
     document, fetch: fetchImpl, plexoraUrl: (path) => `/${path}`,
     flaskVariables: { datasource: "stack" },
-    PlexoraPaid: { explain: (license) => explained.push(license) },
+    // The page's render-time hint (paidFeature.js `allows`).
+    PlexoraPaid: { allows: (entitlement) => hinted && entitlement.startsWith("volume"),
+                   explain: (license) => explained.push(license) },
     PlexoraToast: { show() {} },
     PlexoraCanvasLayout: { place: (node) => { wrapper.appendChild(node); return () => node.remove(); } },
     __plexora: {
@@ -183,10 +187,15 @@ box.PlexoraSurfaceLayers.init({ datasource: "stack", layerStack: box.__plexora.s
 
 // -- the licence ---------------------------------------------------------------------
 
+const hidden = await Studio.open({ channel: "CD31" });
+check("on Free the dock does not open and asks the server nothing",
+      hidden === false && !Studio.isOpen() && requests.length === 0 && explained.length === 0);
+// The page was told Paid; the server no longer agrees (a licence that lapsed).
+hinted = true;
 const refused = await Studio.open({ channel: "CD31" });
-check("on Free the dock does not open", refused === false && !Studio.isOpen());
-check("and the Paid modal opens with the server's words",
-      explained.length === 1 && explained[0].label === "Surface Studio");
+check("a licence that lapsed: the server refuses and the dock closes",
+      refused === false && !Studio.isOpen());
+check("and quietly: nothing explains or upsells", explained.length === 0);
 
 // -- with the licence ------------------------------------------------------------------
 

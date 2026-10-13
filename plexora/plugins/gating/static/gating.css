@@ -112,7 +112,7 @@
 
 .gate-nudge {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     left: var(--space-2);
     position: absolute;
     top: var(--space-2);
@@ -161,7 +161,7 @@
     color: var(--text-secondary);
     font-size: 14px;
     position: absolute;
-    right: 6px;
+    right: 5px;
     top: 4px;
 }
 
@@ -581,20 +581,15 @@
 /* ---------------------------------------------------------------------------
    A z-stack, gated plane by plane (gatingPlanes.js).
 
-   VIEW     [ Plane | Slab ]             core's segmented control (viewer.css
-            [ 5 ] µm  [Mean v]  5 planes   .cell-mode-options) and the Depth
-                                           card's own number and select fields,
-   so the row reads as the viewer's controls rather than a second design. The
-   two captions (`.gate-row-caption`, on core's own row and caption) share one
-   width so MARKER's and VIEW's controls start on one line, and the slab's
-   fields start under the selector they belong to.
-   --------------------------------------------------------------------------- */
-.gate-planes {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
+   VIEW   [ Plane | Slab ]  |  5 µm
 
+   One line: core's segmented control (viewer.css .cell-mode-options), then
+   the slab's thickness -- hidden, divider and all, for the plane. The
+   thickness is bare text that turns into a field on click. How the planes
+   are combined is the Depth card's (mean unless changed there). The two captions
+   (`.gate-row-caption`) share one width so MARKER's and VIEW's controls start
+   on one line.
+   --------------------------------------------------------------------------- */
 .gate-planes[hidden],
 .gate-slab-row[hidden],
 .gate-plane-readout[hidden] {
@@ -603,34 +598,98 @@
 
 #gate_marker_section:has(> .gate-planes:not([hidden])) .gate-row-caption,
 .gate-planes .gate-row-caption {
-    min-width: 58px;
+    min-width: 50px;
 }
 
-.gate-view-control {
-    min-width: 0;
+/* Core's 10px after the caption, as MARKER's row has; the slab's group
+   sits as close to the toggle as its own fields sit to each other. */
+.gate-view-row {
+    flex-wrap: nowrap;
+}
+
+.gate-view-row > .gate-slab-row {
+    margin-left: -6px;
+}
+
+/* The toggle takes the width the slab's group leaves, so the row spans the
+   sidebar like MARKER's; it never shrinks below its labels. */
+.gate-view-row > .gate-view-control {
+    flex: 1 0 auto;
+}
+
+.gate-view-row > .gate-slab-row {
+    flex: 0 1 auto;
+}
+
+.gate-view-control .cell-mode-option {
+    flex: 1 0 auto;
+    line-height: 16px;
+    padding: 3px 7px;
 }
 
 .gate-slab-row {
     align-items: center;
     display: flex;
-    gap: var(--space-2);
+    gap: 4px;
     min-width: 0;
-    /* Under the selector, not under its caption: the caption's 58px and the
-       row's 10px gap. */
-    padding-left: 68px;
 }
 
-.gate-slab-row .gate-slab-agg {
-    flex: 0 1 auto;
-    min-width: 0;
-    width: auto;
+.gate-view-divider {
+    align-self: center;
+    background: var(--border-subtle);
+    flex: 0 0 1px;
+    height: 16px;
+    width: 1px;
 }
 
-.gate-slab-row .gate-slab-planes {
-    margin-left: auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+/* "5 µm": the number is an input with nothing around it until it is used --
+   a faint underline on hover says it can be, the channel accent while typing. */
+.gate-slab-field {
+    align-items: baseline;
+    cursor: text;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 3px;
+    white-space: nowrap;
+}
+
+.gate-slab-thickness {
+    -moz-appearance: textfield;
+    appearance: textfield;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 16px;
+    min-width: 1ch;
+    padding: 0;
+    text-align: right;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.gate-slab-thickness::-webkit-inner-spin-button,
+.gate-slab-thickness::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.gate-slab-field:hover .gate-slab-thickness {
+    border-bottom-color: var(--text-muted);
+}
+
+.gate-slab-thickness:focus {
+    border-bottom-color: var(--accent-channel);
+    outline: none;
+}
+
+.gate-slab-unit {
+    color: var(--text-muted);
+    font-size: 11px;
 }
 
 /* The plane's cells under the stack's line: a quiet neutral shading, not a

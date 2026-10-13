@@ -657,32 +657,28 @@ const sparkOf = (page) => page.dom.byId.get("plexora_ai_button");
 const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.classList.contains("plx-ai-launch"));
 
 {
+    // index.html leaves the button out on Free; should one be on the page
+    // anyway (a licence that lapsed while it was open), it hides.
     const free = makePage();
     const spark = sparkOf(free);
-    const visible = spark.hidden === false && !cornerChipOf(free);
+    free.panel.syncLaunchChip();
+    const hidden = spark.hidden === true && !cornerChipOf(free);
     spark.click();
     await tick(5);
-    const notice = free.choices[0];
-    const told = Boolean(notice) && /under development and needs a licence/.test(notice.body.join(" "))
-        && notice.choices.map((c) => c.label).join("|") === "Close|Enter License…"
-        && free.panel.launcher() === null && free.licensed.length === 0;
-    free.confirmAnswer = "license";
-    spark.click();
-    await tick(5);
-    const toLicense = free.licensed.length === 1 && free.panel.launcher() === null;
-    check("Plexora AI on Free: the header AI button is always shown; clicked, it says Plexora AI is under "
-        + "development and needs a licence, offers Close and Enter License (no trial), and Enter License goes there",
-        visible && told && toLicense, { visible, notice, licensed: free.licensed });
+    const quiet = free.choices.length === 0 && free.panel.launcher() === null
+        && free.licensed.length === 0 && free.explained.length === 0;
+    check("Plexora AI on Free: the header AI button is not shown, and a click on one left on the page "
+        + "opens nothing and explains nothing",
+        hidden && quiet, { hidden, choices: free.choices, licensed: free.licensed });
     const noChip = !cornerChipOf(free);
     await free.panel.openLauncher();
     const shown = free.panel.launcher();
     const asked = free.fetches.filter((f) => f.url.includes("ai/v1/")).length;
-    byAction(free.dom.body, "ai-explain").click();
+    const about = byAction(free.dom.body, "ai-explain");
     check("Plexora AI on Free: opened anyway, both buttons are disabled with the "
-        + "reason, nothing is asked of the gateway, and About Plexora AI explains",
+        + "reason, nothing is asked of the gateway, and there is no About Plexora AI",
         noChip && shown && shown.buttons.gating.disabled && shown.buttons.qc.disabled
-        && /Paid licence that includes AI/.test(shown.buttons.gating.note) && asked === 0
-        && free.explained.length === 1 && free.explained[0].entitlement === "ai",
+        && asked === 0 && !about && free.explained.length === 0,
         { noChip, shown, asked, explained: free.explained });
 }
 

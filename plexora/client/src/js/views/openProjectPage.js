@@ -143,10 +143,16 @@
         // What to show
         // ------------------------------------------------------------------
 
+        /** What a card says: the display name, else the name. `name` stays
+         *  what every link, selection and request is keyed by. */
+        function shownName(project) {
+            return project.displayName || project.name;
+        }
+
         function sorted(list) {
             const out = list.slice();
             if (state.sort === "name") {
-                out.sort((a, b) => a.name.localeCompare(b.name));
+                out.sort((a, b) => shownName(a).localeCompare(shownName(b)));
             } else {
                 out.sort((a, b) => {
                     const aTime = a[state.sort] ? new Date(a[state.sort]).getTime() : 0;
@@ -175,7 +181,8 @@
                     folders: state.folder ? [] : state.datasets.filter(
                         (d) => d.name.toLowerCase().includes(query)),
                     projects: sorted(state.projects.filter(
-                        (p) => p.name.toLowerCase().includes(query))),
+                        (p) => p.name.toLowerCase().includes(query)
+                            || shownName(p).toLowerCase().includes(query))),
                     flattened: true,
                 };
             }
@@ -314,15 +321,19 @@
         function projectMarkup(project, flattened, row) {
             const href = plexoraUrl(encodeURIComponent(project.name));
             const name = escapeHtml(project.name);
+            const shown = escapeHtml(shownName(project));
+            // The tooltip names the folder too when a title hides it.
+            const tip = shownName(project) === project.name
+                ? name : `${shown} (${name})`;
             const caption = escapeHtml(dateCaption(project));
             const kind = row ? "row" : "card";
             const selected = state.selection.has(project.name) ? " is-selected" : "";
             return `<div class="project-${kind}${selected}" draggable="true"
                          data-project-name="${name}">
                 ${selectMarkup(project)}
-                <a class="project-${kind}-link" href="${href}" title="${name}">
+                <a class="project-${kind}-link" href="${href}" title="${tip}">
                     ${thumbMarkup(project)}
-                    <span class="project-${kind}-name">${name}</span>
+                    <span class="project-${kind}-name">${shown}</span>
                     <span class="project-${kind}-date">${caption}${sharedMarkup(project)}</span>
                     ${badgesMarkup(project)}
                 </a>
@@ -702,7 +713,7 @@
             if (!deletable.length) return;
             const ok = await window.PlexoraConfirm.ask({
                 title: deletable.length === 1
-                    ? `Delete “${deletable[0].name}”?`
+                    ? `Delete “${shownName(deletable[0])}”?`
                     : `Delete ${countPhrase(deletable.length, "sample")}?`,
                 body: "This removes the data from disk and cannot be undone.",
                 confirm: "Delete",

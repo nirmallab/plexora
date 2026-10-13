@@ -175,7 +175,8 @@
 
         async function loadCells() {
             const vs = viewStateOf();
-            if (!vs) return;
+            // No row without Plexora 3D (depth_panel.html), so nothing to poll.
+            if (!vs || !q("[data-depth-cells]")) return;
             try {
                 const response = await fetch(cellsUrl(vs));
                 cells = response.ok ? await response.json() : null;

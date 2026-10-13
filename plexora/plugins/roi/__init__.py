@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261011_merge"
+VERSION = "20261012_license_tiers"
 
 
 def _blueprint():
@@ -43,6 +43,10 @@ PLUGIN = Plugin(
     label="ROI",
     version=VERSION,
     blueprint_factory=_blueprint,
+    # A region made from 3-D cells is Plexora 3D; every 2-D region is Free.
+    # Making a flat region 3-D through /api/operations is refused in the
+    # route itself (routes._makes_a_solid), since the batch is mixed.
+    endpoint_entitlements={"from_cells": "volume:objects"},
     icon="draw-polygon",
     # I for Interest. Not mod+R, which reloads the page -- interceptable in
     # principle, but a shortcut that costs the user their session when this

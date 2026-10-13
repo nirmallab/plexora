@@ -11,9 +11,10 @@ modal ask, and the few things they can change.
 - `POST /settings/license/connect/poll` `{code}` -- `{pending: true}` until the
   person approves at account.biocognia.com, then the certificates are saved
   and the status comes back.
-- `POST /settings/license/activate` `{credential, name?, cluster?}` -- an
-  activation code minted in the portal (`BIOC-...`) or a `BIOCT1_` token,
-  exchanged for this device's certificate.
+- `POST /settings/license/activate` `{credential, name?, cluster?}` -- the
+  seat's licence key from the portal (`BIOC-XXXX-XXXX-XXXX-XXXX`), a one-time
+  activation code (`BIOC-XXXX-XXXX`) or a `BIOCT1_` token, exchanged for this
+  device's certificate.
 - `POST /settings/license/install` `{certificate}` -- an offline licence file's
   text, or a bare `BIOC1` certificate.
 - `POST /settings/license/refresh` -- check with the platform now.
@@ -165,8 +166,8 @@ def license_activate():
     credential = str(body.get("credential") or "").strip()
     if not credential or len(credential) > MAX_CREDENTIAL:
         return jsonify(success=False,
-                       error="Enter an activation code from account.biocognia.com (BIOC-...) "
-                             "or a BIOCT1_ token."), 400
+                       error="Enter your licence key from account.biocognia.com "
+                             "(BIOC-XXXX-XXXX-XXXX-XXXX), an activation code or a BIOCT1_ token."), 400
     try:
         LICENSING.activate(credential, kind=_kind(body), name=_name(body))
     except LicenseError as exc:

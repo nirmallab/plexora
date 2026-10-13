@@ -16,7 +16,7 @@ from flask import jsonify, request
 
 from plexora import app
 from plexora.server.models import datasets
-from plexora.server.models.project import Project
+from plexora.server.models.project import Project, read_title
 
 
 def _known():
@@ -24,16 +24,30 @@ def _known():
     return set(Project.load_all())
 
 
-def _listing():
-    known = _known()
+def _listing(known=None):
+    known = _known() if known is None else known
     return [dataset.to_wire()
             for dataset in sorted(datasets.load_all(known=known).values(),
                                   key=lambda d: d.name.casefold())]
 
 
+def _titles(entries):
+    """Project name -> display title, for the projects that have one. A
+    member list is names; this is what lets the viewer's dataset walk say
+    what the user calls them without a /projects listing."""
+    out = {}
+    for name, entry in entries.items():
+        title = read_title((entry or {}).get("title"), name)
+        if title:
+            out[name] = title
+    return out
+
+
 @app.route('/datasets')
 def list_datasets():
-    return jsonify(success=True, datasets=_listing())
+    entries = Project.load_all()
+    return jsonify(success=True, datasets=_listing(set(entries)),
+                   titles=_titles(entries))
 
 
 @app.route('/datasets', methods=['POST'])

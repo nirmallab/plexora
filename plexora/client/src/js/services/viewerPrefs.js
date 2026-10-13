@@ -9,6 +9,9 @@
  *               and width; null = sized to fit, up to the default
  *     motion    "on" | "off": planes fade into each other and the 3-D view
  *               coasts after a drag, or neither
+ *     grid      the 3-D view's reference grid (views/volumeRenderer.js):
+ *               {on, faces: "walls" | "floor", step: "auto" | a number in
+ *               x and y's units, opacity: 0.05..1, labels}
  *     rotate    how Play turns the stack in 3-D (views/volumeRenderer.js
  *               setAutoRotate): {speed: degrees a second, ROTATE_SPEED;
  *               axis: "screen" | "x" | "y" | "z"; direction: 1 | -1}. Whether
@@ -30,6 +33,7 @@
     "use strict";
 
     const SAVE_DELAY_MS = 400;
+    const GRID = { on: false, faces: "walls", step: "auto", opacity: 0.18, labels: true };
     const ROTATE = { speed: 30, axis: "screen", direction: 1 };
     //: Degrees a second (server/routes/volume_routes.py ROTATE_SPEED).
     const ROTATE_SPEED = [5, 90];
@@ -37,7 +41,8 @@
     //: The 3-D view's plane handles (server/routes/volume_routes.py HANDLES_DEFAULTS).
     const HANDLES = { visible: true, opacity: 0.55 };
     const HANDLE_OPACITY = [0.15, 1];
-    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", rotate: ROTATE, handles: HANDLES };
+    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID,
+                       rotate: ROTATE, handles: HANDLES };
 
     /** A handles preference, repaired over `base` (the server's
      *  `normalize_handles` keeps the same bounds). */
@@ -48,6 +53,24 @@
         if (typeof patch.opacity === "number" && Number.isFinite(patch.opacity)) {
             out.opacity = Math.min(HANDLE_OPACITY[1], Math.max(HANDLE_OPACITY[0], patch.opacity));
         }
+        return out;
+    }
+
+    /** A grid preference, repaired over `base`: what does not parse keeps
+     *  the value it had (the server's `normalize_grid` keeps the same bounds). */
+    function mergeGrid(base, patch) {
+        const out = { ...base };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.on === "boolean") out.on = patch.on;
+        if (patch.faces === "walls" || patch.faces === "floor") out.faces = patch.faces;
+        if (patch.step === "auto") out.step = "auto";
+        else if (typeof patch.step === "number" && Number.isFinite(patch.step) && patch.step > 0) {
+            out.step = Math.min(1e6, Math.max(1e-3, patch.step));
+        }
+        if (typeof patch.opacity === "number" && Number.isFinite(patch.opacity)) {
+            out.opacity = Math.min(1, Math.max(0.05, patch.opacity));
+        }
+        if (typeof patch.labels === "boolean") out.labels = patch.labels;
         return out;
     }
 
@@ -120,6 +143,11 @@
             return Number.isFinite(share) ? share : null;
         }
 
+        /** The 3-D view's grid: `{on, faces, step, opacity, labels}`. */
+        grid() {
+            return { ...this.prefs.grid };
+        }
+
         /** How Play turns the stack in 3-D: `{speed, axis, direction}`. */
         rotate() {
             return { ...this.prefs.rotate };
@@ -163,6 +191,7 @@
 
         /**
          * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`,
+         * `{grid: {on: true}}` (merged over the grid as it is),
          * `{rotate: {speed: 45}}` (merged over the rotation as it is),
          * `{handles: {visible: false}}`.
          * `save: false` while a drag is still moving; the drag's end saves.
@@ -170,6 +199,8 @@
         set(patch, { save = true } = {}) {
             if (!patch || typeof patch !== "object") return this.get();
             this._merge(patch);
+            const grid = patch.grid || this._pending.grid
+                ? { grid: { ...(this._pending.grid || {}), ...(patch.grid || {}) } } : {};
             const rotate = patch.rotate || this._pending.rotate
                 ? { rotate: { ...(this._pending.rotate || {}), ...(patch.rotate || {}) } } : {};
             const handles = patch.handles || this._pending.handles
@@ -177,6 +208,7 @@
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
+                ...grid,
                 ...rotate,
                 ...handles,
             };
@@ -197,6 +229,7 @@
                 sections,
                 motion: patch?.motion === "off" || patch?.motion === "on"
                     ? patch.motion : this.prefs.motion,
+                grid: mergeGrid(this.prefs.grid || GRID, patch?.grid),
                 rotate: mergeRotate(this.prefs.rotate || ROTATE, patch?.rotate),
                 handles: mergeHandles(this.prefs.handles || HANDLES, patch?.handles),
             };

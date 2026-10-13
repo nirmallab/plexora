@@ -23,19 +23,28 @@ def test_manifest_is_well_formed():
 
 
 def test_paid_covers_every_declared_entitlement():
-    # The Paid roots (`ai`, `surfaces`) plus every add-on are what must cover
-    # the manifest: nothing declared may sit outside a root a plan can grant.
-    grants = tuple(manifest.AI_MODULES) + ("surfaces",) + manifest.ADD_ONS
+    # The Paid default plus every add-on is what must cover the manifest:
+    # nothing declared may sit outside a root a plan can grant.
+    grants = manifest.paid_default() + manifest.ADD_ONS
     for name in manifest.ENTITLEMENTS:
         assert ent.any_satisfies(grants, name), name
 
 
-def test_surface_studio_is_its_own_root_outside_ai():
-    assert "surfaces" in manifest.ROOTS and "surfaces" not in manifest.ADD_ONS
-    assert not ent.any_satisfies(tuple(manifest.AI_MODULES), "surfaces")
+def test_the_four_roots_and_the_paid_default():
+    assert manifest.ROOTS == ("ai", "volume", "transcriptomics", "mcp")
+    # Every root but the add-ons: what a purchased licence carries by default.
+    assert manifest.paid_default() == ("ai", "volume", "transcriptomics")
+    assert manifest.label("volume") == "Plexora 3D"
+
+
+def test_surface_studio_is_part_of_plexora_3d_not_ai():
+    assert "volume:surfaces" in manifest.ENTITLEMENTS
+    assert ent.satisfies("volume", "volume:surfaces")
+    assert not ent.any_satisfies(tuple(manifest.AI_MODULES), "volume:surfaces")
+    from plexora.agent.core import surface as agent_surface
     from plexora.server import surface
 
-    assert surface.ENTITLEMENT == "surfaces"
+    assert surface.ENTITLEMENT == agent_surface.ENTITLEMENT == "volume:surfaces"
 
 
 def test_add_ons_are_declared_roots_outside_the_ai_root():
@@ -44,14 +53,37 @@ def test_add_ons_are_declared_roots_outside_the_ai_root():
         assert not ent.any_satisfies(tuple(manifest.AI_MODULES), root), root
 
 
-def test_unlocks_lists_every_root_with_whether_it_is_granted():
-    rows = manifest.unlocks(["ai"], paid=True)
-    assert [row["entitlement"] for row in rows] == list(manifest.ROOTS)
+def test_unlocks_lists_every_root_and_plugin_with_whether_it_is_granted():
+    rows = manifest.unlocks(["ai", "plugin:video_studio"], paid=True)
+    assert [row["entitlement"] for row in rows] == [*manifest.ROOTS, "plugin:video_studio"]
     assert {row["entitlement"]: row["granted"] for row in rows} == {
-        "ai": True, "surfaces": False, "mcp": False}
-    assert all(row["granted"] for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=True))
-    assert not any(row["granted"]
-                   for row in manifest.unlocks(["ai", "surfaces", "mcp"], paid=False))
+        "ai": True, "volume": False, "transcriptomics": False, "mcp": False, "plugin:video_studio": True}
+    assert rows[-1]["label"] == "Video Studio"
+    everything = [*manifest.paid_default(), "mcp", "plugin:video_studio"]
+    assert all(row["granted"] for row in manifest.unlocks(everything, paid=True))
+    assert not any(row["granted"] for row in manifest.unlocks(everything, paid=False))
+    # A plugin is sold on its own: the Paid default does not include it.
+    assert not any(r["granted"] for r in manifest.unlocks(manifest.paid_default(), paid=True)
+                   if r["entitlement"].startswith("plugin:"))
+
+
+def test_every_plugin_sold_on_its_own_is_declared():
+    """A shipped plugin that needs a `plugin:<name>` grant is in PLUGINS, so the
+    platform shows staff a switch for it; nothing in PLUGINS is a typo."""
+    from plexora.server import plugins as plugin_registry
+
+    named = set()
+    for name in plugin_registry.available_names():
+        plugin = plugin_registry.load(name)
+        if plugin is None:
+            continue
+        for needed in (plugin.entitlement, *plugin.endpoint_entitlements.values()):
+            if needed and needed.startswith(manifest.PLUGIN_ROOT + ":"):
+                named.add(needed.split(":", 1)[1])
+    assert "video_studio" in named
+    assert named == set(manifest.PLUGINS)
+    for name, (label, sentence) in manifest.PLUGINS.items():
+        assert ent.valid(f"{manifest.PLUGIN_ROOT}:{name}") and label and sentence.endswith("."), name
 
 
 def test_known_accepts_plugin_paths_but_not_typos():
@@ -64,6 +96,8 @@ def test_labels_fall_back_to_nearest_declared_ancestor():
     assert manifest.label("ai:gating:session") == "AI gating sessions"
     assert manifest.label("ai:gating:session:future") == "AI gating sessions"
     assert manifest.label("plugin:spatial_stats") == "Spatial Stats"
+    assert manifest.label("plugin:video_studio") == "Video Studio"
+    assert manifest.summary("plugin:video_studio").startswith("Scientific videos")
     assert manifest.summary("ai:unknown_child").startswith("AI agents")
 
 
@@ -81,6 +115,9 @@ def test_the_product_manifest_is_one_the_platform_accepts():
         assert data["entitlements"][root] == {"label": manifest.ENTITLEMENTS[root][0],
                                               "sentence": manifest.ENTITLEMENTS[root][1]}
     assert data["trial_days"] == 30
+    # Each plugin sold on its own, so the platform shows a switch for it.
+    assert data["plugins"] == {name: {"label": label, "sentence": sentence}
+                               for name, (label, sentence) in manifest.PLUGINS.items()}
     # Deterministic, and plain JSON: the sync tool uploads exactly this.
     assert json.loads(json.dumps(data)) == manifest.product_manifest()
 

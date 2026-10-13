@@ -87,6 +87,9 @@ def _project_card(name, entry, homes, holders, own):
         'name': name,
         'createdAt': created_at,
         'lastOpenedAt': last_opened_at,
+        # What to show; `name` stays what to link and fetch by.
+        'title': project.title,
+        'displayName': project.display_name,
         'thumbnailUrl': f'/project_thumbnail/{name}',
         'shared': home_root is not None and home_root != own,
         # The folder this project is in, or null for one at the top level.
@@ -263,6 +266,10 @@ def _describe(project):
     layers = list(spec.layers) if spec else []
     return {
         "name": project.name,
+        # The display name, when the user gave one; `displayName` resolves the
+        # fallback so the page never has to.
+        "title": project.title,
+        "displayName": project.display_name,
         # Every layer this sample draws, the reference and the mask included.
         # `manifest.layers` rather than a second walk of `all_layers` here, so
         # the edit page and a plugin asking the same question get the same
@@ -797,6 +804,9 @@ def _needs_for_tool(project, tool_name):
 def save_project(name):
     """Apply an edit. Everything except the image can change.
 
+    `title` is the display name: empty, or the name itself, clears it. The
+    name is never changed by this or anything else -- see `_retitle`.
+
     Merge semantics throughout: a key the request does not mention is carried
     across untouched. The expensive work -- re-reading a new data file,
     converting a new mask -- runs only when that input actually changed, which
@@ -806,6 +816,23 @@ def save_project(name):
     project = Project.find(name)
     if project is None:
         return jsonify(success=False, error="Unknown project"), 404
+
+    # The display name, checked before anything else is applied so a title
+    # that is refused cannot leave half an edit behind it.
+    retitle = "title" in payload
+    if retitle:
+        if project.is_shared:
+            # Same refusal, same reason, as delete: the entry belongs to
+            # whoever provisioned the shared root.
+            return jsonify(
+                success=False,
+                error="This project is on a shared data directory and cannot "
+                      "be renamed from Plexora.",
+            ), 403
+        try:
+            project.with_title(payload.get("title"))
+        except ValueError as exc:
+            return jsonify(success=False, error=str(exc)), 400
 
     try:
         changed = _apply_edit(project, payload)
@@ -823,9 +850,37 @@ def save_project(name):
         if error:
             return jsonify(success=False, error=error), 400
 
+    if retitle:
+        _retitle(name, payload.get("title"))
+
     project = Project.find(name)
     return jsonify(success=True, reloaded=changed,
-                   segmentation_pending=project.segmentation.pending)
+                   segmentation_pending=project.segmentation.pending,
+                   name=name, title=project.title,
+                   display_name=project.display_name)
+
+
+def _retitle(name, title):
+    """Store a project's display name and tell every tab showing it.
+
+    Only the title moves. `name` is the registry key, the folder, the `.db`
+    stem and every URL, so a rename that touched it would be a migration; this
+    is one field of the entry, and nothing is reloaded for it. Local for every
+    project, a node-held one included: the registry entry is this machine's
+    config.json, and a node holds files, never the record that names them.
+    """
+    from plexora.server.models import viewer_sessions
+
+    updated = Project.mutate(name, lambda current: current.with_title(title))
+    if updated is None:
+        return
+    # Other tabs on this project relabel without a reload (agentBridge.js's
+    # `project.renamed`). The tab that saved hears it too and sets the same
+    # text again, which is harmless.
+    viewer_sessions.publish(name, "core", "project.renamed",
+                            {"name": name, "title": updated.title,
+                             "display_name": updated.display_name},
+                            origin="server")
 
 
 def _apply_edit(project, payload):

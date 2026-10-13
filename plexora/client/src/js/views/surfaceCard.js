@@ -215,9 +215,12 @@ window.PlexoraSurfaceCard = (function () {
         compare.setAttribute("aria-pressed", String(Boolean(render().compareRaw)));
         action("fa-file-export", "Export", "Save the mesh (PLY, OBJ, STL or glTF) with its provenance",
             (event) => window.PlexoraSurfaceObjects?.exportMenu?.(layer.id, event.currentTarget));
-        action("fa-sliders", "Edit", "Open Surface Studio with this surface's settings", () => {
-            window.PlexoraSurfaceStudio?.open({ from: layer.spec?.surface || null });
-        });
+        // Remaking a surface is Plexora 3D; everything above is a read.
+        if (window.PlexoraPaid?.allows?.("volume:surfaces")) {
+            action("fa-sliders", "Edit", "Open Surface Studio with this surface's settings", () => {
+                window.PlexoraSurfaceStudio?.open({ from: layer.spec?.surface || null });
+            });
+        }
         body.appendChild(actions);
 
         let summary = null;

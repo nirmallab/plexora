@@ -141,6 +141,7 @@ def test_a_new_dataset_is_made_and_the_sample_filed_in_it(client):
     assert response.get_json()["name"] in folder.projects
 
 
+@pytest.mark.paid
 def test_a_run_registers_its_layers_and_reports_what_is_still_building(client,
                                                                       tmp_path):
     pytest.importorskip("pyarrow")

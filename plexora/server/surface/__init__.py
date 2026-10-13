@@ -19,9 +19,9 @@ here ever writes back into an image or a mask.
     importers.py   the same four formats read back
     contacts.py    neighbours and contact areas between objects
 
-Licensed: making and analysing surfaces needs the `surfaces` entitlement
+Licensed: making and analysing surfaces needs the `volume:surfaces` entitlement
 (plexora/licensing/manifest.py); reading, drawing, exporting and deleting a
 surface that exists never does.
 """
 
-ENTITLEMENT = "surfaces"
+ENTITLEMENT = "volume:surfaces"

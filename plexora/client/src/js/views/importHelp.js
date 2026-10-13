@@ -27,6 +27,19 @@
 window.PlexoraImportHelp = (function () {
     "use strict";
 
+    //: Whether this licence offers `entitlement`. Spatial transcriptomics is a
+    //: Paid root, and without it the importer does not detect a Xenium, Visium
+    //: or Visium HD run at all (import_proposal._licensed) -- so the catalogue
+    //: does not describe one either: an entry marked `entitlement` is left out,
+    //: not greyed and not explained. Asked when the dialog is built, so a
+    //: licence adopted in Settings shows them the next time it opens.
+    function allows(entitlement) {
+        return !entitlement || Boolean(window.PlexoraPaid?.allows?.(entitlement));
+    }
+
+    //: The one entitlement this catalogue asks about.
+    const TRANSCRIPTOMICS = "transcriptomics";
+
     //: What each thing the importer can produce is called in a chip. The
     //: server's own long names are in `import_proposal.describe()` and belong
     //: to a ROW, which has a line to itself; these have to fit four to a card.
@@ -64,6 +77,7 @@ window.PlexoraImportHelp = (function () {
     const FORMATS = [
         {
             name: "Xenium run", shape: "folder", bundle: "xenium",
+            entitlement: "transcriptomics",
             pointAt: "the run folder itself",
             marker: "experiment.xenium",
             produces: ["xenium_morphology", "cell_boundaries",
@@ -82,6 +96,7 @@ window.PlexoraImportHelp = (function () {
         },
         {
             name: "Visium (Space Ranger)", shape: "folder", bundle: "visium",
+            entitlement: "transcriptomics",
             pointAt: "the outs folder",
             marker: "spatial/scalefactors_json.json + tissue_positions*.csv "
                   + "+ a feature matrix",
@@ -92,7 +107,7 @@ window.PlexoraImportHelp = (function () {
         },
         {
             name: "Visium HD (Space Ranger 3/4)", shape: "folder",
-            bundle: "visium_hd",
+            bundle: "visium_hd", entitlement: "transcriptomics",
             pointAt: "the outs folder, or one binned_outputs/square_XXXum folder",
             marker: "binned_outputs/square_*um/spatial/scalefactors_json.json "
                   + "with bin_size_um",
@@ -163,6 +178,7 @@ window.PlexoraImportHelp = (function () {
         },
         {
             name: "Transcripts", shape: "file",
+            entitlement: "transcriptomics",
             pointAt: "the parquet",
             marker: "feature_name · x_location · y_location columns",
             produces: ["transcripts"],
@@ -188,6 +204,9 @@ window.PlexoraImportHelp = (function () {
         {
             name: "No image at all", shape: "file",
             pointAt: "transcripts or a mask on their own",
+            //: What `pointAt` says on a licence without transcriptomics,
+            //: which has no transcripts to bring.
+            pointAtWithout: "a mask on its own",
             marker: "—",
             produces: ["blank"],
             mayAsk: [],
@@ -212,6 +231,7 @@ window.PlexoraImportHelp = (function () {
     const EXAMPLES = [
         {
             title: "One folder, one pick",
+            entitlement: "transcriptomics",
             tree: "run_0042/\n"
                 + "├─ experiment.xenium\n"
                 + "├─ morphology_focus/\n"
@@ -334,14 +354,16 @@ window.PlexoraImportHelp = (function () {
         panel.appendChild(steps);
 
         const cols = el("div", "plx-help-cols");
+        const tenx = allows(TRANSCRIPTOMICS);
         [["Required", [
-            ["fa-image", "One image", "or a folder that holds one: a Xenium "
-                + "run, Visium, SpatialData, OME-Zarr"],
+            ["fa-image", "One image", "or a folder that holds one: "
+                + (tenx ? "a Xenium run, Visium, " : "") + "SpatialData, OME-Zarr"],
          ]], ["Optional", [
             ["fa-shapes", "Segmentation mask", "a label image, or a boundary "
                 + "parquet"],
             ["fa-table", "Cell table", "CSV · Parquet · AnnData"],
-            ["fa-braille", "Transcripts, boundaries, annotations", ""],
+            ["fa-braille", tenx ? "Transcripts, boundaries, annotations"
+                                : "Boundaries, annotations", ""],
             ["fa-pen", "A name and a dataset", "both are filled in for you"],
          ]]].forEach(([heading, rows]) => {
             const col = el("section", "plx-help-col");
@@ -366,7 +388,8 @@ window.PlexoraImportHelp = (function () {
 
     function renderFormats(panel) {
         const grid = el("div", "plx-help-grid");
-        FORMATS.forEach((format) => {
+        const tenx = allows(TRANSCRIPTOMICS);
+        FORMATS.filter((format) => allows(format.entitlement)).forEach((format) => {
             const card = el("article", "plx-help-card");
             const head = el("header", "plx-help-card-head");
             head.appendChild(icon(format.shape === "folder"
@@ -376,8 +399,8 @@ window.PlexoraImportHelp = (function () {
                                 format.shape === "folder" ? "Folder" : "File"));
             card.appendChild(head);
 
-            card.appendChild(el("p", "plx-help-card-line",
-                                "Point at " + format.pointAt));
+            card.appendChild(el("p", "plx-help-card-line", "Point at "
+                + ((!tenx && format.pointAtWithout) || format.pointAt)));
             // Three keyed lines down one column, so the values line up and
             // the eye can run "what does it look for" down the grid without
             // reading the cards.
@@ -416,7 +439,7 @@ window.PlexoraImportHelp = (function () {
     }
 
     function renderExamples(panel) {
-        EXAMPLES.forEach((example) => {
+        EXAMPLES.filter((example) => allows(example.entitlement)).forEach((example) => {
             const block = el("section", "plx-help-example");
             block.appendChild(el("h3", "plx-help-col-head", example.title));
             block.appendChild(el("pre", "plx-help-tree", example.tree));

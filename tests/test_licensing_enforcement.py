@@ -68,11 +68,29 @@ PAID = {
     "ai.chat_history": "ai:chat",
     # Surface Studio (plexora/agent/core/surface.py): making and analysing
     # surfaces. Reading, restyling, exporting and deleting one stay Free.
-    "surface.create": "surfaces",
-    "surface.suggest_threshold": "surfaces",
-    "surface.inspect": "surfaces",
-    "surface.refine": "surfaces",
-    "surface.neighbours": "surfaces",
+    "surface.create": "volume:surfaces",
+    "surface.suggest_threshold": "volume:surfaces",
+    "surface.inspect": "volume:surfaces",
+    "surface.refine": "volume:surfaces",
+    "surface.neighbours": "volume:surfaces",
+    # Plexora 3D beyond looking at a stack (agent/core/volume*.py, QC's stack
+    # and object review, ROI carry, the segmentation plugin).
+    "volume.measure_objects": "volume:objects",
+    "volume.track_objects": "volume:objects",
+    "volume.render_object_views": "volume:objects",
+    "volume.object_z_profile": "volume:objects",
+    "volume.check_quality": "volume:analysis",
+    "volume.colocalize_3d": "volume:analysis",
+    "volume.find_regions_of_interest_3d": "volume:analysis",
+    "qc.run_qc_3d": "volume:analysis",
+    "qc.set_qc_plane": "volume:analysis",
+    "qc.write_qc_3d_regions": "volume:analysis",
+    "qc.object_review_start": "volume:objects",
+    "qc.object_review_next": "volume:objects",
+    "qc.object_review_answer": "volume:objects",
+    "qc.object_review_finish": "volume:objects",
+    "roi.carry": "volume:objects",
+    "segmentation.segment_3d": "volume:segmentation",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -88,13 +106,19 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
                 # The image checks' writers: the user's own checks, written on request.
                 "qc.blur_set", "qc.blur_write_regions", "qc.registration_write_regions",
                 "qc.segmentation_write_flags",
-                "roi.create", "roi.update", "roi.delete", "roi.list")
+                "roi.create", "roi.update", "roi.delete", "roi.list",
+                # Looking at a z-stack, and reading what Plexora 3D made.
+                "volume.inspect", "volume.set_z_spacing", "volume.sample_z_planes",
+                "volume.axis_profile", "volume.pin_projection", "volume.render_sections",
+                "volume.render_projection", "viewer.set_volume_mode",
+                "surface.list", "surface.measure", "surface.objects", "surface.update",
+                "surface.export", "surface.delete", "qc.get_qc_3d", "qc.object_review_status")
 
 
 @pytest.fixture
 def session(tmp_path):
     make_synthetic_project(tmp_path)
-    registry.discover(["gating", "roi", "qc"])
+    registry.discover(["gating", "roi", "qc", "segmentation"])
     return AgentSession()
 
 
@@ -134,8 +158,8 @@ def test_manual_gating_stays_free(session):
 
 
 def test_paid_covers_everything_it_should():
-    # The Paid roots: `ai` (and the modules under it) and Surface Studio.
-    grants = tuple(manifest.AI_MODULES) + ("surfaces",)
+    # The Paid default: every root but the add-ons.
+    grants = manifest.paid_default()
     for entitlement in set(PAID.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
@@ -148,6 +172,18 @@ def test_describe_and_the_mcp_description_say_paid(session):
     assert described["gating.set"]["plan"] == "free"
     assert "Part of Plexora Paid" in tools.description_for(registry.get("gating.session_start"))
     assert "Paid" not in tools.description_for(registry.get("gating.set"))
+
+
+def test_mcp_lists_paid_tools_on_free_too(session):
+    """Not granted, not shown is the page's rule, not MCP's: the tool list is
+    built once per server and the licence can change under it, so a Paid tool
+    stays listed (its description says Paid) and its call refuses."""
+    from types import SimpleNamespace
+
+    from plexora.mcp.server import _offered
+
+    offered = {cap.tool_name for cap in _offered(SimpleNamespace(profile=None))}
+    assert {"measure_objects", "run_qc_3d", "gating_session_start", "set_gate"} <= offered
 
 
 def test_license_required_is_a_known_code_everywhere():
@@ -302,7 +338,7 @@ def test_scope_says_license_required_on_free(session):
 def test_server_info_names_the_plan(session, paid_license):
     from plexora.mcp.server import _license_info
 
-    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp"],
+    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp", "transcriptomics", "volume"],
                                "mcp": True}
 
 

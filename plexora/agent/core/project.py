@@ -12,7 +12,8 @@ from plexora.agent.schemas import AgentModel, NoInput, ProjectInput
 
 class ListProjectsInput(AgentModel):
     dataset: str | None = Field(None, description="Only projects in this dataset (name or id).")
-    query: str | None = Field(None, description="Only projects whose name contains this text.")
+    query: str | None = Field(None, description="Only projects whose name or display "
+                              "title contains this text.")
     limit: int = Field(50, ge=1, le=MAX_LIST, description="At most this many.")
 
 
@@ -22,6 +23,9 @@ def _card(record, dataset_of):
     summary = manifest.summary(record)
     return {
         "name": record.name,
+        # What the user calls it, when that is not its name; null otherwise.
+        # `name` is still what every other tool takes.
+        "title": record.title,
         "dataset": dataset_of.get(record.name),
         "image_kind": record.image.kind,
         "modality": record.image.modality,
@@ -45,6 +49,13 @@ def _datasets_by_project():
         return {}
 
 
+def _title_of(entry) -> str:
+    """A raw entry's display title, or "" -- read without building a Project,
+    since a query filters every registered name before any is loaded."""
+    title = entry.get("title") if isinstance(entry, dict) else None
+    return title if isinstance(title, str) else ""
+
+
 def list_projects(call, inp):
     from plexora.server.models.project import Project
 
@@ -61,7 +72,8 @@ def list_projects(call, inp):
         names = [n for n in names if n in members]
     if inp.query:
         folded = inp.query.casefold()
-        names = [n for n in names if folded in n.casefold()]
+        names = [n for n in names
+                 if folded in n.casefold() or folded in _title_of(entries[n]).casefold()]
     cards = []
     shown, truncated = bounded(names, inp.limit)
     for name in shown:
@@ -114,6 +126,7 @@ def inspect_project(call, inp):
     image = record.image
     out = {
         "name": record.name,
+        "title": record.title,
         "summary": manifest.summary(record),
         "image": {
             "kind": image.kind,

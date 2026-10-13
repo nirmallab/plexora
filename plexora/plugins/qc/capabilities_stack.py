@@ -330,11 +330,16 @@ def set_qc_plane(call, inp):
                     "are not reused"}
 
 
+#: Stack QC is Plexora 3D (plexora/licensing/manifest.py); reading what the
+#: last check found stays Free.
+ENTITLEMENT = "volume:analysis"
+
+
 def capabilities(free):
     tags = ("qc", "z-stack", "volume", "planes", "focus", "attenuation", "seams", "drift",
             "segmentation", "3d")
     return [
-        free(name="qc.run_qc_3d", tool_name="run_qc_3d",
+        free(name="qc.run_qc_3d", tool_name="run_qc_3d", entitlement=ENTITLEMENT,
              purpose="Check a z-stack as a stack: planes out of focus, signal fading with "
                      "depth, empty or repeated planes, tile seams, a cycle drifting in z "
                      "against the reference cycle, and 3-D objects that are not one whole "
@@ -345,13 +350,14 @@ def capabilities(free):
              purpose="What the last stack check (run_qc_3d) found.",
              permission="read", input_model=ProjectInput, handler=get_qc_3d,
              egress="aggregates", reads=("qc",), tags=tags),
-        free(name="qc.set_qc_plane", tool_name="set_qc_plane",
+        free(name="qc.set_qc_plane", tool_name="set_qc_plane", entitlement=ENTITLEMENT,
              purpose="Choose which plane of a z-stack QC's checks (blur, artifacts, "
                      "registration, segmentation, DNA retention) read; omitted, the stack's "
                      "default plane.",
              permission="reversible_write", input_model=PlaneInput, handler=set_qc_plane,
              writes=("qc",), persistent=True, reads=("qc",), tags=tags),
         free(name="qc.write_qc_3d_regions", tool_name="write_qc_3d_regions",
+             entitlement=ENTITLEMENT,
              purpose="Write the last stack check's findings as QC regions: one on some planes "
                      "is limited to them, so the cells it leaves out are the ones there "
                      "(needs a z column in the cell table).",

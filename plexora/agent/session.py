@@ -197,8 +197,12 @@ class AgentSession:
         try:
             return Project.load(name)
         except KeyError:
-            known = sorted(Project.load_all())
-            close = [n for n in known if n.casefold() == str(name).casefold()]
+            entries = Project.load_all()
+            known = sorted(entries)
+            # A display title is not a key, but it is what the user calls the
+            # project -- so it is offered back rather than silently resolved.
+            close = [n for n in known if str(name).casefold() in (
+                n.casefold(), str((entries[n] or {}).get("title") or "").casefold())]
             raise AgentError(
                 "unknown_project", f"no project named {name!r}",
                 detail={"did_you_mean": close[:3], "known_count": len(known),

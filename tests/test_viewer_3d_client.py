@@ -68,7 +68,8 @@ def test_the_3d_view_keeps_its_textures():
     another area fetch, going back does not; LRU past the GPU budget; zoomed in
     at rest, the part seen is fetched finer, once; a channel switched on for the
     first time is fetched under its window and drawn; a channel new to the
-    picture fades in, at once with motion off or for a capture
+    picture fades in, at once with motion off or for a capture; the reference
+    grid's steps, units, numbers on screen, preference and uniforms
     (tests/js/volume_renderer_probe.mjs)."""
     _passed(_run("volume_renderer_probe.mjs"), 70)
 
@@ -99,4 +100,4 @@ def test_quick_surface_previews_debounced_and_posts_raw_units():
     """Surface Studio's dock: refused on Free with the Paid modal, a debounced
     preview, a superseded one aborted, the raw isovalue posted
     (tests/js/surface_studio_probe.mjs)."""
-    _passed(_run("surface_studio_probe.mjs"), 14)
+    _passed(_run("surface_studio_probe.mjs"), 15)

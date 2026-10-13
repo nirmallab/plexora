@@ -797,22 +797,11 @@ window.PlexoraAgentPanel = (function () {
         return document.getElementById("openseadragon_wrapper") || document.body;
     }
 
-    /** Without an `ai` licence the AI button says this, and nothing else:
-     *  no trial, just the way to enter a licence. */
-    async function explainLocked() {
-        const answer = await window.PlexoraConfirm?.choose?.({
-            title: "Plexora AI",
-            body: ["Plexora AI is under development and needs a licence to access it."],
-            choices: [{ value: null, label: "Close" },
-                      { value: "license", label: "Enter License…", kind: "primary", focus: true }],
-        });
-        if (answer === "license") window.PlexoraPaid?.goToLicense?.();
-        return answer;
-    }
-
-    /** The sidebar header's AI button (#plexora_ai_button), always shown: with
-     *  an `ai` licence hint it opens the launcher (or closes it when it is
-     *  up); without one it explains that Plexora AI needs a licence. */
+    /** The sidebar header's AI button (#plexora_ai_button): with an `ai`
+     *  licence hint it opens the launcher (or closes it when it is up).
+     *  Without one it is not on the page (index.html), and hidden here too
+     *  should the licence lapse while the page is open: not granted, not
+     *  shown. */
     function syncLaunchChip() {
         const spark = document.getElementById("plexora_ai_button");
         if (!spark) return null;
@@ -821,10 +810,9 @@ window.PlexoraAgentPanel = (function () {
             spark.addEventListener("click", () => {
                 if (launcher) closeLauncher();
                 else if (aiAllowed()) openLauncher();
-                else explainLocked();
             });
         }
-        spark.hidden = false;
+        spark.hidden = !aiAllowed();
         spark.setAttribute("aria-expanded", launcher ? "true" : "false");
         return spark;
     }
@@ -897,7 +885,6 @@ window.PlexoraAgentPanel = (function () {
         const known = Boolean(answer && !answer.error && answer.available_credits !== undefined);
         launcher.balance.hidden = !known;
         launcher.balanceText.textContent = known ? `${creditCount(answer.available_credits)} credits available` : "";
-        launcher.more.hidden = aiAllowed();
     }
 
     async function launch(kind, note = null) {
@@ -1147,12 +1134,6 @@ window.PlexoraAgentPanel = (function () {
         const balanceText = el("span", "plx-ai-balance-text");
         balance.append(coin, balanceText);
         balance.hidden = true;
-        const more = button("plx-button plx-agent-button", "About Plexora AI");
-        more.dataset.action = "ai-explain";
-        more.hidden = true;
-        more.addEventListener("click", () => {
-            window.PlexoraPaid?.explain?.({ entitlement: "ai", label: "Plexora AI" });
-        });
         const chat = button("plx-button plx-agent-button", "Chat with Plexora AI");
         chat.dataset.action = "ai-chat";
         chat.hidden = !window.PlexoraChatPanel || !document.getElementById("openseadragon_wrapper");
@@ -1160,9 +1141,9 @@ window.PlexoraAgentPanel = (function () {
             closeLauncher();
             window.PlexoraChatPanel?.open?.();
         });
-        root.append(none, balance, chat, more);
+        root.append(none, balance, chat);
         // What the context step hides while it is up (and puts back).
-        const toolsView = [intro, ...sections.map(({ section }) => section), none, balance, chat, more];
+        const toolsView = [intro, ...sections.map(({ section }) => section), none, balance, chat];
         hide.addEventListener("click", () => closeLauncher());
         backdrop.addEventListener("click", () => closeLauncher());
         const onKey = (event) => {
@@ -1170,7 +1151,7 @@ window.PlexoraAgentPanel = (function () {
         };
         if (typeof document.addEventListener === "function") document.addEventListener("keydown", onKey);
         document.body.append(backdrop, root);
-        launcher = { root, backdrop, onKey, rows, sections, groups, none, balance, balanceText, more,
+        launcher = { root, backdrop, onKey, rows, sections, groups, none, balance, balanceText,
                      title, toolsView, step: null, answer: null, starting: false };
         syncLaunchChip();
         paintLauncher();

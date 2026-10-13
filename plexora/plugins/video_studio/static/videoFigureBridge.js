@@ -85,7 +85,7 @@
                 capture_id: captureId,
                 datasource: env.datasource,
                 source: { kind: "plexora_project", datasource: env.datasource,
-                          display_name: env.datasource,
+                          display_name: global.PlexoraProjectTitle?.current?.() || env.datasource,
                           image: { width: facts.image_size?.[0] || 0, height: facts.image_size?.[1] || 0 },
                           channels: (facts.channels || []).map((c) => ({ key: c.key,
                                                                          fullname_at_capture: c.name })),

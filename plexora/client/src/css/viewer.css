@@ -4037,47 +4037,6 @@ body.sidebar-collapsed .viewer-shell,
     letter-spacing: -0.02em;
 }
 
-/* The badge: what the picture is, in words, under the sample's name. Amber
-   whenever it is not a plane the image holds -- a projection reads as a
-   plane, and this is the line that says it is not. */
-.viewer-depth-badge {
-    align-items: center;
-    color: var(--text-secondary);
-    display: flex;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    gap: 6px;
-    padding: 0 10px;
-}
-
-.viewer-depth-badge.is-derived {
-    color: var(--accent-warning);
-}
-
-.viewer-depth-badge-spin {
-    border: 2px solid var(--border-strong);
-    border-radius: 50%;
-    border-top-color: var(--text-secondary);
-    display: none;
-    height: 10px;
-    width: 10px;
-}
-
-.viewer-depth-badge.is-loading .viewer-depth-badge-spin {
-    animation: depth-badge-spin 0.9s linear infinite;
-    display: inline-block;
-}
-
-@keyframes depth-badge-spin {
-    to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .viewer-depth-badge.is-loading .viewer-depth-badge-spin {
-        animation: none;
-    }
-}
-
 /* The Depth card. Labels left, fields right, one baseline per row. */
 .depth-panel {
     display: flex;
@@ -4219,10 +4178,9 @@ body.sidebar-collapsed .viewer-shell,
 
 /* Several rules above set `display`, which beats the `hidden` attribute's
    user-agent `display: none` -- a hidden play button or frame row would stay
-   on screen. Scoped to these two surfaces rather than global. */
+   on screen. Scoped to these surfaces rather than global. */
 .depth-settings [hidden],
 .viewer-depth-strip [hidden],
-.viewer-depth-badge [hidden],
 .depth-panel [hidden] {
     display: none !important;
 }
@@ -4743,6 +4701,21 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .viewer-volume-canvas[hidden] {
+    display: none;
+}
+
+/* The 3-D grid's numbers (volumeRenderer.paintGridLabels): a 2-D canvas laid
+   exactly over the 3-D one and above it, under the furniture, never a click. */
+.viewer-volume-grid-labels {
+    height: 100%;
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
+    z-index: 201;
+}
+
+.viewer-volume-grid-labels[hidden] {
     display: none;
 }
 
@@ -5943,4 +5916,38 @@ body.sidebar-collapsed .viewer-shell,
     .plx-surf-studio[aria-busy="true"] .plx-surf-studio-mark {
         animation: none;
     }
+}
+
+/* The project label renames in place (imageViewer.js, PlexoraProjectTitle).
+   The caption round it stays click-through; only the name takes the pointer.
+   No box at any point: a text cursor and a faint underline say it can be
+   edited, and while it is, the underline turns the accent colour and the
+   ellipsis gives way so the caret can reach the end of what is typed. */
+/* No underline until it is pointed at: even a transparent one picks up the
+   caption's text-shadow and draws a dark bar under the name. */
+.viewer-project-label.is-renamable {
+    cursor: text;
+    pointer-events: auto;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.viewer-project-label.is-renamable:hover,
+.viewer-project-label.is-renamable:focus-visible {
+    outline: none;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+}
+
+.viewer-project-label.is-renamable.is-editing {
+    min-width: 4ch;
+    outline: none;
+    text-decoration-color: var(--accent-channel);
+    text-decoration-line: underline;
+    text-decoration-style: solid;
+    text-overflow: clip;
+}
+
+.viewer-project-label.is-renamable.is-saving {
+    opacity: 0.7;
 }

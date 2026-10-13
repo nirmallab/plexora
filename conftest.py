@@ -444,10 +444,12 @@ def pytest_configure(config):
 
 
 #: What the `paid` marker and the `paid_license` fixture install: the Paid
-#: default plus external MCP access, so a Paid test may drive its tools over an
-#: in-process MCP client. `license_issuer.issue()` alone still mints the plain
-#: Paid default (`["ai"]`), which is what a test of the `mcp` add-on starts from.
-PAID_TEST_GRANTS = ("ai", "mcp")
+#: default (every root but the add-ons) plus external MCP access, so a Paid
+#: test may drive its tools over an in-process MCP client.
+#: `license_issuer.issue()` alone still mints `["ai"]`, the narrowest Paid
+#: licence, which is what a test of a single root or of the `mcp` add-on
+#: starts from.
+PAID_TEST_GRANTS = ("ai", "volume", "transcriptomics", "mcp")
 
 
 def _issuer(monkeypatch):
@@ -491,7 +493,7 @@ def license_issuer(monkeypatch):
 
 @pytest.fixture
 def paid_license(license_issuer):
-    """A valid Paid licence (`ai` and `mcp`, PAID_TEST_GRANTS) installed for this test."""
+    """A valid Paid licence (PAID_TEST_GRANTS: the Paid default and `mcp`) installed for this test."""
     license_issuer.install(license_issuer.issue(ent=list(PAID_TEST_GRANTS)))
     return license_issuer
 

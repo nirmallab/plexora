@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -962,6 +963,7 @@ _MODELLED_KEYS = frozenset({
     "resources", "spatialLayers", "imageRender", "imageDepth",
     "imageAxes", "imageShape", "imageDefaultView", "imageZSemantics",
     "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews",
+    "title",
 })
 
 #: Requirement keys that describe the feature table rather than the project.
@@ -1014,6 +1016,48 @@ def _with_coordinate_spec(spec, answer: Mapping[str, Any]):
 #: role answers recorded alongside it were discarded before they reached the
 #: project -- see _repair_confirmed.
 _LOST_ROLE_KEY = "role:undefined"
+
+
+#: The longest display name a project may carry. Long enough for a sentence
+#: about a sample, short enough that a card and the viewer's corner label can
+#: still show it on one line with an ellipsis.
+MAX_TITLE = 120
+
+
+def clean_title(value: Any, name: str) -> str | None:
+    """A display name as it should be stored, or None for "use the name".
+
+    Trimmed, with every run of whitespace inside it folded to one space, so a
+    pasted title with a tab or a line break in it reads as the words it is.
+    Empty, or the project's own name, is None: a title that says the same as
+    the key is not a title, and storing it would freeze today's name into a
+    second field. Raises ValueError for anything that cannot be shown on one
+    line -- a control character -- or that is longer than `MAX_TITLE`.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("A project name must be text.")
+    # Line breaks and tabs are whitespace a paste brings along, not content:
+    # they are folded below. Any other control character is refused.
+    if any(unicodedata.category(ch) == "Cc" and ch not in "\t\n\r" for ch in value):
+        raise ValueError("A project name cannot contain control characters.")
+    cleaned = " ".join(value.split())
+    if not cleaned or cleaned == name:
+        return None
+    if len(cleaned) > MAX_TITLE:
+        raise ValueError(f"That name is too long (limit {MAX_TITLE} characters).")
+    return cleaned
+
+
+def read_title(value: Any, name: str) -> str | None:
+    """A stored title, read leniently: a hand-edited entry whose title no
+    longer passes `clean_title` shows the project's name rather than failing
+    to load."""
+    try:
+        return clean_title(value, name)
+    except ValueError:
+        return None
 
 
 def _repair_depth(value: Any) -> int:
@@ -1480,6 +1524,12 @@ class Project:
     #: root replaces those layers in place. Empty for every project imported
     #: from loose files, which is what keeps it free when it is not used.
     bundles: tuple[Mapping[str, Any], ...] = ()
+    #: What the user calls this project, when that is not its name. None for
+    #: every project that has never been given one, and for one whose title was
+    #: cleared. `name` stays the key -- config.json, the folder, `<name>.db`,
+    #: every URL -- so renaming is this field and nothing else. Read
+    #: `display_name` rather than this: that resolves the fallback.
+    title: str | None = None
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The root this project's registry entry was read from, and therefore
@@ -1516,6 +1566,7 @@ class Project:
             image_render=dict(entry.get("imageRender") or {}),
             image_depth=_repair_depth(entry.get("imageDepth")),
             bundles=_bundles_from_entry(entry),
+            title=read_title(entry.get("title"), name),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
 
@@ -1530,6 +1581,9 @@ class Project:
             # freeze today's answer into the file, so a project that later
             # gained a mask would go on drawing centroids.
             "cellLayer": self.cell_layer_choice,
+            # Absent rather than null when there is none, like the rest of
+            # this block: the name is what every older entry means.
+            "title": self.title,
         }))
         if self.confirmed:
             entry["confirmed"] = list(self.confirmed)
@@ -1567,6 +1621,16 @@ class Project:
         """Copy with the named fields replaced. Merge semantics: a field not
         named is carried across untouched, `extra` included."""
         return replace(self, **changes)
+
+    @property
+    def display_name(self) -> str:
+        """What to show a person: the title when there is one, else the name."""
+        return self.title or self.name
+
+    def with_title(self, value: Any) -> "Project":
+        """Copy with a new display name. Empty, or the name itself, clears it;
+        anything `clean_title` refuses raises ValueError."""
+        return self.patch(title=clean_title(value, self.name))
 
     # -- questions everything else asks ----------------------------------
 

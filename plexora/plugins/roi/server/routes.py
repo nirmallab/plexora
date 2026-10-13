@@ -119,6 +119,28 @@ def get_state():
     })
 
 
+#: Giving a flat region a shape through a z-stack's planes -- carried,
+#: an ellipsoid, built from cells -- is Plexora 3D (plexora/licensing/
+#: manifest.py). Editing, flattening, restoring or deleting a region that is
+#: already 3-D stays Free: it is something a Paid feature made.
+SOLID_ENTITLEMENT = "volume:objects"
+
+
+def _makes_a_solid(repository, operations) -> bool:
+    """Whether this batch turns a flat region into a 3-D one."""
+    setting = [op for op in operations or () if isinstance(op, dict)
+               and op.get("op") == "roi.set_solid" and op.get("solid")]
+    if not setting:
+        return False
+    state = repository.load()
+    for op in setting:
+        entry = state["images"].get(op.get("image") or schema.DEFAULT_IMAGE) or {}
+        _, feature = schema.find(entry.get("features") or [], op.get("id"))
+        if feature is not None and not feature.get("solid"):
+            return True
+    return False
+
+
 @roi_bp.route('/api/operations', methods=['POST'])
 def post_operations():
     """Apply a batch of edits, if the client is writing against the revision it
@@ -130,6 +152,16 @@ def post_operations():
         return jsonify(success=False, error=str(exc)), 400
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
+
+    from plexora import licensing
+    from plexora.licensing import guards
+
+    try:
+        needs_3d = _makes_a_solid(repository, body.get('operations'))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    if needs_3d and not licensing.allows(SOLID_ENTITLEMENT):
+        return guards.http_refusal(SOLID_ENTITLEMENT, what="roi.set_solid")
 
     try:
         revision = repository.apply(body.get('base_revision'), body.get('operations'))

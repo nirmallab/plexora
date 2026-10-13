@@ -630,6 +630,13 @@
             if (featuresLogInput && featuresLogInput.checked !== Boolean(project.featureLog)) {
                 payload.features_log = featuresLogInput.checked;
             }
+            // The display name, when it changed. The server trims it and folds
+            // its whitespace; "" clears it back to the project's name.
+            const titleInput = document.getElementById("edit_title");
+            if (titleInput) {
+                const wanted = titleInput.value.trim().split(/\s+/).join(" ");
+                if (wanted !== (project.title || "")) payload.title = wanted;
+            }
             // Saving is the user looking at these values and accepting them,
             // which is the same act the requirements modal asks for -- so a
             // tool opened afterwards must not ask about them again. Sent as the

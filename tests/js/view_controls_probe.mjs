@@ -120,6 +120,10 @@ check("surfaces once there is one; a new one wherever Surface Studio is",
           .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.show,surfaces.light,surfaces.new,surfaces.import"
       && popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 0 })
           .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.import");
+check("without Plexora 3D there is no new surface or mesh import, but surfaces still show",
+      popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 1, surfaceStudio: true,
+                                           surfaceMaking: false })
+          .filter((id) => id.startsWith("surfaces.")).join() === "surfaces.show,surfaces.light");
 check("the grid where the 3-D view has one, its options while it is on",
       popover(stack({ mode: "volume" }), { ...page, grid: true }).includes("grid.on")
       && !popover(stack({ mode: "volume" }), { ...page, grid: true }).includes("grid.options")

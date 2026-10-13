@@ -22,8 +22,9 @@ never a new measurement of record: what you say about it names how it was made.
 
 A z-stack on this machine (volume-triage first). Sizes in µm need a known z step
 (`inspect_volume` `spacing.z.source`); without one every size is in voxels and says so.
-Cell surfaces need a label volume (a volumetric mask). Surface Studio is a Paid feature
-(`surfaces`); a refusal's `detail` says so in words to pass on.
+Cell surfaces need a label volume (a volumetric mask). Surface Studio needs a
+licence with `volume` (`volume:surfaces`); over MCP also `mcp`. A refusal's
+`detail` says so in words to pass on.
 
 ## Decision logic
 

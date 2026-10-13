@@ -108,11 +108,11 @@ opens the page to approve it; or, from a terminal:
 
 ```bash
 plexora license status
-plexora license activate                       # this computer: prints a code to approve in the browser
-plexora license activate BIOC-XXXX-XXXX        # with a code made in the portal, no browser needed
-plexora license activate --cluster --name O2   # a whole HPC cluster, once, from a login node
-plexora license install lab.bioc               # an offline licence file
-plexora license trial                          # 30 days of Paid
+plexora license activate                            # this computer: prints a code to approve in the browser
+plexora license activate BIOC-XXXX-XXXX-XXXX-XXXX   # with your licence key from the portal, no browser needed
+plexora license activate --cluster --name O2        # a whole HPC cluster, once, from a login node
+plexora license install lab.bioc                    # an offline licence file
+plexora license trial                               # 30 days of Paid
 ```
 
 A licence check sends the licence certificate and a hash that identifies the

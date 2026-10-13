@@ -1,8 +1,9 @@
 /**
  * The browser half of licensing, run in node against the shipped scripts.
  *
- *   - toolLoader.js: a `locked` panel answer opens the Paid modal and mounts
- *     NOTHING; a quiet (restore) load reports it and opens nothing.
+ *   - toolLoader.js: a `locked` panel answer (a stale link, a licence that
+ *     lapsed while the page was open) mounts NOTHING and opens nothing --
+ *     not granted, not shown; a quiet (restore) load reports it the same way.
  *   - paidFeature.js: the modal's words and choices, trial and licence
  *     routes, the page hint, and that loading it does nothing at all.
  *
@@ -159,11 +160,10 @@ function loaderSandbox(payload) {
 const LOCKED = { locked: { entitlement: "plugin:spatial_stats", plan_required: "paid", tool: "spatial_stats",
                            label: "Spatial Stats", summary: "A Paid Plexora feature.", state: "free" } };
 
-await check("a locked tool opens the Paid modal and mounts nothing", async () => {
+await check("a locked tool opens nothing, explains nothing and mounts nothing", async () => {
     const { L, mounted, explained } = loaderSandbox(LOCKED);
     const outcome = await L.openTool("spatial_stats");
-    assert.equal(explained.length, 1);
-    assert.equal(explained[0].label, "Spatial Stats");
+    assert.equal(explained.length, 0);
     assert.equal(mounted.length, 0);
     assert.equal(outcome.skipped, "locked");
     assert.equal(L.loadedTools().length, 0);
