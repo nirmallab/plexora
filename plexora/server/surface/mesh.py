@@ -41,6 +41,8 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora.server.utils.jit import njit, register_primer
+
 MAGIC = b"PXMS"
 FORMAT_VERSION = 1
 
@@ -216,6 +218,34 @@ def renumber_by_size(mesh: Mesh, labels: np.ndarray) -> Mesh:
 
 
 # -- geometry -------------------------------------------------------------------------
+#
+# The per-vertex and per-triangle loops below are compiled kernels
+# (plexora/server/utils/jit.py): on a cell-surface mesh of millions of
+# triangles, numpy's scatter-adds and a scipy sparse operator were most of the
+# build. Each sums in one fixed order, so a mesh is the same bytes wherever it
+# is made.
+
+
+@njit
+def _face_normals_into(p, t, out):  # pragma: no cover - jit
+    for i in range(t.shape[0]):
+        a = t[i, 0]
+        b = t[i, 1]
+        c = t[i, 2]
+        ux = p[b, 0] - p[a, 0]
+        uy = p[b, 1] - p[a, 1]
+        uz = p[b, 2] - p[a, 2]
+        vx = p[c, 0] - p[a, 0]
+        vy = p[c, 1] - p[a, 1]
+        vz = p[c, 2] - p[a, 2]
+        nx = uy * vz - uz * vy
+        ny = uz * vx - ux * vz
+        nz = ux * vy - uy * vx
+        for v in (a, b, c):
+            out[v, 0] += nx
+            out[v, 1] += ny
+            out[v, 2] += nz
+    return out
 
 
 def vertex_normals(positions, triangles, scale=None) -> np.ndarray:
@@ -226,29 +256,111 @@ def vertex_normals(positions, triangles, scale=None) -> np.ndarray:
         p = p * np.asarray(scale, dtype=np.float64)
     out = np.zeros_like(p)
     if len(triangles):
-        t = np.asarray(triangles, dtype=np.int64)
-        face = np.cross(p[t[:, 1]] - p[t[:, 0]], p[t[:, 2]] - p[t[:, 0]])
-        for k in range(3):
-            np.add.at(out, t[:, k], face)
+        _face_normals_into(np.ascontiguousarray(p),
+                           np.ascontiguousarray(triangles, dtype=np.int64), out)
     norm = np.linalg.norm(out, axis=1)
     norm[norm == 0] = 1.0
     return (out / norm[:, None]).astype(np.float32)
 
 
-def _neighbour_mean(n_vertices, triangles):
-    """The uniform umbrella operator as a sparse matrix: row i averages i's
-    neighbours."""
-    from scipy import sparse
+@njit
+def _adjacency(n, t):  # pragma: no cover - jit
+    """Each vertex's neighbours, once each and ascending: `(indptr, indices)`."""
+    count = np.zeros(n + 1, np.int64)
+    for i in range(t.shape[0]):
+        for k in range(3):
+            count[t[i, k] + 1] += 2
+    start = np.cumsum(count)
+    fill = start[:-1].copy()
+    entries = np.empty(start[-1], np.int64)
+    for i in range(t.shape[0]):
+        for k in range(3):
+            a = t[i, k]
+            b = t[i, (k + 1) % 3]
+            entries[fill[a]] = b
+            fill[a] += 1
+            entries[fill[b]] = a
+            fill[b] += 1
+    indptr = np.zeros(n + 1, np.int64)
+    indices = np.empty(start[-1], np.int64)
+    m = 0
+    for v in range(n):
+        # A vertex has a handful of neighbours: an insertion sort in place.
+        a0 = start[v]
+        a1 = start[v + 1]
+        for i in range(a0 + 1, a1):
+            key = entries[i]
+            j = i - 1
+            while j >= a0 and entries[j] > key:
+                entries[j + 1] = entries[j]
+                j -= 1
+            entries[j + 1] = key
+        last = -1
+        for i in range(a0, a1):
+            if entries[i] != last:
+                last = entries[i]
+                indices[m] = last
+                m += 1
+        indptr[v + 1] = m
+    return indptr, indices[:m]
 
-    t = np.asarray(triangles, dtype=np.int64)
-    rows = np.concatenate([t[:, 0], t[:, 1], t[:, 2], t[:, 1], t[:, 2], t[:, 0]])
-    cols = np.concatenate([t[:, 1], t[:, 2], t[:, 0], t[:, 0], t[:, 1], t[:, 2]])
-    adjacency = sparse.csr_matrix((np.ones(len(rows), np.float64), (rows, cols)),
-                                  shape=(n_vertices, n_vertices))
-    adjacency.data[:] = 1.0                 # an edge two triangles share counts once
-    degree = np.asarray(adjacency.sum(axis=1)).ravel()
-    degree[degree == 0] = 1.0
-    return sparse.diags(1.0 / degree) @ adjacency
+
+@njit
+def _umbrella_step(p, indptr, indices, factor, out):  # pragma: no cover - jit
+    """`out = p + factor * (mean of the neighbours - p)`, vertex by vertex."""
+    for v in range(p.shape[0]):
+        k0 = indptr[v]
+        k1 = indptr[v + 1]
+        if k1 == k0:
+            out[v, 0] = p[v, 0]
+            out[v, 1] = p[v, 1]
+            out[v, 2] = p[v, 2]
+            continue
+        sx = 0.0
+        sy = 0.0
+        sz = 0.0
+        for k in range(k0, k1):
+            j = indices[k]
+            sx += p[j, 0]
+            sy += p[j, 1]
+            sz += p[j, 2]
+        d = float(k1 - k0)
+        out[v, 0] = p[v, 0] + factor * (sx / d - p[v, 0])
+        out[v, 1] = p[v, 1] + factor * (sy / d - p[v, 1])
+        out[v, 2] = p[v, 2] + factor * (sz / d - p[v, 2])
+    return out
+
+
+@njit
+def _signed_volumes(p, t, starts, counts, scale, out):  # pragma: no cover - jit
+    sx = scale[0]
+    sy = scale[1]
+    sz = scale[2]
+    for o in range(starts.shape[0]):
+        total = 0.0
+        for i in range(starts[o], starts[o] + counts[o]):
+            a = t[i, 0]
+            b = t[i, 1]
+            c = t[i, 2]
+            ax, ay, az = p[a, 0] * sx, p[a, 1] * sy, p[a, 2] * sz
+            bx, by, bz = p[b, 0] * sx, p[b, 1] * sy, p[b, 2] * sz
+            cx, cy, cz = p[c, 0] * sx, p[c, 1] * sy, p[c, 2] * sz
+            total += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)
+        out[o] = total / 6.0
+    return out
+
+
+def object_volumes(mesh: Mesh, scale=(1.0, 1.0, 1.0)) -> np.ndarray:
+    """Each object's signed enclosed volume in `scale` units, in `objects` order."""
+    mesh = mesh if mesh.objects is not None else sort_by_object(mesh)
+    out = np.zeros(mesh.n_objects, np.float64)
+    if not mesh.n_objects:
+        return out
+    return _signed_volumes(np.ascontiguousarray(mesh.positions, dtype=np.float64),
+                           np.ascontiguousarray(mesh.triangles, dtype=np.int64),
+                           mesh.objects[:, 1].astype(np.int64),
+                           mesh.objects[:, 2].astype(np.int64),
+                           np.asarray(scale, dtype=np.float64), out)
 
 
 @dataclass(frozen=True)
@@ -275,14 +387,16 @@ class Smoothing:
 
 
 def taubin(positions, triangles, smoothing: Smoothing, *, scale=(1.0, 1.0, 1.0),
-           voxel=(1.0, 1.0, 1.0)):
+           voxel=(1.0, 1.0, 1.0), progress=None):
     """Smoothed positions and a report of how far they moved.
 
     Computed in the physical frame (`positions * scale`), so an anisotropic
     stack is smoothed as the tissue was, not as its voxels are; `voxel` is
     the extraction level's voxel size in level-0 voxels per axis, which the
-    constraint is counted in. Returns `(positions, report)`; the report is in
-    the units of `scale` (µm when it is the spacing)."""
+    constraint is counted in. Each step moves a vertex towards the mean of
+    its neighbours (each counted once). Returns `(positions, report)`; the
+    report is in the units of `scale` (µm when it is the spacing).
+    `progress(done, total)` is told after each iteration."""
     positions = np.asarray(positions, dtype=np.float64)
     if smoothing.iterations <= 0 or not len(triangles):
         return positions.astype(np.float32), {"max_displacement": 0.0,
@@ -290,13 +404,17 @@ def taubin(positions, triangles, smoothing: Smoothing, *, scale=(1.0, 1.0, 1.0),
     scale = np.asarray(scale, dtype=np.float64)
     start = positions * scale
     cap = smoothing.constraint * np.asarray(voxel, dtype=np.float64) * scale
-    mean = _neighbour_mean(len(positions), triangles)
+    indptr, indices = _adjacency(len(positions), np.ascontiguousarray(triangles, dtype=np.int64))
     p = start.copy()
+    q = np.empty_like(p)
     lo, hi = start - cap, start + cap
-    for _ in range(int(smoothing.iterations)):
-        p += smoothing.lam * (mean @ p - p)
-        p += smoothing.mu * (mean @ p - p)
+    total = int(smoothing.iterations)
+    for done in range(total):
+        _umbrella_step(p, indptr, indices, float(smoothing.lam), q)
+        _umbrella_step(q, indptr, indices, float(smoothing.mu), p)
         np.clip(p, lo, hi, out=p)
+        if progress is not None:
+            progress(done + 1, total)
     moved = np.linalg.norm(p - start, axis=1)
     report = {"max_displacement": float(moved.max()) if len(moved) else 0.0,
               "mean_displacement": float(moved.mean()) if len(moved) else 0.0}
@@ -342,6 +460,100 @@ def orient_outward(mesh: Mesh) -> Mesh:
 # -- measurement ----------------------------------------------------------------------
 
 
+@njit
+def _object_sums(v, t, starts, counts, scale, sums, box):  # pragma: no cover - jit
+    """Per object, over its triangles: area, signed volume, the volume- and
+    area-weighted centroid sums (`sums`, scaled), and the box (`box`, unscaled)."""
+    sx = scale[0]
+    sy = scale[1]
+    sz = scale[2]
+    for o in range(starts.shape[0]):
+        for q in range(8):
+            sums[o, q] = 0.0
+        for q in range(3):
+            box[o, q] = np.inf
+            box[o, 3 + q] = -np.inf
+        for i in range(starts[o], starts[o] + counts[o]):
+            a = t[i, 0]
+            b = t[i, 1]
+            c = t[i, 2]
+            ax, ay, az = v[a, 0] * sx, v[a, 1] * sy, v[a, 2] * sz
+            bx, by, bz = v[b, 0] * sx, v[b, 1] * sy, v[b, 2] * sz
+            cx, cy, cz = v[c, 0] * sx, v[c, 1] * sy, v[c, 2] * sz
+            ux, uy, uz = bx - ax, by - ay, bz - az
+            wx, wy, wz = cx - ax, cy - ay, cz - az
+            nx = uy * wz - uz * wy
+            ny = uz * wx - ux * wz
+            nz = ux * wy - uy * wx
+            tri_area = 0.5 * np.sqrt(nx * nx + ny * ny + nz * nz)
+            tri_vol = (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz)
+                       + az * (bx * cy - by * cx)) / 6.0
+            mx, my, mz = ax + bx + cx, ay + by + cy, az + bz + cz
+            sums[o, 0] += tri_area
+            sums[o, 1] += tri_vol
+            sums[o, 2] += mx / 4.0 * tri_vol
+            sums[o, 3] += my / 4.0 * tri_vol
+            sums[o, 4] += mz / 4.0 * tri_vol
+            sums[o, 5] += mx / 3.0 * tri_area
+            sums[o, 6] += my / 3.0 * tri_area
+            sums[o, 7] += mz / 3.0 * tri_area
+            for corner in (a, b, c):
+                for q in range(3):
+                    value = v[corner, q]
+                    if value < box[o, q]:
+                        box[o, q] = value
+                    if value > box[o, 3 + q]:
+                        box[o, 3 + q] = value
+    return sums
+
+
+@njit
+def _object_moments(v, t, starts, counts, scale, centroid, out):  # pragma: no cover - jit
+    """Per object, the area-weighted second moment of its triangles' centres
+    about `centroid`: (xx, xy, xz, yy, yz, zz)."""
+    sx = scale[0]
+    sy = scale[1]
+    sz = scale[2]
+    for o in range(starts.shape[0]):
+        for q in range(6):
+            out[o, q] = 0.0
+        gx, gy, gz = centroid[o, 0], centroid[o, 1], centroid[o, 2]
+        for i in range(starts[o], starts[o] + counts[o]):
+            a = t[i, 0]
+            b = t[i, 1]
+            c = t[i, 2]
+            ax, ay, az = v[a, 0] * sx, v[a, 1] * sy, v[a, 2] * sz
+            bx, by, bz = v[b, 0] * sx, v[b, 1] * sy, v[b, 2] * sz
+            cx, cy, cz = v[c, 0] * sx, v[c, 1] * sy, v[c, 2] * sz
+            ux, uy, uz = bx - ax, by - ay, bz - az
+            wx, wy, wz = cx - ax, cy - ay, cz - az
+            nx = uy * wz - uz * wy
+            ny = uz * wx - ux * wz
+            nz = ux * wy - uy * wx
+            tri_area = 0.5 * np.sqrt(nx * nx + ny * ny + nz * nz)
+            rx = (ax + bx + cx) / 3.0 - gx
+            ry = (ay + by + cy) / 3.0 - gy
+            rz = (az + bz + cz) / 3.0 - gz
+            out[o, 0] += rx * rx * tri_area
+            out[o, 1] += rx * ry * tri_area
+            out[o, 2] += rx * rz * tri_area
+            out[o, 3] += ry * ry * tri_area
+            out[o, 4] += ry * rz * tri_area
+            out[o, 5] += rz * rz * tri_area
+    return out
+
+
+def _rim_vertices(triangles, n_vertices) -> np.ndarray:
+    """The lower vertex of every edge only one triangle uses."""
+    keys, _ = _edge_keys(triangles, n_vertices)
+    keys.sort()
+    if not len(keys):
+        return np.zeros(0, np.int64)
+    step = keys[1:] != keys[:-1]
+    single = np.concatenate([[True], step]) & np.concatenate([step, [True]])
+    return keys[single] // np.int64(n_vertices)
+
+
 def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None) -> dict:
     """One row per object, as columns (numpy arrays).
 
@@ -365,26 +577,18 @@ def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None) -> 
                     "touches_bounds": np.zeros(0, bool)})
         return out
     scale = np.asarray(scale, dtype=np.float64)
-    t = mesh.triangles.astype(np.int64)
-    v = mesh.positions.astype(np.float64)
-    a, b, c = v[t[:, 0]] * scale, v[t[:, 1]] * scale, v[t[:, 2]] * scale
-    cross = np.cross(b - a, c - a)
-    tri_area = 0.5 * np.linalg.norm(cross, axis=1)
-    tri_vol = np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0
+    t = np.ascontiguousarray(mesh.triangles, dtype=np.int64)
+    v = np.ascontiguousarray(mesh.positions, dtype=np.float64)
     starts = mesh.objects[:, 1].astype(np.int64)
     counts = mesh.objects[:, 2].astype(np.int64)
-    area = np.add.reduceat(tri_area, starts)
-    volume = np.add.reduceat(tri_vol, starts)
+    box = np.zeros((k, 6))
+    sums = _object_sums(v, t, starts, counts, scale, np.zeros((k, 8)), box)
+    area, volume = sums[:, 0], sums[:, 1]
     # Volume-weighted centroid of a closed surface; area-weighted otherwise.
-    tet_c = (a + b + c) / 4.0
-    tri_c = (a + b + c) / 3.0
-    vc = np.add.reduceat(tet_c * tri_vol[:, None], starts)
-    ac = np.add.reduceat(tri_c * tri_area[:, None], starts)
+    vc, ac = sums[:, 2:5], sums[:, 5:8]
 
     # Closedness per object: an edge used by one triangle only is a rim.
-    keys, lo = _edge_keys(t, mesh.n_vertices)
-    unique, first, counts_e = np.unique(keys, return_index=True, return_counts=True)
-    rim_vertices = lo[first[counts_e == 1]]
+    rim_vertices = _rim_vertices(t, mesh.n_vertices)
     rims = np.bincount(np.searchsorted(ids, mesh.object_id[rim_vertices]), minlength=k) \
         if len(rim_vertices) else np.zeros(k, np.int64)
     closed = rims[:k] == 0
@@ -398,21 +602,17 @@ def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None) -> 
 
     # Elongation: the spread of the surface along its longest axis over its
     # shortest (1 for a sphere), from the area-weighted second moment.
-    rel = tri_c - np.repeat(centroid, counts, axis=0)
-    moments = np.zeros((k, 3, 3))
-    for i in range(3):
-        for j in range(i, 3):
-            moments[:, i, j] = moments[:, j, i] = np.add.reduceat(
-                rel[:, i] * rel[:, j] * tri_area, starts)
+    second = _object_moments(v, t, starts, counts, scale,
+                             np.ascontiguousarray(np.nan_to_num(centroid)), np.zeros((k, 6)))
+    moments = np.empty((k, 3, 3))
+    for (i, j), q in zip(((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2)), range(6)):
+        moments[:, i, j] = moments[:, j, i] = second[:, q]
     with np.errstate(divide="ignore", invalid="ignore"):
         moments = np.nan_to_num(moments / area[:, None, None])
         eig = np.linalg.eigvalsh(moments)
         elong = np.sqrt(np.where(eig[:, 0] > 0, eig[:, 2] / eig[:, 0], np.nan))
 
-    tri_min = np.minimum(np.minimum(v[t[:, 0]], v[t[:, 1]]), v[t[:, 2]])
-    tri_max = np.maximum(np.maximum(v[t[:, 0]], v[t[:, 1]]), v[t[:, 2]])
-    lo_box = np.minimum.reduceat(tri_min, starts)
-    hi_box = np.maximum.reduceat(tri_max, starts)
+    lo_box, hi_box = box[:, :3], box[:, 3:]
     out.update({
         f"mesh_area_{unit}2": area,
         f"mesh_volume_{unit}3": volume_out,
@@ -567,3 +767,21 @@ def subset(mesh: Mesh, ids) -> Mesh:
             if len(ranges) else np.zeros(0, np.int64))
     out = replace(mesh, triangles=mesh.triangles[pick], objects=None)
     return sort_by_object(compact(out))
+
+
+def _prime():
+    tri = np.array([[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]], np.int64)
+    pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float64)
+    vertex_normals(pos, tri)
+    taubin(pos, tri, Smoothing(iterations=1))
+    tetra = sort_by_object(Mesh(positions=pos.astype(np.float32), triangles=tri.astype(np.uint32),
+                                object_id=np.ones(4, np.uint32)))
+    object_volumes(tetra)
+    measure(tetra)
+
+
+register_primer(__name__)
+
+
+def prime():
+    _prime()

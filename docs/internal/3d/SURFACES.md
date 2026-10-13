@@ -80,19 +80,37 @@ centres on integers), `normals i8 (N,4)` in the voxel frame, `object_id u32 (N)`
 - `isosurface.py`: per-strip preprocessing with a halo (anisotropic Gaussian in µm,
   background = Gaussian of half the object diameter, clipped), components from the vertex
   graph, numbered by size, `min_size` by enclosed volume, then `finish` (Taubin, normals).
-- `labels.py`: per-cell crops read in tile groups; each crop blurred `0.6` of a voxel along
-  each axis (each axis's own voxel — this is what removes the terraces between planes on
-  anisotropic stacks) and marched at 0.5, padded with 0 (cut cells capped on their voxel
-  faces); Taubin (capped at half a voxel) and a 0.1-voxel inset so touching cells do not
-  z-fight. A label volume's levels are XY-only, so at a level whose pixel is wider than
-  the z step runs of planes are pooled (`levels.label_z_stride`: about cubic grid voxels;
-  a voxel is the cell's when any plane of its run is). Without it a finely stepped stack
-  (194 planes at 0.28 µm under 0.14 µm pixels, 11 k cells) was 7 M triangles even at its
-  coarsest level.
+- `nets.py` + `labels.py`: cell surfaces in ONE pass over the level, whatever the number of
+  cells — multi-label surface nets (2026-10-13; replaced a per-cell Lewiner loop with a
+  0.6-voxel blur). A cube between eight voxel centres whose corners are not all one label
+  holds one vertex per label at its corners (the centroid of that label's crossing-edge
+  midpoints, an exact integer sum divided once); every voxel face between two labels is one
+  quad of each nonzero label beside it, wound out of the label. Closed by construction,
+  exactly 2 triangles per exposed voxel face, touching cells stay two surfaces, the grid is
+  padded with background so a cut cell is capped on its outer voxel faces. Read in
+  chunk-aligned tiles × z-slabs (`BLOCK_VOXELS` 16 M) on `min(allocated cpus,
+  PLEXORA_SURFACE_THREADS or 8)` threads of `nogil` kernels; a tile reads only its own
+  chunks (+ one plane below), the cubes across tile seams are made afterwards from the rows
+  and columns each tile kept (y-seams, then x-seams). Vertices sorted by (label, cube), quads
+  by (label, cube, axis): **the same bytes for any tile size, thread count, compiled or
+  interpreted** — which is why a data node's build equals this machine's (tests pin all
+  three). With an object table, tiles no object's box meets are not read; without one, the
+  objects are counted on the mask's COARSEST level for planning (`labels.label_counts`) —
+  no second scan. Then Taubin (constrained to half a grid voxel) and the 0.1-voxel inset.
+  A label volume's levels are XY-only, so at a level whose pixel is wider than the z step
+  runs of planes are pooled (`levels.label_z_stride`: about cubic grid voxels; each pixel of
+  a run takes the label on most of its planes, the earliest on a tie — a one-plane object
+  is kept). Without it a finely stepped stack (194 planes at 0.28 µm under 0.14 µm pixels,
+  11 k cells) was 7 M triangles even at its coarsest level. Cell surfaces carry
+  `LABEL_ENGINE` in their cache key, so a change of engine marks only them stale.
 - `levels.py`: quality presets (preview 4 M grid voxels / 300 k triangles; standard 48 M /
   3 M; full 512 M / `PLEXORA_SURFACE_BUDGET_TRIANGLES`), regions, `z_stride` (mean-pooled
-  planes), cell triangle estimate (calibrated 2.7 triangles per voxel² of sphere-equivalent
-  area, within 25 %), refusals with the estimate.
+  planes), cell triangle estimate (exactly 2 per exposed voxel face from the table's face
+  counts; from voxel counts, 1.55 faces per unit of sphere-equivalent area, within 25 %),
+  refusals with the estimate.
+- `mesh.py`: normals, Taubin (deduplicated CSR neighbours), signed volumes and `measure` are
+  compiled kernels, each summing in one fixed order (were numpy scatter-adds and a scipy
+  sparse operator: 6.9 s of a 3.7 M-triangle build, now 1.4 s).
 - `preview.py`: the slider's grid read once and cached (512 MB LRU), MC per isovalue,
   contours through z / x / y in the header. `suggest.py`: Otsu, triangle, log-GMM split.
 - `refine.py` (versions + undo), `export.py` / `importers.py` (PLY, OBJ, STL, GLB + zip with
@@ -127,6 +145,28 @@ view state), and the S key.
 Layers header (z-stacks only), the 3-D options menu (Volume and surfaces / Volume only /
 Surfaces only / New surface…), S over the 3-D view, a card's Edit.
 
+**The Cells control in 3-D** (`services/maskSurfaces.js`, 2026-10-13). The 3-D view has no
+label path, so there Outlines and Filled draw a 3-D mask's cells as cell surfaces marked
+`role: "mask"`: Outlines as glass (the volume shows through), Filled solid, None hidden,
+coloured by the active tool's cell colours (`plexora:cell-lut-changed`) or one colour per
+cell. Without `volume:surfaces` (or with a 2-D mask) Outlines, Filled and Centroids are not
+on the row in 3-D — hidden, not greyed — and come back on the plane
+(`viewerControls.volumeModes`). The first time, a preview build (300 k triangles) is drawn
+when it lands and the standard build replaces it the frame its mesh is uploaded (the
+preview is hidden in the `plexora:surface-loaded` handler — never a frame drawing
+neither); the wait is `views/maskSurfaceWait.js` (modal → "Continue in background" → the
+navbar chip `#mask_surface_chip`; a failure reopens once with Retry), an instance of
+`views/jobWait.js` like the mask pyramid's wait. Later visits ask `GET /volume/<ds>/surfaces`
+(`role`, `stale`, the recipe) and post nothing. The mask's surfaces are smoothed `strong` (24
+Taubin iterations: against a voxelized anisotropic ellipsoid the 95th-percentile normal error
+is 14°, 17° at `medium`, the old blurred marching cubes 17°; volume within 0.2 %). Once the
+standard build is on screen the preview is deleted, with any of the mask's surfaces of that
+frame made from a mask that changed since or by an older recipe (`retire`) -- never a surface
+made in Surface Studio, which has no `role`. The preview has no card in Layers; mask surfaces
+draw no cut lines on the planes (the labels already do), and the overlay opacity row is not
+offered in 3-D (a surface's opacity is on its card). The agent: `set_cell_render_mode` in 3-D
+answers `surfaces {layer, status, quality}`; `viewer_get_state` has `mask_surfaces`.
+
 ### Agent
 `plexora/agent/core/surface.py` (11 capabilities), viewer commands `viewer_set_volume_mode`,
 `viewer_set_camera`, `viewer_set_surface` (bridge handlers in `agentBridge.js`), MCP
@@ -156,6 +196,23 @@ server with a test licence):
 
 Rays stop at opaque surfaces, so volume + surfaces is cheaper than volume alone.
 
+Cell surfaces after the one-pass engine (Windows, 24 cores, 2026-10-13,
+`PLEXORA_PERF=1 pytest -m perf tests/test_surface_perf.py -s`): 2 000 packed ellipsoids in a
+48 × 1024 × 1024 label store (the store Plexora builds), light smoothing, 3.7 M triangles:
+
+| | 1 thread | 4 threads |
+|---|---|---|
+| extract (read, kernel, assemble) | 1.17 s | 0.75 s |
+| smooth + normals + inset | 0.85 s | 0.83 s |
+| total | 2.0 s (990 cells/s) | 1.6 s (1 260 cells/s) |
+| object count on the coarsest level (planning) | 0.1 s | |
+
+The per-cell loop it replaced: 4.5 s for the same cells with the old finishing (and a
+second full scan of level 0 without an object table). Kernel alone 0.33 s single-threaded,
+0.10 s on 4 threads (`nogil`); zarr's own decode is already parallel (0.09 s for the
+level). At standard quality the finishing (smoothing, measuring, writing) is now as large as
+the extraction: both scale with the triangle budget, not with the mask.
+
 ## 7. Limits and how to read a surface
 
 - An isosurface is the boundary at a chosen value, not a validated object boundary.
@@ -172,9 +229,16 @@ Rays stop at opaque surfaces, so volume + surfaces is cheaper than volume alone.
   `POST /node/v1/image/<rid>/block` (`providers.node.NodeVolumeReader`); contact areas
   read one mask block through `NodeLabelVolume`. A stack read from a web address is
   still refused (`resource_not_local`). `tests/test_node_surfaces.py` pins node = local.
-- Per-cell extraction is a Python loop (~1 ms/cell): fine to ~50 k cells; a one-pass numba
-  multi-label kernel is the Phase 3 answer. The full-resolution ceiling is the browser's
-  triangle budget; chunked region LOD is Phase 3.
+- Cell surfaces are one pass over the level the quality picks; the cost is that level's
+  voxels and the triangle budget, not the cell count. The full-resolution ceiling is the
+  browser's triangle budget (5 M); chunked region LOD is Phase 3.
+- Surface nets put vertices on voxel faces with no blur, so a coarse or pooled grid shows
+  its terraces more than the old blurred crops did; Taubin rounds them (`strong`, 24
+  iterations, for the viewer's mask surfaces; measured as smooth as the old pipeline at
+  `medium`). Mode pooling gives a pixel shared by two cells
+  within a run to the one on most of its planes (the old rule gave it to both).
+- A data node builds with its own Plexora: node = local holds when both run this engine
+  (an older node still answers with the per-cell mesh).
 - WBOIT is approximate for many overlapping translucent layers; the sorted fallback can
   pop between interpenetrating objects.
 - Glass over black reads dark (it is see-through); raise opacity or use Outline for figures.
@@ -193,8 +257,7 @@ Rays stop at opaque surfaces, so volume + surfaces is cheaper than volume alone.
 
 ## 9. Next (Phases 3–4, designed only)
 
-One-pass numba multi-label surface nets; chunked out-of-core extraction with halos (the
-strip is already the unit); region surfaces at level 0 with camera-aware LOD and frustum
+Region surfaces at level 0 with camera-aware LOD and frustum
 culling; watershed splitting; AO/shadows/
 supersampling; time-resolved surfaces per frame with tracking-aware colour; SCIMAP Pro
 hand-off of surface measurements.

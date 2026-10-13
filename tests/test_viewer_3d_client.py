@@ -101,3 +101,24 @@ def test_quick_surface_previews_debounced_and_posts_raw_units():
     preview, a superseded one aborted, the raw isovalue posted
     (tests/js/surface_studio_probe.mjs)."""
     _passed(_run("surface_studio_probe.mjs"), 15)
+
+
+def test_a_3d_mask_is_drawn_as_cell_surfaces_in_3d():
+    """Outlines and Filled in the 3-D view (services/maskSurfaces.js): built
+    only in 3-D with a 3-D mask and Surface Studio; a preview then the standard
+    build, posted once each; the standard replaces the preview the frame its
+    mesh is in, never a frame drawing neither; glass for Outlines, solid for
+    Filled, coloured as the cells are; a failure reported once and retried; a
+    page that finds them made posts nothing (tests/js/mask_surfaces_probe.mjs)."""
+    out = _run("mask_surfaces_probe.mjs")
+    assert "all checks passed" in out, out
+    assert out.count("PASS ") >= 45, out
+
+
+def test_one_modal_and_chip_serve_every_background_job():
+    """views/jobWait.js: the mask pyramid's wait and the cell surfaces' wait
+    are two instances on two mounts, Escape closes the one on top, leaving
+    the viewer closes both, a failure offers Retry (tests/js/job_wait_probe.mjs)."""
+    out = _run("job_wait_probe.mjs")
+    assert "all checks passed" in out, out
+    assert out.count("PASS ") >= 10, out

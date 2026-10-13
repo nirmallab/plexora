@@ -441,6 +441,8 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "paid: run with a valid Paid test licence installed (AI capabilities "
                    "unlocked). The default is Free, as it is for a real install.")
+    config.addinivalue_line(
+        "markers", "perf: a timing, skipped unless PLEXORA_PERF=1 (run with -m perf -s).")
 
 
 #: What the `paid` marker and the `paid_license` fixture install: the Paid

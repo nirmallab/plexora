@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261013_reading_skeleton">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261013_mask_surfaces">
     {% block style %}{% endblock %}
 
 
@@ -83,7 +83,7 @@
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261013_minimap_lens"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261012_project_title"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261013_mask_surfaces"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261012_main_merge2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -96,14 +96,14 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261004_magic_select"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261013_mask_surfaces"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261011_surfaces"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261013_mask_surfaces"></script>
     {# Before the plugin assets at the bottom of this block: a layer section's
        own script may ask PlexoraLayerSections whether it is one. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerSections.js?v=20260919_layer_cards"></script>
@@ -489,6 +489,9 @@
        A <button> because it is the way back to the modal -- the detail has to
        be reachable after the user has put it away, and by the keyboard. #}
     <button type="button" id="segmentation_chip" class="segmentation-chip" hidden></button>
+    {# The same, for a 3-D mask being turned into cell surfaces
+       (views/maskSurfaceWait.js). #}
+    <button type="button" id="mask_surface_chip" class="segmentation-chip" hidden></button>
     {# Opening a project, step by step (views/loadProgress.js): the viewer's
        boot waiting on the cell table, the mask or an image read from the web.
        Styled as the chip above; a status, not a button -- there is nothing

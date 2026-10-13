@@ -711,6 +711,9 @@ async function init(config, savedViewTransform = null) {
                                                     layerStack: seaDragonViewer.layerStack });
                 window.PlexoraSurfaceStudio?.init();
                 window.PlexoraSurfaceInspect?.init();
+                // A 3-D mask's Outlines and Filled in the 3-D view, as cell
+                // surfaces (services/maskSurfaces.js).
+                window.PlexoraMaskSurfaces?.init();
                 const surfaceButton = document.getElementById("layer_surface_button");
                 if (surfaceButton && window.PlexoraSurfaceStudio && viewState.depth > 1) {
                     surfaceButton.hidden = false;

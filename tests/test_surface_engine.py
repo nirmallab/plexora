@@ -173,6 +173,20 @@ class _Labels:
         return self.array[z0:z1 + 1, rows, cols]
 
 
+class _Pyramid(_Labels):
+    """Levels made as the label store makes them: every other row and column."""
+
+    def __init__(self, array, n_levels=3):
+        super().__init__(array)
+        self.levels = [array[:, ::2 ** k, ::2 ** k] for k in range(n_levels)]
+
+    def level_shapes(self):
+        return [[int(a.shape[1]), int(a.shape[2])] for a in self.levels]
+
+    def read(self, level, z0, z1, rows, cols):
+        return self.levels[level][z0:z1 + 1, rows, cols]
+
+
 def _label_scene():
     labels = np.zeros((20, 128, 128), np.uint16)
     counts = {1: _ellipsoid(labels, (8, 40, 40), (5, 12, 12), 1),
@@ -181,17 +195,24 @@ def _label_scene():
     return labels, counts
 
 
+def _extract(labels, grid=None, **kwargs):
+    grid = grid or marching.Grid.of(labels.shape)
+    return label_surfaces.extract_labels(_Labels(labels), 0, grid, **kwargs)
+
+
+def _sha(surface):
+    return hashlib.sha256(mesh_mod.to_bytes(surface)).hexdigest()
+
+
 def test_every_object_gets_its_own_closed_surface_under_its_id():
     labels, counts = _label_scene()
     before = labels.copy()
-    volume = _Labels(labels)
-    ids, boxes, voxels = label_surfaces.object_boxes(volume, 0)
+    ids, voxels = label_surfaces.label_counts(_Labels(labels))
     assert ids.tolist() == [1, 3, 7]
     assert dict(zip(ids.tolist(), voxels.tolist())) == counts
-    surface, report = label_surfaces.extract(
-        volume, 0, marching.Grid.of(labels.shape), ids, boxes,
-        smoothing=mesh_mod.Smoothing.preset("medium"))
+    surface, report = _extract(labels, smoothing=mesh_mod.Smoothing.preset("medium"))
     assert surface.ids().tolist() == [1, 3, 7] and report["missing_count"] == 0
+    assert report["engine"]["algorithm"] == "surface_nets_multilabel"
     assert np.array_equal(labels, before)
     columns = mesh_mod.measure(surface, dims=(128, 128, 20))
     assert columns["closed"].all()
@@ -202,32 +223,157 @@ def test_every_object_gets_its_own_closed_surface_under_its_id():
         assert bool(touches) == (int(label) == 3)
 
 
+def test_every_surface_faces_out_of_its_cell():
+    labels, _ = _label_scene()
+    surface, _ = _extract(labels, inset=0.0)
+    for label in (1, 3, 7):
+        mine = mesh_mod.subset(surface, [label])
+        assert mesh_mod.signed_volume(mine.positions, mine.triangles) > 0, label
+
+
 def test_a_selection_makes_only_those_surfaces_and_the_inset_is_applied():
     labels, _ = _label_scene()
-    volume = _Labels(labels)
-    ids, boxes, _ = label_surfaces.object_boxes(volume, 0, ids=[7])
-    plain, _ = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids, boxes,
-                                      inset=0.0)
-    inset, report = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids,
-                                           boxes, inset=0.25)
+    plain, _ = _extract(labels, ids=[7], inset=0.0)
+    inset, report = _extract(labels, ids=[7], inset=0.25)
     assert plain.ids().tolist() == [7] and report["inset_vox"] == 0.25
     assert mesh_mod.signed_volume(inset.positions, inset.triangles) < \
         mesh_mod.signed_volume(plain.positions, plain.triangles)
+
+
+def test_a_selection_is_the_same_mesh_as_that_cell_of_the_whole():
+    labels, _ = _label_scene()
+    whole, _ = _extract(labels, inset=0.0)
+    one, _ = _extract(labels, ids=[7], inset=0.0)
+    ref = mesh_mod.subset(whole, [7])
+    assert np.array_equal(one.positions, ref.positions)
+    assert np.array_equal(one.triangles, ref.triangles)
+
+
+def test_requested_ids_absent_from_the_mask_are_reported_missing():
+    labels, _ = _label_scene()
+    ids, counts = label_surfaces.label_counts(_Labels(labels), ids=[7, 99])
+    assert ids.tolist() == [7, 99] and counts[1] == 1     # one coarse pixel, for planning
+    surface, report = _extract(labels, ids=[7, 99])
+    assert surface.ids().tolist() == [7]
+    assert report["missing"] == [99] and report["missing_count"] == 1
 
 
 def test_neighbours_that_touch_stay_two_surfaces():
     labels = np.zeros((8, 32, 32), np.uint16)
     labels[2:6, 8:16, 8:16] = 4
     labels[2:6, 8:16, 16:24] = 5     # shares a face with 4
-    volume = _Labels(labels)
-    ids, boxes, _ = label_surfaces.object_boxes(volume, 0)
-    surface, _ = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids, boxes)
+    surface, _ = _extract(labels)
     assert surface.ids().tolist() == [4, 5]
     columns = mesh_mod.measure(surface)
     assert columns["closed"].all()
     a = surface.positions[surface.object_id == 4][:, 0].max()
     b = surface.positions[surface.object_id == 5][:, 0].min()
     assert a < b                     # the inset parts them
+
+
+def test_a_cell_cut_by_the_edge_is_capped_on_its_faces():
+    labels, counts = _label_scene()
+    surface, _ = _extract(labels, ids=[3], inset=0.0)
+    columns = mesh_mod.measure(surface, dims=(128, 128, 20))
+    assert bool(columns["closed"][0]) and bool(columns["touches_bounds"][0])
+    # Capped on the outer faces of plane 0, half a voxel outside its centre.
+    assert surface.positions[:, 2].min() == pytest.approx(-0.5)
+    assert columns["mesh_volume_vox3"][0] == pytest.approx(counts[3], rel=0.15)
+
+
+def test_blocks_weld_into_the_same_mesh_as_one_block():
+    """Tiles of 17 px and slabs of a few planes -- every seam crossed by a
+    cell -- make the same bytes as the volume read whole."""
+    labels, _ = _label_scene()
+    smooth = mesh_mod.Smoothing.preset("medium")
+    whole, report = _extract(labels, smoothing=smooth)
+    assert report["engine"]["blocks"] == 1
+    tiled, report = _extract(labels, smoothing=smooth, tile=17, block_voxels=17 * 17 * 4)
+    assert report["engine"]["blocks"] > 20 and report["engine"]["seams"] > 10
+    assert _sha(tiled) == _sha(whole)
+    assert len(mesh_mod.boundary_vertices(tiled)) == 0
+
+
+def test_thread_count_does_not_change_the_bytes():
+    labels, _ = _label_scene()
+    one, _ = _extract(labels, tile=24, threads=1)
+    four, report = _extract(labels, tile=24, threads=4)
+    assert report["engine"]["threads"] == 4
+    assert _sha(one) == _sha(four)
+
+
+def test_tiles_without_an_object_are_not_read():
+    labels, _ = _label_scene()
+    reads = []
+
+    class Counting(_Labels):
+        def read(self, level, z0, z1, rows, cols):
+            reads.append((rows.start, cols.start))
+            return super().read(level, z0, z1, rows, cols)
+
+    grid = marching.Grid.of(labels.shape)
+    whole, _ = label_surfaces.extract_labels(Counting(labels), 0, grid, tile=32, inset=0.0)
+    every = len(reads)
+    reads.clear()
+    regions = np.array([[0, 19, 70, 110, 70, 100]])     # around cell 7 only
+    only, _ = label_surfaces.extract_labels(Counting(labels), 0, grid, ids=[7], regions=regions,
+                                            tile=32, inset=0.0)
+    assert len(reads) < every / 2
+    ref = mesh_mod.subset(whole, [7])
+    assert np.array_equal(only.positions, ref.positions)
+
+
+def test_the_interpreted_kernel_matches_the_compiled_one(monkeypatch):
+    from plexora.server.surface import nets
+    from plexora.server.utils import jit
+
+    if not jit.enabled():
+        pytest.skip("numba is off: every run is interpreted already")
+    labels, _ = _label_scene()
+    labels = labels[:, 24:112, 8:104].copy()      # small: the interpreted loops are slow
+    compiled, _ = _extract(labels, tile=40)
+    for name in ("_count", "_fill", "_pool_runs", "_corners", "_distinct", "_triangulate"):
+        monkeypatch.setattr(nets, name, getattr(nets, name).py_func)
+    interpreted, _ = _extract(labels, tile=40)
+    assert _sha(interpreted) == _sha(compiled)
+
+
+def test_smoothing_reports_each_iteration():
+    labels, _ = _label_scene()
+    stages, ticks = [], []
+    _extract(labels, smoothing=mesh_mod.Smoothing.preset("medium"), stage=stages.append,
+             progress=lambda done, total: ticks.append((done, total)))
+    assert stages == ["smoothing"]
+    iterations = mesh_mod.Smoothing.PRESETS["medium"]
+    assert ticks[-iterations:] == [(i + 1, iterations) for i in range(iterations)]
+
+
+def test_counts_from_the_coarsest_level_plan_the_same_level():
+    labels = np.zeros((12, 256, 256), np.uint32)
+    exact = {}
+    for n in range(12):
+        exact[n + 1] = _ellipsoid(labels, (6, 30 + 60 * (n % 4), 40 + 70 * (n // 4)),
+                                  (4, 18, 14), n + 1)
+    pyramid = _Pyramid(labels)
+    ids, counts = label_surfaces.label_counts(pyramid)
+    assert ids.tolist() == sorted(exact)
+    np.testing.assert_allclose(counts, [exact[i] for i in ids.tolist()], rtol=0.1)
+    for quality in levels.QUALITIES:
+        assert levels.plan_labels(pyramid, counts, quality=quality)[0] == \
+            levels.plan_labels(pyramid, np.array(list(exact.values())), quality=quality)[0]
+
+
+def test_pooled_runs_take_the_label_on_most_planes_and_keep_a_thin_one():
+    from plexora.server.surface import nets
+
+    planes = np.zeros((6, 1, 4), np.uint32)
+    planes[:, 0, 0] = [2, 2, 3, 0, 0, 0]          # 2 on most of run 0
+    planes[:, 0, 1] = [0, 5, 6, 0, 0, 0]          # a tie: the earlier plane's
+    planes[:, 0, 2] = [0, 0, 0, 0, 9, 0]          # one plane thick: kept
+    planes[:, 0, 3] = [4, 4, 4, 4, 4, 4]
+    pooled = nets.pool(planes, 3)
+    assert pooled[:, 0, :].tolist() == [[2, 5, 0, 4], [0, 0, 9, 4]]
+    assert nets.pool(planes[:5], 3)[1, 0, :].tolist() == [0, 0, 9, 4]   # a short last run
 
 
 def test_a_coarse_level_of_a_fine_z_stack_pools_planes():
@@ -246,11 +392,8 @@ def test_pooled_planes_keep_each_cell_closed_and_in_place():
     counts = {1: _ellipsoid(labels, (14, 20, 20), (10, 6, 6), 1),
               2: _ellipsoid(labels, (26, 44, 40), (12, 7, 9), 2)}
     labels[33, 50:58, 6:14] = 9          # one plane thick: pooled, not lost
-    volume = _Labels(labels)
-    ids, boxes, _ = label_surfaces.object_boxes(volume, 0)
-    full, _ = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids, boxes)
-    pooled, report = label_surfaces.extract(
-        volume, 0, marching.Grid.of((10, 64, 64), z_stride=4), ids, boxes, z_stride=4)
+    full, _ = _extract(labels)
+    pooled, report = _extract(labels, marching.Grid.of((10, 64, 64), z_stride=4), z_stride=4)
     assert pooled.ids().tolist() == [1, 2, 9] and report["missing_count"] == 0
     assert pooled.n_triangles < full.n_triangles / 2
     columns = mesh_mod.measure(pooled, dims=(64, 64, 40))
@@ -288,12 +431,24 @@ def test_the_planner_counts_pooled_planes_and_fits_a_fine_z_stack():
 
 
 def test_the_label_triangle_estimate_is_within_a_quarter():
-    labels, counts = _label_scene()
-    volume = _Labels(labels)
-    ids, boxes, voxels = label_surfaces.object_boxes(volume, 0)
-    surface, _ = label_surfaces.extract(volume, 0, marching.Grid.of(labels.shape), ids, boxes)
+    labels, _ = _label_scene()
+    ids, voxels = label_surfaces.label_counts(_Labels(labels))
+    surface, _ = _extract(labels)
     estimate = levels.label_triangles(voxels)
     assert estimate == pytest.approx(surface.n_triangles, rel=0.25)
+
+
+def test_exposed_faces_give_the_exact_triangle_count():
+    labels, _ = _label_scene()
+    faces = []
+    for label in (1, 3, 7):
+        inside = np.pad(labels == label, 1)
+        faces.append([int((inside[:, :, 1:] != inside[:, :, :-1]).sum()),
+                      int((inside[:, 1:, :] != inside[:, :-1, :]).sum()),
+                      int((inside[1:] != inside[:-1]).sum())])
+    surface, _ = _extract(labels)
+    fx, fy, fz = np.asarray(faces).T
+    assert levels.label_triangles(None, (fx, fy, fz)) == surface.n_triangles
 
 
 def test_too_many_triangles_is_refused_with_the_estimate():

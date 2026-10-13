@@ -879,6 +879,18 @@ html.is-native-dragging body::after {
     margin-top: var(--space-5);
 }
 
+/* Dismiss, and Retry beside it when a failed job can be run again
+   (views/jobWait.js). `.btn` sets `display`, which would otherwise defeat
+   `hidden` on whichever of the two is not offered. */
+.segmentation-progress-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.segmentation-progress-actions .btn[hidden] {
+    display: none;
+}
+
 /* The promise that closing this is safe. Set apart from the detail line above
    the bar, which is the server's running commentary and changes under it --
    this one is fixed, and is the thing the user has to read exactly once. */

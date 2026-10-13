@@ -516,7 +516,10 @@
    pending state belongs to a viewer looking at the project whose mask is
    converting -- every other page would carry a listener with nothing to
    listen for. #}
-<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260925_desktop_app" defer></script>
+{# The modal-and-chip of a background job (views/jobWait.js), and its waits:
+   the mask pyramid here, the 3-D mask's cell surfaces below. #}
+<script src="{{ data.base_url }}/client/src/js/views/jobWait.js?v=20261013_mask_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20261013_mask_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/loadProgress.js?v=20260924_load_progress" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
    unconditionally: it does nothing at all when its sliders are absent, and
@@ -577,7 +580,11 @@
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
 <script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261013_cut_panel" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261013_cut_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261013_mask_surfaces" defer></script>
+{# A 3-D mask drawn in 3-D: the Cells control's Outlines and Filled as cell
+   surfaces, and the wait while the mask is converted. #}
+<script src="{{ data.base_url }}/client/src/js/views/maskSurfaceWait.js?v=20261013_mask_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261013_mask_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
@@ -601,12 +608,12 @@
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261013_cut_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261013_mask_surfaces" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261013_compact_popover" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261013_mask_surfaces" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

@@ -289,9 +289,10 @@ def list_surfaces(datasource):
     for layer in surface_store.surface_layers(project):
         manifest = surface_store.read_manifest(layer) if layer.status == "ready" else None
         job = layer_jobs.get(project.name, layer.id)
+        spec = (layer.extra or {}).get("surface")
         out.append({"id": layer.id, "label": layer.label, "status": layer.status,
                     "visible": layer.visible, "render": dict(layer.render or {}),
-                    "spec": (layer.extra or {}).get("surface"),
+                    "spec": spec, "role": (spec or {}).get("role"),
                     "job": job, "summary": _summary(manifest),
                     "stale": _stale(project, layer)})
     return jsonify(surfaces=out, licensed=_licensed())

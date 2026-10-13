@@ -43,9 +43,12 @@ QUALITY = {
 }
 QUALITIES = tuple(QUALITY)
 
-#: Marching cubes makes about this many triangles per voxel-unit of surface
-#: area (measured on spheres and ellipsoids of label masks: 2.5-3.0).
-TRIANGLES_PER_AREA = 2.7
+#: Cell surfaces (surface nets, surface/nets.py) make exactly two triangles
+#: per exposed voxel face at the level they are extracted at.
+TRIANGLES_PER_FACE = 2.0
+#: A voxelized object exposes about this many voxel faces per unit of its
+#: smooth surface's area (1.5 for large spheres; more for small cells).
+FACES_PER_AREA = 1.55
 #: An isosurface at a level k makes about this many times fewer triangles
 #: than at level k-1 (its area in grid voxels; between 2 and 4).
 ISO_LEVEL_RATIO = 3.0
@@ -199,15 +202,15 @@ def label_triangles(counts, faces=None, *, level=0, level_factor=1.0, z_stride=1
     s = float(max(1, int(z_stride)))
     if faces is not None:
         fx, fy, fz = (np.asarray(a, dtype=np.float64) for a in faces)
-        # Exposed voxel faces over-count a smooth surface by about 1.5x. A face
-        # across x or y spans one pixel and one plane; across z, two pixels.
-        total = (fz / (f * f) + (fx + fy) / (f * s)).sum() / 1.5
+        # A face across x or y spans one pixel and one plane; across z, two
+        # pixels: at a coarser grid they are that many times fewer.
+        total = (fz / (f * f) + (fx + fy) / (f * s)).sum()
     else:
         counts = np.asarray(counts, dtype=np.float64)
         # A sphere's area per V^(2/3): (36 pi)^(1/3); about a third faces z.
-        area = (36 * math.pi) ** (1 / 3) * np.cbrt(counts) ** 2
-        total = (area / 3.0 / (f * f) + 2.0 * area / 3.0 / (f * s)).sum() * 1.15
-    return int(total * TRIANGLES_PER_AREA)
+        area = (36 * math.pi) ** (1 / 3) * np.cbrt(counts) ** 2 * FACES_PER_AREA
+        total = (area / 3.0 / (f * f) + 2.0 * area / 3.0 / (f * s)).sum()
+    return int(total * TRIANGLES_PER_FACE)
 
 
 def label_z_stride(level_factor, scale=None, depth=None) -> int:

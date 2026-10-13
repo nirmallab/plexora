@@ -5544,13 +5544,24 @@ ordering, restyling and deleting one are the generic layer routes.
 - Server engine, `plexora/server/surface/`: `mesh.py` (the `Mesh`, its
   `PXMS` file — `uint32` header length, JSON header, 4-byte-aligned arrays the
   browser reads with typed-array views — plus `weld`, Taubin smoothing and the
-  measurements); `marching.py` (Lewiner marching cubes over z-strips plus the
+  measurements; normals, Taubin (`_adjacency`, `_umbrella_step`),
+  `object_volumes` and `measure` are compiled kernels, and `mesh` and `nets`
+  are registered `jit` primers); `marching.py` (Lewiner marching cubes over z-strips plus the
   next strip's first plane, so shared-plane vertices are bitwise equal and
   `weld` closes every seam with no tolerance); `isosurface.py` (per-strip
   preprocessing with a halo — Gaussian `sigma_um`, `background_um` local
-  background — components numbered by size, `min_size`); `labels.py` (per-cell
-  crops read in tile groups, each blurred 0.6 of its own axis's voxel, which is
-  what takes the terraces off an anisotropic stack, then marched at 0.5);
+  background — components numbered by size, `min_size`); `nets.py`
+  (one-pass multi-label surface nets — numba kernels `_pool_runs`, `_count`,
+  `_fill`, `_triangulate`; `block_surface`, `surface_pieces` over chunk-aligned
+  tiles x z-slabs on a thread pool, seams made from kept tile edges, and
+  `assemble` — because the cost is then the volume's, not the number of cells
+  times anything); `labels.py` (`extract_labels` runs every cell through
+  `nets.py` in one pass, then Taubin smoothing — stage `"smoothing"` — and a
+  0.1-voxel inset so touching cells do not draw through each other;
+  `label_counts` counts objects on the coarsest level for planning;
+  `regions_from_table` limits the blocks read to those holding an object; the
+  old per-cell `extract`, `object_boxes`, `boxes_from_table` and blur are
+  gone);
   `levels.py` (quality presets, regions, `z_stride`, triangle budgets — a
   request that cannot fit is refused up front with the estimate, not built and
   then undrawable; `PLEXORA_SURFACE_BUDGET_TRIANGLES`); `preview.py` (the
@@ -5561,7 +5572,10 @@ ordering, restyling and deleting one are the generic layer routes.
   pinned projection, files under `<derived root>/surfaces_v1/<token>/` —
   `manifest.json`, `mesh-L<k>.bin`, `objects.parquet` — the token a hash of
   the source and every shaping parameter, so the same request returns the
-  same layer); `refine.py` (each edit a new `mesh-L<k>-v<n>.bin` version in
+  same layer; cell surfaces' key also carries `LABEL_ALGORITHM`/`LABEL_ENGINE`,
+  so an engine change rebuilds rather than serving old meshes; `SurfaceSpec.
+  role` is `"mask"` or nothing, only on cell surfaces, and the list route's
+  entries carry it); `refine.py` (each edit a new `mesh-L<k>-v<n>.bin` version in
   the manifest, undo drops the last); `export.py`/`importers.py` (PLY, OBJ,
   STL, GLB with the manifest beside them); `contacts.py` (surface and
   centroid neighbours; contact area from the MASK's shared voxel faces, not
@@ -5591,6 +5605,18 @@ ordering, restyling and deleting one are the generic layer routes.
   `layerStack.js` maps kind `surface` to the `gl` surface. The view state now
   persists `volume.camera {q, dist, pan}` and `volume.show {volume,
   surfaces}`, which the 3-D camera never was before.
+- 3-D mask overlays (SURFACES.md §4): in 3-D the Cells control's Outlines and
+  Filled draw a 3-D mask as `role:"mask"` cell surfaces, because the 3-D view
+  has no label-tile path — `services/maskSurfaces.js`
+  (`window.PlexoraMaskSurfaces`: a preview build, then the standard one, the
+  superseded one retired) and `views/maskSurfaceWait.js` (its wait,
+  `#mask_surface_chip` in `base.html`). `viewerControls.js`
+  `volumeModes()`/`inVolume()`/`bindVolume()` offer Outlines/Filled in 3-D
+  only with `volume:surfaces` and a 3-D mask, Centroids never, and hide (not
+  grey) what is not offered. `imageViewer.setCellColorLUT` dispatches
+  `plexora:cell-lut-changed` so the surfaces recolour; `layerManager` hides
+  the preview's card; `surfaceLayers` draws no 2-D cuts for `role:"mask"`
+  layers and skips coalesced saves for a removed layer.
 - Agent: `plexora/agent/core/surface.py` (the `surface_*` tools), viewer
   commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`,
   `viewer_set_inspect` (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
@@ -5627,8 +5653,12 @@ ordering, restyling and deleting one are the generic layer routes.
   `test_surface_phase2.py`, `test_surface_agent.py`, `test_node_surfaces.py`
   (node build == local build, mesh and object table),
   `plexora/plugins/figure_builder/tests/test_figure_builder_volume.py`, and
-  JS probes `tests/js/{surface_renderer,surface_studio}_probe.mjs` (wrapped in
-  `tests/test_viewer_3d_client.py`). The boundary goldens include the
+  JS probes `tests/js/{surface_renderer,surface_studio,mask_surfaces,
+  job_wait}_probe.mjs` (wrapped in `tests/test_viewer_3d_client.py`;
+  `cell_mode_control_probe` carries the 3-D mode checks). The timing
+  `tests/test_surface_perf.py` (marker `perf`, registered in `conftest.py`)
+  skips unless `PLEXORA_PERF=1` and numba is on: `PLEXORA_PERF=1 python -m
+  pytest tests/test_surface_perf.py -m perf -s`. The boundary goldens include the
   `/surfaces` routes and the `?v=20261011_surfaces` asset tag.
 
 **Video Studio** (`plexora/plugins/video_studio/`; user docs
@@ -7070,7 +7100,8 @@ loop calls back once per written tile.
 Client: `views/jobProgress.js` is the one panel (bar + `.connect-steps` stage
 rail); `views/tableProgress.js` is the poller over it now that the deleted
 `segmentationProgress.js`'s import-page bar is gone — `views/segmentationWait.js`
-watches a mask's build instead, from inside the viewer, as a listener on
+(one instance of the shared modal + chip `views/jobWait.js`,
+`PlexoraJobWait.create`; `maskSurfaceWait.js` is the other) watches a mask's build instead, from inside the viewer, as a listener on
 `main.js`'s own poll rather than a second one over `jobProgress.js`. **Not**
 `PlexoraStatus` — that is busy/live/error only, and `main.css` argues the case
 where the rule lives.
@@ -8379,6 +8410,10 @@ in **5.6 s**.
   the MCP server's start, the same first-call-off-the-request-thread rule
   the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
   GMM fitting.
+- **A cell-surface mesh is byte-identical for any tile size, thread count,
+  compiled or interpreted** (`server/surface/nets.py`; pinned in
+  `tests/test_surface_engine.py`), because that is how a data node's build
+  equals a local one — node = local is a byte comparison, not a tolerance.
 - **A QC finding is an ROI in a `qc_<category>` category, its class in
   `roi_meta`; a user edit always wins.** `plugins/qc/roi_link.py` writes a QC
   region as an ordinary ROI so the ROI panel, exports and cell overlap all

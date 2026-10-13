@@ -607,6 +607,22 @@ class ImageViewer {
             // sharp squares. Planar images keep the instant draw they have
             // always had.
             blendTime: Number(config?.imageShape?.z) > 1 ? 0.18 : 0,
+            // How many tiles one update of an item may ask for: a volume's,
+            // 32; OSD's default (kept for planar images) is 1. OSD caps each
+            // update's load candidates at `_currentMaxTilesPerFrame` -- ten
+            // times this on an item's first update, halved per level it
+            // visits down to this (TiledImage._updateLevel) -- so at 1 a new
+            // plane's pair hands over ten tiles and then ONE A FRAME, and the
+            // tile scheduler (tileFetch.js), which decides what goes first
+            // (coverage before sharpness, the plane on screen before a
+            // handover before a prefetch), can only order what it has been
+            // handed. At 32 the first update asks for up to 320: every
+            // level's tiles in view at once, before any are loading -- and so
+            // before `loadingCoverage` can skip a coarse tile because the
+            // finer ones over it are already on their way. OSD itself ranks
+            // the coarsest levels first (level visibility); the scheduler
+            // then decides.
+            maxTilesPerFrame: Number(config?.imageShape?.z) > 1 ? 32 : 1,
             // OpenSeadragon 6 creates ONE TileCache on the viewer and hands the
             // same instance to every TiledImage, so this budget has to cover
             // (visible tiles x active channels), not just visible tiles. At
@@ -839,9 +855,17 @@ class ImageViewer {
                 decodeInline: PlexoraTileDecode.decodeTileInline,
                 // The plane's loader hands the scheduler more jobs than it
                 // runs, so the order across viewers is decided in one place.
+                // 256, not imageLoaderLimit's 10: OSD's ImageLoader starts at
+                // most `jobLimit` jobs and holds the rest in its own queue,
+                // first come first served, where the scheduler cannot see
+                // them -- and a swap now asks for a whole view at every level
+                // at once (maxTilesPerFrame). The wire is still the
+                // scheduler's MAX_IN_FLIGHT (6): a started job is only a place
+                // in its line. Only a volume's tile sources attach, so a
+                // planar image's loader keeps its 10.
                 onAttach: () => {
                     const loader = this.viewer?.imageLoader;
-                    if (loader && loader.jobLimit && loader.jobLimit < 32) loader.jobLimit = 32;
+                    if (loader && loader.jobLimit && loader.jobLimit < 256) loader.jobLimit = 256;
                 },
             }).watch(this.viewer)
             : null;
@@ -1596,6 +1620,9 @@ class ImageViewer {
         layer.lutVersion = (layer.lutVersion || 0) + 1;
         layer.styleCache = new Map();
         this.applyCellColor(name);
+        // The 3-D view's cell surfaces take the same colours
+        // (services/maskSurfaces.js).
+        globalThis.dispatchEvent?.(new CustomEvent("plexora:cell-lut-changed", { detail: { name } }));
         return true;
     }
 

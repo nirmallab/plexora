@@ -321,6 +321,11 @@ window.PlexoraLayerManager = (function () {
     /** Whether this layer earns a card. See CARDED_KINDS. */
     function isCarded(layer) {
         if (!layer) return false;
+        // The quick preview of a 3-D mask's cell surfaces is a step of their
+        // conversion (services/maskSurfaces.js), reported by its wait; the
+        // standard build is the layer the user has.
+        const surface = layer.spec?.surface;
+        if (surface?.role === "mask" && surface.quality === "preview") return false;
         if (CARDED_KINDS.has(kindOf(layer))) return true;
         if (layer.drawnBy) return true;
         if (adopted.has(layer.id)) return true;

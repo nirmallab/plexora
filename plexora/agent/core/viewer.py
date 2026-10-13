@@ -605,7 +605,8 @@ def capabilities():
                    tags=TAGS),
         cap(name="viewer.get_state", tool_name="viewer_get_state",
             purpose="What an open viewer is showing: project, viewport, channels with "
-                    "colours and windows, layers, cell-drawing mode, open tools.",
+                    "colours and windows, layers, cell-drawing mode, open tools; in 3-D, "
+                    "the 3-D mask's cell surfaces (mask_surfaces).",
             permission="read", input_model=ViewInput, handler=get_state),
         cap(name="viewer.open_project", tool_name="viewer_open_project",
             purpose="Open a project in the viewer (optionally with a tool).",
@@ -625,7 +626,9 @@ def capabilities():
             purpose="Open (or close) a tool panel in the viewer, e.g. gating.",
             input_model=ToolInput, handler=open_tool),
         cap(name="viewer.set_cell_mode", tool_name="viewer_set_cell_mode",
-            purpose="How the viewer draws cells: outlines, filled, centroids, off.",
+            purpose="How the viewer draws cells: outlines, filled, centroids, off. In the "
+                    "3-D view, outlines and filled draw a 3-D mask's cells as surfaces, "
+                    "built the first time (needs Surface Studio).",
             input_model=CellModeInput, handler=set_cell_mode),
         cap(name="viewer.set_active_marker", tool_name="viewer_set_active_marker",
             purpose="Make a marker the one the gating panel shows and colours by.",

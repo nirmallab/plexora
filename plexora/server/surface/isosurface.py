@@ -137,20 +137,19 @@ def extract(read, grid: marching.Grid, iso, *, pre: Preprocess | None = None,
 
 
 def _object_volumes(surface, scale):
-    t = surface.triangles.astype(np.int64)
-    p = surface.positions.astype(np.float64) * np.asarray(scale, dtype=np.float64)
-    per = np.einsum("ij,ij->i", p[t[:, 0]], np.cross(p[t[:, 1]], p[t[:, 2]])) / 6.0
-    return np.add.reduceat(per, surface.objects[:, 1].astype(np.int64))
+    return mesh_mod.object_volumes(surface, scale)
 
 
-def finish(surface, smoothing, *, scale, voxel, keep_raw=True, report=None, inset=0.0):
-    """Smooth (Taubin, constrained), compute normals, inset; fills `report`."""
+def finish(surface, smoothing, *, scale, voxel, keep_raw=True, report=None, inset=0.0,
+           progress=None):
+    """Smooth (Taubin, constrained), compute normals, inset; fills `report`.
+    `progress(done, total)` is told each smoothing iteration."""
     report = report if report is not None else {}
     before = float(np.abs(_object_volumes(surface, scale)).sum()) if surface.n_objects else 0.0
     if smoothing is not None and smoothing.iterations > 0 and surface.n_triangles:
         raw = surface.positions
         smoothed, moved = mesh_mod.taubin(raw, surface.triangles, smoothing, scale=scale,
-                                          voxel=voxel)
+                                          voxel=voxel, progress=progress)
         surface = replace(surface, positions=smoothed, positions_raw=raw if keep_raw else None)
         report["smoothing"] = {**smoothing.to_dict(), **moved}
     normals = mesh_mod.vertex_normals(surface.positions, surface.triangles)

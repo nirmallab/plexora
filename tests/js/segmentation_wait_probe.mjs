@@ -28,6 +28,8 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCE = join(REPO, "plexora/client/src/js/views/segmentationWait.js");
+//: The modal and chip themselves, which segmentationWait.js is one instance of.
+const JOB_WAIT = join(REPO, "plexora/client/src/js/views/jobWait.js");
 const PORTAL = join(REPO, "plexora/client/src/js/views/popoverPortal.js");
 
 // -- a DOM small enough to read -----------------------------------------------
@@ -162,6 +164,7 @@ function boot() {
     // decision this file makes, and the fullscreen ::backdrop makes a wrong
     // answer invisible rather than broken.
     runInContext(readFileSync(PORTAL, "utf8"), context, { filename: "popoverPortal.js" });
+    runInContext(readFileSync(JOB_WAIT, "utf8"), context, { filename: "jobWait.js" });
     runInContext(readFileSync(SOURCE, "utf8"), context, { filename: "segmentationWait.js" });
 
     return {

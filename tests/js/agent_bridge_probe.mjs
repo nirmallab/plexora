@@ -487,6 +487,37 @@ async function run(cmd) {
     check("a tool the page does not offer is rejected", offMenu && offMenu.status === "rejected", offMenu);
 }
 
+{
+    // In 3-D, Outlines and Filled draw a 3-D mask as cell surfaces, built the
+    // first time (services/maskSurfaces.js): the answer says whether they are
+    // on screen or on their way, and get_state reports them.
+    const volumeServer = makeServer();
+    const ensured = [];
+    const volumePage = makePage({ server: volumeServer, storage: makeStorage(), plexoraOverrides: {
+        viewerControls: {
+            mode: "none",
+            inVolume: () => true,
+            async selectMode(mode) { this.mode = mode; },
+            offeredModes: () => ({ none: true, centroids: false, outlines: true, filled: true }),
+        },
+    } });
+    volumePage.g.PlexoraMaskSurfaces = {
+        async ensure() { ensured.push("ensure"); },
+        report: () => ({ allowed: true, state: "building", shown: null, mode: "outlines",
+                         preview: "surf-p", standard: null }),
+    };
+    const runVolume = async (cmd) => { await volumePage.bridge._run(cmd); return ackFor(volumeServer, cmd); };
+    const ack = await runVolume(command("set_cell_render_mode", { mode: "outlines" }));
+    check("in 3-D, Outlines answers that the cell surfaces are building",
+        ack && ack.status === "done" && ack.result.cell_mode === "outlines"
+        && ack.result.surfaces && ack.result.surfaces.status === "building"
+        && ack.result.surfaces.layer === "surf-p" && ensured.length === 1, ack && ack.result);
+    const state = await runVolume(command("get_state"));
+    check("get_state reports the mask's cell surfaces",
+        state && state.result.mask_surfaces && state.result.mask_surfaces.state === "building",
+        state && state.result && state.result.mask_surfaces);
+}
+
 // -- claimable commands -----------------------------------------------------------
 
 {

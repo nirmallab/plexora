@@ -263,6 +263,12 @@ The most triangles one surface may have (Surface Studio). A request past it is r
 
 </Param>
 
+<Param name={"PLEXORA_SURFACE_THREADS"} default={"8"}>
+
+How many threads build one set of cell surfaces (a 3-D mask's, in one pass over it); at most the cores this process may use. A data node reads its own.
+
+</Param>
+
 <Param name={"PLEXORA_SURFACE_PREVIEW_VOXELS"} default={"2000000"}>
 
 Voxels the Surface Studio threshold preview reads (a coarse level of the area asked for, kept in memory while the slider moves).

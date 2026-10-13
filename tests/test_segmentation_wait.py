@@ -103,6 +103,8 @@ def test_the_viewer_loads_the_panel_and_has_somewhere_to_put_the_chip():
     assert "views/segmentationWait.js" in index
     # Before main.js, which calls into it during init().
     assert index.index("views/segmentationWait.js") < index.index("js/main.js")
+    # And after the modal and chip it is an instance of.
+    assert index.index("views/jobWait.js") < index.index("views/segmentationWait.js")
     assert 'id="segmentation_chip"' in base, "the navbar is base.html's"
     # PopoverPortal is a classic script and the overlay goes through it, so it
     # has to already be defined. base.html loads it un-deferred in <head>, which

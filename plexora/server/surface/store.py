@@ -46,9 +46,17 @@ OBJECTS = "objects.parquet"
 MANIFEST_VERSION = 1
 TYPES = ("isosurface", "label_surfaces", "imported")
 ALGORITHM = "marching_cubes_lewiner"
+#: How cell surfaces are made (surface/nets.py). Part of their cache key, so a
+#: change of engine marks the cell surfaces made before it stale -- and only them.
+LABEL_ALGORITHM = "surface_nets_multilabel"
+LABEL_ENGINE = 2
+#: What a surface's `role` may be: "mask" is the viewer's own cell surfaces,
+#: built when Outlines or Filled is chosen in 3-D (services/maskSurfaces.js).
+ROLES = ("mask",)
 STAGES = {
-    "scanning": (0, 15, "Finding the objects"),
-    "extracting": (15, 85, "Extracting the surface"),
+    "scanning": (0, 10, "Finding the objects"),
+    "extracting": (10, 70, "Extracting the surface"),
+    "smoothing": (70, 85, "Smoothing the surface"),
     "measuring": (85, 95, "Measuring the objects"),
     "writing": (95, 99, "Writing the surface"),
 }
@@ -94,6 +102,7 @@ class SurfaceSpec:
     ids: tuple | None = None
     inset: float = label_surfaces.DEFAULT_INSET
     label: str | None = None
+    role: str | None = None
 
     @classmethod
     def from_dict(cls, raw) -> "SurfaceSpec":
@@ -135,12 +144,15 @@ class SurfaceSpec:
             raise SurfaceRefused("an isosurface needs the channel it is of")
         region = raw.get("region") if isinstance(raw.get("region"), dict) else None
         label = str(raw.get("label") or "").strip()[:120] or None
+        role = raw.get("role") or None
+        if role is not None and (kind != "label_surfaces" or role not in ROLES):
+            raise SurfaceRefused("role is mask, and only for cell surfaces")
         return cls(type=kind, channel=str(channel) if channel else None, t=t, iso=iso,
                    preprocess=isosurface.Preprocess.from_dict(raw.get("preprocess")),
                    min_size=_number(raw, "min_size", 0.0, low=0.0), smoothing=smoothing,
                    quality=quality, level=level, region=region, ids=ids,
                    inset=_number(raw, "inset", label_surfaces.DEFAULT_INSET, low=0.0),
-                   label=label)
+                   label=label, role=role)
 
     def to_dict(self) -> dict:
         out = {"type": self.type, "t": self.t, "smoothing": self.smoothing,
@@ -161,6 +173,8 @@ class SurfaceSpec:
             out["inset"] = self.inset
         if self.label:
             out["label"] = self.label
+        if self.role:
+            out["role"] = self.role
         return out
 
     def default_label(self, n_ids=None) -> str:
@@ -240,6 +254,7 @@ def cache_key(project, spec: SurfaceSpec) -> str:
              "manifest": MANIFEST_VERSION}
     if spec.type == "label_surfaces":
         parts["labels"] = _identity(project, "segmentation")
+        parts["engine"] = [LABEL_ALGORITHM, LABEL_ENGINE]
     raw = json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
@@ -613,51 +628,54 @@ def extract_isosurface(spec, source, channel, stage, report, cancelled):
 
 
 def extract_label_surfaces(spec, labels_volume, table, *, image_width, scale, stage, report,
-                           cancelled, physical=True):
+                           cancelled, physical=True, threads=None):
     """`(surface, level, info)`: one surface per object of `labels_volume`
     (frame `spec.t`'s), sized by the object table `table` when there is one
-    and found by a scan when not. `scale` is the image's voxel size in µm
-    (`physical` False when the spacing is not known: then no level pools
-    planes). Run here for a mask on this machine and by a data node for one
-    it holds."""
+    and by a count on the mask's coarsest level when not. `scale` is the
+    image's voxel size in µm (`physical` False when the spacing is not
+    known: then no level pools planes). Run here for a mask on this machine
+    and by a data node for one it holds -- the same function, the same
+    bytes (surface/nets.py)."""
+    import polars as pl
+
     shapes = labels_volume.level_shapes()
     spacing = scale if physical else None
+    keep = None
     if table is not None:
-        keep = table if spec.ids is None else table.filter(
-            __import__("polars").col("label").is_in(list(spec.ids)))
+        keep = table if spec.ids is None else table.filter(pl.col("label").is_in(list(spec.ids)))
+        if spec.ids is not None and keep.height == 0:
+            raise SurfaceRefused("none of those ids is an object of this mask")
         counts, faces = keep["volume_vox"].to_numpy(), _faces(keep)
     else:
         stage("scanning")
-        ids0, _boxes0, counts = label_surfaces.object_boxes(
-            labels_volume, 0, ids=spec.ids, progress=report, cancelled=cancelled)
-        keep, faces = None, None
-        if spec.ids is not None and not len(ids0):
-            raise SurfaceRefused("none of those ids is an object of this mask")
-    level, _estimate = levels.plan_labels(labels_volume, counts, faces=faces,
-                                          quality=spec.quality, level=spec.level,
-                                          image_width=image_width, scale=spacing)
+        found, counts = label_surfaces.label_counts(labels_volume, ids=spec.ids,
+                                                    progress=report, cancelled=cancelled)
+        faces = None
+        if not len(found):
+            raise SurfaceRefused("the mask has no objects" if spec.ids is None
+                                 else "none of those ids is an object of this mask")
+    level, estimate = levels.plan_labels(labels_volume, counts, faces=faces,
+                                         quality=spec.quality, level=spec.level,
+                                         image_width=image_width, scale=spacing)
     height_k, width_k = shapes[level]
     fx, fy = labels_volume.width / max(1, width_k), labels_volume.height / max(1, height_k)
-    if keep is not None and level == 0:
-        ids, boxes, _ = label_surfaces.boxes_from_table(
-            keep, dims=(labels_volume.depth, height_k, width_k))
-    else:
-        stage("scanning")
-        ids, boxes, _ = label_surfaces.object_boxes(labels_volume, level, ids=spec.ids,
-                                                    progress=report, cancelled=cancelled)
     # The planner's own rule, so the build pools the planes it was sized for.
     stride = levels.label_z_stride((image_width or shapes[0][1]) / max(1, width_k), spacing,
                                    labels_volume.depth)
     grid = marching.Grid.of((-(-labels_volume.depth // stride), height_k, width_k),
                             factor_xy=(fx, fy), z_stride=stride)
+    regions = None if keep is None else label_surfaces.regions_from_table(
+        keep, factor_xy=(fx, fy), z_stride=stride, shape=grid.shape)
     stage("extracting")
-    surface, rep = label_surfaces.extract(
-        labels_volume, level, grid, ids, boxes, scale=scale,
+    surface, rep = label_surfaces.extract_labels(
+        labels_volume, level, grid, ids=spec.ids, regions=regions, scale=scale,
         smoothing=mesh_mod.Smoothing.preset(spec.smoothing), inset=spec.inset * min(fx, fy),
-        progress=report, cancelled=cancelled, z_stride=stride)
+        progress=report, stage=stage, cancelled=cancelled, z_stride=stride, threads=threads)
     if not surface.n_triangles:
-        raise SurfaceRefused("no object of the mask produced a surface")
-    return surface, level, {"plan": {"level": level, "grid": grid.to_dict(), "z_stride": stride},
+        raise SurfaceRefused("no object of the mask produced a surface" if spec.ids is None
+                             else "none of those ids is an object of this mask")
+    return surface, level, {"plan": {"level": level, "grid": grid.to_dict(), "z_stride": stride,
+                                     "estimate": int(estimate)},
                             "report": rep, "ids_from": "labels"}
 
 
@@ -709,7 +727,7 @@ def write_surface(folder: Path, surface, frame, *, project, spec, level, volume,
         "spacing": {"x": spacing.x.to_dict(), "y": spacing.y.to_dict(), "z": spacing.z.to_dict(),
                     "units": "um" if physical else "voxel", "scale": list(scale)},
         "dims": [volume.width, volume.height, volume.depth],
-        "algorithm": ALGORITHM,
+        "algorithm": LABEL_ALGORITHM if spec.type == "label_surfaces" else ALGORITHM,
         "lods": [{"level": level, "path": mesh_name, **lod}],
         "objects": {"count": surface.n_objects, "ids_from": info.get("ids_from"),
                     "touching_bounds": int(np.asarray(frame["touches_bounds"]).sum())

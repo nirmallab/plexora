@@ -176,7 +176,9 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
 ## Not done
 
 - Oblique planes. `surfaceRenderer.setClipPlane` is the seam.
-- A voxel-label rendering of 3-D masks. Surface Studio's per-cell surfaces are cut instead.
+- A voxel-label rendering of 3-D masks. In 3-D the Cells control's Outlines and Filled draw
+  the mask as cell surfaces (services/maskSurfaces.js, SURFACES.md §4), which are cut with
+  the voxels.
 - Video Studio animates a cut only through its clip track. `inspect` is a frame's static cut.
 
 ## Tests

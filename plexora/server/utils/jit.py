@@ -107,7 +107,9 @@ def register_primer(module: str):
 for _name in ("plexora.server.utils.label_kernels",
               "plexora.plugins.gating.server.autogate.kernels",
               "plexora.plugins.qc.server.segqc.kernels",
-              "plexora.server.volume.measure"):
+              "plexora.server.volume.measure",
+              "plexora.server.surface.mesh",
+              "plexora.server.surface.nets"):
     register_primer(_name)
 
 

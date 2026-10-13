@@ -191,6 +191,55 @@ class ViewerControls {
         this.bindLayerOpacity();
         this.bindCta();
         this.bindOverlayKey();
+        this.bindVolume();
+    }
+
+    /**
+     * @function bindVolume - offer what can be drawn in the view on screen.
+     *
+     * The 3-D view has no label path: there, Outlines and Filled are the
+     * mask's cell surfaces (services/maskSurfaces.js), which need a 3-D mask
+     * and Surface Studio -- and Centroids are not drawn at all. So the row is
+     * re-offered on the way into 3-D and out of it (`plexora:view-requested`
+     * fires for every step of a scrub; only the edge is news), and when the
+     * licence changes. The mode itself is kept: back on a plane, the cells are
+     * drawn as they were.
+     */
+    bindVolume() {
+        this._wasVolume = this.inVolume();
+        window.addEventListener("plexora:view-requested", () => {
+            const volume = this.inVolume();
+            if (volume === this._wasVolume) return;
+            this._wasVolume = volume;
+            this.refreshAvailability();
+            this.paintLayerOpacity();
+            this.announce();
+        });
+        window.addEventListener("plexora:license-changed", () => {
+            this.refreshAvailability();
+            this.announce();
+        });
+    }
+
+    /** Whether the 3-D view, not the plane, is the picture. */
+    inVolume() {
+        const viewState = window.__plexora?.viewState;
+        return Boolean(viewState?.enabled?.() && viewState.isVolume?.());
+    }
+
+    /**
+     * @function volumeModes - in 3-D, what can be drawn there; null on a plane.
+     *
+     * Outlines and Filled draw a 3-D mask's cells as surfaces, which is
+     * Surface Studio's (`volume:surfaces`): without it, or with a 2-D mask,
+     * they are not offered -- not shown greyed, the rule every Paid control
+     * follows (services/paidFeature.js) -- and come back on the plane.
+     */
+    volumeModes() {
+        if (!this.inVolume()) return null;
+        const surfaces = Boolean(window.__plexora?.viewState?.labelsAre3d?.())
+            && Boolean(window.PlexoraPaid?.allows?.("volume:surfaces"));
+        return { none: true, centroids: false, outlines: surfaces, filled: surfaces };
     }
 
     /**
@@ -459,7 +508,9 @@ class ViewerControls {
      * section brings the control with it, tool or no tool.
      */
     paintLayerOpacity() {
-        const drawn = this.maskWanted() || this.pointsWanted();
+        // Not in 3-D: what it fades is drawn on the plane, and the 3-D view's
+        // cell surfaces have their own opacity on their card.
+        const drawn = (this.maskWanted() || this.pointsWanted()) && !this.inVolume();
         if (this.opacityRow) this.opacityRow.hidden = !drawn;
         if (!this.opacitySlider || !drawn) return;
         // Silent: this is the panel catching up with a layer that changed under
@@ -697,6 +748,9 @@ class ViewerControls {
             shown: this.shownModes(),
             layer: layer?.name || null,
             opacity: layer ? layer.opacity : null,
+            // Which picture the row is for: in 3-D, Outlines and Filled are
+            // cell surfaces (services/maskSurfaces.js follows this event).
+            volume: this.inVolume(),
         };
         window.dispatchEvent(new CustomEvent("plexora:cell-mode-changed", { detail }));
         window.dispatchEvent(new CustomEvent("plexora:outlines-changed", {
@@ -805,6 +859,8 @@ class ViewerControls {
                 && (!supported || supported.includes(mode));
         });
         if (layer && !(supported && supported.includes("none"))) offered.none = false;
+        const volume = this.volumeModes();
+        if (volume) ViewerControls.MODES.forEach((mode) => { if (!volume[mode]) offered[mode] = false; });
         return offered;
     }
 
@@ -855,6 +911,9 @@ class ViewerControls {
      *   - the resource is there but cannot do this -- shown, disabled, with the
      *     reason on it.
      *
+     * In 3-D the view decides first (volumeModes): what it cannot draw is
+     * not on the row, reason or not.
+     *
      * And one collapse: with nothing left but None, there is no choice being
      * offered. None is not an option so much as the state the viewer is already
      * in, and a lone greyed-looking button reads as a broken control rather
@@ -863,11 +922,14 @@ class ViewerControls {
     shownModes() {
         const offered = this.offeredModes();
         const supported = this.activeLayer()?.supportedModes || null;
+        const volume = this.volumeModes();
         const shown = {};
         ViewerControls.MODES.forEach((mode) => {
             const usedByTool = !supported || supported.includes(mode);
+            // In 3-D a mode the view cannot draw is not on the row at all.
+            const drawable = !volume || volume[mode];
             shown[mode] = Boolean(offered[mode])
-                || (usedByTool && Boolean(this.unusableReason(mode)));
+                || (usedByTool && drawable && Boolean(this.unusableReason(mode)));
         });
         if (!ViewerControls.MODES.some((mode) => mode !== "none" && shown[mode])) {
             ViewerControls.MODES.forEach((mode) => { shown[mode] = false; });

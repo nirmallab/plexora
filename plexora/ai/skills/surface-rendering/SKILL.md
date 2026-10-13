@@ -38,6 +38,11 @@ licence with `volume` (`volume:surfaces`); over MCP also `mcp`. A refusal's
      diameter of the objects to keep). Noise pieces: `min_size`.
 3. Cells of a volumetric mask: `surface_create` with `type: "label_surfaces"` (all cells, or
    `ids`). Each surface carries its cell's id, so the table's rows and the surfaces line up.
+   In the volume view, the viewer's own Outlines and Filled draw the whole mask this way
+   (`viewer_set_cell_mode` with outlines or filled): built the first time, a preview then
+   the standard surfaces, as glass (outlines) or solid (filled); `viewer_get_state` says
+   whether they are building or shown. Use that to show the mask; use `surface_create` for
+   a selection of cells or your own recipe.
 4. Look before you conclude: `viewer_set_volume_mode`, `viewer_set_camera`, then
    `viewer_capture`. `viewer_set_inspect` cuts the stack open to see inside -- a cutaway
    takes a side or a corner off, a crop keeps a box -- and the surfaces are cut with it. For
@@ -102,6 +107,7 @@ drawn.
 ## Failure modes
 
 - `license_required`: Surface Studio is not on this licence; pass on the refusal's hint.
+  Without it the viewer does not offer Outlines or Filled in the volume view at all.
 - Nothing crosses the isovalue: the value is outside the channel's range; suggest one.
 - Too many triangles: choose a lower quality, a region (`box`, `planes`) or fewer cells.
 - `resource_not_local`: the stack is on another machine; surfaces are made where it is.

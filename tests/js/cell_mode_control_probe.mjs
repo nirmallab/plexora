@@ -163,7 +163,8 @@ function fakeViewer({ segmentationFails = false } = {}) {
 function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     hasCentroids = true, segmentationFails = false, cellLayer = null,
     segmentationStatus = "ready", hasTable = hasCentroids,
-    answerRequirements = true, maskAttached = false } = {}) {
+    answerRequirements = true, maskAttached = false,
+    volume = false, labels3d = false, licensed = false } = {}) {
     const buttons = new Map(MODES.map((mode) => [mode, makeButton(mode)]));
     const handlers = new Map();
     //: Listeners the control puts on the DOCUMENT rather than on the Cells
@@ -263,9 +264,28 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     // names exactly the missing things and nothing else.
     const asked = [];
     const viewer = fakeViewer({ segmentationFails });
+    //: Listeners on the window: the view's edges and the licence.
+    const winHandlers = new Map();
+    //: The view state, as much of it as the control reads: which picture is
+    //: on screen, and whether the mask is a 3-D one.
+    const view = { mode: volume ? "volume" : "plane" };
+    const viewState = {
+        enabled: () => true,
+        isVolume: () => view.mode === "volume",
+        labelsAre3d: () => labels3d,
+    };
+    const license = { paid: licensed, entitlements: licensed ? ["volume"] : [] };
     const win = {
         dispatchEvent(event) { events.push({ type: event.type, detail: event.detail }); },
-        addEventListener() {},
+        addEventListener(type, fn) {
+            if (!winHandlers.has(type)) winHandlers.set(type, []);
+            winHandlers.get(type).push(fn);
+        },
+        PlexoraPaid: {
+            allows: (entitlement) => license.paid
+                && license.entitlements.some((grant) => entitlement === grant
+                                             || entitlement.startsWith(`${grant}:`)),
+        },
         flaskVariables: { datasource: "demo" },
         location: { reload() { asked.push("reload"); } },
         PlexoraRequirements: {
@@ -275,6 +295,7 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
             },
         },
         __plexora: {
+            viewState,
             refreshDataset() {
                 asked.push("refresh");
                 return Promise.resolve({ maskAttached });
@@ -341,6 +362,17 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
         pointSize, pointSizeRow, opacity, opacityRow, overlayHint,
         pointSizeSlider: sliders.get(pointSize),
         opacitySlider: sliders.get(opacity),
+        /** Go into 3-D or back to the plane, as viewState announces it. */
+        setView(mode) {
+            view.mode = mode;
+            (winHandlers.get("plexora:view-requested") || []).forEach((fn) => fn({}));
+        },
+        /** A licence activated (or replaced) in Settings, inside this page. */
+        setLicence(paid) {
+            license.paid = paid;
+            license.entitlements = paid ? ["volume"] : [];
+            (winHandlers.get("plexora:license-changed") || []).forEach((fn) => fn({}));
+        },
         /** Press a bare key the way the document would deliver it. */
         press(key, init = {}) {
             const event = { key, preventDefault() { this.defaultPrevented = true; },
@@ -1176,6 +1208,79 @@ const activeModes = (buttons) =>
         asked.includes("reload") && !asked.includes("watch"),
         "attaching one inserts the Area channel at imageData[0], so every "
         + "channel index this page holds has just moved");
+}
+
+// -- the 3-D view: Outlines and Filled are cell surfaces there ------------
+
+const shownNow = (buttons) => MODES.filter((mode) => buttons.get(mode).shown);
+
+{
+    // No Surface Studio: in 3-D the mask cannot be drawn, so the row offers
+    // nothing -- hidden, not greyed -- and the plane gets it all back.
+    const app = build({ labels3d: true, licensed: false });
+    check("on a plane every mode the project can draw is offered",
+        String(shownNow(app.buttons)) === "none,centroids,outlines,filled",
+        String(shownNow(app.buttons)));
+    app.setView("volume");
+    check("unlicensed, 3-D hides Centroids, Outlines and Filled",
+        !app.buttons.get("centroids").shown && !app.buttons.get("outlines").shown
+        && !app.buttons.get("filled").shown, String(shownNow(app.buttons)));
+    check("...and with only None left the whole row gives way",
+        app.control.hidden === true);
+    check("...and none of them can be reached from the keyboard",
+        app.buttons.get("outlines").disabled && app.buttons.get("filled").disabled);
+    const announced = app.events.filter((e) => e.type === "plexora:cell-mode-changed").pop();
+    check("...and the View menu is told the same",
+        announced && announced.detail.volume === true && !announced.detail.shown.outlines,
+        JSON.stringify(announced?.detail));
+    app.setView("plane");
+    check("back on the plane they reappear",
+        String(shownNow(app.buttons)) === "none,centroids,outlines,filled"
+        && app.control.hidden === false, String(shownNow(app.buttons)));
+}
+
+{
+    // Surface Studio and a 3-D mask: Outlines and Filled are offered in 3-D
+    // (as surfaces); Centroids are not drawn there.
+    const app = build({ labels3d: true, licensed: true, volume: true });
+    check("licensed, 3-D offers Outlines and Filled",
+        app.buttons.get("outlines").shown && !app.buttons.get("outlines").disabled
+        && app.buttons.get("filled").shown && !app.buttons.get("filled").disabled);
+    check("...but never Centroids, which 3-D does not draw",
+        !app.buttons.get("centroids").shown && app.buttons.get("centroids").disabled);
+    await app.controls.selectMode("filled");
+    check("choosing Filled in 3-D is a mode change the service hears",
+        app.controls.mode === "filled"
+        && app.events.some((e) => e.type === "plexora:cell-mode-changed" && e.detail.mode === "filled"));
+    check("...and the overlay opacity, which fades the plane's drawing, is not offered in 3-D",
+        app.opacityRow.hidden === true);
+    app.setView("plane");
+    check("...but is on the plane, drawing Filled", app.opacityRow.hidden === false);
+    app.setView("volume");
+    app.setLicence(false);
+    check("a licence that goes takes them off the row at once",
+        !app.buttons.get("outlines").shown && app.control.hidden === true);
+    app.setLicence(true);
+    check("...and one that comes brings them back",
+        app.buttons.get("outlines").shown && app.buttons.get("filled").shown);
+}
+
+{
+    // A 2-D mask has no cells in depth to draw: licensed or not.
+    const app = build({ labels3d: false, licensed: true, volume: true });
+    check("a 2-D mask offers nothing in 3-D, even with Surface Studio",
+        !app.buttons.get("outlines").shown && app.control.hidden === true);
+}
+
+{
+    // Scrubbing in 3-D fires view-requested for every step; the row is
+    // re-offered only at the edge.
+    const app = build({ labels3d: true, licensed: true, volume: true });
+    const before = app.events.length;
+    app.setView("volume");
+    app.setView("volume");
+    check("steps inside 3-D are not news to the row",
+        app.events.length === before, `${app.events.length - before} events`);
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

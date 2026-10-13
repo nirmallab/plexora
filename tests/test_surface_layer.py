@@ -268,6 +268,40 @@ def test_cell_surfaces_follow_the_mask_ids_and_join_the_voxel_table(tmp_path, cl
     assert Project.find("cells").layer(selected["layer"]).label == "Surfaces of 1 cell"
 
 
+def test_a_preview_then_a_standard_build_are_two_layers_with_the_mask_role(tmp_path, client,
+                                                                           surfaces_license):
+    """What the viewer's Cells control asks for in 3-D: a quick preview, then
+    the standard build, both marked as the mask's own -- with no object table,
+    so the objects are counted on the mask's coarsest level."""
+    _project(tmp_path, name="cells", mask=True)
+    asked = {"type": "label_surfaces", "smoothing": "light", "role": "mask", "t": 0}
+    preview = client.post("/volume/cells/surfaces",
+                          json={**asked, "quality": "preview", "label": "Cells (preview)"})
+    assert preview.status_code == 202, preview.get_json()
+    standard = client.post("/volume/cells/surfaces",
+                           json={**asked, "quality": "standard", "label": "Cells of the 3-D mask"})
+    first, second = preview.get_json()["layer"], standard.get_json()["layer"]
+    assert first != second
+    for layer_id in (first, second):
+        assert _settle("cells", layer_id)["status"] == "ready", layer_jobs.get("cells", layer_id)
+        manifest = client.get(f"/volume/cells/surfaces/{layer_id}/manifest").get_json()
+        assert manifest["algorithm"] == "surface_nets_multilabel"
+        assert manifest["params"]["role"] == "mask"
+        assert manifest["objects"]["count"] == 3
+        assert manifest["build"]["report"]["engine"]["blocks"] >= 1
+    listing = {entry["id"]: entry for entry in client.get("/volume/cells/surfaces")
+               .get_json()["surfaces"]}
+    assert listing[first]["role"] == "mask" and listing[first]["spec"]["quality"] == "preview"
+    assert listing[second]["spec"]["quality"] == "standard" and not listing[second]["stale"]
+    # A role is the mask's only, and only for cell surfaces.
+    assert client.post("/volume/cells/surfaces", json={**ISO, "role": "mask"}).status_code == 400
+    assert client.post("/volume/cells/surfaces",
+                       json={**asked, "role": "other"}).status_code == 400
+    # The same request again is the layer that exists.
+    again = client.post("/volume/cells/surfaces", json={**asked, "quality": "preview"})
+    assert again.status_code == 200 and again.get_json()["layer"] == first
+
+
 def test_the_view_state_keeps_the_3d_camera_and_what_is_shown(tmp_path, client):
     _project(tmp_path)
     state = {"mode": "volume", "volume": {"camera": {"q": [0, 0, 0.6, 0.8], "dist": 2.5,

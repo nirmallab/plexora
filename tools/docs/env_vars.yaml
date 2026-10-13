@@ -140,6 +140,10 @@ public:
     group: Z-stacks
     description: The most triangles one surface may have (Surface Studio). A request past it is refused with the estimate and what to change -- a lower quality, a smaller region or fewer cells -- rather than built and then not drawable in a browser.
     default: "5000000"
+  - name: PLEXORA_SURFACE_THREADS
+    group: Z-stacks
+    description: How many threads build one set of cell surfaces (a 3-D mask's, in one pass over it); at most the cores this process may use. A data node reads its own.
+    default: "8"
   - name: PLEXORA_SURFACE_PREVIEW_VOXELS
     group: Z-stacks
     description: Voxels the Surface Studio threshold preview reads (a coarse level of the area asked for, kept in memory while the slider moves).

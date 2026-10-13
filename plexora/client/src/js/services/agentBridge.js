@@ -843,6 +843,9 @@ window.PlexoraAgentBridge = (function () {
         state.hd_mode = panel ? Boolean(panel.isHdMode()) : false;
         state.layers = describeLayers();
         state.cell_mode = plexora.viewerControls ? (plexora.viewerControls.mode || null) : null;
+        // In 3-D, Outlines and Filled draw a 3-D mask's cells as surfaces:
+        // whether they are allowed, built, building and which one is shown.
+        state.mask_surfaces = window.PlexoraMaskSurfaces?.report?.() || null;
         state.tools_open = openTools();
         state.tools_loaded = (loader && loader.loadedTools && loader.loadedTools()) || [];
         state.active_tool = (loader && loader.activeTool && loader.activeTool()) || null;
@@ -2045,7 +2048,19 @@ window.PlexoraAgentBridge = (function () {
                     + `(offered: ${names.join(", ") || "none"})`);
             }
             touch();
-            return { cell_mode: controls.mode };
+            const answer = { cell_mode: controls.mode };
+            // In 3-D the mask is drawn as cell surfaces, built the first time
+            // they are asked for: say whether they are on screen or on their way.
+            const surfaces = window.PlexoraMaskSurfaces;
+            if (surfaces && controls.inVolume?.() && (mode === "outlines" || mode === "filled")) {
+                await surfaces.ensure?.();
+                const report = surfaces.report();
+                answer.surfaces = { layer: report.shown || report.standard || report.preview,
+                                    status: report.state === "ready" || report.shown ? "shown" : report.state,
+                                    quality: report.shown && report.shown === report.standard ? "standard"
+                                        : (report.shown ? "preview" : null) };
+            }
+            return answer;
         },
 
         async capture_view(args, call) {

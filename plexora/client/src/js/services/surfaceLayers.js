@@ -150,6 +150,8 @@ window.PlexoraSurfaceLayers = (function () {
         clearTimeout(queued.timer);
         queued.timer = setTimeout(() => {
             pendingPersist.delete(id);
+            // A layer removed meanwhile has nothing left to save to.
+            if (!stack?.get(id)) return;
             const body = {};
             if (queued.visible !== undefined) body.visible = queued.visible;
             if (Object.keys(queued.render).length) body.render = queued.render;
@@ -465,8 +467,11 @@ window.PlexoraSurfaceLayers = (function () {
 
     async function refreshCuts() {
         const where = planeQuery();
+        // Not the mask's own surfaces (services/maskSurfaces.js): on a plane
+        // the mask is drawn from its labels, and their cut would draw it twice.
         const layers = surfaceLayers().filter((layer) => layer.visible !== false
-            && (layer.spec?.status || "ready") === "ready");
+            && (layer.spec?.status || "ready") === "ready"
+            && layer.spec?.surface?.role !== "mask");
         const keep = new Set(layers.map((layer) => layer.id));
         for (const id of [...cuts.keys()]) if (!keep.has(id)) cuts.delete(id);
         if (!where || !layers.length) {
