@@ -6,10 +6,12 @@
  * like gating a 2-D image: step through the stack and judge each plane's
  * cells. Two things are added here, and neither changes what a gate is:
  *
- * - WHAT THE IMAGE SHOWS: the plane alone, or a SLAB around it -- the mean,
- *   max or median of the planes within half a thickness of it (5 um by
- *   default), cut where the stack ends -- for a stain too faint or too uneven
- *   to judge on one optical section. It is the viewer's own projection, kept
+ * - WHAT THE IMAGE SHOWS: the plane alone, or a SLAB around it -- the
+ *   planes within half a thickness of it (5 um by default) combined, cut
+ *   where the stack ends -- for a stain too faint or too uneven to judge on
+ *   one optical section. Opening the panel shows the slab (enterSlab). Mean
+ *   by default; how the planes are combined is the Depth card's to change,
+ *   and the slab keeps whatever it is set to there. It is the viewer's own projection, kept
  *   centred on the plane as the user steps (viewState's following slab,
  *   `clip`), and the outlines stay the plane's own cells: a projection's
  *   picture is several planes, its outlines are always one plane's.
@@ -35,11 +37,11 @@ const GATE_PLANE_PREFETCH_MS = 160;
 const GATE_SLAB_TYPE_MS = 450;
 const GATE_SLAB_DEFAULT_UM = 5;
 const GATE_SLAB_DEFAULT_PLANES = 5;
-//: The panel's aggregations, as the viewer's projection spells them.
-const GATE_SLAB_OPS = { mean: "mean", max: "max", median: "med" };
+//: How a slab's planes are combined unless the Depth card says otherwise.
+const GATE_SLAB_DEFAULT_OP = "mean";
 const GATE_VIEW_TITLES = {
     plane: "Show the plane on its own.",
-    slab: "Show the planes around this one combined (mean, max or median), centred on it and "
+    slab: "Show the planes around this one combined, centred on it and "
         + "cut where the stack ends. The outlines stay this plane's cells, and gates still use "
         + "each cell's whole-cell value.",
 };
@@ -118,26 +120,29 @@ class GatePlaneControl {
         return Math.floor(Number(thickness) / (2 * step) + 1e-9);
     }
 
-    /** What the slab fields describe: the projection on screen when it is a
-     *  following one, else the last slab chosen, else the default. */
+    /** What the thickness describes: the projection on screen when it is a
+     *  following one, else the last slab chosen, else the default. `op` is
+     *  the viewer's own spelling, carried through untouched. */
     slabChoice() {
         const last = this.lastSlab || {};
         const zKnown = this.zStepUm() > 0;
         const base = zKnown
             ? { thickness_um: Number(last.thickness_um) || GATE_SLAB_DEFAULT_UM }
             : { planes: Number(last.planes) || GATE_SLAB_DEFAULT_PLANES };
-        const agg = GATE_SLAB_OPS[last.agg] ? last.agg : "mean";
         const state = this.state;
         if (state?.mode === "slab" && state.slab.follow) {
-            const onScreen = Object.keys(GATE_SLAB_OPS).find((key) => GATE_SLAB_OPS[key] === state.slab.op);
+            const op = state.slab.op || GATE_SLAB_DEFAULT_OP;
             const planes = state.slab.thickness;
             if (2 * (this.halfFor(base) ?? -1) + 1 !== planes) {
-                // Set elsewhere (the Depth card): said in its own planes.
-                return { planes, agg: onScreen || agg, foreign: !onScreen };
+                // Set elsewhere (the Depth card): in microns when the stack's
+                // z step is known -- n planes span n steps centre to centre,
+                // which halfFor maps back to the same n -- else in planes.
+                const thickness = zKnown ? Math.round(planes * this.zStepUm() * 1000) / 1000 : null;
+                return thickness > 0 ? { thickness_um: thickness, op } : { planes, op };
             }
-            return { ...base, agg: onScreen || agg, foreign: !onScreen };
+            return { ...base, op };
         }
-        return { ...base, agg };
+        return { ...base, op: GATE_SLAB_DEFAULT_OP };
     }
 
     /** Show the plane, or the slab around it. */
@@ -152,12 +157,20 @@ class GatePlaneControl {
         const half = this.halfFor(slab);
         if (half === null) return;
         this.rememberSlab(slab);
-        vs.set({ mode: "slab", slab: { thickness: 2 * half + 1, op: GATE_SLAB_OPS[slab.agg] || "mean",
+        vs.set({ mode: "slab", slab: { thickness: 2 * half + 1, op: slab.op || GATE_SLAB_DEFAULT_OP,
                                        follow: true, clip: true } });
     }
 
+    /** The panel was opened: show the slab around the plane, unless a slab
+     *  is on screen already (the Depth card's fixed range included). From
+     *  the 3-D view too -- gating is judged on a plane's cells. */
+    enterSlab() {
+        if (!this.root || this.state?.mode === "slab") return;
+        this.show("slab");
+    }
+
     rememberSlab(slab) {
-        this.lastSlab = { ...(this.lastSlab || {}), agg: slab.agg || "mean",
+        this.lastSlab = { ...(this.lastSlab || {}),
                           ...(slab.thickness_um !== undefined ? { thickness_um: slab.thickness_um } : {}),
                           ...(slab.planes !== undefined ? { planes: slab.planes } : {}) };
         try {
@@ -326,6 +339,8 @@ class GatePlaneControl {
     // -- painting -------------------------------------------------------------
 
     build() {
+        // One line: VIEW [Plane | Slab] | 5 µm. The thickness is a bare number
+        // until it is clicked; it and its divider are hidden for the plane.
         this.root.innerHTML = `
             <div class="control-row gate-view-row">
                 <span class="control-label gate-row-caption" id="gate_view_label">View</span>
@@ -335,25 +350,20 @@ class GatePlaneControl {
                         <button type="button" class="cell-mode-option" data-gate-view="slab" role="radio" aria-checked="false">Slab</button>
                     </div>
                 </div>
-            </div>
-            <div class="gate-slab-row" hidden>
-                <input class="depth-panel-number is-short gate-slab-thickness" type="number"
-                       min="0.1" step="0.5" inputmode="decimal" aria-label="Slab thickness">
-                <span class="depth-panel-unit gate-slab-unit">µm</span>
-                <select class="sidebar-select depth-panel-select gate-slab-agg"
-                        aria-label="How the slab's planes are combined">
-                    <option value="mean">Mean</option>
-                    <option value="max">Max</option>
-                    <option value="median">Median</option>
-                </select>
-                <span class="depth-panel-unit gate-slab-planes"></span>
+                <div class="gate-slab-row" hidden>
+                    <span class="gate-view-divider" aria-hidden="true"></span>
+                    <label class="gate-slab-field">
+                        <input class="gate-slab-thickness" type="number" min="0.1" step="0.5"
+                               inputmode="decimal" aria-label="Slab thickness">
+                        <span class="gate-slab-unit">µm</span>
+                    </label>
+                </div>
             </div>`;
         this.buttons = [...this.root.querySelectorAll("[data-gate-view]")];
         this.slabRow = this.root.querySelector(".gate-slab-row");
         this.thickness = this.root.querySelector(".gate-slab-thickness");
         this.unit = this.root.querySelector(".gate-slab-unit");
-        this.agg = this.root.querySelector(".gate-slab-agg");
-        this.planesText = this.root.querySelector(".gate-slab-planes");
+        this.field = this.root.querySelector(".gate-slab-field");
         for (const button of this.buttons) {
             button.title = GATE_VIEW_TITLES[button.dataset.gateView];
             button.addEventListener("click", () => this.onView(button.dataset.gateView));
@@ -376,7 +386,11 @@ class GatePlaneControl {
             clearTimeout(this._typeTimer);
             this.onSlabFields();
         });
-        this.agg.addEventListener("change", () => this.onSlabFields());
+        // A bare number: Enter puts it down, so the field goes back to text.
+        this.thickness.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") this.thickness.blur();
+        });
+        this.thickness.addEventListener("blur", () => this.paintPlanes());
     }
 
     onView(kind) {
@@ -391,10 +405,11 @@ class GatePlaneControl {
             this.paintPlanes();
             return;
         }
-        const agg = this.agg.value || "mean";
-        // In the unit the field shows: planes for a projection set elsewhere.
+        // The planes combined as they are on screen (the Depth card's to
+        // change); in the unit the field shows.
+        const op = this.slabChoice().op;
         const choice = this.unit.textContent === "µm" && this.zStepUm() > 0
-            ? { thickness_um: value, agg } : { planes: Math.round(value), agg };
+            ? { thickness_um: value, op } : { planes: Math.round(value), op };
         this.show("slab", choice);
     }
 
@@ -416,50 +431,47 @@ class GatePlaneControl {
         }
         this.slabRow.hidden = kind !== "slab";
         const zKnown = this.zStepUm() > 0;
-        if (kind === "slab" && document.activeElement !== this.thickness
-                && document.activeElement !== this.agg) {
+        if (kind === "slab" && document.activeElement !== this.thickness) {
             const choice = this.slabChoice();
             const inMicrons = zKnown && choice.thickness_um !== undefined;
             this.thickness.value = inMicrons ? String(choice.thickness_um) : String(choice.planes);
             this.unit.textContent = inMicrons ? "µm" : "planes";
-            this.agg.value = choice.agg || "mean";
         }
         this.thickness.step = this.unit.textContent === "µm" ? "0.5" : "2";
         this.thickness.min = this.unit.textContent === "µm" ? "0.1" : "1";
-        this.thickness.title = zKnown
-            ? `Planes within half this thickness of the plane on screen are combined, centre to centre (${this.formatUm(this.zStepUm())} µm per plane).`
-            : "This stack's z step is not known, so the thickness is in planes. Set it in the Depth card to type microns.";
         this.paintPlanes();
         this.paintReadout();
     }
 
-    /** Beside the fields: the planes combined now ("z 10–14", which shows
-     *  the cut at either end too), or while a thickness is being typed, how
-     *  many planes it comes to. */
+    /** The thickness, sized to its digits so "5 µm" reads as one word, and
+     *  its tooltip: how the planes are chosen, and which planes are combined
+     *  now ("z 10–14", cut at either end) or a typed thickness comes to. */
     paintPlanes() {
-        if (!this.planesText) return;
+        if (!this.thickness) return;
+        const digits = Math.max(1, String(this.thickness.value || "").length);
+        this.thickness.style.width = `${digits + 0.15}ch`;
+        const step = this.zStepUm();
+        const lines = [step > 0
+            ? `Click to change. Planes within half this thickness of the plane on screen are combined, centre to centre (${this.formatUm(step)} µm per plane).`
+            : "Click to change. This stack's z step is not known, so the thickness is in planes. Set it in the Depth card to type microns."];
         const state = this.state;
-        const typing = document.activeElement === this.thickness;
-        this.planesText.textContent = "";
-        this.planesText.title = "";
-        if (typing) {
+        if (document.activeElement === this.thickness) {
             const typed = Number(this.thickness.value);
             const body = this.unit.textContent === "µm" ? { thickness_um: typed }
                 : { planes: Math.round(typed) };
             const half = typed > 0 ? this.halfFor(body) : null;
-            if (half === null) return;
-            const count = 2 * half + 1;
-            this.planesText.textContent = `${count} plane${count === 1 ? "" : "s"}`;
-            this.planesText.title = count === 1
-                ? "Thinner than two plane steps: the plane on its own." : "";
-            return;
+            if (half !== null) {
+                const count = 2 * half + 1;
+                lines.push(count === 1 ? "Thinner than two plane steps: the plane on its own."
+                    : `${count} planes.`);
+            }
+        } else if (state?.mode === "slab") {
+            const { z0, z1 } = state.slab;
+            const count = z1 - z0 + 1;
+            lines.push(`Now: ${count} plane${count === 1 ? "" : "s"} (z ${z0}${z1 > z0 ? `–${z1}` : ""}), `
+                + `centred on plane ${state.z} and cut where the stack ends.`);
         }
-        if (state?.mode !== "slab") return;
-        const { z0, z1 } = state.slab;
-        const count = z1 - z0 + 1;
-        this.planesText.textContent = z1 > z0 ? `z ${z0}–${z1}` : `z ${z0}`;
-        this.planesText.title = `${count} plane${count === 1 ? "" : "s"}, centred on plane ${state.z} `
-            + "and cut where the stack ends, so a plane near either end combines fewer.";
+        this.field.title = lines.join("\n");
     }
 
     paintReadout() {

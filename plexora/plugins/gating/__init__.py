@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_table_fix"
+VERSION = "20261012_view_auto_slab"
 
 
 def _blueprint():

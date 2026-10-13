@@ -32,6 +32,7 @@ CHECKS = (
     "microns become planes centre to centre, from the z step alone",
     "without a known z step the thickness is in planes",
     "the slab comes back as the user left it",
+    "opening the panel shows the slab, unless one is on screen already",
     "the plane's cells are read once per plane and marker",
     "the planes ahead of the hand are read once it is still",
     "the plane's shading: on the plot's own axis, smoothed, NaN left out",

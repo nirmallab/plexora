@@ -139,10 +139,11 @@ await check("the plane counted is the one whose outlines are drawn", () => {
 
 await check("Slab asks the viewer for a following, clipped projection; Plane takes it back", () => {
     const { self, viewState } = control();
-    self.show("slab", { thickness_um: 5, agg: "median" });
+    self.show("slab", { thickness_um: 5 });
     assert.deepEqual(JSON.parse(JSON.stringify(viewState.sets.at(-1))),
-                     { mode: "slab", slab: { thickness: 5, op: "med", follow: true, clip: true } });
-    self.show("slab", { thickness_um: 2, agg: "max" });
+                     { mode: "slab", slab: { thickness: 5, op: "mean", follow: true, clip: true } },
+                     "mean unless the Depth card says otherwise");
+    self.show("slab", { thickness_um: 2, op: "max" });
     assert.equal(viewState.sets.at(-1).slab.thickness, 3);
     assert.equal(viewState.sets.at(-1).slab.op, "max");
     self.show("plane");
@@ -164,23 +165,48 @@ await check("without a known z step the thickness is in planes", () => {
     const { self, viewState } = control({ zStep: { value: 1, unit: "µm", source: "default" } });
     assert.equal(self.zStepUm(), null, "a guessed step is not a step");
     assert.equal(self.halfFor({ thickness_um: 5 }), null);
-    assert.deepEqual({ ...self.slabChoice() }, { planes: 5, agg: "mean" });
-    self.show("slab", { planes: 4, agg: "mean" });
+    assert.deepEqual({ ...self.slabChoice() }, { planes: 5, op: "mean" });
+    self.show("slab", { planes: 4, op: "mean" });
     assert.equal(viewState.sets.at(-1).slab.thickness, 5, "an even count stays centred");
 });
 
 await check("the slab comes back as the user left it", () => {
     const first = control();
-    first.self.show("slab", { thickness_um: 7.5, agg: "max" });
+    first.self.show("slab", { thickness_um: 7.5, op: "max" });
     const again = control();
     again.self.lastSlab = again.self.loadLastSlab();
-    assert.deepEqual({ ...again.self.slabChoice() }, { thickness_um: 7.5, agg: "max" });
+    assert.deepEqual({ ...again.self.slabChoice() }, { thickness_um: 7.5, op: "mean" },
+                     "the thickness is remembered; how planes combine is the Depth card's");
     const fresh = control();
-    assert.deepEqual({ ...fresh.self.slabChoice() }, { thickness_um: 5, agg: "mean" });
-    // A following projection set elsewhere (the Depth card) is said in its own planes.
-    const elsewhere = control({ state: { mode: "slab", z: 8,
-                                         slab: { z0: 4, z1: 12, thickness: 9, op: "max", follow: true } } });
-    assert.deepEqual({ ...elsewhere.self.slabChoice() }, { planes: 9, agg: "max", foreign: false });
+    assert.deepEqual({ ...fresh.self.slabChoice() }, { thickness_um: 5, op: "mean" });
+    // A following projection set elsewhere (the Depth card) keeps its own op,
+    // and its planes are said in microns when the z step is known...
+    const slab = { z0: 4, z1: 12, thickness: 9, op: "max", follow: true };
+    const elsewhere = control({ state: { mode: "slab", z: 8, slab },
+                                zStep: { value: 0.28, unit: "µm", source: "metadata" } });
+    const choice = elsewhere.self.slabChoice();
+    assert.deepEqual({ ...choice }, { thickness_um: 2.52, op: "max" });
+    assert.equal(2 * elsewhere.self.halfFor(choice) + 1, 9, "...which come back as the same planes");
+    // ...and in planes when it is not.
+    const unknown = control({ state: { mode: "slab", z: 8, slab },
+                              zStep: { value: 1, unit: "µm", source: "default" } });
+    assert.deepEqual({ ...unknown.self.slabChoice() }, { planes: 9, op: "max" });
+});
+
+await check("opening the panel shows the slab, unless one is on screen already", () => {
+    for (const mode of ["plane", "volume"]) {
+        const { self, viewState } = control({ state: { mode, z: 5, slab: {} } });
+        self.root = {};
+        self.enterSlab();
+        assert.deepEqual(JSON.parse(JSON.stringify(viewState.sets.at(-1))),
+                         { mode: "slab", slab: { thickness: 5, op: "mean", follow: true, clip: true } },
+                         `from the ${mode} view`);
+    }
+    const { self, viewState } = control({ state: { mode: "slab", z: 5,
+                                                   slab: { z0: 0, z1: 9, thickness: 10, op: "max", follow: false } } });
+    self.root = {};
+    self.enterSlab();
+    assert.equal(viewState.sets.length, 0, "a slab on screen is left as it is");
 });
 
 await check("the plane's cells are read once per plane and marker", async () => {

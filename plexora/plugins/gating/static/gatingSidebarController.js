@@ -102,7 +102,18 @@ class GatingSidebarController {
         this._onCellGate = (event) => {
             if ((event.detail || {}).layer === this.layerName()) this.paintQcNote();
         };
+        //: Set while a routed page (Settings, Figures) covers the viewer: the
+        //: onShow that follows is the viewer coming back, not the panel being
+        //: opened, and leaves the view as the user had it.
+        this._viewerCovered = false;
+        //: Cleared again once the viewer is back: toolLoader's listener, added
+        //: at start-up, has called onShow by then, and a panel that was folded
+        //: meanwhile gets no onShow to clear it.
+        this._onViewerHidden = () => { this._viewerCovered = true; };
+        this._onViewerShown = () => { this._viewerCovered = false; };
         this.ctx.onCleanup?.(() => {
+            window.removeEventListener("plexora:viewer-hidden", this._onViewerHidden);
+            window.removeEventListener("plexora:viewer-shown", this._onViewerShown);
             window.removeEventListener("plexora:cell-gate-changed", this._onCellGate);
             this.disarmKeys();
             this._plotResize?.disconnect?.();
@@ -145,6 +156,8 @@ class GatingSidebarController {
         if (typeof GatePlaneControl === "function" && GatePlaneControl.applies(this.ctx)) {
             this.planes = new GatePlaneControl(this);
             this.planes.init();
+            // A panel restored on reload was opened before this line ran.
+            if (this._shown) this.planes.enterSlab();
         }
 
         // One request, not awaited: the panel is usable while it is in flight
@@ -169,6 +182,9 @@ class GatingSidebarController {
         // The note under the gate says how many cells QC left uncalled, which
         // the viewer knows once it has evaluated the gate (paintQcNote).
         window.addEventListener("plexora:cell-gate-changed", this._onCellGate);
+        // Whether the next onShow is the panel opening (see _viewerCovered).
+        window.addEventListener("plexora:viewer-hidden", this._onViewerHidden);
+        window.addEventListener("plexora:viewer-shown", this._onViewerShown);
 
         // No resize listener. d3-simple-slider had to be handed a width in
         // pixels and rebuilt whenever the sidebar changed size; a
@@ -186,6 +202,9 @@ class GatingSidebarController {
         this.armKeys();
         this._shown = true;
         this.contrast?.show();
+        // Opening the panel on a z-stack shows the slab around the plane.
+        if (!this._viewerCovered) this.planes?.enterSlab();
+        this._viewerCovered = false;
     }
 
     // Called by toolLoader.js when the panel is put away, and when a routed
