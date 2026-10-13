@@ -141,6 +141,10 @@ check("a single-voxel slab is a section at its centre", bsingle.cut === G.CUT.pl
 const edge = G.resolve(G.clean({ mode: "slab", axes: { z: true }, slab: { thickness: { z: 9 } } }, d, space),
                        G.positions({ z: 0 }, d), d);
 check("a slab at the stack's edge is cut there", edge.planes[0].lo === 0 && edge.planes[0].hi === 5);
+const texEdge = G.toTexture(edge, covered, 40);
+check("...and the shader is given the interval drawn, not a centre past the edge",
+      near(texEdge.plane[2] - texEdge.half[2], 0) && near(texEdge.plane[2] + texEdge.half[2], 5 / 40),
+      JSON.stringify(texEdge));
 
 // -- texture space -----------------------------------------------------------
 const tex = G.toTexture(cxz, covered, 40);

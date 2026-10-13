@@ -370,7 +370,8 @@
                 row.slider = new Slider(holder, {
                     mode: kind === "range" ? "range" : "single",
                     min: lo, max: axis === "z" ? hi : hi - (kind === "plane" ? 1 : 0), step: 1, integer: true,
-                    minGap: kind === "range" ? 1 : 0,
+                    // A pixel at least across; along z one plane is a crop.
+                    minGap: kind === "range" && axis !== "z" ? 1 : 0,
                     unit: units.unit, format: units.format, parse: units.parse,
                     fieldsSlot: fields, fieldWidth: 54,
                     ariaLabel: `${axis.toUpperCase()} ${kind === "range" ? "range kept" : (kind === "cut" ? "cut" : "plane")}`,

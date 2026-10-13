@@ -118,6 +118,10 @@
     const DETAIL_MAX_SHARE = 0.35;
     //: A new detail only when the part seen overlaps the last by less.
     const DETAIL_KEEP_OVERLAP = 0.7;
+    //: [inspect] A section or slab drawn alone fetches this much either side
+    //: of itself: planes along z, full-resolution pixels across.
+    const SECTION_PAD_PLANES = 3.5;
+    const SECTION_PAD_PX = 4;
     //: Points per side of the lattice the part seen is found with.
     const REGION_LATTICE = 16;
     //: Bytes of a detail uploaded to the GPU per display frame.
@@ -2658,7 +2662,14 @@ ${sample}`;
             const alone = (cut.cut === 1 || cut.cut === 2) && cut.context <= 0;
             const along = cut.planeOn.filter(Boolean).length === 1 ? cut.planeOn.indexOf(1) : -1;
             if (alone && along >= 0) {
-                const pad = along === 2 ? 0.5 / Math.max(1, this.viewState?.depth || 1) : 0.002;
+                // A few planes either side along z (a few pixels across): a
+                // step of the section to the next plane is still inside the
+                // detail fetched for this one (DETAIL_KEEP_OVERLAP), and is a
+                // uniform rather than a request.
+                const span = along === 2 ? Math.max(1, this.viewState?.depth || 1)
+                    : Math.max(1, (this.covered ? this.covered[along + 2] - this.covered[along] : 0)
+                        || Number(this.viewState?.info?.[along === 0 ? "width" : "height"]) || 1);
+                const pad = (along === 2 ? SECTION_PAD_PLANES : SECTION_PAD_PX) / span;
                 bounds[along] = [Math.max(bounds[along][0], cut.plane[along] - cut.half[along] - pad),
                                  Math.min(bounds[along][1], cut.plane[along] + cut.half[along] + pad)];
             }
@@ -3261,10 +3272,27 @@ ${sample}`;
             });
         }
         global.addEventListener?.("plexora:channels-applied", () => controller.channelsChanged());
-        // [inspect] Whoever changes the cut, and a preview under a hand.
+        // [inspect] Whoever changes the cut, and a preview under a hand: while
+        // one is previewed the view is moving (as under a camera drag: no
+        // crossfade, a finer detail only once it rests), and the commit or
+        // the cancel that ends it is the rest.
+        let cutting = false;
         viewState.subscribe(() => controller.cutChanged());
-        global.addEventListener?.("plexora:inspect-preview", () => controller.cutChanged());
-        global.addEventListener?.("plexora:inspect-changed", () => controller.cutChanged());
+        global.addEventListener?.("plexora:inspect-preview", () => {
+            if (renderer && !renderer.interacting) {
+                renderer.interacting = true;
+                cutting = true;
+            }
+            controller.cutChanged();
+        });
+        global.addEventListener?.("plexora:inspect-changed", () => {
+            if (renderer && cutting) {
+                cutting = false;
+                renderer.interacting = false;
+                renderer.invalidate();
+            }
+            controller.cutChanged();
+        });
         controller.sync(viewState.get());
         return controller;
     }

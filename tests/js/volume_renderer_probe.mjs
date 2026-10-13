@@ -285,6 +285,17 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     check("a Z section drawn alone is levelled by its plane", same(cutter.clipRange(), [12, 12]));
     set({ mode: "section", axes: { z: true } });
     check("with the surroundings drawn too, by the whole stack", cutter.clipRange() === null);
+    cutter.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600 };
+    set({ mode: "section", axes: { z: true }, context: 0 });
+    const thin = cutter.visibleRegion();
+    check("a Z section drawn alone is seen only around its plane, a few planes either side",
+          thin && thin.lo[2] <= 12 / 40 && thin.hi[2] >= 13 / 40 && thin.hi[2] - thin.lo[2] <= 9 / 40,
+          JSON.stringify(thin));
+    set({ mode: "crop", axes: { z: true }, crop: { z: [10, 19] } });
+    const kept = cutter.visibleRegion();
+    check("a crop's part seen is inside it", kept && kept.lo[2] >= 0.25 - 1e-9 && kept.hi[2] <= 0.5 + 1e-9,
+          JSON.stringify(kept));
+    delete cutter.canvas;
 
     const calls = {};
     cutter.gl = new Proxy({}, { get: (target, name) => (typeof name !== "string" ? undefined

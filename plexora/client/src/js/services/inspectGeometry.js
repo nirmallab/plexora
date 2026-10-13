@@ -353,9 +353,13 @@
         }
         for (const plane of resolved.planes) {
             const i = AXES.indexOf(plane.axis);
-            out.plane[i] = t(plane.axis, plane.at);
+            // The middle of the interval drawn -- not `at`: a slab cut short
+            // by the stack's edge is not centred on its plane any more.
+            const lo = t(plane.axis, plane.lo);
+            const hi = t(plane.axis, plane.hi);
+            out.plane[i] = (lo + hi) / 2;
             out.planeOn[i] = 1;
-            out.half[i] = Math.max(0, (t(plane.axis, plane.hi) - t(plane.axis, plane.lo)) / 2);
+            out.half[i] = Math.max(0, (hi - lo) / 2);
         }
         return out;
     }
