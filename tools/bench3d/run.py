@@ -33,11 +33,11 @@ OUT = ROOT / "docs" / "internal" / "3d" / "perf"
 #: Which scenarios each dataset runs, and what they need to know about it.
 DATASETS = {
     "small": {"scenarios": ["open", "channels", "zsteps", "jump", "held", "sync", "panes_resize",
-                            "volume", "volume_flash", "zoom", "contrast", "tour", "memory"],
+                            "volume", "volume_flash", "clip", "zoom", "contrast", "tour", "memory"],
               "params": {"channels": [0, 1], "extra": 2, "z0": 6}},
     "twoplane": {"scenarios": ["flash"], "params": {}},
     "ims": {"scenarios": ["open", "channels", "zsteps", "jump", "held", "sync", "panes_resize",
-                          "volume", "volume_flash", "zoom", "contrast", "tour", "memory"],
+                          "volume", "volume_flash", "clip", "zoom", "contrast", "tour", "memory"],
             "params": {"channels": [0, 1, 2], "extra": 3, "z0": 85, "crossings": [63, 127]}},
     "meso": {"scenarios": ["open", "zsteps", "jump", "held", "sync", "panes_resize", "volume",
                            "volume_flash", "zoom", "contrast", "tour"],

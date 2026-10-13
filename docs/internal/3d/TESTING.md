@@ -95,13 +95,16 @@ and restarts.
 
 **The strip follows the mode, and the cog.** Every control on the strip is one that does
 something now. In 3-D the plane rail's thumb, its hover mark and the Sections button go: the
-plane is frozen there. The rail is the clip range, so drag the band to move it and its ends to
-resize it; a press outside it does nothing. `]` / `[` and Shift+wheel move the clip range. The
-readout under the rail is a label. The cog below it opens the settings for the mode on screen:
+plane under it is frozen there. The rail is the 3-D view's cut along Z: over the whole stack
+drag a band end to crop the planes (the band then moves too); a Z section's or slab's plane is
+the thumb, picked and dragged; a Z cutaway's cut is the band's one handle. A press outside the
+planes drawn does nothing, and with nothing cut along Z the rail does nothing. `]` / `[` and
+Shift+wheel move whatever is cut along Z. The readout under the rail is a label ("all", "4–30",
+"z 12"). The cog below it opens the settings for the mode on screen:
 - on a plane, Show (one plane or a projection's operation);
 - in a projection, the operation, the percentile, the planes and Follow;
-- in 3-D, MIP/Additive, the view, the planes drawn, how Play turns the stack, the grid (when on)
-  and the surfaces.
+- in 3-D, MIP/Additive, the view, the cut (in words, Whole stack, Cut… for the dock), how Play
+  turns the stack, the grid (when on) and the surfaces.
 
 Change the mode with the popover open and its rows change in place. Escape, a click elsewhere,
 a resize or a scroll closes it. The full matrix is in `VIEW_CONTROLS.md`.
@@ -122,18 +125,35 @@ frame after a turn, a texture, a detail or bricks landing, a channel switched of
 over a sixth of a second rather than cutting. Under MIP a turning stack keeps its brightness:
 the same number of samples moving as at rest.
 
-**3-D view.** The cube button: a maximum-intensity or additive rendering; the projection
-range on the rail is the clip range. Drag to turn it and let go while moving: it keeps turning
+**3-D view.** The cube button: a maximum-intensity or additive rendering of the whole stack
+(the projection's range is the projection's alone). Drag to turn it and let go while moving: it keeps turning
 and slows to a stop -- a hard flick about 55 degrees, an ordinary drag about 25, a slow placed
 release not at all. Any press stops it. The wheel's zoom eases; the view presets (and
 double-click) turn there rather than cut. With the view focused, the arrow keys turn it, + / -
 zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower resolution if
 frames come slowly; it is redrawn in full once it rests.
 
-*Contrast that follows the clip range.* In 3-D, narrow the clip range to a dim part of the stack
-(say the deepest few planes): channels whose range you have not set re-level to the planes kept,
-about a quarter of a second after you stop dragging, and back to the whole stack's when you widen
-it again. A channel whose range you set (or that was saved) is left alone.
+*Contrast that follows the cut.* In 3-D, crop Z to a dim part of the stack (say the deepest few
+planes), or show a Z section or slab with Around at 0: channels whose range you have not set
+re-level to the planes kept, about a quarter of a second after you stop dragging, and back to the
+whole stack's when you widen it again. A channel whose range you set (or that was saved) is left
+alone.
+
+**Slice & Clip** (docs/internal/3d/SLICE_CLIP.md). In 3-D, the dock under the gizmo cuts the stack:
+- **Cut modes.** Pick Cutaway, Sections, Slabs or Crop, then the axes.
+  - Crop: each axis keeps a range; X+Y keeps the box they make.
+  - Cutaway: each axis takes a side off; X+Y takes out one corner, so the inside shows.
+  - Sections: real-intensity planes, X+Y a cross of them, the rest of the stack dimmed (Around).
+  - Slabs: thick slices combined along each ray. Try Mean against Maximum on a dense channel.
+- **Dragging, and the camera.** Drag a slider: the picture follows with nothing saved, and the
+  release is one undo step (the dock's arrows, or Cmd/Ctrl+Z over the view or the dock). Drag a
+  handle's grip in the view: the face follows the hand at any angle, and the camera never moves.
+  Esc puts a drag back.
+- **Settings are kept.** Switch Slab → Whole stack → Slab: the slab is where it was. Reload: the
+  cut is too.
+- **Surfaces.** With a cell surface shown, the meshes are cut with the voxels, and a cut-open
+  cell shows a flat cap.
+- **In 2-D.** Back in 2-D the plane on screen is the Z section's.
 
 **Which way it faces, and turning about one axis.** In 3-D a small X / Y / Z gizmo sits in the
 top-right corner (x red, y green, z blue), faint until you hover it, move the view or lock an

@@ -33,11 +33,19 @@ PlexoraViewControls.register({
   - `depth` (two or more planes), `frames`, `depthOrFrames`;
   - `colourless` (not an RGB stack), `webgl2` (the 3-D view can be drawn), `sections` (the
     panes exist), `zStep`, `labels3d`;
-  - `surfaces`, `surfacesPresent`, `surfaceStudio`, `prefs`, `card`, `grid`.
+  - `surfaces`, `surfacesPresent`, `surfaceStudio`, `prefs`, `card`, `grid`;
+  - `cut` (the 3-D view can be cut: services/inspectState.js is on the page), `volumeDrawn`
+    (the voxels are drawn, not "surfaces only").
 - **State flags (`FLAGS`)** describe what the user chose:
   - `mode.plane`, `mode.slab`, `mode.volume`;
   - `following`, `fixed` (a projection that follows the plane, or does not);
-  - `rotating`, `sectionsOn`, `allPlanes`, `percentile`, `gridOn`.
+  - `rotating`, `sectionsOn`, `allPlanes`, `percentile`, `gridOn`;
+  - the 3-D view's cut (docs/internal/3d/SLICE_CLIP.md), true only in 3-D:
+    - `cut.full`, `cut.on`, `cut.cutaway`, `cut.section`, `cut.slab`, `cut.crop`;
+    - `cut.planes` (section or slab), `cut.box` (crop or cutaway), `cut.combines` (a slab
+      that is not a single plane);
+    - `axis.x`, `axis.y`, `axis.z`;
+    - `cut.noPlane`, `cut.noBand`: nothing on the rail to pick, or no range on it.
 - **Typos fail at load.** An unknown capability, flag, mode or duplicate id throws at
   `register`.
 - **No fixed point.** `excludes` and `depends` may name flags, or entries that have no
@@ -75,29 +83,59 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Mode buttons plane / projection / 3-D | ✓ | ✓ | ✓ | ✓ | depth, not colour; 3-D also WebGL2 |
 | Sections | ✓ | ✓ | ✓ | – | the panes exist, not colour |
 | Play | planes | slides the range | planes | **turns the stack** | depth or frames (single plane: frames) |
-| Rail | picks a plane | range moves/resizes | range resizes | **clip range only**; a press outside it does nothing | depth |
-| Band | – | ✓ | ✓ | ✓ (the clip) | depth |
-| Thumb, hover mark | ✓ | ✓ | ✓ | – | depth |
+| Rail | picks a plane | range moves/resizes | range resizes | **the cut along Z** (below); a press outside it does nothing | depth |
+| Band | – | ✓ | ✓ | whole stack, a Z crop or cutaway, a combining Z slab | depth |
+| Thumb, hover mark | ✓ | ✓ | ✓ | a Z section's or slab's plane | depth |
 | Readout (a `role=status` label, not a button) | ✓ | ✓ | ✓ | ✓ | depth |
 | Cog | ✓ | ✓ | ✓ | ✓ | depth or frames |
 | Frame steps | T | T | T | T | frames |
-| Keys `]` `[`, Shift+wheel | plane | range | plane | **clip range** (`viewState.step`) | depth |
+| Keys `]` `[`, Shift+wheel | plane | range | plane | **the cut along Z** (`viewState.step`) | depth |
 | Popover: Show (one plane, or an operation) | ✓ | ✓ | ✓ | – | not colour |
 | Popover: Percentile | – | when pct | when pct | – | |
 | Popover: Planes z0–z1, Follow | – | ✓ | ✓ | – | |
 | Popover: Composite, View | – | – | – | ✓ | WebGL2 |
-| Popover: Planes drawn (+ All planes unless all) | – | – | – | ✓ | |
+| Popover: Cut (in words, Whole stack, Cut… opens the dock) | – | – | – | ✓ | cut |
 | Popover: Speed, About, Direction (Play's turn) | – | – | – | ✓ | prefs |
 | Popover: Grid, its options while on | – | – | – | ✓ | the 3-D view's grid |
 | Popover: Surfaces (show, light) / New / Import | – | – | – | ✓ | a surface / Surface Studio / the layers |
 | Popover: Depth card… | ✓ | ✓ | ✓ | ✓ | the card |
 | Thresholding's View Plane/Slab row (`gating.view`) | ✓ | ✓ | ✓ | – | registered by the plugin |
+| Depth card: projection rows (`card.projection`) | ✓ | ✓ | ✓ | – | depth, not colour |
+
+In 3-D the rail is the cut along Z (`rail` config `{plane, band, bandMove, cut}`):
+
+| Cut | Rail |
+|---|---|
+| whole stack | the band is every plane; an end resized makes a Z crop; the band moves |
+| Z crop | its range, resized and moved |
+| Z cutaway | its range; only the end that is the cut moves |
+| Z section, Z slab | the thumb is the plane, picked and dragged (a combining slab's planes as a band) |
+| nothing cut along Z | nothing; a press does nothing |
+
+The 3-D dock (views/volumeDock.js) is the `dock` surface, shown only in 3-D:
+
+| Row | Full | Cutaway | Section | Slab | Crop | Needs |
+|---|---|---|---|---|---|---|
+| Cut (the mode) | ✓ | ✓ | ✓ | ✓ | ✓ | cut |
+| Axes | – | ✓ | ✓ | ✓ | ✓ | |
+| X / Y / Z (one per active axis) | – | the cut, kept side | the plane | the plane | the range | |
+| Combine | – | – | – | ✓ | – | volumeDrawn |
+| Thick | – | – | – | unless one plane | – | |
+| Opacity | – | – | ✓ | – | – | |
+| Around (the context) | – | – | ✓ | ✓ | – | volumeDrawn |
+| Solid cut faces | – | ✓ | – | – | ✓ | volumeDrawn |
+| Handles, Reset | – | ✓ | ✓ | ✓ | ✓ | (handles: prefs) |
+| Undo, redo | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| More: Voxels | ✓ | ✓ | ✓ | ✓ | ✓ | volumeDrawn |
+| More: handles' strength | – | ✓ | ✓ | ✓ | ✓ | prefs |
+| More: panes follow the sections | – | – | ✓ | ✓ | – | sections |
 
 Where values live is unchanged:
 
-- The projection, the clip range and the composite are per image (`/view_state/<ds>`).
-- Play's speed, axis and direction, the grid, Motion and the pane sizes are per user
-  (`/viewer_prefs`).
+- The projection, the 3-D view's cut (`inspect`) and the composite are per image
+  (`/view_state/<ds>`).
+- Play's speed, axis and direction, the grid, the cut's handles, Motion and the pane sizes are
+  per user (`/viewer_prefs`).
 - Whether Play is turning is never stored, so a page never opens mid-motion.
 
 ## Adding a control

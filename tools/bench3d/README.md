@@ -74,3 +74,9 @@ OSD's in-memory tiles never carry one pass into the next; the server's caches st
   (`panes_grownPx`), the label stretched (`panes_labelStretch`; text in
   `extra.panes_label`), frame-time P95 during the drag (`resize_frameP95`); before/after
   screenshots under `$PLEXORA_BENCH_HOME/shots/`. The size is reset to the default after.
+- `clip` (Slice & Clip, docs/internal/3d/SLICE_CLIP.md): in 3-D, an X crop's far face dragged by
+  its handle grip with the real mouse, 60 moves (`clip_drag_*`: fps, frame P95/P99, dropped
+  frames, `fetches` -- a cut is uniforms, so 0 -- and `turned`, whether the camera moved: 0);
+  crops of one and of two axes previewed every frame (`clip_one_*`, `clip_two_*`); a Z section
+  drawn alone moved through the stack, until its exact planes are in (`clip_sectionResolved`,
+  `clip_sectionLevelFetches`). Skipped on a build without the cut.
