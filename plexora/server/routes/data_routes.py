@@ -1048,9 +1048,130 @@ def get_saved_channel_list():
     resp = data_model.get_saved_channel_list(datasource)
     return serialize_and_submit_json(resp)
 
-_tile_png_cache = OrderedDict()
+class _EncodedTiles(OrderedDict):
+    """Encoded tiles, least recently used first; `nbytes` is what they hold
+    (kept by `_keep_tile`, zeroed by `clear`)."""
+
+    def __init__(self):
+        super().__init__()
+        self.nbytes = 0
+
+    def clear(self):
+        super().clear()
+        self.nbytes = 0
+
+
+def _tile_cache_budget():
+    """`PLEXORA_TILE_CACHE_MB`, else a sixteenth of the memory this process
+    was given, 128 MB to 2 GB -- a data node's rule for its own tile cache
+    (node/api.py `_tile_cache_budget`)."""
+    import os
+
+    raw = os.environ.get("PLEXORA_TILE_CACHE_MB")
+    try:
+        if raw:
+            return max(16, int(raw)) * 2**20
+    except ValueError:
+        pass
+    try:
+        from plexora._resources import allocated_memory_bytes
+
+        total = allocated_memory_bytes() or 8 * 2**30
+    except Exception:  # noqa: BLE001 -- sizing only
+        total = 8 * 2**30
+    return int(max(128 * 2**20, min(2 * 2**30, total // 16)))
+
+
+#: Encoded tiles already sent, so a pan back or a plane stepped back to is
+#: answered from memory.
+#:
+#: Budgeted in BYTES, not entries. It used to be 1500 tiles, which is 75-450
+#: MB of 8-bit WebP tiles and 3 GB of 16-bit ones (a stored PNG of a 1024 px
+#: tile is 2 MB). `_TILE_PNG_CACHE_MAX` remains as a ceiling on the count.
+_tile_png_cache = _EncodedTiles()
 _tile_png_cache_lock = threading.Lock()
-_TILE_PNG_CACHE_MAX = 1500
+_TILE_PNG_CACHE_MAX = 20000
+_TILE_PNG_CACHE_BYTES = _tile_cache_budget()
+_tile_png_stats = {"hits": 0, "misses": 0}
+
+
+def _tile_key(generation, datasource, channel, level, tile, quality, view="", window=None):
+    """The tile cache's key for one tile. The view only when there is one, so
+    a planar project's key is the tuple it has always been."""
+    return ((generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
+            + ((window,) if window else ()))
+
+
+def _keep_tile(key, value):
+    """File `(bytes, mimetype)` under `key`, evicting the least recently used
+    past the budget -- never the tile just kept: one bigger than the whole
+    budget is still worth answering the next request for it from."""
+    size = len(value[0])
+    with _tile_png_cache_lock:
+        if not _tile_png_cache:
+            _tile_png_cache.nbytes = 0
+        previous = _tile_png_cache.pop(key, None)
+        if previous is not None:
+            _tile_png_cache.nbytes -= len(previous[0])
+        _tile_png_cache[key] = value
+        _tile_png_cache.nbytes += size
+        while len(_tile_png_cache) > 1 and (len(_tile_png_cache) > _TILE_PNG_CACHE_MAX
+                                            or _tile_png_cache.nbytes > _TILE_PNG_CACHE_BYTES):
+            _, dropped = _tile_png_cache.popitem(last=False)
+            _tile_png_cache.nbytes -= len(dropped[0])
+
+
+def tile_cache_stats() -> dict:
+    """What the encoded tile cache holds (`/volume/<ds>/perf`)."""
+    with _tile_png_cache_lock:
+        return {"entries": len(_tile_png_cache), "bytes": _tile_png_cache.nbytes,
+                "budget": _TILE_PNG_CACHE_BYTES, **_tile_png_stats}
+
+
+def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, window, hit):
+    """Make this tile at the planes ahead of the hand (prefetch.py
+    `TILE_PREFETCHER`) when it is a plane of a stack decoded a plane at a time
+    (`data_model.tiles_ahead_of`): encoded in the background and filed under
+    the key this route would file it under, so the browser's standby request
+    for the next plane is answered from memory. Never waited on."""
+    from dataclasses import replace
+
+    from plexora.server.volume.prefetch import TILE_PREFETCHER
+
+    plan = data_model.tiles_ahead_of(datasource, channel, view)
+    if plan is None:
+        return
+    spec, depth = plan
+
+    def view_at(z):
+        return replace(spec, z=int(z)).token()
+
+    def held(z):
+        key = _tile_key(generation, datasource, channel, level, tile, quality, view_at(z), window)
+        with _tile_png_cache_lock:
+            return key in _tile_png_cache
+
+    def encode(z):
+        at = view_at(z)
+        key = _tile_key(generation, datasource, channel, level, tile, quality, at, window)
+        if held(z) or data_model.load_generation != generation:
+            return False
+        try:
+            with data_model.reading_ahead():
+                value = data_model.encode_tile(datasource, channel, level, tile, quality, at,
+                                               window=window)
+        except data_model.NotLoaded:
+            return False
+        if data_model.load_generation != generation:
+            return False
+        _keep_tile(key, value)
+        return True
+
+    region = (generation, datasource, channel, level, tile, quality, window, spec.t)
+    try:
+        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit)
+    except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
+        _log.debug("tile read-ahead not queued", exc_info=True)
 
 
 def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", window=None):
@@ -1067,16 +1188,20 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
     # This thread's previous tile is not this one's -- a cached tile included,
     # which would otherwise be sent with the last section's drawn-up flags.
     served_steps()
-    # The view only when there is one, so a planar project's key is the tuple
-    # it has always been.
-    key = ((generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
-           + ((window,) if window else ()))
+    key = _tile_key(generation, datasource, channel, level, tile, quality, view, window)
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
         if cached is not None:
             _tile_png_cache.move_to_end(key)
-            _perf.note("cache", "hit")
-            return cached
+            _tile_png_stats["hits"] += 1
+        else:
+            _tile_png_stats["misses"] += 1
+    if cached is not None:
+        _perf.note("cache", "hit")
+        if view:
+            _tiles_ahead(generation, datasource, channel, level, tile, quality, view, window,
+                         hit=True)
+        return cached
 
     _perf.note("cache", "miss")
     encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
@@ -1089,11 +1214,10 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
         if not served_final():
             return encoded, mimetype
 
-    with _tile_png_cache_lock:
-        _tile_png_cache[key] = (encoded, mimetype)
-        _tile_png_cache.move_to_end(key)
-        while len(_tile_png_cache) > _TILE_PNG_CACHE_MAX:
-            _tile_png_cache.popitem(last=False)
+    _keep_tile(key, (encoded, mimetype))
+    if view:
+        _tiles_ahead(generation, datasource, channel, level, tile, quality, view, window,
+                     hit=False)
     return encoded, mimetype
 
 

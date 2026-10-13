@@ -63,10 +63,12 @@ import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 
 from plexora.server.volume import chunk_cache
+from plexora.telemetry import performance as _perf
 from plexora.server.volume.axes import AxisSpacing, Spacing, normalize_unit
 from plexora.server.volume.model import Volume, VolumeSource, level_infos
 from plexora.server.volume.plane_view import DerivedPyramid
@@ -310,8 +312,12 @@ class ImsVolumeSource(VolumeSource):
 
     def _read_chunks(self, level, t, channel, layout, z0, z1, rows, cols):
         """Stored planes z0..z1 (inclusive) of the rectangle, through the
-        decoded-chunk cache: raw bytes under the lock, inflated outside it."""
+        decoded-chunk cache: raw bytes under the lock, inflated outside it.
+        On a tile's thread, the bytes' time is the read's `io` part and their
+        decompression its `inflate` (`Server-Timing`), from whichever decode
+        thread did each chunk."""
         cz, cy, cx = layout["chunks"]
+        phases = _perf.current()
         dtype = layout["dtype"]
         dataset = layout["dataset"]
         filters = layout["filters"]
@@ -346,6 +352,7 @@ class ImsVolumeSource(VolumeSource):
 
         def load(entry):
             key, where = entry
+            started = perf_counter()
             if where is _UNLOCATED:
                 raw, mask = read_locked(origin_of(key))
             elif where is None:
@@ -353,7 +360,13 @@ class ImsVolumeSource(VolumeSource):
             else:
                 offset, size, mask = where
                 raw = self._raw.read(offset, size)
-            return decode(raw, mask)
+            if phases is None:
+                return decode(raw, mask)
+            read = perf_counter()
+            decoded = decode(raw, mask)
+            _perf.part("io", (read - started) * 1000.0, phases)
+            _perf.part("inflate", (perf_counter() - read) * 1000.0, phases)
+            return decoded
 
         def load_many(missing):
             dkey = (int(level), int(t), int(channel))
@@ -412,11 +425,15 @@ class ImsVolumeSource(VolumeSource):
         return located
 
     def _span(self, level, t, channel, z0, z1, rows, cols):
-        """Stored planes z0..z1 of the rectangle, by whichever path applies."""
+        """Stored planes z0..z1 of the rectangle, by whichever path applies.
+        Finding the dataset and its layout, the file's lock included, is the
+        read's `open` part."""
+        started = perf_counter()
         with self._io:
             layout = self._layout(level, t, channel)
             if layout is None:
                 return np.asarray(self._dataset(level, t, channel)[z0:z1 + 1, rows, cols])
+        _perf.part("open", (perf_counter() - started) * 1000.0)
         return self._read_chunks(level, t, channel, layout, z0, z1, rows, cols)
 
     def _read(self, level, t, channel, z, rows, cols):

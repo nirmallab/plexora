@@ -34,8 +34,14 @@ every channel changes plane in the same frame, and the picture dissolves into th
 up to 0.16 s (shorter while you scrub fast) -- on screen only: when it ends you see the plane the
 readout names, unblended, and captures never contain a fade. A pan or zoom during a fade ends it
 at once. Under the hand the rail's thumb moves between planes and settles onto the plane on
-screen when you let go. Once you stop, the next planes in the direction you were going (and one
-behind) are built ahead, invisibly, so the next step is immediate.
+screen when you let go. The next planes in the direction you are going (and one behind) are
+built ahead, invisibly, so the next step is immediate: two ahead at rest, up to six ahead while
+you hold a key, asked for as each plane lands. A jump (a click far down the rail, Alt+`]`, a
+typed plane) no longer waits behind a plane still loading: the plane on its way is dropped and
+the jump goes at once. A step shows the next plane's coarse tiles before the last plane finishes
+sharpening. In a projection that follows the plane, a step no longer waits for the new range's
+contrast statistics: it shows at once, and the contrast eases to the new range a moment after
+you stop.
 
 **Speed and staying in step (the performance pass, `PERF.md`).** Try these on the Imaris stack
 and the light-sheet stack, with the section panes on:
@@ -74,13 +80,47 @@ turns HD on by itself and says so once.
 
 **Sections.** The strip's grid button: XZ along the bottom and YZ along the right, cut through
 the centre of the view and lined up with it. Zoom in to see them grow to the stack's real depth.
-Hover a pane's inner edge (a thin accent line with a grip appears) and drag it to resize the
-pane; focus it and use the arrow keys (Shift for bigger steps); double-click it, press Home, or
-use the Depth card's "Default sizes" to restore the default. A pane is never taller than its
-stack at the plane's scale (the section keeps the plane's proportions), so a larger size shows
-more planes once you zoom in. The cut stays in the middle of the part of the plane the panes
-leave uncovered, and the zoom buttons move clear of a tall XZ pane. Sizes are yours, not the
-image's: they hold across images, modes and restarts.
+Hover a pane's inner edge (a thin accent line with a grip appears) and drag it either way to
+resize the pane; focus it and use the arrow keys (Shift for bigger steps); double-click it, press
+Home, or use the Depth card's "Default sizes" to restore the default. The size you choose is the
+size shown. While the stack at the plane's scale is taller than the pane, the pane shows a window
+of its planes at the plane's proportions. Past the stack's own height every plane is shown and z
+is stretched to fill the pane, in whole-pixel bands. The label then says how much ("XZ · y 343 ·
+z ×2.4"); within 4 px of the stack's own height the pane snaps to it ("· all planes"). A pane
+never covers the last 240 px of the plane, or the depth strip. Nothing reloads while you drag:
+the cut holds still until you let go, then moves to the middle of the part of the plane the
+panes leave uncovered, and the sections there are fetched once. The zoom buttons and the legend
+move clear of a tall XZ pane. Sizes are yours, not the image's: they hold across images, modes
+and restarts.
+
+**The strip follows the mode, and the cog.** Every control on the strip is one that does
+something now. In 3-D the plane rail's thumb, its hover mark and the Sections button go: the
+plane is frozen there. The rail is the clip range, so drag the band to move it and its ends to
+resize it; a press outside it does nothing. `]` / `[` and Shift+wheel move the clip range. The
+readout under the rail is a label. The cog below it opens the settings for the mode on screen:
+- on a plane, Show (one plane or a projection's operation);
+- in a projection, the operation, the percentile, the planes and Follow;
+- in 3-D, MIP/Additive, the view, the planes drawn, how Play turns the stack, the grid (when on)
+  and the surfaces.
+
+Change the mode with the popover open and its rows change in place. Escape, a click elsewhere,
+a resize or a scroll closes it. The full matrix is in `VIEW_CONTROLS.md`.
+
+**Play in 3-D turns the stack.** In 3-D, Play turns the stack about the screen's vertical at
+30°/s from where the camera is, keeping its zoom and pan, until you press it again, press on the
+view, press Esc, lock an axis or pick a view. The cog sets the speed (5–90°/s), the axis (the
+screen's vertical, or the image's X, Y or Z, which then stays still on screen) and the
+direction; changing them while it turns takes effect at once. It turns even with Motion off,
+since it is your action and one press stops it. A figure capture records the pose and leaves it
+turning; a video render stops it. Whether it was turning is never saved.
+
+**No flash in 3-D.** Turn the stack and let go, then zoom in on part of a large stack and wait
+for it to sharpen. Toggle HD, or wait for a new stack's brightness to turn exact. The picture
+should never go black or jump in brightness. A channel being replaced keeps its old texture,
+read in its own window, until the new one lands. A finer picture at the same camera (the full
+frame after a turn, a texture, a detail or bricks landing, a channel switched off) dissolves in
+over a sixth of a second rather than cutting. Under MIP a turning stack keeps its brightness:
+the same number of samples moving as at rest.
 
 **3-D view.** The cube button: a maximum-intensity or additive rendering; the projection
 range on the rail is the clip range. Drag to turn it and let go while moving: it keeps turning

@@ -62,6 +62,14 @@
     //: An in-flight revision still loading after this long, with a newer one
     //: waiting, is superseded: the newest wins rather than queueing behind it.
     const SUPERSEDE_AFTER_MS = 1000;
+    //: A JUMP -- a request more than NEAR_PLANES from the one before it, or
+    //: another mode or frame, made after the hand had been still for
+    //: SCRUB_GAP_MS -- supersedes the revision in flight at once when that is
+    //: far from it too: a revision on its way somewhere else has nothing to
+    //: give the new one. A held key or a dragged rail asks planes in small,
+    //: quick steps and keeps the 1 s rule, so it still lands planes on the way.
+    const NEAR_PLANES = 2;
+    const SCRUB_GAP_MS = 80;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -453,6 +461,10 @@
             }
             const wasVolume = before.mode === "volume";
             this.state = this._clean(merged);
+            const at = now();
+            this._jump = this._far(before, this.state)
+                && at - (this._lastSetAt ?? -Infinity) >= SCRUB_GAP_MS;
+            this._lastSetAt = at;
             if (this.state.mode === "volume" && !wasVolume) this._frozen = before;
             else if (this.state.mode !== "volume") this._frozen = null;
             const fromClass = this._windowClass;
@@ -468,6 +480,17 @@
             return this.get();
         }
 
+        /** Whether `a` and `b` are far apart: another mode or frame, or the
+         *  plane or the range more than NEAR_PLANES away. */
+        _far(a, b) {
+            if (!a || !b) return true;
+            if (a.mode !== b.mode || (a.t || 0) !== (b.t || 0)) return true;
+            const gap = Math.max(Math.abs((a.z ?? 0) - (b.z ?? 0)),
+                                 Math.abs((a.slab?.z0 ?? 0) - (b.slab?.z0 ?? 0)),
+                                 Math.abs((a.slab?.z1 ?? 0) - (b.slab?.z1 ?? 0)));
+            return gap > NEAR_PLANES;
+        }
+
         /** `state` moved to plane `z` as `set({ z })` would move it -- a
          *  following slab recentred with it -- without changing anything: what
          *  a step would show, for the planes prefetched ahead of the hand. */
@@ -476,11 +499,14 @@
             return this._clean({ ...state, z, __recentre: follows });
         }
 
-        /** Step z by `dz` planes (the keys, the wheel, the play button). */
+        /** Step z by `dz` planes (the keys, the wheel, the play button). A
+         *  fixed projection's range moves instead, and so does 3-D's clip
+         *  range: there the plane is not what is drawn. */
         step(dz) {
             if (!this.enabled() || this.depth < 2) return this.get();
             const top = this.depth - 1;
-            if (this.state.mode === "slab" && !this.state.slab.follow) {
+            if (this.state.mode === "volume"
+                    || (this.state.mode === "slab" && !this.state.slab.follow)) {
                 const { z0, z1 } = this.state.slab;
                 const width = z1 - z0;
                 const start = clamp(z0 + dz, 0, top - width);
@@ -609,10 +635,13 @@
             if (flight) {
                 if (flight.rev.key !== key) {
                     this._pendingKey = key;
-                    // Back to what is on screen, or stuck behind something
-                    // slow: the revision in flight has nothing left to give.
-                    if (key === this._appliedKey
+                    // Back to what is on screen, a jump to somewhere far from
+                    // it, or stuck behind something slow: the revision in
+                    // flight has nothing left to give.
+                    const jumped = this._jump && this._far(flight.rev.state, this.state);
+                    if (key === this._appliedKey || jumped
                             || now() - flight.rev.started >= SUPERSEDE_AFTER_MS) {
+                        if (jumped) global.PlexoraViewPerf?.mark?.("view", "jumped", flight.rev.id);
                         flight.rev.supersede();
                     } else if (!flight.timer) {
                         flight.timer = setTimeout(() => {
@@ -802,6 +831,8 @@
     ViewState.abortError = abortError;
     ViewState.SYNC_WAIT_MS = SYNC_WAIT_MS;
     ViewState.SUPERSEDE_AFTER_MS = SUPERSEDE_AFTER_MS;
+    ViewState.NEAR_PLANES = NEAR_PLANES;
+    ViewState.SCRUB_GAP_MS = SCRUB_GAP_MS;
     global.PlexoraViewState = ViewState;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = ViewState;

@@ -248,6 +248,9 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             this.inflight = new Set();
             this.requests = 0;
             this.generation = 0;
+            //: Bumped whenever the page table changes (a brick placed or
+            //: dropped, the atlas started again): what is drawn changed.
+            this.pagesVersion = 0;
             this.cut = null;
             this.bytes = 0;
             this.finest = null;
@@ -372,6 +375,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             this.finest = null;
             this.key = "";
             this.generation += 1;
+            this.pagesVersion += 1;
         }
 
         /** The graphics context went: everything on it is gone. */
@@ -395,6 +399,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
         uploadPages() {
             const gl = this.gl;
             if (!gl || !this.pages) return;
+            this.pagesVersion += 1;
             gl.bindTexture(gl.TEXTURE_3D, this.pages);
             gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, ...this.pageSize, gl.RGBA_INTEGER,
                              gl.UNSIGNED_BYTE, this.mirror);

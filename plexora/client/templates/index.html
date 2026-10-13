@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261012_grid3d">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261012_merge_main">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -554,19 +554,21 @@
    badge on the canvas, and core's Depth card. Before main.js, which reads
    the state beside /config and mounts the strip. All three do nothing for a
    planar image. #}
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261012_main_merge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261012_3d_controls" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261012_grid3d" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261012_merge_main" defer></script>
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261012_fluid_planes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261012_3d_controls" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261012_3d_controls" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261011_atlas" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls" defer></script>
 {# Surfaces (plexora/server/surface): the meshes drawn in the 3-D view, the
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
@@ -576,10 +578,10 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_grid3d_floor" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_main_merge2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_3d_controls" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261012_plane_gating" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_fluid_planes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_3d_controls" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -598,7 +600,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261012_fluid_planes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261012_3d_controls" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

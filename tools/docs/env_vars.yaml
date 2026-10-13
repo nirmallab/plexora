@@ -73,6 +73,10 @@ public:
     group: Performance
     description: Largest mask, in bytes, read into memory in one go when converting it. Larger masks are streamed tile by tile, which uses less memory but is slower on network drives.
     default: "8589934592 (8 GB)"
+  - name: PLEXORA_TILE_CACHE_MB
+    group: Performance
+    description: Memory, in MB, the viewer's server keeps for image tiles it has already encoded, so a pan back over visited ground or a plane stepped back to is answered without a read -- and, for a z-stack stored plane by plane, the tiles of the next planes made ahead of the one on screen. Budgeted in bytes because a 16-bit tile is about 2 MB and an 8-bit one about 100 KB. A data node has its own (`PLEXORA_NODE_TILE_CACHE_MB`).
+    default: "a sixteenth of the allocated memory, 128 to 2048"
   - name: PLEXORA_NO_NUMBA
     group: Performance
     description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
@@ -110,7 +114,7 @@ public:
     default: "96"
   - name: PLEXORA_CHUNK_CACHE_MB
     group: Z-stacks
-    description: Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, the block of planes read ahead of the one on screen, and the 3-D view's level reuse chunks instead of decompressing them again. Sized from the memory this process was given (a cluster job's allocation, not the node's).
+    description: Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks, an OME-Zarr store's, and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, the block of planes read ahead of the one on screen, and the 3-D view's level reuse chunks instead of decompressing them again. Sized from the memory this process was given (a cluster job's allocation, not the node's).
     default: "an eighth of the allocated memory, 256 to 8192"
   - name: PLEXORA_DECODE_THREADS
     group: Z-stacks

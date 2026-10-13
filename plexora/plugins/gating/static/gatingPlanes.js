@@ -75,6 +75,13 @@ class GatePlaneControl {
     init() {
         if (!this.root || !this.readout) return;
         this.build();
+        // The View row is a depth control like the strip's: offered on a plane
+        // or a projection, never in 3-D, where whole cells are gated and no
+        // plane is on screen (services/viewControls.js; "gating.view").
+        this.ctx.view.controls?.register?.({
+            id: "view", surfaces: ["gating"], modes: ["plane", "slab"], needs: ["depth"],
+            doc: "Thresholding's View row: gate the plane on screen, or a slab around it.",
+        });
         this.ctx.view.onChange(() => this.follow());
         // The view moves under the hand before the picture does: the controls
         // follow the request, the counts the committed view.
@@ -416,7 +423,9 @@ class GatePlaneControl {
     paint() {
         if (!this.root) return;
         const state = this.state;
-        const shown = Boolean(state && this.ctx.view?.enabled && state.mode !== "volume");
+        const controls = this.ctx.view?.controls;
+        const shown = Boolean(state && this.ctx.view?.enabled) && (controls?.visible
+            ? controls.visible("view") : state.mode !== "volume");
         this.root.hidden = !shown;
         if (!shown) {
             this.paintReadout();

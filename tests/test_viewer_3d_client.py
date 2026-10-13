@@ -47,7 +47,7 @@ def test_every_surface_draws_one_navigation_revision():
     """The plane, the panes, the outlines and the 3-D view commit in one task;
     late surfaces never overwrite a newer revision; superseded revisions commit
     nothing (tests/js/nav_revision_probe.mjs)."""
-    _passed(_run("nav_revision_probe.mjs"), 20)
+    _passed(_run("nav_revision_probe.mjs"), 25)
 
 
 def test_the_section_panes_show_the_newest_section_in_step():
@@ -60,7 +60,7 @@ def test_one_scheduler_fetches_and_decodes_each_tile_once():
     """Dedup, order of need, decode once with a transferred buffer, cancellation
     with the item that wanted the tile; batched only on a slow link
     (tests/js/tile_fetch_probe.mjs)."""
-    _passed(_run("tile_fetch_probe.mjs"), 27)
+    _passed(_run("tile_fetch_probe.mjs"), 28)
 
 
 def test_the_3d_view_keeps_its_textures():
@@ -71,7 +71,7 @@ def test_the_3d_view_keeps_its_textures():
     picture fades in, at once with motion off or for a capture; the reference
     grid's steps, units, numbers on screen, preference and uniforms
     (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 52)
+    _passed(_run("volume_renderer_probe.mjs"), 66)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
@@ -79,7 +79,7 @@ def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
     within the atlas's room), the page table, slot reuse, batched requests,
     gzip only on a slow link, and the shader's walk
     (tests/js/volume_atlas_probe.mjs)."""
-    _passed(_run("volume_atlas_probe.mjs"), 35)
+    _passed(_run("volume_atlas_probe.mjs"), 37)
 
 
 def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():

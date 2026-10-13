@@ -175,6 +175,21 @@ function check(condition, message) {
     check(vs.spec() === "z24-34p99.5", `a percentile spells its q (${vs.spec()})`);
 }
 
+// -- in 3-D a step moves the clip range, never the frozen plane --------------
+{
+    const vs = new ViewState("vol", { fetchImpl: fakeFetch({
+        "volume/vol/info": VOLUME, "view_state/vol": {} }) });
+    await vs.load({ search: "" });
+    vs.set({ z: 12 });
+    vs.set({ mode: "volume", slab: { z0: 5, z1: 9, follow: false } });
+    vs.step(3);
+    const state = vs.get();
+    check(state.slab.z0 === 8 && state.slab.z1 === 12 && state.z === 12,
+          `] in 3-D moves the clip range and leaves the plane (${JSON.stringify(state.slab)}, z ${state.z})`);
+    vs.step(-100);
+    check(vs.get().slab.z0 === 0 && vs.get().slab.z1 === 4, "and stops at the top of the stack");
+}
+
 // -- a colour stack's planes are shown one at a time -------------------------
 {
     const vs = new ViewState("hez", { fetchImpl: fakeFetch({

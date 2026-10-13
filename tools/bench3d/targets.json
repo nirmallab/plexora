@@ -1,5 +1,5 @@
 {
- "_doc": "Targets per metric. `value` is ms unless it ends in F (the run's measured display period). `stat` is p50 | p95 | max | min | mean. `datasets` limits a target; absent means every dataset that reports the metric.",
+ "_doc": "Targets per metric. `value` is ms unless it ends in F (the run's measured display period) or the metric counts something (tiles, frames, planes, shows). `stat` is p50 | p95 | max | min | mean. `datasets` limits a target; absent means every dataset that reports the metric.",
  "targets": [
   {"metric": "tMeaningful_warm", "stat": "p50", "op": "<=", "value": 400, "datasets": ["small"]},
   {"metric": "tMeaningful_warm", "stat": "p50", "op": "<=", "value": 600, "datasets": ["ims"]},
@@ -27,10 +27,18 @@
   {"metric": "scrub_frameP99", "stat": "p50", "op": "<=", "value": "3F"},
   {"metric": "crossing_commit", "stat": "max", "op": "<=", "value": 400, "datasets": ["ims"]},
   {"metric": "flash_frames", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "jump_wastedTiles", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "jump_wastedTiles_L0", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "jumpBusy_wastedTiles", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "jumpBusy_wastedTiles_L0", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "held_lag", "stat": "p50", "op": "<=", "value": 1},
 
   {"metric": "zline_leadMs", "stat": "max", "op": "<=", "value": "1F"},
   {"metric": "zstep_spread", "stat": "p95", "op": "<=", "value": "1F"},
   {"metric": "pan_staleTokens", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "panes_showsDuring", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "panes_showsAfter", "stat": "max", "op": "<=", "value": 2},
+  {"metric": "resize_frameP95", "stat": "p50", "op": "<=", "value": "2F"},
 
   {"metric": "toggle3d_on", "stat": "p50", "op": "<=", "value": "2F"},
   {"metric": "toggle3d_off", "stat": "p50", "op": "<=", "value": "2F"},
@@ -52,6 +60,12 @@
   {"metric": "detail_levelGain", "stat": "min", "op": ">=", "value": 1, "datasets": ["meso", "large", "medium"]},
   {"metric": "detail_dropped", "stat": "max", "op": "<=", "value": 6},
   {"metric": "volume_gpuMB", "stat": "max", "op": "<=", "value": 1024},
+  {"metric": "v3d_blackFrames", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "v3d_flashFrames", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "v3d_handoverBlack", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "v3d_handoverFlash", "stat": "max", "op": "<=", "value": 0},
+  {"metric": "v3d_settleJump", "stat": "p50", "op": "<=", "value": 4},
+  {"metric": "v3d_ghostMs", "stat": "p95", "op": "<=", "value": 3},
 
   {"metric": "zoomOut_decodes", "stat": "p50", "op": "<=", "value": 0},
   {"metric": "zoomOut_full", "stat": "p50", "op": "<=", "value": "2F"},

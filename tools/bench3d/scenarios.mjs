@@ -1,4 +1,4 @@
-// scenarios.mjs - the ten benchmark scenarios (docs/internal/3d/PERF.md).
+// scenarios.mjs - the benchmark scenarios (docs/internal/3d/PERF.md; README for the newer ones).
 //
 // Each scenario is `run(ctx)` -> {metrics: {name: [values]}, extra}. Values are
 // milliseconds unless the name says otherwise; one value per repetition (or
@@ -15,9 +15,12 @@ function put(metrics, name, value) {
     (metrics[name] ||= []).push(...(Array.isArray(value) ? value : [value]));
 }
 
-async function boot(ctx, { navigate = true } = {}) {
+async function boot(ctx, { navigate = true, z = null } = {}) {
     const { browser } = ctx;
-    if (navigate) await browser.navigate(`${ctx.base}/${encodeURIComponent(ctx.dataset)}`);
+    // `z`: open on that plane (the URL's ?z= wins over the saved view state,
+    // which is whatever plane the last page left).
+    const query = z === null ? "" : `?z=${z}`;
+    if (navigate) await browser.navigate(`${ctx.base}/${encodeURIComponent(ctx.dataset)}${query}`);
     const ok = await browser.waitFor(() => Boolean(window.__bench?.k?.booted?.()), 180000);
     if (!ok) throw new Error("the viewer did not boot");
     await browser.eval(() => __bench.k.quiet(500, 120000));
@@ -462,13 +465,9 @@ async function sync(ctx) {
 
 // -- 6. the 3-D view ---------------------------------------------------------------
 
-async function volume(ctx) {
-    const metrics = {};
-    await boot(ctx);
-    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
-    await reset(ctx);
-    const F = await period(ctx);
-    const enter = async () => ctx.browser.eval(async () => {
+/** Enter 3-D and wait until it has drawn with nothing loading (or refused). */
+async function enterVolume(ctx) {
+    return ctx.browser.eval(async () => {
         const k = __bench.k;
         const c0 = k.counters();
         const t0 = performance.now();
@@ -487,11 +486,32 @@ async function volume(ctx) {
         const ready = performance.now() - t0;
         return { ready, ended, counters: k.delta(c0, k.counters()) };
     });
-    const leave = async () => ctx.browser.eval(async () => {
+}
+
+async function leaveVolume(ctx) {
+    return ctx.browser.eval(async () => {
         __bench.k.vs().set({ mode: "plane" });
         await __bench.k.quiet(400);
         return true;
     });
+}
+
+/** The rotation drag: 60 moves right with a wobble, released moving (a coast). */
+function rotateDrag(centre) {
+    const moves = [["press", centre.x, centre.y, 8]];
+    for (let i = 1; i <= 60; i += 1) moves.push(["move", centre.x + 3 * i, centre.y + Math.sin(i / 8) * 20, 8]);
+    moves.push(["release", centre.x + 180, centre.y, 0]);
+    return moves;
+}
+
+async function volume(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx);
+    const F = await period(ctx);
+    const enter = () => enterVolume(ctx);
+    const leave = () => leaveVolume(ctx);
     const entryMark = ctx.browser.net.length;
     const first = await enter();
     // What entering read: every /level response's bytes, its server read
@@ -526,10 +546,7 @@ async function volume(ctx) {
     });
     for (let rep = 0; rep < Math.min(ctx.reps, 5); rep += 1) {
         const t0 = await ctx.browser.eval(() => { __bench.reset({ counters: false }); __bench.start(); return performance.now(); });
-        const moves = [["press", centre.x, centre.y, 8]];
-        for (let i = 1; i <= 60; i += 1) moves.push(["move", centre.x + 3 * i, centre.y + Math.sin(i / 8) * 20, 8]);
-        moves.push(["release", centre.x + 180, centre.y, 0]);
-        await ctx.browser.mouse(moves);
+        await ctx.browser.mouse(rotateDrag(centre));
         const r = await ctx.browser.eval(async (t0, F) => {
             const k = __bench.k;
             const t1 = performance.now();
@@ -885,6 +902,514 @@ async function parity2d(ctx) {
     return { metrics: { perfMarks: [marks] }, extra: { urls: [...new Set(urls)], png: shot.result?.data || null } };
 }
 
+// -- 4c. far jumps (plan 4.0) -------------------------------------------------------------
+
+/** The plane view at `zoom` ("home", or "L0": one image pixel per screen pixel,
+ *  the finest level), on plane `z`, at rest with nothing on the wire. */
+async function atZoom(ctx, zoom, z) {
+    await reset(ctx, { z });
+    let info = null;
+    if (zoom === "L0") {
+        info = await ctx.browser.eval(async (at) => {
+            const k = __bench.k;
+            const r = k.zoomToLevel0(1, at);
+            await k.quiet(500);
+            return { ...r, finest: k.finestDrawn() };
+        }, ctx.params.zoomAt || null);
+    }
+    await ctx.browser.netIdle(300, 8000);
+    return info;
+}
+
+/** From rest: wait for the view, the plane's standby and the wire to settle. */
+async function atRest(ctx) {
+    await ctx.browser.eval(() => __bench.k.quiet(500));
+    await sleep(300);
+    await ctx.browser.netIdle(300, 8000);
+}
+
+/** Tile requests (the CDP log) issued within [fromMs, toMs] (epoch ms, the
+ *  page's timeOrigin + now()), by the plane their `view=` names: Map(z -> n). */
+function tilesByPlane(records, fromMs, toMs) {
+    const out = new Map();
+    for (const r of records) {
+        if (r.kind !== "tile" || !Number.isFinite(r.wall)) continue;
+        const at = r.wall * 1000;
+        if (at < fromMs || at > toMs) continue;
+        const match = /[?&]view=([^&]*)/.exec(r.url);
+        const plane = match ? /^(?:t\d+)?z(\d+)$/.exec(decodeURIComponent(match[1])) : null;
+        if (!plane) continue;   // a 2-D mask, a projection: not a plane
+        const z = Number(plane[1]);
+        const first = out.get(z);
+        out.set(z, { n: (first?.n || 0) + 1, first: Math.min(first?.first ?? Infinity, at) });
+    }
+    return out;
+}
+
+/** Metrics of one jump (`r` from pagekit's jumpTo) under `name`, `suffix`
+ *  naming the zoom ("" home, "_L0" zoomed in to the finest level). */
+function jumpMetrics(metrics, name, suffix, r, records) {
+    const tiles = tilesByPlane(records, r.from, r.to);
+    let wasted = 0;
+    for (const [z, entry] of tiles) if (z !== r.origin && z !== r.dest) wasted += entry.n;
+    const firstDest = tiles.get(r.dest)?.first;
+    put(metrics, `${name}_commit${suffix}`, r.commit);
+    put(metrics, `${name}_full${suffix}`, r.full);
+    put(metrics, `${name}_wastedTiles${suffix}`, wasted);
+    put(metrics, `${name}_originTiles${suffix}`, tiles.get(r.origin)?.n || 0);
+    // The app's mark where it has one, else the first destination tile's request.
+    put(metrics, `${name}_waitMs${suffix}`,
+        r.wait ?? (Number.isFinite(firstDest) ? Math.max(0, firstDest - r.from) : null));
+    return Object.fromEntries([...tiles].map(([z, entry]) => [z, entry.n]));
+}
+
+async function jump(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 10) return { metrics, skipped: "depth under 10" };
+    const F = await period(ctx);
+    const top = ctx.info.depth - 1;
+    const o = Math.max(0, Math.min(top, ctx.params.z0 ?? Math.floor(ctx.info.depth / 2)));
+    let plus = Math.min(top, o + 50);
+    if (plus === o) plus = Math.max(0, o - 50);
+    const far = plus >= top / 2 ? 0 : top;   // the end farther away
+    const route = [plus, far, o].filter((z, i, all) => z !== (i ? all[i - 1] : o));
+    // The busy case starts from a plane the other scenarios leave alone, so
+    // the step out of it is cold; the jump is the same +50.
+    const o2 = Math.max(0, Math.min(top - 1, Math.floor(o / 2)));
+    const busyDest = Math.min(top, o2 + 50);
+    const extra = { route, o, o2, busyDest, l0: null, tiles: {} };
+    for (const zoom of ["home", "L0"]) {
+        const suffix = zoom === "L0" ? "_L0" : "";
+        for (let rep = 0; rep < Math.min(ctx.reps, 3); rep += 1) {
+            // A fresh page and HTTP cache each time: OSD's in-memory tile cache
+            // would otherwise carry one pass's planes into the next.
+            await ctx.browser.clearCache();
+            await boot(ctx, { z: o });
+            const info = await atZoom(ctx, zoom, o);
+            if (info && !extra.l0) extra.l0 = info;
+            await ctx.browser.eval(() => { __bench.reset({ counters: false }); __bench.start(); return true; });
+            for (const dest of route) {
+                await atRest(ctx);
+                const mark = ctx.browser.net.length;
+                const r = await ctx.browser.eval((dest) => __bench.k.jumpTo(dest), dest);
+                const tiles = jumpMetrics(metrics, "jump", suffix, r, ctx.browser.netSince(mark));
+                // What the first jump of each zoom fetched, by plane: a check on the window.
+                extra.tiles[zoom] ??= { origin: r.origin, dest: r.dest, tiles };
+            }
+            // The same jump issued 100 ms into a cold single step (Z3: does it
+            // wait behind the revision in flight?).
+            if (busyDest > o2 + 1) {
+                await atRest(ctx);
+                await ctx.browser.clearCache();
+                const mark = ctx.browser.net.length;
+                const busy = await ctx.browser.eval(async (o2, dest) => {
+                    const k = __bench.k;
+                    const vs = k.vs();
+                    const ta = performance.now();
+                    vs.set({ z: o2 });
+                    // Loaded, and on at once: its standby has not started.
+                    await k.waitPlane(vs.spec(), ta);
+                    vs.step(1);
+                    const stepSpec = vs.spec();
+                    await k.sleep(100);
+                    const inFlight = (vs.appliedSpec?.() ?? "") !== stepSpec
+                        && !k.shows(__bench.sig.main, stepSpec);
+                    return { ...(await k.jumpTo(dest)), inFlight };
+                }, o2, busyDest);
+                jumpMetrics(metrics, "jumpBusy", suffix, busy, ctx.browser.netSince(mark));
+                put(metrics, `jumpBusy_inFlight${suffix}`, busy.inFlight ? 1 : 0);
+            }
+            await ctx.browser.eval(() => { __bench.stop(); return true; });
+        }
+    }
+    return { metrics, F, extra };
+}
+
+
+// -- 4d. a held key (plan 4.0) --------------------------------------------------------------
+
+const KEY_NEXT_EVENT = { key: "]", code: "BracketRight", windowsVirtualKeyCode: 221,
+                         nativeVirtualKeyCode: 221 };
+
+async function held(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 10) return { metrics, skipped: "depth under 10" };
+    const F = await period(ctx);
+    const top = ctx.info.depth - 1;
+    const planes = Math.min(40, top);
+    const start = Math.max(0, Math.min(ctx.params.z0 ?? 0, top - planes));
+    // The real key where the page takes it (depthStrip's `]`), else the same
+    // steps from inside the page at the same cadence.
+    await reset(ctx, { z: start });
+    await ctx.browser.key("]", { code: "BracketRight", keyCode: 221 });
+    const moved = await ctx.browser.eval(async (z) => {
+        await __bench.k.sleep(80);
+        return __bench.k.vs().get().z !== z;
+    }, start);
+    const input = moved ? "key" : "step";
+    const extra = { input, planes, start };
+    for (const zoom of ["home", "L0"]) {
+        const suffix = zoom === "L0" ? "_L0" : "";
+        for (const rate of [8, 15]) {
+            const name = rate === 8 ? "held" : `held${rate}`;
+            const interval = 1000 / rate;
+            for (let rep = 0; rep < Math.min(ctx.reps, 3); rep += 1) {
+                await ctx.browser.clearCache();
+                await boot(ctx, { z: start });
+                await atZoom(ctx, zoom, start);
+                await atRest(ctx);
+                const t0 = await ctx.browser.eval(() => {
+                    __bench.reset({ counters: false });
+                    __bench.start();
+                    __bench.heldFrom = { adopted: __bench.k.perfCount("standbyAdopted"),
+                                         level: __bench.k.finestDrawn() };
+                    __bench.heldUp = null;
+                    return performance.now();
+                });
+                if (input === "key") {
+                    // Down, auto-repeats on a fixed clock, up one interval after
+                    // the last: the key held for `planes` intervals.
+                    const begin = Date.now();
+                    for (let i = 0; i < planes; i += 1) {
+                        const wait = begin + i * interval - Date.now();
+                        if (wait > 0) await sleep(wait);
+                        await ctx.browser.key("]", { code: "BracketRight", keyCode: 221,
+                                                     repeat: i > 0, up: false });
+                    }
+                    const wait = begin + planes * interval - Date.now();
+                    if (wait > 0) await sleep(wait);
+                    await ctx.browser.send("Input.dispatchKeyEvent", { type: "keyUp", ...KEY_NEXT_EVENT });
+                } else {
+                    await ctx.browser.eval(async (planes, interval) => {
+                        const vs = __bench.k.vs();
+                        const begin = performance.now();
+                        for (let i = 0; i < planes; i += 1) {
+                            const wait = begin + i * interval - performance.now();
+                            if (wait > 0) await __bench.k.sleep(wait);
+                            vs.step(1);
+                        }
+                        const wait = begin + planes * interval - performance.now();
+                        if (wait > 0) await __bench.k.sleep(wait);
+                        __bench.heldUp = performance.now();
+                        return true;
+                    }, planes, interval);
+                }
+                const r = await ctx.browser.eval(async (t0) => {
+                    const k = __bench.k;
+                    const vs = k.vs();
+                    const evalAt = performance.now();
+                    const ups = __bench.inputs.filter(([t, type]) => type === "keyup" && t >= t0 && t <= evalAt);
+                    const tUp = __bench.heldUp ?? (ups.length ? ups[ups.length - 1][0] : evalAt);
+                    // What the hand had asked for at release, and what the plane showed.
+                    let requested = null;
+                    for (const [t, name, detail] of __bench.events) {
+                        if (name !== "plexora:view-requested" || t > tUp || !detail?.spec) continue;
+                        requested = k.planeOf(detail.spec) ?? requested;
+                    }
+                    requested ??= vs.get().z;
+                    let committed = null;
+                    for (const [t, surface, value] of __bench.trans) {
+                        if (surface !== "main" || t > tUp) continue;
+                        committed = k.zOfSig(value) ?? committed;
+                    }
+                    const r = await k.waitPlane(vs.spec(), tUp);
+                    // Settled: the final plane on screen, loaded at the level the
+                    // plane drew at rest before the hold.
+                    const settle = r.commit === null ? null
+                        : await k.waitFull(vs.spec(), tUp, __bench.heldFrom?.level ?? null);
+                    const painted = new Set();
+                    for (const [t, surface, value] of __bench.trans) {
+                        if (surface === "main" && t >= t0) painted.add(k.zOfSig(value));
+                    }
+                    painted.delete(null);
+                    const adopted = k.perfCount("standbyAdopted");
+                    const from = __bench.heldFrom?.adopted;
+                    __bench.stop();
+                    return { lag: committed === null ? null : requested - committed,
+                             settle, settleCommit: r.commit, painted: painted.size,
+                             adopted: adopted === null || from === null || from === undefined ? null : adopted - from,
+                             requested, committed, final: vs.get().z };
+                }, t0);
+                put(metrics, `${name}_lag${suffix}`, r.lag);
+                put(metrics, `${name}_settle${suffix}`, r.settle);
+                put(metrics, `${name}_standbyAdopted${suffix}`, r.adopted);
+                put(metrics, `${name}_painted${suffix}`, r.painted);
+                if (rep === 0) extra[`${name}${suffix}`] = { requested: r.requested, committed: r.committed, final: r.final };
+            }
+        }
+    }
+    return { metrics, F, extra };
+}
+
+// -- 6b. 3-D flashes: rest after a rotation, filling in, a window handover (plan 3.6) ------
+
+const V3D_LUM = { lum: true, region: [0.25, 0.25, 0.5, 0.5], grid: [16, 12] };
+
+async function volumeFlash(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx);
+    const F = await period(ctx);
+    // The default camera, not the one the last page saved (a close-up between
+    // two cells would leave the traced centre empty): this page's renderer is
+    // new, and an empty stored camera is one it does not take.
+    await ctx.browser.eval(() => { __bench.k.vs().set({ volume: { camera: {} } }, { save: false }); return true; });
+    const first = await enterVolume(ctx);
+    if (first.ended) {
+        await leaveVolume(ctx);
+        return { metrics, F, skipped: `3-D ${first.ended}` };
+    }
+    const reps = Math.min(ctx.reps, 3);
+    const extra = { ghost: false, handover: null, fill: [], series: {} };
+    const centre = await ctx.browser.eval(() => {
+        const r = __bench.k.P().volumeView.renderer;
+        const c = r.canvas.getBoundingClientRect();
+        return { x: c.left + c.width / 2, y: c.top + c.height / 2, dist: r.camera?.dist ?? null };
+    });
+    const startRecording = () => ctx.browser.eval(async (lum) => {
+        const k = __bench.k;
+        await k.volumeRest(300, 30000);
+        __bench.reset({ counters: false });
+        __bench.hookApp();
+        __bench.start(lum);
+        __bench.v3dFrom = { counters: k.counters(), at: performance.now() };
+        await k.sleep(200);
+        return performance.now();
+    }, V3D_LUM);
+    // 1. a rotation by a real drag, released moving: the coast, then rest.
+    for (let rep = 0; rep < reps; rep += 1) {
+        await startRecording();
+        await ctx.browser.mouse(rotateDrag(centre));
+        const r = await ctx.browser.eval(async () => {
+            const k = __bench.k;
+            const renderer = k.P().volumeView.renderer;
+            const ups = __bench.inputs.filter(([, type]) => type === "pointerup");
+            const tRel = ups.length ? ups[ups.length - 1][0] : performance.now();
+            const end = performance.now() + 6000;
+            while (performance.now() < end && renderer.animating()) await k.sleep(8);
+            const tRest = performance.now();
+            await k.sleep(700);   // rest + 600 ms, and the last bitmaps in
+            __bench.stop();
+            const all = k.lumTrace(tRel, tRest + 600, tRest + 400);
+            const atRest = k.lumTrace(tRest - 50, tRest + 600, tRest + 400);
+            const c = k.delta(__bench.v3dFrom.counters, k.counters());
+            return { ...all, settleJump: atRest.jump, captures: c.vghostCaptures || 0,
+                     ghostMs: __bench.vghostMs.map(([, ms]) => ms),
+                     ghost: Boolean(k.P().volumeView.renderer?.ghost) };
+        });
+        put(metrics, "v3d_restJump", r.jump);
+        put(metrics, "v3d_settleJump", r.settleJump);
+        put(metrics, "v3d_flashFrames", r.flash);
+        put(metrics, "v3d_blackFrames", r.black);
+        put(metrics, "v3d_restFrames", r.frames);
+        put(metrics, "v3d_lumRef", r.ref);
+        if (rep === 0) extra.series.rest = r.series;
+        if (r.ghost) {
+            extra.ghost = true;
+            put(metrics, "v3d_ghostCaptures", r.captures);
+            put(metrics, "v3d_ghostMs", r.ghostMs);
+        }
+    }
+    // 2. wheel in: the brick atlas or the detail sub-volume fills in.
+    for (let rep = 0; rep < reps; rep += 1) {
+        await ctx.browser.eval(async (dist) => {
+            const r = __bench.k.P().volumeView.renderer;
+            if (Number.isFinite(dist) && r.camera) { r.camera.dist = dist; r.zoomTarget = null; r.invalidate(); }
+            await __bench.k.volumeRest(300, 30000);
+            return true;
+        }, centre.dist);
+        const t0 = await startRecording();
+        for (let i = 0; i < 8; i += 1) {
+            await ctx.browser.wheel(centre.x, centre.y, -120);
+            await sleep(30);
+        }
+        const r = await ctx.browser.eval(async (t0) => {
+            const k = __bench.k;
+            const renderer = k.P().volumeView.renderer;
+            const end = performance.now() + 6000;
+            while (performance.now() < end && renderer.animating()) await k.sleep(8);
+            await k.volumeRest(200, 30000);
+            const tRest = performance.now();
+            await k.sleep(700);
+            __bench.stop();
+            const c = k.delta(__bench.v3dFrom.counters, k.counters());
+            return { ...k.lumTrace(t0 - 100, tRest + 600, tRest + 400), bricks: c["req:brick"] || 0,
+                     detail: Boolean(renderer.detail), captures: c.vghostCaptures || 0,
+                     ghostMs: __bench.vghostMs.map(([, ms]) => ms), settledIn: tRest - t0 };
+        }, t0);
+        put(metrics, "v3d_fillFlash", r.flash);
+        put(metrics, "v3d_fillBlack", r.black);
+        put(metrics, "v3d_fillSettle", r.settledIn);
+        if (extra.ghost) {
+            put(metrics, "v3d_ghostCaptures", r.captures);
+            put(metrics, "v3d_ghostMs", r.ghostMs);
+        }
+        extra.fill.push({ bricks: r.bricks, detail: r.detail, frames: r.frames, ref: r.ref });
+        if (rep === 0) extra.series.fill = r.series;
+    }
+    // 3. a forced window handover (services/volumeWindows.js adopt), from the
+    // starting camera: one shown channel's window made 10 % wider, as exact.
+    await ctx.browser.eval(async (dist) => {
+        const r = __bench.k.P().volumeView.renderer;
+        if (Number.isFinite(dist) && r.camera) { r.camera.dist = dist; r.zoomTarget = null; r.invalidate(); }
+        await __bench.k.volumeRest(300, 30000);
+        return true;
+    }, centre.dist);
+    for (let rep = 0; rep < reps; rep += 1) {
+        await startRecording();
+        const r = await ctx.browser.eval(async () => {
+            const k = __bench.k;
+            const windows = k.P().volumeWindows;
+            const renderer = k.P().volumeView.renderer;
+            const name = (renderer.channels?.() || []).map((c) => c.name)
+                .find((n) => windows?.peek?.(n));
+            if (!name) { __bench.stop(); return { skipped: "no window held" }; }
+            const current = windows.peek(name);
+            // Redrawn every frame while the handover lands, as anything moving
+            // or a contrast drag redraws it (an invalidate): a frame drawn
+            // while the channel's new texture is missing is what goes black
+            // or fades in from nothing. Left alone, a still view keeps its
+            // last picture and shows nothing either way.
+            let redrawing = true;
+            const redraw = () => {
+                if (!redrawing) return;
+                renderer.invalidate?.();
+                requestAnimationFrame(redraw);
+            };
+            requestAnimationFrame(redraw);
+            const t0 = performance.now();
+            windows.adopt(name, { ...current, qmax: current.qmax * 1.1, exact: true });
+            await k.sleep(50);
+            await k.volumeRest(200, 30000);
+            const tRest = performance.now();
+            await k.sleep(700);
+            redrawing = false;
+            __bench.stop();
+            const c = k.delta(__bench.v3dFrom.counters, k.counters());
+            return { ...k.lumBand(t0, tRest + 600, tRest + 400), name,
+                     texmiss: k.perfMarks("volume", "texmiss", t0).length,
+                     captures: c.vghostCaptures || 0, ghostMs: __bench.vghostMs.map(([, ms]) => ms),
+                     loads: c.volumeLoads || 0, settledIn: tRest - t0 };
+        });
+        if (r.skipped) {
+            extra.handover = r.skipped;
+            break;
+        }
+        put(metrics, "v3d_handoverBlack", r.black);
+        put(metrics, "v3d_handoverFlash", r.flash);
+        put(metrics, "v3d_handoverSettle", r.settledIn);
+        put(metrics, "v3d_texmiss", r.texmiss);
+        if (extra.ghost) {
+            put(metrics, "v3d_ghostCaptures", r.captures);
+            put(metrics, "v3d_ghostMs", r.ghostMs);
+        }
+        extra.handover = { name: r.name, loads: r.loads, frames: r.frames, before: r.before, ref: r.ref,
+                           cells: r.cells };
+        if (rep === 0) extra.series.handover = r.series;
+    }
+    await leaveVolume(ctx);
+    return { metrics, F, extra };
+}
+
+// -- 5b. resizing the XZ pane by its divider (plan 2.5) ---------------------------------------
+
+async function panesResize(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx, { layout: "sections" });
+    await ctx.browser.eval(() => __bench.k.quiet(800, 120000));
+    const F = await period(ctx);
+    const extra = { labels: [], shots: {} };
+    for (let rep = 0; rep < Math.min(ctx.reps, 3); rep += 1) {
+        // From the default size each time: a size is saved for the user and
+        // outlives the page.
+        const at = await ctx.browser.eval(async () => {
+            const k = __bench.k;
+            const sp = k.P().sectionPanes;
+            if (!sp?.enabled || !sp.panes) return null;
+            sp.resetSize?.("xz");
+            await k.quiet(600, 60000);
+            await k.sleep(300);
+            __bench.hookApp();
+            const divider = document.querySelector(".viewer-section-divider.is-xz");
+            if (!divider || divider.hidden) return null;
+            const box = divider.getBoundingClientRect();
+            if (!(box.width > 0 && box.height > 0)) return null;
+            const x = box.left + box.width / 2;
+            const y = box.top + box.height / 2;
+            const hit = document.elementFromPoint(x, y);
+            return { x, y, onDivider: Boolean(hit && (hit === divider || divider.contains(hit))) };
+        });
+        if (!at) return { metrics, F, skipped: "no XZ divider" };
+        extra.onDivider = at.onDivider;
+        if (rep === 0) extra.shots.before = await ctx.browser.shot();
+        await ctx.browser.eval(() => {
+            const wrapper = document.getElementById("openseadragon_wrapper");
+            const read = () => parseFloat(wrapper.style.getPropertyValue("--plx-section-xz-h"));
+            __bench.reset({ counters: false });
+            __bench.start();
+            __bench.xzh = [[performance.now(), read()]];
+            __bench.xzhObserver?.disconnect();
+            __bench.xzhObserver = new MutationObserver(() => {
+                const value = read();
+                const last = __bench.xzh[__bench.xzh.length - 1];
+                if (!last || last[1] !== value) __bench.xzh.push([performance.now(), value]);
+            });
+            __bench.xzhObserver.observe(wrapper, { attributes: true, attributeFilter: ["style"] });
+            return true;
+        });
+        // Up 200 px in 20 steps, a frame apart: the pane grows.
+        const moves = [["press", at.x, at.y, 16]];
+        for (let i = 1; i <= 20; i += 1) moves.push(["move", at.x, at.y - 10 * i, 16]);
+        moves.push(["release", at.x, at.y - 200, 0]);
+        await ctx.browser.mouse(moves);
+        const r = await ctx.browser.eval(async (F) => {
+            const k = __bench.k;
+            const last = (type) => {
+                const list = __bench.inputs.filter(([, t]) => t === type);
+                return list.length ? list[list.length - 1][0] : null;
+            };
+            const tDown = last("pointerdown") ?? __bench.xzh[0][0];
+            const tUp = last("pointerup") ?? performance.now();
+            await k.sleep(Math.max(0, tUp + 2100 - performance.now()));
+            __bench.xzhObserver?.disconnect();
+            __bench.stop();
+            // Pane reloads: shows that started a load (probes.js, by generation).
+            const loads = __bench.events.filter(([, name]) => /^(xz|yz):load$/.test(name)).map(([t]) => t);
+            const sizes = __bench.xzh.filter(([t]) => t <= tUp).map(([, v]) => v).filter(Number.isFinite);
+            let monotonic = 1;
+            for (let i = 1; i < sizes.length; i += 1) if (sizes[i] < sizes[i - 1] - 0.5) monotonic = 0;
+            return { during: loads.filter((t) => t >= tDown && t <= tUp).length,
+                     after: loads.filter((t) => t > tUp && t <= tUp + 2000).length,
+                     monotonic, grown: sizes.length ? sizes[sizes.length - 1] - sizes[0] : null,
+                     label: k.P().sectionPanes?.panes?.xz?.label?.textContent || "",
+                     fs: k.frameStats(tDown, tUp, F), dragMs: tUp - tDown };
+        }, F);
+        put(metrics, "panes_showsDuring", r.during);
+        put(metrics, "panes_showsAfter", r.after);
+        put(metrics, "panes_monotonic", r.monotonic);
+        put(metrics, "panes_grownPx", r.grown);
+        put(metrics, "panes_labelStretch", /z\s*[×x]\s*\d/.test(r.label) ? 1 : 0);
+        put(metrics, "resize_frameP95", r.fs.p95);
+        put(metrics, "resize_dropped", r.fs.dropped);
+        extra.labels.push(r.label);
+        if (rep === 0) extra.shots.after = await ctx.browser.shot();
+    }
+    extra.panes_label = extra.labels[extra.labels.length - 1] ?? null;
+    // Leave the default size behind for the scenarios after this one.
+    await ctx.browser.eval(async () => {
+        __bench.k.P().sectionPanes?.resetSize?.("xz");
+        await __bench.k.quiet(400);
+        return true;
+    });
+    await reset(ctx, { layout: "single" });
+    return { metrics, F, extra };
+}
+
 export const SCENARIOS = {
     open: { run: open },
     channels: { run: channels },
@@ -897,4 +1422,8 @@ export const SCENARIOS = {
     tour: { run: tour },
     memory: { run: memory },
     parity2d: { run: parity2d },
+    jump: { run: jump },
+    held: { run: held },
+    volume_flash: { run: volumeFlash },
+    panes_resize: { run: panesResize },
 };

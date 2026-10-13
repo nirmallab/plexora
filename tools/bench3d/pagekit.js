@@ -187,8 +187,241 @@
         return grid.reduce((a, b) => a + b, 0) / Math.max(1, grid.length);
     }
 
+    // -- plane tokens, the app's own marks --------------------------------------
+
+    /** The plane of a plane token ("z12", "t3z12"), else null (a projection). */
+    function planeOf(token) {
+        const match = /^(?:t\d+)?z(\d+)$/.exec(String(token || "").replace(/^hd:/, ""));
+        return match ? Number(match[1]) : null;
+    }
+    /** The plane a surface signature shows, or null. */
+    function zOfSig(sig) {
+        for (const token of views(sig)) {
+            const z = planeOf(token);
+            if (z !== null) return z;
+        }
+        return null;
+    }
+    function perf() {
+        return P().perf || window.PlexoraViewPerf || null;
+    }
+    /** The app's marks (services/perfProbe.js) `surface:name` at or after `since`;
+     *  [] on a build without them. */
+    function perfMarks(surface, name, since = -Infinity) {
+        const list = perf()?.marks?.() || [];
+        return list.filter((m) => m.surface === surface && m.name === name && m.at >= since);
+    }
+    /** An app counter (services/perfProbe.js), or null on a build without them. */
+    function perfCount(name) {
+        const counts = perf()?.counters?.();
+        return counts ? (counts[name] || 0) : null;
+    }
+
+    /** Zoom the plane so one image pixel is `ratio` screen pixels (1: level 0
+     *  at 1:1), centred on image pixel `at` (default the image's centre). */
+    function zoomToLevel0(ratio = 1, at = null) {
+        const v = viewer();
+        const item = channelItems(v.world).find((i) => i.getOpacity() > 0) || v.world.getItemAt(0);
+        if (!item) return null;
+        const size = item.source?.dimensions || item.getContentSize?.();
+        const [x, y] = at || [size.x / 2, size.y / 2];
+        v.viewport.zoomTo(item.imageToViewportZoom(ratio), null, true);
+        v.viewport.panTo(item.imageToViewportCoordinates(x, y), true);
+        v.viewport.applyConstraints(true);
+        return { zoom: v.viewport.getZoom(true), maxLevel: item.source?.maxLevel ?? null };
+    }
+    /** The finest pyramid level any visible channel item drew last frame. */
+    function finestDrawn() {
+        let best = null;
+        for (const item of channelItems(viewer()?.world).filter((i) => i.getOpacity() > 0)) {
+            for (const info of item._lastDrawn || []) {
+                const level = info.level ?? info.tile?.level;
+                if (Number.isFinite(level)) best = best === null ? level : Math.max(best, level);
+            }
+        }
+        return best;
+    }
+
+    // -- a luminance series: means per frame -------------------------------------
+
+    /** [[t, mean], ...] of the luminance frames in [t0, t1]; over the cells
+     *  in `mask` (indexes) only, when given. */
+    function lumMeans(t0, t1, mask = null) {
+        const mean = mask
+            ? (grid) => mask.reduce((sum, i) => sum + grid[i], 0) / mask.length
+            : meanLum;
+        return B.lum.filter(([t]) => t >= t0 && t <= t1).map(([t, grid]) => [t, mean(grid)]);
+    }
+    /** The cells the picture over [t0, t1] lights up: at least a quarter of
+     *  its brightest cell (per-cell median); every cell if fewer than four. */
+    function litCells(t0, t1) {
+        const grids = B.lum.filter(([t]) => t >= t0 && t <= t1).map(([, grid]) => grid);
+        if (!grids.length) return null;
+        const ref = grids[0].map((_, i) => {
+            const values = grids.map((grid) => grid[i]).sort((a, b) => a - b);
+            return values[Math.floor(values.length / 2)];
+        });
+        const top = Math.max(...ref);
+        const lit = ref.map((v, i) => (v >= Math.max(1, 0.25 * top) ? i : -1)).filter((i) => i >= 0);
+        return lit.length >= 4 ? lit : null;
+    }
+    /** The largest change of mean between consecutive frames. */
+    function maxStep(values) {
+        let most = 0;
+        for (let i = 1; i < values.length; i += 1) most = Math.max(most, Math.abs(values[i] - values[i - 1]));
+        return most;
+    }
+    /**
+     * Frames whose mean leaves the band of BOTH its neighbours by more than
+     * `eps`, the same way up or down: flashFrames' band test, with the frames
+     * either side as "before" and "after" (a moving 3-D view has no fixed
+     * before/after). A run of up to two such frames counts each.
+     */
+    function spikeFrames(values, eps = 6) {
+        let n = 0;
+        let i = 1;
+        while (i < values.length - 1) {
+            const a = values[i - 1];
+            let hit = 0;
+            for (let w = 1; w <= 2 && i + w < values.length; w += 1) {
+                const b = values[i + w];
+                const run = values.slice(i, i + w);
+                if (run.every((x) => x - a > eps && x - b > eps)
+                        || run.every((x) => a - x > eps && b - x > eps)) {
+                    hit = w;
+                    break;
+                }
+            }
+            n += hit;
+            i += Math.max(1, hit);
+        }
+        return n;
+    }
+    /** Frames darker than `share` of `ref` (null when `ref` is too dark to tell). */
+    function darkFrames(values, ref, share = 0.1) {
+        if (!(ref > 2)) return null;
+        return values.filter((v) => v < share * ref).length;
+    }
+    /**
+     * The luminance means over [from, to] and what they say: the largest
+     * frame-to-frame step, spike frames, and frames darker than a tenth of the
+     * settled picture (the median mean over [refFrom, to]).
+     */
+    function lumTrace(from, to, refFrom) {
+        const series = lumMeans(from, to).map(([, m]) => m);
+        const tail = lumMeans(refFrom, to).map(([, m]) => m).sort((a, b) => a - b);
+        const ref = tail.length ? tail[Math.floor(tail.length / 2)] : null;
+        return { frames: series.length, ref, jump: maxStep(series), flash: spikeFrames(series),
+                 black: ref === null ? null : darkFrames(series, ref),
+                 series: series.slice(0, 200).map((m) => Math.round(m * 10) / 10) };
+    }
+
+    /**
+     * A still picture changing from one state to another over [t0, to]:
+     * flashFrames' band test on the mean -- frames outside [before, after]
+     * (medians of the frames before t0 and from refFrom) by more than
+     * max(2, 5 % of the brighter) -- and frames under a tenth of `after`.
+     * Means over the cells the settled picture lights up (litCells), so a
+     * sparse sample on a dark ground still moves the mean.
+     */
+    function lumBand(t0, to, refFrom) {
+        const median = (list) => {
+            const sorted = list.slice().sort((a, b) => a - b);
+            return sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+        };
+        const mask = litCells(refFrom, to);
+        const before = median(lumMeans(t0 - 150, t0, mask).map(([, m]) => m));
+        const after = median(lumMeans(refFrom, to, mask).map(([, m]) => m));
+        const series = lumMeans(t0, to, mask).map(([, m]) => m);
+        if (before === null || after === null) {
+            return { frames: series.length, before, ref: after, flash: null, black: null, series: [] };
+        }
+        const eps = Math.max(2, 0.05 * Math.max(before, after));
+        const lo = Math.min(before, after) - eps;
+        const hi = Math.max(before, after) + eps;
+        return { frames: series.length, before, ref: after, cells: mask ? mask.length : null,
+                 flash: series.filter((m) => m < lo || m > hi).length,
+                 black: darkFrames(series, after),
+                 series: series.slice(0, 200).map((m) => Math.round(m * 10) / 10) };
+    }
+
+    /** The 3-D view at rest: nothing moving, nothing loading (the renderer's
+     *  own settled() where the build has one), held for `hold` ms. */
+    async function volumeRest(hold = 200, ms = 30000) {
+        const end = now() + ms;
+        let since = null;
+        while (now() < end) {
+            const r = P().volumeView?.renderer;
+            const still = r && !r.animating?.() && !r.interacting;
+            const ready = r && (typeof r.settled === "function" ? r.settled()
+                : (r.status === "ready" && !r._loads?.size));
+            if (still && ready) {
+                since ??= now();
+                if (now() - since >= hold) return true;
+            } else {
+                since = null;
+            }
+            await sleep(16);
+        }
+        return false;
+    }
+
+    /**
+     * Jump the plane to `dest` through the app's entry point (viewState.set)
+     * and time it: commit and full as waitPlane; `wait` until the destination's
+     * revision started (perfProbe's `view:requested` mark, null on a build
+     * without marks); `from`/`to` the request and the full load as epoch ms,
+     * to match the CDP request log's wall times. Recording must be on.
+     */
+    async function jumpTo(dest) {
+        const state = vs();
+        const origin = zOfSig(B.sig.main) ?? state.get().z;
+        const level = finestDrawn();   // the view's level, as the plane at rest drew it
+        const t0 = now();
+        state.set({ z: dest });
+        const spec = state.spec();
+        const r = await waitPlane(spec, t0);
+        const full = r.commit === null ? null : await waitFull(spec, t0, level);
+        const started = perfMarks("view", "requested", t0).find((m) => m.extra === spec);
+        return { origin, dest, spec, level, commit: r.commit, full,
+                 wait: started ? started.at - t0 : null,
+                 from: performance.timeOrigin + t0,
+                 to: performance.timeOrigin + t0 + (full ?? 60000) };
+    }
+
+    /**
+     * Once `token` is on screen: until every item is fully loaded AND drawing
+     * at least `level` (the finest level the plane drew at rest before; null:
+     * any), for two polls running. ms from t0, or null after `ms`.
+     *
+     * waitPlane's `full` alone can end at the swap: items handed over while
+     * they cover the view at a coarser level report fully loaded before their
+     * sharpening has asked for a tile.
+     */
+    async function waitFull(token, t0, level = null, ms = 60000) {
+        const end = now() + ms;
+        let since = null;
+        let polls = 0;
+        while (now() < end) {
+            const done = shows(B.sig.main, token) && loaded(viewer().world)
+                && (level === null || (finestDrawn() ?? -1) >= level);
+            if (done) {
+                since ??= now();
+                polls += 1;
+                if (polls >= 2) return since - t0;
+            } else {
+                since = null;
+                polls = 0;
+            }
+            await sleep(4);
+        }
+        return null;
+    }
+
     B.k = { items, channelItems, loaded, views, shows, coverage, meaningful, booted, settled,
             quiet, dismissToasts, slots, setChannels, enabled, reset, waitPlane, counters,
             delta, frameStats, flashFrames, meanLum, panesLoaded, volumeReady, sleep, now,
-            viewer, vs, P };
+            viewer, vs, P, planeOf, zOfSig, perfMarks, perfCount, zoomToLevel0, finestDrawn,
+            lumMeans, maxStep, spikeFrames, darkFrames, lumTrace, lumBand, volumeRest, jumpTo,
+            waitFull };
 })();

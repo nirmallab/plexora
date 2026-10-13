@@ -143,6 +143,12 @@ Largest mask, in bytes, read into memory in one go when converting it. Larger ma
 
 </Param>
 
+<Param name={"PLEXORA_TILE_CACHE_MB"} default={"a sixteenth of the allocated memory, 128 to 2048"}>
+
+Memory, in MB, the viewer's server keeps for image tiles it has already encoded, so a pan back over visited ground or a plane stepped back to is answered without a read -- and, for a z-stack stored plane by plane, the tiles of the next planes made ahead of the one on screen. Budgeted in bytes because a 16-bit tile is about 2 MB and an 8-bit one about 100 KB. A data node has its own (`PLEXORA_NODE_TILE_CACHE_MB`).
+
+</Param>
+
 <Param name={"PLEXORA_NO_NUMBA"}>
 
 Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
@@ -217,7 +223,7 @@ Memory, in MB, for decoded chunks of each Imaris channel read through HDF5's own
 
 <Param name={"PLEXORA_CHUNK_CACHE_MB"} default={"an eighth of the allocated memory, 256 to 8192"}>
 
-Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, the block of planes read ahead of the one on screen, and the 3-D view's level reuse chunks instead of decompressing them again. Sized from the memory this process was given (a cluster job's allocation, not the node's).
+Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks, an OME-Zarr store's, and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, the block of planes read ahead of the one on screen, and the 3-D view's level reuse chunks instead of decompressing them again. Sized from the memory this process was given (a cluster job's allocation, not the node's).
 
 </Param>
 

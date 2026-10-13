@@ -15,6 +15,7 @@ dataset's scenarios, what its derived files hold on disk is recorded too
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import platform
 import subprocess
@@ -31,24 +32,27 @@ OUT = ROOT / "docs" / "internal" / "3d" / "perf"
 
 #: Which scenarios each dataset runs, and what they need to know about it.
 DATASETS = {
-    "small": {"scenarios": ["open", "channels", "zsteps", "sync", "volume", "zoom", "contrast",
-                            "tour", "memory"],
+    "small": {"scenarios": ["open", "channels", "zsteps", "jump", "held", "sync", "panes_resize",
+                            "volume", "volume_flash", "zoom", "contrast", "tour", "memory"],
               "params": {"channels": [0, 1], "extra": 2, "z0": 6}},
     "twoplane": {"scenarios": ["flash"], "params": {}},
-    "ims": {"scenarios": ["open", "channels", "zsteps", "sync", "volume", "zoom", "contrast",
-                          "tour", "memory"],
+    "ims": {"scenarios": ["open", "channels", "zsteps", "jump", "held", "sync", "panes_resize",
+                          "volume", "volume_flash", "zoom", "contrast", "tour", "memory"],
             "params": {"channels": [0, 1, 2], "extra": 3, "z0": 85, "crossings": [63, 127]}},
-    "meso": {"scenarios": ["open", "zsteps", "sync", "volume", "zoom", "contrast", "tour"],
+    "meso": {"scenarios": ["open", "zsteps", "jump", "held", "sync", "panes_resize", "volume",
+                           "volume_flash", "zoom", "contrast", "tour"],
              "params": {"channels": [0], "z0": 958}},
-    "medium": {"scenarios": ["open", "channels", "zsteps", "sync", "volume", "zoom", "tour"],
+    "medium": {"scenarios": ["open", "channels", "zsteps", "jump", "held", "sync", "panes_resize",
+                             "volume", "volume_flash", "zoom", "tour"],
                "params": {"channels": [0, 1], "extra": 2, "z0": 90, "crossings": [31, 63]}},
     "large": {"scenarios": ["open", "zsteps", "sync", "volume", "tour"],
               "params": {"channels": [0, 1], "extra": 2, "z0": 1990}},
     "xenium": {"scenarios": ["open", "zsteps", "zoom"], "params": {"channels": [0], "z0": 5}},
     "flat": {"scenarios": ["parity2d"], "params": {}},
-    "mediumz": {"scenarios": ["open", "zsteps", "volume", "zoom"],
+    "mediumz": {"scenarios": ["open", "zsteps", "jump", "held", "volume", "volume_flash", "zoom"],
                 "params": {"channels": [0, 1], "extra": 2, "z0": 64}},
-    "flatstack": {"scenarios": ["open", "zsteps", "sync", "volume", "zoom"],
+    "flatstack": {"scenarios": ["open", "zsteps", "jump", "held", "sync", "panes_resize", "volume",
+                                "volume_flash", "zoom"],
                   "params": {"channels": [0, 1], "extra": 2, "z0": 50}},
 }
 
@@ -165,9 +169,20 @@ def main(argv=None):
         if parity and parity.get("extra", {}).get("png"):
             png = bench_home() / "parity" / f"{sha}-{args.label}-{dataset}.png"
             png.parent.mkdir(parents=True, exist_ok=True)
-            import base64
             png.write_bytes(base64.b64decode(parity["extra"].pop("png")))
             parity["extra"]["png"] = f"$PLEXORA_BENCH_HOME/parity/{png.name}"
+        # Any scenario's screenshots (`extra.shots`: {name: base64 PNG}).
+        for scenario, result in scenarios.items():
+            shots = (result.get("extra") or {}).get("shots") if isinstance(result, dict) else None
+            if not isinstance(shots, dict):
+                continue
+            for shot, data in list(shots.items()):
+                if not isinstance(data, str) or data.startswith("$"):
+                    continue
+                png = bench_home() / "shots" / f"{sha}-{args.label}-{dataset}-{scenario}-{shot}.png"
+                png.parent.mkdir(parents=True, exist_ok=True)
+                png.write_bytes(base64.b64decode(data))
+                shots[shot] = f"$PLEXORA_BENCH_HOME/shots/{png.name}"
     path.write_text(json.dumps(record, indent=1))
     print(path)
 

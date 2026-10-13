@@ -52,6 +52,22 @@ def test_the_viewer_motion_probe_passes():
     assert out.count("ok - ") >= 40
 
 
+def test_the_view_controls_probe_passes():
+    """Which depth control is offered in which mode: the whole matrix, the
+    registration rules, and resolving never touching the view state
+    (tests/js/view_controls_probe.mjs)."""
+    out = _run("view_controls_probe.mjs")
+    assert "all " in out and "checks passed" in out
+
+
+def test_the_depth_strip_probe_passes():
+    """The strip follows the mode -- in 3-D the rail is the clip range and
+    Play turns the stack -- and its cog popover follows it open
+    (tests/js/depth_strip_probe.mjs)."""
+    out = _run("depth_strip_probe.mjs")
+    assert "all " in out and "checks passed" in out
+
+
 def test_the_canvas_layout_probe_passes():
     """Bands add up along their edge, docks keep order, and a plugin's element
     asking to be docked is docked (tests/js/canvas_layout_probe.mjs)."""
@@ -83,8 +99,8 @@ def test_the_viewer_page_loads_the_depth_scripts_before_main():
     order = [page.index(name) for name in (
         "js/services/viewState.js?v=", "js/services/perfProbe.js?v=",
         "js/services/volumeWindows.js?v=",
-        "js/services/viewerPrefs.js?v=",
-        "js/views/depthStrip.js?v=", "js/views/depthTools.js?v=",
+        "js/services/viewerPrefs.js?v=", "js/services/viewControls.js?v=",
+        "js/views/depthStrip.js?v=", "js/views/depthSettings.js?v=", "js/views/depthTools.js?v=",
         "js/views/volumeCamera.js?v=", "js/views/orientationGizmo.js?v=",
         "js/views/volumeRenderer.js?v=",
         "js/views/sectionPanes.js?v=", "js/views/planeMotion.js?v=", "js/main.js?v=")]
@@ -115,8 +131,14 @@ def test_the_depth_ui_uses_icons_font_awesome_ships():
         pytest.skip("font awesome is not installed")
     shipped = test_icon_names._shipped()
     strip = (CLIENT / "src" / "js" / "views" / "depthStrip.js").read_text(encoding="utf-8")
+    settings = (CLIENT / "src" / "js" / "views" / "depthSettings.js").read_text(encoding="utf-8")
     used = set(re.findall(r'icon\("([a-z-]+)"\)', strip))
+    # The popover's glyph buttons name theirs as `glyph: "..."` or in a
+    # choices table: [value, text, glyph, title].
+    used |= set(re.findall(r'glyph: "([a-z-]+)"', settings))
+    used |= set(re.findall(r'\[(?:-?1|"[a-z]+"), "[^"]*", "([a-z-]+)", "', settings))
+    used |= set(re.findall(r'\["(?:xy|xz|yz|iso)", "([a-z-]+)"', settings))
     # The mode buttons name theirs in a table: [mode, glyph, title].
     used |= set(re.findall(r'\["(?:plane|slab|sections|volume)", "([a-z-]+)"', strip))
-    assert {"square", "layer-group", "play", "pause"} <= used
+    assert {"square", "layer-group", "play", "pause", "gear", "rotate-left", "arrows-to-dot"} <= used
     assert used <= shipped, used - shipped

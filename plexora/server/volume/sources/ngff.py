@@ -6,6 +6,13 @@ TIFF there is no cycles-on-Z ambiguity to resolve: a `z` axis is depth and a
 `ome_zarr._LevelView` pinned to (t, z) -- the same object `open_image` hands
 the tile path for a planar store, with a different pin.
 
+A level whose chunks are more than one plane deep reads its planes through
+the decoded-chunk cache instead (`_CachedPlane`): a plane's chunk holds the
+next planes too, so read directly it was decoded again at every step and
+kept by nothing, and the block the plane prefetcher read ahead
+(volume/prefetch.py) was thrown away. Through the cache, a step inside a
+chunk decodes nothing and the step across its edge finds the next block read.
+
 A store missing coarse levels gets them derived once (`build_volume_extension`)
 for EVERY plane, into arrays shaped (T, C, Z, h, w): the 2-D extension
 `ome_zarr.build_extension` writes is one plane's, and a z-stack served from
@@ -77,9 +84,13 @@ class NgffVolumeSource(VolumeSource):
     def _build_plane(self, t: int, z: int):
         # A coarse level that halves z holds plane z of the stack at its own
         # plane `stored_plane(level, z)`, as Imaris's do.
-        levels = [ome_zarr._make_level(array, self._axes, t=t,
-                                       z=stored_plane(self.volume, level, z))
-                  for level, array in enumerate(self._arrays[:self._base_levels])]
+        levels = []
+        for level, array in enumerate(self._arrays[:self._base_levels]):
+            stored = stored_plane(self.volume, level, z)
+            if "z" in self._axes and int(array.chunks[self._axes.index("z")]) > 1:
+                levels.append(_CachedPlane(self, level, array, self._axes, t, stored))
+            else:
+                levels.append(ome_zarr._make_level(array, self._axes, t=t, z=stored))
         if self._extension is not None:
             index = self._base_levels
             while str(index) in self._extension:
@@ -179,6 +190,46 @@ class NgffVolumeSource(VolumeSource):
     def _forget_planes(self) -> None:
         with self._lock:
             self._planes.clear()
+
+
+class _CachedPlane(ome_zarr._LevelView):
+    """One base level of one plane, `[channel, rows, cols]`, of a store whose
+    chunks are deeper than a plane: a rectangle is read in whole chunks
+    through the decoded-chunk cache (`NgffVolumeSource.read_stored`), so the
+    planes beside it come out of the cache. The same voxels as reading the
+    array directly; anything but a plain rectangle -- a stride, an empty or
+    reversed range -- is read directly, as a `_LevelView` reads it. Everything
+    that looks inside a level view (`ome_zarr._storage_keys`) sees one."""
+
+    __slots__ = ("_source", "_level", "_t", "_stored")
+
+    def __init__(self, source, level, array, axes, t, stored):
+        super().__init__(array, axes, t=t, z=stored)
+        self._source = source
+        self._level = int(level)
+        self._t = int(t)
+        self._stored = int(stored)
+
+    def __getitem__(self, index):
+        if not isinstance(index, tuple):
+            index = (index,)
+        channel = index[0]
+        rows = index[1] if len(index) > 1 else slice(None)
+        cols = index[2] if len(index) > 2 else slice(None)
+        if (isinstance(channel, (int, np.integer)) and _plain(rows, self.shape[1])
+                and _plain(cols, self.shape[2])):
+            return self._source.read_stored(self._level, self._t, int(channel), self._stored,
+                                            self._stored, rows, cols)[0]
+        return super().__getitem__(index)
+
+
+def _plain(part, size) -> bool:
+    """Whether `part` is a rectangle's side a chunked read gives exactly: a
+    slice, unit step, that covers at least one pixel of `size`."""
+    if not isinstance(part, slice) or part.step not in (None, 1):
+        return False
+    start, stop, _ = part.indices(size)
+    return stop > start
 
 
 class _Subsampled:

@@ -57,11 +57,26 @@
  * and so no grid.
  *
  * Draws on demand -- a frame only after the camera, the channels or the clip
- * changed. A channel new to the picture (switched on, its level just arrived,
- * the view just entered) comes in over a quarter of a second rather than
- * landing at once: its colour and opacity are scaled up from nothing, at full
- * quality, and at once with motion off. `webglcontextlost` hands the viewer
- * back to Plane mode with a toast.
+ * changed. A channel new to the picture (switched on, the view just entered)
+ * comes in over a quarter of a second rather than landing at once: its colour
+ * and opacity are scaled up from nothing, at full quality, and at once with
+ * motion off. `webglcontextlost` hands the viewer back to Plane mode with a
+ * toast.
+ *
+ * NEVER A BLANK OR WRONGLY BRIGHT FRAME WHILE DATA LOADS. A channel whose
+ * texture is being replaced -- its window turning exact, a frame step, HD on
+ * or off -- keeps drawing the texture it was drawn from (same area only), read
+ * in that texture's own window, until the new one lands (entryFor). What the
+ * picture is DRAWN with changing under a still camera -- the full frame after
+ * a turn stops, a texture, a finer detail or a batch of bricks landing, a
+ * channel switched off -- dissolves rather than cuts: the frame on screen is
+ * held on an opaque ghost over the canvas (planeMotion.js VolumeGhost) and
+ * faded out over the new one. A moving camera ends any ghost at once, a
+ * capture never has one, and with motion off there is none. MIP is drawn
+ * with the same number of samples moving as at rest -- fewer would miss thin
+ * peaks and the stack would dim while it turns -- and the sampling jitter
+ * follows the screen, not the render target, so it holds still when the
+ * resolution drops.
  *
  * MOVING IT. A drag turns the stack under the hand, one frame per display
  * refresh (views/volumeCamera.js holds the orientation and the named views,
@@ -73,11 +88,14 @@
  * real object does: the speed decays exponentially, per millisecond rather
  * than per frame (the same coast at 60 Hz and 120 Hz), so a flick carries as
  * far as it was fast and a slow, placed release does not move at all. Any
- * press stops it dead. The wheel's zoom eases to where it is going, and the
+ * press stops it dead. Play in 3-D (the depth strip) turns the stack on its
+ * own (setAutoRotate): smoothly, paced by the frame time, about the screen's
+ * vertical or an image axis, from the camera as it is -- until a press, a
+ * preset, a lock, Esc or Play again stops it. The wheel's zoom eases to where it is going, and the
  * preset views turn there rather than cut. While anything moves, the picture
- * is drawn with half the samples and -- if frames still come slower than the
- * display -- at a lower resolution, learnt as it goes; the moment it rests it
- * is drawn again in full. With motion off (the system's reduced-motion
+ * is drawn at a lower resolution if frames come slower than the display,
+ * learnt as it goes (and, additive only, with half the samples); the moment it
+ * rests it is drawn again in full. With motion off (the system's reduced-motion
  * setting, or the Depth card's switch: services/viewerPrefs.js) nothing
  * coasts or eases: every change lands at once.
  */
@@ -157,6 +175,12 @@
     //: A channel drawn that was not drawn the frame before comes in over
     //: this long, eased out, rather than all at once.
     const FADE_IN_MS = 240;
+    //: Play in 3-D turns the stack this many degrees a second: the default
+    //: and the bounds (services/viewerPrefs.js `rotate`).
+    const ROTATE_DEFAULT_DPS = 30;
+    const ROTATE_MIN_DPS = 5;
+    const ROTATE_MAX_DPS = 90;
+    const ROTATE_AXES = ["screen", "x", "y", "z"];
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -277,6 +301,7 @@ uniform float u_grid;          // the grid's opacity, 0 for none
 uniform int u_grid_faces;      // 0 every far face, 1 the far z face only
 uniform vec3 u_grid_scale;     // grid lines per box unit, per axis
 uniform vec3 u_grid_offset;    // grid lines from the origin to the box's centre
+uniform vec2 u_jitter_res;     // the full-quality target's size, in its pixels
 ${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;" : ""}
 ${chunk ? chunk.declarations : ""}
 in vec2 v_ndc;
@@ -345,8 +370,11 @@ void main() {
     float stepLength = length(u_extent) / float(u_steps);
     int count = int(ceil(len / stepLength));
     // Jitter the first step by the pixel's position, so the regular sampling
-    // grid does not show as wood-grain rings.
-    float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    // grid does not show as wood-grain rings -- the position on the
+    // full-quality grid, not the fragment's, so the pattern holds still when
+    // a moving view is drawn at a lower resolution.
+    vec2 cell = floor((v_ndc * 0.5 + 0.5) * u_jitter_res);
+    float jitter = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
     float v[NCH];
     float peak[NCH];
     for (int c = 0; c < NCH; c++) peak[c] = 0.0;
@@ -780,6 +808,9 @@ ${sample}`;
             this.spin = null;
             this.zoomTarget = null;
             this.tween = null;
+            //: Play in 3-D: {axis: "screen" | "x" | "y" | "z", rate: signed
+            //: radians per ms}, or null (setAutoRotate).
+            this.autoRotate = null;
             this.lastStep = 0;
             //: Resolution while moving, as a share of full; learnt (see draw).
             this.fastScale = 1;
@@ -789,6 +820,19 @@ ${sample}`;
             //: name -> when they were first drawn (presence).
             this._drawn = new Set();
             this._fades = new Map();
+            //: name -> the texture key the channel was last drawn from: what
+            //: it keeps drawing while its own texture loads (entryFor).
+            this._shownKey = new Map();
+            //: name -> the texture key it is waiting for (one mark per miss).
+            this._missed = new Map();
+            this._textureIds = 0;
+            this._detailIds = 0;
+            //: The camera and the composition the last frame was drawn with
+            //: (cameraKey, draw), and the crossfade between two compositions.
+            this._lastCam = null;
+            this._lastComp = null;
+            this._stepKey = "";
+            this.ghost = null;
             this.prefs = global.PlexoraViewerPrefs || null;
             this.status = "idle";
             this.level = null;
@@ -854,6 +898,9 @@ ${sample}`;
             this.gridCanvas.setAttribute("aria-hidden", "true");
             this.gridCanvas.hidden = true;
             this.wrapper.appendChild(this.gridCanvas);
+            // The crossfade between two pictures at one camera (draw).
+            const Ghost = global.PlexoraPlaneMotion?.VolumeGhost;
+            this.ghost = Ghost ? new Ghost(this, { prefs: this.prefs }) : null;
             // [surfaces] Meshes drawn on this context (views/surfaceRenderer.js).
             this.surfaces = global.PlexoraSurfaceRenderer
                 ? new global.PlexoraSurfaceRenderer(this) : null;
@@ -875,6 +922,7 @@ ${sample}`;
         destroy() {
             cancelAnimationFrame(this.frame);
             clearTimeout(this._settleTimer);
+            this.setAutoRotate(false);
             this.spin = null;
             this.tween = null;
             this.zoomTarget = null;
@@ -888,6 +936,10 @@ ${sample}`;
             this.atlas = null;
             this.surfaces?.destroy();
             this.surfaces = null;
+            this.ghost?.cancel();
+            this.ghost?.ghost?.remove();
+            this.ghost = null;
+            this._shownKey.clear();
             this.canvas?.remove();
             this.gridCanvas?.remove();
             this.gridCanvas = null;
@@ -906,10 +958,15 @@ ${sample}`;
             if (this.note && !visible) this.note.hidden = true;
             this.gizmo?.show(visible);
             if (!visible) {
+                // Leaving 3-D by any path stops Play's turn: nothing turns
+                // unseen, and coming back never finds it still going.
+                this.setAutoRotate(false);
                 this.setLock(null);
                 // Back in 3-D, what is drawn comes in again.
                 this._drawn.clear();
                 this._fades.clear();
+                this.ghost?.cancel();
+                this._lastCam = null;
             }
             if (visible) this.invalidate();
         }
@@ -929,8 +986,10 @@ ${sample}`;
             const next = name && name !== this.lock ? name : null;
             if (next === this.lock) return;
             this.lock = next;
-            // A spin about the old axis (or a free one) is not this lock's.
+            // A spin about the old axis (or a free one) is not this lock's,
+            // and nor is Play's turn.
             this.spin = null;
+            this.setAutoRotate(false);
             this.gizmo?.setLocked(this.lock);
             this.canvas?.setAttribute("aria-description",
                 this.lock ? `Turning about the image's ${this.lock.toUpperCase()} axis` : "");
@@ -949,6 +1008,9 @@ ${sample}`;
         lost() {
             this.textures.clear();
             this.textureBytes = 0;
+            this._shownKey.clear();
+            this.ghost?.cancel();
+            this.setAutoRotate(false);
             this.detail = null;
             this.atlas?.lost();
             this.surfaces?.lost();
@@ -991,6 +1053,15 @@ ${sample}`;
                         ? `${formatG(packet.qmin)},${formatG(packet.qmax)}` : "");
                 const levelWindow = held ? [held.qmin, held.qmax]
                     : (packet ? [Number(packet.qmin), Number(packet.qmax)] : null);
+                // The slider in raw units: what a texture made with another
+                // window is read with (windowFor).
+                let raw = null;
+                if (sidebar.isHdMode?.()) {
+                    raw = slot.range ? slot.range.map(Number) : null;
+                } else if (packet && Number.isFinite(Number(packet.qmin))) {
+                    const span = Math.max(1, Number(packet.qmax) - Number(packet.qmin));
+                    raw = (slot.range || [0, 255]).map((value) => Number(packet.qmin) + (value / 255) * span);
+                }
                 // The slider's bytes are over the sidebar's window; a texture
                 // made with another (the provisional one, say) is read in its own.
                 if (!sidebar.isHdMode?.() && packet && levelWindow
@@ -1005,6 +1076,8 @@ ${sample}`;
                     colour: hexToRgb(slot.color?.hex || slot.color),
                     window,
                     stamp,
+                    raw: raw && raw.every(Number.isFinite) ? raw : null,
+                    levelWindow,
                     opacity: this.opacityOf(fullName),
                 };
             });
@@ -1027,10 +1100,72 @@ ${sample}`;
             return `${name}|${t}|${format}|${box}|${stamp}`;
         }
 
-        /** The texture `channel` draws from now, or null. */
+        /** The texture made for `channel` as it is now, or null. */
         textureOf(channel) {
             return this.textures.get(this.textureKey(channel.name, undefined, undefined, undefined,
                                                      channel.stamp || "")) || null;
+        }
+
+        /**
+         * The texture `channel` is DRAWN from: its own when held, else --
+         * while that loads -- the one it was drawn from last, when that is of
+         * the same area. A window turning exact, a frame step, HD on or off:
+         * the picture keeps the channel until its new texture can replace it,
+         * never a channel gone black and faded back in. A different area is a
+         * different picture, and is never stood in for. Drawing only:
+         * `settled()`, `refine()` and the loads ask for the exact texture.
+         */
+        entryFor(channel) {
+            const key = this.textureKey(channel.name, undefined, undefined, undefined, channel.stamp || "");
+            const exact = this.textures.get(key);
+            if (exact) {
+                this._shownKey.set(channel.name, key);
+                this._missed.delete(channel.name);
+                return exact;
+            }
+            const shown = this.textures.get(this._shownKey.get(channel.name));
+            if (!shown || shown.box !== this.boxKey()) return null;
+            if (this._missed.get(channel.name) !== key) {
+                this._missed.set(channel.name, key);
+                global.PlexoraViewPerf?.mark?.("volume", "texmiss", null, channel.name);
+            }
+            return shown;
+        }
+
+        /**
+         * `channel`'s window in the units of the texture it is drawn from.
+         * Its own texture's is `channel.window`; an older one, made with
+         * another window (the provisional one, while the exact one loads; 8-bit
+         * while HD's arrives), reads the same raw range in its own window, so
+         * the picture keeps its contrast across the handover.
+         */
+        windowFor(channel) {
+            const entry = channel.entry;
+            const made = entry?.levelWindow;
+            const own = channel.levelWindow;
+            if (!made || !channel.raw) return channel.window;
+            if (entry.format === this.format() && own && own[0] === made[0] && own[1] === made[1]) {
+                return channel.window;
+            }
+            const span = Math.max(1e-6, made[1] - made[0]);
+            return channel.raw.map((value) => Math.min(1, Math.max(0, (value - made[0]) / span)));
+        }
+
+        /** The textures eviction must leave: what each channel is made with
+         *  now, what it is drawn from, and the details for both. */
+        keepKeys(channels = this.channels()) {
+            const keep = new Set(channels.map((channel) => this.textureKey(
+                channel.name, undefined, undefined, undefined, channel.stamp || "")));
+            for (const key of this._shownKey.values()) keep.add(key);
+            for (const detail of [this.detail, this._detailRequest]) {
+                if (!detail?.region) continue;
+                for (const channel of channels) {
+                    keep.add(this.detailKey(channel, detail));
+                    const shown = this.textures.get(this._shownKey.get(channel.name));
+                    if (shown) keep.add(this.detailKey({ name: channel.name, stamp: shown.stamp }, detail));
+                }
+            }
+            return keep;
         }
 
         /** Fetch the level every visible channel needs and does not hold. */
@@ -1050,13 +1185,16 @@ ${sample}`;
                                     Math.floor((4 * this.budget) / Math.max(1, channels.length)));
             // The level already drawn, when every visible channel at it still
             // fits what they share (eight channels at the default budget).
-            const held = channels.map((channel) => this.textureOf(channel)).find(Boolean);
+            // A channel being replaced (entryFor) counts as drawn at the level
+            // it is drawn from, when its bytes are the same kind.
+            const held = channels.map((channel) => this.textureOf(channel)
+                || this.textures.get(this._shownKey.get(channel.name))).find((entry) => entry
+                    && entry.format === this.format() && entry.box === this.boxKey());
             const level = held && held.bytes * channels.length <= 8 * this.budget
                 ? held.level : null;
             await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget,
                                                                         channel.stamp, level)));
-            this.evict(new Set(channels.map((channel) => this.textureKey(
-                channel.name, undefined, undefined, undefined, channel.stamp || ""))));
+            this.evict(this.keepKeys(channels));
             this.status = "ready";
             this.paintStatus();
         }
@@ -1162,8 +1300,12 @@ ${sample}`;
                 // the box's proportions are measured from (extent()).
                 const covered = String(response.headers.get("X-Plexora-Box") || "")
                     .split(",").map(Number);
+                const window = String(stamp || "").split(",").map(Number);
                 const entry = {
-                    texture, t, format, box: area, name,
+                    texture, t, format, box: area, name, stamp,
+                    id: ++this._textureIds,
+                    //: The window its bytes are quantized with (`w=`), raw units.
+                    levelWindow: window.length === 2 && window.every(Number.isFinite) ? window : null,
                     shape: [depth, height, width],
                     covered: covered.length === 4 && covered.every(Number.isFinite) ? covered : null,
                     level: Number(response.headers.get("X-Plexora-Level") || 0),
@@ -1282,7 +1424,23 @@ ${sample}`;
 
         /** True while something still moves on its own. */
         animating() {
-            return Boolean(this.spin || this.tween || this.zoomTarget !== null);
+            return Boolean(this.spin || this.tween || this.zoomTarget !== null || this.autoRotate);
+        }
+
+        /**
+         * Everything that places the picture on screen: the camera, the
+         * canvas's size, the clip and the area. Two frames with the same key
+         * line up pixel for pixel, which is when one may dissolve into the
+         * other (VolumeGhost).
+         */
+        cameraKey() {
+            const c = this.camera;
+            const state = this.view || this.viewState?.get?.();
+            const pinned = this._pinnedSize;
+            return [c.q.map((v) => v.toFixed(6)).join(","), c.dist.toFixed(6), c.panX.toFixed(6),
+                    c.panY.toFixed(6), this.canvas?.clientWidth || 0, this.canvas?.clientHeight || 0,
+                    state?.slab?.z0, state?.slab?.z1, JSON.stringify(this.clipXY || null), this.boxKey(),
+                    pinned ? `${pinned.width}x${pinned.height}` : ""].join("|");
         }
 
         /** True while the picture may be drawn at the lower quality. */
@@ -1325,7 +1483,8 @@ ${sample}`;
         /** One display frame: move what is moving, draw, and ask for the next
          *  frame while anything still moves. */
         onFrame(time) {
-            if (this.animating()) {
+            const wasAnimating = this.animating();
+            if (wasAnimating) {
                 const dt = this.lastStep ? Math.min(64, Math.max(0, time - this.lastStep)) : 16;
                 this.lastStep = time;
                 this.advance(dt, time);
@@ -1336,7 +1495,15 @@ ${sample}`;
             if (this.fading()) this.dirty = true;
             if (this.dirty) {
                 this.learnFrame(time, this.animating());
-                this.draw(time);
+                // The frame a coast, a turn or an eased zoom ends in is drawn
+                // as the moving ones were: the full picture follows at rest,
+                // at this same camera, and so dissolves in (draw).
+                this._motionTail = wasAnimating && !this.animating();
+                try {
+                    this.draw(time);
+                } finally {
+                    this._motionTail = false;
+                }
                 if (!this.moving()) this.scheduleDetail();
             }
             // [surfaces] The camera at rest is remembered (attach's onRest).
@@ -1354,6 +1521,19 @@ ${sample}`;
         /** Move the camera on by `dt` milliseconds of whatever is moving. */
         advance(dt, time) {
             const camera = this.camera;
+            if (this.autoRotate) {
+                // Play's turn: the same angle per millisecond whatever the
+                // frame rate (dt is capped, so a tab coming back does not
+                // leap), about the screen's vertical as a sideways drag
+                // turns it, or about an image axis held still on screen as
+                // a locked drag does. The zoom and the pan are left alone.
+                const C = Camera();
+                const { axis, rate } = this.autoRotate;
+                const angle = rate * dt;
+                camera.q = axis === "screen"
+                    ? C.quat.normalize(C.quat.multiply(C.quat.axisAngle([0, 1, 0], angle), camera.q))
+                    : C.turnAbout(camera.q, axis, angle);
+            }
             if (this.spin) {
                 // Exponential decay, integrated exactly over dt: the same
                 // coast whatever the frame rate.
@@ -1399,12 +1579,51 @@ ${sample}`;
         stopMotion() {
             this.spin = null;
             this.tween = null;
+            this.setAutoRotate(false);
+        }
+
+        /**
+         * Play in 3-D: turn the stack `speed` degrees a second (within
+         * ROTATE_MIN_DPS..ROTATE_MAX_DPS) about `axis` -- "screen" (the
+         * screen's vertical) or an image axis -- `direction` 1 or -1, from the
+         * camera as it is; called again while on, it takes the new speed and
+         * axis without a jump. Off with `on` false. It is the user's action,
+         * so it turns with motion off too (smooth() governs what moves of its
+         * own accord); `stopMotion` (any press), `turnTo`, `setLock`,
+         * `restoreCamera`, `renderFrame` and a sized `snapshot` end it.
+         * Announced as `plexora:volume-rotate` ({on}) when it starts or stops.
+         */
+        setAutoRotate(on, { speed = ROTATE_DEFAULT_DPS, axis = "screen", direction = 1 } = {}) {
+            const was = Boolean(this.autoRotate);
+            if (on) {
+                const dps = Math.min(ROTATE_MAX_DPS,
+                                     Math.max(ROTATE_MIN_DPS, Number(speed) || ROTATE_DEFAULT_DPS));
+                this.spin = null;
+                this.tween = null;
+                this.autoRotate = {
+                    axis: ROTATE_AXES.includes(axis) ? axis : "screen",
+                    rate: ((dps * Math.PI) / 180 / 1000) * (Number(direction) < 0 ? -1 : 1),
+                };
+                if (!this.lastStep) this.lastStep = now();
+                this.invalidate();
+            } else {
+                this.autoRotate = null;
+            }
+            if (was === Boolean(this.autoRotate)) return;
+            this.onAutoRotate?.(Boolean(this.autoRotate));
+            try {
+                global.dispatchEvent?.(new CustomEvent("plexora:volume-rotate",
+                    { detail: { on: Boolean(this.autoRotate) } }));
+            } catch (error) {
+                // No CustomEvent in a bare runtime.
+            }
         }
 
         /** Turn (and pan) to `target` -- `{q, panX, panY, dist}`, any of
          *  them -- the short way round. */
         turnTo(target) {
             this.spin = null;
+            this.setAutoRotate(false);
             const to = { ...target };
             if (to.q) to.q = to.q.slice();
             if (!this.smooth()) {
@@ -1533,12 +1752,15 @@ ${sample}`;
         }
 
         /** The atlas made to fit what `channels` draw now; false when it is
-         *  not served, not loaded yet, or has nothing finer than the base. */
+         *  not served, not loaded yet, or has nothing finer than the base.
+         *  Keyed by the textures DRAWN (entryFor): a channel still drawn
+         *  from its last texture keeps the bricks made with the same window
+         *  and frame until its new texture lands. */
         atlasFits(channels, lead) {
             const atlas = this.atlas;
             if (!atlas || atlas.status !== "ready" || !lead) return false;
-            return atlas.configure(channels.map((c) => ({ name: c.name, stamp: c.stamp || "" })),
-                                   this.frameT(), this.format(), lead.level);
+            return atlas.configure(channels.map((c) => ({ name: c.name, stamp: (c.entry ? c.entry.stamp : c.stamp) || "" })),
+                                   lead.t ?? this.frameT(), lead.format || this.format(), lead.level);
         }
 
         draw(time = now(), { settled = false } = {}) {
@@ -1546,26 +1768,124 @@ ${sample}`;
             const gl = this.gl;
             const canvas = this.canvas;
             if (!gl || !canvas || (canvas.hidden && !this._drawHidden)) return;
-            const fast = this.moving();
+            const fast = this.moving() || Boolean(this._motionTail);
             this.drawnFast = fast;
-            const ratio = Math.min(global.devicePixelRatio || 1, 1.5) * (fast ? this.fastScale : 1);
+            const full = Math.min(global.devicePixelRatio || 1, 1.5);
+            const ratio = full * (fast ? this.fastScale : 1);
             // A pinned size wins over the canvas's CSS size: a frame rendered
             // for a video is the video's size (pinSize), and so is an export's
             // (snapshot), whatever the window.
             const pinned = this._pinnedSize;
             const width = pinned ? pinned.width : Math.max(1, Math.round(canvas.clientWidth * ratio));
             const height = pinned ? pinned.height : Math.max(1, Math.round(canvas.clientHeight * ratio));
+            const at = now();
+
+            // 1. What this frame is drawn with, decided before anything is
+            //    written: the canvas still holds the last frame (see 2).
+            const channels = this.channels().map((channel) => ({ ...channel, entry: this.entryFor(channel) }))
+                .filter((channel) => channel.entry);
+            // [surfaces] "Surfaces only" draws no channel; surfaces draw their
+            // passes first and leave the volume two outputs to fill.
+            if (this.surfaces?.hideVolume) channels.length = 0;
+            const lead = channels.length ? channels[0].entry : null;
+            const detail = lead ? this.detail : null;
+            // A detail made with the window and frame each channel is drawn in.
+            const details = detail
+                ? channels.map((channel) => this.textures.get(this.detailKey(
+                    { name: channel.name, stamp: channel.entry.stamp ?? channel.stamp }, detail)) || null)
+                : [];
+            const withAtlas = Boolean(lead) && this.atlasFits(channels, lead) && this.atlas.active();
+            const withDetail = !withAtlas && Boolean(detail) && details.length > 0
+                && details.every(Boolean);
+            if (withAtlas && !this._atlasEngaged) {
+                // The bricks cost more per sample than one texture: start the
+                // moving resolution a step down rather than learn it from a
+                // run of dropped frames (learnFrame goes on from here).
+                this._atlasEngaged = true;
+                this.fastScale = Math.min(this.fastScale, 0.85);
+            }
+            let shape = lead ? lead.shape : null;
+            let steps = 0;
+            let finest = null;
+            if (lead) {
+                shape = channels.reduce((most, channel) => {
+                    const s = channel.entry.shape;
+                    return s[0] * s[1] * s[2] > most[0] * most[1] * most[2] ? s : most;
+                }, lead.shape);
+                // As many samples as the finest voxels drawn: the detail's,
+                // spread over the whole box, when there is one.
+                let longest = Math.max(...shape);
+                if (withDetail) {
+                    const dshape = details[0].shape;   // (z, y, x)
+                    const span = [detail.hi[2] - detail.lo[2], detail.hi[1] - detail.lo[1],
+                                  detail.hi[0] - detail.lo[0]];
+                    longest = Math.max(longest, ...dshape.map((side, i) => side / Math.max(1e-3, span[i])));
+                }
+                // The finest bricks the atlas draws: as many samples as their
+                // voxels -- at rest. Moving, the base's count: the bricks are
+                // still read, and a turning view is drawn again in full (and
+                // dissolves in) the moment it stops.
+                finest = withAtlas && !fast ? this.atlas.finestVox() : null;
+                if (finest) {
+                    const info = this.viewState?.info || {};
+                    const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+                    const fullSpan = [covered[2] - covered[0], covered[3] - covered[1],
+                                      Math.max(1, this.viewState?.depth || 1)];
+                    longest = Math.max(longest, ...fullSpan.map((side, i) => side / finest[i]));
+                }
+                // Along the diagonal, so about one sample per texel along any
+                // axis. Halved while moving for the additive composite only:
+                // it is step-corrected and just softens, where MIP with fewer
+                // samples misses thin peaks and the stack dims as it turns.
+                steps = Math.min(finest ? 2048 : 1024, Math.max(96, Math.round(longest * 2)));
+                if (fast && this.composite === "additive") steps = Math.round(steps / 2);
+            }
+            const stepKey = `${steps}|${fast ? 1 : 0}|${this.fastScale.toFixed(3)}`;
+            if (stepKey !== this._stepKey) {
+                this._stepKey = stepKey;
+                global.PlexoraViewPerf?.mark?.("volume", "steps", null, stepKey);
+            }
+
+            // 2. The crossfade. With the camera where the last frame had it and
+            //    what is drawn changed -- the full frame after a turn, a texture,
+            //    a detail or bricks landing, a channel gone -- the frame on
+            //    screen is held on the ghost before the canvas is touched
+            //    (resizing it clears it), and fades out over this one. A camera
+            //    that moved ends a fade at once; a capture never has one; a
+            //    channel coming in has its own (presence).
+            const cam = this.cameraKey();
+            const comp = [channels.map((channel) => `${channel.name}:${channel.entry.id}`).join(","),
+                          withDetail ? detail.id : "",
+                          withAtlas ? this.atlas.pagesVersion : "",
+                          steps, `${width}x${height}`, this.composite];
+            const ghost = this.ghost;
+            let held = false;
+            if (ghost) {
+                if (settled) {
+                    ghost.cancel();
+                } else {
+                    ghost.sync(cam);
+                    const last = this._lastComp;
+                    const changed = last ? comp.findIndex((part, i) => String(part) !== String(last[i])) : -1;
+                    const arriving = channels.some((channel) => !this._drawn.has(channel.name));
+                    if (!fast && cam === this._lastCam && changed >= 0 && !arriving) {
+                        held = ghost.capture(cam);
+                        if (held) {
+                            global.PlexoraViewPerf?.mark?.("volume", "ghost", null,
+                                ["channels", "detail", "pages", "steps", "size", "composite"][changed]);
+                        }
+                    }
+                }
+            }
+            this._lastCam = settled ? null : cam;
+            this._lastComp = settled ? null : comp;
+
+            // 3. The frame.
             if (canvas.width !== width || canvas.height !== height) {
                 canvas.width = width;
                 canvas.height = height;
             }
             gl.viewport(0, 0, width, height);
-            const at = now();
-            const channels = this.channels().map((channel) => ({ ...channel, entry: this.textureOf(channel) }))
-                .filter((channel) => channel.entry);
-            // [surfaces] "Surfaces only" draws no channel; surfaces draw their
-            // passes first and leave the volume two outputs to fill.
-            if (this.surfaces?.hideVolume) channels.length = 0;
             const surf = this.surfaces?.begin(channels, { fast }) || null;
             // A channel new to the picture comes in rather than lands: its
             // colour and opacity scaled by how far in it is.
@@ -1580,26 +1900,15 @@ ${sample}`;
                     surf.finish(false);
                     this.paintGizmo(fast);
                 }
+                if (held) ghost.release();
                 return;
             }
             // What is drawn sets the box's proportions and the step count:
             // channels may hold different levels (see ensureTextures).
             for (const channel of channels) channel.entry.used = at;
-            const lead = channels[0].entry;
             this.covered = lead.covered;
-            this.shape = channels.reduce((most, channel) => {
-                const shape = channel.entry.shape;
-                return shape[0] * shape[1] * shape[2] > most[0] * most[1] * most[2] ? shape : most;
-            }, lead.shape);
+            this.shape = shape;
             this.level = lead.level;
-            // The detail where the camera looks, once every channel has it.
-            const detail = this.detail;
-            const details = detail
-                ? channels.map((channel) => this.textures.get(this.detailKey(channel, detail)) || null)
-                : [];
-            const withAtlas = this.atlasFits(channels, lead) && this.atlas.active();
-            const withDetail = !withAtlas && Boolean(detail) && details.length > 0
-                && details.every(Boolean);
             const programKey = `${channels.length}|${withDetail ? 1 : 0}|${withAtlas ? 1 : 0}${surf ? "|s" : ""}`;
             let built = this.programs.get(programKey);
             if (!built) {
@@ -1637,7 +1946,8 @@ ${sample}`;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
             gl.uniform3fv(uniform("u_color"), channels.flatMap(
                 (channel, index) => channel.colour.map((value) => value * presence[index])));
-            gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => channel.window));
+            // Each channel in the window of the texture it is drawn from.
+            gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => this.windowFor(channel)));
             gl.uniform1fv(uniform("u_opacity"), channels.map(
                 (channel, index) => channel.opacity * presence[index]));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
@@ -1651,26 +1961,11 @@ ${sample}`;
             gl.uniform4fv(uniform("u_clip_xy"), [xy.x[0], xy.x[1], xy.y[0], xy.y[1]]);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
             this.bindGrid(gl, uniform, [xy.x[0], xy.y[0], clip[0]], [xy.x[1], xy.y[1], clip[1]]);
-            // As many samples as the finest voxels drawn: the detail's, spread
-            // over the whole box, when there is one.
-            let longest = this.shape ? Math.max(...this.shape) : 256;
-            if (withDetail) {
-                const shape = details[0].shape;   // (z, y, x)
-                const span = [detail.hi[2] - detail.lo[2], detail.hi[1] - detail.lo[1],
-                              detail.hi[0] - detail.lo[0]];
-                longest = Math.max(longest, ...shape.map((side, i) => side / Math.max(1e-3, span[i])));
-            }
-            // The finest bricks the atlas draws: as many samples as their voxels
-            // -- at rest. Moving, the base's count: the bricks are still read,
-            // and a turning view is drawn again in full the moment it stops.
-            const finest = withAtlas && !fast ? this.atlas.finestVox() : null;
-            if (finest) {
-                longest = Math.max(longest, ...atlasView.fullSpan.map((side, i) => side / finest[i]));
-            }
-            // Along the diagonal, so about one sample per texel along any axis.
-            const steps = Math.min(finest ? 2048 : 1024, Math.max(96, Math.round(longest * 2)));
-            gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
+            gl.uniform1i(uniform("u_steps"), steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
+            gl.uniform2fv(uniform("u_jitter_res"), pinned ? [pinned.width, pinned.height]
+                : [Math.max(1, Math.round(canvas.clientWidth * full)),
+                   Math.max(1, Math.round(canvas.clientHeight * full))]);
             surf?.bindDepth(uniform);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
             gl.enableVertexAttribArray(0);
@@ -1679,6 +1974,7 @@ ${sample}`;
             surf?.finish(true);
             this.paintGizmo(fast);
             this.paintGridLabels();
+            if (held) ghost.release();
         }
 
         // -- the reference grid ----------------------------------------------
@@ -2061,6 +2357,9 @@ ${sample}`;
             if (this.moving() || this.status !== "ready" || !this.gl) return;
             const atlas = this.atlas;
             if (atlas?.status === "loading") return;          // load() schedules again
+            // A channel still drawn from its last texture (entryFor): finer
+            // views of it wait until its own has landed.
+            if (this.channels().some((channel) => !this.textureOf(channel))) return;
             if (atlas?.status === "ready") {
                 const channels = this.channels();
                 const lead = channels.length ? this.textureOf(channels[0]) : null;
@@ -2168,6 +2467,7 @@ ${sample}`;
             this.spin = null;
             this.tween = null;
             this.zoomTarget = null;
+            this.setAutoRotate(false);
             this.interacting = false;
             // Always a real draw: never the canvas's last picture returned as
             // if it were this frame's.
@@ -2237,7 +2537,7 @@ ${sample}`;
                     && channels.every((channel) => this.textures.has(this.detailKey(channel, held)))) {
                 return;
             }
-            const request = { region: pixels, t, format, wanted: pixels };
+            const request = { region: pixels, t, format, wanted: pixels, id: ++this._detailIds };
             this._detailRequest = request;
             let level = null;
             let arrived = null;
@@ -2340,8 +2640,7 @@ ${sample}`;
             };
             this.textures.set(key, entry);
             this.textureBytes += entry.bytes;
-            this.evict(new Set([key, ...this.channels().map((ch) => this.textureKey(
-                ch.name, undefined, undefined, undefined, ch.stamp || ""))]));
+            this.evict(new Set([key, ...this.keepKeys()]));
             return { level: entry.level, covered: entry.covered, z: entry.z };
         }
 
@@ -2356,7 +2655,8 @@ ${sample}`;
         /** The current picture as a canvas (captures): at the canvas's own
          *  size, or drawn at `{width, height}` device pixels for an export
          *  (copied out, then the canvas goes back to its size). Every channel
-         *  in full, never partway in. */
+         *  in full, never partway in. A plain capture records the pose of a
+         *  turning stack and leaves it turning; a sized export stops it. */
         snapshot({ width = null, height = null } = {}) {
             if (!this.canvas) return null;
             if (!(width > 0 && height > 0)) {
@@ -2370,6 +2670,7 @@ ${sample}`;
                 this.spin = null;
                 this.tween = null;
                 this.zoomTarget = null;
+                this.setAutoRotate(false);
                 this.interacting = false;
                 this.draw(now(), { settled: true });
                 const labelled = this.withGridLabels(this.canvas);
@@ -2395,6 +2696,7 @@ ${sample}`;
         restoreCamera(stored) {
             const q = stored?.q;
             if (!Array.isArray(q) || q.length !== 4 || !q.every(Number.isFinite)) return false;
+            this.setAutoRotate(false);
             this.camera.q = q.slice();
             if (Number.isFinite(stored.dist)) this.camera.dist = Math.max(MIN_DIST, Math.min(8, stored.dist));
             if (Array.isArray(stored.pan) && stored.pan.every(Number.isFinite)) {
@@ -2509,6 +2811,14 @@ ${sample}`;
             channelsChanged() {
                 if (renderer && viewState.isVolume()) renderer.refresh();
             },
+            /** Play in 3-D: turn the stack (`{speed, axis, direction}`,
+             *  services/viewerPrefs.js `rotate`), or stop. */
+            rotate(on, options = {}) {
+                if (!renderer || !viewState.isVolume()) return false;
+                renderer.setAutoRotate(Boolean(on), options);
+                return Boolean(renderer.autoRotate);
+            },
+            get rotating() { return Boolean(renderer?.autoRotate); },
         };
         // X, Y, Z lock turns to that image axis; the same key again, or Esc,
         // lets go. Bare letters other tools bind too (Thresholding's Z / X for
@@ -2524,7 +2834,8 @@ ${sample}`;
             if (typing() || document.querySelector("dialog[open]")
                 || global.PlexoraConfirm?.modalOpen?.()) return;
             if (event.key === "Escape") {
-                if (renderer.lock) renderer.setLock(null);
+                if (renderer.autoRotate) renderer.setAutoRotate(false);
+                else if (renderer.lock) renderer.setLock(null);
                 return;
             }
             const key = String(event.key || "").toLowerCase();
@@ -2577,7 +2888,8 @@ ${sample}`;
     VolumeRenderer.attach = attach;
     VolumeRenderer.releaseSpeed = releaseSpeed;
     VolumeRenderer.MOTION = { SPIN_TAU_MS, RELEASE_MIN, SPIN_STOP, SPIN_MAX, ZOOM_TAU_MS,
-                              TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS };
+                              TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS,
+                              ROTATE_DEFAULT_DPS, ROTATE_MIN_DPS, ROTATE_MAX_DPS };
     VolumeRenderer.fragmentSource = fragmentSource;
     VolumeRenderer.grid = { DEFAULTS: GRID_DEFAULTS, prefs: gridPrefs, niceStep, niceNeighbour,
                             axes: gridAxes, labels: gridLabels, project, formatTick };

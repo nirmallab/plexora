@@ -19,7 +19,8 @@
  *   projection is levelled to), up to its limit;
  * - going back to the plane on screen supersedes the revision in flight: its
  *   signal aborts and it commits nothing; so does one stuck loading while a
- *   newer one waits;
+ *   newer one waits, and one a jump far from it leaves behind (a step to the
+ *   next plane, or a fast drag, lets it land);
  * - revision ids only grow, and view-changed says which one is on screen.
  *
  * Run directly:  node tests/js/nav_revision_probe.mjs
@@ -140,6 +141,55 @@ function contiguous(names) {
         && vs.revision()?.spec === "z11");
     const changed = events.filter((e) => e.type === "plexora:view-changed").pop();
     check("view-changed names the revision on screen", changed?.detail?.rev === vs.revision().id);
+}
+
+// -- a jump far away supersedes at once; a near step waits ---------------------------
+
+{
+    const vs = await volume();
+    const aborted = [];
+    const slow = { z11: 600 };
+    vs.registerSurface("main", { order: 20, ...surface("main", (rev) => sleep(slow[rev.spec] ?? 20), { aborted }) });
+    const from = log.length;
+    const t0 = performance.now();
+    vs.set({ z: 11 });
+    await sleep(120);                      // the hand still: the next request is a jump
+    vs.set({ z: 35 });
+    await vs.settled();
+    const took = performance.now() - t0;
+    check("a jump far from the plane in flight supersedes it at once, not after a second",
+        aborted.includes("main:z11") && log.slice(from).includes("main:z35")
+        && !log.slice(from).includes("main:z11")
+        && took < 600, `${took.toFixed(0)} ms; aborted ${aborted.join()}`);
+}
+
+{
+    const vs = await volume();
+    const aborted = [];
+    const slow = { z11: 300 };
+    vs.registerSurface("main", { order: 20, ...surface("main", (rev) => sleep(slow[rev.spec] ?? 20), { aborted }) });
+    const from = log.length;
+    vs.set({ z: 11 });
+    await sleep(120);
+    vs.set({ z: 12 });                     // the next plane: the one in flight is on the way
+    await vs.settled();
+    check("a step to the next plane lets the one in flight land first",
+        !aborted.includes("main:z11") && log.slice(from).indexOf("main:z11") >= 0
+        && log.slice(from).indexOf("main:z11") < log.slice(from).indexOf("main:z12"), aborted.join());
+}
+
+{
+    const vs = await volume();
+    const aborted = [];
+    const slow = { z11: 300 };
+    vs.registerSurface("main", { order: 20, ...surface("main", (rev) => sleep(slow[rev.spec] ?? 20), { aborted }) });
+    const from = log.length;
+    vs.set({ z: 11 });
+    await sleep(20);                       // a fast drag down the rail: no pause
+    vs.set({ z: 20 });
+    await vs.settled();
+    check("a fast drag is a scrub, not a jump: planes still land on the way",
+        !aborted.includes("main:z11") && log.slice(from).includes("main:z11"), aborted.join());
 }
 
 // -- a slow surface commits late, never over a newer revision --------------------------

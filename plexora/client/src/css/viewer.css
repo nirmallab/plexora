@@ -3994,7 +3994,7 @@ body.sidebar-collapsed .viewer-shell,
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    cursor: pointer;
+    cursor: default;
     display: flex;
     flex-direction: column;
     font-size: 10px;
@@ -4005,9 +4005,16 @@ body.sidebar-collapsed .viewer-shell,
     width: 100%;
 }
 
-.depth-strip-readout:hover {
-    border-color: var(--border-subtle);
+/* The cog under the readout: the settings for what is drawn now
+   (views/depthSettings.js). Lit while its popover is open. */
+.depth-strip-settings[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
+}
+
+/* In 3-D (and a fixed projection) the band is grabbed and moved. */
+.depth-strip-band.is-movable {
+    cursor: grab;
 }
 
 .depth-strip-readout-top {
@@ -4172,6 +4179,7 @@ body.sidebar-collapsed .viewer-shell,
 /* Several rules above set `display`, which beats the `hidden` attribute's
    user-agent `display: none` -- a hidden play button or frame row would stay
    on screen. Scoped to these surfaces rather than global. */
+.depth-settings [hidden],
 .viewer-depth-strip [hidden],
 .depth-panel [hidden] {
     display: none !important;
@@ -4328,6 +4336,22 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .viewer-plane-ghost[hidden] {
+    display: none;
+}
+
+/* The 3-D view's crossfade (planeMotion.js VolumeGhost): the frame before a
+   refinement, held over the volume's canvas (z 200) while the new one fades
+   in under it -- below the volume's note, its gizmo and every control. */
+.viewer-volume-ghost {
+    height: 100%;
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
+    z-index: 200;
+}
+
+.viewer-volume-ghost[hidden] {
     display: none;
 }
 
@@ -4495,7 +4519,15 @@ body.sidebar-collapsed .viewer-shell,
     height: 100%;
     inset: 0;
     position: absolute;
+    transform-origin: 0 0;
     width: 100%;
+}
+
+/* A pane taller (XZ) or wider (YZ) than its stack at the plane's scale shows
+   every plane, stretched along z (sectionPanes.js layout): each plane a band
+   of whole pixels, as the pane draws them, not a blur between planes. */
+.viewer-section-pane.is-stretched .viewer-section-pane-osd canvas {
+    image-rendering: pixelated;
 }
 
 .viewer-section-pane-label {

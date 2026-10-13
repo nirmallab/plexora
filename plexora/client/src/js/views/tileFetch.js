@@ -17,8 +17,12 @@
  *   handover's items and a prefetch's all ask for the same tile, and share one
  *   fetch and one decode;
  * - IN ORDER OF NEED: what is on screen before a handover loading behind it
- *   before a prefetch; the plane before the panes; coarse levels before fine
- *   ones; near the centre before the edge. MAX_IN_FLIGHT at a time;
+ *   before a prefetch -- and COVERAGE BEFORE SHARPNESS: once a plane covers
+ *   the view at some level its finer tiles only sharpen it, and the next
+ *   plane's tiles that would cover the view go first (a step shows the next
+ *   plane coarse before the last one finishes sharpening); the plane before
+ *   the panes; coarse levels before fine ones; near the centre before the
+ *   edge. MAX_IN_FLIGHT at a time;
  * - DECODED ONCE, in a worker, with the response's buffer TRANSFERRED (no
  *   copy); the job is finished as an empty `context2d` -- the only format the
  *   canvas drawer draws -- so OSD's own image decode never runs, and the
@@ -46,8 +50,10 @@
     const MAX_IN_FLIGHT = 6;
     //: Of those, at most this many for prefetched planes: a request on the
     //: wire cannot be overtaken, and the server answers in the order asked --
-    //: a prefetch must never be what a tile on screen waits behind.
+    //: a prefetch must never be what a tile on screen waits behind. One more
+    //: (MAX_STANDBY_IDLE) only while nothing else is in flight or waiting.
     const MAX_STANDBY_IN_FLIGHT = 1;
+    const MAX_STANDBY_IDLE = 2;
     //: A link whose wait for a tile's first byte -- the server's time taken
     //: out -- is over BATCH_ENTER_MS for every one of its last BATCH_WINDOW
     //: tiles is batched, and stops being when one comes under BATCH_LEAVE_MS;
@@ -60,8 +66,10 @@
     const BATCH_WINDOW = 12;
     //: Tiles in one batch.
     const BATCH_MAX = 16;
-    //: Priority tiers: on screen, a handover behind it, a prefetch.
-    const TIER = { visible: 0, handover: 1, standby: 2 };
+    //: Priority tiers: what the plane on screen needs to cover the view,
+    //: what the plane coming in behind it (a handover) needs to, the plane on
+    //: screen sharpening, the one coming in sharpening, a prefetch.
+    const TIER = { visible: 0, handover: 1, sharpen: 2, handoverSharpen: 3, standby: 4 };
     const OWNER = { main: 0, pane: 1 };
 
     function now() {
@@ -200,6 +208,24 @@
             return this;
         }
 
+        /** Whether `item` already covers the view at some level
+         *  (channelFade.covers): what is left for it only sharpens. Asked
+         *  once per item per pump. */
+        covers(item) {
+            const covers = global.PlexoraChannelFade?.covers;
+            if (!item || typeof covers !== "function") return false;
+            const cache = this._covered;
+            if (cache?.has(item)) return cache.get(item);
+            let answer = false;
+            try {
+                answer = Boolean(covers(item));
+            } catch (error) {
+                answer = false;
+            }
+            cache?.set(item, answer);
+            return answer;
+        }
+
         /** Where a job stands in line: lower is sooner. */
         rank(job) {
             const tile = job.tile || {};
@@ -208,6 +234,9 @@
             let tier = TIER.visible;
             const hidden = item && typeof item.getOpacity === "function" && !(item.getOpacity() > 0);
             if (hidden) tier = source.plexoraStandby ? TIER.standby : TIER.handover;
+            if (tier !== TIER.standby && this.covers(item)) {
+                tier = tier === TIER.visible ? TIER.sharpen : TIER.handoverSharpen;
+            }
             const owner = OWNER[source.plexoraOwner] ?? 0;
             const level = Number.isFinite(tile.level) ? tile.level : 0;
             const distance = Number.isFinite(tile.squaredDistance) ? tile.squaredDistance : 0;
@@ -307,6 +336,15 @@
         }
 
         pump() {
+            this._covered = new Map();
+            try {
+                this._pump();
+            } finally {
+                this._covered = null;
+            }
+        }
+
+        _pump() {
             while (this.inFlight < this.maxInFlight && this.queue.length) {
                 for (const request of this.queue) {
                     let best = null;
@@ -318,8 +356,13 @@
                 }
                 this.queue.sort((a, b) => compare(a.key, b.key));
                 const request = this.queue[0];
+                // Only prefetches are waiting (the queue is in order of need):
+                // a second may go while nothing else is on the wire either.
+                const share = this.inFlight === this.standbyInFlight
+                    ? Math.max(this.maxStandbyInFlight, this.maxStandbyIdle ?? MAX_STANDBY_IDLE)
+                    : this.maxStandbyInFlight;
                 if (request.jobs.size && request.key[0] === TIER.standby
-                        && this.standbyInFlight >= this.maxStandbyInFlight) {
+                        && this.standbyInFlight >= share) {
                     return;   // only prefetches left, and their share is in use
                 }
                 this.queue.shift();

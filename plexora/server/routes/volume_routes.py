@@ -334,9 +334,11 @@ def put_view_state(datasource):
 # -- how this user likes the viewer, for every image ----------------------
 
 #: A section pane's saved size, as a share of the plane's height (XZ) or width
-#: (YZ). The panes lie over the plane, so past the upper bound too little of
-#: it is left to cut through; `None` sizes a pane to fit, up to its default.
-SECTION_SHARE = (0.05, 0.75)
+#: (YZ). The panes lie over the plane; the browser keeps a fixed number of
+#: pixels of it uncovered (sectionPanes.js MIN_XY_PX), which is the real bound,
+#: so this one only stops nonsense. `None` sizes a pane to fit, up to its
+#: default.
+SECTION_SHARE = (0.05, 0.9)
 #: "off" stops planes fading into each other and the 3-D view coasting after
 #: a drag, on top of the system's own reduced-motion setting.
 MOTION = ("on", "off")
@@ -382,6 +384,33 @@ def normalize_grid(value):
     }
 
 
+#: How Play turns the stack in 3-D (views/volumeRenderer.js setAutoRotate):
+#: degrees a second within ROTATE_SPEED, about the screen's vertical or an
+#: image axis, one way or the other. Whether it is turning is never stored.
+ROTATE_DEFAULTS = {"speed": 30.0, "axis": "screen", "direction": 1}
+ROTATE_SPEED = (5.0, 90.0)
+ROTATE_AXES = ("screen", "x", "y", "z")
+
+
+def normalize_rotate(value):
+    """The rotate preference, repaired field by field: what does not parse
+    reads as its default (viewerPrefs.js's `mergeRotate` keeps the same bounds)."""
+    rotate = value if isinstance(value, dict) else {}
+    speed = rotate.get("speed")
+    try:
+        speed = None if isinstance(speed, bool) else float(speed)
+    except (TypeError, ValueError):
+        speed = None
+    direction = rotate.get("direction")
+    return {
+        "speed": (min(ROTATE_SPEED[1], max(ROTATE_SPEED[0], speed))
+                  if speed is not None and math.isfinite(speed) else ROTATE_DEFAULTS["speed"]),
+        "axis": rotate["axis"] if rotate.get("axis") in ROTATE_AXES else ROTATE_DEFAULTS["axis"],
+        "direction": (direction if direction in (1, -1) and not isinstance(direction, bool)
+                      else ROTATE_DEFAULTS["direction"]),
+    }
+
+
 def normalize_viewer_prefs(value):
     """The viewer's preferences, repaired: a share outside its bounds is
     clamped, and anything that does not parse reads as its default."""
@@ -399,13 +428,15 @@ def normalize_viewer_prefs(value):
                               if share is not None and math.isfinite(share) else None)
     motion = value.get("motion")
     return {"sections": out_sections, "motion": motion if motion in MOTION else "on",
-            "grid": normalize_grid(value.get("grid"))}
+            "grid": normalize_grid(value.get("grid")),
+            "rotate": normalize_rotate(value.get("rotate"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
 def get_viewer_prefs():
-    """The section panes' sizes, whether the viewer animates and the 3-D
-    grid, for every image. Kept in the settings file rather than the browser: the desktop
+    """The section panes' sizes, whether the viewer animates, the 3-D grid and
+    how Play turns the stack in 3-D, for every image. Kept in the settings file
+    rather than the browser: the desktop
     app's port -- and so the page's origin, and its storage -- can change
     from one run to the next."""
     stored = paths.read_settings().get("viewer")
@@ -427,7 +458,11 @@ def put_viewer_prefs():
     grid = current.get("grid") if isinstance(current.get("grid"), dict) else {}
     if isinstance(payload.get("grid"), dict):
         grid = {**grid, **payload["grid"]}
-    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid})
+    rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
+    if isinstance(payload.get("rotate"), dict):
+        rotate = {**rotate, **payload["rotate"]}
+    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
+                                     "rotate": rotate})
     settings["viewer"] = stored
     paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)
@@ -781,14 +816,21 @@ def volume_window(datasource):
 def volume_perf(datasource):
     """What the volume caches hold now, for the 3-D benchmark and for a person
     asking why a stack is slow: the level payload cache and, once the stack
-    has been read, its decoded-chunk cache and window state."""
+    has been read, its decoded-chunk cache and window state; the encoded tile
+    cache; and how much of what was read ahead landed -- of the blocks a hand
+    stepped into, how many the block read-ahead had read (`plane_prefetch`
+    `hit_rate`), and of the plane tiles served, how many came from those the
+    tile read-ahead had made (`tile_prefetch` `tile_hit_rate`)."""
     _project_or_404(datasource)
     from plexora.server.models import data_model
+    from plexora.server.routes import data_routes
     from plexora.server.volume import chunk_cache
-    from plexora.server.volume.prefetch import PREFETCHER
+    from plexora.server.volume.prefetch import PREFETCHER, TILE_PREFETCHER
 
     out = {"level_cache": serve.stats(), "chunk_cache": chunk_cache.CACHE.stats(),
+           "tile_cache": data_routes.tile_cache_stats(),
            "plane_prefetch": PREFETCHER.snapshot(),
+           "tile_prefetch": TILE_PREFETCHER.snapshot(),
            "exact_window_queue": len(data_model._exact_window_queue),
            "provisional_windows": sorted(name for (_scope, name)
                                          in list(data_model._provisional_windows))}

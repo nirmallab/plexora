@@ -169,3 +169,48 @@ const IMARIS = { qmin: 0, qmax: 114, vmin_hint: 42, vmax_hint: 73 };
     assert.deepEqual(plane.levelled, []);
     console.log("the 3-D view's hints level only channels the user has not set, and only in 3-D");
 }
+
+// -- 6. a step of the same projection is shown at once, levelled when still ---
+{
+    const helper = /\nfunction sameProjectionMoved[\s\S]*?\n}\n/.exec(source)?.[0];
+    const still = Number(/const CONTRAST_STILL_MS = (\d+);/.exec(source)?.[1]);
+    assert.ok(helper && still > 0, "sameProjectionMoved / CONTRAST_STILL_MS are gone");
+    let state = { ...SLAB, slab: { z0: 10, z1: 20, op: "max" } };
+    const timers = [];
+    const viewState = {
+        frames: 1, enabled: () => true, get: () => state,
+        spec: (s) => (s.mode === "slab" ? `z${s.slab.z0}-${s.slab.z1}${s.slab.op}` : `z${s.z}`),
+    };
+    const context = createContext({
+        document: {}, Promise,
+        window: { __plexora: { viewState } },
+        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+        clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
+    });
+    runInContext(`${helper}\nvar CONTRAST_STILL_MS = ${still};`, context);
+    const methods = runInContext(`({\n${["contrastView", "prepareContrast", "relevelWhenStill"]
+        .map((name) => extractMethod(source, name)).join(",\n")}\n})`, context);
+    const levelled = [];
+    const sidebar = Object.assign(Object.create(methods), {
+        root: context.document, idPrefix: "", hdModeOverride: undefined,
+        _contrastViewShown: "z10-20max",
+        channelSlots: [{ index: 0, name: "tdTomato", enabled: true, userRangeChanged: false }],
+        channelList: { ensureChannelStats: () => Promise.resolve() },
+        viewStats: () => Promise.resolve(null),
+        autoChannel: (index, options) => levelled.push([index, options.view]),
+    });
+    state = { ...state, slab: { z0: 11, z1: 21, op: "max" } };
+    const commit = sidebar.prepareContrast({ state, superseded: false });
+    assert.equal(typeof commit, "function", "a step is not held for its statistics");
+    commit();
+    assert.deepEqual(levelled, [], "nor levelled in the step's own frame");
+    assert.equal(timers.at(-1).ms, still);
+    timers.at(-1).fn();
+    assert.deepEqual(levelled, [[0, "z11-21max"]], "levelled once the hand is still");
+    // Another operation is another picture: held for its statistics as before.
+    state = { ...state, slab: { z0: 11, z1: 21, op: "mean" } };
+    const held = sidebar.prepareContrast({ state, superseded: false });
+    assert.ok(held && typeof held.then === "function", "a new operation waits for its statistics");
+    console.log("a projection's step shows at once and is levelled once the hand is still");
+}
+

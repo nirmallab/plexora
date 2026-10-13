@@ -5,30 +5,48 @@
  * it, binds no key and changes no tile address (services/viewState.js says
  * why). On a z-stack it is a narrow column on the right edge of the canvas:
  *
- *     [plane] [projection]      what the picture is
- *     [play]                    step through the planes
- *     ┊ rail ┊                  z 0 at the top, as a section's rows are
- *     [12 / 40]                 the readout; click it for the operation
+ *     [plane] [projection] [3-D]   what the picture is
+ *     [sections]                   XZ and YZ beside the plane
+ *     [play]                       step through the planes; in 3-D, turn it
+ *     ┊ rail ┊                     z 0 at the top, as a section's rows are
+ *     12 / 40                      what is drawn, in numbers
+ *     [⚙]                          the settings for what is drawn now
+ *
+ * EVERY CONTROL IS ONE THAT DOES SOMETHING NOW. Which of them shows, and what
+ * each does, is declared in services/viewControls.js and resolved on every
+ * paint: in 3-D the plane is frozen, so the plane rail, its hover mark and
+ * the Sections button go and the rail is the clip range, dragged as a
+ * projection's band is; Play turns the stack instead of stepping it. A
+ * control that does nothing in a mode is hidden there, never left disabled.
  *
  * What the picture is in words ("z 12/40 · 24.0 µm", "MIP z 8–20 · 13
- * planes", viewState.label) is not on the canvas -- the caption is the
- * project's name alone -- but it is drawn into every capture (imageViewer's
+ * planes", viewState.label) is drawn into every capture (imageViewer's
  * renderCurrentViewCanvas), so a projection can never pass for a plane in
- * one, and the rail's readout and the Depth card say it on screen.
+ * one; on screen the readout and the Depth card say it.
  *
- * Everything less frequent lives in the Depth card (views/depthTools.js).
+ * The cog opens the settings that apply to the mode on screen
+ * (views/depthSettings.js); everything less frequent lives in the Depth card
+ * (views/depthTools.js).
  *
- * Keys, only on a volume and never while typing: `]` / `[` one plane,
- * Shift ten, Alt to the last / first; `.` / `,` one frame. Shift+wheel over
- * the image scrubs z. No bare letter: every one is already somebody's.
+ * Keys, only on a volume and never while typing: `]` / `[` one plane (in 3-D
+ * and in a fixed projection, the range one plane), Shift ten, Alt to the last
+ * / first; `.` / `,` one frame. Shift+wheel over the image does what `]` / `[`
+ * do. No bare letter: every one is already somebody's.
  */
 (function (global) {
     "use strict";
 
     const PLAY_FPS = 6;
     const TICK_EVERY = 5;
-    //: The 3-D grid's strengths, as the menu names them: its lines' opacity.
-    const GRID_STRENGTHS = [[0.18, "faint"], [0.32, "medium"], [0.5, "strong"]];
+
+    //: What Play says it will do, and what it says while doing it, per kind
+    //: (viewControls.js "play" config).
+    const PLAY_WORDS = {
+        planes: ["Step through the planes", "Stop stepping"],
+        band: ["Slide the range through the stack", "Stop sliding"],
+        frames: ["Play the frames", "Stop"],
+        rotate: ["Rotate the stack (Esc stops)", "Stop rotating"],
+    };
 
     function el(tag, className, attrs = {}) {
         const node = document.createElement(tag);
@@ -55,7 +73,7 @@
 
     class DepthStrip {
         constructor(viewState, { viewer = null, openCard = null, volume = null,
-                                 sections = null } = {}) {
+                                 sections = null, extras = null } = {}) {
             this.viewState = viewState;
             this.viewer = viewer;
             this.openCard = openCard;
@@ -66,13 +84,28 @@
             //: The orthogonal sections' controller (views/sectionPanes.js),
             //: or null for a stack too thin to cut.
             this.sections = sections;
+            //: What the page has, for the controls' context (main.js
+            //: coreExtras): shared with the settings popover, so the two can
+            //: never disagree about what is offered.
+            this.extras = typeof extras === "function" ? extras : null;
             this.root = null;
+            //: control id (services/viewControls.js) -> its node.
+            this.nodes = {};
+            //: The interval stepping planes, a range or frames, or null; and
+            //: which of those it steps. Turning in 3-D is the renderer's.
             this.playing = null;
+            this.playingKind = null;
+            //: What Play does now, and what the rail does (resolved in paint).
+            this.playKind = "planes";
+            this.railConfig = { plane: true, band: false, bandMove: false };
             this.drag = null;
             //: The plane the pointer rests on along the rail, or null.
             this.hoveredZ = null;
+            this.hoverOn = true;
+            this.settings = null;
             this._unsubscribe = null;
             this._onKey = (event) => this.onKey(event);
+            this._onRepaint = () => this.paint();
         }
 
         mount() {
@@ -89,6 +122,10 @@
                 { edge: "right", size: 56, order: 0 }) || null;
             this._unsubscribe = vs.subscribe(() => this.paint());
             global.addEventListener("plexora:view-changed", this._onSettled = () => this.paintLoading(false));
+            // What changes which controls are offered, beside the view state:
+            // a control registered (a plugin's), the prefs, Play's turn
+            // stopped by a press, a surface arriving, the 3-D view built.
+            for (const name of REPAINT_ON) global.addEventListener(name, this._onRepaint);
             document.addEventListener("keydown", this._onKey);
             this.bindWheel();
             this.paint();
@@ -96,16 +133,37 @@
         }
 
         destroy() {
-            this.stop();
+            this.stop({ persist: false });
             this.endHover();
+            this.settings?.close?.();
             this._unsubscribe?.();
             document.removeEventListener("keydown", this._onKey);
             global.removeEventListener("plexora:view-changed", this._onSettled);
+            for (const name of REPAINT_ON) global.removeEventListener(name, this._onRepaint);
             this.root?.remove();
             this._band?.();
             this._band = null;
             document.getElementById("openseadragon_wrapper")?.classList.remove("has-depth-strip");
             this.root = null;
+        }
+
+        /** What the page has (`extras`), over what the strip knows itself. */
+        pageExtras() {
+            return {
+                volumeSupported: this.volumeSupported,
+                sectionsSupported: Boolean(this.sections),
+                rotating: Boolean(this.volume?.rotating),
+                prefs: global.PlexoraViewerPrefs || null,
+                openCard: typeof this.openCard === "function" ? this.openCard : null,
+                ...(this.extras ? this.extras() : {}),
+            };
+        }
+
+        /** The controls' context now (services/viewControls.js), or null on
+         *  a page without the registry. */
+        context() {
+            const controls = global.PlexoraViewControls;
+            return controls ? controls.context(this.viewState, () => this.pageExtras()) : null;
         }
 
         // -- building ------------------------------------------------------
@@ -115,26 +173,26 @@
             const root = el("div", "viewer-depth-strip", {
                 id: "viewer_depth_strip", role: "group", "aria-label": "Depth",
             });
-            const modes = el("div", "depth-strip-modes", { role: "radiogroup",
-                                                           "aria-label": "Show" });
+            this.modes = el("div", "depth-strip-modes", { role: "radiogroup",
+                                                          "aria-label": "Show" });
             this.modeButtons = {};
             const offered = [
                 ["plane", "square", "One plane"],
                 ["slab", "layer-group", "Projection of a range of planes"],
+                ["volume", "cube", "The stack in 3-D"],
             ];
-            if (this.volumeSupported) offered.push(["volume", "cube", "The stack in 3-D"]);
             for (const [mode, glyph, title] of offered) {
+                if (mode === "volume" && !this.volumeSupported) continue;
                 const button = el("button", "depth-strip-button", {
                     type: "button", role: "radio", title, "aria-label": title,
                     "data-depth-mode": mode,
                 });
                 button.appendChild(icon(glyph));
                 button.addEventListener("click", () => this.chooseMode(mode));
-                modes.appendChild(button);
+                this.modes.appendChild(button);
                 this.modeButtons[mode] = button;
+                this.nodes[`mode.${mode}`] = button;
             }
-            // One plane at a time is all a colour stack offers.
-            if (vs.depth < 2 || vs.color) modes.hidden = true;
 
             this.sectionsButton = el("button", "depth-strip-button", {
                 type: "button", title: "Show XZ and YZ sections through the centre of the view",
@@ -142,36 +200,46 @@
             });
             this.sectionsButton.appendChild(icon("table-cells-large"));
             this.sectionsButton.addEventListener("click", () => {
-                const state = vs.get();
-                const on = state.layout === "sections";
-                vs.set({ layout: on ? "single" : "sections",
-                         mode: !on && state.mode === "volume" ? "plane" : state.mode });
+                const on = vs.get().layout === "sections";
+                vs.set({ layout: on ? "single" : "sections" });
             });
-            if (!this.sections || vs.color) this.sectionsButton.hidden = true;
+            this.nodes.sections = this.sectionsButton;
 
             this.playButton = el("button", "depth-strip-button", {
-                type: "button", title: "Step through the planes",
-                "aria-label": "Step through the planes", "aria-pressed": "false",
+                type: "button", title: PLAY_WORDS.planes[0],
+                "aria-label": PLAY_WORDS.planes[0], "aria-pressed": "false",
             });
             this.playButton.appendChild(icon("play"));
-            this.playButton.addEventListener("click", () => (this.playing ? this.stop() : this.play()));
-            if (vs.depth < 2 && vs.frames < 2) this.playButton.hidden = true;
+            this.playButton._glyph = "play";
+            this.playButton.addEventListener("click", () => (this.isPlaying() ? this.stop() : this.play()));
+            this.nodes.play = this.playButton;
 
             this.rail = this.buildRail();
+            this.nodes.rail = this.rail;
 
-            this.readout = el("button", "depth-strip-readout", {
-                type: "button", title: "Projection and depth options",
-                "aria-haspopup": "menu",
+            // What is drawn, in numbers: read, not pressed -- the settings
+            // are the cog's.
+            this.readout = el("div", "depth-strip-readout", {
+                role: "status", "aria-live": "polite", title: "What is drawn",
             });
             this.readoutTop = el("span", "depth-strip-readout-top");
             this.readoutBottom = el("span", "depth-strip-readout-bottom");
             this.readout.append(this.readoutTop, this.readoutBottom);
-            this.readout.addEventListener("click", (event) => {
-                event.stopPropagation();
-                this.openOptions();
-            });
+            this.nodes.readout = this.readout;
 
-            root.append(modes, this.sectionsButton, this.playButton, this.rail, this.readout);
+            this.cog = el("button", "depth-strip-button is-small depth-strip-settings", {
+                type: "button", title: "Depth settings", "aria-label": "Depth settings",
+                "aria-haspopup": "dialog", "aria-expanded": "false",
+            });
+            this.cog.appendChild(icon("gear"));
+            this.cog.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.openSettings();
+            });
+            this.nodes.cog = this.cog;
+
+            root.append(this.modes, this.sectionsButton, this.playButton, this.rail, this.readout,
+                        this.cog);
             // A time series: which frame, and a step either way. Below the
             // planes' readout because z is what the rail moves; `.` and `,`
             // do the same from the keyboard.
@@ -189,6 +257,7 @@
                 this.frameNext.addEventListener("click", () => vs.stepTime(1));
                 this.frame.append(this.framePrev, this.frameText, this.frameNext);
                 root.append(this.frame);
+                this.nodes.frame = this.frame;
             }
             return root;
         }
@@ -222,6 +291,9 @@
             track.append(this.band, this.hoverMark, this.thumb);
             rail.appendChild(track);
             this.track = track;
+            this.nodes.band = this.band;
+            this.nodes.hover = this.hoverMark;
+            this.nodes.thumb = this.thumb;
             rail.addEventListener("pointermove", (event) => this.hover(event));
             rail.addEventListener("pointerleave", () => this.endHover());
             rail.addEventListener("pointerdown", (event) => this.startDrag(event));
@@ -232,7 +304,7 @@
                     this.viewState.step(steps[event.key]);
                 } else if (event.key === "Home" || event.key === "End") {
                     event.preventDefault();
-                    this.viewState.set({ z: event.key === "Home" ? 0 : vs.depth - 1 });
+                    this.toEnd(event.key === "Home" ? -1 : 1);
                 }
             });
             rail.addEventListener("wheel", (event) => {
@@ -241,7 +313,6 @@
                     ? event.deltaY : event.deltaX;
                 if (delta) this.viewState.step(delta > 0 ? 1 : -1);
             }, { passive: false });
-            if (vs.depth < 2) rail.hidden = true;
             return rail;
         }
 
@@ -272,11 +343,39 @@
             }
         }
 
+        /**
+         * Show the controls that do something now (services/viewControls.js)
+         * and nothing else, and say what each does. Never changes the view
+         * state: a mode change only repaints, and a plane stepper whose kind
+         * no longer applies (3-D entered while stepping) just stops.
+         */
+        applyControls() {
+            const controls = global.PlexoraViewControls;
+            const ctx = this.context();
+            const resolved = controls && ctx ? controls.resolve(ctx, { surface: "strip" }) : null;
+            const shown = resolved ? new Map(resolved.map((entry) => [entry.id, entry.config]))
+                : new Map(Object.keys(this.nodes).map((id) => [id, {}]));
+            for (const [id, node] of Object.entries(this.nodes)) {
+                if (node) node.hidden = !shown.has(id);
+            }
+            this.modes.hidden = !Object.keys(this.modeButtons).some((mode) => shown.has(`mode.${mode}`));
+            const state = this.viewState.get();
+            this.playKind = shown.get("play")?.kind
+                || (state.mode === "volume" ? "rotate" : "planes");
+            this.railConfig = { plane: true, band: state.mode !== "plane", bandMove: false,
+                                ...(shown.get("rail") || {}) };
+            this.hoverOn = shown.has("hover");
+            if (!this.hoverOn) this.endHover();
+            if (this.playing && this.playingKind !== this.playKind) this.stop({ persist: false });
+            return ctx;
+        }
+
         paint() {
             const vs = this.viewState;
             const state = vs.get();
             if (!state || !this.root) return;
             this.noticeProjection(state);
+            this.applyControls();
             for (const [mode, button] of Object.entries(this.modeButtons)) {
                 const on = state.mode === mode;
                 button.classList.toggle("is-active", on);
@@ -287,22 +386,29 @@
             this.sectionsButton?.setAttribute("aria-pressed", sectionsOn ? "true" : "false");
             const volume = state.mode === "volume";
             // In 3-D the band is the clip range, so it is drawn and dragged
-            // exactly as a projection's is.
+            // exactly as a fixed projection's is.
             const slab = state.mode === "slab" || volume;
             this.root.classList.toggle("is-slab", slab);
             this.root.classList.toggle("is-volume", volume);
             // While the rail is dragged the thumb is the hand's, between planes
             // as much as on them (moveDrag); it settles on the plane after.
             if (this.drag?.kind !== "z") this.thumb.style.top = `${this.fraction(state.z) * 100}%`;
-            this.band.hidden = !slab;
             if (slab) {
                 const top = this.fraction(state.slab.z0);
                 const bottom = this.fraction(state.slab.z1);
                 this.band.style.top = `${top * 100}%`;
                 this.band.style.height = `${Math.max(0, bottom - top) * 100}%`;
             }
-            this.rail.setAttribute("aria-valuenow", String(state.z));
-            this.rail.setAttribute("aria-valuetext", vs.label());
+            this.band.classList.toggle("is-movable", Boolean(this.railConfig.bandMove));
+            if (volume) {
+                this.rail.setAttribute("aria-label", "Planes drawn in 3-D");
+                this.rail.setAttribute("aria-valuenow", String(state.slab.z0));
+                this.rail.setAttribute("aria-valuetext", `planes ${state.slab.z0}–${state.slab.z1}`);
+            } else {
+                this.rail.setAttribute("aria-label", "Plane");
+                this.rail.setAttribute("aria-valuenow", String(state.z));
+                this.rail.setAttribute("aria-valuetext", vs.label());
+            }
             if (volume) {
                 this.readoutTop.textContent = "3-D";
                 this.readoutBottom.textContent = `${state.slab.z0}–${state.slab.z1}`;
@@ -323,7 +429,10 @@
                 this.framePrev.disabled = state.t <= 0;
                 this.frameNext.disabled = state.t >= vs.frames - 1;
             }
+            this.paintPlay();
             this.paintLoading(vs.spec() !== vs.appliedSpec());
+            // The popover follows the mode, open (depthSettings.js).
+            this.settings?.refresh?.();
         }
 
         paintLoading(on) {
@@ -333,9 +442,26 @@
             this.root?.classList.toggle("is-loading", Boolean(on));
         }
 
+        /** Play's glyph and words for what it does now, and whether it is. */
+        paintPlay() {
+            const button = this.playButton;
+            if (!button) return;
+            const words = PLAY_WORDS[this.playKind] || PLAY_WORDS.planes;
+            const on = this.isPlaying();
+            const label = on ? words[1] : words[0];
+            button.setAttribute("aria-pressed", on ? "true" : "false");
+            button.setAttribute("aria-label", label);
+            button.title = label;
+            const glyph = on ? "pause" : "play";
+            if (button._glyph !== glyph) {
+                button.replaceChildren(on ? icon("pause") : icon("play"));
+                button._glyph = glyph;
+            }
+        }
+
         /** The pointer over the rail: mark the plane a click would choose. */
         hover(event) {
-            if (this.drag || event.pointerType === "touch") {
+            if (this.drag || event.pointerType === "touch" || !this.hoverOn) {
                 this.endHover();
                 return;
             }
@@ -359,20 +485,24 @@
 
         // -- interaction -----------------------------------------------------
 
-        /**
-         * Switch what the picture is. Entering 3-D with the slab still at its
-         * default (centred, following z) opens the whole stack: in 3-D the
-         * band is the clip range, and a first look should show everything.
-         */
+        /** Switch what the picture is (viewControls.transition: entering 3-D
+         *  from a slab that follows the plane opens the whole stack). */
         chooseMode(mode) {
             const vs = this.viewState;
+            const controls = global.PlexoraViewControls;
+            vs.set(controls ? controls.transition(controls.context(vs), mode) : { mode });
+        }
+
+        /** To the first (-1) or last (1) plane -- in 3-D and in a fixed
+         *  projection, the range moved there whole. */
+        toEnd(sign) {
+            const vs = this.viewState;
             const state = vs.get();
-            if (mode === "volume" && state.mode !== "volume" && state.slab.follow) {
-                vs.set({ mode, slab: { z0: 0, z1: vs.depth - 1, follow: false,
-                                       thickness: vs.depth } });
-                return;
+            if (state.mode === "volume" || (state.mode === "slab" && !state.slab.follow)) {
+                vs.step(sign * vs.depth);
+            } else {
+                vs.set({ z: sign > 0 ? vs.depth - 1 : 0 });
             }
-            vs.set({ mode });
         }
 
         zAt(clientY) {
@@ -392,25 +522,34 @@
             this.thumb.style.top = `${this.fraction(this.zExact(clientY)) * 100}%`;
         }
 
+        /**
+         * A press on the rail: a band end resizes the range, a press inside
+         * a range that can move moves it, and anywhere else picks the plane --
+         * except in 3-D, where the plane is not what is drawn and a press
+         * outside the clip range does nothing (viewControls "rail" config).
+         */
         startDrag(event) {
             if (event.button !== 0) return;
             event.preventDefault();
-            this.rail.focus({ preventScroll: true });
+            this.rail.focus?.({ preventScroll: true });
             const vs = this.viewState;
             const state = vs.get();
+            const config = this.railConfig;
             const handle = event.target?.dataset?.handle;
             const z = this.zAt(event.clientY);
-            if (state.mode === "slab" && handle) {
+            const inBand = z >= state.slab.z0 && z <= state.slab.z1;
+            if (config.band && handle) {
                 this.drag = { kind: handle };
-            } else if (state.mode === "slab" && z >= state.slab.z0 && z <= state.slab.z1
-                       && !state.slab.follow) {
+            } else if (config.bandMove && inBand) {
                 this.drag = { kind: "band", from: z, z0: state.slab.z0, z1: state.slab.z1 };
-            } else {
+            } else if (config.plane) {
                 this.drag = { kind: "z" };
                 this.rail.classList.add("is-dragging");
                 this.rail.classList.remove("is-hovering");
                 this.followThumb(event.clientY);
                 vs.set({ z });
+            } else {
+                return;
             }
             const move = (e) => this.moveDrag(e);
             const up = () => {
@@ -432,6 +571,7 @@
             const vs = this.viewState;
             const state = vs.get();
             const z = this.zAt(event.clientY);
+            const volume = state.mode === "volume";
             if (drag.kind === "z") {
                 this.followThumb(event.clientY);
                 if (z !== state.z) vs.set({ z });
@@ -440,8 +580,11 @@
                 if (drag.kind === "z0") z0 = Math.min(z, z1);
                 else z1 = Math.max(z, z0);
                 if (z0 !== state.slab.z0 || z1 !== state.slab.z1) {
-                    vs.set({ z: Math.round((z0 + z1) / 2),
-                             slab: { z0, z1, thickness: z1 - z0 + 1 } });
+                    const slab = { z0, z1, thickness: z1 - z0 + 1 };
+                    // In 3-D the range is the clip; the plane it was entered
+                    // from stays where it was.
+                    vs.set(volume ? { slab: { ...slab, follow: false } }
+                        : { z: Math.round((z0 + z1) / 2), slab });
                 }
             } else if (drag.kind === "band") {
                 const width = drag.z1 - drag.z0;
@@ -453,219 +596,66 @@
             }
         }
 
-        openOptions() {
-            const vs = this.viewState;
-            const state = vs.get();
-            if (state.mode === "volume") {
-                this.openVolumeOptions(state);
-                return;
-            }
-            const items = [];
-            const ops = [["max", "Maximum (MIP)"], ["mean", "Mean"], ["min", "Minimum"],
-                         ["std", "Std. deviation"], ["med", "Median"]];
-            for (const [op, label] of ops) {
-                items.push({
-                    label, checked: state.mode === "slab" && state.slab.op === op,
-                    onSelect: () => vs.set({ mode: "slab", slab: { op } }),
-                });
-            }
-            items.push({
-                label: "95th percentile",
-                checked: state.mode === "slab" && state.slab.op === "pct",
-                onSelect: () => vs.set({ mode: "slab", slab: { op: "pct", q: 95 } }),
-            });
-            items.push({ separator: true });
-            items.push({
-                label: "Follow the plane",
-                checked: Boolean(state.slab.follow),
-                title: "Keep the projection centred on the current plane",
-                onSelect: () => vs.set({ slab: { follow: !state.slab.follow } }),
-            });
-            items.push({
-                label: "One plane",
-                checked: state.mode === "plane",
-                onSelect: () => vs.set({ mode: "plane" }),
-            });
-            if (typeof this.openCard === "function") {
-                items.push({ separator: true });
-                items.push({ label: "Depth options…", onSelect: () => this.openCard() });
-            }
-            global.PlexoraMenu?.open?.(this.readout, items);
+        /** The cog: the settings for what is drawn now (depthSettings.js). */
+        openSettings() {
+            const Settings = global.PlexoraDepthSettings;
+            if (!Settings) return;
+            if (!this.settings) this.settings = new Settings({ strip: this });
+            this.settings.toggle(this.cog);
         }
 
-        openVolumeOptions(state) {
-            const vs = this.viewState;
-            const renderer = this.volume?.renderer;
-            const composite = state.volume?.composite === "additive" ? "additive" : "mip";
-            const items = [
-                { label: "Maximum intensity (MIP)", checked: composite === "mip",
-                  onSelect: () => vs.set({ volume: { composite: "mip" } }) },
-                { label: "Additive", checked: composite === "additive",
-                  onSelect: () => vs.set({ volume: { composite: "additive" } }) },
-                { separator: true },
-                { label: "View",
-                  actions: [
-                      { icon: "fas fa-arrows-to-dot", title: "Looking down onto XY",
-                        onSelect: () => renderer?.preset("xy") },
-                      { icon: "fas fa-grip-lines", title: "From the side, XZ",
-                        onSelect: () => renderer?.preset("xz") },
-                      { icon: "fas fa-grip-lines-vertical", title: "From the side, YZ",
-                        onSelect: () => renderer?.preset("yz") },
-                      { icon: "fas fa-cube", title: "Three-quarter view",
-                        onSelect: () => renderer?.preset("iso") },
-                  ] },
-                { label: "All planes",
-                  onSelect: () => vs.set({ slab: { z0: 0, z1: vs.depth - 1, follow: false,
-                                                    thickness: vs.depth } }) },
-                ...this.gridItems(renderer),
-            ];
-            // Surfaces (services/surfaceLayers.js): what the 3-D view shows,
-            // once there is a surface, and a new one.
-            const surfaces = global.PlexoraSurfaceLayers;
-            // Making a surface and importing a mesh are Plexora 3D; showing
-            // and lighting the surfaces that exist is not.
-            const canMake = Boolean(global.PlexoraPaid?.allows?.("volume:surfaces"));
-            if (surfaces && (canMake || surfaces.surfaceLayers().length)) {
-                items.push({ separator: true });
-                if (surfaces.surfaceLayers().length) {
-                    const show = surfaces.shown();
-                    items.push(
-                        { label: "Volume and surfaces", checked: show.volume && show.surfaces,
-                          onSelect: () => surfaces.setShow({ volume: true, surfaces: true }) },
-                        { label: "Volume only", checked: show.volume && !show.surfaces,
-                          onSelect: () => surfaces.setShow({ volume: true, surfaces: false }) },
-                        { label: "Surfaces only", checked: !show.volume && show.surfaces,
-                          onSelect: () => surfaces.setShow({ volume: false, surfaces: true }) });
-                }
-                if (canMake) {
-                    items.push({ label: "New surface…", title: "Surface Studio (S)",
-                                 onSelect: () => global.PlexoraSurfaceStudio?.open() });
-                    items.push({ label: "Import mesh…", title: "PLY, OBJ, STL, GLB, or a zip Plexora exported",
-                                 onSelect: () => {
-                                     const input = document.createElement("input");
-                                     input.type = "file";
-                                     input.accept = ".ply,.obj,.stl,.glb,.zip";
-                                     input.addEventListener("change", () => {
-                                         const file = input.files?.[0];
-                                         if (!file) return;
-                                         surfaces.importMesh(file).catch((error) => global.PlexoraToast?.show?.(
-                                             { title: error.message, tone: "warning" }));
-                                     });
-                                     input.click();
-                                 } });
-                }
-                if (surfaces.surfaceLayers().length) {
-                    const current = surfaces.lightName();
-                    items.push({ label: "Light",
-                                 actions: [["left", "arrow-left", "Light from the left"],
-                                           ["above", "arrow-up", "Light from above"],
-                                           ["right", "arrow-right", "Light from the right"],
-                                           ["front", "circle-dot", "Light from the front"]]
-                                     .map(([name, glyph, title]) => ({
-                                         icon: `fas fa-${glyph}`,
-                                         title: current === name ? `${title} (now)` : title,
-                                         onSelect: () => surfaces.setLight(name) })) });
-                }
-            }
-            items.push({ separator: true },
-                       { label: "Back to one plane", onSelect: () => vs.set({ mode: "plane" }) });
-            global.PlexoraMenu?.open?.(this.readout, items);
+        /** Whether Play is running: stepping, or turning the stack. */
+        isPlaying() {
+            return Boolean(this.playing) || (this.playKind === "rotate" && Boolean(this.volume?.rotating));
+        }
+
+        get rotating() {
+            return Boolean(this.volume?.rotating);
         }
 
         /**
-         * The 3-D view's reference grid (views/volumeRenderer.js), a per-user
-         * preference (services/viewerPrefs.js `grid`): the switch, and while
-         * it is on where it is drawn, its spacing, its strength and its
-         * numbers. A spacing or strength step opens the menu again, so it
-         * can be stepped more than once.
+         * Play, as the mode has it (viewControls "play" config): step through
+         * the planes; slide a fixed projection's range; play the frames of a
+         * single-plane series; or in 3-D turn the stack, at the speed and
+         * about the axis of the settings (services/viewerPrefs.js `rotate`).
          */
-        gridItems(renderer) {
-            const prefs = global.PlexoraViewerPrefs;
-            const helpers = global.PlexoraVolumeRenderer?.grid;
-            if (!prefs?.grid || !helpers) return [];
-            const grid = prefs.grid();
-            const set = (patch) => prefs.set({ grid: patch });
-            const again = () => this.openVolumeOptions(this.viewState.get());
-            const items = [
-                { separator: true },
-                { label: "Grid", checked: grid.on,
-                  title: "Lines on the far walls of the box, behind the tissue",
-                  onSelect: () => set({ on: !grid.on }) },
-            ];
-            if (!grid.on) return items;
-            items.push(
-                { label: "On the walls", checked: grid.faces === "walls",
-                  onSelect: () => set({ faces: "walls" }) },
-                { label: "On the floor", checked: grid.faces === "floor",
-                  title: "Only on the far face across z",
-                  onSelect: () => set({ faces: "floor" }) });
-            const axes = renderer?.gridAxes?.(grid.step) || null;
-            if (axes) {
-                const unit = axes.units[0];
-                const step = axes.step[0];
-                const say = (value) => `${helpers.formatTick(value)} ${unit}`;
-                const finer = helpers.niceNeighbour(step, -1);
-                const coarser = helpers.niceNeighbour(step, 1);
-                // Finer than the grid allows draws the same lines (gridAxes).
-                const finest = renderer.gridAxes(finer).step[0] >= step;
-                items.push({
-                    label: `Spacing: ${say(step)}${grid.step === "auto" ? " (auto)" : ""}`,
-                    actions: [
-                        { icon: "fas fa-minus", title: `Finer: ${say(finer)}`, disabled: finest,
-                          onSelect: () => { set({ step: finer }); again(); } },
-                        { icon: "fas fa-plus", title: `Coarser: ${say(coarser)}`,
-                          onSelect: () => { set({ step: coarser }); again(); } },
-                        { icon: "fas fa-rotate-left", title: `Automatic: ${say(axes.auto)}`,
-                          disabled: grid.step === "auto",
-                          onSelect: () => { set({ step: "auto" }); again(); } },
-                    ] });
-            }
-            const strengths = GRID_STRENGTHS;
-            let at = 0;
-            strengths.forEach(([value], index) => {
-                if (Math.abs(value - grid.opacity) < Math.abs(strengths[at][0] - grid.opacity)) at = index;
-            });
-            items.push({
-                label: `Lines: ${strengths[at][1]}`,
-                actions: [
-                    { icon: "fas fa-minus", title: at > 0 ? `Fainter: ${strengths[at - 1][1]}` : "Fainter",
-                      disabled: at <= 0,
-                      onSelect: () => { set({ opacity: strengths[at - 1][0] }); again(); } },
-                    { icon: "fas fa-plus",
-                      title: at < strengths.length - 1 ? `Stronger: ${strengths[at + 1][1]}` : "Stronger",
-                      disabled: at >= strengths.length - 1,
-                      onSelect: () => { set({ opacity: strengths[at + 1][0] }); again(); } },
-                ] },
-            { label: "Axis labels", checked: grid.labels,
-              title: "Numbers along three edges of the box",
-              onSelect: () => set({ labels: !grid.labels }) });
-            return items;
-        }
-
         play() {
             const vs = this.viewState;
-            if (this.playing) return;
-            this.playButton.setAttribute("aria-pressed", "true");
-            this.playButton.replaceChildren(icon("pause"));
-            const byTime = vs.depth < 2 && vs.frames > 1;
+            if (this.isPlaying()) return;
+            const kind = this.playKind;
+            if (kind === "rotate") {
+                this.volume?.rotate?.(true, global.PlexoraViewerPrefs?.rotate?.() || {});
+                this.paintPlay();
+                return;
+            }
+            this.playingKind = kind;
             this.playing = setInterval(() => {
                 const state = vs.get();
-                if (byTime) {
+                if (kind === "frames") {
                     vs.set({ t: (state.t + 1) % vs.frames }, { save: false });
+                } else if (kind === "band") {
+                    const width = state.slab.z1 - state.slab.z0;
+                    const start = state.slab.z1 >= vs.depth - 1 ? 0 : state.slab.z0 + 1;
+                    vs.set({ slab: { z0: start, z1: start + width } }, { save: false });
                 } else {
                     vs.set({ z: (state.z + 1) % vs.depth }, { save: false });
                 }
             }, 1000 / PLAY_FPS);
+            this.paintPlay();
         }
 
-        stop() {
-            if (!this.playing) return;
-            clearInterval(this.playing);
-            this.playing = null;
-            this.playButton?.setAttribute("aria-pressed", "false");
-            this.playButton?.replaceChildren(icon("play"));
-            // The plane playback stopped on is the one to reopen on.
-            this.viewState.persist();
+        /** Stop Play. `persist: false` when it stops because the mode moved
+         *  on: nobody chose the plane it stopped on. */
+        stop({ persist = true } = {}) {
+            if (this.volume?.rotating) this.volume.rotate?.(false);
+            if (this.playing) {
+                clearInterval(this.playing);
+                this.playing = null;
+                this.playingKind = null;
+                // The plane playback stopped on is the one to reopen on.
+                if (persist) this.viewState.persist();
+            }
+            this.paintPlay();
         }
 
         onKey(event) {
@@ -679,8 +669,10 @@
                 event.preventDefault();
                 const sign = event.code === "BracketRight" ? 1 : -1;
                 if (event.altKey) {
-                    vs.set({ z: sign > 0 ? vs.depth - 1 : 0 });
+                    this.toEnd(sign);
                 } else {
+                    // A plane; in 3-D and in a fixed projection, the range
+                    // (viewState.step).
                     vs.step(sign * (event.shiftKey ? 10 : 1));
                 }
             } else if ((event.code === "Period" || event.code === "Comma") && vs.frames > 1
@@ -690,7 +682,7 @@
             }
         }
 
-        /** Shift+wheel over the image scrubs z instead of zooming. */
+        /** Shift+wheel over the image does what `]` and `[` do. */
         bindWheel() {
             const viewer = this.viewer;
             if (!viewer?.addHandler || this.viewState.depth < 2) return;
@@ -706,6 +698,12 @@
         }
     }
 
+    //: Events after which the strip's controls are resolved again.
+    const REPAINT_ON = ["plexora:viewer-prefs-changed", "plexora:view-controls-changed",
+                        "plexora:volume-rotate", "plexora:volume-mounted",
+                        "plexora:surface-loaded"];
+
+    DepthStrip.PLAY_WORDS = PLAY_WORDS;
     global.PlexoraDepthStrip = DepthStrip;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = DepthStrip;

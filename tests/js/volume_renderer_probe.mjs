@@ -20,7 +20,11 @@
  *   the range is narrower, asked once per range;
  * - the reference grid: 1-2-5 steps, microns only from a stated spacing (pixels
  *   and planes otherwise), its numbers where the camera puts them, the
- *   preference repaired, and the uniforms that turn it on and off.
+ *   preference repaired, and the uniforms that turn it on and off;
+ * - a texture being replaced (a window turning exact) is drawn from until the
+ *   new one lands, in its own window, never evicted meanwhile; the new one
+ *   dissolves in at a still camera, never across a camera move or a capture;
+ * - MIP keeps its samples while moving; the jitter is on a fixed grid.
  *
  * Run directly:  node tests/js/volume_renderer_probe.mjs
  */
@@ -499,6 +503,126 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     grid = { ...grid, on: false };
     drawn.draw(3000);
     check("and off again, nothing but the opacity", set.u_grid[0] === 0);
+}
+
+// -- a texture being replaced is not a channel gone ---------------------------------
+{
+    // The provisional window turning exact (services/volumeWindows.js) gives a
+    // channel a new texture key. The old texture used to be filtered out of
+    // the draw until the new one landed -- the channel went black, then faded
+    // in from nothing. Now it keeps drawing, in its own window.
+    const set = {};
+    const bound = [];
+    const recordingGl = new Proxy({}, {
+        get(target, name) {
+            if (typeof name !== "string") return undefined;
+            if (/^[A-Z_0-9]+$/.test(name)) return name;
+            if (name === "getUniformLocation") return (program, uniform) => uniform;
+            if (name.startsWith("uniform")) return (location, ...values) => { set[location] = values; };
+            if (name === "getShaderParameter" || name === "getProgramParameter") return () => true;
+            if (name === "createTexture" || name === "createProgram") return () => ({ id: Math.random() });
+            if (name === "bindTexture") return (target, texture) => bound.push(texture);
+            return () => undefined;
+        },
+    });
+    const marks = [];
+    box.PlexoraViewPerf = { mark: (...args) => marks.push(args), provide() {} };
+    const windows = new box.PlexoraVolumeWindows("vol", { fetchImpl: () => Promise.resolve({ ok: false }) });
+    windows.windows.set("full:DNA", { qmin: 0, qmax: 1000, exact: false });
+    box.__plexora.volumeWindows = windows;
+    hd = false;
+    slots.forEach((slot, i) => { slot.enabled = i === 0; });
+    let release = null;
+    const fetchHeld = (url) => (url.includes("w=0%2C1100")
+        ? new Promise((resolve) => { release = () => resolve(fetchImpl(url)); })
+        : fetchImpl(url));
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl: fetchHeld });
+    view.gl = recordingGl;
+    view.maxTexture = 2048;
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    const ghost = {
+        captures: 0, releases: 0, cancels: 0, held: null,
+        capture(cam) { this.captures += 1; this.held = cam; return true; },
+        release() { this.releases += 1; },
+        cancel() { this.cancels += 1; this.held = null; },
+        sync(cam) { if (this.held && cam !== this.held) this.cancel(); },
+    };
+    view.ghost = ghost;
+    await view.refresh();
+    view.draw(1000);
+    view.draw(1300);
+    const oldKey = view._shownKey.get("full:DNA");
+    const raw = [(10 / 255) * 4095, (200 / 255) * 4095];
+    windows.adopt("full:DNA", { qmin: 0, qmax: 1100, exact: true });
+    const loading = view.refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    bound.length = 0;
+    view.draw(2000);
+    const near = (a, b) => Math.abs(a - b) < 1e-4;
+    check("while its new texture loads, a channel is drawn from the one it had, in full",
+          set.u_opacity?.[0]?.[0] === 0.6 && !view.fading() && view._shownKey.get("full:DNA") === oldKey,
+          JSON.stringify({ opacity: set.u_opacity?.[0], key: view._shownKey.get("full:DNA") }));
+    check("...read in the window that texture was made with, so its contrast holds",
+          near(set.u_window[0][0], raw[0] / 1000) && near(set.u_window[0][1], Math.min(1, raw[1] / 1000)),
+          JSON.stringify([...set.u_window[0]]));
+    check("...and the miss is marked once", marks.filter((m) => m[1] === "texmiss").length === 1);
+    view.gpuBudget = 1;
+    view.evict(view.keepKeys());
+    check("past the GPU budget the texture being drawn is never evicted while its replacement loads",
+          view.textures.has(oldKey));
+    view.gpuBudget = 1024 * 2 ** 20;
+    check("finer views wait for the channel's own texture", (() => {
+        let asked = false;
+        const saved = view.considerDetail;
+        view.considerDetail = () => { asked = true; return Promise.resolve(); };
+        view.status = "ready";
+        view.refine();
+        view.considerDetail = saved;
+        return !asked;
+    })());
+    const capturesBefore = ghost.captures;
+    release();
+    await loading;
+    view.draw(2100);
+    check("the new texture, once landed, is drawn in its own window",
+          view._shownKey.get("full:DNA") !== oldKey && near(set.u_window[0][0], raw[0] / 1100),
+          JSON.stringify([...set.u_window[0]]));
+    check("...and dissolves in over the old: one capture, one release, at the same camera",
+          ghost.captures === capturesBefore + 1 && ghost.releases === capturesBefore + 1);
+    view.draw(2200);
+    check("the same picture drawn again holds nothing", ghost.captures === capturesBefore + 1);
+    view.camera.dist += 0.1;
+    view.draw(2300);
+    check("a camera that moves ends the fade and holds nothing",
+          ghost.cancels >= 1 && ghost.captures === capturesBefore + 1);
+    view.snapshot();
+    check("a capture never holds one", ghost.captures === capturesBefore + 1);
+
+    // MIP draws as many samples moving as at rest; additive halves them.
+    view.composite = "mip";
+    view.interacting = true;
+    view.draw(3000);
+    const moving = set.u_steps[0];
+    view.interacting = false;
+    view.draw(3100);
+    check("MIP is drawn with the same samples moving as at rest", moving === set.u_steps[0] && moving > 0,
+          `${moving} vs ${set.u_steps[0]}`);
+    view.composite = "additive";
+    view.interacting = true;
+    view.draw(3200);
+    const halved = set.u_steps[0];
+    view.interacting = false;
+    view.draw(3300);
+    check("additive halves them while moving", halved === Math.round(set.u_steps[0] / 2),
+          `${halved} vs ${set.u_steps[0]}`);
+    check("the sampling jitter is on the full-quality grid, whatever the resolution",
+          set.u_jitter_res && set.u_jitter_res[0][0] === 800 && set.u_jitter_res[0][1] === 600,
+          JSON.stringify(set.u_jitter_res));
+    view.box = { x: 0, y: 0, width: 16, height: 16 };
+    check("another area is never stood in for by the last one",
+          view.entryFor(view.channels()[0]) === null);
+    delete box.__plexora.volumeWindows;
+    delete box.PlexoraViewPerf;
 }
 
 if (failures.length) {

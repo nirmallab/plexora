@@ -16,7 +16,8 @@
  *   as TRANSITIONS, so a run of thousands of frames stays small;
  * - optionally a luminance grid of what is on screen: the viewer's ground,
  *   the plane canvas over it, the fade's ghost at its current opacity over that,
- *   the 3-D canvas -- composited the way the browser composites them;
+ *   the 3-D canvas and its own ghost (a build that has one) -- composited the
+ *   way the browser composites them;
  * - input timestamps (capture phase) and the viewer's own events.
  *
  * Everything lives on `window.__bench`. Nothing here reads anything the app
@@ -35,6 +36,8 @@
         frames: [],
         lum: [],
         longTasks: [],
+        //: [t, ms] per 3-D ghost capture (hookApp), when the build has one.
+        vghostMs: [],
         recording: false,
         lumOn: false,
         lumGrid: [32, 20],
@@ -175,7 +178,15 @@
                 const show = pane.show.bind(pane);
                 pane.show = (token, ...rest) => {
                     if (token !== pane.token) { B.event(`${axis}:show`, token); count("paneShows"); }
-                    return show(token, ...rest);
+                    const before = pane.generation;
+                    const result = show(token, ...rest);
+                    // A show that started a load of its own (a new generation),
+                    // not one that joined the load in flight or found its
+                    // token on screen: a reload of the pane.
+                    const started = Number.isFinite(before) ? pane.generation !== before
+                        : token !== pane.token;
+                    if (started) { B.event(`${axis}:load`, token); count("paneLoads"); }
+                    return result;
                 };
             }
         }
@@ -187,6 +198,26 @@
             if (renderer.loadChannel) {
                 const load = renderer.loadChannel.bind(renderer);
                 renderer.loadChannel = (...a) => { count("volumeLoads"); B.event("volume:load", a[0]); return load(...a); };
+            }
+        }
+        // The 3-D view's ghost crossfade, where a build has one (a PlaneFade
+        // like the plane's): captures counted and timed, as the 2-D fade is.
+        const vghost = renderer?.ghost;
+        if (vghost && typeof vghost === "object" && !vghost.__bench && typeof vghost.capture === "function") {
+            vghost.__bench = true;
+            const capture = vghost.capture.bind(vghost);
+            vghost.capture = (...a) => {
+                const t = now();
+                const r = capture(...a);
+                const ms = now() - t;
+                B.vghostMs.push([t, ms]);
+                B.event("vghost:capture", ms);
+                count("vghostCaptures");
+                return r;
+            };
+            if (typeof vghost.release === "function") {
+                const release = vghost.release.bind(vghost);
+                vghost.release = (...a) => { B.event("vghost:release", null); count("vghostReleases"); return release(...a); };
             }
         }
         return true;
@@ -239,6 +270,8 @@
         }
         const ghost = P.planeMotion?.fade?.ghost;
         sigs.ghost = ghost && !ghost.hidden ? "on" : "";
+        const vghost = volumeGhost();
+        sigs.vghost = vghost && !vghost.hidden ? "on" : "";
         for (const [surface, value] of Object.entries(sigs)) {
             if (B.sig[surface] !== value) {
                 B.sig[surface] = value;
@@ -276,12 +309,14 @@
         const resize = { resizeWidth: gw, resizeHeight: gh, resizeQuality: "medium" };
         const renderer = P.volumeView?.renderer;
         const volume = renderer?.canvas && !renderer.canvas.hidden && renderer.canvas.width ? renderer.canvas : null;
-        const ghost = P.planeMotion?.fade?.ghost;
-        const opacity = ghostOpacity();
+        // Over the plane, the plane's fade ghost; over the 3-D view, its own
+        // ghost where the build has one -- each at its current opacity.
+        const ghost = volume ? volumeGhost() : P.planeMotion?.fade?.ghost;
+        const opacity = volume ? elementOpacity(ghost) : ghostOpacity();
         const ground = groundOf(document.getElementById("openseadragon"));
         const snap = (canvas) => createImageBitmap(canvas, ...crop(canvas), resize);
         lumBusy += 1;
-        Promise.all([snap(volume || main), !volume && ghost && opacity > 0 && ghost.width ? snap(ghost) : null])
+        Promise.all([snap(volume || main), ghost && opacity > 0 && ghost.width ? snap(ghost) : null])
             .then(([plane, held]) => {
                 if (!lumCanvas) {
                     lumCanvas = document.createElement("canvas");
@@ -314,11 +349,19 @@
     }
     B.sample = sample;
 
-    function ghostOpacity() {
-        const ghost = window.__plexora?.planeMotion?.fade?.ghost;
-        if (!ghost || ghost.hidden) return 0;
-        const value = Number(getComputedStyle(ghost).opacity);
+    function elementOpacity(node) {
+        if (!node || node.hidden || typeof node.width !== "number") return 0;
+        const value = Number(getComputedStyle(node).opacity);
         return Number.isFinite(value) ? value : 0;
+    }
+    function ghostOpacity() {
+        return elementOpacity(window.__plexora?.planeMotion?.fade?.ghost);
+    }
+    /** The 3-D view's ghost element (a canvas), or null on a build without one. */
+    function volumeGhost() {
+        const ghost = window.__plexora?.volumeView?.renderer?.ghost;
+        const node = ghost && typeof ghost === "object" ? ghost.ghost : null;
+        return node && typeof node.width === "number" ? node : null;
     }
 
     let lumCanvas = null;
@@ -354,6 +397,13 @@
         const renderer = P.volumeView?.renderer;
         if (renderer?.canvas && !renderer.canvas.hidden && renderer.canvas.width) {
             ctx.drawImage(renderer.canvas, ...src(renderer.canvas), 0, 0, gw, gh);
+            const vghost = volumeGhost();
+            const vopacity = elementOpacity(vghost);
+            if (vghost && vopacity > 0 && vghost.width) {
+                ctx.globalAlpha = vopacity;
+                ctx.drawImage(vghost, ...src(vghost), 0, 0, gw, gh);
+                ctx.globalAlpha = 1;
+            }
         } else {
             ctx.drawImage(main, ...src(main), 0, 0, gw, gh);
             const ghost = P.planeMotion?.fade?.ghost;
@@ -416,6 +466,7 @@
         B.frames.length = 0;
         B.lum.length = 0;
         B.longTasks.length = 0;
+        B.vghostMs.length = 0;
         B.sig = Object.create(null);
         if (counters) B.counters = Object.create(null);
         return now();

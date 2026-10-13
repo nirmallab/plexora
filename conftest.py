@@ -304,6 +304,18 @@ def _finish_layer_builds(plexora_data_root):
 
 
 @pytest.fixture(autouse=True)
+def _finish_tile_read_ahead():
+    """Drop the tiles queued to be made ahead of a plane, and let the one being
+    made finish (volume/prefetch.py `TILE_PREFETCHER`): left running, it would
+    file its tile into the next test's tile cache."""
+    yield
+    from plexora.server.volume.prefetch import TILE_PREFETCHER
+
+    TILE_PREFETCHER.forget()
+    TILE_PREFETCHER.drain()
+
+
+@pytest.fixture(autouse=True)
 def _finish_agent_jobs(plexora_data_root):
     """Let an agent job finish before the root is repointed under it.
 

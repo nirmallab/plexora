@@ -250,17 +250,20 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
     user (the settings file), each PUT merged over what is there."""
     from plexora import paths
 
+    turn = {"speed": 30.0, "axis": "screen", "direction": 1}
     paths.write_settings({"data_dir": "/somewhere"})
     grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {
-        "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid}
+        "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn}
     client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
     stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
-    assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid}
+    assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid,
+                      "rotate": turn}
     # Out of bounds is clamped; nonsense reads as the default.
     stored = client.put("/viewer_prefs", json={
         "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
-    assert stored == {"sections": {"xz": None, "yz": 0.75}, "motion": "on", "grid": grid}
+    assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "grid": grid,
+                      "rotate": turn}
     client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
     assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
     # The rest of the settings file is left alone.
@@ -293,6 +296,25 @@ def test_the_3d_grid_preference_is_merged_and_repaired(client):
     assert normalize_grid({"step": "auto"})["step"] == "auto"
     assert normalize_grid({"step": float("nan")})["step"] == "auto"
     assert normalize_grid("nonsense")["on"] is False
+
+
+def test_the_rotation_preference_is_merged_and_clamped(client):
+    """How Play turns the stack in 3-D: merged field by field, the speed held
+    to ROTATE_SPEED, nonsense read as the default -- and never whether it is
+    turning, which a page must not open in."""
+    from plexora import paths
+
+    paths.write_settings({})
+    stored = client.put("/viewer_prefs", json={"rotate": {"speed": 45}}).get_json()["prefs"]
+    assert stored["rotate"] == {"speed": 45.0, "axis": "screen", "direction": 1}
+    stored = client.put("/viewer_prefs", json={"rotate": {"axis": "z", "direction": -1}}).get_json()["prefs"]
+    assert stored["rotate"] == {"speed": 45.0, "axis": "z", "direction": -1}
+    stored = client.put("/viewer_prefs", json={"rotate": {"speed": 900, "axis": "w",
+                                                          "direction": True, "on": True}}).get_json()["prefs"]
+    assert stored["rotate"] == {"speed": 90.0, "axis": "screen", "direction": 1}
+    stored = client.put("/viewer_prefs", json={"rotate": {"speed": 1}}).get_json()["prefs"]
+    assert stored["rotate"]["speed"] == 5.0
+    assert "on" not in client.get("/viewer_prefs").get_json()["rotate"]
 
 
 # -- whole levels and section geometry -------------------------------------

@@ -23,15 +23,23 @@
  * plane under the pointer. Off by default; the strip's Sections button
  * toggles it and the choice is saved with the view state (`layout`).
  *
- * RESIZABLE. Each pane's inner edge is a divider: drag it, or focus it and use
- * the arrow keys; double-click (or Home) gives the default size back. A pane
- * is at most the size chosen and never more than its stack is tall at the
- * plane's scale -- the section keeps the plane's proportions, so a bigger pane
- * shows more planes when zoomed in rather than stretched ones. The size is a
- * share of the plane's height (XZ) or width (YZ), saved for the user rather
- * than the image (services/viewerPrefs.js), so it holds across images, modes
- * and sessions. Resizing moves nothing else: the plane, its zoom, the channels
- * and the plane on screen stay put.
+ * RESIZABLE, both ways. Each pane's inner edge is a divider: drag it, or focus
+ * it and use the arrow keys; double-click (or Home) gives the default size
+ * back. The size chosen is the size shown. While the stack at the plane's
+ * scale is taller than the pane, the pane shows a window of its planes at the
+ * plane's proportions, scrolled to keep the plane on screen in view; once the
+ * pane is the taller, every plane is shown and z is stretched to fill it (a
+ * CSS scale on the pane's own viewer, `factor`, said in the label as "z ×2.4"
+ * -- the rows are the same planes, drawn taller, never new ones). A size
+ * within SNAP_PX of the stack's own height snaps to it. A pane never grows
+ * over the controls: it leaves MIN_XY_PX of the plane uncovered.
+ *
+ * The size is a share of the plane's height (XZ) or width (YZ), saved for the
+ * user rather than the image (services/viewerPrefs.js), so it holds across
+ * images, modes and sessions. Resizing moves nothing else: the plane, its
+ * zoom, the channels and the plane on screen stay put, and the sections are
+ * not asked for again until the divider is let go (the cut is held still
+ * while it moves).
  *
  * The cut runs through the centre of the part of the plane NOT under a pane,
  * so a pane made large never hides the line it is a section along.
@@ -45,7 +53,14 @@
     //: A size the user chose, as a share (server/routes/volume_routes.py
     //: SECTION_SHARE holds the same bounds).
     const MIN_SHARE = 0.05;
-    const MAX_SHARE = 0.75;
+    const MAX_SHARE = 0.9;
+    //: What a pane leaves of the plane, at its largest: room for the plane
+    //: itself and the controls over it.
+    const MIN_XY_PX = 240;
+    //: A size this close to the stack's own height at the plane's scale is
+    //: that height: z drawn at the plane's proportions, the detent between a
+    //: window of planes and a stretched whole stack.
+    const SNAP_PX = 4;
     //: Pixels per arrow key on a divider; Shift for KEY_STEP_LARGE.
     const KEY_STEP = 16;
     const KEY_STEP_LARGE = 64;
@@ -453,10 +468,15 @@
         }
 
         /**
-         * Size the pane: as tall (XZ) or wide (YZ) as its stack at the plane's
-         * scale, up to the user's chosen share of the plane or, unchosen, the
-         * default; scrolled to keep the plane on screen in view when the stack
-         * is the bigger.
+         * Size the pane: the user's chosen share of the plane or, unchosen, as
+         * tall (XZ) or wide (YZ) as its stack at the plane's scale up to the
+         * default share. A stack taller than the pane is scrolled to keep the
+         * plane on screen in view; a pane taller than its stack shows every
+         * plane, stretched along z by `factor` to fill it.
+         *
+         * `view`: {top, rows, scale, size, inner, factor, natural, whole} --
+         * `size` the pane's screen px across, `inner` its own viewer's (size /
+         * factor), `natural` the whole stack's at the plane's scale.
          */
         layout() {
             const owner = this.owner;
@@ -466,23 +486,35 @@
             const scale = frame.scale;                       // screen px per image px
             const across = this.axis === "xz" ? frame.height : frame.width;
             const share = owner.shareOf(this.axis);
-            const maxPx = Math.max(MIN_PANE_PX, across * (share ?? MAX_PANE_FRACTION));
-            const wanted = rows * scale;
-            const shown = Math.round(Math.max(MIN_PANE_PX, Math.min(maxPx, wanted)));
-            const rowsShown = Math.min(rows, shown / scale);
+            const natural = rows * scale;
+            const limit = owner.maxPanePx(this.axis, frame);
+            let asked = share !== null ? across * share : Math.min(across * MAX_PANE_FRACTION, natural);
+            if (share !== null && Math.abs(asked - natural) <= SNAP_PX) asked = natural;
+            const shown = Math.round(Math.max(MIN_PANE_PX, Math.min(limit, asked)));
+            // Stretched only past the detent: a pane a pixel or two taller than
+            // its stack (rounding) shows it at the plane's proportions.
+            const factor = shown > natural + SNAP_PX ? shown / Math.max(1e-6, natural) : 1;
+            const inner = shown / factor;
+            const rowsShown = Math.min(rows, inner / scale);
             const zRow = owner.zRow(rows);
             let top = 0;
             if (rowsShown < rows) {
                 top = Math.max(0, Math.min(rows - rowsShown, zRow - rowsShown / 2));
             }
             //: Whether the pane holds every plane (to the pixel it is rounded to).
-            const whole = wanted <= maxPx + 0.5;
-            this.view = { top, rows: rowsShown, scale, size: shown, whole };
+            const whole = natural <= shown + 0.5;
+            this.view = { top, rows: rowsShown, scale, size: shown, inner, factor, natural, whole };
+            const stretch = factor > 1;
+            this.root.classList.toggle("is-stretched", stretch);
             if (this.axis === "xz") {
                 this.root.style.height = `${shown}px`;
+                this.canvasHost.style.height = `${inner}px`;
+                this.canvasHost.style.transform = stretch ? `scaleY(${factor})` : "";
                 owner.wrapper?.style.setProperty("--plx-section-xz-h", `${shown}px`);
             } else {
                 this.root.style.width = `${shown}px`;
+                this.canvasHost.style.width = `${inner}px`;
+                this.canvasHost.style.transform = stretch ? `scaleX(${factor})` : "";
                 owner.wrapper?.style.setProperty("--plx-section-yz-w", `${shown}px`);
             }
             // The pane's band in the canvas layout (services/canvasLayout.js):
@@ -503,11 +535,14 @@
             const view = this.view;
             if (!frame || !view || !this.osd || !this.geometry) return;
             const geometry = this.geometry;
-            const { top, rows: rowsShown, scale, size: shown } = view;
+            const { top, rows: rowsShown, scale } = view;
+            // The pane's own viewer is `inner` across; a stretched pane scales
+            // it up to its size on screen (layout).
+            const inner = view.inner ?? view.size;
             const along = this.axis === "xz" ? [frame.x0, frame.x1] : [frame.y0, frame.y1];
             const width = geometry.width;                    // image px along the section
-            const containerWidth = this.axis === "xz" ? frame.width : shown;
-            const containerHeight = this.axis === "xz" ? shown : frame.height;
+            const containerWidth = this.axis === "xz" ? frame.width : inner;
+            const containerHeight = this.axis === "xz" ? inner : frame.height;
             // The pane was just resized; tell the viewport now rather than at
             // its next frame, or the zoom below is computed for the old size.
             this.osd.viewport.resize(new OpenSeadragon.Point(containerWidth, containerHeight),
@@ -542,7 +577,8 @@
         paintZLine() {
             const view = this.view;
             if (!view || !this.geometry) return;
-            const offset = (this.owner.zRow(this.geometry.height) - view.top) * view.scale;
+            const offset = (this.owner.zRow(this.geometry.height) - view.top) * view.scale
+                * (view.factor || 1);
             const visible = offset >= 0 && offset <= view.size;
             this.zline.hidden = !visible;
             if (this.axis === "xz") {
@@ -583,6 +619,8 @@
                             t: owner.viewState.get()?.t || 0, scale: view.scale };
             const rows = this.geometry.height;
             const start = xz ? frame.x0 : frame.y0;
+            // Screen px per image row across the pane: z is stretched with it.
+            const zScale = view.scale * (view.factor || 1);
             for (const provider of owner.overlays.values()) {
                 let shapes = [];
                 try {
@@ -597,7 +635,7 @@
                     if (shape.outline) {
                         strokeCellOutline(context, shape.spans || [], {
                             along: (a) => (a - start) * view.scale,
-                            across: (z) => ((z / query.depth) * rows - view.top) * view.scale,
+                            across: (z) => ((z / query.depth) * rows - view.top) * zScale,
                             xz,
                         });
                         continue;
@@ -605,8 +643,8 @@
                     for (const span of shape.spans || []) {
                         const along0 = (span.a0 - start) * view.scale;
                         const along1 = (span.a1 - start) * view.scale;
-                        const across0 = ((span.z0 / query.depth) * rows - view.top) * view.scale;
-                        const across1 = (((span.z1 + 1) / query.depth) * rows - view.top) * view.scale;
+                        const across0 = ((span.z0 / query.depth) * rows - view.top) * zScale;
+                        const across1 = (((span.z1 + 1) / query.depth) * rows - view.top) * zScale;
                         const [x, y, w, h] = xz
                             ? [along0, across0, along1 - along0, across1 - across0]
                             : [across0, along0, across1 - across0, along1 - along0];
@@ -641,7 +679,7 @@
                             for (let i = 0; i + 1 < line.length; i += 2) {
                                 const along = (line[i] - start) * view.scale;
                                 const across = (((line[i + 1] + 0.5) / query.depth) * rows - view.top)
-                                    * view.scale;
+                                    * zScale;
                                 const [x, y] = xz ? [along, across] : [across, along];
                                 if (i === 0) context.moveTo(x, y);
                                 else context.lineTo(x, y);
@@ -660,7 +698,7 @@
             const view = this.view;
             if (!view || !this.geometry) return;
             const along = this.axis === "xz" ? event.clientY - box.top : event.clientX - box.left;
-            const row = view.top + along / view.scale;
+            const row = view.top + along / (view.scale * (view.factor || 1));
             this.owner.setZFromRow(row, this.geometry.height);
         }
 
@@ -701,6 +739,11 @@
             this.superseded = 0;
             this.targetTimer = 0;
             this.targetKey = "";
+            //: The pane whose divider is being dragged ("xz" | "yz"), or null:
+            //: the cut is held still and nothing is reloaded until it is let go.
+            this.resizing = null;
+            //: The section tokens the labels last named.
+            this.labelled = null;
         }
 
         /** The state the panes draw (see `shown`). */
@@ -715,13 +758,27 @@
             return Number.isFinite(saved) ? saved : null;
         }
 
+        /**
+         * The largest a pane may be, in screen px: what leaves MIN_XY_PX of
+         * the plane uncovered -- above XZ, and left of YZ, which stands beside
+         * the depth strip's band.
+         */
+        maxPanePx(axis, frame = this.frame) {
+            if (!frame) return Infinity;
+            if (axis === "xz") return Math.max(MIN_PANE_PX, frame.height - MIN_XY_PX);
+            const band = parseFloat(this.wrapper?.style?.getPropertyValue?.("--plx-band-sections-yz")) || 0;
+            return Math.max(MIN_PANE_PX, frame.width - band - MIN_XY_PX);
+        }
+
         /** Resize a pane to `px` (its height for XZ, width for YZ). Saved
-         *  only with `save`, which a drag passes once, at its end. */
+         *  only with `save`, which a drag passes once, at its end. The size
+         *  is clamped first, so a saved share is one that was on screen. */
         resize(axis, px, { save = false } = {}) {
             const frame = this.frame || this.measure();
             if (!frame) return;
             const across = axis === "xz" ? frame.height : frame.width;
-            const share = Math.max(MIN_SHARE, Math.min(MAX_SHARE, px / Math.max(1, across)));
+            const clamped = Math.max(MIN_PANE_PX, Math.min(this.maxPanePx(axis, frame), px));
+            const share = Math.max(MIN_SHARE, Math.min(MAX_SHARE, clamped / Math.max(1, across)));
             if (save) {
                 delete this.liveShare[axis];
                 this.prefs?.set?.({ sections: { [axis]: share } });
@@ -750,6 +807,7 @@
                 const start = axis === "xz" ? event.clientY : event.clientX;
                 const startSize = pane.view?.size || MIN_PANE_PX;
                 let size = startSize;
+                this.resizing = axis;
                 divider.classList.add("is-dragging");
                 wrapper?.classList.add(`is-resizing-${axis}`);
                 const move = (e) => {
@@ -764,6 +822,9 @@
                     divider.removeEventListener("pointercancel", up);
                     divider.classList.remove("is-dragging");
                     wrapper?.classList.remove(`is-resizing-${axis}`);
+                    // Let go: the cut may move to the new centre, and the
+                    // sections through it are asked for once.
+                    this.resizing = null;
                     if (size !== startSize) {
                         this.resize(axis, size, { save: true });
                     } else {
@@ -987,12 +1048,22 @@
          */
         follow(settled) {
             if (!this.enabled || !this.panes) return;
+            const held = this.resizing ? this.frame : null;
             this.frame = this.measure();
             if (!this.frame) return;
             for (const pane of Object.values(this.panes)) pane.layout();
-            this.locateCut();
+            if (held) {
+                // A divider being dragged: the cut stays where it was, so the
+                // sections on screen stay the right ones and nothing reloads.
+                const { cx, cy, cutX, cutY } = held;
+                Object.assign(this.frame, { cx, cy, cutX, cutY });
+            } else {
+                this.locateCut();
+            }
             for (const pane of Object.values(this.panes)) pane.apply();
             this.paintCrosshair();
+            if (this.labelled) this.paintLabels(this.labelled);
+            if (held) return;
             if (settled) {
                 clearTimeout(this.targetTimer);
                 this.targetKey = "";
@@ -1126,10 +1197,14 @@
         }
 
         paintLabels(tokens) {
-            // "all planes" when the pane already holds the whole stack -- which
-            // is also why dragging its edge further does nothing until you
-            // zoom in.
-            const whole = (pane) => (pane.view?.whole ? " · all planes" : "");
+            this.labelled = tokens;
+            // "z ×2.4" when z is stretched to fill the pane, "all planes" when
+            // the pane holds the whole stack at the plane's proportions.
+            const whole = (pane) => {
+                const factor = pane.view?.factor || 1;
+                if (factor > 1.001) return ` · z ×${factor.toFixed(1)}`;
+                return pane.view?.whole ? " · all planes" : "";
+            };
             this.panes.xz.label.textContent = `XZ · y ${tokens.y.toLocaleString()}${whole(this.panes.xz)}`;
             this.panes.yz.label.textContent = `YZ · x ${tokens.x.toLocaleString()}${whole(this.panes.yz)}`;
             const assumed = (this.viewState.info?.spacing?.z?.source || "missing");
