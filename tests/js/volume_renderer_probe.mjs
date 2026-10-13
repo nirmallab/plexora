@@ -17,7 +17,10 @@
  *   what lets the browser keep them;
  * - the default contrast follows the clip range: the level's own hint over
  *   the whole stack, the planes kept (`/hint?z=`, at the level drawn) when
- *   the range is narrower, asked once per range.
+ *   the range is narrower, asked once per range;
+ * - the reference grid: 1-2-5 steps, microns only from a stated spacing (pixels
+ *   and planes otherwise), its numbers where the camera puts them, the
+ *   preference repaired, and the uniforms that turn it on and off.
  *
  * Run directly:  node tests/js/volume_renderer_probe.mjs
  */
@@ -362,6 +365,140 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     view.draw(5000);
     check("back in 3-D, what is drawn comes in again",
           opacity().every((value) => value === 0) && view.fading(), JSON.stringify(opacity()));
+}
+
+// -- the reference grid ----------------------------------------------------------
+{
+    const G = VolumeRenderer.grid;
+    check("an automatic step is a 1-2-5 value with about six lines across",
+          G.niceStep(1000) === 200 && G.niceStep(300) === 50 && G.niceStep(120) === 20
+          && G.niceStep(0.9) === 0.2 && G.niceStep(6) === 1,
+          [1000, 300, 120, 0.9, 6].map((v) => G.niceStep(v)).join());
+    check("finer and coarser are the neighbouring 1-2-5 values",
+          G.niceNeighbour(50, -1) === 20 && G.niceNeighbour(50, 1) === 100
+          && G.niceNeighbour(1, -1) === 0.5 && G.niceNeighbour(200, 1) === 500);
+    check("a tick is printed without float dust", G.formatTick(0.1 + 0.2) === "0.3"
+          && G.formatTick(150) === "150" && G.formatTick(-1e-12) === "0");
+
+    // 1000 x 500 pixels of 0.5 µm by 20 planes of 2 µm: 500 x 250 x 40 µm.
+    const covered = [0, 0, 1000, 500];
+    const extent = [1, 0.5, 0.08];
+    const microns = { x: { value: 0.5, unit: "µm", source: "metadata" },
+                      z: { value: 2, unit: "µm", source: "manual" } };
+    const axes = G.axes({ spacing: microns, covered, planes: 20, extent });
+    check("stated spacing is counted in microns on every axis, one step for all",
+          axes.units.join() === "µm,µm,µm" && axes.auto === 100
+          && axes.step.join() === "100,100,100", JSON.stringify(axes));
+    check("the box's centre is the area's centre, z from the first plane's centre",
+          axes.centre.join() === "250,125,19" && axes.per.join() === "500,500,500",
+          JSON.stringify(axes));
+    const nm = G.axes({ spacing: { x: { value: 500, unit: "nm", source: "metadata" },
+                                   z: { value: 0.002, unit: "mm", source: "metadata" } },
+                        covered, planes: 20, extent });
+    check("nanometres and millimetres are turned into microns",
+          nm.units.join() === "µm,µm,µm" && nm.centre.join() === "250,125,19");
+    const assumed = G.axes({ spacing: { x: { value: 1, unit: "µm", source: "assumed" },
+                                        z: { value: 2, unit: "µm", source: "metadata" } },
+                             covered, planes: 20, extent });
+    check("an assumed pixel size is never printed as microns: pixels and planes",
+          assumed.units.join() === "px,px,planes" && assumed.step[0] === 200
+          && assumed.step[2] === 5 && assumed.centre[2] === 9.5, JSON.stringify(assumed));
+    const noZ = G.axes({ spacing: { x: microns.x, z: { value: null, source: "missing" } },
+                         covered, planes: 20, extent });
+    check("a stated pixel size with no z step: microns across, planes in depth",
+          noZ.units.join() === "µm,µm,planes" && noZ.step[0] === 100 && noZ.step[2] === 5);
+    const chosen = G.axes({ spacing: microns, covered, planes: 20, extent, step: 20 });
+    const crowded = G.axes({ spacing: microns, covered, planes: 20, extent, step: 0.01 });
+    check("a chosen step is kept, but never more than forty lines across",
+          chosen.step[0] === 20 && crowded.step[0] === 20, `${chosen.step} ${crowded.step}`);
+
+    // Projection: the camera's own matrices, looking down onto XY.
+    const C = box.PlexoraVolumeCamera;
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl });
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600 };
+    view.camera = { q: C.VIEWS.xy.slice(), dist: 2, panX: 0, panY: 0 };
+    const { forward, eye } = view.cameraMatrices();
+    const centre = G.project(forward, [0, 0, 0], 800, 600);
+    const f = 1 / Math.tan(0.35);
+    const right = G.project(forward, [0.5, 0, 0], 800, 600);
+    const down = G.project(forward, [0, 0.25, 0], 800, 600);
+    const expectX = 400 + (0.5 * f / (800 / 600) / 2) * 400;
+    const expectY = 300 + (0.25 * f / 2) * 300;
+    check("a point in the box lands where the camera puts it (XY: x right, y down)",
+          Math.abs(centre.x - 400) < 1e-6 && Math.abs(centre.y - 300) < 1e-6
+          && Math.abs(right.x - expectX) < 1e-3 && Math.abs(right.y - 300) < 1e-3
+          && Math.abs(down.y - expectY) < 1e-3 && Math.abs(down.x - 400) < 1e-3,
+          JSON.stringify({ centre, right, down, expectX, expectY }));
+    check("and a point behind the camera is not projected",
+          G.project(forward, [0, 0, -5], 800, 600) === null);
+
+    view.camera = { q: C.VIEWS.iso.slice(), dist: 2.2, panX: 0, panY: 0 };
+    const iso = view.cameraMatrices();
+    // A deeper stack (20 planes of 10 µm), so z has an edge long enough.
+    const deep = [1, 0.5, 0.4];
+    const cube = G.axes({ spacing: { x: microns.x, z: { value: 10, unit: "µm", source: "metadata" } },
+                          covered, planes: 20, extent: deep });
+    const lo = deep.map((e) => -e / 2);
+    const hi = deep.map((e) => e / 2);
+    const labels = G.labels({ forward: iso.forward, eye: iso.eye, lo, hi, axes: cube, width: 800, height: 600 });
+    const titles = labels.filter((label) => label.title).map((label) => label.text);
+    const ticks = labels.filter((label) => !label.title);
+    check("from three-quarters every axis is numbered, and named with its unit",
+          titles.join() === "X (µm),Y (µm),Z (µm)" && ticks.length >= 6, JSON.stringify(labels));
+    check("every number is a line's value, on the screen",
+          ticks.every((label) => Number(label.text) % 100 === 0 && label.x >= 0 && label.x <= 800
+                       && label.y >= 0 && label.y <= 600), JSON.stringify(ticks));
+    const along = G.labels({ forward, eye, lo, hi, axes: cube, width: 800, height: 600 });
+    check("looking straight down z, z has no edge to be numbered along",
+          !along.some((label) => label.text.startsWith("Z")), JSON.stringify(along.filter((l) => l.title)));
+
+    check("the preference is repaired: nonsense reads as the default",
+          JSON.stringify(G.prefs({ on: "yes", faces: "ceiling", step: -3, opacity: 9, labels: 0 }))
+          === JSON.stringify({ on: false, faces: "walls", step: "auto", opacity: 1, labels: true })
+          && G.prefs({ on: true, faces: "floor", step: 25, opacity: 0.3 }).step === 25
+          && JSON.stringify(G.prefs(null)) === JSON.stringify(G.DEFAULTS));
+
+    const source = VolumeRenderer.fragmentSource(2);
+    check("the grid is drawn by the ray caster, on the face each ray leaves by",
+          source.includes("vec4 gridBehind(") && source.includes("uniform float u_grid;")
+          && source.includes("grid.rgb") && /fwidth\(f\)/.test(source));
+
+    // The uniforms, with the grid off and on.
+    const set = {};
+    const recordingGl = new Proxy({}, {
+        get(target, name) {
+            if (typeof name !== "string") return undefined;
+            if (/^[A-Z_0-9]+$/.test(name)) return name;
+            if (name === "getUniformLocation") return (program, uniform) => uniform;
+            if (name.startsWith("uniform")) return (location, ...values) => { set[location] = values; };
+            if (name === "getShaderParameter" || name === "getProgramParameter") return () => true;
+            if (name === "createTexture" || name === "createProgram") return () => ({});
+            return () => undefined;
+        },
+    });
+    slots.forEach((slot, i) => { slot.enabled = i === 0; });
+    const drawn = new VolumeRenderer({ viewState: { ...viewState, info: { width: 32, height: 32,
+                                                                        spacing: microns } },
+                                       datasource: "vol", fetchImpl });
+    drawn.gl = recordingGl;
+    drawn.maxTexture = 2048;
+    drawn.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    await drawn.refresh();
+    drawn.draw(1000);
+    check("with no grid preference the grid is off: an opacity of nothing",
+          set.u_grid?.[0] === 0 && !("u_grid_scale" in set), JSON.stringify(set.u_grid));
+    let grid = { on: true, faces: "floor", step: "auto", opacity: 0.3, labels: true };
+    drawn.prefs = { smoothMotion: () => false, grid: () => grid };
+    drawn.draw(2000);
+    // 32 x 32 px of 0.5 µm by 4 planes of 2 µm: 16 x 16 x 8 µm, the longest
+    // side one box unit, and a 2 µm step -- eight lines per box unit.
+    const scale = [...set.u_grid_scale[0]];
+    check("on, the shader is told the opacity, the faces and lines per box unit",
+          Math.abs(set.u_grid[0] - 0.3) < 1e-6 && set.u_grid_faces[0] === 1
+          && scale.every((v) => Math.abs(v - 16 / 2) < 1e-4), JSON.stringify({ scale, g: set.u_grid }));
+    grid = { ...grid, on: false };
+    drawn.draw(3000);
+    check("and off again, nothing but the opacity", set.u_grid[0] === 0);
 }
 
 if (failures.length) {

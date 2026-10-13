@@ -379,6 +379,14 @@ void main() {`],
         outBack = vec4(min(colour, vec3(1.0)), alpha);
         outFront = vec4(min(colourF, vec3(1.0)), alphaF);
     }`],
+            // The reference grid (the renderer's gridBehind) goes under the
+            // back part, so a translucent surface lies over it, and nowhere a
+            // ray stopped at an opaque surface before it left the box.
+            [`    outColor.rgb = min(outColor.rgb + grid.rgb * (u_mode == 0
+        ? 1.0 - clamp(2.0 * max(max(outColor.r, outColor.g), outColor.b), 0.0, 1.0)
+        : 1.0 - alpha), vec3(1.0));`,
+             `    if (hit.y < gridExit - 1e-4) grid = vec4(0.0);
+    outBack = vec4(outBack.rgb + (1.0 - outBack.a) * grid.rgb, outBack.a + (1.0 - outBack.a) * grid.a);`],
         ];
         let text = source;
         for (const [anchor, replacement] of swaps) {

@@ -27,6 +27,8 @@
 
     const PLAY_FPS = 6;
     const TICK_EVERY = 5;
+    //: The 3-D grid's strengths, as the menu names them: its lines' opacity.
+    const GRID_STRENGTHS = [[0.18, "faint"], [0.32, "medium"], [0.5, "strong"]];
 
     function el(tag, className, attrs = {}) {
         const node = document.createElement(tag);
@@ -515,6 +517,7 @@
                 { label: "All planes",
                   onSelect: () => vs.set({ slab: { z0: 0, z1: vs.depth - 1, follow: false,
                                                     thickness: vs.depth } }) },
+                ...this.gridItems(renderer),
             ];
             // Surfaces (services/surfaceLayers.js): what the 3-D view shows,
             // once there is a surface, and a new one.
@@ -562,6 +565,76 @@
             items.push({ separator: true },
                        { label: "Back to one plane", onSelect: () => vs.set({ mode: "plane" }) });
             global.PlexoraMenu?.open?.(this.readout, items);
+        }
+
+        /**
+         * The 3-D view's reference grid (views/volumeRenderer.js), a per-user
+         * preference (services/viewerPrefs.js `grid`): the switch, and while
+         * it is on where it is drawn, its spacing, its strength and its
+         * numbers. A spacing or strength step opens the menu again, so it
+         * can be stepped more than once.
+         */
+        gridItems(renderer) {
+            const prefs = global.PlexoraViewerPrefs;
+            const helpers = global.PlexoraVolumeRenderer?.grid;
+            if (!prefs?.grid || !helpers) return [];
+            const grid = prefs.grid();
+            const set = (patch) => prefs.set({ grid: patch });
+            const again = () => this.openVolumeOptions(this.viewState.get());
+            const items = [
+                { separator: true },
+                { label: "Grid", checked: grid.on,
+                  title: "Lines on the far walls of the box, behind the tissue",
+                  onSelect: () => set({ on: !grid.on }) },
+            ];
+            if (!grid.on) return items;
+            items.push(
+                { label: "On the walls", checked: grid.faces === "walls",
+                  onSelect: () => set({ faces: "walls" }) },
+                { label: "On the floor", checked: grid.faces === "floor",
+                  title: "Only on the far face across z",
+                  onSelect: () => set({ faces: "floor" }) });
+            const axes = renderer?.gridAxes?.(grid.step) || null;
+            if (axes) {
+                const unit = axes.units[0];
+                const step = axes.step[0];
+                const say = (value) => `${helpers.formatTick(value)} ${unit}`;
+                const finer = helpers.niceNeighbour(step, -1);
+                const coarser = helpers.niceNeighbour(step, 1);
+                // Finer than the grid allows draws the same lines (gridAxes).
+                const finest = renderer.gridAxes(finer).step[0] >= step;
+                items.push({
+                    label: `Spacing: ${say(step)}${grid.step === "auto" ? " (auto)" : ""}`,
+                    actions: [
+                        { icon: "fas fa-minus", title: `Finer: ${say(finer)}`, disabled: finest,
+                          onSelect: () => { set({ step: finer }); again(); } },
+                        { icon: "fas fa-plus", title: `Coarser: ${say(coarser)}`,
+                          onSelect: () => { set({ step: coarser }); again(); } },
+                        { icon: "fas fa-rotate-left", title: `Automatic: ${say(axes.auto)}`,
+                          disabled: grid.step === "auto",
+                          onSelect: () => { set({ step: "auto" }); again(); } },
+                    ] });
+            }
+            const strengths = GRID_STRENGTHS;
+            let at = 0;
+            strengths.forEach(([value], index) => {
+                if (Math.abs(value - grid.opacity) < Math.abs(strengths[at][0] - grid.opacity)) at = index;
+            });
+            items.push({
+                label: `Lines: ${strengths[at][1]}`,
+                actions: [
+                    { icon: "fas fa-minus", title: at > 0 ? `Fainter: ${strengths[at - 1][1]}` : "Fainter",
+                      disabled: at <= 0,
+                      onSelect: () => { set({ opacity: strengths[at - 1][0] }); again(); } },
+                    { icon: "fas fa-plus",
+                      title: at < strengths.length - 1 ? `Stronger: ${strengths[at + 1][1]}` : "Stronger",
+                      disabled: at >= strengths.length - 1,
+                      onSelect: () => { set({ opacity: strengths[at + 1][0] }); again(); } },
+                ] },
+            { label: "Axis labels", checked: grid.labels,
+              title: "Numbers along three edges of the box",
+              onSelect: () => set({ labels: !grid.labels }) });
+            return items;
         }
 
         play() {

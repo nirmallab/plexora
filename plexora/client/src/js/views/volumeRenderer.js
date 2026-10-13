@@ -42,6 +42,20 @@
  * mode: what is rendered is planes z0..z1, so cutting the stack down to the
  * planes of interest is the same gesture as choosing a projection's range.
  *
+ * THE GRID. An optional reference grid (the readout menu's Grid; a per-user
+ * preference, services/viewerPrefs.js `grid`) is drawn by the ray caster
+ * itself, not as geometry: each ray that crosses the box finds the face it
+ * leaves by and draws lines there, at round values counted from the image's
+ * origin. Those faces are the far walls, so the grid is always behind the
+ * tissue, turns with it, and follows the slab band and setClip as the box
+ * does; bright tissue covers it, and so does an opaque surface. Lines are in
+ * microns only where the spacing is stated (metadata or typed): otherwise x
+ * and y count pixels and z planes, and the numbers say so. Their numbers are
+ * a 2-D canvas over this one, laid out each frame drawn from the same camera,
+ * and baked into snapshot() -- not into renderFrame(), whose caller (Video
+ * Studio) draws its own axes. With "Surfaces only" there is no volume pass
+ * and so no grid.
+ *
  * Draws on demand -- a frame only after the camera, the channels or the clip
  * changed. A channel new to the picture (switched on, its level just arrived,
  * the view just entered) comes in over a quarter of a second rather than
@@ -259,6 +273,10 @@ uniform float u_opacity[NCH];
 uniform int u_mode;            // 0 MIP, 1 additive
 uniform int u_steps;
 uniform vec3 u_ground;
+uniform float u_grid;          // the grid's opacity, 0 for none
+uniform int u_grid_faces;      // 0 every far face, 1 the far z face only
+uniform vec3 u_grid_scale;     // grid lines per box unit, per axis
+uniform vec3 u_grid_offset;    // grid lines from the origin to the box's centre
 ${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;" : ""}
 ${chunk ? chunk.declarations : ""}
 in vec2 v_ndc;
@@ -277,6 +295,37 @@ float level(float value, vec2 window) {
     return clamp((value - window.x) / max(window.y - window.x, 1e-4), 0.0, 1.0);
 }
 
+// The reference grid, on the face each ray leaves the box by -- the far
+// walls only, so it is always behind the tissue -- as premultiplied light.
+// Lines are a pixel wide at any zoom (fwidth), fade where they would crowd
+// closer than a few pixels, and the faces' own edges are drawn stronger so
+// the box reads. exitT is where the ray leaves the box.
+vec4 gridBehind(vec3 origin, vec3 dir, vec3 lo, vec3 hi, out float exitT) {
+    vec3 inv = 1.0 / dir;
+    vec3 t0 = (lo - origin) * inv;
+    vec3 t1 = (hi - origin) * inv;
+    vec3 tmax = max(t0, t1);
+    vec3 tmin = min(t0, t1);
+    float tIn = max(max(tmin.x, tmin.y), tmin.z);
+    exitT = min(min(tmax.x, tmax.y), tmax.z);
+    vec3 p = origin + dir * exitT;
+    vec3 f = u_grid_offset + p * u_grid_scale;
+    // Derivatives before any branch: neighbouring pixels may leave by
+    // another face, or miss the box.
+    vec3 wf = max(fwidth(f), vec3(1e-6));
+    vec3 wp = max(fwidth(p), vec3(1e-6));
+    if (tIn > exitT || exitT < 0.0) return vec4(0.0);
+    vec3 across = vec3(equal(tmax, vec3(exitT)));
+    if (u_grid_faces == 1 && across.z < 0.5) return vec4(0.0);
+    vec3 inFace = 1.0 - across;
+    vec3 lines = (1.0 - smoothstep(0.5, 1.5, abs(fract(f + 0.5) - 0.5) / wf))
+        * (1.0 - smoothstep(0.15, 0.4, wf)) * inFace;
+    vec3 edges = (1.0 - smoothstep(0.75, 1.75, min(p - lo, hi - p) / wp)) * inFace;
+    float a = max(max(max(lines.x, lines.y), lines.z) * u_grid,
+                  max(max(edges.x, edges.y), edges.z) * min(1.0, u_grid * 2.2));
+    return vec4(vec3(0.75, 0.8, 0.88) * a, a);
+}
+
 void main() {
     vec4 nearPoint = u_inverse * vec4(v_ndc, -1.0, 1.0);
     vec4 farPoint = u_inverse * vec4(v_ndc, 1.0, 1.0);
@@ -284,6 +333,8 @@ void main() {
     vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
     vec3 lo = vec3(u_clip_xy.x, u_clip_xy.z, u_clip_z.x) * u_extent - 0.5 * u_extent;
     vec3 hi = vec3(u_clip_xy.y, u_clip_xy.w, u_clip_z.y) * u_extent - 0.5 * u_extent;
+    float gridExit = 0.0;
+    vec4 grid = u_grid > 0.0 ? gridBehind(origin, dir, lo, hi, gridExit) : vec4(0.0);
     vec2 hit = hitBox(origin, dir, lo, hi);
     if (hit.x > hit.y || hit.y < 0.0) {
         outColor = vec4(u_ground, 1.0);
@@ -329,8 +380,16 @@ ${sample.join("\n")}`}
     } else {
         outColor = vec4(min(colour + (1.0 - alpha) * u_ground, vec3(1.0)), 1.0);
     }
+${GRID_UNDER}
 }`;
     }
+
+    /** The grid under the picture: bright tissue covers it (MIP), and what
+     *  the rays have gathered hides it (additive). surfaceRenderer.js swaps
+     *  this line for its own (behind the back part, never past a surface). */
+    const GRID_UNDER = `    outColor.rgb = min(outColor.rgb + grid.rgb * (u_mode == 0
+        ? 1.0 - clamp(2.0 * max(max(outColor.r, outColor.g), outColor.b), 0.0, 1.0)
+        : 1.0 - alpha), vec3(1.0));`;
 
     /**
      * The atlas variant's march (views/volumeAtlas.js): the ray advances by
@@ -438,6 +497,255 @@ ${sample}`;
         return [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
     }
 
+    // -- the reference grid -------------------------------------------------
+    //
+    // Pure helpers, so the probe can test them without a GL context: what the
+    // grid's lines are in each axis's units, where they fall in the box, and
+    // where their numbers go on screen. The shader half is `gridBehind`.
+
+    //: The grid as the user leaves it (services/viewerPrefs.js `grid`).
+    const GRID_DEFAULTS = { on: false, faces: "walls", step: "auto", opacity: 0.18, labels: true };
+    //: Sources a length may be printed from (server/volume/axes.py
+    //: TRUSTED_SOURCES): "assumed" is a ratio for display, never a micron.
+    const TRUSTED_SPACING = ["metadata", "manual"];
+    //: How many microns one of each length unit is (axes.py `_MICRONS`).
+    const MICRONS = { "µm": 1, "μm": 1, um: 1, nm: 1e-3, mm: 1e3 };
+    //: An automatic step gives about this many lines across the longest side;
+    //: a chosen one is never finer than MAX_GRID_LINES across it.
+    const GRID_LINES = 6;
+    const MAX_GRID_LINES = 40;
+    //: Tick numbers: at most this many per axis, this far off their edge (CSS
+    //: px), and an edge shorter than MIN_LABEL_EDGE on screen gets none.
+    const MAX_LABELS = 12;
+    const LABEL_OFFSET = 9;
+    const TITLE_OFFSET = 24;
+    const MIN_LABEL_EDGE = 40;
+
+    /** The grid preference, repaired: anything that does not parse reads as
+     *  its default (the server's `normalize_viewer_prefs` says the same). */
+    function gridPrefs(value) {
+        const v = value && typeof value === "object" ? value : {};
+        const step = Number(v.step);
+        const opacity = Number(v.opacity);
+        return {
+            on: typeof v.on === "boolean" ? v.on : GRID_DEFAULTS.on,
+            faces: v.faces === "floor" ? "floor" : "walls",
+            step: v.step !== "auto" && typeof v.step !== "boolean" && Number.isFinite(step) && step > 0
+                ? Math.min(1e6, Math.max(1e-3, step)) : "auto",
+            opacity: v.opacity !== null && typeof v.opacity !== "boolean" && Number.isFinite(opacity)
+                ? Math.min(1, Math.max(0.05, opacity)) : GRID_DEFAULTS.opacity,
+            labels: typeof v.labels === "boolean" ? v.labels : GRID_DEFAULTS.labels,
+        };
+    }
+
+    /** The 1-2-5 x 10^n value nearest `value` from above (`up`) or below. */
+    function niceAt(value, { up = true } = {}) {
+        if (!(value > 0)) return 1;
+        const power = 10 ** Math.floor(Math.log10(value));
+        const steps = [1, 2, 5, 10].map((m) => m * power);
+        if (up) return steps.find((s) => s >= value * (1 - 1e-9)) || 10 * power;
+        return [...steps].reverse().find((s) => s <= value * (1 + 1e-9)) || power;
+    }
+
+    /** The 1-2-5 step that puts closest to `lines` lines across `span`. */
+    function niceStep(span, lines = GRID_LINES) {
+        if (!(span > 0)) return 1;
+        const target = span / lines;
+        const below = niceAt(target, { up: false });
+        const above = niceAt(target, { up: true });
+        return Math.abs(Math.log(target / below)) <= Math.abs(Math.log(above / target)) ? below : above;
+    }
+
+    /** The next 1-2-5 step finer (`-1`) or coarser (`+1`) than `step`. */
+    function niceNeighbour(step, direction) {
+        return direction > 0 ? niceAt(step * 1.01, { up: true }) : niceAt(step * 0.99, { up: false });
+    }
+
+    /** A spacing axis's length per pixel or plane in microns, or null when it
+     *  is not one a length may be printed from. */
+    function micronsOf(axis) {
+        const value = Number(axis?.value);
+        const unit = MICRONS[String(axis?.unit || "µm").trim()];
+        if (!TRUSTED_SPACING.includes(axis?.source) || !(value > 0) || !unit) return null;
+        return value * unit;
+    }
+
+    /**
+     * What the grid's lines are along each image axis (x, y, z), for a box of
+     * `extent` (the renderer's, longest side 1) over full-resolution pixels
+     * `covered` = [x0, y0, x1, y1] and `planes` planes:
+     *
+     *     units   "µm" where the spacing is stated, "px" for x and y without
+     *             one, "planes" for z without one (or without x and y's)
+     *     centre  the axis's value at the box's centre
+     *     per     its value per box unit
+     *     step    the distance between lines, in the axis's units
+     *     auto    the automatic step for x and y
+     *
+     * Every axis is measured against the box as it is drawn -- y by x's
+     * spacing, as the box is -- so the lines fall where the numbers say.
+     * Values count from the image's origin; z from the first plane's centre.
+     */
+    function gridAxes({ spacing = {}, covered, planes, extent, step = "auto" } = {}) {
+        const umX = micronsOf(spacing?.x);
+        const umZ = umX ? micronsOf(spacing?.z) : null;
+        const perPx = umX || 1;
+        const perPlane = umZ || 1;
+        const [x0, y0, x1, y1] = covered;
+        const depth = Math.max(1, planes || 1);
+        const spans = [(x1 - x0) * perPx, (y1 - y0) * perPx, depth * perPlane];
+        const centre = [(x0 + x1) / 2 * perPx, (y0 + y1) / 2 * perPx, (depth / 2 - 0.5) * perPlane];
+        const per = spans.map((span, i) => span / Math.max(1e-9, extent[i]));
+        const units = [umX ? "µm" : "px", umX ? "µm" : "px", umZ ? "µm" : "planes"];
+        // One step for every axis in the same unit, so a square is square.
+        const shared = umZ ? Math.max(...spans) : Math.max(spans[0], spans[1]);
+        const auto = niceStep(shared);
+        const chosen = Number.isFinite(step) && step > 0 ? step : auto;
+        const xy = Math.max(chosen, niceAt(shared / MAX_GRID_LINES));
+        const z = umZ ? xy : Math.max(1, niceStep(depth));
+        return { units, centre, per, step: [xy, xy, z], auto, spans };
+    }
+
+    /** A tick's number as it is printed: no trailing zeros, no float dust. */
+    function formatTick(value) {
+        const rounded = Math.abs(value) < 1e-9 ? 0 : Number(value.toPrecision(6));
+        return String(rounded);
+    }
+
+    /** `point` (box space) on a `width` x `height` screen through `forward`
+     *  (clip from box), or null behind the camera. */
+    function project(forward, point, width, height) {
+        const [x, y, z] = point;
+        const m = forward;
+        const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+        if (!(w > 1e-6)) return null;
+        const cx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
+        const cy = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
+        return { x: (cx + 1) / 2 * width, y: (1 - cy) / 2 * height };
+    }
+
+    /**
+     * The grid's numbers on screen: along one edge of the box per axis, the
+     * edge the camera sees the box's outline by (one of its faces turned
+     * towards the camera, the other away) and lowest-leftmost of those, so
+     * the numbers stand outside the box and never over the tissue. Each tick
+     * at a line of `axes.step`; one that would crowd the last, or overlap a
+     * name or a number already placed (two axes meet at a corner), is left
+     * out -- the names are placed first.
+     * `[{x, y, text, align, baseline, title}]` in the screen's pixels, the
+     * axis's name (`title`) beside its edge's middle; `scale` multiplies the
+     * offsets (a capture larger than the screen).
+     * `floor`: only the far z face has lines (u_grid_faces 1), so X and Y are
+     * numbered along that face's own edges, whether or not they are on the
+     * outline, and Z, which has no lines there, is not numbered at all.
+     */
+    function gridLabels({ forward, eye, lo, hi, axes, width, height, scale = 1, floor = false }) {
+        const out = [];
+        const centre = project(forward, lo.map((v, i) => (v + hi[i]) / 2), width, height);
+        if (!centre) return out;
+        const facing = (axis, high) => (high ? eye[axis] > hi[axis] : eye[axis] < lo[axis]);
+        //: The far z face, the floor: the one the eye is further from.
+        const floorHigh = eye[2] < (lo[2] + hi[2]) / 2;
+        const names = ["X", "Y", "Z"];
+        //: What is placed so far, as boxes, for the overlap test.
+        const placed = [];
+        const boxOf = (label, size) => {
+            const w = (label.text.length * 6.2 + 4) * scale;
+            const h = size * scale;
+            const x = label.align === "left" ? label.x : label.align === "right" ? label.x - w : label.x - w / 2;
+            const y = label.baseline === "top" ? label.y : label.baseline === "bottom" ? label.y - h : label.y - h / 2;
+            return { x0: x, y0: y, x1: x + w, y1: y + h };
+        };
+        const place = (label, size) => {
+            const box = boxOf(label, size);
+            if (placed.some((o) => box.x0 < o.x1 && o.x0 < box.x1 && box.y0 < o.y1 && o.y0 < box.y1)) {
+                return false;
+            }
+            placed.push(box);
+            out.push(label);
+            return true;
+        };
+        //: Ticks wait for every axis's name to be placed.
+        const ticks = [];
+        for (let a = 0; a < 3; a += 1) {
+            if (floor && a === 2) continue;
+            const [b, c] = [0, 1, 2].filter((i) => i !== a);
+            let best = null;
+            for (const highB of [false, true]) {
+                for (const highC of [false, true]) {
+                    // An outline edge: one face beside it towards the camera.
+                    const outline = facing(b, highB) !== facing(c, highC);
+                    if (floor) {
+                        // An edge of the floor (c is z for both X and Y), on
+                        // the outline when it can be, so the numbers stay off
+                        // the tissue.
+                        if (highC !== floorHigh) continue;
+                    } else if (!outline) {
+                        continue;
+                    }
+                    const at = (value) => {
+                        const p = [0, 0, 0];
+                        p[a] = value;
+                        p[b] = highB ? hi[b] : lo[b];
+                        p[c] = highC ? hi[c] : lo[c];
+                        return p;
+                    };
+                    const start = project(forward, at(lo[a]), width, height);
+                    const end = project(forward, at(hi[a]), width, height);
+                    if (!start || !end) continue;
+                    const length = Math.hypot(end.x - start.x, end.y - start.y);
+                    if (length < MIN_LABEL_EDGE * scale) continue;
+                    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+                    // Low on the screen first, then left.
+                    const score = (mid.y - centre.y) - 0.35 * (mid.x - centre.x)
+                        + (floor && outline ? 1e6 : 0);
+                    if (!best || score > best.score) best = { score, at, start, end, mid, length };
+                }
+            }
+            if (!best) continue;
+            // Away from the box, square to the edge.
+            const tx = (best.end.x - best.start.x) / best.length;
+            const ty = (best.end.y - best.start.y) / best.length;
+            let nx = -ty;
+            let ny = tx;
+            if (nx * (best.mid.x - centre.x) + ny * (best.mid.y - centre.y) < 0) {
+                nx = -nx;
+                ny = -ny;
+            }
+            const align = nx > 0.4 ? "left" : nx < -0.4 ? "right" : "center";
+            const baseline = ny > 0.4 ? "top" : ny < -0.4 ? "bottom" : "middle";
+            const step = axes.step[a];
+            const value = (p) => axes.centre[a] + p * axes.per[a];
+            const vLo = value(lo[a]);
+            const vHi = value(hi[a]);
+            let first = Math.ceil((vLo - 1e-9 * Math.abs(vLo)) / step);
+            const last = Math.floor((vHi + 1e-9 * Math.abs(vHi)) / step);
+            // Never more than MAX_LABELS: every second (fifth...) line then.
+            let stride = 1;
+            while ((last - first) / stride + 1 > MAX_LABELS) stride = niceAt(stride * 1.01);
+            first = Math.ceil(first / stride) * stride;
+            let previous = null;
+            for (let k = first; k <= last; k += stride) {
+                const tick = k * step;
+                const point = project(forward, best.at((tick - axes.centre[a]) / axes.per[a]), width, height);
+                if (!point) continue;
+                const text = formatTick(tick);
+                // Room for the text along the edge before the next one.
+                const room = (text.length * 6.2 + 10) * scale;
+                if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < room) continue;
+                const x = point.x + nx * LABEL_OFFSET * scale;
+                const y = point.y + ny * LABEL_OFFSET * scale;
+                if (x < 0 || y < 0 || x > width || y > height) continue;
+                ticks.push({ x, y, text, align, baseline, title: false });
+                previous = point;
+            }
+            place({ x: best.mid.x + nx * TITLE_OFFSET * scale, y: best.mid.y + ny * TITLE_OFFSET * scale,
+                    text: `${names[a]} (${axes.units[a]})`, align, baseline, title: true }, 13);
+        }
+        for (const tick of ticks) place(tick, 12);
+        return out;
+    }
+
     class VolumeRenderer {
         constructor({ viewState, datasource, wrapper = null, fetchImpl = null,
                       budget = DEFAULT_BUDGET } = {}) {
@@ -540,6 +848,12 @@ ${sample}`;
             });
             this.bindPointer(canvas);
             this.wrapper.appendChild(canvas);
+            // The grid's numbers: a 2-D canvas over this one, never a click.
+            this.gridCanvas = document.createElement("canvas");
+            this.gridCanvas.className = "viewer-volume-grid-labels";
+            this.gridCanvas.setAttribute("aria-hidden", "true");
+            this.gridCanvas.hidden = true;
+            this.wrapper.appendChild(this.gridCanvas);
             // [surfaces] Meshes drawn on this context (views/surfaceRenderer.js).
             this.surfaces = global.PlexoraSurfaceRenderer
                 ? new global.PlexoraSurfaceRenderer(this) : null;
@@ -575,6 +889,8 @@ ${sample}`;
             this.surfaces?.destroy();
             this.surfaces = null;
             this.canvas?.remove();
+            this.gridCanvas?.remove();
+            this.gridCanvas = null;
             this.note?.remove();
             this.note = null;
             this.gizmo?.root.remove();
@@ -585,6 +901,7 @@ ${sample}`;
 
         show(visible) {
             if (this.canvas) this.canvas.hidden = !visible;
+            if (this.gridCanvas && !visible) this.gridCanvas.hidden = true;
             // The sentence goes with the canvas; refresh says it again on return.
             if (this.note && !visible) this.note.hidden = true;
             this.gizmo?.show(visible);
@@ -1256,6 +1573,9 @@ ${sample}`;
             gl.clearColor(0, 0, 0, surf ? 0 : 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
             if (!channels.length) {
+                // No volume pass, so no grid: it is drawn by the ray caster.
+                this._grid = null;
+                this.paintGridLabels();
                 if (surf) {
                     surf.finish(false);
                     this.paintGizmo(fast);
@@ -1330,6 +1650,7 @@ ${sample}`;
             const xy = this.clipXY || { x: [0, 1], y: [0, 1] };
             gl.uniform4fv(uniform("u_clip_xy"), [xy.x[0], xy.x[1], xy.y[0], xy.y[1]]);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
+            this.bindGrid(gl, uniform, [xy.x[0], xy.y[0], clip[0]], [xy.x[1], xy.y[1], clip[1]]);
             // As many samples as the finest voxels drawn: the detail's, spread
             // over the whole box, when there is one.
             let longest = this.shape ? Math.max(...this.shape) : 256;
@@ -1357,6 +1678,114 @@ ${sample}`;
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             surf?.finish(true);
             this.paintGizmo(fast);
+            this.paintGridLabels();
+        }
+
+        // -- the reference grid ----------------------------------------------
+
+        /** The grid as the user leaves it (services/viewerPrefs.js). */
+        gridPrefs() {
+            return gridPrefs(this.prefs?.grid?.());
+        }
+
+        /** What the grid's lines are for the box drawn now (gridAxes), at
+         *  `step` in x and y's units or the automatic one. */
+        gridAxes(step = this.gridPrefs().step) {
+            const vs = this.viewState;
+            const info = vs?.info || {};
+            const full = info.levels?.[0] || info;
+            // The box extent() draws: the area the textures cover, by every
+            // plane of the stack.
+            const covered = this.covered
+                || [0, 0, Number(full.width || info.width) || 1, Number(full.height || info.height) || 1];
+            const planes = Math.max(this.shape?.[0] || 1, Number(vs?.depth) || 0);
+            return gridAxes({ spacing: info.spacing, covered, planes, extent: this.extent(), step });
+        }
+
+        /** The grid's uniforms for a box clipped to `lo`..`hi` (texture
+         *  space): an opacity of 0 when it is off, and nothing else to do. */
+        bindGrid(gl, uniform, lo, hi) {
+            const grid = this.gridPrefs();
+            if (!grid.on) {
+                this._grid = null;
+                gl.uniform1f(uniform("u_grid"), 0);
+                return;
+            }
+            const axes = this.gridAxes(grid.step);
+            const extent = this.extent();
+            this._grid = { axes, labels: grid.labels, faces: grid.faces,
+                           lo: lo.map((v, i) => (v - 0.5) * extent[i]),
+                           hi: hi.map((v, i) => (v - 0.5) * extent[i]) };
+            gl.uniform1f(uniform("u_grid"), grid.opacity);
+            gl.uniform1i(uniform("u_grid_faces"), grid.faces === "floor" ? 1 : 0);
+            gl.uniform3fv(uniform("u_grid_scale"), axes.per.map((per, i) => per / axes.step[i]));
+            gl.uniform3fv(uniform("u_grid_offset"), axes.centre.map((c, i) => c / axes.step[i]));
+        }
+
+        /** The grid's numbers over the canvas (`.viewer-volume-grid-labels`),
+         *  laid out again with every frame drawn; hidden with no grid. */
+        paintGridLabels() {
+            const overlay = this.gridCanvas;
+            if (!overlay) return;
+            const canvas = this.canvas;
+            const shown = Boolean(this._grid?.labels) && Boolean(canvas) && !canvas.hidden;
+            const context = overlay.getContext?.("2d");
+            if (!shown || !context) {
+                overlay.hidden = true;
+                return;
+            }
+            const width = canvas.clientWidth || 1;
+            const height = canvas.clientHeight || 1;
+            const ratio = Math.min(global.devicePixelRatio || 1, 2);
+            const w = Math.round(width * ratio);
+            const h = Math.round(height * ratio);
+            if (overlay.width !== w || overlay.height !== h) {
+                overlay.width = w;
+                overlay.height = h;
+            }
+            context.setTransform(1, 0, 0, 1, 0, 0);
+            context.clearRect(0, 0, w, h);
+            context.setTransform(ratio, 0, 0, ratio, 0, 0);
+            this.drawGridLabels(context, width, height, 1);
+            overlay.hidden = false;
+        }
+
+        /** The grid's numbers into `context` over a `width` x `height`
+         *  picture of the current camera, offsets and type times `scale`. */
+        drawGridLabels(context, width, height, scale = 1) {
+            const grid = this._grid;
+            if (!grid?.labels || !this.canvas) return;
+            const camera = this.cameraMatrices();
+            const labels = gridLabels({ forward: camera.forward, eye: camera.eye, lo: grid.lo,
+                                        hi: grid.hi, axes: grid.axes, width, height, scale,
+                                        floor: grid.faces === "floor" });
+            context.save();
+            context.shadowColor = "rgba(0, 0, 0, 0.9)";
+            context.shadowBlur = 3 * scale;
+            for (const label of labels) {
+                context.font = `${label.title ? 600 : 400} ${(label.title ? 11 : 10) * scale}px `
+                    + "system-ui, -apple-system, 'Segoe UI', sans-serif";
+                context.fillStyle = label.title ? "rgba(214, 222, 235, 0.9)" : "rgba(190, 200, 216, 0.82)";
+                context.textAlign = label.align;
+                context.textBaseline = label.baseline;
+                context.fillText(label.text, label.x, label.y);
+            }
+            context.restore();
+        }
+
+        /** `source` (the GL canvas) with the grid's numbers drawn in, as a
+         *  copy; `source` itself when there are none to draw. */
+        withGridLabels(source) {
+            if (!this._grid?.labels || !source || typeof document === "undefined") return source;
+            const copy = document.createElement("canvas");
+            const context = copy.getContext?.("2d");
+            if (!context) return source;
+            copy.width = source.width;
+            copy.height = source.height;
+            context.drawImage(source, 0, 0);
+            this.drawGridLabels(context, source.width, source.height,
+                                source.width / Math.max(1, this.canvas?.clientWidth || source.width));
+            return copy;
         }
 
         paintGizmo(fast = this.moving()) {
@@ -1932,7 +2361,7 @@ ${sample}`;
             if (!this.canvas) return null;
             if (!(width > 0 && height > 0)) {
                 this.draw(now(), { settled: true });
-                return this.canvas;
+                return this.withGridLabels(this.canvas);
             }
             // A video's pinned size (pinSize) comes back afterwards.
             const pinned = this._pinnedSize;
@@ -1943,6 +2372,8 @@ ${sample}`;
                 this.zoomTarget = null;
                 this.interacting = false;
                 this.draw(now(), { settled: true });
+                const labelled = this.withGridLabels(this.canvas);
+                if (labelled !== this.canvas) return labelled;
                 const copy = document.createElement("canvas");
                 copy.width = this.canvas.width;
                 copy.height = this.canvas.height;
@@ -2108,6 +2539,10 @@ ${sample}`;
                 if (!event.repeat) global.dispatchEvent?.(new CustomEvent("plexora:surface-studio-toggle"));
             }
         }, true);
+        // The grid is the user's (services/viewerPrefs.js): a uniform, a redraw.
+        global.addEventListener?.("plexora:viewer-prefs-changed", () => {
+            if (viewState.isVolume()) renderer?.invalidate();
+        });
         // HD swaps the textures for half floats (or back): the same refresh.
         global.addEventListener?.("plexora:hd-mode-changed", () => controller.channelsChanged());
         // A channel's exact window replacing its provisional one: its levels
@@ -2144,6 +2579,8 @@ ${sample}`;
     VolumeRenderer.MOTION = { SPIN_TAU_MS, RELEASE_MIN, SPIN_STOP, SPIN_MAX, ZOOM_TAU_MS,
                               TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS };
     VolumeRenderer.fragmentSource = fragmentSource;
+    VolumeRenderer.grid = { DEFAULTS: GRID_DEFAULTS, prefs: gridPrefs, niceStep, niceNeighbour,
+                            axes: gridAxes, labels: gridLabels, project, formatTick };
     VolumeRenderer.mat4 = { multiply: mat4Multiply, invert: mat4Invert,
                             perspective: mat4Perspective, lookAt: mat4LookAt };
     global.PlexoraVolumeRenderer = VolumeRenderer;

@@ -68,9 +68,10 @@ def test_the_3d_view_keeps_its_textures():
     another area fetch, going back does not; LRU past the GPU budget; zoomed in
     at rest, the part seen is fetched finer, once; a channel switched on for the
     first time is fetched under its window and drawn; a channel new to the
-    picture fades in, at once with motion off or for a capture
+    picture fades in, at once with motion off or for a capture; the reference
+    grid's steps, units, numbers on screen, preference and uniforms
     (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 30)
+    _passed(_run("volume_renderer_probe.mjs"), 52)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():

@@ -1,14 +1,17 @@
 /**
  * viewerPrefs.js - how this user likes the viewer, for every image.
  *
- * Two things, both a matter of taste rather than of the image, so they are
- * stored once for the user (`/viewer_prefs`, in the settings file) and not
- * per project the way the plane and the projection are (viewState.js):
+ * Matters of taste rather than of the image, so they are stored once for
+ * the user (`/viewer_prefs`, in the settings file) and not per project the
+ * way the plane and the projection are (viewState.js):
  *
  *     sections  the XZ and YZ panes' sizes, as a share of the plane's height
  *               and width; null = sized to fit, up to the default
  *     motion    "on" | "off": planes fade into each other and the 3-D view
  *               coasts after a drag, or neither
+ *     grid      the 3-D view's reference grid (views/volumeRenderer.js):
+ *               {on, faces: "walls" | "floor", step: "auto" | a number in
+ *               x and y's units, opacity: 0.05..1, labels}
  *
  * `smoothMotion()` is what every animation asks. It is false when either the
  * user turned motion off here or the system asks for reduced motion
@@ -24,7 +27,26 @@
     "use strict";
 
     const SAVE_DELAY_MS = 400;
-    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on" };
+    const GRID = { on: false, faces: "walls", step: "auto", opacity: 0.18, labels: true };
+    const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID };
+
+    /** A grid preference, repaired over `base`: what does not parse keeps
+     *  the value it had (the server's `normalize_grid` keeps the same bounds). */
+    function mergeGrid(base, patch) {
+        const out = { ...base };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.on === "boolean") out.on = patch.on;
+        if (patch.faces === "walls" || patch.faces === "floor") out.faces = patch.faces;
+        if (patch.step === "auto") out.step = "auto";
+        else if (typeof patch.step === "number" && Number.isFinite(patch.step) && patch.step > 0) {
+            out.step = Math.min(1e6, Math.max(1e-3, patch.step));
+        }
+        if (typeof patch.opacity === "number" && Number.isFinite(patch.opacity)) {
+            out.opacity = Math.min(1, Math.max(0.05, patch.opacity));
+        }
+        if (typeof patch.labels === "boolean") out.labels = patch.labels;
+        return out;
+    }
 
     function url(path) {
         return typeof global.plexoraUrl === "function" ? global.plexoraUrl(path) : `/${path}`;
@@ -82,6 +104,11 @@
             return Number.isFinite(share) ? share : null;
         }
 
+        /** The 3-D view's grid: `{on, faces, step, opacity, labels}`. */
+        grid() {
+            return { ...this.prefs.grid };
+        }
+
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
             if (this._holds > 0) return false;
@@ -114,15 +141,19 @@
         }
 
         /**
-         * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`.
+         * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`,
+         * `{grid: {on: true}}` (merged over the grid as it is).
          * `save: false` while a drag is still moving; the drag's end saves.
          */
         set(patch, { save = true } = {}) {
             if (!patch || typeof patch !== "object") return this.get();
             this._merge(patch);
+            const grid = patch.grid || this._pending.grid
+                ? { grid: { ...(this._pending.grid || {}), ...(patch.grid || {}) } } : {};
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
+                ...grid,
             };
             this._paintRoot();
             this._announce();
@@ -141,6 +172,7 @@
                 sections,
                 motion: patch?.motion === "off" || patch?.motion === "on"
                     ? patch.motion : this.prefs.motion,
+                grid: mergeGrid(this.prefs.grid || GRID, patch?.grid),
             };
         }
 
