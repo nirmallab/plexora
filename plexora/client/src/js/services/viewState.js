@@ -10,13 +10,10 @@
  *     info  = what the image IS: depth, frames, spacing, levels (from
  *             /volume/<ds>/info, read once at boot)
  *     state = { t, z, mode: "plane"|"slab"|"volume", slab: {z0, z1, op, q,
- *               thickness, follow, clip}, section: {x, y}, layout, aux,
- *               volume, inspect }
+ *               thickness, follow, clip}, layout, aux, volume, inspect }
  *
- * `inspect` is how the 3-D view is cut -- cutaway, section, slab or crop
- * over any of X, Y and Z (services/inspectGeometry.js has the rules). Its
- * sections and slabs sit at `z` and `section.x/y`, so the Z section in 3-D
- * is the plane the 2-D view comes back to. It is not part of a revision
+ * `inspect` is how the 3-D view is cut -- a cutaway or a crop over any of
+ * X, Y and Z (services/inspectGeometry.js has the rules). It is not part of a revision
  * (revisionKey): the 3-D view reads it at every frame, so a cut follows the
  * hand with no swap behind it. `slab` stays the 2-D projection's range.
  *
@@ -280,13 +277,11 @@
                 slab: { z0: clamp(z - half, 0, depth - 1),
                         z1: clamp(z - half + thickness - 1, 0, depth - 1),
                         op: "max", thickness, follow: true },
-                section: { x: Math.floor((this.info?.width || 0) / 2),
-                           y: Math.floor((this.info?.height || 0) / 2) },
                 layout: "single",
                 aux: null,
                 volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto" },
                 // [inspect] How the 3-D view is cut (inspectGeometry.js).
-                ...(Geometry() ? { inspect: Geometry().defaults(this._dims(), Geometry().spacing(this.info)) } : {}),
+                ...(Geometry() ? { inspect: Geometry().defaults(this._dims()) } : {}),
             };
         }
 
@@ -303,6 +298,8 @@
             const top = this.depth - 1;
             const defaults = this._defaults();
             const out = { ...defaults, ...raw };
+            // The 3-D view's section positions, gone with its sections.
+            delete out.section;
             out.t = clamp(int(out.t, 0), 0, this.frames - 1);
             out.z = clamp(int(out.z, defaults.z), 0, top);
             out.mode = MODES.includes(out.mode) ? out.mode : "plane";
@@ -339,7 +336,7 @@
             slab.z1 = z1;
             out.slab = slab;
             delete out.__recentre;
-            if (Geometry()) out.inspect = Geometry().clean(raw.inspect, this._dims(), Geometry().spacing(this.info));
+            if (Geometry()) out.inspect = Geometry().clean(raw.inspect, this._dims());
             return out;
         }
 
@@ -463,8 +460,7 @@
         cutLabel(state = this.state) {
             const G = Geometry();
             if (!G || !state?.inspect) return "";
-            const d = this._dims();
-            return G.describe(state.inspect, G.positions(state, d), d, G.spacing(this.info));
+            return G.describe(state.inspect, this._dims(), G.spacing(this.info));
         }
 
         _frameTime(t) {
@@ -495,7 +491,6 @@
             const merged = {
                 ...before, ...patch,
                 slab: { ...before.slab, ...(patch.slab || {}) },
-                section: { ...before.section, ...(patch.section || {}) },
                 volume: { ...before.volume, ...(patch.volume || {}) },
             };
             if (patch.inspect && Geometry()) merged.inspect = Geometry().merge(before.inspect, patch.inspect);
@@ -562,17 +557,14 @@
         }
 
         /**
-         * [inspect] A step in 3-D moves what is cut along Z: the Z section or
-         * slab (the plane), a Z crop's range whole, a Z cutaway's cut. With no
-         * cut along Z there is nothing to move.
+         * [inspect] A step in 3-D moves what is cut along Z: a Z crop's range
+         * whole, a Z cutaway's cut. With no cut along Z there is nothing to
+         * move.
          */
         _stepCut(dz) {
             const top = this.depth - 1;
             const inspect = this.state.inspect;
             if (!inspect?.axes?.z) return this.get();
-            if (inspect.mode === "section" || inspect.mode === "slab") {
-                return this.set({ z: clamp(this.state.z + dz, 0, top) });
-            }
             if (inspect.mode === "crop") {
                 const [z0, z1] = inspect.crop.z;
                 const start = clamp(z0 + dz, 0, top - (z1 - z0));

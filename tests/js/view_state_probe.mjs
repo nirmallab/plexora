@@ -189,7 +189,7 @@ function check(condition, message) {
     const spec = vs.spec();
     vs.step(3);
     check(vs.get().z === 12 && vs.get().inspect.mode === "full", "with nothing cut along Z a step moves nothing");
-    vs.set({ inspect: { mode: "crop", axes: { z: true }, crop: { z: [5, 9] } } });
+    vs.set({ inspect: { mode: "crop", axes: { x: false, z: true }, crop: { z: [5, 9] } } });
     vs.step(3);
     let state = vs.get();
     check(state.inspect.crop.z[0] === 8 && state.inspect.crop.z[1] === 12 && state.z === 12,
@@ -197,19 +197,20 @@ function check(condition, message) {
     vs.step(-100);
     check(vs.get().inspect.crop.z[0] === 0 && vs.get().inspect.crop.z[1] === 4, "and stops at the top of the stack");
     check(vs.label().includes("crop Z planes 0–4"), `the caption says the cut (${vs.label()})`);
-    vs.set({ inspect: { mode: "cutaway", cutaway: { z: { at: 20 } } } });
+    vs.set({ inspect: { mode: "cutaway", axes: { x: false, z: true }, cutaway: { z: { at: 20 } } } });
     vs.step(2);
     check(vs.get().inspect.cutaway.z.at === 22, "a Z cutaway's cut moves");
     check(vs.get().inspect.crop.z[1] === 4, "and the crop it is not keeps its range");
     const key = vs.revisionKey();
-    vs.set({ inspect: { mode: "section", axes: { x: true, z: true } } });
+    vs.set({ inspect: { mode: "crop", axes: { x: true, z: true } } });
     check(vs.revisionKey() === key, "a cut is not a revision: the 3-D view reads it every frame");
     vs.step(5);
     state = vs.get();
-    check(state.z === 17 && state.inspect.mode === "section", "a Z section moves with the plane");
+    check(state.z === 12, "a step in 3-D never moves the frozen plane");
     check(vs.spec() === spec, `the tiles under the 3-D view stay on the plane it was entered from (${vs.spec()})`);
     vs.set({ mode: "plane" });
-    check(vs.spec() === "z17", "and leaving 3-D comes back to the Z section's plane");
+    check(vs.spec() === "z12", "and leaving 3-D comes back to that plane");
+    check(!("section" in vs.get()), "the view state keeps no 3-D section positions");
     vs.set({ mode: "volume", inspect: { crop: { x: [1900, 100] } } });
     check(vs.get().inspect.crop.x[0] === 100 && vs.get().inspect.crop.y[1] === 1500,
           "a patch to one axis keeps the others, repaired");

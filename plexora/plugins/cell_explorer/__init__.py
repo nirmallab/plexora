@@ -41,6 +41,7 @@ PLUGIN = Plugin(
     version=VERSION,
     blueprint_factory=_blueprint,
     icon="table-cells",
+    order=40,
     # E for Explorer, not C: the figure canvas binds mod+C to Copy, and a
     # shortcut that opens a tool from anywhere in the app cannot also mean
     # something else on one of its pages.

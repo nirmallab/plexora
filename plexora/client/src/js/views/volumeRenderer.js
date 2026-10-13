@@ -39,12 +39,11 @@
  * deep, and the badge says "assumed".
  *
  * CUTTING IT. The view state's `inspect` (services/inspectGeometry.js) cuts
- * the stack: a cutaway, sections, slabs or a crop, over any of X, Y and Z.
- * Every one of them is uniforms -- the box a ray is clipped to, the corner a
- * cutaway takes out, the planes or slabs and how a slab's voxels combine --
- * read at every frame from services/inspectState.js, so a cut follows the
- * hand with no texture, program or revision behind it. A section is sampled
- * where each ray crosses its plane, never between two steps of the march.
+ * the stack: a cutaway or a crop, over any of X, Y and Z. Both are uniforms
+ * -- the box a ray is clipped to, the corner a cutaway takes out, whether
+ * the cut faces are drawn solid -- read at every frame from
+ * services/inspectState.js, so a cut follows the hand with no texture,
+ * program or revision behind it.
  *
  * THE GRID. An optional reference grid (the depth popover's Grid row; a per-user
  * preference, services/viewerPrefs.js `grid`) is drawn by the ray caster
@@ -118,10 +117,6 @@
     const DETAIL_MAX_SHARE = 0.35;
     //: A new detail only when the part seen overlaps the last by less.
     const DETAIL_KEEP_OVERLAP = 0.7;
-    //: [inspect] A section or slab drawn alone fetches this much either side
-    //: of itself: planes along z, full-resolution pixels across.
-    const SECTION_PAD_PLANES = 3.5;
-    const SECTION_PAD_PX = 4;
     //: Points per side of the lattice the part seen is found with.
     const REGION_LATTICE = 16;
     //: Bytes of a detail uploaded to the GPU per display frame.
@@ -309,15 +304,7 @@ uniform vec3 u_box_hi;
 uniform int u_hole_on;         // a cutaway's corner taken out of the box
 uniform vec3 u_hole_lo;
 uniform vec3 u_hole_hi;
-uniform int u_cut;             // 0 nothing more, 1 planes, 2 slabs, 3 the cut faces
-uniform vec3 u_plane;          // each section's or slab's centre, texture space
-uniform vec3 u_plane_on;       // 1.0 along each axis that has one
-uniform vec3 u_slab_half;      // each slab's half thickness, texture space
-uniform int u_slab_op;         // 1 max, 2 mean, 3 min, 4 sum
-uniform float u_context;       // the surrounding volume beside a section or slab
-uniform float u_cut_alpha;     // a section plane's, or a cut face's, opacity
-uniform vec3 u_cut_color[NCH]; // the channels' colours, never dimmed by u_context
-uniform vec3 u_vox;            // one full-resolution voxel, box units (a slab's sum)
+uniform int u_cut;             // 0 nothing more, 1 the cut faces drawn solid
 uniform vec3 u_color[NCH];
 uniform vec2 u_window[NCH];    // [lo, hi] in 0..1 texture units
 uniform float u_opacity[NCH];
@@ -408,17 +395,15 @@ void main() {
     for (int c = 0; c < NCH; c++) peak[c] = 0.0;
     vec3 colour = vec3(0.0);
     float alpha = 0.0;
-    // [inspect] A section or slab with no surroundings: nothing to march.
-    bool skipMarch = (u_cut == 1 || u_cut == 2) && u_context <= 0.0;
 ${atlas ? ATLAS_MARCH(chunk.sample) : `    for (int i = 0; i < 4096; i++) {
-        if (i >= count || skipMarch) break;
+        if (i >= count) break;
         float t = t0 + (float(i) + jitter) * stepLength;
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;${locate}
 ${sample.join("\n")}`}
         // [inspect] What a cut leaves out is not part of the march: a
-        // cutaway's corner, and the slabs, which are combined on their own.
-        if ((u_hole_on == 1 && inHole(p)) || (u_cut == 2 && inSlab(p))) {
+        // cutaway's corner.
+        if (u_hole_on == 1 && inHole(p)) {
             for (int c = 0; c < NCH; c++) v[c] = 0.0;
         }
         if (u_mode == 0) {
@@ -437,12 +422,10 @@ ${sample.join("\n")}`}
             if (alpha > 0.97) break;
         }${atlas ? "\n        t += stepLength;" : ""}
     }
-    // [inspect] The sections, the slabs or the cut faces the ray meets.
+    // [inspect] The cut face the ray meets, drawn solid.
     float cutT = 1e20;
     vec4 cut = vec4(0.0);
-    if (u_cut == 1) cut = cutPlanes(origin, dir, t0, hit.y, cutT);
-    else if (u_cut == 2) cut = cutSlabs(origin, dir, t0, hit.y, jitter, stepLength, cutT);
-    else if (u_cut == 3) cut = cutFace(origin, dir, lo, hi, t0, hit.y, cutT);
+    if (u_cut == 1) cut = cutFace(origin, dir, lo, hi, t0, hit.y, cutT);
     if (u_mode == 0) {
         for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c]);
         outColor = vec4(max(min(colour, vec3(1.0)), u_ground), 1.0);
@@ -464,10 +447,8 @@ ${GRID_UNDER}
     /**
      * [inspect] What a cut draws beyond the box (services/inspectGeometry.js):
      * a point sampled anywhere in the stack (`sampleAt`, the same textures
-     * the march reads, bricks included), and from it the section planes a
-     * ray meets -- where it crosses them, exactly, so a plane one voxel thick
-     * is never missed between two steps -- the slabs, their voxels combined
-     * along the ray, and the cut faces, drawn solid.
+     * the march reads, bricks included), and from it the cut faces, drawn
+     * solid.
      */
     function cutSource(count, sample, locate, atlasSample) {
         let body;
@@ -503,129 +484,10 @@ bool inHole(vec3 p) {
     return all(greaterThan(p, u_hole_lo)) && all(lessThan(p, u_hole_hi));
 }
 
-bool inSlab(vec3 p) {
-    vec3 off = abs(p - u_plane) - u_slab_half;
-    return (u_plane_on.x > 0.5 && off.x <= 0.0) || (u_plane_on.y > 0.5 && off.y <= 0.0)
-        || (u_plane_on.z > 0.5 && off.z <= 0.0);
-}
-
 vec3 cutColour(float v[NCH]) {
     vec3 c = vec3(0.0);
-    for (int i = 0; i < NCH; i++) c += u_cut_color[i] * level(v[i], u_window[i]);
+    for (int i = 0; i < NCH; i++) c += u_color[i] * level(v[i], u_window[i]);
     return c;
-}
-
-// The planes met in [tNear, tFar], nearest first, each at u_cut_alpha.
-vec4 cutPlanes(vec3 origin, vec3 dir, float tNear, float tFar, out float tFirst) {
-    float ts[3];
-    ts[0] = 1e20; ts[1] = 1e20; ts[2] = 1e20;
-    int n = 0;
-    for (int a = 0; a < 3; a++) {
-        if (u_plane_on[a] < 0.5 || abs(dir[a]) < 1e-7) continue;
-        float t = ((u_plane[a] - 0.5) * u_extent[a] - origin[a]) / dir[a];
-        if (t < tNear || t > tFar) continue;
-        ts[n] = t;
-        n++;
-    }
-    if (ts[1] < ts[0]) { float s = ts[0]; ts[0] = ts[1]; ts[1] = s; }
-    if (ts[2] < ts[1]) { float s = ts[1]; ts[1] = ts[2]; ts[2] = s; }
-    if (ts[1] < ts[0]) { float s = ts[0]; ts[0] = ts[1]; ts[1] = s; }
-    tFirst = ts[0];
-    vec4 acc = vec4(0.0);
-    Brick brick = noBrick();
-    for (int i = 0; i < 3; i++) {
-        if (i >= n) break;
-        float v[NCH];
-        sampleAt((origin + dir * ts[i]) / u_extent + 0.5, brick, v);
-        acc.rgb += (1.0 - acc.a) * cutColour(v) * u_cut_alpha;
-        acc.a += (1.0 - acc.a) * u_cut_alpha;
-    }
-    return acc;
-}
-
-// The slabs met in [tNear, tFar]: their intervals along the ray, merged
-// where they overlap (the union is one region), sampled at half the march's
-// step -- a slab thinner than that still gets one sample -- and combined.
-vec4 cutSlabs(vec3 origin, vec3 dir, float tNear, float tFar, float jitter, float stepLength,
-              out float tFirst) {
-    float lo[3];
-    float hi[3];
-    lo[0] = 1e20; lo[1] = 1e20; lo[2] = 1e20;
-    hi[0] = 1e20; hi[1] = 1e20; hi[2] = 1e20;
-    int n = 0;
-    for (int a = 0; a < 3; a++) {
-        if (u_plane_on[a] < 0.5) continue;
-        float s0 = (u_plane[a] - u_slab_half[a] - 0.5) * u_extent[a];
-        float s1 = (u_plane[a] + u_slab_half[a] - 0.5) * u_extent[a];
-        float enter = tNear;
-        float leave = tFar;
-        if (abs(dir[a]) < 1e-7) {
-            if (origin[a] < s0 || origin[a] > s1) continue;
-        } else {
-            float ta = (s0 - origin[a]) / dir[a];
-            float tb = (s1 - origin[a]) / dir[a];
-            enter = max(min(ta, tb), tNear);
-            leave = min(max(ta, tb), tFar);
-        }
-        if (enter >= leave) continue;
-        lo[n] = enter;
-        hi[n] = leave;
-        n++;
-    }
-    tFirst = 1e20;
-    if (n == 0) return vec4(0.0);
-    for (int sweep = 0; sweep < 2; sweep++) {
-        for (int i = 0; i < 2; i++) {
-            if (lo[i + 1] < lo[i]) {
-                float s = lo[i]; lo[i] = lo[i + 1]; lo[i + 1] = s;
-                s = hi[i]; hi[i] = hi[i + 1]; hi[i + 1] = s;
-            }
-        }
-    }
-    float sMax[NCH];
-    float sMin[NCH];
-    float sSum[NCH];
-    for (int c = 0; c < NCH; c++) { sMax[c] = 0.0; sMin[c] = 1e9; sSum[c] = 0.0; }
-    float weight = 0.0;
-    float end = -1e20;
-    Brick brick = noBrick();
-    tFirst = lo[0];
-    for (int k = 0; k < 3; k++) {
-        if (k >= n) break;
-        // Merged: the part of this interval past the end of the last.
-        float start = max(lo[k], end);
-        float stop = hi[k];
-        end = max(end, stop);
-        float len = stop - start;
-        if (len <= 0.0) continue;
-        int cnt = int(clamp(ceil(len / (stepLength * 0.5)), 1.0, 512.0));
-        float dt = len / float(cnt);
-        for (int i = 0; i < 512; i++) {
-            if (i >= cnt) break;
-            float t = start + (float(i) + jitter) * dt;
-            float v[NCH];
-            sampleAt((origin + dir * t) / u_extent + 0.5, brick, v);
-            for (int c = 0; c < NCH; c++) {
-                sMax[c] = max(sMax[c], v[c]);
-                sMin[c] = min(sMin[c], v[c]);
-                sSum[c] += v[c] * dt;
-            }
-            weight += dt;
-        }
-    }
-    // A sum is the voxels added along the ray: dt in voxels, not box units.
-    float perVoxel = length(dir / max(u_vox, vec3(1e-9)));
-    vec3 colour = vec3(0.0);
-    float alpha = 0.0;
-    for (int c = 0; c < NCH; c++) {
-        float value = u_slab_op == 1 ? sMax[c]
-            : (u_slab_op == 2 ? sSum[c] / max(weight, 1e-9)
-            : (u_slab_op == 3 ? sMin[c] : sSum[c] * perVoxel));
-        float s = level(value, u_window[c]);
-        colour += u_cut_color[c] * s;
-        alpha = max(alpha, s);
-    }
-    return vec4(colour, clamp(alpha, 0.0, 1.0));
 }
 
 // Where the ray first meets kept voxels across a cut -- a cropped side of
@@ -652,7 +514,7 @@ vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, o
     float v[NCH];
     Brick brick = noBrick();
     sampleAt((origin + dir * (tFace + 1e-4)) / u_extent + 0.5, brick, v);
-    return vec4(cutColour(v) * u_cut_alpha, u_cut_alpha);
+    return vec4(cutColour(v), 1.0);
 }
 `;
     }
@@ -672,7 +534,7 @@ vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, o
     int cState = 0;
     float t = t0 + jitter * stepLength;
     for (int i = 0; i < 8192; i++) {
-        if (t > hit.y || skipMarch) break;
+        if (t > hit.y) break;
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;
         vec3 full = A + B * t;
@@ -1216,7 +1078,7 @@ ${sample}`;
         engaged() {
             const within = (node) => Boolean(node) && (node.matches?.(":hover")
                 || node === document.activeElement || node.contains?.(document.activeElement));
-            // [inspect] The 3-D dock and the handles are part of the view.
+            // [inspect] The cut panel and the handles are part of the view.
             return within(this.canvas) || within(this.gizmo?.root) || within(global.PlexoraVolumeDock?.root)
                 || within(this.handles?.root);
         }
@@ -1578,20 +1440,14 @@ ${sample}`;
 
         /**
          * The planes the cut keeps, `[z0, z1]`, or null for the whole stack:
-         * what the contrast is levelled over. A Z crop's or cutaway's range;
-         * a Z section's plane, or slab's planes, when it is drawn alone.
+         * what the contrast is levelled over -- a Z crop's or cutaway's range.
          */
         clipRange() {
             const depth = Math.max(1, this.viewState?.depth || 1);
             const resolved = this.inspectNow();
             if (!resolved) return null;
-            let z0 = Math.max(0, Math.floor(resolved.box.z[0]));
-            let z1 = Math.min(depth - 1, Math.ceil(resolved.box.z[1]) - 1);
-            const plane = resolved.planes.length === 1 ? resolved.planes[0] : null;
-            if (plane?.axis === "z" && resolved.context <= 0) {
-                z0 = Math.max(0, Math.floor(plane.lo));
-                z1 = Math.min(depth - 1, Math.max(z0, Math.ceil(plane.hi) - 1));
-            }
+            const z0 = Math.max(0, Math.floor(resolved.box.z[0]));
+            const z1 = Math.min(depth - 1, Math.ceil(resolved.box.z[1]) - 1);
             return z0 <= 0 && z1 >= depth - 1 ? null : [z0, z1];
         }
 
@@ -1606,14 +1462,12 @@ ${sample}`;
             const G = global.PlexoraInspectGeometry;
             const state = this.viewState?.get?.();
             if (!G || !state?.inspect) return null;
-            const d = G.dims(this.viewState.info, this.viewState.depth);
-            return G.resolve(state.inspect, G.positions(state, d), d);
+            return G.resolve(state.inspect, G.dims(this.viewState.info, this.viewState.depth));
         }
 
         /**
          * The cut in texture space for textures covering `covered`, narrowed
-         * by `setClip` (Video Studio's reveals): `{lo, hi, hole, plane,
-         * planeOn, half, cut, op, context, opacity, face}`.
+         * by `setClip` (Video Studio's reveals): `{lo, hi, hole, cut, face}`.
          */
         cutUniforms(covered = this.covered) {
             const G = global.PlexoraInspectGeometry;
@@ -1622,8 +1476,7 @@ ${sample}`;
             const depth = Math.max(1, this.viewState?.depth || 1);
             const resolved = G ? this.inspectNow() : null;
             const out = resolved ? G.toTexture(resolved, area, depth)
-                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, plane: [0.5, 0.5, 0.5], planeOn: [0, 0, 0],
-                    half: [0, 0, 0], cut: 0, op: 0, context: 1, opacity: 1, face: 0 };
+                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, cut: 0, face: 0 };
             const clip = this.clipXY;
             if (clip) {
                 ["x", "y", "z"].forEach((axis, i) => {
@@ -1637,25 +1490,14 @@ ${sample}`;
         }
 
         /** Set the cut's uniforms on the program in use. */
-        bindCut(uniform, cut, covered, extent) {
+        bindCut(uniform, cut) {
             const gl = this.gl;
-            const info = this.viewState?.info || {};
-            const area = covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
-            const depth = Math.max(1, this.viewState?.depth || 1);
             gl.uniform3fv(uniform("u_box_lo"), cut.lo);
             gl.uniform3fv(uniform("u_box_hi"), cut.hi);
             gl.uniform1i(uniform("u_hole_on"), cut.hole ? 1 : 0);
             gl.uniform3fv(uniform("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
             gl.uniform3fv(uniform("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
             gl.uniform1i(uniform("u_cut"), cut.cut);
-            gl.uniform3fv(uniform("u_plane"), cut.plane);
-            gl.uniform3fv(uniform("u_plane_on"), cut.planeOn);
-            gl.uniform3fv(uniform("u_slab_half"), cut.half);
-            gl.uniform1i(uniform("u_slab_op"), cut.op || 1);
-            gl.uniform1f(uniform("u_context"), cut.context);
-            gl.uniform1f(uniform("u_cut_alpha"), cut.cut === 3 ? 1 : cut.opacity);
-            const span = [Math.max(1e-9, area[2] - area[0]), Math.max(1e-9, area[3] - area[1]), depth];
-            gl.uniform3fv(uniform("u_vox"), extent.map((side, i) => side / span[i]));
         }
 
         /**
@@ -2074,13 +1916,6 @@ ${sample}`;
                 clip: [Math.max(0, Math.floor(cut.lo[2] * depth)),
                        Math.min(depth - 1, Math.ceil(cut.hi[2] * depth) - 1)],
                 box: { lo: [0, 1, 2].map((a) => full(a, cut.lo[a])), hi: [0, 1, 2].map((a) => full(a, cut.hi[a])) },
-                // Sections and slabs drawn alone: only the bricks they cross.
-                only: (cut.cut === 1 || cut.cut === 2) && cut.context <= 0
-                    ? [0, 1, 2].filter((a) => cut.planeOn[a]).map((a) => ({
-                        axis: a,
-                        lo: full(a, Math.max(0, cut.plane[a] - cut.half[a])) - (a < 2 ? 1 : 0.5),
-                        hi: full(a, Math.min(1, cut.plane[a] + cut.half[a])) + (a < 2 ? 1 : 0.5) }))
-                    : null,
                 // A screen pixel's size at distance 1; a base voxel in
                 // full-resolution pixels, pixels and planes.
                 pixel: (2 * Math.tan(FOV_Y / 2)) / Math.max(1, this.canvas?.height || 1),
@@ -2295,22 +2130,18 @@ ${sample}`;
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
-            // [inspect] The cut: the box, the corner, the planes or slabs. Beside
-            // a section or slab the rest of the stack is drawn at u_context.
+            // [inspect] The cut: the box, the corner, the cut faces.
             const cut = this.cutUniforms(lead.covered);
-            const dim = cut.cut === 1 || cut.cut === 2 ? cut.context : 1;
             gl.uniform3fv(uniform("u_color"), channels.flatMap(
-                (channel, index) => channel.colour.map((value) => value * presence[index] * dim)));
-            gl.uniform3fv(uniform("u_cut_color"), channels.flatMap(
                 (channel, index) => channel.colour.map((value) => value * presence[index])));
             // Each channel in the window of the texture it is drawn from.
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => this.windowFor(channel)));
             gl.uniform1fv(uniform("u_opacity"), channels.map(
-                (channel, index) => channel.opacity * presence[index] * dim));
+                (channel, index) => channel.opacity * presence[index]));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
             const extent = this.extent();
             gl.uniform3fv(uniform("u_extent"), extent);
-            this.bindCut(uniform, cut, lead.covered, extent);
+            this.bindCut(uniform, cut);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
             this.bindGrid(gl, uniform, cut.lo, cut.hi);
             gl.uniform1i(uniform("u_steps"), steps);
@@ -2673,24 +2504,9 @@ ${sample}`;
             const forward = inverse ? mat4Invert(inverse) : null;
             if (!forward) return null;
             const extent = this.extent();
-            // [inspect] Within what the cut keeps; a section or slab drawn
-            // alone along one axis is all that is seen along it.
+            // [inspect] Within what the cut keeps.
             const cut = this.cutUniforms();
             const bounds = [0, 1, 2].map((a) => [cut.lo[a], cut.hi[a]]);
-            const alone = (cut.cut === 1 || cut.cut === 2) && cut.context <= 0;
-            const along = cut.planeOn.filter(Boolean).length === 1 ? cut.planeOn.indexOf(1) : -1;
-            if (alone && along >= 0) {
-                // A few planes either side along z (a few pixels across): a
-                // step of the section to the next plane is still inside the
-                // detail fetched for this one (DETAIL_KEEP_OVERLAP), and is a
-                // uniform rather than a request.
-                const span = along === 2 ? Math.max(1, this.viewState?.depth || 1)
-                    : Math.max(1, (this.covered ? this.covered[along + 2] - this.covered[along] : 0)
-                        || Number(this.viewState?.info?.[along === 0 ? "width" : "height"]) || 1);
-                const pad = (along === 2 ? SECTION_PAD_PLANES : SECTION_PAD_PX) / span;
-                bounds[along] = [Math.max(bounds[along][0], cut.plane[along] - cut.half[along] - pad),
-                                 Math.min(bounds[along][1], cut.plane[along] + cut.half[along] + pad)];
-            }
             const xy = { x: bounds[0], y: bounds[1] };
             const clip = bounds[2];
             const n = REGION_LATTICE;
@@ -2767,7 +2583,7 @@ ${sample}`;
 
         /** [inspect] Whether what the cut shows has arrived: no level, brick
          *  or detail in flight. Until then the base level is drawn, z-pooled
-         *  and coarser -- the dock says so (volumeDock "refining"). */
+         *  and coarser -- the cut panel says so (volumeDock "refining"). */
         resolved() {
             if (this._loads.size || this._filling) return false;
             return !(this.atlas && (this.atlas.status === "loading" || this.atlas.inflight?.size > 0));

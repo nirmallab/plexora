@@ -7,24 +7,23 @@
  *
  *     [plane] [projection] [3-D]   what the picture is
  *     [sections]                   XZ and YZ beside the plane
+ *     [cut] [crop]                 in 3-D: cut the stack open
  *     [play]                       step through the planes; in 3-D, turn it
  *     ┊ rail ┊                     z 0 at the top, as a section's rows are
- *     12 / 40                      what is drawn, in numbers
  *     [⚙]                          the settings for what is drawn now
  *
  * EVERY CONTROL IS ONE THAT DOES SOMETHING NOW. Which of them shows, and what
  * each does, is declared in services/viewControls.js and resolved on every
  * paint: in 3-D the plane under the view is frozen, so the Sections button
- * goes and the rail is the 3-D view's cut along Z (services/inspectState.js):
- * the planes drawn -- dragged as a projection's band is, which crops the
- * stack -- a Z crop's or cutaway's range, or a Z section's or slab's plane
- * as the thumb. Play turns the stack instead of stepping it. A control that
- * does nothing in a mode is hidden there, never left disabled.
+ * and the rail go, Cut and Crop come -- each opens the cut panel to the
+ * strip's left (views/volumeDock.js) -- and Play turns the stack instead of
+ * stepping it. A control that does nothing in a mode is hidden there, never
+ * left disabled.
  *
  * What the picture is in words ("z 12/40 · 24.0 µm", "MIP z 8–20 · 13
  * planes", viewState.label) is drawn into every capture (imageViewer's
  * renderCurrentViewCanvas), so a projection can never pass for a plane in
- * one; on screen the readout and the Depth card say it.
+ * one; on screen the Depth card says it.
  *
  * The cog opens the settings that apply to the mode on screen
  * (views/depthSettings.js); everything less frequent lives in the Depth card
@@ -33,7 +32,8 @@
  * Keys, only on a volume and never while typing: `]` / `[` one plane (in 3-D
  * and in a fixed projection, the range one plane), Shift ten, Alt to the last
  * / first; `.` / `,` one frame. Shift+wheel over the image does what `]` / `[`
- * do. No bare letter: every one is already somebody's.
+ * do. No bare letter of the strip's own: the cut panel's `O` turns a cut
+ * on and off (views/volumeDock.js).
  */
 (function (global) {
     "use strict";
@@ -210,6 +210,28 @@
                 this.nodes[`mode.${mode}`] = button;
             }
 
+            // In 3-D, the two ways to cut the stack open; each opens the cut
+            // panel beside the strip (views/volumeDock.js), which also owns
+            // their key.
+            this.cutTools = el("div", "depth-strip-cut", { role: "group", "aria-label": "Cut the stack" });
+            this.toolButtons = {};
+            const key = (global.PlexoraVolumeDock?.TOGGLE_KEY || "o").toUpperCase();
+            for (const [tool, glyph, title] of [
+                ["cutaway", "scissors", "Cut: take a side off the stack"],
+                ["crop", "crop-simple", "Crop: keep a box of the stack"],
+            ]) {
+                const words = `${title} (${key} shows or hides it)`;
+                const node = el("button", "depth-strip-button", {
+                    type: "button", title: words, "aria-label": words, "aria-pressed": "false",
+                    "data-cut-tool": tool,
+                });
+                node.appendChild(icon(glyph));
+                node.addEventListener("click", () => global.PlexoraVolumeDock?.pick?.(tool));
+                this.cutTools.appendChild(node);
+                this.toolButtons[tool] = node;
+                this.nodes[`tool.${tool}`] = node;
+            }
+
             this.sectionsButton = el("button", "depth-strip-button", {
                 type: "button", title: "Show XZ and YZ sections through the centre of the view",
                 "aria-label": "Sections", "aria-pressed": "false",
@@ -233,16 +255,6 @@
             this.rail = this.buildRail();
             this.nodes.rail = this.rail;
 
-            // What is drawn, in numbers: read, not pressed -- the settings
-            // are the cog's.
-            this.readout = el("div", "depth-strip-readout", {
-                role: "status", "aria-live": "polite", title: "What is drawn",
-            });
-            this.readoutTop = el("span", "depth-strip-readout-top");
-            this.readoutBottom = el("span", "depth-strip-readout-bottom");
-            this.readout.append(this.readoutTop, this.readoutBottom);
-            this.nodes.readout = this.readout;
-
             this.cog = el("button", "depth-strip-button is-small depth-strip-settings", {
                 type: "button", title: "Depth settings", "aria-label": "Depth settings",
                 "aria-haspopup": "dialog", "aria-expanded": "false",
@@ -254,11 +266,10 @@
             });
             this.nodes.cog = this.cog;
 
-            root.append(this.modes, this.sectionsButton, this.playButton, this.rail, this.readout,
-                        this.cog);
+            root.append(this.modes, this.cutTools, this.sectionsButton, this.playButton, this.rail, this.cog);
             // A time series: which frame, and a step either way. Below the
-            // planes' readout because z is what the rail moves; `.` and `,`
-            // do the same from the keyboard.
+            // rail because z is what the rail moves; `.` and `,` do the same
+            // from the keyboard.
             if (vs.frames > 1) {
                 this.frame = el("div", "depth-strip-frame", { role: "group",
                     "aria-label": "Frame" });
@@ -375,6 +386,7 @@
                 if (node) node.hidden = !shown.has(id);
             }
             this.modes.hidden = !Object.keys(this.modeButtons).some((mode) => shown.has(`mode.${mode}`));
+            this.cutTools.hidden = !Object.keys(this.toolButtons).some((tool) => shown.has(`tool.${tool}`));
             const state = this.viewState.get();
             this.playKind = shown.get("play")?.kind
                 || (state.mode === "volume" ? "rotate" : "planes");
@@ -392,65 +404,39 @@
             const state = cutter?.previewing ? cutter.effective() : vs.get();
             if (!state || !this.root) return;
             this.noticeProjection(state);
-            const ctx = this.applyControls();
+            this.applyControls();
             for (const [mode, button] of Object.entries(this.modeButtons)) {
                 const on = state.mode === mode;
                 button.classList.toggle("is-active", on);
                 button.setAttribute("aria-checked", on ? "true" : "false");
             }
+            // The tool that cuts the 3-D view now, lit.
+            for (const [tool, node] of Object.entries(this.toolButtons)) {
+                const on = state.mode === "volume" && state.inspect?.mode === tool;
+                node.classList.toggle("is-active", on);
+                node.setAttribute("aria-pressed", on ? "true" : "false");
+            }
             const sectionsOn = state.layout === "sections" && state.mode !== "volume";
             this.sectionsButton?.classList.toggle("is-active", sectionsOn);
             this.sectionsButton?.setAttribute("aria-pressed", sectionsOn ? "true" : "false");
-            const volume = state.mode === "volume";
             const slab = state.mode === "slab";
-            // In 3-D the band is the planes the cut keeps along Z (a range of
-            // its own, viewControls keptPlanes), drawn and dragged as a fixed
-            // projection's is; the thumb a Z section's or slab's plane.
-            const range = volume ? [ctx?.keptZ0 ?? 0, ctx?.keptZ1 ?? vs.depth - 1]
-                : [state.slab.z0, state.slab.z1];
-            this.root.classList.toggle("is-slab", slab || volume);
-            this.root.classList.toggle("is-volume", volume);
+            this.root.classList.toggle("is-slab", slab);
+            // No rail in 3-D: the strip is only as tall as its buttons (viewer.css).
+            this.root.classList.toggle("is-volume", state.mode === "volume");
             // While the rail is dragged the thumb is the hand's, between planes
             // as much as on them (moveDrag); it settles on the plane after.
-            if (this.drag?.kind !== "z" && this.drag?.kind !== "cut-plane") {
+            if (this.drag?.kind !== "z") {
                 this.thumb.style.top = `${this.fraction(state.z) * 100}%`;
             }
-            if (slab || volume) {
-                const top = this.fraction(range[0]);
-                const bottom = this.fraction(range[1]);
+            if (slab) {
+                const top = this.fraction(state.slab.z0);
+                const bottom = this.fraction(state.slab.z1);
                 this.band.style.top = `${top * 100}%`;
                 this.band.style.height = `${Math.max(0, bottom - top) * 100}%`;
             }
             this.band.classList.toggle("is-movable", Boolean(this.railConfig.bandMove));
-            // A Z cutaway's band has one end that moves: the cut.
-            const cutEnd = volume && ctx?.cut === "cutaway"
-                ? (state.inspect?.cutaway?.z?.keep === "lo" ? "z1" : "z0") : null;
-            this.handleTop.hidden = Boolean(cutEnd) && cutEnd !== "z0";
-            this.handleBottom.hidden = Boolean(cutEnd) && cutEnd !== "z1";
-            if (volume) {
-                const plane = this.railConfig.plane;
-                this.rail.setAttribute("aria-label", plane ? "Z section in 3-D" : "Planes drawn in 3-D");
-                this.rail.setAttribute("aria-valuenow", String(plane ? state.z : range[0]));
-                this.rail.setAttribute("aria-valuetext", plane ? `z ${state.z}` : `planes ${range[0]}–${range[1]}`);
-            } else {
-                this.rail.setAttribute("aria-label", "Plane");
-                this.rail.setAttribute("aria-valuenow", String(state.z));
-                this.rail.setAttribute("aria-valuetext", vs.label());
-            }
-            if (volume) {
-                this.readoutTop.textContent = "3-D";
-                this.readoutBottom.textContent = this.cutReadout(ctx, state, range);
-            } else if (slab) {
-                const op = state.slab.op === "pct" ? `p${state.slab.q}`
-                    : (state.slab.op === "max" ? "MIP" : state.slab.op);
-                this.readoutTop.textContent = op;
-                this.readoutBottom.textContent = `${state.slab.z0}–${state.slab.z1}`;
-            } else {
-                this.readoutTop.textContent = String(state.z);
-                this.readoutBottom.textContent = `/ ${vs.depth}`;
-            }
-            this.readoutBottom.classList.toggle(
-                "is-long", this.readoutBottom.textContent.length > 4);
+            this.rail.setAttribute("aria-valuenow", String(state.z));
+            this.rail.setAttribute("aria-valuetext", vs.label());
             if (this.frameText) {
                 this.frameText.textContent = `t ${state.t + 1}`;
                 this.frameText.title = `Frame ${state.t + 1} of ${vs.frames}`;
@@ -461,15 +447,6 @@
             this.paintLoading(vs.spec() !== vs.appliedSpec());
             // The popover follows the mode, open (depthSettings.js).
             this.settings?.refresh?.();
-        }
-
-        /** The readout's second line in 3-D: what is cut along Z. */
-        cutReadout(ctx, state, range) {
-            const cut = ctx?.cut || "full";
-            if (cut === "full") return "all";
-            if (!ctx?.cutAxes?.z) return { cutaway: "cut", section: "sect.", slab: "slab", crop: "crop" }[cut] || "";
-            if (cut === "section" || (cut === "slab" && ctx.slabComposite === "single")) return `z ${state.z}`;
-            return `${range[0]}–${range[1]}`;
         }
 
         paintLoading(on) {
@@ -561,9 +538,8 @@
 
         /**
          * A press on the rail: a band end resizes the range, a press inside
-         * a range that can move moves it, and anywhere else picks the plane --
-         * except in 3-D, where the plane is not what is drawn and a press
-         * outside the clip range does nothing (viewControls "rail" config).
+         * a range that can move moves it, and anywhere else picks the plane
+         * (viewControls "rail" config). The rail is not shown in 3-D.
          */
         startDrag(event) {
             if (event.button !== 0) return;
@@ -571,14 +547,10 @@
             this.rail.focus?.({ preventScroll: true });
             const vs = this.viewState;
             const state = vs.get();
+            if (state.mode === "volume") return;
             const config = this.railConfig;
             const handle = event.target?.dataset?.handle;
             const z = this.zAt(event.clientY);
-            if (state.mode === "volume") {
-                if (!this.startCutDrag(event, state, z, handle)) return;
-                this.listenDrag();
-                return;
-            }
             const inBand = z >= state.slab.z0 && z <= state.slab.z1;
             if (config.band && handle) {
                 this.drag = { kind: handle };
@@ -596,8 +568,7 @@
             this.listenDrag();
         }
 
-        /** Follow the pointer until it is let go (moveDrag), then commit a
-         *  cut previewed under it as one change. */
+        /** Follow the pointer until it is let go (moveDrag). */
         listenDrag() {
             const move = (e) => this.moveDrag(e);
             const up = () => {
@@ -606,56 +577,11 @@
                 this.rail.classList.remove("is-dragging");
                 global.removeEventListener("pointermove", move);
                 global.removeEventListener("pointerup", up);
-                // One drag, one undo entry.
-                if (kind.startsWith("cut-")) this.cutter()?.commit();
                 // Onto the plane on screen (a short glide, viewer.css).
-                if (kind === "z" || kind === "cut-plane") this.paint();
+                if (kind === "z") this.paint();
             };
             global.addEventListener("pointermove", move);
             global.addEventListener("pointerup", up);
-        }
-
-        /**
-         * A press on the rail in 3-D (viewControls "rail" config): on a Z
-         * section's or slab's rail it picks the plane; on the planes drawn a
-         * band end resizes them -- the whole stack becomes a Z crop -- and the
-         * band moves; a Z cutaway's one end moves its cut. Anything else
-         * along the rail is not the cut's, and does nothing. Returns whether
-         * a drag began.
-         */
-        startCutDrag(event, state, z, handle) {
-            const config = this.railConfig;
-            const ctx = this.context();
-            const kept = [ctx?.keptZ0 ?? 0, ctx?.keptZ1 ?? this.viewState.depth - 1];
-            if (config.plane) {
-                this.drag = { kind: "cut-plane" };
-                this.rail.classList.add("is-dragging");
-                this.rail.classList.remove("is-hovering");
-                this.followThumb(event.clientY);
-                this.cut({ z });
-            } else if (config.band && handle) {
-                this.drag = { kind: `cut-${handle}`, cut: config.cut, kept, axes: state.inspect?.axes };
-            } else if (config.bandMove && z >= kept[0] && z <= kept[1]) {
-                this.drag = { kind: "cut-band", from: z, kept, cut: config.cut, axes: state.inspect?.axes };
-            } else {
-                return false;
-            }
-            return true;
-        }
-
-        /** Preview a cut under the hand (services/inspectState.js); a page
-         *  without the cut controller sets it outright. */
-        cut(patch) {
-            const cutter = this.cutter();
-            if (cutter) cutter.preview(patch);
-            else this.viewState.set(patch);
-        }
-
-        /** A Z crop of planes `[z0, z1]`: the whole stack becomes one, keeping
-         *  no crop of another axis it may have kept from before. */
-        cropZ(drag, z0, z1) {
-            const axes = drag.cut === "full" ? { x: false, y: false, z: true } : { z: true };
-            this.cut({ inspect: { mode: "crop", axes, crop: { z: [z0, z1] } } });
         }
 
         moveDrag(event) {
@@ -664,23 +590,7 @@
             const vs = this.viewState;
             const state = vs.get();
             const z = this.zAt(event.clientY);
-            if (drag.kind === "cut-plane") {
-                this.followThumb(event.clientY);
-                this.cut({ z });
-            } else if (drag.kind === "cut-z0" || drag.kind === "cut-z1") {
-                if (drag.cut === "cutaway") {
-                    this.cut({ inspect: { cutaway: { z: { at: z } } } });
-                } else {
-                    let [z0, z1] = drag.kept;
-                    if (drag.kind === "cut-z0") z0 = Math.min(z, z1);
-                    else z1 = Math.max(z, z0);
-                    this.cropZ(drag, z0, z1);
-                }
-            } else if (drag.kind === "cut-band") {
-                const width = drag.kept[1] - drag.kept[0];
-                const start = Math.max(0, Math.min(vs.depth - 1 - width, drag.kept[0] + (z - drag.from)));
-                this.cropZ(drag, start, start + width);
-            } else if (drag.kind === "z") {
+            if (drag.kind === "z") {
                 this.followThumb(event.clientY);
                 if (z !== state.z) vs.set({ z });
             } else if (drag.kind === "z0" || drag.kind === "z1") {

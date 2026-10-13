@@ -8,8 +8,6 @@
  *     crop      both faces along each axis cut, and a grip in the box's
  *               middle that moves the box whole
  *     cutaway   the cut along each axis
- *     section   each plane
- *     slab      each slab's middle plane (its two faces faint)
  *
  * DRAGGING A GRIP NEVER TURNS THE STACK. A press on a grip is taken before
  * the canvas sees it (stopped and captured, as the gizmo's are), so the
@@ -22,8 +20,8 @@
  * A grip double-clicked puts its axis back. Focused (Tab), the arrow keys
  * move it a voxel, Shift ten.
  *
- * Shown in the cut's modes while the viewer prefs say so (`handles`:
- * visible, opacity; views/volumeDock.js toggles them). Redrawn after every
+ * Shown while a tool cuts and the viewer prefs say so (`handles`: visible,
+ * opacity; the cut panel, views/volumeDock.js, sets them). Redrawn after every
  * frame the renderer draws (`addDrawListener`).
  *
  * Classic script, `window.PlexoraVolumeHandles`.
@@ -150,15 +148,15 @@
         }
 
         /**
-         * What to draw: faces `{key, axis, at, span, faint}` (span: the
-         * ranges of the other two axes) and grips `{key, axis, kind, at}` in
+         * What to draw: faces `{key, axis, at, span}` (span: the ranges of
+         * the other two axes) and grips `{key, axis, kind, at}` in
          * continuous image coordinates. `kind`: "lo" / "hi" (a crop's face),
-         * "cut" (a cutaway's), "plane" (a section's or slab's), "body".
+         * "cut" (a cutaway's), "body".
          */
         layout(state) {
             const inspect = state.inspect;
             const d = this.dims();
-            const resolved = this.G.resolve(inspect, this.G.positions(state, d), d);
+            const resolved = this.G.resolve(inspect, d);
             const box = resolved.box;
             const faces = [];
             const grips = [];
@@ -183,16 +181,6 @@
                     const span = other(axis, region || box);
                     faces.push({ key: `${axis}:cut`, axis, at: where, span });
                     grips.push({ key: `${axis}:cut`, axis, kind: "cut", at: where, span });
-                }
-            } else if (resolved.mode === "section" || resolved.mode === "slab") {
-                for (const plane of resolved.planes) {
-                    const span = other(plane.axis, box);
-                    faces.push({ key: `${plane.axis}:plane`, axis: plane.axis, at: plane.at, span });
-                    if (plane.hi > plane.lo) {
-                        faces.push({ key: `${plane.axis}:lo`, axis: plane.axis, at: plane.lo, span, faint: true });
-                        faces.push({ key: `${plane.axis}:hi`, axis: plane.axis, at: plane.hi, span, faint: true });
-                    }
-                    grips.push({ key: `${plane.axis}:plane`, axis: plane.axis, kind: "plane", at: plane.at, span });
                 }
             }
             return { faces, grips };
@@ -256,7 +244,7 @@
                     this.faces.set(face.key, path);
                 }
                 seen.add(face.key);
-                path.setAttribute("class", `handle-face is-${face.axis}${face.faint ? " is-faint" : ""}`);
+                path.setAttribute("class", `handle-face is-${face.axis}`);
                 if (points.some((p) => !p)) {
                     path.setAttribute("d", "");
                     continue;
@@ -323,8 +311,8 @@
         gripLabel(grip) {
             if (grip.kind === "body") return "Move the crop";
             const name = grip.axis.toUpperCase();
-            return { lo: `${name} crop, near face`, hi: `${name} crop, far face`, cut: `${name} cut`,
-                     plane: `${name} section` }[grip.kind] || name;
+            return { lo: `${name} crop, near face`, hi: `${name} crop, far face`,
+                     cut: `${name} cut` }[grip.kind] || name;
         }
 
         // -- dragging ------------------------------------------------------------
@@ -443,9 +431,7 @@
                 const at = clamp(inspect.cutaway[axis].at + delta(axis), min, max);
                 return { inspect: { cutaway: { [axis]: { at } } } };
             }
-            if (axis === "z") return { z: clamp(state.z + delta("z"), 0, d.depth - 1) };
-            const top = Math.max(min, max - 1);
-            return { section: { [axis]: clamp(Math.round(state.section?.[axis] ?? 0) + delta(axis), min, top) } };
+            return null;
         }
 
         endDrag(event, move, up) {

@@ -108,11 +108,10 @@
             slab: state.slab ? { z0: state.slab.z0, z1: state.slab.z1, op: state.slab.op || "max" }
                 : null,
             clip: { x: [0, 1], y: [0, 1], z: [0, 1] },
-            // How the 3-D view is cut (core's services/inspectGeometry.js),
-            // and where its X and Y sections are: the video's cut, frame to
-            // frame. The clip track cuts on top of it.
+            // How the 3-D view is cut (core's services/inspectGeometry.js):
+            // the video's cut, frame to frame. The clip track cuts on top of
+            // it.
             inspect: state.inspect ? JSON.parse(JSON.stringify(state.inspect)) : null,
-            section: state.section ? { x: state.section.x, y: state.section.y } : null,
         };
     }
 
@@ -235,9 +234,6 @@
         }
         if (view.inspect && JSON.stringify(current.inspect || null) !== JSON.stringify(view.inspect)) {
             patch.inspect = view.inspect;
-        }
-        if (view.section && (current.section?.x !== view.section.x || current.section?.y !== view.section.y)) {
-            patch.section = { x: view.section.x, y: view.section.y };
         }
         return Object.keys(patch).length ? patch : null;
     }

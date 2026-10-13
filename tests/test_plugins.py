@@ -501,6 +501,29 @@ def test_find_and_tools_for(fake_registry):
     assert {p.name for p in registry.ready_tools(app, FULL)} == {"gating", "roi"}
 
 
+def test_the_tools_menu_follows_each_plugins_order(fake_registry):
+    """Lowest `order` first; a plugin that sets none keeps discovery order,
+    after every plugin that does."""
+    fake_registry["alpha"] = _fake_plugin("alpha")
+    fake_registry["cells"] = _fake_plugin("cells", order=40)
+    fake_registry["omega"] = _fake_plugin("omega")
+    fake_registry["qc"] = _fake_plugin("qc", order=10)
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert [p.name for p in registry.tools_for(app, NO_TABLE)] \
+        == ["qc", "cells", "alpha", "omega"]
+
+
+def test_the_bundled_tools_menu_leads_with_the_core_workflow():
+    """QC, Thresholding, ROI, Cell Explorer, Figure Builder -- then the rest."""
+    names = ["qc", "gating", "roi", "cell_explorer", "figure_builder"]
+    orders = [registry.load(name).order for name in names]
+    assert orders == sorted(orders)
+    default = Plugin(name="other", label="Other").order
+    assert max(orders) < default
+
+
 def test_an_incompatible_datasource_drops_out_of_the_menu(fake_registry):
     """Compatibility still filters: an RGB quick view offers no marker tools."""
     fake_registry["gating"] = _fake_plugin("gating", requires=Requires(table=True))

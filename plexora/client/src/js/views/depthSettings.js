@@ -7,9 +7,9 @@
  *
  *     one plane    Show: one plane or a projection's operation
  *     projection   the operation, its percentile, the planes combined, Follow
- *     3-D          MIP / Additive, the view, how the stack is cut (and the
- *                  3-D dock that cuts it), how Play turns the stack, the
- *                  grid, the surfaces
+ *     3-D          MIP / Additive, the view, how Play turns the stack, the
+ *                  grid, the surfaces (the cut is the strip's Cut and Crop,
+ *                  and the panel they open, views/volumeDock.js)
  *
  * and the Depth card at its foot for everything less frequent. Nothing in it
  * is permanent furniture: it opens on the cog and closes on the next click
@@ -250,29 +250,6 @@
                 row.appendChild(button("", () => preset(name), { title, glyph, className: "is-glyph" }));
             }
             return { node: field("View", row), update() {} };
-        },
-        "volume.clip"(ctx, config, popover) {
-            // How the 3-D view is cut (services/inspectState.js), in words;
-            // the 3-D dock (views/volumeDock.js) is where it is cut.
-            const cutter = () => global.PlexoraInspect;
-            const summary = el("span", "depth-panel-unit plx-popover-note", { "data-cut-summary": "" });
-            const whole = button("Whole stack", () => cutter()?.reset?.("full"),
-                                 { title: "Draw every voxel of the stack", className: "is-link" });
-            const open = button("Cut…", () => {
-                popover.close({ refocus: false });
-                global.PlexoraVolumeDock?.open?.();
-            }, { title: "The 3-D dock: a cutaway, sections, slabs or a crop", className: "is-link" });
-            const links = el("div", "plx-popover-actions");
-            links.append(whole, open);
-            const node = el("div", "plx-popover-stack");
-            node.append(field("Cut", summary), links);
-            return {
-                node,
-                update(now) {
-                    summary.textContent = cutter()?.describe?.() || "the whole stack";
-                    whole.hidden = now.cut === "full";
-                },
-            };
         },
         "rotate.speed"(ctx, config, popover) {
             const prefs = ctx.prefs;
@@ -652,20 +629,23 @@
             if (volume?.rotating) volume.rotate(true, global.PlexoraViewerPrefs?.rotate?.() || {});
         }
 
-        /** Left of the strip, level with the cog, inside the window; below or
-         *  above the cog where there is no room to its left. */
+        /** Left of the strip -- and of the cut panel open beside it
+         *  (views/volumeDock.js) -- level with the cog, inside the window;
+         *  below or above the cog where there is no room to its left. */
         place() {
             const node = this.el;
             const anchor = this.anchor;
             if (!node || !anchor?.getBoundingClientRect) return;
             const box = anchor.getBoundingClientRect();
             const strip = this.strip.root?.getBoundingClientRect?.() || box;
+            const panel = this.strip.root?.querySelector?.(".volume-dock.is-open")?.getBoundingClientRect?.();
+            const edge = panel ? Math.min(strip.left, panel.left) : strip.left;
             node.style.position = "fixed";
             const width = node.offsetWidth || 260;
             const height = node.offsetHeight || 0;
             const viewW = global.innerWidth || 0;
             const viewH = global.innerHeight || 0;
-            let left = strip.left - GAP - width;
+            let left = edge - GAP - width;
             let top = box.top + box.height / 2 - height / 2;
             if (left < GAP) {
                 left = Math.max(GAP, Math.min(box.right - width, viewW - width - GAP));

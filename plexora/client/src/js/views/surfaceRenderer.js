@@ -39,9 +39,7 @@
  * `(p + 0.5 - origin) * scale - extent / 2`, normals by the inverse transpose of
  * that scale, so an anisotropic stack shades as the tissue would. Fragments
  * the volume's cut leaves out (views/volumeRenderer.js cutUniforms: the box,
- * a cutaway's corner; beside a section, all but a voxel either side of its
- * plane, so the cells it crosses show as rings on it; beside a slab, all but
- * the slab), or behind the clipping plane, are discarded -- the same cut as
+ * a cutaway's corner), or behind the clipping plane, are discarded -- the same cut as
  * the voxels. A closed surface cut open shows its inside as a flat CAP, one
  * unlit tone of its colour, so a cut face never passes for its biology.
  *
@@ -187,11 +185,6 @@ uniform vec3 u_box_hi;
 uniform int u_hole_on;
 uniform vec3 u_hole_lo;
 uniform vec3 u_hole_hi;
-uniform int u_cut;             // 1 sections, 2 slabs: only what lies in or by them
-uniform vec3 u_plane;
-uniform vec3 u_plane_on;
-uniform vec3 u_slab_half;
-uniform vec3 u_band;           // a voxel, texture space: the band kept by a section
 uniform bool u_caps;           // a cut is on: an inside seen through it is a cap
 uniform vec4 u_clip_plane;
 uniform bool u_use_clip_plane;
@@ -215,11 +208,6 @@ void main() {
     vec3 p = v_world / u_extent + 0.5;
     if (any(lessThan(p, u_box_lo - 0.001)) || any(greaterThan(p, u_box_hi + 0.001))) discard;
     if (u_hole_on == 1 && all(greaterThan(p, u_hole_lo)) && all(lessThan(p, u_hole_hi))) discard;
-    if (u_cut == 1 || u_cut == 2) {
-        vec3 off = abs(p - u_plane) - max(u_slab_half, u_band);
-        if (!((u_plane_on.x > 0.5 && off.x <= 0.0) || (u_plane_on.y > 0.5 && off.y <= 0.0)
-                || (u_plane_on.z > 0.5 && off.z <= 0.0))) discard;
-    }
     if (u_use_clip_plane && dot(vec4(v_world, 1.0), u_clip_plane) < 0.0) discard;
     if (u_useLut && v_lut.a < 0.002) discard;
 #ifdef PASS_PICK
@@ -408,8 +396,8 @@ void main() {`],
         : 1.0 - alpha), vec3(1.0));`,
              `    if (hit.y < gridExit - 1e-4) grid = vec4(0.0);
     outBack = vec4(outBack.rgb + (1.0 - outBack.a) * grid.rgb, outBack.a + (1.0 - outBack.a) * grid.a);`],
-            // [inspect] A section, slab or cut face goes in front of the
-            // nearest translucent surface or behind it, by where it is.
+            // [inspect] A cut face goes in front of the nearest translucent
+            // surface or behind it, by where it is.
             ["    outColor.rgb = min(cut.rgb + (1.0 - cut.a) * outColor.rgb, vec3(1.0));",
              `    if (cutT < tFront) {
         outFront = vec4(min(cut.rgb + (1.0 - cut.a) * outFront.rgb, vec3(1.0)), cut.a + (1.0 - cut.a) * outFront.a);
@@ -854,7 +842,7 @@ void main() {`],
 
         // -- the frame ---------------------------------------------------------
 
-        /** Where the box is: `{origin, scale, extent, cut, band}` for the
+        /** Where the box is: `{origin, scale, extent, cut}` for the
          *  volume's current area and frame, and its cut (cutUniforms). */
         placement() {
             const volume = this.volume;
@@ -865,11 +853,8 @@ void main() {`],
             const extent = volume.extent();
             const span = [covered[2] - covered[0], covered[3] - covered[1], depth];
             const cut = typeof volume.cutUniforms === "function" ? volume.cutUniforms(covered)
-                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, plane: [0.5, 0.5, 0.5], planeOn: [0, 0, 0],
-                    half: [0, 0, 0], cut: 0 };
+                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, cut: 0 };
             return { origin: [covered[0], covered[1], 0], extent, cut,
-                     // One voxel either side of a section's plane, texture space.
-                     band: span.map((side) => 1 / Math.max(1, side)),
                      scale: extent.map((side, i) => side / Math.max(1e-9, span[i])) };
         }
 
@@ -904,12 +889,7 @@ void main() {`],
             gl.uniform1i(u("u_hole_on"), cut.hole ? 1 : 0);
             gl.uniform3fv(u("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
             gl.uniform3fv(u("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
-            gl.uniform1i(u("u_cut"), cut.cut === 1 || cut.cut === 2 ? cut.cut : 0);
-            gl.uniform3fv(u("u_plane"), cut.plane);
-            gl.uniform3fv(u("u_plane_on"), cut.planeOn);
-            gl.uniform3fv(u("u_slab_half"), cut.half);
-            gl.uniform3fv(u("u_band"), frame.placement.band);
-            const opened = Boolean(cut.hole) || cut.cut === 1 || cut.cut === 2
+            const opened = Boolean(cut.hole)
                 || cut.lo.some((v) => v > 0.0005) || cut.hi.some((v) => v < 0.9995);
             gl.uniform1i(u("u_caps"), opened ? 1 : 0);
             gl.uniform1i(u("u_use_clip_plane"), this.clipPlane ? 1 : 0);

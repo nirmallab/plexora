@@ -877,6 +877,11 @@ class Plugin:
     #: they change how the image is shown rather than analyse it.
     menu: str = "tools"
 
+    #: Where this tool's row sits in its menu, lowest first. Ties keep
+    #: discovery order (bundled plugins by package name, then entry points),
+    #: so a plugin that does not set it lands after every one that does.
+    order: int = 100
+
     #: Offer a button for this tool in the viewer's top-right launcher dock,
     #: beside the dataset navigation -- one click from the image, for a tool
     #: whose whole point is the image (Video Studio). Data only: core renders

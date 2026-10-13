@@ -5243,7 +5243,9 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   out with the plugin. The convention and the mode matrix are in
   `docs/internal/3d/VIEW_CONTROLS.md`. `views/depthSettings.js`
   (`window.PlexoraDepthSettings`) is the cog popover on the depth strip and
-  replaced the readout's menu. The readout is now a `role=status` label.
+  replaced the readout's menu. The strip has no readout in any mode any
+  more (what is drawn is said in the Depth card and every capture), and no
+  rail in 3-D, where it shrinks to its buttons (`is-volume`).
   Rows come from its `ROWS` builder table plus `defineRow`. Script order in
   `index.html`: `viewControls.js`, then `depthStrip.js`, then
   `depthSettings.js`.
@@ -5426,49 +5428,79 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
 
 **Slice & Clip** (branch `feature/slice-clip`; the design, the controls and
 the testing notes are `docs/internal/3d/SLICE_CLIP.md`, the controls matrix
-`docs/internal/3d/VIEW_CONTROLS.md`). The 3-D view is cut open — cutaway,
-section, slab or crop — along any of X, Y and Z.
+`docs/internal/3d/VIEW_CONTROLS.md`). The 3-D view is cut open with one of
+two tools — Cut (`inspect.mode` `"cutaway"`) or Crop (`"crop"`); `"full"` is
+the whole stack — along any of X, Y and Z. The section and slab cut modes
+were removed on 2026-10-13, with "Panes follow the sections", the panes'
+pinned crosshair and cut guides, and the view state's `section` position; a
+cut saved as a section or slab opens as the whole stack.
 
 - Client: `services/inspectGeometry.js` (`PlexoraInspectGeometry`, pure
-  maths: `resolve`/`toTexture`/`clean`/`describe`, in image units, plane k
-  spanning [k, k+1)); every consumer asks this one module.
-  `services/inspectState.js` (`PlexoraInspectState`; `window.PlexoraInspect`
-  built by `main.js` on a z-stack) is the only way a control changes the cut:
-  `preview` (redrawn from uniforms, nothing saved, `plexora:inspect-preview`),
-  `commit`/`set` (one undo entry each), `undo`/`redo`/`reset`.
-  `views/volumeDock.js` (`PlexoraVolumeDock`, the 3-D dock — the registry's
-  `dock` surface) and `views/volumeHandles.js` (`PlexoraVolumeHandles`, SVG
-  grips that drag the cut's faces and never turn the camera). `index.html`
-  loads inspectGeometry before `viewState.js` (which repairs `inspect` with
-  it), inspectState after it, and the dock and handles after
-  `volumeRenderer.js`.
-- View state: `inspect` (mode full/cutaway/section/slab/crop, axes, crop,
-  cutaway, slab thickness/composite, opacity, context, face, linkPanes) and
-  `volume.interpolation`; `viewState._migrate` opens a 3-D view saved with a
-  narrowed projection range as a Z crop. Server: `routes/volume_routes.py`
-  `normalize_inspect`, `INSPECT_MODES`, `INSPECT_COMPOSITES`,
-  `INTERPOLATIONS`, and the viewer pref `handles` (`normalize_handles`).
+  maths: `resolve(inspect, dims)`/`toTexture`/`clean`/`describe(inspect,
+  dims, space)`, in image units, plane k spanning [k, k+1); `TOOLS`,
+  `TOOL_AXES`, `CUT` `{none: 0, faces: 1}`); every consumer asks this one
+  module. `services/inspectState.js` (`PlexoraInspectState`;
+  `window.PlexoraInspect` built by `main.js` on a z-stack) is the only way a
+  control changes the cut: `preview` (redrawn from uniforms, nothing saved,
+  `plexora:inspect-preview`), `commit`/`set` (one undo entry each, through
+  `withTool`, which swaps a tool's axes in and out of `axesBy`), `pick(tool)`,
+  `toggle()` (the tool last chosen off and on, settings kept),
+  `undo`/`redo`/`reset(axis|mode|full)` (`mode` on a hidden cut resets the
+  tool last chosen and shows it).
+  `views/volumeDock.js` (`PlexoraVolumeDock`, the **cut panel** — the
+  registry's `dock` surface: built inside the depth strip's root and opened
+  to the strip's LEFT from its Cut and Crop buttons; `attach({viewState,
+  volume, cutter, extras, strip})`, `pick`, `open`, `collapse`, `close`,
+  `TOGGLE_KEY` `"o"` — bare `O`, or the panel's foot row `cut.toggle`
+  ("O Show/Hide"), hides and shows the cut while 3-D is on screen and nobody
+  types; the panel stays out while the cut is hidden (`is-off`, its grid
+  dimmed) and only › / Esc / × put it away; a panel edit while hidden shows
+  the cut again (`change()`)) and `views/volumeHandles.js` (`PlexoraVolumeHandles`, SVG
+  grips on a crop's faces and body or a cutaway's cut, which never turn the
+  camera). `index.html` loads inspectGeometry before `viewState.js` (which
+  repairs `inspect` with it), inspectState after it, and the panel and
+  handles after `volumeRenderer.js`. `sectionPanes.js` draws nothing of the
+  3-D cut (the 2-D panes and the Sections button stay).
+- View state: `inspect` (`mode` full/cutaway/crop; `tool`, the tool last
+  chosen, kept while off; `axes`, the current tool's; `axesBy`, each tool's
+  own, Cut starting on X and Crop on X/Y/Z; `crop`, `cutaway`, `face`) and
+  `volume.interpolation`; there is no `section` any more.
+  `viewState._migrate` opens a 3-D view saved with a narrowed projection
+  range as a Z crop. Server: `routes/volume_routes.py` `normalize_inspect`
+  (with `tool`/`axesBy`), `INSPECT_MODES`, `INSPECT_TOOLS`,
+  `INSPECT_TOOL_AXES`, `INTERPOLATIONS`, and the viewer pref `handles`
+  (`normalize_handles`).
 - Renderer: `volumeRenderer.js`'s `u_clip_z`/`u_clip_xy` are gone; the box is
-  `u_box_lo/hi`, plus hole/plane/slab/cut-face uniforms (`cutSource`,
-  `sampleAt`, `cutPlanes`, `cutSlabs`, `cutFace`), set by `cutUniforms()`/
-  `bindCut()` from `inspectNow()`; `resolved()` and `addDrawListener()` are
-  new. `surfaceRenderer.js`'s `volumeFragment` gained one swap (the cut's
-  composite line), and its mesh shader is cut by the same box, corner,
-  section band and slabs, with flat caps on back faces.
+  `u_box_lo/hi`, plus the cutaway-corner `u_hole_*` and `u_cut` (1: cut faces
+  solid; `cutSource`, `sampleAt`, `cutFace`), set by `cutUniforms()`/
+  `bindCut(uniform, cut)` from `inspectNow()`; `resolved()` and
+  `addDrawListener()` are new. `surfaceRenderer.js`'s `volumeFragment` gained
+  one swap (a cut face in front of or behind the nearest translucent
+  surface), and its mesh shader is cut by the same box and corner, with flat
+  caps on back faces. `volumeAtlas.js` plans only the bricks the cut keeps
+  (`view.box`).
 - Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`; FLAGS
-  `cut.*`, `axis.*`, `cut.noPlane`, `cut.noBand`; dock GROUPS and the `cut.*`
-  entries; `card.projection`; the 3-D rail config. `transition()` no longer
-  rewrites the slab on entering 3-D.
-- Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`,
+  `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`; the strip's
+  `tool.cutaway`/`tool.crop` (group `cut`) and the panel's `dock` entries
+  `cut.axes` (config `{flip}`), `cut.face`, `cut.handles`, `cut.reset`,
+  `cut.history`, `cut.interpolation`, `cut.handleOpacity`, `cut.toggle`
+  (group `toggle`), shown in 3-D whether the cut is on or hidden (no `when`;
+  they follow `ctx.cutTool`, the live tool or else the one last chosen);
+  `card.projection`. The rail, band, thumb and hover are
+  plane/slab only. `transition()` no longer rewrites the slab on entering
+  3-D.
+- Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`: `mode`
+  full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only;
   `agentBridge.js` `set_inspect`); `viewer_set_z` takes `mode: "keep"`;
-  `describeVolumeView` reports inspect/cut/section/camera/show/box. Figure
+  `describeVolumeView` reports inspect/cut/camera/show/box. Figure
   Builder: `export.volume_cut(panel)` and `cut` in a 3-D panel's report.
-  Video Studio frames carry `view.inspect`/`view.section` (bounded by the
-  schema).
+  Video Studio frames carry `view.inspect` (bounded by the schema); a frame
+  cut as a section or slab plays the whole stack.
 - Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles}_probe.mjs`
   (wrapped in `tests/test_view_state_client.py`, with the script-order and
   `node --check` tests), cut checks in the view_state, volume_renderer,
-  view_controls, depth_strip, section_panes and video_studio_scene probes;
+  view_controls, depth_strip, section_panes (nothing of the 3-D cut left in
+  the panes) and video_studio_scene probes;
   `test_volume_routes`, `test_agent_viewer_api`, `test_figure_builder_volume`,
   `test_video_schema`. Bench scenario `clip` in `tools/bench3d`.
 
@@ -5613,8 +5645,8 @@ a copy of any of them would drift.
   controller `videoStudioSidebarController.js`; `window.PlexoraVideoStudio`
   is the test handle.
 - Core seams it added, all additive: `Plugin.launcher` (`index.html` renders
-  `#viewer_tool_launchers`, top-right dock order 2, from
-  `available_tools` data; `toolLoader.js` binds each to `toggleTool` and
+  `#viewer_tool_launchers` in the sidebar header, left of the AI chip and
+  after `#layer_surface_button`, from `available_tools` data; `toolLoader.js` binds each to `toggleTool` and
   marks `aria-pressed`); `paths.videos_root()`/`VIDEOS_DIRNAME`;
   `volumeRenderer.js` `pinSize`, `settled`, `whenSettled`, `renderFrame`,
   `setClip` (x/y/z clipping; it narrows the cut's `u_box_lo/hi`, never
@@ -8460,8 +8492,8 @@ in **5.6 s**.
   something subtly wrong.
 - **The slab is the 2-D projection only.** `state.slab` no longer clips the
   3-D view and entering 3-D no longer rewrites it; the 3-D view's planes are
-  `inspect`'s (a Z crop, section or slab), whose sections sit at `z` and
-  `section.x/y`, so the Z section in 3-D is the plane 2-D comes back to.
+  `inspect`'s (a Z crop or a Z cutaway), and `]`/`[` or Shift+wheel in 3-D
+  move that cut along Z (`viewState.step`).
 - **The plane fade's ghost is opaque.** OSD's canvas is transparent wherever
   a channel is dim (the ground is CSS), so a ghost copied from it alone let
   the next plane show through and the sum overshot both — the brightness

@@ -338,35 +338,83 @@ def test_the_handles_preference_is_merged_and_clamped(client):
 def test_the_3d_cut_is_kept_and_repaired(tmp_path, client):
     """How the 3-D view is cut (`inspect`, image units) round-trips through
     the view state, repaired: a known mode, axes with one on, ranges ordered,
-    z inside the stack, a slab a voxel or more -- and a state saved without
-    one comes back without one (the client then opens whole, or migrates an
-    old clip range)."""
+    z inside the stack -- and a state saved without one comes back without
+    one (the client then opens whole, or migrates an old clip range). What
+    only the section and slab cuts had (a slab's thickness and composite,
+    the planes' opacity, the context, the linked panes) is not kept, and the
+    view state has no section position."""
     _register_volume(tmp_path)
     plain = client.put("/view_state/vol", json={"z": 2, "mode": "volume"}).get_json()["state"]
     assert "inspect" not in plain
+    assert "section" not in plain
     stored = client.put("/view_state/vol", json={
         "z": 2, "mode": "volume", "volume": {"interpolation": "nearest"},
-        "inspect": {"mode": "crop", "axes": {"x": True, "z": True, "y": "yes"},
+        "section": {"x": 400, "y": 120},
+        "inspect": {"mode": "crop", "tool": "cutaway", "axes": {"x": True, "z": True, "y": "yes"},
                     "crop": {"x": [600, 100], "z": [9, -2], "y": [1, 2, 3]},
                     "cutaway": {"z": {"at": 99, "keep": "sideways"}},
                     "slab": {"thickness": {"z": 0, "x": 12}, "composite": "median"},
                     "opacity": 4, "context": -1, "face": "true", "linkPanes": True}}).get_json()["state"]
+    assert "section" not in stored
     inspect = stored["inspect"]
     assert inspect["mode"] == "crop"
+    assert inspect["tool"] == "crop"                   # a tool that is on is the mode
     assert inspect["axes"] == {"x": True, "y": False, "z": True}
     assert inspect["crop"]["x"] == [100.0, 600.0]
     assert inspect["crop"]["z"] == [0, 4]              # the stack's 5 planes
     assert "y" not in inspect["crop"]
     assert inspect["cutaway"]["z"] == {"at": 4, "keep": "hi"}
-    assert inspect["slab"]["thickness"]["z"] == 1 and inspect["slab"]["thickness"]["x"] == 12
-    assert inspect["slab"]["composite"] == "max"
-    assert inspect["opacity"] == 1.0 and inspect["context"] == 0.0
-    assert inspect["face"] is False and inspect["linkPanes"] is True
+    assert inspect["face"] is False
+    for gone in ("slab", "opacity", "context", "linkPanes"):
+        assert gone not in inspect, gone
     assert stored["volume"]["interpolation"] == "nearest"
     again = client.get("/view_state/vol").get_json()
     assert again["inspect"] == inspect
     nothing = client.put("/view_state/vol", json={"mode": "volume", "inspect": {"axes": {}}}).get_json()["state"]
-    assert nothing["inspect"]["mode"] == "full" and nothing["inspect"]["axes"]["z"] is True
+    assert nothing["inspect"]["mode"] == "full" and nothing["inspect"]["tool"] == "cutaway"
+    assert nothing["inspect"]["axes"] == {"x": True, "y": False, "z": False}
+
+
+def test_each_cut_tool_keeps_its_own_axes(tmp_path, client):
+    """`tool` is the tool last chosen, kept while the cut is off; `axesBy`
+    holds each tool's axes as last left. Both repaired leniently: an unknown
+    tool reads as the cutaway, a tool's axes with none on as its starting
+    ones -- a cutaway on X, a crop on X, Y and Z."""
+    _register_volume(tmp_path)
+    off = client.put("/view_state/vol", json={"mode": "volume", "inspect": {
+        "mode": "full", "tool": "crop", "axes": {"y": True},
+        "axesBy": {"cutaway": {"z": True, "x": "yes"}, "crop": {"x": False, "y": False}}}}).get_json()["state"]
+    inspect = off["inspect"]
+    assert inspect["mode"] == "full" and inspect["tool"] == "crop"
+    assert inspect["axes"] == {"x": False, "y": True, "z": False}
+    assert inspect["axesBy"] == {"cutaway": {"x": False, "y": False, "z": True},
+                                 "crop": {"x": True, "y": True, "z": True}}
+    assert client.get("/view_state/vol").get_json()["inspect"] == inspect
+    odd = client.put("/view_state/vol", json={"mode": "volume", "inspect": {
+        "mode": "full", "tool": "wedge", "axesBy": "nonsense"}}).get_json()["state"]["inspect"]
+    assert odd["tool"] == "cutaway" and odd["axes"] == {"x": True, "y": False, "z": False}
+    assert odd["axesBy"] == {"cutaway": {"x": True, "y": False, "z": False},
+                             "crop": {"x": True, "y": True, "z": True}}
+    # With no axes saved, the current tool's starting axes.
+    crop = client.put("/view_state/vol", json={"mode": "volume", "inspect": {
+        "mode": "crop"}}).get_json()["state"]["inspect"]
+    assert crop["tool"] == "crop" and crop["axes"] == {"x": True, "y": True, "z": True}
+
+
+def test_a_cut_saved_as_a_section_or_slab_opens_whole(tmp_path, client):
+    """The section and slab cuts are gone: a view state saved with one reads
+    as the whole stack, its tool the cutaway, and nothing of the old cut's
+    own settings survives."""
+    _register_volume(tmp_path)
+    for mode in ("section", "slab"):
+        stored = client.put("/view_state/vol", json={"mode": "volume", "inspect": {
+            "mode": mode, "axes": {"z": True}, "slab": {"thickness": {"z": 3}, "composite": "mean"},
+            "opacity": 0.5, "context": 0.3, "linkPanes": True}}).get_json()["state"]
+        inspect = stored["inspect"]
+        assert inspect["mode"] == "full" and inspect["tool"] == "cutaway", mode
+        assert inspect["axes"] == {"x": False, "y": False, "z": True}
+        for gone in ("slab", "opacity", "context", "linkPanes"):
+            assert gone not in inspect, (mode, gone)
 
 
 # -- whole levels and section geometry -------------------------------------

@@ -81,8 +81,11 @@ _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 VIEW_MODES = ("plane", "slab", "sections", "volume")
 COMPOSITES = ("mip", "additive")
 #: How the 3-D view may be cut (core's services/inspectGeometry.js MODES); a
-#: cut is kept with a frame's view up to this many bytes of JSON.
-INSPECT_MODES = ("full", "cutaway", "section", "slab", "crop")
+#: cut is kept with a frame's view up to this many bytes of JSON. A cut made
+#: as a section or a slab (modes since removed) is kept as the whole stack,
+#: as core reads one.
+INSPECT_MODES = ("full", "cutaway", "crop")
+INSPECT_GONE_MODES = ("section", "slab")
 INSPECT_MAX_BYTES = 4096
 SLAB_OPS = ("max", "mean", "min", "std", "med", "pct")
 CELL_MODES = ("none", "centroids", "outlines", "filled")
@@ -363,6 +366,8 @@ def normalize_view(raw, *, depth=1, frames=1) -> dict:
     # units): kept as the viewer wrote it, bounded; the browser repairs it
     # against the image when a frame is applied (inspectGeometry.clean).
     inspect = raw.get("inspect")
+    if isinstance(inspect, dict) and inspect.get("mode") in INSPECT_GONE_MODES:
+        inspect = {**inspect, "mode": "full"}
     if isinstance(inspect, dict) and inspect.get("mode") in INSPECT_MODES:
         try:
             text = json.dumps(inspect)
@@ -370,9 +375,6 @@ def normalize_view(raw, *, depth=1, frames=1) -> dict:
             text = ""
         if text and len(text) <= INSPECT_MAX_BYTES:
             view["inspect"] = json.loads(text)
-    section = raw.get("section")
-    if isinstance(section, dict):
-        view["section"] = {axis: _number(section.get(axis), 0.0, lo=0.0) for axis in ("x", "y")}
     return view
 
 

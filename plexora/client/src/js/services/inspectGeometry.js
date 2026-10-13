@@ -1,30 +1,31 @@
 /**
  * inspectGeometry.js - what part of a stack the 3-D view keeps, as numbers.
  *
- * The 3-D view can be CUT (the view state's `inspect`, services/viewState.js):
+ * The 3-D view can be CUT (the view state's `inspect`, services/viewState.js)
+ * with one of two tools, over any of X, Y and Z:
  *
- *     full      the whole stack
- *     cutaway   a side taken off along each active axis; with two or three
- *               axes, the corner where every one of them is on its removed
- *               side (a cut-away corner, the rest kept)
- *     section   a plane through the stack per active axis, one voxel thick,
- *               in its real intensities
- *     slab      a thick slice per active axis, its voxels combined along each
- *               ray (single, maximum, mean, minimum, sum)
+ *     cutaway   "Cut": a side taken off along each active axis; with two or
+ *               three axes, the corner where every one of them is on its
+ *               removed side (a cut-away corner, the rest kept)
  *     crop      a range kept along each active axis, the box they make
  *
- * over any of X, Y and Z. Every number is in IMAGE units: full-resolution
- * pixels across x and y (boundaries, so a crop of [0, width] is the whole
- * row), plane indices along z. Section and slab positions are the view's own
- * plane and its sections (`state.z`, `state.section.x/y`), which is why the
- * plane a 2-D view returns to is the Z section the 3-D view showed.
+ * `mode` is the tool that is on, or "full" for the whole stack. `tool` is the
+ * tool last chosen, kept while it is off, so turning it back on (the depth
+ * strip's key, views/volumeDock.js) brings back exactly what was cut. Each
+ * tool keeps its own axes: `axes` are the current tool's, `axesBy` what each
+ * had when it was last left (services/inspectState.js swaps them), so a Cut
+ * starts on X and a Crop on X, Y and Z.
  *
- * THIS FILE ONLY COMPUTES. `resolve()` turns the state into a box, a hole and
- * a set of planes in continuous image coordinates (plane k spans [k, k+1));
- * `toTexture()` turns that into the [0,1] numbers the renderer's uniforms
- * take, relative to the area its textures cover. The renderer, the surfaces,
- * the dock, the depth strip, the handles, the section panes, the captions and
- * the agent all ask here, so they cannot disagree about what is cut.
+ * Every number is in IMAGE units: full-resolution pixels across x and y
+ * (boundaries, so a crop of [0, width] is the whole row), plane indices along
+ * z.
+ *
+ * THIS FILE ONLY COMPUTES. `resolve()` turns the state into a box and a hole
+ * in continuous image coordinates (plane k spans [k, k+1)); `toTexture()`
+ * turns that into the [0,1] numbers the renderer's uniforms take, relative to
+ * the area its textures cover. The renderer, the surfaces, the dock, the
+ * handles, the section panes, the captions and the agent all ask here, so
+ * they cannot disagree about what is cut.
  *
  * Lengths are said in a unit the image states: microns only when the image
  * or its user gave the spacing (`metadata` or `manual`), else pixels and
@@ -35,18 +36,20 @@
 (function (global) {
     "use strict";
 
-    const MODES = ["full", "cutaway", "section", "slab", "crop"];
+    const MODES = ["full", "cutaway", "crop"];
+    //: The tools a cut is made with: every mode but the whole stack.
+    const TOOLS = ["cutaway", "crop"];
     const AXES = ["x", "y", "z"];
-    const COMPOSITES = ["single", "max", "mean", "min", "sum"];
     const KEEPS = ["lo", "hi"];
     const TRUSTED = ["metadata", "manual"];
-    //: What the renderer's `u_cut` says: nothing beyond the box, planes,
-    //: slabs combined along the ray, or the cut faces drawn solid.
-    const CUT = { none: 0, planes: 1, slabs: 2, faces: 3 };
-    //: `u_slab_op` for the combining slab composites.
-    const OPS = { max: 1, mean: 2, min: 3, sum: 4 };
-    //: The surrounding volume drawn behind a section or slab, by default.
-    const CONTEXT = 0.15;
+    //: What the renderer's `u_cut` says: nothing beyond the box, or the cut
+    //: faces drawn solid.
+    const CUT = { none: 0, faces: 1 };
+    //: The axes each tool starts with.
+    const TOOL_AXES = {
+        cutaway: { x: true, y: false, z: false },
+        crop: { x: true, y: true, z: true },
+    };
 
     function clamp(value, low, high) {
         return Math.max(low, Math.min(high, value));
@@ -99,55 +102,27 @@
         return space?.[axis] || null;
     }
 
-    /** The defaults for a stack of `d` (dims) and spacing `space`. */
-    function defaults(d, space = null) {
-        const zThick = Math.max(1, Math.round(d.depth / 10));
-        const thickness = thicknessFor(zThick, "z", d, space);
+    /** The defaults for a stack of `d` (dims). */
+    function defaults(d) {
         return {
             mode: "full",
-            axes: { x: false, y: false, z: true },
+            tool: "cutaway",
+            axes: { ...TOOL_AXES.cutaway },
+            axesBy: { cutaway: { ...TOOL_AXES.cutaway }, crop: { ...TOOL_AXES.crop } },
             crop: { x: [0, d.width], y: [0, d.height], z: [0, d.depth - 1] },
             cutaway: {
                 x: { at: Math.round(d.width / 2), keep: "hi" },
                 y: { at: Math.round(d.height / 2), keep: "hi" },
                 z: { at: Math.floor(d.depth / 2), keep: "hi" },
             },
-            slab: { thickness, composite: "max" },
-            opacity: 1,
-            context: CONTEXT,
             face: false,
-            linkPanes: false,
         };
     }
 
     /**
-     * One thickness for every axis: `value` in `axis`'s units (planes along
-     * z, pixels across), the same physical length along the others where the
-     * spacing is stated, the same number of voxels where it is not.
-     */
-    function thicknessFor(value, axis, d, space = null) {
-        const from = stepOf(axis, space);
-        const out = {};
-        for (const to of AXES) {
-            const step = stepOf(to, space);
-            let voxels = value;
-            if (to !== axis && from && step && unitsAgree(from, step)) {
-                voxels = (value * from.value) / step.value;
-            }
-            const top = to === "z" ? d.depth : (to === "x" ? d.width : d.height);
-            out[to] = clamp(Math.round(voxels), 1, Math.max(1, top));
-        }
-        return out;
-    }
-
-    function unitsAgree(a, b) {
-        return (a.unit || "µm") === (b.unit || "µm");
-    }
-
-    /**
-     * Merge `patch` over `base`, one level into `crop`, `cutaway`, `slab` and
-     * `axes` (and one more into a cutaway axis and the thickness), so a patch
-     * to `crop.x` keeps `crop.y`.
+     * Merge `patch` over `base`, one level into `crop`, `cutaway`, `axes` and
+     * `axesBy` (and one more into a cutaway axis and a tool's axes), so a
+     * patch to `crop.x` keeps `crop.y`.
      */
     function merge(base, patch) {
         const out = copy(base) || {};
@@ -158,18 +133,12 @@
                 out.axes = { ...(out.axes || {}), ...value };
             } else if (key === "crop" && isObject(value)) {
                 out.crop = { ...(out.crop || {}), ...copy(value) };
-            } else if (key === "cutaway" && isObject(value)) {
-                const held = { ...(out.cutaway || {}) };
-                for (const [axis, entry] of Object.entries(value)) {
-                    held[axis] = isObject(entry) ? { ...(held[axis] || {}), ...entry } : entry;
+            } else if ((key === "cutaway" || key === "axesBy") && isObject(value)) {
+                const held = { ...(out[key] || {}) };
+                for (const [name, entry] of Object.entries(value)) {
+                    held[name] = isObject(entry) ? { ...(held[name] || {}), ...entry } : entry;
                 }
-                out.cutaway = held;
-            } else if (key === "slab" && isObject(value)) {
-                const held = { ...(out.slab || {}), ...copy(value) };
-                if (isObject(value.thickness)) {
-                    held.thickness = { ...(out.slab?.thickness || {}), ...value.thickness };
-                }
-                out.slab = held;
+                out[key] = held;
             } else {
                 out[key] = copy(value);
             }
@@ -190,19 +159,28 @@
         return [a, b];
     }
 
+    /** Axes as booleans, at least one on (`fallback`'s where none is). */
+    function cleanAxes(raw, fallback) {
+        const out = {};
+        for (const axis of AXES) out[axis] = raw?.[axis] === true;
+        return AXES.some((axis) => out[axis]) ? out : { ...fallback };
+    }
+
     /**
-     * `raw` repaired over the defaults: a known mode, axes as booleans (at
-     * least one on), every position inside the stack, ranges ordered and at
-     * least a voxel wide, thicknesses of a voxel or more.
+     * `raw` repaired over the defaults: a known mode and tool, axes as
+     * booleans (at least one on), every position inside the stack, ranges
+     * ordered and at least a voxel wide. A cut saved as a section or slab
+     * (gone since 2026-10-13) opens as the whole stack.
      */
-    function clean(raw, d, space = null) {
-        const base = defaults(d, space);
+    function clean(raw, d) {
+        const base = defaults(d);
         const src = merge(base, isObject(raw) ? raw : {});
         const out = {};
         out.mode = MODES.includes(src.mode) ? src.mode : "full";
-        out.axes = {};
-        for (const axis of AXES) out.axes[axis] = src.axes?.[axis] === true;
-        if (!AXES.some((axis) => out.axes[axis])) out.axes.z = true;
+        out.tool = TOOLS.includes(out.mode) ? out.mode : (TOOLS.includes(src.tool) ? src.tool : "cutaway");
+        out.axes = cleanAxes(src.axes, TOOL_AXES[out.tool]);
+        out.axesBy = {};
+        for (const tool of TOOLS) out.axesBy[tool] = cleanAxes(src.axesBy?.[tool], TOOL_AXES[tool]);
         out.crop = {
             x: range(src.crop?.x, 0, d.width, base.crop.x, { gap: 1 }),
             y: range(src.crop?.y, 0, d.height, base.crop.y, { gap: 1 }),
@@ -218,30 +196,8 @@
                 keep: KEEPS.includes(entry.keep) ? entry.keep : "hi",
             };
         }
-        const thick = isObject(src.slab?.thickness) ? src.slab.thickness : {};
-        out.slab = {
-            thickness: {
-                x: clamp(int(thick.x, base.slab.thickness.x), 1, Math.max(1, Math.round(d.width))),
-                y: clamp(int(thick.y, base.slab.thickness.y), 1, Math.max(1, Math.round(d.height))),
-                z: clamp(int(thick.z, base.slab.thickness.z), 1, d.depth),
-            },
-            composite: COMPOSITES.includes(src.slab?.composite) ? src.slab.composite : "max",
-        };
-        out.opacity = clamp(num(src.opacity, 1), 0.05, 1);
-        out.context = clamp(num(src.context, CONTEXT), 0, 1);
         out.face = src.face === true;
-        out.linkPanes = src.linkPanes === true;
         return out;
-    }
-
-    /** Where the section and slab planes are: the view's plane and sections. */
-    function positions(state, d) {
-        const section = state?.section || {};
-        return {
-            x: clamp(num(section.x, Math.floor(d.width / 2)), 0, d.width - 1),
-            y: clamp(num(section.y, Math.floor(d.height / 2)), 0, d.height - 1),
-            z: clamp(int(state?.z, Math.floor(d.depth / 2)), 0, d.depth - 1),
-        };
     }
 
     /** The active axes, x before y before z. */
@@ -260,19 +216,13 @@
      *             one-axis cutaway)
      *     hole    {x, y, z: [lo, hi]} | null  the corner a cutaway over two
      *             or three axes takes out of the box
-     *     planes  [{axis, at, lo, hi}]  each section's plane (lo = hi = at)
-     *             or slab's interval, at its centre `at`
-     *     cut     what is drawn beyond the box (CUT), op (OPS), context,
-     *             opacity, face
-     *
-     * `pos` is `positions(state, d)`.
+     *     cut     what is drawn beyond the box (CUT), face
      */
-    function resolve(inspect, pos, d) {
+    function resolve(inspect, d) {
         const mode = inspect?.mode || "full";
         const axes = active(inspect);
         const box = whole(d);
-        const out = { mode, axes: mode === "full" ? [] : axes, box, hole: null, planes: [],
-                      cut: CUT.none, op: 0, context: 1, opacity: 1, face: false };
+        const out = { mode, axes: mode === "full" ? [] : axes, box, hole: null, cut: CUT.none, face: false };
         if (mode === "crop") {
             for (const axis of axes) {
                 const [lo, hi] = inspect.crop[axis];
@@ -298,20 +248,8 @@
                 }
                 out.hole = hole;
             }
-        } else if (mode === "section" || mode === "slab") {
-            const single = mode === "section" || inspect.slab?.composite === "single";
-            for (const axis of axes) {
-                const at = pos[axis] + 0.5;
-                const half = single ? 0 : inspect.slab.thickness[axis] / 2;
-                const top = box[axis][1];
-                out.planes.push({ axis, at, lo: clamp(at - half, 0, top), hi: clamp(at + half, 0, top) });
-            }
-            out.cut = axes.length ? (single ? CUT.planes : CUT.slabs) : CUT.none;
-            out.op = single ? 0 : OPS[inspect.slab.composite] || OPS.max;
-            out.context = inspect.context;
-            out.opacity = mode === "section" ? inspect.opacity : 1;
         }
-        if ((mode === "crop" || mode === "cutaway") && inspect.face && axes.length) {
+        if (mode !== "full" && inspect.face && axes.length) {
             out.face = true;
             out.cut = CUT.faces;
         }
@@ -335,31 +273,10 @@
         const pair = (ranges) => [AXES.map((axis) => t(axis, ranges[axis][0])),
                                   AXES.map((axis) => t(axis, ranges[axis][1]))];
         const [lo, hi] = pair(resolved.box);
-        const out = {
-            lo, hi,
-            hole: null,
-            plane: [0.5, 0.5, 0.5],
-            planeOn: [0, 0, 0],
-            half: [0, 0, 0],
-            cut: resolved.cut,
-            op: resolved.op,
-            context: resolved.context,
-            opacity: resolved.opacity,
-            face: resolved.face ? 1 : 0,
-        };
+        const out = { lo, hi, hole: null, cut: resolved.cut, face: resolved.face ? 1 : 0 };
         if (resolved.hole) {
             const [hlo, hhi] = pair(resolved.hole);
             out.hole = { lo: hlo, hi: hhi };
-        }
-        for (const plane of resolved.planes) {
-            const i = AXES.indexOf(plane.axis);
-            // The middle of the interval drawn -- not `at`: a slab cut short
-            // by the stack's edge is not centred on its plane any more.
-            const lo = t(plane.axis, plane.lo);
-            const hi = t(plane.axis, plane.hi);
-            out.plane[i] = (lo + hi) / 2;
-            out.planeOn[i] = 1;
-            out.half[i] = Math.max(0, (hi - lo) / 2);
         }
         return out;
     }
@@ -370,7 +287,7 @@
     }
 
     /** The kept z planes, `[z0, z1]` inclusive, of a resolution: what the
-     *  contrast is levelled over and the strip's band shows. */
+     *  contrast is levelled over. */
     function keptPlanes(resolved, d) {
         const [lo, hi] = resolved.box.z;
         return [clamp(Math.floor(lo), 0, d.depth - 1), clamp(Math.ceil(hi) - 1, 0, d.depth - 1)];
@@ -403,43 +320,29 @@
         return pair ? `${Math.round(value[0])}–${Math.round(value[1])} px` : `${Math.round(value)} px`;
     }
 
-    /** A thickness `voxels` thick along `axis`, in words. */
-    function thicknessLabel(axis, voxels, space = null) {
-        const step = stepOf(axis, space);
-        const unit = axis === "z" ? (voxels === 1 ? "plane" : "planes") : "px";
-        return step ? `${fixed(voxels * step.value)} ${step.unit}` : `${voxels} ${unit}`;
-    }
-
-    const MODE_WORDS = { full: "", cutaway: "cutaway", section: "section", slab: "slab", crop: "crop" };
+    const MODE_WORDS = { full: "", cutaway: "cutaway", crop: "crop" };
 
     /**
      * The cut in a few words, for the caption, a capture and the agent:
      * "" for the whole stack, else e.g. "crop X 120–310 µm, Z planes 4–9",
-     * "section Z z 12 · 24.0 µm", "slab X 512 px ×16 px (mean)".
+     * "cutaway X from 512 px".
      */
-    function describe(inspect, pos, d, space = null) {
+    function describe(inspect, d, space = null) {
         const mode = inspect?.mode || "full";
         if (mode === "full") return "";
         const parts = active(inspect).map((axis) => {
             const name = axis.toUpperCase();
             if (mode === "crop") return `${name} ${label(axis, inspect.crop[axis], space)}`;
-            if (mode === "cutaway") {
-                const { at, keep } = inspect.cutaway[axis];
-                return `${name} ${keep === "hi" ? "from" : "to"} ${label(axis, at, space)}`;
-            }
-            const where = label(axis, pos[axis], space);
-            if (mode === "section" || inspect.slab.composite === "single") return `${name} ${where}`;
-            return `${name} ${where} × ${thicknessLabel(axis, inspect.slab.thickness[axis], space)}`;
+            const { at, keep } = inspect.cutaway[axis];
+            return `${name} ${keep === "hi" ? "from" : "to"} ${label(axis, at, space)}`;
         });
-        const op = mode === "slab" && inspect.slab.composite !== "single"
-            ? ` (${inspect.slab.composite})` : "";
-        return `${MODE_WORDS[mode]} ${parts.join(", ")}${op}`.trim();
+        return `${MODE_WORDS[mode] || mode} ${parts.join(", ")}`.trim();
     }
 
     global.PlexoraInspectGeometry = {
-        MODES, AXES, COMPOSITES, CUT, OPS, CONTEXT,
-        dims, spacing, defaults, thicknessFor, merge, clean, positions, active, resolve,
-        toTexture, sameTexture, keptPlanes, label, thicknessLabel, describe,
+        MODES, TOOLS, TOOL_AXES, AXES, CUT,
+        dims, spacing, defaults, merge, clean, active, resolve,
+        toTexture, sameTexture, keptPlanes, label, describe,
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraInspectGeometry;

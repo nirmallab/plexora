@@ -287,9 +287,13 @@ def tools_for(app, project) -> list[Plugin]:
     way to tell which one you got.
 
     A Paid plugin this licence does not unlock is not offered (`unlocked`).
+
+    In menu order (`Plugin.order`); the sort is stable, so ties keep discovery
+    order.
     """
-    return [p for p in tools(app)
-            if not p.is_layer_section and p.requires.applies_to(project) and unlocked(p)]
+    offered = [p for p in tools(app)
+               if not p.is_layer_section and p.requires.applies_to(project) and unlocked(p)]
+    return sorted(offered, key=lambda p: p.order)
 
 
 def layer_sections_for(app, project) -> list[Plugin]:

@@ -94,13 +94,10 @@ move clear of a tall XZ pane. Sizes are yours, not the image's: they hold across
 and restarts.
 
 **The strip follows the mode, and the cog.** Every control on the strip is one that does
-something now. In 3-D the plane rail's thumb, its hover mark and the Sections button go: the
-plane under it is frozen there. The rail is the 3-D view's cut along Z: over the whole stack
-drag a band end to crop the planes (the band then moves too); a Z section's or slab's plane is
-the thumb, picked and dragged; a Z cutaway's cut is the band's one handle. A press outside the
-planes drawn does nothing, and with nothing cut along Z the rail does nothing. `]` / `[` and
-Shift+wheel move whatever is cut along Z. The readout under the rail is a label ("all", "4–30",
-"z 12"). The cog below it opens the settings for the mode on screen:
+something now. In 3-D the plane rail and the Sections button go (the plane under the view is
+frozen there), and Cut and Crop come; the strip is only as tall as its buttons. `]` / `[` and
+Shift+wheel move whatever is cut along Z. There is no readout under the rail in any mode. The
+cog opens the settings for the mode on screen:
 - on a plane, Show (one plane or a projection's operation);
 - in a projection, the operation, the percentile, the planes and Follow;
 - in 3-D, MIP/Additive, the view, the cut (in words, Whole stack, Cut… for the dock), how Play
@@ -134,26 +131,28 @@ zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower
 frames come slowly; it is redrawn in full once it rests.
 
 *Contrast that follows the cut.* In 3-D, crop Z to a dim part of the stack (say the deepest few
-planes), or show a Z section or slab with Around at 0: channels whose range you have not set
+planes), or cut along Z: channels whose range you have not set
 re-level to the planes kept, about a quarter of a second after you stop dragging, and back to the
 whole stack's when you widen it again. A channel whose range you set (or that was saved) is left
 alone.
 
-**Slice & Clip** (docs/internal/3d/SLICE_CLIP.md). In 3-D, the dock under the gizmo cuts the stack:
-- **Cut modes.** Pick Cutaway, Sections, Slabs or Crop, then the axes.
-  - Crop: each axis keeps a range; X+Y keeps the box they make.
-  - Cutaway: each axis takes a side off; X+Y takes out one corner, so the inside shows.
-  - Sections: real-intensity planes, X+Y a cross of them, the rest of the stack dimmed (Around).
-  - Slabs: thick slices combined along each ray. Try Mean against Maximum on a dense channel.
-- **Dragging, and the camera.** Drag a slider: the picture follows with nothing saved, and the
-  release is one undo step (the dock's arrows, or Cmd/Ctrl+Z over the view or the dock). Drag a
-  handle's grip in the view: the face follows the hand at any angle, and the camera never moves.
-  Esc puts a drag back.
-- **Settings are kept.** Switch Slab → Whole stack → Slab: the slab is where it was. Reload: the
-  cut is too.
+**Slice & Clip** (docs/internal/3d/SLICE_CLIP.md). In 3-D, the strip's Cut and Crop cut the stack:
+- **The two tools.** Press Cut (scissors): the stack loses a side along X, and the cut panel
+  slides out to the strip's left. Press Crop: the panel changes in place, cropping on X, Y and Z.
+  - Cut: each axis takes a side off; X+Y takes out one corner, so the inside shows. The flip
+    beside an axis keeps the other side; its full half is the side kept.
+  - Crop: each axis keeps a range; X+Y+Z keeps a box.
+- **Dragging, and the camera.** Drag a handle's grip in the view: the face follows the hand at
+  any angle, and the camera never moves. Esc puts a drag back. The release is one undo step (the
+  panel's Undo, or Cmd/Ctrl+Z over the view or the panel).
+- **Settings are kept.** Change Cut's axes, switch to Crop and back: Cut's axes, flips and
+  faces are as they were. Collapse the panel (›, Esc, or the lit tool again): the cut stays.
+  Press `O` with the pointer anywhere: the whole stack, and the panel stays out, dimmed, its
+  `O` key cap lit; `O` again (or the panel's Show/Hide): the cut, exactly as it was. Hide it
+  and click an axis or Reset: the cut shows again with the change. × closes the panel and
+  goes back to the whole stack. Reload: the cut is kept.
 - **Surfaces.** With a cell surface shown, the meshes are cut with the voxels, and a cut-open
   cell shows a flat cap.
-- **In 2-D.** Back in 2-D the plane on screen is the Z section's.
 
 **Which way it faces, and turning about one axis.** In 3-D a small X / Y / Z gizmo sits in the
 top-right corner (x red, y green, z blue), faint until you hover it, move the view or lock an

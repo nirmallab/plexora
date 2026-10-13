@@ -50,9 +50,10 @@ function stack({ mode = "plane", follow = true, op = "max", z0 = 3, z1 = 9, dept
         zStep: () => ({ value: 2, unit: "µm" }),
         get: () => ({ mode, z: 6, t: 0, layout, slab: { z0, z1, op, follow, q: 95 },
                       volume: show ? { show } : {},
-                      inspect: { mode: "full", axes: { x: false, y: false, z: true },
+                      inspect: { mode: "full", tool: "cutaway", axes: { x: true, y: false, z: false },
+                                 axesBy: { cutaway: { x: true, y: false, z: false }, crop: { x: true, y: true, z: true } },
                                  crop: { z: [0, depth - 1] }, cutaway: { z: { at: 20, keep: "hi" } },
-                                 slab: { thickness: { x: 8, y: 8, z: 4 }, composite: "max" }, ...(inspect || {}) } }),
+                                 ...(inspect || {}) } }),
         set: () => { sets += 1; },
     };
 }
@@ -64,18 +65,18 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // -- the strip ------------------------------------------------------------------
 
-check("one plane: modes, sections, play, the rail with its thumb and hover mark, readout, cog",
+check("one plane: modes, sections, play, the rail with its thumb and hover mark, cog",
       same(strip(stack()), ["mode.plane", "mode.slab", "mode.volume", "sections", "play", "rail",
-                            "thumb", "hover", "readout", "cog"]), strip(stack()).join());
+                            "thumb", "hover", "cog"]), strip(stack()).join());
 check("a projection adds its band",
       same(strip(stack({ mode: "slab" })), ["mode.plane", "mode.slab", "mode.volume", "sections", "play",
-                                            "rail", "band", "thumb", "hover", "readout", "cog"]));
+                                            "rail", "band", "thumb", "hover", "cog"]));
 const volume = strip(stack({ mode: "volume", follow: false }));
-check("3-D: no sections, no plane thumb, no hover mark -- the plane is frozen there",
-      same(volume, ["mode.plane", "mode.slab", "mode.volume", "play", "rail", "band", "readout", "cog"]),
+check("3-D: no sections, no rail -- the plane is frozen there; Cut and Crop instead",
+      same(volume, ["mode.plane", "mode.slab", "mode.volume", "tool.cutaway", "tool.crop", "play", "cog"]),
       volume.join());
 check("a colour stack is one plane at a time: no modes, no sections",
-      same(strip(stack({ color: true })), ["play", "rail", "thumb", "hover", "readout", "cog"]));
+      same(strip(stack({ color: true })), ["play", "rail", "thumb", "hover", "cog"]));
 check("without WebGL2 there is no 3-D button",
       !strip(stack(), { ...page, volumeSupported: false }).includes("mode.volume"));
 check("without section panes there is no Sections button",
@@ -95,9 +96,9 @@ check("Play steps planes; slides a fixed projection's range; plays frames; turns
       && config(stack({ depth: 1, frames: 9 }), "play").kind === "frames"
       && config(stack({ mode: "volume" }), "play").kind === "rotate");
 const railIn = (vs) => config(vs, "rail");
-check("the rail picks a plane everywhere but 3-D, where only the clip range moves",
-      railIn(stack()).plane === true && railIn(stack({ mode: "volume" })).plane === false
-      && railIn(stack({ mode: "volume" })).bandMove === true && railIn(stack({ mode: "volume" })).band === true);
+check("the rail picks a plane over a plane and a projection; a band only over a projection",
+      railIn(stack()).plane === true && railIn(stack()).band === false
+      && railIn(stack({ mode: "slab" })).plane === true && railIn(stack({ mode: "slab" })).band === true);
 check("a following projection's band is resized, not moved; a fixed one's is moved",
       railIn(stack({ mode: "slab", follow: true })).bandMove === false
       && railIn(stack({ mode: "slab", follow: false })).bandMove === true);
@@ -112,8 +113,8 @@ check("...and the percentile only when it is one",
       popover(stack({ mode: "slab", op: "pct" })).includes("projection.percentile")
       && !popover(stack({ mode: "slab", op: "mean" })).includes("projection.percentile"));
 const vol = popover(stack({ mode: "volume" }));
-check("3-D: composite, view, planes drawn, how Play turns -- and no projection",
-      same(vol, ["volume.composite", "volume.view", "volume.clip", "rotate.speed", "rotate.axis",
+check("3-D: composite, view, how Play turns -- and no projection",
+      same(vol, ["volume.composite", "volume.view", "rotate.speed", "rotate.axis",
                  "rotate.direction", "card"]), vol.join());
 check("surfaces once there is one; a new one wherever Surface Studio is",
       popover(stack({ mode: "volume" }), { ...page, surfacesAvailable: true, surfaceCount: 2, surfaceStudio: true })
@@ -142,75 +143,57 @@ check("into 3-D is just the mode: the 3-D view keeps its own cut, the projection
 check("back to a plane is just the mode",
       same(R.transition(R.context(stack({ mode: "volume" }), page), "plane"), { mode: "plane" }));
 
-// -- the 3-D cut: the rail and the dock (views/volumeDock.js) ------------------------
+// -- the 3-D cut: the strip's tools and the panel (views/volumeDock.js) ----------------
 
 const cutIn = (inspect, extra = {}) => stack({ mode: "volume", inspect, ...extra });
 const dock = (vs, extras = page) => ids(vs, "dock", extras);
-const RAIL3D = ["mode.plane", "mode.slab", "mode.volume", "play", "rail"];
-check("3-D, whole: the rail is the planes drawn, its band resized and moved -- a crop it becomes",
-      same(strip(cutIn({})), [...RAIL3D, "band", "readout", "cog"])
-      && same(railIn(cutIn({})), { plane: false, band: true, bandMove: true, cut: "full" }));
-check("a Z section: the rail's thumb is its plane, picked and dragged; no band",
-      same(strip(cutIn({ mode: "section" })), [...RAIL3D, "thumb", "hover", "readout", "cog"])
-      && railIn(cutIn({ mode: "section" })).plane === true && railIn(cutIn({ mode: "section" })).band === false);
-check("an X section only: nothing along Z on the rail",
-      same(strip(cutIn({ mode: "section", axes: { x: true, z: false } })), [...RAIL3D, "readout", "cog"]));
-check("a Z slab: its planes as a band and its plane as the thumb; the thumb moves it",
-      same(strip(cutIn({ mode: "slab" })), [...RAIL3D, "band", "thumb", "hover", "readout", "cog"])
-      && railIn(cutIn({ mode: "slab" })).plane === true && railIn(cutIn({ mode: "slab" })).band === false);
-check("a Z crop's range is resized and moved; a Z cutaway's one cut moves",
-      railIn(cutIn({ mode: "crop" })).bandMove === true
-      && railIn(cutIn({ mode: "cutaway" })).band === true && railIn(cutIn({ mode: "cutaway" })).bandMove === false);
+const STRIP3D = ["mode.plane", "mode.slab", "mode.volume", "tool.cutaway", "tool.crop", "play", "cog"];
+const CUTS = [{}, { mode: "crop" }, { mode: "cutaway" }, { mode: "cutaway", axes: { x: false, z: true } }];
+check("3-D, whatever the cut: Cut and Crop on the strip, no rail",
+      CUTS.every((inspect) => same(strip(cutIn(inspect)), STRIP3D)),
+      CUTS.map((inspect) => strip(cutIn(inspect)).join()).join(" | "));
+check("no Cut or Crop where the page cannot cut, nor outside 3-D",
+      !strip(cutIn({}), { ...page, cutSupported: false }).some((id) => id.startsWith("tool."))
+      && !strip(stack()).some((id) => id.startsWith("tool."))
+      && !strip(stack({ mode: "slab" })).some((id) => id.startsWith("tool.")));
 check("the popover's planes row is the planes the cut keeps",
-      R.context(cutIn({ mode: "crop", crop: { z: [4, 9] } }), page).keptZ0 === 4
-      && R.context(cutIn({ mode: "crop", crop: { z: [4, 9] } }), page).allPlanes === false
+      R.context(cutIn({ mode: "crop", axes: { x: false, z: true }, crop: { z: [4, 9] } }), page).keptZ0 === 4
+      && R.context(cutIn({ mode: "crop", axes: { x: false, z: true }, crop: { z: [4, 9] } }), page).allPlanes === false
       && R.context(cutIn({}), page).allPlanes === true);
+check("the context names the tool last chosen, kept while it is off",
+      R.context(cutIn({ mode: "full", tool: "crop" }), page).cutTool === "crop"
+      && R.context(cutIn({ mode: "cutaway" }), page).cutTool === "cutaway");
+check("the popover no longer carries the cut (the strip's Cut and Crop do)",
+      !popover(cutIn({ mode: "crop" })).some((id) => id.startsWith("volume.clip") || id.startsWith("cut.")));
 
-const TOOLS = ["cut.handles", "cut.reset", "cut.history", "cut.interpolation", "cut.handleOpacity"];
-check("the dock in 2-D: nothing", dock(stack()).length === 0 && dock(stack({ mode: "slab" })).length === 0);
-check("whole: the mode switch, undo, how voxels are read",
-      same(dock(cutIn({})), ["cut.mode", "cut.history", "cut.interpolation"]), dock(cutIn({})).join());
-check("a Z cutaway: the axes, its cut, the cut faces, the tools",
-      same(dock(cutIn({ mode: "cutaway" })), ["cut.mode", "cut.axes", "cut.z", "cut.face", ...TOOLS]),
-      dock(cutIn({ mode: "cutaway" })).join());
-check("X+Y sections: two positions, their opacity, the surroundings, the panes",
-      same(dock(cutIn({ mode: "section", axes: { x: true, y: true, z: false } })),
-           ["cut.mode", "cut.axes", "cut.x", "cut.y", "cut.opacity", "cut.context", ...TOOLS, "cut.link"]),
-      dock(cutIn({ mode: "section", axes: { x: true, y: true, z: false } })).join());
-check("a Z slab: how it combines and how thick, the surroundings",
-      same(dock(cutIn({ mode: "slab" })),
-           ["cut.mode", "cut.axes", "cut.z", "cut.combine", "cut.thickness", "cut.context", ...TOOLS, "cut.link"]),
-      dock(cutIn({ mode: "slab" })).join());
-check("a single-plane slab has no thickness",
-      !dock(cutIn({ mode: "slab", slab: { thickness: { z: 4 }, composite: "single" } })).includes("cut.thickness"));
-check("an X+Z crop: two ranges, the cut faces",
-      same(dock(cutIn({ mode: "crop", axes: { x: true, z: true } })),
-           ["cut.mode", "cut.axes", "cut.x", "cut.z", "cut.face", ...TOOLS]),
-      dock(cutIn({ mode: "crop", axes: { x: true, z: true } })).join());
-check("X+Y shows exactly the X and Y rows, X+Z the X and Z, Y+Z the Y and Z",
-      ["xy", "xz", "yz"].every((pair) => {
-          const axes = { x: pair.includes("x"), y: pair.includes("y"), z: pair.includes("z") };
-          return same(dock(cutIn({ mode: "crop", axes })).filter((id) => /^cut\.[xyz]$/.test(id)),
-                      [...pair].map((a) => `cut.${a}`));
-      }));
+const PANEL = ["cut.axes", "cut.face", "cut.handles", "cut.reset", "cut.history", "cut.interpolation",
+               "cut.handleOpacity", "cut.toggle"];
+check("the panel in 2-D: nothing", dock(stack()).length === 0 && dock(stack({ mode: "slab" })).length === 0);
+check("the cut hidden: the same panel, for the tool last chosen (it stays out until its ×)",
+      same(dock(cutIn({ mode: "full", tool: "crop" })), PANEL)
+      && R.configOf("cut.axes", R.context(cutIn({ mode: "full", tool: "crop" }), page)).flip === false
+      && R.configOf("cut.axes", R.context(cutIn({ mode: "full", tool: "cutaway" }), page)).flip === true,
+      dock(cutIn({})).join());
+check("a Cut: the axes, then faces, handles, reset and undo, then voxels and handles' strength",
+      same(dock(cutIn({ mode: "cutaway" })), PANEL), dock(cutIn({ mode: "cutaway" })).join());
+check("a Crop: exactly the same panel", same(dock(cutIn({ mode: "crop", axes: { x: true, y: true, z: true } })), PANEL),
+      dock(cutIn({ mode: "crop" })).join());
+check("only a Cut flips the side each axis keeps",
+      R.configOf("cut.axes", R.context(cutIn({ mode: "cutaway" }), page)).flip === true
+      && R.configOf("cut.axes", R.context(cutIn({ mode: "crop" }), page)).flip === false);
 const surfacesOnly = { volume: false, surfaces: true };
-check("surfaces only: nothing about voxels -- no combining, no surroundings, no faces",
-      !dock(cutIn({ mode: "slab" }, { show: surfacesOnly })).some((id) => ["cut.combine", "cut.context",
-                                                                          "cut.interpolation"].includes(id))
-      && !dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).includes("cut.face")
-      && dock(cutIn({ mode: "slab" }, { show: surfacesOnly })).includes("cut.thickness"));
-check("no section panes: no linking them",
-      !dock(cutIn({ mode: "section" }), { ...page, sectionsSupported: false }).includes("cut.link"));
-check("a page that cannot cut has no dock rows", dock(cutIn({ mode: "crop" }), { ...page, cutSupported: false }).length === 0);
-check("each axis row says what it does in the mode",
-      R.configOf("cut.x", R.context(cutIn({ mode: "crop", axes: { x: true } }), page)).kind === "range"
-      && R.configOf("cut.x", R.context(cutIn({ mode: "cutaway", axes: { x: true } }), page)).kind === "cut"
-      && R.configOf("cut.x", R.context(cutIn({ mode: "slab", axes: { x: true } }), page)).kind === "plane");
-const modesShown = ["full", "cutaway", "section", "slab", "crop"].map((mode) => dock(cutIn({ mode })));
-check("never an incompatible row: no slab rows outside Slab, no faces outside Crop and Cutaway",
-      modesShown.every((rows, i) => (i === 3 || !rows.some((id) => id === "cut.combine" || id === "cut.thickness"))
-          && ((i === 1 || i === 4) || !rows.includes("cut.face"))
-          && (i === 2 || !rows.includes("cut.opacity"))));
+check("surfaces only: nothing about voxels -- no faces, no Voxels",
+      !dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).some((id) => ["cut.face", "cut.interpolation"].includes(id))
+      && dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).includes("cut.axes"));
+check("without the viewer prefs, no handle controls",
+      !dock(cutIn({ mode: "cutaway" }), { ...page, prefs: null }).some((id) => id.startsWith("cut.handle")));
+check("a page that cannot cut has no panel rows", dock(cutIn({ mode: "crop" }), { ...page, cutSupported: false }).length === 0);
+check("no section, slab, mode or position rows are left",
+      R.entries().every((entry) => !/^cut\.(mode|[xyz]|combine|thickness|opacity|context|link)$/.test(entry.id)
+          && entry.id !== "volume.clip"));
+check("no state flag for sections or slabs is left",
+      !Object.keys(R.FLAGS).some((flag) => /^cut\.(section|slab|planes|combines|box)$/.test(flag))
+      && same(R.CUTS, ["full", "cutaway", "crop"]));
 
 // -- rules ------------------------------------------------------------------------------
 

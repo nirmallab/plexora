@@ -41,11 +41,8 @@ PlexoraViewControls.register({
   - `following`, `fixed` (a projection that follows the plane, or does not);
   - `rotating`, `sectionsOn`, `allPlanes`, `percentile`, `gridOn`;
   - the 3-D view's cut (docs/internal/3d/SLICE_CLIP.md), true only in 3-D:
-    - `cut.full`, `cut.on`, `cut.cutaway`, `cut.section`, `cut.slab`, `cut.crop`;
-    - `cut.planes` (section or slab), `cut.box` (crop or cutaway), `cut.combines` (a slab
-      that is not a single plane);
-    - `axis.x`, `axis.y`, `axis.z`;
-    - `cut.noPlane`, `cut.noBand`: nothing on the rail to pick, or no range on it.
+    - `cut.full`, `cut.on` (a tool is cutting), `cut.cutaway`, `cut.crop`;
+    - `axis.x`, `axis.y`, `axis.z`.
 - **Typos fail at load.** An unknown capability, flag, mode or duplicate id throws at
   `register`.
 - **No fixed point.** `excludes` and `depends` may name flags, or entries that have no
@@ -54,7 +51,8 @@ PlexoraViewControls.register({
 - **`config(ctx)`** says what a control *does* in a mode, beside whether it shows. Play's
   `kind` is `planes`, `band` (slide a fixed projection's range), `frames` or `rotate`. The
   rail's `{plane, band, bandMove}` says whether a press picks a plane, whether the band
-  ends resize and whether the band moves.
+  ends resize and whether the band moves. The cut panel's `cut.axes` says `{flip}`: true
+  for a Cut, whose axes each flip the side they keep.
 
 ## Resolving
 
@@ -82,11 +80,11 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 |---|---|---|---|---|---|
 | Mode buttons plane / projection / 3-D | ✓ | ✓ | ✓ | ✓ | depth, not colour; 3-D also WebGL2 |
 | Sections | ✓ | ✓ | ✓ | – | the panes exist, not colour |
+| Cut, Crop (open the cut panel) | – | – | – | ✓ | depth, cut |
 | Play | planes | slides the range | planes | **turns the stack** | depth or frames (single plane: frames) |
-| Rail | picks a plane | range moves/resizes | range resizes | **the cut along Z** (below); a press outside it does nothing | depth |
-| Band | – | ✓ | ✓ | whole stack, a Z crop or cutaway, a combining Z slab | depth |
-| Thumb, hover mark | ✓ | ✓ | ✓ | a Z section's or slab's plane | depth |
-| Readout (a `role=status` label, not a button) | ✓ | ✓ | ✓ | ✓ | depth |
+| Rail | picks a plane | range moves/resizes | range resizes | – (the cut is the panel's and the handles') | depth |
+| Band | – | ✓ | ✓ | – | depth |
+| Thumb, hover mark | ✓ | ✓ | ✓ | – | depth |
 | Cog | ✓ | ✓ | ✓ | ✓ | depth or frames |
 | Frame steps | T | T | T | T | frames |
 | Keys `]` `[`, Shift+wheel | plane | range | plane | **the cut along Z** (`viewState.step`) | depth |
@@ -94,7 +92,6 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Popover: Percentile | – | when pct | when pct | – | |
 | Popover: Planes z0–z1, Follow | – | ✓ | ✓ | – | |
 | Popover: Composite, View | – | – | – | ✓ | WebGL2 |
-| Popover: Cut (in words, Whole stack, Cut… opens the dock) | – | – | – | ✓ | cut |
 | Popover: Speed, About, Direction (Play's turn) | – | – | – | ✓ | prefs |
 | Popover: Grid, its options while on | – | – | – | ✓ | the 3-D view's grid |
 | Popover: Surfaces (show, light) / New / Import | – | – | – | ✓ | a surface / Surface Studio / the layers |
@@ -102,33 +99,28 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Thresholding's View Plane/Slab row (`gating.view`) | ✓ | ✓ | ✓ | – | registered by the plugin |
 | Depth card: projection rows (`card.projection`) | ✓ | ✓ | ✓ | – | depth, not colour |
 
-In 3-D the rail is the cut along Z (`rail` config `{plane, band, bandMove, cut}`):
+In 3-D the strip has no rail (2026-10-13) and is only as tall as its buttons: the mode
+buttons, Cut and Crop, Play and the cog. `]`/`[` and Shift+wheel still move a cut along Z.
+There is no readout in any mode: what is drawn is said in the Depth card and in every
+capture.
 
-| Cut | Rail |
-|---|---|
-| whole stack | the band is every plane; an end resized makes a Z crop; the band moves |
-| Z crop | its range, resized and moved |
-| Z cutaway | its range; only the end that is the cut moves |
-| Z section, Z slab | the thumb is the plane, picked and dragged (a combining slab's planes as a band) |
-| nothing cut along Z | nothing; a press does nothing |
+The cut panel (views/volumeDock.js) is the `dock` surface. It opens to the strip's left from
+Cut or Crop and stays out until its › or ×, also while `O` hides the cut. Its rows are the
+tool's (`cutTool`: the tool cutting, or else the one last chosen):
 
-The 3-D dock (views/volumeDock.js) is the `dock` surface, shown only in 3-D:
+| Control | Cut | Crop | Needs |
+|---|---|---|---|
+| Axes X / Y / Z (the last stays on) | ✓, X at first | ✓, X Y Z at first | cut |
+| Flip, beside each axis cut | ✓ | – | |
+| Solid cut faces | ✓ | ✓ | volumeDrawn |
+| Handles shown (eye) | ✓ | ✓ | prefs |
+| Reset, Undo (Cmd/Ctrl+Z; Shift redoes) | ✓ | ✓ | |
+| Voxels: smooth or blocks | ✓ | ✓ | volumeDrawn |
+| Handles' strength | ✓ | ✓ | prefs |
+| `O` Show/Hide (the cut hidden or shown, the panel left out) | ✓ | ✓ | |
 
-| Row | Full | Cutaway | Section | Slab | Crop | Needs |
-|---|---|---|---|---|---|---|
-| Cut (the mode) | ✓ | ✓ | ✓ | ✓ | ✓ | cut |
-| Axes | – | ✓ | ✓ | ✓ | ✓ | |
-| X / Y / Z (one per active axis) | – | the cut, kept side | the plane | the plane | the range | |
-| Combine | – | – | – | ✓ | – | volumeDrawn |
-| Thick | – | – | – | unless one plane | – | |
-| Opacity | – | – | ✓ | – | – | |
-| Around (the context) | – | – | ✓ | ✓ | – | volumeDrawn |
-| Solid cut faces | – | ✓ | – | – | ✓ | volumeDrawn |
-| Handles, Reset | – | ✓ | ✓ | ✓ | ✓ | (handles: prefs) |
-| Undo, redo | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| More: Voxels | ✓ | ✓ | ✓ | ✓ | ✓ | volumeDrawn |
-| More: handles' strength | – | ✓ | ✓ | ✓ | ✓ | prefs |
-| More: panes follow the sections | – | – | ✓ | ✓ | – | sections |
+While the cut is hidden the panel's axes and actions are dimmed (`is-off`) and the `O` key cap
+is lit; using any of them shows the cut again with the change.
 
 Where values live is unchanged:
 

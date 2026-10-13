@@ -350,9 +350,9 @@ def test_a_mirror_with_no_viewer_turns_itself_off_and_the_session_goes_on(served
 
 
 def test_the_3d_view_is_cut_in_image_units(served):
-    """viewer_set_inspect: a crop, a slab, a cutaway reach the tab as the
-    browser's cut (services/inspectGeometry.js) takes them -- pixels across x
-    and y, planes along z -- and the browser's answer comes back."""
+    """viewer_set_inspect: a crop, a cutaway, the cut faces reach the tab as
+    the browser's cut (services/inspectGeometry.js) takes them -- pixels
+    across x and y, planes along z -- and the browser's answer comes back."""
     session = AgentSession()
     with FakeTab() as tab:
         cut = invoke(session, "viewer_set_inspect",
@@ -363,14 +363,13 @@ def test_the_3d_view_is_cut_in_image_units(served):
         assert sent["arguments"]["mode"] == "crop" and sent["arguments"]["axes"] == ["x", "z"]
         assert sent["arguments"]["crop"] == {"x": [100.0, 600.0], "z": [4.0, 9.0]}
         assert cut["result"]["receipt"]["persistent_state"] == "none"
-        sliced = invoke(session, "viewer_set_inspect",
-                        {"mode": "slab", "axes": ["z"], "z": 12, "thickness": {"z": 4},
-                         "composite": "mean", "context": 0},
-                        link=served)
-        assert sliced["ok"], sliced
+        faced = invoke(session, "viewer_set_inspect", {"face": True}, link=served)
+        assert faced["ok"], faced
         sent = [c for c in tab.seen if c["type"] == "set_inspect"][-1]["arguments"]
-        assert sent == {"mode": "slab", "axes": ["z"], "z": 12, "thickness": {"z": 4.0},
-                        "composite": "mean", "context": 0.0}
+        assert sent == {"face": True}
+        whole = invoke(session, "viewer_set_inspect", {"mode": "full"}, link=served)
+        assert whole["ok"], whole
+        assert [c for c in tab.seen if c["type"] == "set_inspect"][-1]["arguments"] == {"mode": "full"}
         opened = invoke(session, "viewer_set_inspect",
                         {"mode": "cutaway", "axes": ["x", "y"],
                          "cutaway": {"x": {"at": 800}, "y": {"at": 300, "keep": "lo"}}},
@@ -388,14 +387,20 @@ def test_a_cut_that_cannot_be_is_refused_before_the_tab(served):
         assert invoke(session, "viewer_set_inspect", {}, link=served)["error"]["code"] == "invalid_input"
         wedge = invoke(session, "viewer_set_inspect", {"mode": "wedge"}, link=served)
         assert wedge["error"]["code"] == "invalid_input"
-        thin = invoke(session, "viewer_set_inspect", {"thickness": {"z": 0}}, link=served)
-        assert thin["error"]["code"] == "invalid_input"
+        # The section and slab cuts are gone, and so is everything only they took.
+        for mode in ("section", "slab"):
+            gone = invoke(session, "viewer_set_inspect", {"mode": mode, "axes": ["z"]}, link=served)
+            assert gone["error"]["code"] == "invalid_input", mode
+        for argument in ({"thickness": {"z": 4}}, {"composite": "mean"}, {"opacity": 0.5},
+                         {"context": 0.2}, {"z": 3}, {"section_x": 10}, {"section_y": 10}):
+            refused = invoke(session, "viewer_set_inspect", {"mode": "crop", **argument}, link=served)
+            assert refused["error"]["code"] == "invalid_input", argument
         assert not any(c["type"] == "set_inspect" for c in tab.seen)
 
 
 def test_a_z_step_can_stay_in_the_3d_view(served):
-    """viewer_set_z with mode 'keep' moves z and leaves the view as it is: in
-    3-D, the Z section or slab moves; by default it shows that one plane."""
+    """viewer_set_z with mode 'keep' moves z and leaves the view as it is (a
+    projection, the 3-D view); by default it shows that one plane."""
     session = AgentSession()
     with FakeTab() as tab:
         assert invoke(session, "viewer_set_z", {"z": 5, "mode": "keep"}, link=served)["ok"]

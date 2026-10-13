@@ -43,9 +43,9 @@ function viewer() {
     const calls = { set: [], slot: [], transform: [], fit: [], saves: 0 };
     const state = { t: 0, z: 3, mode: "plane", layout: "single",
                     slab: { z0: 2, z1: 4, op: "max", follow: true, thickness: 3 },
-                    volume: { composite: "mip", opacity: {} }, section: { x: 0, y: 0 },
+                    volume: { composite: "mip", opacity: {} },
                     // As core's view state always has one (inspectGeometry.clean).
-                    inspect: { mode: "full", axes: { x: false, y: false, z: true },
+                    inspect: { mode: "full", tool: "cutaway", axes: { x: true, y: false, z: false },
                                crop: { x: [0, 1000], y: [0, 800], z: [0, 9] } } };
     const vs = {
         depth: 10, frames: 2, info: { width: 1000, height: 800, spacing: { x: { value: 0.5, unit: "µm" } } },
@@ -190,17 +190,18 @@ check("the renderer's own motion is stopped", env.renderer.spin === null && env.
 check("the clip reaches the renderer", env.renderer.clipXY && env.renderer.clipXY.x[1] === 0.5, env.renderer.clipXY);
 
 // The 3-D view's cut (core's inspect) rides with the frame's view.
-const cut = { mode: "crop", axes: { x: true, y: false, z: true }, crop: { x: [100, 600], z: [2, 5] } };
+const cut = { mode: "crop", tool: "crop", axes: { x: true, y: false, z: true }, crop: { x: [100, 600], z: [2, 5] } };
 const cutFrame = JSON.parse(JSON.stringify(volume));
 cutFrame.view.inspect = cut;
-cutFrame.view.section = { x: 400, y: 120 };
 calls.set.length = 0;
 await Scene.apply(env, cutFrame, { aspect: 16 / 9 });
-check("a frame's cut and sections reach the view, unsaved",
-      JSON.stringify(calls.set[0]?.patch?.inspect) === JSON.stringify(cut) && calls.set[0].patch.section.x === 400
+check("a frame's cut reaches the view, unsaved",
+      JSON.stringify(calls.set[0]?.patch?.inspect) === JSON.stringify(cut)
       && calls.set[0].options.save === false, calls.set[0]);
+check("…and no section position rides with it (the view state has none)",
+      calls.set[0] && !("section" in calls.set[0].patch), calls.set[0]);
 check("capture records the cut", JSON.stringify(Scene.capture(env).view.inspect) === JSON.stringify(cut)
-      && Scene.capture(env).view.section.x === 400);
+      && !("section" in Scene.capture(env).view), Scene.capture(env).view);
 calls.set.length = 0;
 await Scene.apply(env, cutFrame, { aspect: 16 / 9 });
 check("the same cut again is no revision", calls.set.length === 0, calls.set);

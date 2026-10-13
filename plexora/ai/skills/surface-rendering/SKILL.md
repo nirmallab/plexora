@@ -39,9 +39,10 @@ licence with `volume` (`volume:surfaces`); over MCP also `mcp`. A refusal's
 3. Cells of a volumetric mask: `surface_create` with `type: "label_surfaces"` (all cells, or
    `ids`). Each surface carries its cell's id, so the table's rows and the surfaces line up.
 4. Look before you conclude: `viewer_set_volume_mode`, `viewer_set_camera`, then
-   `viewer_capture`. `viewer_set_inspect` cuts the stack open -- a crop or cutaway to see
-   inside, a section through an object in its real intensities, a slab -- and the surfaces
-   are cut with it. `viewer_set_surface` isolates or highlights objects in this tab only;
+   `viewer_capture`. `viewer_set_inspect` cuts the stack open to see inside -- a cutaway
+   takes a side or a corner off, a crop keeps a box -- and the surfaces are cut with it. For
+   an object in its real intensities, look at a plane through it (`viewer_set_z`,
+   `render_sections`). `viewer_set_surface` isolates or highlights objects in this tab only;
    `surface_update` saves a look.
 5. Check it: `surface_inspect` (fragments, objects cut by the volume's edge, open objects,
    how far smoothing moved it, mesh versus voxel volume). Fix with `surface_refine`

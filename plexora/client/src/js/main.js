@@ -691,18 +691,19 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
-            // The 3-D view's dock (cutting the stack) and the handles that
-            // drag its cuts in the view (views/volumeDock.js, volumeHandles.js).
+            // The 3-D view's cut panel, beside the strip's Cut and Crop, and
+            // the handles that cut in the view (views/volumeDock.js,
+            // volumeHandles.js).
             if (volume && window.PlexoraInspect) {
                 try {
                     __plexora.volumeDock = window.PlexoraVolumeDock?.attach?.({
-                        viewState, volume, cutter: window.PlexoraInspect, extras: depthControlExtras,
+                        viewState, volume, cutter: window.PlexoraInspect, extras: depthControlExtras, strip,
                     }) || null;
                     __plexora.volumeHandles = window.PlexoraVolumeHandles?.attach?.({
                         viewState, volume, cutter: window.PlexoraInspect,
                     }) || null;
                 } catch (error) {
-                    console.error("main: the 3-D dock could not be set up", error);
+                    console.error("main: the cut panel could not be set up", error);
                 }
             }
             // Surfaces (plexora/server/surface): layers drawn in the 3-D view,

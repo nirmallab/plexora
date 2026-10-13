@@ -2846,14 +2846,16 @@
    the stage's transform-origin is, so the map appears to grow out of it, and
    the button that opened it is still under the pointer to close it again. It
    used to jump to the top-right on opening, which put the one control a user
-   had just pressed somewhere else. Open, it overlaps the frame's corner by a
-   few pixels, and reads as a tab on the map. Only the glyph changes: the
-   frame-and-box while closed, a cross while open (miniMap.js draws both). */
+   had just pressed somewhere else. Square rather than round: open, it sits
+   flush in the frame's corner -- its left and bottom edges ARE the frame's,
+   with the frame's border and corner radius -- and reads as a tab cut into the
+   map rather than a disc perched on its rim. The glyph is the other change:
+   the frame-and-box while closed, a cross while open (miniMap.js draws both). */
 .viewer-mini-map-lens {
     align-items: center;
     background: rgba(18, 24, 32, 0.82);
     border: 1px solid var(--border-subtle);
-    border-radius: 50%;
+    border-radius: var(--radius-md);
     bottom: 0;
     color: rgba(226, 232, 240, 0.72);
     cursor: pointer;
@@ -2865,8 +2867,24 @@
     pointer-events: auto;
     position: absolute;
     transition: background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-base) var(--ease-standard),
+        border-radius var(--duration-base) var(--ease-standard),
         color var(--duration-fast) var(--ease-standard);
     width: 34px;
+}
+
+/* The corners on the frame's edges go square, so the tab's sides run straight
+   into the frame's; the outer one keeps the frame's radius, the inner one a
+   small one. Opaque while open: the "you are here" box and the tissue run
+   under it, and seen through the tab they read as lines across the cross. */
+.viewer-mini-map.is-expanded .viewer-mini-map-lens {
+    background: rgb(18, 24, 32);
+    border-color: rgba(148, 163, 184, 0.34);
+    border-radius: 0 var(--radius-sm) 0 var(--radius-md);
+}
+
+.viewer-mini-map.is-expanded .viewer-mini-map-lens:hover {
+    background: rgb(31, 41, 55);
 }
 
 .viewer-mini-map-lens:hover {
@@ -3769,6 +3787,15 @@ body.sidebar-collapsed .viewer-shell,
     gap: 2px;
 }
 
+/* In 3-D, Cut and Crop under what the picture is, set off by a rule. */
+.depth-strip-cut {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: var(--space-1);
+}
+
 .depth-strip-button {
     align-items: center;
     background: transparent;
@@ -3800,7 +3827,6 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .depth-strip-button:focus-visible,
-.depth-strip-readout:focus-visible,
 .depth-strip-rail:focus-visible {
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
     outline: none;
@@ -3988,53 +4014,16 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 0.35;
 }
 
-.depth-strip-readout {
-    align-items: center;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    cursor: default;
-    display: flex;
-    flex-direction: column;
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    line-height: 1.15;
-    padding: 2px 0;
-    width: 100%;
-}
-
-/* The cog under the readout: the settings for what is drawn now
+/* The cog under the rail: the settings for what is drawn now
    (views/depthSettings.js). Lit while its popover is open. */
 .depth-strip-settings[aria-expanded="true"] {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
 
-/* In 3-D (and a fixed projection) the band is grabbed and moved. */
+/* In a fixed projection the band is grabbed and moved. */
 .depth-strip-band.is-movable {
     cursor: grab;
-}
-
-.depth-strip-readout-top {
-    color: var(--text-primary);
-    font-size: 11px;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.depth-strip-readout-bottom {
-    color: var(--text-muted);
-    white-space: nowrap;
-}
-
-/* A range ("12–135") is wider than the strip's 26px of text at the readout's
-   own size; it steps down rather than wrapping onto a third line. */
-.depth-strip-readout-bottom.is-long {
-    font-size: 8px;
-    letter-spacing: -0.02em;
 }
 
 /* The Depth card. Labels left, fields right, one baseline per row. */
@@ -4323,67 +4312,69 @@ body.sidebar-collapsed .viewer-shell,
     cursor: grabbing;
 }
 
-/* The 3-D dock (views/volumeDock.js): cutting the stack, in the canvas
-   layout's top-right column under the gizmo, only while the 3-D view is.
-   Its rows are the popover's (main.css .plx-popover-*), so the two read as
-   one family. */
+/* The cut panel (views/volumeDock.js): the strip's Cut and Crop opened to
+   its left, an extension of the strip -- the same ground, border and type --
+   whose right edge is the strip's own left border. It slides out from under
+   the strip, right to left, and back in when it collapses. */
 .volume-dock {
-    background: rgba(11, 15, 21, 0.9);
+    --axis: var(--accent-channel);
+    background: rgba(11, 15, 21, 0.86);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+    border-right: 0;
     box-sizing: border-box;
+    clip-path: inset(0 0 0 100%);
     color: var(--text-secondary);
     display: flex;
     flex-direction: column;
     font-size: 12px;
-    max-height: 100%;
-    min-height: 0;
-    width: 248px;
+    gap: 5px;
+    /* At least as tall as the strip, so the two share a bottom edge too;
+       Show/Hide sits on it. */
+    min-height: calc(100% + 2px);
+    opacity: 0;
+    padding: 4px 6px 0 8px;
+    pointer-events: none;
+    position: absolute;
+    right: calc(100% + 1px);
+    top: -1px;
+    transition: clip-path var(--duration-base) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard),
+                visibility 0s linear var(--duration-base);
+    visibility: hidden;
+    width: 156px;
 }
 
-/* `display` above beats the `hidden` attribute. */
-.volume-dock[hidden],
+.volume-dock.is-open {
+    clip-path: inset(0);
+    opacity: 1;
+    pointer-events: auto;
+    transition: clip-path var(--duration-base) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard),
+                visibility 0s;
+    visibility: visible;
+}
+
+.plx-reduced-motion .volume-dock {
+    transition: none;
+}
+
+/* The strip's top-left corner gives way to the panel, so the two read as
+   one surface. */
+.viewer-depth-strip.has-cut-panel {
+    border-top-left-radius: 0;
+}
+
+/* `display` below beats the `hidden` attribute. */
 .volume-dock [hidden] {
     display: none !important;
-}
-
-.volume-dock.is-folded {
-    width: auto;
 }
 
 .volume-dock-head {
     align-items: center;
     display: flex;
-    flex: 0 0 auto;
-    gap: 6px;
-    padding: 6px 8px 6px 4px;
-}
-
-.volume-dock-fold {
-    align-items: center;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    font-size: 10px;
-    height: 22px;
-    justify-content: center;
-    padding: 0;
-    width: 22px;
-}
-
-.volume-dock-fold:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary);
-}
-
-.volume-dock-fold:focus-visible {
-    box-shadow: 0 0 0 3px var(--accent-channel-soft);
-    outline: none;
+    gap: 2px;
+    height: 24px;
 }
 
 .volume-dock-title {
@@ -4391,27 +4382,18 @@ body.sidebar-collapsed .viewer-shell,
     font-weight: 600;
 }
 
-.volume-dock-summary {
-    color: var(--text-muted);
+.volume-dock-spacer {
     flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
-.volume-dock.is-folded .volume-dock-summary {
-    flex: 0 1 auto;
-    max-width: 150px;
-}
-
-/* The cut's exact planes still on their way (volumeRenderer.resolved). */
+/* The voxels the cut shows still on their way (volumeRenderer.resolved). */
 .volume-dock-refining {
     animation: volume-dock-breathe 1.2s var(--ease-standard) infinite;
     background: var(--accent-channel);
     border-radius: 50%;
     flex: 0 0 auto;
     height: 6px;
+    margin-left: 4px;
     width: 6px;
 }
 
@@ -4423,67 +4405,155 @@ body.sidebar-collapsed .viewer-shell,
     animation: none;
 }
 
-.volume-dock-body {
-    border-top: 1px solid var(--border-subtle);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 8px;
-}
-
-.volume-dock-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.volume-dock-field {
+.volume-dock-head-button,
+.volume-dock-chip,
+.volume-dock-flip,
+.volume-dock-action {
     align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    min-height: 26px;
-}
-
-.volume-dock-label {
-    color: var(--text-secondary);
-    flex: 0 0 44px;
-    font-size: 12px;
-}
-
-.volume-dock-mode {
-    display: flex;
-    width: 100%;
-}
-
-.volume-dock-mode .plx-popover-segment {
-    flex: 1 1 0;
-    min-width: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    justify-content: center;
     padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
 }
 
-.volume-dock-segmented .plx-popover-segment {
-    font-weight: 600;
-    min-width: 30px;
+.volume-dock-head-button {
+    font-size: 11px;
+    height: 22px;
+    width: 22px;
+}
+
+.volume-dock-head-button:hover,
+.volume-dock-flip:hover:not(:disabled),
+.volume-dock-action:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.volume-dock button:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* The axes down the left, the actions in the space beside them: three rows
+   of chips as tall as two rows of actions. */
+.volume-dock-grid {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: 48px 1fr;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.volume-dock-axes {
+    display: grid;
+    gap: 4px;
+    grid-auto-rows: 24px;
 }
 
 .volume-dock-axis {
     display: flex;
-    flex-direction: column;
     gap: 2px;
 }
 
-.volume-dock-axis-line {
-    align-items: center;
-    display: flex;
-    gap: 6px;
+.volume-dock-axis.is-x { --axis: #e5484d; }
+.volume-dock-axis.is-y { --axis: #46a758; }
+.volume-dock-axis.is-z { --axis: #4c7cf0; }
+
+/* An axis chip wears the colour the handles draw that axis in. */
+.volume-dock-chip {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    flex: 1 1 auto;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 0;
 }
 
-.volume-dock-axis-name {
+.volume-dock-chip:hover {
     color: var(--text-primary);
-    flex: 0 0 14px;
-    font-weight: 700;
+}
+
+.volume-dock-chip.is-active {
+    background: color-mix(in srgb, var(--axis) 18%, transparent);
+    border-color: color-mix(in srgb, var(--axis) 60%, transparent);
+    color: var(--axis);
+}
+
+/* A Cut's kept side, beside its axis: the half drawn full is the side kept
+   -- the glyph's left, mirrored for the far (high) side. Its place is held
+   beside an axis not cut, so the chips never shift. (The icon may be an
+   inline svg by now.) */
+.volume-dock-flip {
+    flex: 0 0 20px;
+    font-size: 10px;
+}
+
+.volume-dock-flip.is-idle {
+    visibility: hidden;
+}
+
+.volume-dock-flip > * {
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.volume-dock-flip.is-flipped > * {
+    transform: scaleX(-1);
+}
+
+.volume-dock-actions {
+    display: grid;
+    gap: 4px;
+    grid-auto-rows: 38px;
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.volume-dock-action {
+    font-size: 13px;
+    height: 100%;
+    width: 100%;
+}
+
+.volume-dock-action.is-active,
+.volume-dock-action[aria-pressed="true"] {
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.14));
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.volume-dock-action:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+/* Voxels across the panel's width, the handles' strength under them. */
+.volume-dock-segmented {
+    box-sizing: border-box;
+    display: flex;
+    width: 100%;
+}
+
+.volume-dock-segmented .plx-popover-segment {
+    flex: 1 1 0;
+    font-size: 11px;
+    min-width: 0;
+    padding: 0 4px;
+}
+
+.volume-dock-handles {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 11px;
+    gap: 8px;
+    height: 20px;
+    padding: 0 2px 0 4px;
 }
 
 .volume-dock-slider {
@@ -4491,93 +4561,57 @@ body.sidebar-collapsed .viewer-shell,
     min-width: 0;
 }
 
-.volume-dock-axis-under {
+/* Show/Hide (`O`) at the foot: the cut on and off while looking, the panel
+   left out. Centred under its rule, as much room above as below. A hidden
+   cut quietens the controls above it (using one shows the cut again), and
+   its key lights to say how to bring it back. */
+.volume-dock-toggle {
     align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 6px;
-    justify-content: space-between;
-    padding-left: 20px;
-}
-
-.volume-dock-axis-under > .volume-dock-note {
-    margin-left: auto;
-}
-
-.volume-dock-fields {
-    align-items: center;
-    display: flex;
-    gap: 4px;
-}
-
-.volume-dock-note {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    overflow: hidden;
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.volume-dock-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.volume-dock-stack > .volume-dock-note {
-    align-self: flex-end;
-}
-
-.volume-dock-select {
-    flex: 1 1 auto;
-    max-width: none;
-}
-
-.volume-dock-tools {
-    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     border-top: 1px solid var(--border-subtle);
-    display: flex;
-    gap: 4px;
-    padding-top: 6px;
-}
-
-.volume-dock-spacer {
-    flex: 1 1 auto;
-}
-
-.volume-dock-more {
-    border-top: 1px solid var(--border-subtle);
-    padding-top: 4px;
-}
-
-.volume-dock-more-summary {
+    box-sizing: border-box;
     color: var(--text-muted);
     cursor: pointer;
+    display: flex;
+    flex: 0 0 29px;
+    font-family: inherit;
     font-size: 11px;
-    list-style: none;
-    padding: 2px 0;
-    user-select: none;
+    gap: 8px;
+    justify-content: center;
+    margin-top: auto;
+    padding: 0;
+    transition: color var(--duration-fast) var(--ease-standard);
+    width: 100%;
 }
 
-.volume-dock-more-summary::-webkit-details-marker {
-    display: none;
+.volume-dock-toggle:hover {
+    color: var(--text-primary);
 }
 
-.volume-dock-more-summary::before {
-    content: "\25B8";
-    display: inline-block;
-    margin-right: 6px;
-    transition: transform var(--duration-fast) var(--ease-standard);
+.volume-dock-toggle:hover .plx-kbd {
+    border-color: var(--text-muted);
 }
 
-.volume-dock-more[open] > .volume-dock-more-summary::before {
-    transform: rotate(90deg);
+.volume-dock-toggle .plx-kbd {
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
 }
 
-.volume-dock-more > .volume-dock-rows {
-    padding-top: 6px;
+.volume-dock-toggle[aria-pressed="false"] .plx-kbd {
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.14));
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.volume-dock.is-off .volume-dock-grid {
+    opacity: 0.5;
+}
+
+.volume-dock.is-off .volume-dock-title {
+    color: var(--text-muted);
 }
 
 /* The handles (views/volumeHandles.js): the cut's planes outlined in the 3-D
@@ -4621,10 +4655,6 @@ body.sidebar-collapsed .viewer-shell,
 
 .volume-handles .handle-face {
     stroke: currentColor;
-}
-
-.volume-handles .handle-face.is-faint {
-    stroke-dasharray: 4 3;
 }
 
 .volume-handles .handle-grip {
@@ -4827,8 +4857,11 @@ body.sidebar-collapsed .viewer-shell,
     transition: none;
 }
 
-.viewer-depth-strip.is-volume .depth-strip-thumb {
-    display: none;
+/* In 3-D there is no rail (the cut along Z is the dock's), so the strip is
+   only as tall as its buttons. */
+.viewer-depth-strip.is-volume {
+    height: auto;
+    min-height: 0;
 }
 
 /* Orthogonal sections (views/sectionPanes.js): XZ along the bottom of the
@@ -4944,40 +4977,6 @@ body.sidebar-collapsed .viewer-shell,
     height: 0;
     left: 0;
     right: 0;
-}
-
-/* Pinned to the 3-D view's X or Y section (sectionPanes.pinned): drawn in
-   the accent, and taken by the pointer -- a 9px band -- to move it. */
-.viewer-section-crosshair.is-pinned {
-    border-color: var(--accent-channel);
-    pointer-events: auto;
-}
-
-.viewer-section-crosshair.is-pinned::after {
-    content: "";
-    position: absolute;
-}
-
-.viewer-section-crosshair.is-vertical.is-pinned {
-    cursor: ew-resize;
-}
-
-.viewer-section-crosshair.is-vertical.is-pinned::after {
-    bottom: 0;
-    left: -5px;
-    top: 0;
-    width: 9px;
-}
-
-.viewer-section-crosshair.is-horizontal.is-pinned {
-    cursor: ns-resize;
-}
-
-.viewer-section-crosshair.is-horizontal.is-pinned::after {
-    height: 9px;
-    left: 0;
-    right: 0;
-    top: -5px;
 }
 
 .viewer-section-pane[hidden],
@@ -5120,81 +5119,33 @@ body.sidebar-collapsed .viewer-shell,
     z-index: 211;
 }
 
-/* -- tool launchers (Plugin.launcher) ----------------------------------------
-   One button per tool that asked for one, docked top-right beside the dataset
-   navigation (index.html #viewer_tool_launchers) and styled like it, so the
-   corner reads as one strip of controls. Pressed while the tool is open
-   (toolLoader.js paintMenuRows). */
+/* -- sidebar header tools (Surface Studio, Plugin.launcher) ------------------
+   The buttons left of the Plexora AI chip (index.html .sidebar-header-actions):
+   Surface Studio's, then one per tool that declared `launcher`. The AI chip's
+   height and corner, with a glyph sized to its sparkle, so the row reads as one
+   strip. A launcher is pressed while its tool is open (toolLoader.js
+   paintMenuRows). */
 .viewer-tool-launchers {
     align-items: center;
-    background: rgba(11, 15, 21, 0.82);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    transition: background var(--duration-fast) var(--ease-standard),
-                border-color var(--duration-fast) var(--ease-standard);
-}
-
-.viewer-tool-launchers:hover,
-.viewer-tool-launchers:focus-within {
-    background: rgba(11, 15, 21, 0.95);
-    border-color: var(--border-strong);
-}
-
-.viewer-launcher {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: calc(var(--radius-sm) - 2px);
-    color: var(--text-secondary);
-    cursor: pointer;
     display: inline-flex;
-    font-size: 12px;
-    height: 24px;
-    justify-content: center;
-    line-height: 1;
-    position: relative;
-    transition: background var(--duration-fast) var(--ease-standard),
-                color var(--duration-fast) var(--ease-standard);
+    gap: var(--space-2);
+}
+
+.sidebar-header-tool {
+    border-radius: var(--radius-sm);
+    font-size: 15px;
     width: 28px;
 }
 
-.viewer-launcher:hover {
-    background: var(--border-subtle);
-    color: var(--text-primary);
-}
-
-.viewer-launcher:focus-visible {
+.sidebar-header-tool:focus-visible {
     outline: 2px solid var(--accent-channel);
-    outline-offset: 1px;
+    outline-offset: 2px;
 }
 
-.viewer-launcher[aria-pressed="true"] {
+.sidebar-header-tool[aria-pressed="true"] {
     background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
     color: var(--accent-channel);
-}
-
-/* A Paid tool the licence does not unlock: a small dot, the Tools menu's badge
-   in miniature. The click explains (tool_routes `locked`). */
-.viewer-launcher-paid {
-    background: var(--accent-warning);
-    border-radius: 50%;
-    height: 5px;
-    position: absolute;
-    right: 3px;
-    top: 3px;
-    width: 5px;
-}
-
-.brightfield-ground ~ .viewer-tool-launchers,
-#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-tool-launchers {
-    background: rgba(255, 255, 255, 0.88);
-}
-
-#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-launcher {
-    color: rgba(18, 24, 32, 0.75);
 }
 
 /* -- Surface Studio (views/surfaceCard.js, surfaceStudio.js, surfaceInspect.js,

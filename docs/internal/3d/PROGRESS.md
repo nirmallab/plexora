@@ -267,5 +267,6 @@ main. Design and the full list: `SLICE_CLIP.md`. Plan:
 | Fidelity: thin-region detail for a lone section/slab, atlas bricks of the cut only, `resolved()` and the dock's dot, contrast over kept planes | done |
 | Panes pinned to the X/Y sections (`linkPanes`), draggable crosshair | done |
 | Figure Builder round trip and `cut` in the report; Video Studio frames carry the cut, slab narrows z via the clip; `viewer_set_inspect`, `viewer_set_z mode=keep`, lease restore | done |
+| 2026-10-13: sections and slabs removed (with `linkPanes`, the pinned crosshair, the panes' cut guides and `state.section`); the dock became the cut panel beside the strip's new Cut and Crop; each tool keeps its own axes (`inspect.tool`, `axesBy`); `O` (and the panel's Show/Hide) hides and shows the cut with the panel left out, × alone closes it | done |
 | Oblique planes; voxel-label 3-D masks | not done (seams kept) |
 | Bench scenario `clip` | see tools/bench3d |

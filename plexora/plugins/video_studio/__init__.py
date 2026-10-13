@@ -35,7 +35,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261013_slice_clip"
+VERSION = "20261013_cut_panel"
 
 
 def _blueprint():

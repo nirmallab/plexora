@@ -144,7 +144,7 @@ const DIMS = G.dims({ width: 400, height: 300 }, 40);
 const asked = [];
 let state = { mode: "plane", z: 10, t: 0, layout: "single",
               slab: { z0: 5, z1: 15, op: "max", follow: true, thickness: 11 }, volume: {},
-              section: { x: 200, y: 150 }, inspect: G.clean({}, DIMS) };
+              inspect: G.clean({}, DIMS) };
 const subscribers = new Set();
 const vs = {
     depth: 40, frames: 1, color: false, info: { width: 400, height: 300 },
@@ -206,72 +206,35 @@ const afterEnter = asked.length;
 check("entering 3-D while stepping planes stops the stepper without touching the view state",
       stepping === 1 && intervals.size === 0 && afterEnter === 1 && !asked.some((p) => p.persist),
       JSON.stringify(asked));
-check("in 3-D, whole: no plane thumb, no hover mark, no Sections; the band (every plane) is there",
-      !shownIds().includes("thumb") && !shownIds().includes("hover") && !shownIds().includes("sections")
-      && shownIds().includes("band") && shownIds().includes("rail") && strip.readoutBottom.textContent === "all",
+check("in 3-D: no rail, no thumb, band or hover mark, no Sections; the strip only as tall as its buttons",
+      !["rail", "thumb", "band", "hover", "sections"].some((id) => shownIds().includes(id))
+      && ["play", "cog"].every((id) => shownIds().includes(id)) && strip.root.classList.contains("is-volume"),
       shownIds().join());
+check("...and Cut and Crop under the mode buttons, neither lit on the whole stack",
+      ["tool.cutaway", "tool.crop"].every((id) => shownIds().includes(id)) && !strip.cutTools.hidden
+      && Object.values(strip.toolButtons).every((b) => b.getAttribute("aria-pressed") === "false"));
+check("each says what it does and its key", /Cut: take a side off.*\(O shows or hides it\)/
+      .test(strip.toolButtons.cutaway.getAttribute("title"))
+      && /Crop: keep a box/.test(strip.toolButtons.crop.getAttribute("title")),
+      strip.toolButtons.cutaway.getAttribute("title"));
+const picked = [];
+box.PlexoraVolumeDock = { pick: (tool) => picked.push(tool) };
+strip.toolButtons.crop.fire("click");
+check("a press hands the tool to the cut panel (views/volumeDock.js)", picked.join() === "crop");
+vs.set({ inspect: { mode: "crop" } });
+check("the tool that cuts is lit", strip.toolButtons.crop.getAttribute("aria-pressed") === "true"
+      && strip.toolButtons.crop.classList.contains("is-active")
+      && strip.toolButtons.cutaway.getAttribute("aria-pressed") === "false");
 
+// The rail is not the cut's: a press on it in 3-D (were it reached) does nothing.
 const press = (clientY, extra = {}) => strip.rail.fire("pointerdown", { button: 0, clientY, ...extra });
 const at = (z) => 100 + 400 * (z / 39);
-const handle = (name) => { const node = fakeElement("span"); node.dataset.handle = name; return node; };
-// The whole stack's band end: dragged, the stack is cropped along Z.
-asked.length = 0;
-press(at(39), { target: handle("z1") });
-box.dispatchEvent({ type: "pointermove", clientY: at(30) });
-check("while the hand is on it, nothing is saved: the cut is previewed",
-      asked.length === 0 && box.PlexoraInspect.previewing && strip.band.style.height !== "100%");
-box.dispatchEvent({ type: "pointerup" });
-check("let go, the whole stack's end makes one Z crop, the plane left alone",
-      asked.length === 1 && asked[0].inspect?.mode === "crop" && asked[0].inspect.crop.z.join() === "0,30"
-      && asked[0].inspect.axes.x === false && asked[0].z === undefined, JSON.stringify(asked));
-
-// The rail in 3-D: a press outside the planes drawn does nothing.
-vs.set({ inspect: { crop: { z: [10, 20] } } });
-asked.length = 0;
-press(at(35));
-check("a press on the rail outside the planes drawn sets nothing in 3-D", asked.length === 0 && !strip.drag);
-press(at(15));
-box.dispatchEvent({ type: "pointermove", clientY: at(18) });
-box.dispatchEvent({ type: "pointerup" });
-check("a press inside drags the Z crop whole, the plane left alone",
-      asked.length === 1 && asked[0].inspect?.crop?.z?.join() === "13,23" && asked[0].z === undefined,
-      JSON.stringify(asked));
-asked.length = 0;
-press(at(23), { target: handle("z1") });
-box.dispatchEvent({ type: "pointermove", clientY: at(30) });
-box.dispatchEvent({ type: "pointerup" });
-check("its end resizes it, still without moving the plane",
-      asked.length === 1 && asked[0].inspect?.crop?.z?.join() === "13,30" && asked[0].z === undefined,
-      JSON.stringify(asked));
-check("the readout says the planes kept", strip.readoutBottom.textContent === "13–30");
-check("one gesture, one undo", box.PlexoraInspect.undo() && vs.get().inspect.crop.z.join() === "13,23");
-
-// A Z section: the thumb is its plane; the rail picks it.
-vs.set({ inspect: { mode: "section" } });
-check("a Z section: the thumb and hover mark, no band", shownIds().includes("thumb")
-      && shownIds().includes("hover") && !shownIds().includes("band"), shownIds().join());
 asked.length = 0;
 press(at(25));
 box.dispatchEvent({ type: "pointermove", clientY: at(27) });
 box.dispatchEvent({ type: "pointerup" });
-check("a press and drag move the Z section (the plane), as one change",
-      asked.length === 1 && asked[0].z === 27 && !asked[0].inspect, JSON.stringify(asked));
-// A Z cutaway: one end moves.
-vs.set({ inspect: { mode: "cutaway", cutaway: { z: { at: 20, keep: "hi" } } } });
-check("a Z cutaway keeping the deep side: only its top end is a handle",
-      !strip.handleTop.hidden && strip.handleBottom.hidden && shownIds().includes("band"));
-asked.length = 0;
-press(at(20), { target: handle("z0") });
-box.dispatchEvent({ type: "pointermove", clientY: at(8) });
-box.dispatchEvent({ type: "pointerup" });
-check("dragging it moves the cut", asked.length === 1 && asked[0].inspect?.cutaway?.z?.at === 8, JSON.stringify(asked));
-// Only X cut: nothing along Z for the rail.
-vs.set({ inspect: { mode: "section", axes: { x: true, z: false } } });
-asked.length = 0;
-press(at(10));
-check("an X section only: the rail is not the cut's, a press does nothing",
-      asked.length === 0 && !shownIds().includes("band") && !shownIds().includes("thumb"));
-vs.set({ inspect: { mode: "crop", axes: { x: false, z: true }, crop: { z: [10, 20] } } });
+check("a press on the rail in 3-D sets nothing", asked.length === 0 && !strip.drag, JSON.stringify(asked));
+vs.set({ inspect: { mode: "full" } });
 
 // `]` in 3-D moves what is cut along Z (viewState.step does), never a frozen plane.
 asked.length = 0;
@@ -300,8 +263,8 @@ check("a turn stopped by the view (a press, Esc) gives Play back its play glyph"
 strip.cog.fire("click");
 const popover = strip.settings;
 const rowIds = () => [...popover.el.querySelectorAll("[data-control]")].map((n) => n.getAttribute("data-control"));
-check("the cog opens the settings for 3-D: composite, view, the cut, rotation, the Depth card",
-      popover.isOpen() && ["volume.composite", "volume.view", "volume.clip", "rotate.speed", "rotate.axis",
+check("the cog opens the settings for 3-D: composite, view, rotation, the Depth card",
+      popover.isOpen() && ["volume.composite", "volume.view", "rotate.speed", "rotate.axis",
                            "rotate.direction", "card"].every((id) => rowIds().includes(id))
       && !rowIds().some((id) => id.startsWith("projection.")), rowIds().join());
 check("the cog says the popover is open", strip.cog.getAttribute("aria-expanded") === "true");

@@ -316,6 +316,21 @@
             }
         }
 
+        /** Where an item in this corner is held: the edge (or the middle) its
+         *  dock stacks from on each axis. An item that only grows or shrinks
+         *  keeps this point, so it does not glide; the neighbours it pushes
+         *  move theirs, so they do. Measured from the top-left, a bottom-left
+         *  item shrinking (the mini-map closing) read as a move, and slid down
+         *  from where its top had been. */
+        static anchor(corner, rect) {
+            const [vertical, horizontal] = corner.split("-");
+            const x = horizontal === "left" ? rect.left
+                : horizontal === "right" ? rect.left + rect.width
+                    : rect.left + rect.width / 2;
+            const y = vertical === "bottom" ? rect.top + rect.height : rect.top;
+            return { x, y };
+        }
+
         /** Each docked item that moved since it was last seen slides from its
          *  old place to its new one. */
         glide() {
@@ -331,15 +346,17 @@
                 || Math.abs(area.height - before.height) > 0.5);
             const still = reducedMotion() || areaMoved
                 || this.wrapper.matches?.("[class*='is-resizing']");
-            for (const dock of Object.values(this.docks)) {
+            for (const [corner, dock] of Object.entries(this.docks)) {
                 for (const child of dock.children) {
                     const now = child.getBoundingClientRect();
                     const was = this.rects.get(child);
                     this.rects.set(child, now);
                     if (still || !was || !(now.width || now.height)
                             || typeof child.animate !== "function") continue;
-                    const dx = was.left - now.left;
-                    const dy = was.top - now.top;
+                    const from = CanvasLayout.anchor(corner, was);
+                    const to = CanvasLayout.anchor(corner, now);
+                    const dx = from.x - to.x;
+                    const dy = from.y - to.y;
                     if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
                     // Not from where it was when it had no size (just shown).
                     if (!(was.width || was.height)) continue;

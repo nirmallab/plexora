@@ -58,6 +58,8 @@ PLUGIN = Plugin(
                            "stack_write": "volume:analysis",
                            "stack_plane": "volume:analysis"},
     icon="clipboard-check",
+    # First in the Tools menu: QC, Thresholding, ROI, Cell Explorer, Figure Builder.
+    order=10,
     # Not Q: mod+q quits a Mac browser and ctrl+shift+q quits Chrome elsewhere.
     # X for "exclude", which is what a QC region mostly says.
     shortcut="mod+shift+x",

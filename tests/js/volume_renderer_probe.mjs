@@ -213,7 +213,7 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     let inspect = G.clean({}, dims4);
     box.dispatchEvent = (event) => { if (event.type === "plexora:volume-hint") sent.push(event.detail); return true; };
     const clipState = { depth: 4, info: { width: 32, height: 32 },
-                        get: () => ({ t: 0, z: 1, section: {}, slab: { z0: 0, z1: 3 }, inspect }) };
+                        get: () => ({ t: 0, z: 1, slab: { z0: 0, z1: 3 }, inspect }) };
     const fetchHint = (url) => {
         if (url.includes("/hint?")) {
             hintAsks.push(url);
@@ -230,7 +230,7 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
           sent.length >= 1 && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === 0,
           JSON.stringify(sent));
     sent.length = 0;
-    inspect = G.clean({ mode: "crop", axes: { z: true }, crop: { z: [1, 2] } }, dims4);
+    inspect = G.clean({ mode: "crop", axes: { x: false, z: true }, crop: { z: [1, 2] } }, dims4);
     clipped.refreshHints({ now: true });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -259,7 +259,7 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
                    spacing: { x: { value: 0.5, unit: "µm", source: "metadata" },
                               z: { value: 2, unit: "µm", source: "metadata" } } };
     const d = G.dims(info, 40);
-    let state = { t: 0, z: 12, section: { x: 500, y: 250 }, slab: { z0: 0, z1: 39 },
+    let state = { t: 0, z: 12, slab: { z0: 0, z1: 39 },
                   inspect: G.clean({}, d), volume: {} };
     const vs = { depth: 40, info, get: () => state };
     const cutter = new VolumeRenderer({ viewState: vs, datasource: "vol", fetchImpl });
@@ -281,17 +281,12 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     cutter.setClip(null);
     check("the surfaces' z range follows the cut", near(cutter.clipRangeZ()[0], 0.1) && near(cutter.clipRangeZ()[1], 0.25));
     check("the contrast is levelled over the cropped planes", same(cutter.clipRange(), [4, 9]));
-    set({ mode: "section", axes: { z: true }, context: 0 });
-    check("a Z section drawn alone is levelled by its plane", same(cutter.clipRange(), [12, 12]));
-    set({ mode: "section", axes: { z: true } });
-    check("with the surroundings drawn too, by the whole stack", cutter.clipRange() === null);
+    set({ mode: "cutaway", axes: { x: false, z: true }, cutaway: { z: { at: 30, keep: "lo" } } });
+    check("and over the planes a Z cut keeps", same(cutter.clipRange(), [0, 30]));
+    set({ mode: "cutaway", axes: { x: true, z: false } });
+    check("a cut across the plane is levelled by the whole stack", cutter.clipRange() === null);
     cutter.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600 };
-    set({ mode: "section", axes: { z: true }, context: 0 });
-    const thin = cutter.visibleRegion();
-    check("a Z section drawn alone is seen only around its plane, a few planes either side",
-          thin && thin.lo[2] <= 12 / 40 && thin.hi[2] >= 13 / 40 && thin.hi[2] - thin.lo[2] <= 9 / 40,
-          JSON.stringify(thin));
-    set({ mode: "crop", axes: { z: true }, crop: { z: [10, 19] } });
+    set({ mode: "crop", axes: { x: false, z: true }, crop: { z: [10, 19] } });
     const kept = cutter.visibleRegion();
     check("a crop's part seen is inside it", kept && kept.lo[2] >= 0.25 - 1e-9 && kept.hi[2] <= 0.5 + 1e-9,
           JSON.stringify(kept));
@@ -303,26 +298,26 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
             if (name.startsWith("uniform")) calls[args[0]] = args.slice(1);
         })) });
     const uniform = (name) => name;
-    set({ mode: "slab", axes: { x: true, z: true }, slab: { thickness: { x: 20, z: 4 }, composite: "mean" },
-          context: 0.3 });
-    cutter.bindCut(uniform, cutter.cutUniforms(), cutter.covered, [1, 0.5, 0.08]);
-    check("a slab binds its planes, half thicknesses and how it combines",
-          calls.u_cut[0] === 2 && calls.u_slab_op[0] === 2 && near(calls.u_context[0], 0.3)
-          && same(calls.u_plane_on[0], [1, 0, 1]) && near(calls.u_slab_half[0][2], 2 / 40)
-          && near(calls.u_slab_half[0][0], 10 / 2000), JSON.stringify(calls));
-    check("and a voxel in box units, for a slab's sum", near(calls.u_vox[0][0], 1 / 2000) && near(calls.u_vox[0][2], 0.08 / 40));
+    set({ mode: "crop", axes: { x: true, z: true }, crop: { x: [200, 1200], z: [4, 9] } });
+    cutter.bindCut(uniform, cutter.cutUniforms());
+    check("a crop binds its box and nothing beyond it",
+          near(calls.u_box_lo[0][0], 0.1) && near(calls.u_box_hi[0][2], 0.25) && calls.u_cut[0] === 0
+          && calls.u_hole_on[0] === 0, JSON.stringify(calls));
+    check("no section or slab uniform is bound any more",
+          !Object.keys(calls).some((name) => /u_plane|u_slab|u_context|u_vox|u_cut_alpha|u_cut_color/.test(name)),
+          Object.keys(calls).join());
     set({ mode: "cutaway", axes: { x: true, y: true, z: false }, face: true,
           cutaway: { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "lo" } } });
-    cutter.bindCut(uniform, cutter.cutUniforms(), cutter.covered, [1, 0.5, 0.08]);
+    cutter.bindCut(uniform, cutter.cutUniforms());
     check("a cutaway over two axes binds its corner, faces solid",
           calls.u_hole_on[0] === 1 && near(calls.u_hole_hi[0][0], 0.4) && near(calls.u_hole_lo[0][1], 0.3)
-          && same(calls.u_box_lo[0], [0, 0, 0]) && calls.u_cut[0] === 3 && calls.u_cut_alpha[0] === 1,
+          && same(calls.u_box_lo[0], [0, 0, 0]) && calls.u_cut[0] === G.CUT.faces,
           JSON.stringify(calls));
     const before = cutter.cameraKey();
     set({ mode: "full" });
     check("a cut is a camera move: it never dissolves", cutter.cameraKey() !== before);
-    box.PlexoraInspect = { viewState: vs, resolved: () => G.resolve(G.clean({ mode: "crop", axes: { z: true },
-        crop: { z: [0, 9] } }, d), G.positions(state, d), d) };
+    box.PlexoraInspect = { viewState: vs, resolved: () => G.resolve(G.clean({ mode: "crop",
+        axes: { x: false, z: true }, crop: { z: [0, 9] } }, d), d) };
     check("the cut controller's answer -- a preview -- wins over the state", near(cutter.cutUniforms().hi[2], 0.25));
     delete box.PlexoraInspect;
 }
@@ -332,10 +327,15 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     const text = VolumeRenderer.fragmentSource(2, false, false);
     check("the box is uniforms; the old z and xy clip are gone",
           text.includes("uniform vec3 u_box_lo;") && !text.includes("u_clip_z") && !text.includes("u_clip_xy"));
-    for (const name of ["sampleAt", "inHole", "inSlab", "cutPlanes", "cutSlabs", "cutFace"]) {
+    for (const name of ["sampleAt", "inHole", "cutFace"]) {
         check(`the shader has ${name}`, text.includes(`${name}(`));
     }
-    check("a section with no surroundings marches nothing", text.includes("if (i >= count || skipMarch) break;"));
+    for (const name of ["inSlab", "cutPlanes", "cutSlabs", "skipMarch", "u_plane", "u_slab", "u_context",
+                        "u_vox", "u_cut_alpha", "u_cut_color"]) {
+        check(`the shader has no ${name} left`, !text.includes(name)
+              && !VolumeRenderer.fragmentSource(3, true, false).includes(name)
+              && !readFileSync(join(JS, "views/volumeRenderer.js"), "utf8").includes(name));
+    }
     const detail = VolumeRenderer.fragmentSource(2, true, false);
     check("a detail's sample point reads the detail where it holds it",
           /void sampleAt[\s\S]*inDetail[\s\S]*u_detail1/.test(detail));

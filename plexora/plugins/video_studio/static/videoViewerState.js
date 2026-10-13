@@ -110,7 +110,7 @@
             if (env.vs && saved.view) {
                 const s = saved.view;
                 env.vs.set({ t: s.t, z: s.z, mode: s.mode, layout: s.layout, slab: s.slab,
-                             section: s.section, volume: s.volume }, { save: false });
+                             volume: s.volume }, { save: false });
                 await env.vs.settled();
             }
         });
@@ -184,8 +184,7 @@
         const camera = saved.view?.mode === "volume" ? saved.camera : null;
         return clean({ view: saved.view && { t: saved.view.t, z: saved.view.z, mode: saved.view.mode,
                                             layout: saved.view.layout, slab: saved.view.slab,
-                                            inspect: saved.view.inspect || null,
-                                            section: saved.view.section || null },
+                                            inspect: saved.view.inspect || null },
                        viewport: saved.viewport, transform: saved.transform, camera,
                        slots: saved.slots.map((s) => ({ name: s.name, colorHex: s.colorHex,
                                                         enabled: s.enabled })),

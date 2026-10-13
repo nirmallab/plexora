@@ -103,19 +103,34 @@ def test_the_3d_views_cut_rides_in_the_base_view():
     """How the 3-D view was cut (core's inspect, image units) is kept with
     the view a video was made from, as the viewer wrote it and bounded -- the
     browser repairs it against the image when a frame is applied -- and an
-    unknown or oversized one is dropped rather than guessed at."""
-    cut = {"mode": "crop", "axes": {"x": True, "z": True}, "crop": {"x": [100, 600], "z": [2, 5]}}
+    unknown or oversized one is dropped rather than guessed at. A frame's view
+    has no section position: the 3-D view's sections are gone, and with them
+    the only thing it was for."""
+    cut = {"mode": "crop", "tool": "crop", "axes": {"x": True, "z": True},
+           "axesBy": {"cutaway": {"x": True}, "crop": {"x": True, "z": True}},
+           "crop": {"x": [100, 600], "z": [2, 5]}}
     doc = schema.normalize_project({"source": STACK, "base": {"view": {
         "mode": "volume", "inspect": cut, "section": {"x": 400, "y": -3}}}})
     view = doc["base"]["view"]
     assert view["inspect"] == cut
-    assert view["section"] == {"x": 400.0, "y": 0.0}
+    assert "section" not in view
     assert schema.normalize_project(doc) == doc
     odd = schema.normalize_project({"source": STACK, "base": {"view": {"inspect": {"mode": "wedge"}}}})
     assert "inspect" not in odd["base"]["view"]
     huge = schema.normalize_project({"source": STACK, "base": {"view": {
         "inspect": {"mode": "crop", "notes": "x" * 10000}}}})
     assert "inspect" not in huge["base"]["view"]
+
+
+def test_a_cut_made_as_a_section_or_slab_is_kept_as_the_whole_stack():
+    """A video made while the 3-D view could still be cut into sections or a
+    slab plays with the whole stack, as core reads such a cut, rather than
+    with whatever cut the viewer has when it is played."""
+    for mode in ("section", "slab"):
+        doc = schema.normalize_project({"source": STACK, "base": {"view": {
+            "mode": "volume", "inspect": {"mode": mode, "axes": {"z": True}}}}})
+        assert doc["base"]["view"]["inspect"]["mode"] == "full", mode
+        assert schema.normalize_project(doc) == doc
 
 
 def test_duplicate_track_ids_are_made_unique():

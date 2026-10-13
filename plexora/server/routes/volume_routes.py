@@ -32,10 +32,14 @@ MODES = ("plane", "slab", "sections", "volume")
 LAYOUTS = ("single", "split-h", "quad", "strip", "sections")
 COMPOSITES = ("mip", "additive")
 VIEW_STATE_VERSION = 1
-#: How the 3-D view may be cut, and how a slab's voxels are combined
-#: (client services/inspectGeometry.js MODES / COMPOSITES).
-INSPECT_MODES = ("full", "cutaway", "section", "slab", "crop")
-INSPECT_COMPOSITES = ("single", "max", "mean", "min", "sum")
+#: How the 3-D view may be cut, and the tools it is cut with: every mode but
+#: the whole stack (client services/inspectGeometry.js MODES / TOOLS).
+INSPECT_MODES = ("full", "cutaway", "crop")
+INSPECT_TOOLS = ("cutaway", "crop")
+#: The axes each tool starts with (inspectGeometry.js TOOL_AXES): a cutaway
+#: on X, a crop on X, Y and Z.
+INSPECT_TOOL_AXES = {"cutaway": {"x": True, "y": False, "z": False},
+                     "crop": {"x": True, "y": True, "z": True}}
 #: How the 3-D view's textures are read between voxels.
 INTERPOLATIONS = ("linear", "nearest")
 
@@ -235,8 +239,6 @@ def normalize_view_state(value, depth=None, frames=None):
         out["slab"]["thickness"] = max(1, int(slab.get("thickness", z1 - z0 + 1)))
     except (TypeError, ValueError):
         out["slab"]["thickness"] = z1 - z0 + 1
-    section = value.get("section") if isinstance(value.get("section"), dict) else {}
-    out["section"] = {"x": _int(section.get("x"), 0, 0), "y": _int(section.get("y"), 0, 0)}
     layout = value.get("layout")
     out["layout"] = layout if layout in LAYOUTS else "single"
     aux = value.get("aux")
@@ -309,6 +311,14 @@ def normalize_inspect(value, depth=None):
     """How the 3-D view is cut, repaired: image units -- pixels across x and
     y (boundaries), plane indices along z.
 
+    `mode` is the tool that is on ("cutaway" or "crop"), or "full" for the
+    whole stack. `tool` is the tool last chosen, kept while the mode is
+    "full" so it can be turned back on; while a tool is on it is that tool.
+    Each tool keeps its own axes: `axes` are the current tool's, `axesBy`
+    what each tool had when it was last left, every set with at least one
+    axis on (the tool's starting axes where none is). A cut saved as a
+    section or a slab, modes since removed, reads as the whole stack.
+
     The same rules as the client's `inspectGeometry.clean`, as far as the
     server knows the image: z against the depth, x and y only kept
     non-negative (the browser clamps them to the plane it draws). Lenient:
@@ -317,10 +327,20 @@ def normalize_inspect(value, depth=None):
     value = value if isinstance(value, dict) else {}
     top_z = (depth - 1) if depth else None
     out = {"mode": value.get("mode") if value.get("mode") in INSPECT_MODES else "full"}
-    axes = value.get("axes") if isinstance(value.get("axes"), dict) else {}
-    out["axes"] = {axis: axes.get(axis) is True for axis in ("x", "y", "z")}
-    if not any(out["axes"].values()):
-        out["axes"]["z"] = True
+    if out["mode"] in INSPECT_TOOLS:
+        out["tool"] = out["mode"]
+    else:
+        out["tool"] = value.get("tool") if value.get("tool") in INSPECT_TOOLS else "cutaway"
+
+    def axes_of(raw, fallback):
+        raw = raw if isinstance(raw, dict) else {}
+        kept = {axis: raw.get(axis) is True for axis in ("x", "y", "z")}
+        return kept if any(kept.values()) else dict(fallback)
+
+    out["axes"] = axes_of(value.get("axes"), INSPECT_TOOL_AXES[out["tool"]])
+    axes_by = value.get("axesBy") if isinstance(value.get("axesBy"), dict) else {}
+    out["axesBy"] = {tool: axes_of(axes_by.get(tool), INSPECT_TOOL_AXES[tool])
+                     for tool in INSPECT_TOOLS}
 
     def pair(raw, integer, high):
         if not isinstance(raw, (list, tuple)) or len(raw) != 2:
@@ -344,17 +364,7 @@ def normalize_inspect(value, depth=None):
         at = (_int(entry.get("at"), 0, 0, top_z) if axis == "z"
               else _float(entry.get("at"), 0.0, 0.0))
         out["cutaway"][axis] = {"at": at, "keep": "lo" if entry.get("keep") == "lo" else "hi"}
-    slab = value.get("slab") if isinstance(value.get("slab"), dict) else {}
-    thickness = slab.get("thickness") if isinstance(slab.get("thickness"), dict) else {}
-    out["slab"] = {
-        "thickness": {axis: _int(thickness.get(axis), 1, 1, depth if axis == "z" else None)
-                      for axis in ("x", "y", "z") if thickness.get(axis) is not None},
-        "composite": slab.get("composite") if slab.get("composite") in INSPECT_COMPOSITES else "max",
-    }
-    out["opacity"] = _float(value.get("opacity"), 1.0, 0.05, 1.0)
-    out["context"] = _float(value.get("context"), 0.15, 0.0, 1.0)
     out["face"] = value.get("face") is True
-    out["linkPanes"] = value.get("linkPanes") is True
     return out
 
 

@@ -90,7 +90,7 @@ const INFO = { width: 2000, height: 1000, spacing: { x: { value: 0.5, unit: "µm
 const DIMS = G.dims(INFO, 40);
 
 const asked = [];
-let state = { mode: "volume", z: 12, t: 0, section: { x: 500, y: 250 }, slab: { z0: 0, z1: 39 }, volume: {},
+let state = { mode: "volume", z: 12, t: 0, slab: { z0: 0, z1: 39 }, volume: {},
               inspect: G.clean({ mode: "crop", axes: { x: true, z: true },
                                  crop: { x: [400, 1600], z: [5, 30] } }, DIMS) };
 const subscribers = new Set();
@@ -99,7 +99,7 @@ const vs = {
     get: () => JSON.parse(JSON.stringify(state)),
     set(patch) {
         asked.push(patch);
-        state = { ...state, ...patch, section: { ...state.section, ...(patch.section || {}) },
+        state = { ...state, ...patch,
                   inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), DIMS) };
         for (const fn of subscribers) fn(state);
         return state;
@@ -130,11 +130,12 @@ check("a cutaway over X and Y: one face per cut, across the corner taken out",
       laid.grips.map((g) => g.key).join() === "x:cut,y:cut"
       && JSON.stringify(laid.faces[0].span) === JSON.stringify([["y", [300, 1000]], ["z", [0, 40]]]),
       JSON.stringify(laid.faces[0]));
-state.inspect = G.clean({ mode: "slab", axes: { x: true, y: true, z: true }, slab: { thickness: { z: 4 } } }, DIMS);
+state.inspect = G.clean({ mode: "crop", axes: { x: true, y: true, z: true } }, DIMS);
 laid = handles.layout(vs.get());
-check("slabs: a grip on each middle plane, the faces faint",
-      laid.grips.map((g) => g.key).join() === "x:plane,y:plane,z:plane"
-      && laid.faces.filter((f) => f.faint).length === 6, laid.faces.length);
+check("a crop over X, Y and Z (the Crop's default): two faces an axis and the body",
+      laid.faces.length === 6 && laid.grips.map((g) => g.key).join() === "x:lo,x:hi,y:lo,y:hi,z:lo,z:hi,body",
+      laid.grips.map((g) => g.key).join());
+check("no grip moves a plane any more", laid.grips.every((g) => g.kind !== "plane"));
 
 // -- following the hand ---------------------------------------------------------
 const camera = renderer.cameraMatrices();
@@ -209,7 +210,7 @@ box.PlexoraViewerPrefs = { handles: () => ({ visible: true, opacity: 0.4 }) };
 state.inspect = G.clean({ mode: "full" }, DIMS);
 handles.paint();
 check("nothing to drag over the whole stack", handles.root.getAttribute("hidden") !== null);
-state.inspect = G.clean({ mode: "section", axes: { z: true } }, DIMS);
+state.inspect = G.clean({ mode: "cutaway", axes: { x: false, z: true } }, DIMS);
 handles.paint();
 check("shown for a cut, outlines at the prefs' strength",
       handles.root.getAttribute("hidden") === null && handles.faceLayer.getAttribute("opacity") === "0.4");

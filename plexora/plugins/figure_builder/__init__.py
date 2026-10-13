@@ -139,6 +139,7 @@ PLUGIN = Plugin(
     # want to reopen a figure. These two entries are the way in, and they are
     # data: core renders them with its own classes.
     icon="images",
+    order=50,
     # Opens the TOOL -- the capture dock over the image -- not the library page.
     # Declaring no panel does not mean there is nothing to open: activating this
     # plugin is what puts the dock on screen, and that is what a user asking for

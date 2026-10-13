@@ -1,10 +1,10 @@
 /**
  * inspectState.js - changing how the 3-D view is cut: preview, commit, undo.
  *
- * The cut lives in the view state (`inspect`, `z`, `section`;
- * services/viewState.js) and its rules in services/inspectGeometry.js. This
- * is the one way the dock, the depth strip, the handles, the keyboard and the
- * agent change it, so every one of them gets the same three things:
+ * The cut lives in the view state (`inspect`; services/viewState.js) and its
+ * rules in services/inspectGeometry.js. This is the one way the dock, the
+ * handles, the keyboard and the agent change it, so every one of them gets
+ * the same four things:
  *
  *   PREVIEW while a hand is on a control: `preview(patch)` lays the patch
  *   over the state for the 3-D view only -- it redraws from uniforms in the
@@ -16,12 +16,14 @@
  *   before onto a history of HISTORY entries; edits within COALESCE_MS of each
  *   other with the same `gesture` key fold into one. `undo()` / `redo()`.
  *
+ *   ONE TOOL AT A TIME, each with its own axes: a patch that picks the other
+ *   tool (`{mode: "crop"}`) leaves the old tool's axes in `axesBy` and brings
+ *   the new one's back (`withTool`). `toggle()` turns the tool last chosen
+ *   off (the whole stack) and on again with everything it had.
+ *
  *   ONE ANSWER for what is drawn: `effective()` is the state with any preview
  *   laid over it, `resolved()` its resolution (inspectGeometry.resolve). The
  *   volume renderer reads it every frame (volumeRenderer.inspectNow).
- *
- * Section and slab positions are the view's own `z` and `section.x/y`: a
- * patch may carry them (`{z: 12}`, `{section: {x: 400}}`) beside `inspect`.
  *
  * Classic script, `window.PlexoraInspectState` (the class) and, once the
  * viewer has a z-stack, `window.PlexoraInspect` (main.js).
@@ -71,21 +73,32 @@
             return this.G.spacing(this.viewState.info);
         }
 
-        /** What the cut is made of now: `{inspect, z, section}`. */
+        /** What the cut is made of now: `{inspect}`. */
         snapshot(state = this.viewState.get()) {
-            return { inspect: copy(state?.inspect), z: state?.z, section: copy(state?.section) };
+            return { inspect: copy(state?.inspect) };
         }
 
         /** The state with a patch laid over it, as `viewState.set` would. */
         _over(state, patch) {
-            if (!patch) return state;
-            const out = { ...state };
-            if (patch.inspect) {
-                out.inspect = this.G.clean(this.G.merge(state.inspect, patch.inspect), this.dims(), this.spacing());
-            }
-            if (patch.z !== undefined) out.z = Math.max(0, Math.min(this.viewState.depth - 1, Math.round(patch.z)));
-            if (patch.section) out.section = { ...(state.section || {}), ...patch.section };
-            return out;
+            if (!patch?.inspect) return state;
+            return { ...state, inspect: this.G.clean(this.G.merge(state.inspect, patch.inspect), this.dims()) };
+        }
+
+        /**
+         * `patch` as it applies to `state`: when it picks the other tool, it
+         * also leaves the tool it replaces its axes (`axesBy`) and takes up
+         * the new tool's own -- a Cut on X and a Crop on X, Y and Z do not
+         * trade axes. Axes the patch names itself win.
+         */
+        withTool(patch, state) {
+            const next = patch?.inspect?.mode;
+            const inspect = state?.inspect;
+            if (!inspect || !this.G.TOOLS.includes(next) || next === inspect.tool) return patch;
+            return { ...patch, inspect: {
+                ...patch.inspect,
+                axes: { ...inspect.axesBy[next], ...(patch.inspect.axes || {}) },
+                axesBy: { ...(patch.inspect.axesBy || {}), [inspect.tool]: { ...inspect.axes } },
+            } };
         }
 
         /** The state the 3-D view draws: the view state, any preview over it. */
@@ -98,16 +111,14 @@
         resolved() {
             const state = this.effective();
             if (!state?.inspect) return null;
-            const d = this.dims();
-            return this.G.resolve(state.inspect, this.G.positions(state, d), d);
+            return this.G.resolve(state.inspect, this.dims());
         }
 
         /** "crop X 100–600 µm" for what is drawn now ("" when whole). */
         describe() {
             const state = this.effective();
             if (!state?.inspect) return "";
-            const d = this.dims();
-            return this.G.describe(state.inspect, this.G.positions(state, d), d, this.spacing());
+            return this.G.describe(state.inspect, this.dims(), this.spacing());
         }
 
         /** Call `fn(resolved, {preview})` on every change of what is drawn;
@@ -146,42 +157,27 @@
         }
 
         /**
-         * Change the cut: `patch` = `{inspect?, z?, section?}`. `save: false`
-         * for a change nobody chose (a capture put back, an agent's replay);
+         * Change the cut: `patch` = `{inspect}`. `save: false` for a change
+         * nobody chose (a capture put back, an agent's replay);
          * `history: false` to leave the history alone; `gesture` to fold
          * repeated edits of one control into one undo entry.
          */
         set(patch, { save = true, history = true, gesture = null } = {}) {
-            if (!this.enabled || !patch) return this.viewState.get();
+            if (!this.enabled || !patch?.inspect) return this.viewState.get();
+            const applied = this.withTool(patch, this.viewState.get());
             this.previewPatch = null;
             if (history) this._remember(gesture);
-            const out = this.viewState.set(this._patchFor(patch), { save });
+            const out = this.viewState.set({ inspect: applied.inspect }, { save });
             this._changed(false);
-            return out;
-        }
-
-        /** A view-state patch: `inspect` repaired here, so what is saved is
-         *  what is drawn. */
-        _patchFor(patch) {
-            const out = {};
-            if (patch.inspect) out.inspect = patch.inspect;
-            if (patch.z !== undefined) out.z = patch.z;
-            if (patch.section) out.section = patch.section;
             return out;
         }
 
         /** Show `patch` over the state in the 3-D view only, until commit or
          *  cancel. Successive previews of one gesture replace each other. */
         preview(patch) {
-            if (!this.enabled || !patch) return;
-            const held = this.previewPatch || {};
-            this.previewPatch = {
-                ...(held.inspect || patch.inspect
-                    ? { inspect: this.G.merge(held.inspect || {}, patch.inspect || {}) } : {}),
-                ...(patch.z !== undefined ? { z: patch.z } : (held.z !== undefined ? { z: held.z } : {})),
-                ...(held.section || patch.section
-                    ? { section: { ...(held.section || {}), ...(patch.section || {}) } } : {}),
-            };
+            if (!this.enabled || !patch?.inspect) return;
+            const held = this.previewPatch?.inspect || {};
+            this.previewPatch = { inspect: this.G.merge(held, patch.inspect) };
             this._changed(true);
         }
 
@@ -203,39 +199,44 @@
             this._changed(false);
         }
 
+        /** Cut with `tool` ("cutaway" or "crop"), as it was last left. */
+        pick(tool) {
+            if (!this.G.TOOLS.includes(tool)) return this.viewState.get();
+            return this.set({ inspect: { mode: tool } });
+        }
+
+        /** The tool last chosen off (the whole stack), or on again with its
+         *  axes and its cuts as they were. */
+        toggle() {
+            const inspect = this.viewState.get()?.inspect;
+            if (!this.enabled || !inspect) return this.viewState.get();
+            return this.set({ inspect: { mode: inspect.mode === "full" ? inspect.tool : "full" } });
+        }
+
         /**
-         * Back to defaults: `"axis"` (one axis of the current mode, `axis`),
-         * `"mode"` (the current mode's settings), `"cut"` (every mode's) or
+         * Back to defaults: `"axis"` (one axis of the current tool, `axis`),
+         * `"mode"` (every axis of the current tool, or of the tool last chosen
+         * while the cut is hidden, which it shows again; the axes chosen stay) or
          * `"full"` (the whole stack, settings kept).
          */
         reset(scope = "full", { axis = null } = {}) {
             if (!this.enabled) return this.viewState.get();
-            const state = this.viewState.get();
-            const inspect = state.inspect;
-            const base = this.G.defaults(this.dims(), this.spacing());
+            const inspect = this.viewState.get().inspect;
             if (scope === "full") return this.set({ inspect: { mode: "full" } });
-            if (scope === "cut") {
-                return this.set({ inspect: { ...base, mode: inspect.mode, axes: inspect.axes } });
-            }
+            const base = this.G.defaults(this.dims());
             const axes = scope === "axis" && axis ? [axis] : this.G.AXES;
-            const patch = {};
-            if (inspect.mode === "crop") {
-                patch.inspect = { crop: Object.fromEntries(axes.map((a) => [a, base.crop[a]])) };
-            } else if (inspect.mode === "cutaway") {
-                patch.inspect = { cutaway: Object.fromEntries(axes.map((a) => [a, base.cutaway[a]])) };
-            } else if (inspect.mode === "slab" || inspect.mode === "section") {
-                // A plane back to the middle of the stack (or of the plane).
-                const d = this.dims();
-                const middle = { x: Math.floor(d.width / 2), y: Math.floor(d.height / 2) };
-                const section = {};
-                for (const a of axes) if (a !== "z") section[a] = middle[a];
-                if (Object.keys(section).length) patch.section = section;
-                if (axes.includes("z")) patch.z = Math.floor(d.depth / 2);
-                if (inspect.mode === "slab" && scope === "mode") {
-                    patch.inspect = { slab: { thickness: base.slab.thickness, composite: base.slab.composite } };
-                }
+            // A hidden cut (the whole stack shown) is the tool last chosen's,
+            // and its reset shows it again.
+            const tool = inspect.mode === "full" ? inspect.tool : inspect.mode;
+            if (tool === "crop") {
+                return this.set({ inspect: { mode: tool,
+                                             crop: Object.fromEntries(axes.map((a) => [a, base.crop[a]])) } });
             }
-            return this.set(patch);
+            if (tool === "cutaway") {
+                return this.set({ inspect: { mode: tool,
+                                             cutaway: Object.fromEntries(axes.map((a) => [a, base.cutaway[a]])) } });
+            }
+            return this.viewState.get();
         }
 
         canUndo() { return this.past.length > 0; }
@@ -262,7 +263,7 @@
 
         _apply(entry) {
             this.previewPatch = null;
-            this.viewState.set({ inspect: entry.inspect, z: entry.z, section: entry.section });
+            this.viewState.set({ inspect: entry.inspect });
             this._changed(false);
         }
     }

@@ -34,6 +34,7 @@ PLUGIN = Plugin(
     version=VERSION,
     blueprint_factory=_blueprint,
     icon="sliders",
+    order=20,
     # Not mod+T: the browser opens a tab on that one and will not give it up.
     # B is what is left that no browser and no plugin has claimed.
     shortcut="mod+b",

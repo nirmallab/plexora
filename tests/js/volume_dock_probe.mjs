@@ -1,13 +1,15 @@
 /**
- * The 3-D dock (views/volumeDock.js): cutting the stack from the canvas.
+ * The cut panel (views/volumeDock.js): Cut and Crop, opened beside the strip.
  *
- * Driven through a small DOM, as a user would. Pinned: the dock is there only
- * in 3-D; each spatial mode shows its rows and no other (the registry's
- * "dock" surface); X+Y shows exactly the X and Y rows; a slider previews while
- * dragged and commits once on release, one undo entry; a mode's settings are
- * kept while another is used; lengths are in microns only where the image
- * states its spacing; surfaces alone hide every row about voxels; undo and
- * redo by button and by Cmd/Ctrl+Z.
+ * Driven through a small DOM, as a user would. Pinned: the panel comes out
+ * only from a tool, in 3-D; Cut starts on X and Crop on X, Y and Z, and each
+ * keeps its own axes when the other is used; the same controls for both, the
+ * flips only beside a Cut's axes; every control is one change of the cut (one
+ * undo entry); collapsing leaves the cut as it is, x goes back to the whole
+ * stack; O and Show/Hide hide the cut and show it again with its settings
+ * kept, the panel left out, never while typing; a control used while the cut
+ * is hidden shows it again; surfaces alone hide every control about voxels;
+ * undo by button and by Cmd/Ctrl+Z.
  *
  * Run directly:  node tests/js/volume_dock_probe.mjs
  */
@@ -126,8 +128,7 @@ const DIMS = G.dims(INFO, 40);
 
 const asked = [];
 let state = { mode: "plane", z: 12, t: 0, layout: "single", slab: { z0: 5, z1: 15, op: "max", follow: true },
-              volume: { show: { volume: true, surfaces: true } }, section: { x: 500, y: 250 },
-              inspect: G.clean({}, DIMS, G.spacing(INFO)) };
+              volume: { show: { volume: true, surfaces: true } }, inspect: G.clean({}, DIMS) };
 const subscribers = new Set();
 const vs = {
     depth: 40, frames: 1, color: false, info: INFO,
@@ -138,8 +139,7 @@ const vs = {
         asked.push(patch);
         state = { ...state, ...patch, slab: { ...state.slab, ...(patch.slab || {}) },
                   volume: { ...state.volume, ...(patch.volume || {}) },
-                  section: { ...state.section, ...(patch.section || {}) },
-                  inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), DIMS, G.spacing(INFO)) };
+                  inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), DIMS) };
         for (const fn of subscribers) fn(state);
         return state;
     },
@@ -147,121 +147,226 @@ const vs = {
     zStep: () => ({ value: 2, unit: "µm" }),
 };
 let engaged = false;
-const volume = { renderer: { covered: [0, 0, 2000, 1000], status: "ready", engaged: () => engaged, resolved: () => true } };
+const volume = { renderer: { covered: [0, 0, 2000, 1000], status: "ready", engaged: () => engaged, resolved: () => true,
+                             canvas: { hidden: false } } };
 const cutter = new box.PlexoraInspectState(vs);
 box.PlexoraInspect = cutter;
+let handlePrefs = { visible: true, opacity: 0.55 };
+const prefSets = [];
 box.PlexoraViewerPrefs = {
-    handles: () => ({ visible: true, opacity: 0.55 }),
-    set(patch) { box.dispatchEvent(new box.CustomEvent("plexora:viewer-prefs-changed", { detail: patch })); },
+    handles: () => ({ ...handlePrefs }),
+    set(patch) {
+        prefSets.push(patch);
+        handlePrefs = { ...handlePrefs, ...(patch.handles || {}) };
+        box.dispatchEvent(new box.CustomEvent("plexora:viewer-prefs-changed", { detail: patch }));
+    },
 };
-const dock = box.PlexoraVolumeDock.attach({ viewState: vs, volume, cutter,
+// The depth strip the panel opens beside (views/depthStrip.js): its root and
+// its Cut and Crop buttons.
+const strip = { root: fakeElement("div"),
+                nodes: { "tool.cutaway": fakeElement("button"), "tool.crop": fakeElement("button") } };
+check("no panel without a strip to open beside", box.PlexoraVolumeDock.attach({ viewState: vs, volume, cutter }) === null);
+const dock = box.PlexoraVolumeDock.attach({ viewState: vs, volume, cutter, strip,
                                              extras: () => ({ sectionsSupported: true }) });
-check("the dock is built for a z-stack's 3-D view", Boolean(dock?.root));
-const rows = () => [...dock.rows.entries()].filter(([id, row]) => id !== "cut.tools" && !row.node.hidden)
-    .map(([id]) => id);
-check("in 2-D it is not there", dock.root.hidden === true);
+check("the panel is built inside the strip, to open from its edge", Boolean(dock?.root)
+      && strip.root.children.includes(dock.root));
+const isOpen = () => dock.root.classList.contains("is-open");
+const shown = () => [...dock.controls.entries()].filter(([, c]) => !c.node.hidden).map(([id]) => id);
+const PANEL = ["cut.axes", "cut.face", "cut.handles", "cut.reset", "cut.history", "cut.interpolation",
+               "cut.handleOpacity", "cut.toggle"];
+check("in 2-D it is not out, and cannot be tabbed into", !isOpen() && dock.root.inert === true);
 
 vs.set({ mode: "volume" });
-check("in 3-D, whole: the mode switch and how voxels are read", !dock.root.hidden
-      && JSON.stringify(rows()) === JSON.stringify(["cut.mode", "cut.interpolation"]), rows().join());
-check("...and undo and redo, disabled with nothing to undo",
-      !dock.rows.get("cut.tools").node.hidden
-      && dock.rows.get("cut.tools").node.querySelectorAll("button").some((b) => /Undo/.test(b.title) && b.disabled));
+check("in 3-D over the whole stack it stays in", !isOpen() && !strip.root.classList.contains("has-cut-panel"));
 
-const modeButton = (mode) => dock.rows.get("cut.mode").node.querySelectorAll("button")
-    .find((b) => b.getAttribute("aria-label") && b.getAttribute("aria-label").toLowerCase().startsWith(
-        { full: "the whole", cutaway: "cutaway", section: "sections", slab: "slabs", crop: "crop" }[mode]));
+// -- Cut ---------------------------------------------------------------------------
 asked.length = 0;
-modeButton("crop").fire("click");
-check("a mode button is one change of the cut", asked.length === 1 && asked[0].inspect?.mode === "crop");
-check("Crop along Z: the axes, Z's range, the cut faces", JSON.stringify(rows())
-      === JSON.stringify(["cut.mode", "cut.axes", "cut.z", "cut.face", "cut.interpolation", "cut.handleOpacity"]),
-      rows().join());
-const chip = (axis) => dock.rows.get("cut.axes").node.querySelectorAll("button")
-    .find((b) => b.textContent === axis.toUpperCase());
-chip("x").fire("click");
-check("X added: exactly the X and Z rows", rows().filter((id) => /^cut\.[xyz]$/.test(id)).join() === "cut.x,cut.z");
-chip("z").fire("click");
+box.PlexoraVolumeDock.pick("cutaway");
+check("Cut pressed: one change turns the tool on, on X", asked.length === 1 && state.inspect.mode === "cutaway"
+      && JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: false, z: false }),
+      JSON.stringify(state.inspect.axes));
+check("...and the panel slides out beside the strip, joined to it", isOpen() && dock.root.inert === false
+      && strip.root.classList.contains("has-cut-panel") && dock.title.textContent === "Cut");
+check("every control of a Cut", JSON.stringify(shown()) === JSON.stringify(PANEL), shown().join());
+const axes = dock.controls.get("cut.axes").node;
+const chip = (axis) => axes.querySelectorAll(".volume-dock-chip")[["x", "y", "z"].indexOf(axis)];
+const flip = (axis) => axes.querySelectorAll(".volume-dock-flip")[["x", "y", "z"].indexOf(axis)];
+check("X lit, Y and Z not", chip("x").getAttribute("aria-pressed") === "true"
+      && chip("y").getAttribute("aria-pressed") === "false");
+check("a flip beside the axis cut; beside the others its place is held, idle",
+      axes.classList.contains("has-flip") && !flip("x").hidden && !flip("x").disabled
+      && flip("y").classList.contains("is-idle") && flip("y").disabled);
+check("the flip says which side is kept, its full half on the far side", /keeping the far side/.test(flip("x").title)
+      && flip("x").classList.contains("is-flipped"), flip("x").title);
+asked.length = 0;
+flip("x").fire("click");
+check("a flip is one change: the near side kept", asked.length === 1 && state.inspect.cutaway.x.keep === "lo"
+      && !flip("x").classList.contains("is-flipped") && /keeping the near side/.test(flip("x").title));
 chip("y").fire("click");
-check("X+Y: exactly the X and Y rows", rows().filter((id) => /^cut\.[xyz]$/.test(id)).join() === "cut.x,cut.y");
+check("Y added: cut along X and Y, Y's flip live", state.inspect.axes.y === true && !flip("y").disabled);
 chip("x").fire("click");
 chip("y").fire("click");
-check("the last axis stays on", state.inspect.axes.y === true && !state.inspect.axes.x);
+check("the last axis stays on", state.inspect.axes.y === true && !state.inspect.axes.x
+      && /one axis stays on/.test(chip("y").title), chip("y").title);
 chip("x").fire("click");
 
-const slider = (id) => dock.rows.get(id).slider;
-check("a crop row is a range over the area the 3-D view draws",
-      slider("cut.x").mode === "range" && slider("cut.x").min === 0 && slider("cut.x").max === 2000);
+const action = (id) => dock.controls.get(id).node;
+action("cut.face").fire("click");
+check("Solid cut faces on, pressed", state.inspect.face === true
+      && action("cut.face").getAttribute("aria-pressed") === "true");
+action("cut.handles").fire("click");
+check("the eye hides the handles (a viewer pref)", prefSets.at(-1)?.handles?.visible === false
+      && action("cut.handles").getAttribute("aria-pressed") === "false" && /hidden/.test(action("cut.handles").title));
+action("cut.handles").fire("click");
+vs.set({ inspect: { cutaway: { x: { at: 300 } } } });
 asked.length = 0;
-slider("cut.x").handlers.onInput([200, 1200]);
-check("dragging previews: nothing saved, the cut on screen moves",
-      asked.length === 0 && cutter.previewing && cutter.resolved().box.x.join() === "200,1200");
-slider("cut.x").handlers.onChange([200, 1200]);
-check("let go: one change", asked.length === 1 && state.inspect.crop.x.join() === "200,1200" && !cutter.previewing);
-check("its fields are in microns (the image states its pixel size)",
-      slider("cut.x").unit === "µm" && slider("cut.x").formatValue(200) === "100.0", slider("cut.x").unit);
-check("a Z range says how many planes and how thick",
-      dock.rows.get("cut.z") && (() => { chip("z").fire("click"); const t = dock.rows.get("cut.z").node
-          .querySelector(".volume-dock-note").textContent; chip("z").fire("click"); return /planes · .*µm$/.test(t); })());
+action("cut.reset").fire("click");
+check("Reset puts the cut back where it starts, the axes and the tool kept",
+      asked.length === 1 && state.inspect.cutaway.x.at === 1000 && state.inspect.cutaway.x.keep === "hi"
+      && state.inspect.axes.x && state.inspect.axes.y && state.inspect.mode === "cutaway",
+      JSON.stringify(state.inspect.cutaway.x));
+check("Undo is live and says its keys", !action("cut.history").disabled
+      && /Undo the last change to the cut \(Ctrl\+Z; Shift\+Ctrl\+Z redoes\)/.test(action("cut.history").title),
+      action("cut.history").title);
+action("cut.history").fire("click");
+check("Undo takes the reset back", state.inspect.cutaway.x.at === 300 && state.inspect.cutaway.x.keep === "lo");
+const voxels = dock.controls.get("cut.interpolation").node.querySelectorAll("button");
+voxels[1].fire("click");
+check("Voxels: blocks, across the panel", state.volume.interpolation === "nearest"
+      && voxels[1].getAttribute("aria-checked") === "true");
+voxels[0].fire("click");
 
-modeButton("slab").fire("click");
-check("Slab: how it combines and how thick, the surroundings",
-      ["cut.combine", "cut.thickness", "cut.context"].every((id) => rows().includes(id))
-      && !rows().includes("cut.face"), rows().join());
-check("a slab's axis row moves its plane", slider("cut.x").mode === "single");
-const thickness = dock.rows.get("cut.thickness").node.querySelector(".volume-dock-note").textContent;
-check("the thickness in microns", /µm$/.test(thickness), thickness);
-const combine = dock.rows.get("cut.combine").node.querySelector("select");
+// -- Crop: the same panel ------------------------------------------------------------
 asked.length = 0;
-combine.value = "mean";
-combine.fire("change");
-check("Combine sets how the slab's voxels combine", asked.length === 1 && state.inspect.slab.composite === "mean");
-combine.value = "single";
-combine.fire("change");
-check("one plane: no thickness", !rows().includes("cut.thickness"));
-modeButton("section").fire("click");
-check("Section: the planes' opacity and the surroundings, no slab rows",
-      rows().includes("cut.opacity") && rows().includes("cut.context") && !rows().includes("cut.combine"));
-modeButton("crop").fire("click");
-check("back to Crop, its range is where it was left", JSON.stringify(slider("cut.x").get()) === "[200,1200]",
-      JSON.stringify(slider("cut.x").get()));
+box.PlexoraVolumeDock.pick("crop");
+check("Crop pressed: the tool switches in one change, on X, Y and Z", asked.length === 1
+      && state.inspect.mode === "crop" && state.inspect.axes.x && state.inspect.axes.y && state.inspect.axes.z,
+      JSON.stringify(state.inspect.axes));
+check("...in place: the same panel, its title, no flips", isOpen() && dock.title.textContent === "Crop"
+      && JSON.stringify(shown()) === JSON.stringify(PANEL) && !axes.classList.contains("has-flip")
+      && flip("x").hidden);
+check("the Cut's axes are kept for it", JSON.stringify(state.inspect.axesBy.cutaway)
+      === JSON.stringify({ x: true, y: true, z: false }), JSON.stringify(state.inspect.axesBy));
+chip("y").fire("click");
+box.PlexoraVolumeDock.pick("cutaway");
+check("back to Cut: its own axes and its flip, as it was left",
+      JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: true, z: false })
+      && state.inspect.cutaway.x.keep === "lo" && state.inspect.face === true);
+box.PlexoraVolumeDock.pick("crop");
+check("and Crop's: X and Z, as it was left", JSON.stringify(state.inspect.axes)
+      === JSON.stringify({ x: true, y: false, z: true }), JSON.stringify(state.inspect.axes));
+
+// -- collapsing, closing, the key ----------------------------------------------------
+asked.length = 0;
+box.PlexoraVolumeDock.pick("crop");
+check("the tool's button again folds the panel in; the crop stays on", !isOpen() && asked.length === 0
+      && state.inspect.mode === "crop" && !strip.root.classList.contains("has-cut-panel"));
+box.PlexoraVolumeDock.pick("crop");
+check("...and again brings it back", isOpen());
+dock.collapseButton.fire("click");
+check("› folds it in too, the crop on, focus back on the strip's Crop", !isOpen() && state.inspect.mode === "crop"
+      && active === strip.nodes["tool.crop"]);
+box.PlexoraVolumeDock.open();
+dock.root.fire("keydown", { key: "Escape" });
+check("Esc in the panel folds it in", !isOpen() && state.inspect.mode === "crop");
+box.PlexoraVolumeDock.open();
+
+const press = (key, extra = {}) => documentListeners.keydown?.forEach((fn) => fn({ key, preventDefault() {},
+    stopPropagation() {}, ...extra }));
+const toggle = action("cut.toggle");
+check("Show/Hide under the handles' strength, its key in a key cap",
+      dock.root.children.at(-1) === toggle && toggle.children[0]?.tagName === "KBD"
+      && toggle.children[0].textContent === "O" && toggle.children[1]?.textContent === "Show/Hide"
+      && toggle.getAttribute("aria-pressed") === "true" && /\(O\): the cut is shown/.test(toggle.title), toggle.title);
+asked.length = 0;
+press("o");
+check("O hides the cut: the whole stack, settings kept, one change", state.inspect.mode === "full"
+      && state.inspect.tool === "crop" && asked.length === 1);
+check("...and the panel stays out, quietened, still the Crop's", isOpen() && dock.root.classList.contains("is-off")
+      && dock.title.textContent === "Crop" && JSON.stringify(shown()) === JSON.stringify(PANEL)
+      && strip.root.classList.contains("has-cut-panel"), shown().join());
+check("Show/Hide says the cut is hidden", toggle.getAttribute("aria-pressed") === "false"
+      && /the cut is hidden\. Show it again/.test(toggle.title), toggle.title);
+press("o");
+check("O again: the crop back, exactly as it was, the panel never moved",
+      state.inspect.mode === "crop" && JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: false, z: true })
+      && isOpen() && !dock.root.classList.contains("is-off"));
+asked.length = 0;
+toggle.fire("click");
+check("Show/Hide clicked hides it too, the panel out", state.inspect.mode === "full" && asked.length === 1 && isOpen());
+toggle.fire("click");
+check("...and shows it again", state.inspect.mode === "crop" && isOpen());
+press("o");
+asked.length = 0;
+chip("y").fire("click");
+check("an axis chosen while the cut is hidden shows it again, in one change", asked.length === 1
+      && state.inspect.mode === "crop" && state.inspect.axes.y === true && !dock.root.classList.contains("is-off"));
+chip("y").fire("click");
+vs.set({ inspect: { crop: { x: [400, 1600] } } });
+press("o");
+asked.length = 0;
+action("cut.reset").fire("click");
+check("Reset while hidden: the crop back where it starts, shown, in one change", asked.length === 1
+      && state.inspect.mode === "crop" && JSON.stringify(state.inspect.crop.x) === JSON.stringify([0, 2000]),
+      JSON.stringify(state.inspect.crop.x));
+action("cut.history").fire("click");
+check("...which Undo takes back, hidden again as it was", state.inspect.mode === "full"
+      && JSON.stringify(state.inspect.crop.x) === JSON.stringify([400, 1600]) && isOpen());
+asked.length = 0;
+box.PlexoraVolumeDock.pick("crop");
+check("the strip's Crop while hidden shows the crop, the panel out", asked.length === 1
+      && state.inspect.mode === "crop" && isOpen());
+press("o");
+box.PlexoraVolumeDock.pick("cutaway");
+check("...and Cut while hidden switches to a shown Cut", state.inspect.mode === "cutaway" && isOpen()
+      && dock.title.textContent === "Cut" && axes.classList.contains("has-flip"));
+box.PlexoraVolumeDock.pick("crop");
+check("back to the crop as it was", JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: false, z: true })
+      && JSON.stringify(state.inspect.crop.x) === JSON.stringify([400, 1600]), JSON.stringify(state.inspect.crop.x));
+asked.length = 0;
+press("o", { ctrlKey: true });
+press("o", { repeat: true });
+check("not with a modifier, nor held down", asked.length === 0);
+const field = fakeElement("input");
+active = field;
+press("o");
+check("never while typing", asked.length === 0 && state.inspect.mode === "crop");
+active = null;
+vs.set({ mode: "plane" });
+asked.length = 0;
+press("o");
+check("never outside 3-D", asked.length === 0);
+vs.set({ mode: "volume" });
+
+asked.length = 0;
+dock.closeButton.fire("click");
+check("× closes the panel and goes back to the whole stack", !isOpen() && state.inspect.mode === "full"
+      && asked.length === 1);
+press("o");
+check("O after ×: the crop back, the panel left closed", state.inspect.mode === "crop" && !isOpen());
+box.PlexoraVolumeDock.pick("crop");
+check("its button opens the panel again", isOpen());
+
+// -- over surfaces alone, and undo by key ---------------------------------------------
 vs.set({ volume: { show: { volume: false, surfaces: true } } });
 check("surfaces only: no cut faces, no reading of voxels",
-      !rows().includes("cut.face") && !rows().includes("cut.interpolation"));
+      !shown().includes("cut.face") && !shown().includes("cut.interpolation") && shown().includes("cut.axes"));
 vs.set({ volume: { show: { volume: true, surfaces: true } } });
 
-// Undo and redo.
-const undo = dock.rows.get("cut.tools").node.querySelectorAll("button").find((b) => /Undo/.test(b.title));
-const before = state.inspect.mode;
-modeButton("cutaway").fire("click");
-undo.fire("click");
-check("Undo takes the last cut back", state.inspect.mode === before, state.inspect.mode);
+const before = state.inspect.axes.y;
+chip("y").fire("click");
 engaged = true;
-const key = (shiftKey) => documentListeners.keydown?.forEach((fn) => fn({ key: "z", metaKey: true, shiftKey,
-    preventDefault() {}, stopPropagation() {} }));
-key(true);
-check("Shift+Cmd+Z redoes it, while the 3-D view is worked in", state.inspect.mode === "cutaway");
-key(false);
-check("Cmd+Z undoes it", state.inspect.mode === before);
+const chordKey = (shiftKey) => press("z", { metaKey: true, shiftKey });
+chordKey(false);
+check("Cmd+Z undoes a cut while the 3-D view is worked in", state.inspect.axes.y === before);
+chordKey(true);
+check("Shift+Cmd+Z redoes it", state.inspect.axes.y === !before);
 engaged = false;
-key(true);
-check("not while the user works elsewhere", state.inspect.mode === before);
-
-// No stated spacing: pixels, never invented microns.
-vs.info = { width: 2000, height: 1000 };
-modeButton("crop").fire("click");
-check("with no stated spacing, pixels, never invented microns",
-      slider("cut.x").unit === "px" && slider("cut.x").formatValue(200) === "200", slider("cut.x").unit);
-vs.info = INFO;
-
-// Folding.
-dock.setFolded(true, { remember: false });
-check("folded, only the head shows", dock.body.hidden && dock.root.classList.contains("is-folded"));
-box.PlexoraVolumeDock.open();
-check("open() unfolds it", !dock.body.hidden);
+chordKey(false);
+check("not while the user works elsewhere", state.inspect.axes.y === !before);
 
 vs.set({ mode: "plane" });
-check("back in 2-D the dock goes", dock.root.hidden);
+check("back in 2-D the panel goes", !isOpen() && dock.root.inert === true);
 
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);

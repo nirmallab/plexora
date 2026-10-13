@@ -879,11 +879,10 @@ window.PlexoraAgentBridge = (function () {
             derived: vs.isDerived(), window_class: vs.windowClass(),
             spacing: (vs.info && vs.info.spacing) || null,
             // The 3-D view: how it is cut (image units; services/inspectGeometry.js),
-            // the same in words, where its sections are, its camera, what it
-            // draws and the area of the plane it draws.
+            // the same in words, its camera, what it draws and the area of the
+            // plane it draws.
             inspect: state.inspect || null,
             cut: typeof vs.cutLabel === "function" ? vs.cutLabel() : "",
-            section: state.section || null,
             camera: renderer ? renderer.cameraState() : ((state.volume && state.volume.camera) || null),
             show: (state.volume && state.volume.show) || null,
             box: renderer ? (renderer.box || null) : null,
@@ -1549,8 +1548,7 @@ window.PlexoraAgentBridge = (function () {
             if (keep || !held.volume || !vs) return false;
             // The 3-D view's cut too: its tiles stay on one plane whatever it
             // shows, so the token alone does not say it moved.
-            const cutOf = (state) => JSON.stringify([state.mode, state.inspect || null, state.z,
-                                                     state.section || null]);
+            const cutOf = (state) => JSON.stringify([state.mode, state.inspect || null, state.z]);
             if (vs.spec(held.volume) === vs.spec() && cutOf(held.volume) === cutOf(vs.get())) return false;
             vs.set(held.volume, { save: false });
             await untilDrawn(vs.settled());
@@ -1857,29 +1855,9 @@ window.PlexoraAgentBridge = (function () {
             }
             if (args.crop && typeof args.crop === "object") inspect.crop = args.crop;
             if (args.cutaway && typeof args.cutaway === "object") inspect.cutaway = args.cutaway;
-            if (args.thickness || args.composite) {
-                inspect.slab = {};
-                if (args.thickness) inspect.slab.thickness = args.thickness;
-                if (args.composite) inspect.slab.composite = String(args.composite);
-            }
-            for (const key of ["opacity", "context"]) {
-                if (Number.isFinite(Number(args[key])) && args[key] !== null) inspect[key] = Number(args[key]);
-            }
             if (typeof args.face === "boolean") inspect.face = args.face;
-            const patch = Object.keys(inspect).length ? { inspect } : {};
-            if (args.z !== undefined && args.z !== null) {
-                const z = Number(args.z);
-                if (!(z >= 0 && z < vs.depth)) {
-                    throw new Error(`z ${z} is outside this image's ${vs.depth} planes (0-${vs.depth - 1})`);
-                }
-                patch.z = z;
-            }
-            const section = {};
-            if (Number.isFinite(Number(args.section_x)) && args.section_x !== null) section.x = Number(args.section_x);
-            if (Number.isFinite(Number(args.section_y)) && args.section_y !== null) section.y = Number(args.section_y);
-            if (Object.keys(section).length) patch.section = section;
             if (vs.get().mode !== "volume") vs.set({ mode: "volume" });
-            cutter.set(patch);
+            if (Object.keys(inspect).length) cutter.set({ inspect });
             await untilDrawn(vs.settled(), call);
             touch();
             return describeVolumeView();

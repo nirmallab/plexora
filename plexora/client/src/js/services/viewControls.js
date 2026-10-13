@@ -35,10 +35,11 @@
  * the view state. No DOM, no text, no icons: those belong to the views.
  *
  * The 3-D view's cut (the view state's `inspect`, services/inspectGeometry.js)
- * is part of the context too: `cut` (full, cutaway, section, slab, crop) and
- * its axes, and the 3-D dock (views/volumeDock.js) is the "dock" surface --
- * a row there shows only in the spatial modes, on the axes and for the
- * representation (volume, surfaces or both) it applies to.
+ * is part of the context too: `cut` (full, cutaway, crop), the tool last
+ * chosen (`cutTool`) and its axes. The strip offers the two tools in 3-D, and
+ * the panel they open beside it (views/volumeDock.js) is the "dock" surface
+ * -- its rows are the tool last chosen's, whether its cut is shown or hidden,
+ * each for the representation (volume, surfaces or both) it applies to.
  *
  * Classic script, `window.PlexoraViewControls`.
  */
@@ -70,7 +71,7 @@
         // The 3-D view can be cut (services/inspectState.js on the page).
         cut: (ctx) => Boolean(ctx.cutSupported),
         // The volume is drawn: not "surfaces only". A row about voxels --
-        // how a slab combines them, the surroundings, the cut faces -- needs it.
+        // the cut faces, how voxels are read -- needs it.
         volumeDrawn: (ctx) => ctx.showVolume !== false,
     };
 
@@ -90,45 +91,19 @@
         "cut.full": (ctx) => ctx.mode === "volume" && ctx.cut === "full",
         "cut.on": (ctx) => ctx.mode === "volume" && ctx.cut !== "full",
         "cut.cutaway": (ctx) => ctx.mode === "volume" && ctx.cut === "cutaway",
-        "cut.section": (ctx) => ctx.mode === "volume" && ctx.cut === "section",
-        "cut.slab": (ctx) => ctx.mode === "volume" && ctx.cut === "slab",
         "cut.crop": (ctx) => ctx.mode === "volume" && ctx.cut === "crop",
-        // Sections or slabs: planes through the stack, the rest dimmed.
-        "cut.planes": (ctx) => ctx.mode === "volume" && (ctx.cut === "section" || ctx.cut === "slab"),
-        // A crop or a cutaway: a box with sides taken off.
-        "cut.box": (ctx) => ctx.mode === "volume" && (ctx.cut === "crop" || ctx.cut === "cutaway"),
-        // A slab whose voxels combine (not a single plane).
-        "cut.combines": (ctx) => ctx.mode === "volume" && ctx.cut === "slab" && ctx.slabComposite !== "single",
         "axis.x": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.x),
         "axis.y": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.y),
         "axis.z": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.z),
-        // In 3-D, nothing on the rail to pick: the plane is the Z section's
-        // only in a section or slab along Z.
-        "cut.noPlane": (ctx) => ctx.mode === "volume" && !railPlane(ctx),
-        // In 3-D, no range on the rail: the whole stack, a Z crop or cutaway,
-        // or a combining Z slab have one.
-        "cut.noBand": (ctx) => ctx.mode === "volume" && !railBand(ctx),
     };
-
-    /** In 3-D, whether a press on the rail moves the Z section or slab. */
-    function railPlane(ctx) {
-        return (ctx.cut === "section" || ctx.cut === "slab") && Boolean(ctx.cutAxes?.z);
-    }
-
-    /** In 3-D, whether the rail shows a range: the planes kept. */
-    function railBand(ctx) {
-        if (ctx.cut === "full") return true;
-        if (!ctx.cutAxes?.z) return false;
-        return ctx.cut === "crop" || ctx.cut === "cutaway"
-            || (ctx.cut === "slab" && ctx.slabComposite !== "single");
-    }
 
     /** Where each group sits, strip top to bottom, popover top to bottom. */
     const GROUPS = {
-        mode: 10, sections: 20, play: 30, rail: 40, readout: 50, cog: 60, frame: 70,
-        projection: 100, volume: 110, clip: 120, rotate: 130, grid: 140, surfaces: 150,
-        // The 3-D dock, top to bottom (views/volumeDock.js).
-        cut: 200, axes: 210, positions: 220, slab: 230, look: 240, tools: 250, advanced: 260,
+        mode: 10, sections: 20, cut: 25, play: 30, rail: 40, cog: 60, frame: 70,
+        projection: 100, volume: 110, rotate: 130, grid: 140, surfaces: 150,
+        // The cut panel beside the strip, top to bottom (views/volumeDock.js):
+        // the axes, the actions to their right, then a row each.
+        axes: 200, actions: 210, voxels: 220, handles: 230, toggle: 240,
         plugins: 800, footer: 900,
     };
 
@@ -210,7 +185,7 @@
         const z1 = Number.isFinite(slab.z1) ? slab.z1 : depth - 1;
         const inspect = state.inspect || {};
         // The planes the 3-D view keeps (a Z crop's or cutaway's), for the
-        // rail and the popover's planes row.
+        // popover's planes row.
         const kept = keptPlanes(inspect, state, depth);
         return {
             mode: MODES.includes(state.mode) ? state.mode : "plane",
@@ -223,9 +198,10 @@
             allPlanes: state.mode === "volume" ? kept[0] <= 0 && kept[1] >= depth - 1
                 : z0 <= 0 && z1 >= depth - 1,
             cut: CUTS.includes(inspect.mode) ? inspect.mode : "full",
+            cutTool: CUTS.includes(inspect.mode) && inspect.mode !== "full" ? inspect.mode
+                : (CUTS.includes(inspect.tool) && inspect.tool !== "full" ? inspect.tool : "cutaway"),
             cutAxes: { x: inspect.axes?.x === true, y: inspect.axes?.y === true,
-                       z: inspect.axes?.z !== false },
-            slabComposite: inspect.slab?.composite || "max",
+                       z: inspect.axes?.z === true },
             keptZ0: kept[0],
             keptZ1: kept[1],
             showVolume: state.volume?.show?.volume !== false,
@@ -250,7 +226,7 @@
         };
     }
 
-    const CUTS = ["full", "cutaway", "section", "slab", "crop"];
+    const CUTS = ["full", "cutaway", "crop"];
 
     /** `[z0, z1]`: the planes a Z crop or cutaway keeps, every plane else. */
     function keptPlanes(inspect, state, depth) {
@@ -260,11 +236,6 @@
         if (inspect.mode === "cutaway" && inspect.cutaway?.z) {
             const { at, keep } = inspect.cutaway.z;
             return keep === "lo" ? [0, at] : [at, top];
-        }
-        if (inspect.mode === "slab" && inspect.slab?.composite !== "single") {
-            const half = (inspect.slab?.thickness?.z || 1) / 2;
-            const z = Number.isFinite(state.z) ? state.z : 0;
-            return [Math.max(0, Math.floor(z + 0.5 - half)), Math.min(top, Math.ceil(z + 0.5 + half) - 1)];
         }
         return [0, top];
     }
@@ -362,6 +333,12 @@
           doc: "Show a projection of a range of planes." },
         { id: "mode.volume", surfaces: ["strip"], needs: ["depth", "colourless", "webgl2"], group: "mode",
           order: 30, doc: "Show the stack in 3-D." },
+        // In 3-D, the two ways to cut the stack open; each opens the panel
+        // beside the strip (views/volumeDock.js).
+        { id: "tool.cutaway", surfaces: ["strip"], modes: ["volume"], needs: ["depth", "cut"], group: "cut",
+          order: 10, doc: "Cut: take a side off the stack along X, Y or Z." },
+        { id: "tool.crop", surfaces: ["strip"], modes: ["volume"], needs: ["depth", "cut"], group: "cut",
+          order: 20, doc: "Crop: keep a box of the stack." },
         { id: "sections", surfaces: ["strip"], modes: ["plane", "slab"],
           needs: ["depth", "sections", "colourless"], group: "sections",
           doc: "XZ and YZ sections beside the plane. Not in 3-D, which is its own view." },
@@ -371,31 +348,20 @@
                   : (ctx.depth < 2 ? "frames" : (ctx.mode === "slab" && !ctx.follow ? "band" : "planes")),
           }),
           doc: "Step through the planes (a fixed projection: slide its range; 3-D: turn the stack)." },
-        { id: "rail", surfaces: ["strip"], needs: ["depth"], group: "rail", order: 10,
-          config: (ctx) => (ctx.mode === "volume" ? {
-              // In 3-D the rail is the cut along Z: a press moves a Z
-              // section or slab; the whole stack's range, or a Z crop's, is
-              // resized (a crop it becomes) and moved; a Z cutaway's one cut
-              // moves (`cut`). Nothing else along Z is the rail's.
-              plane: railPlane(ctx),
-              band: railBand(ctx) && ctx.cut !== "slab",
-              bandMove: ctx.cut === "full" || ctx.cut === "crop",
-              cut: ctx.cut,
-          } : {
+        // Not in 3-D: the cut there is the panel's and the handles' (views/volumeDock.js).
+        { id: "rail", surfaces: ["strip"], modes: ["plane", "slab"], needs: ["depth"], group: "rail", order: 10,
+          config: (ctx) => ({
               plane: true,
               band: ctx.mode !== "plane",
               bandMove: ctx.mode === "slab" && !ctx.follow,
           }),
-          doc: "The planes, z 0 at the top: the plane on screen, the range drawn, or in 3-D the cut along Z." },
-        { id: "band", surfaces: ["strip"], modes: ["slab", "volume"], needs: ["depth"], group: "rail",
-          order: 20, excludes: ["cut.noBand"],
-          doc: "The projection's range; in 3-D, the planes the cut keeps along Z." },
-        { id: "thumb", surfaces: ["strip"], needs: ["depth"], group: "rail", order: 30, excludes: ["cut.noPlane"],
-          doc: "The plane on screen; in 3-D, a Z section's or slab's plane." },
-        { id: "hover", surfaces: ["strip"], needs: ["depth"], group: "rail", order: 40, excludes: ["cut.noPlane"],
+          doc: "The planes, z 0 at the top: the plane on screen, or the range drawn." },
+        { id: "band", surfaces: ["strip"], modes: ["slab"], needs: ["depth"], group: "rail", order: 20,
+          doc: "The projection's range." },
+        { id: "thumb", surfaces: ["strip"], modes: ["plane", "slab"], needs: ["depth"], group: "rail", order: 30,
+          doc: "The plane on screen." },
+        { id: "hover", surfaces: ["strip"], modes: ["plane", "slab"], needs: ["depth"], group: "rail", order: 40,
           doc: "The plane a click would choose, which starts loading under the pointer." },
-        { id: "readout", surfaces: ["strip"], needs: ["depth"], group: "readout",
-          doc: "What is drawn, in numbers." },
         { id: "cog", surfaces: ["strip"], needs: ["depthOrFrames"], group: "cog",
           doc: "The settings that apply to what is drawn now." },
         { id: "frame", surfaces: ["strip"], needs: ["frames"], group: "frame",
@@ -415,8 +381,6 @@
           group: "volume", order: 10, doc: "Maximum intensity or additive." },
         { id: "volume.view", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2"],
           group: "volume", order: 20, doc: "Look along an axis, or the three-quarter view." },
-        { id: "volume.clip", surfaces: ["popover"], modes: ["volume"], needs: ["depth", "cut"],
-          group: "clip", order: 10, doc: "How the 3-D view is cut, and the 3-D dock that cuts it." },
         { id: "rotate.speed", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
           group: "rotate", order: 10, doc: "How fast Play turns the stack." },
         { id: "rotate.axis", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2", "prefs"],
@@ -442,46 +406,26 @@
         { id: "card.projection", surfaces: ["card"], modes: ["plane", "slab"], needs: ["depth", "colourless"],
           group: "projection", doc: "The Depth card's projection rows: the operation, the planes, Follow." },
 
-        // The 3-D dock (views/volumeDock.js): cutting the stack.
-        { id: "cut.mode", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], group: "cut",
-          doc: "The whole stack, a cutaway, sections, slabs or a crop." },
-        { id: "cut.axes", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], when: ["cut.on"],
-          group: "axes", doc: "Which of X, Y and Z are cut." },
-        ...["x", "y", "z"].map((axis, i) => ({
-            id: `cut.${axis}`, surfaces: ["dock"], modes: ["volume"], needs: ["cut"], when: [`axis.${axis}`],
-            group: "positions", order: 10 + i,
-            config: (ctx) => ({
-                // A crop keeps a range; a cutaway moves one cut and flips
-                // the side kept; a section or slab moves its plane.
-                kind: ctx.cut === "crop" ? "range" : (ctx.cut === "cutaway" ? "cut" : "plane"),
-            }),
-            doc: `Where the stack is cut along ${axis.toUpperCase()}.` })),
-        { id: "cut.combine", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
-          when: ["cut.slab"], group: "slab", order: 10,
-          doc: "How a slab's voxels combine along each ray: one plane, maximum, mean, minimum or sum." },
-        { id: "cut.thickness", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], when: ["cut.combines"],
-          group: "slab", order: 20, doc: "How thick the slabs are." },
-        { id: "cut.opacity", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], when: ["cut.section"],
-          group: "look", order: 10, doc: "How opaque the section planes are." },
-        { id: "cut.context", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
-          when: ["cut.planes"], group: "look", order: 20,
-          doc: "The rest of the stack, dimmed, around the sections or slabs." },
+        // The cut panel (views/volumeDock.js), for the tool last chosen,
+        // whether its cut is shown or hidden (O): the panel stays out until
+        // its ×. Its tools' own handles cut in the view (views/volumeHandles.js).
+        { id: "cut.axes", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
+          group: "axes", config: (ctx) => ({ flip: ctx.cutTool === "cutaway" }),
+          doc: "Which of X, Y and Z are cut; a Cut also flips the side each keeps." },
         { id: "cut.face", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
-          when: ["cut.box"], group: "look", order: 30,
-          doc: "Draw the voxels on the cut faces solid." },
-        { id: "cut.handles", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "prefs"], when: ["cut.on"],
-          group: "tools", order: 10, doc: "Handles in the view to drag the cuts." },
-        { id: "cut.reset", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], when: ["cut.on"],
-          group: "tools", order: 20, doc: "Put an axis, the mode or every cut back." },
-        { id: "cut.history", surfaces: ["dock"], modes: ["volume"], needs: ["cut"], group: "tools", order: 30,
-          doc: "Undo and redo a cut." },
+          group: "actions", order: 10, doc: "Draw the voxels on the cut faces solid." },
+        { id: "cut.handles", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "prefs"],
+          group: "actions", order: 20, doc: "Show or hide the handles that drag the cut in the view." },
+        { id: "cut.reset", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
+          group: "actions", order: 30, doc: "Put the tool's cut back where it starts." },
+        { id: "cut.history", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
+          group: "actions", order: 40, doc: "Undo the last change to the cut." },
         { id: "cut.interpolation", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
-          group: "advanced", order: 10, doc: "Read voxels smoothly, or as the blocks they are." },
+          group: "voxels", doc: "Read voxels smoothly, or as the blocks they are." },
         { id: "cut.handleOpacity", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "prefs"],
-          when: ["cut.on"], group: "advanced", order: 20, doc: "How strongly the handles are drawn." },
-        { id: "cut.link", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "sections"], when: ["cut.planes"],
-          group: "advanced", order: 30,
-          doc: "The XZ and YZ panes cut where the X and Y sections are, not at the view's centre." },
+          group: "handles", doc: "How strongly the handles are drawn." },
+        { id: "cut.toggle", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
+          group: "toggle", doc: "Show or hide the cut (O), the panel left out." },
     ];
     for (const entry of CORE) register(entry, { announce: false });
 

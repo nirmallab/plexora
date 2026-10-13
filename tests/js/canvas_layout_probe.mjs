@@ -83,7 +83,7 @@ class HTMLElement {
     }
     remove() { this.detach(); }
     matches() { return false; }
-    getBoundingClientRect() { return { left: 0, top: 0, width: 10, height: 10 }; }
+    getBoundingClientRect() { return this.rect || { left: 0, top: 0, width: 10, height: 10 }; }
     // Heights: an element is its own `h` plus what it holds; one given a
     // `room` (a column) shows only that much.
     get scrollHeight() { return (this.h || 0) + this.children.reduce((sum, c) => sum + c.scrollHeight, 0); }
@@ -218,6 +218,36 @@ roomy.fit();
 check("a plugin's element folds by event, with no call into core",
       shut(plain) && (plain.events || []).some((e) => e.type === "plexora:canvas-collapse"
                                                     && e.detail.collapsed === true));
+
+// -- gliding ---------------------------------------------------------------
+
+// The mini-map closing: its root shrinks to the lens in the bottom-left
+// corner, so its top drops and its bottom stays. Measured from the top-left,
+// that read as a move and the lens slid down from where the map's top had been.
+const host = new HTMLElement("div");
+box.document.getElementById = (id) => (id === "openseadragon_wrapper" ? host : null);
+const glider = new box.PlexoraCanvasLayout.CanvasLayout(host);
+const map = make("mini-map");
+const chip = make("chip");
+const key = make("legend");
+glider.place(map, { corner: "bottom-left", order: 0 });
+glider.place(chip, { corner: "bottom-left", order: 10 });
+glider.place(key, { corner: "bottom-right", order: 0 });
+map.rect = { left: 12, top: 500, width: 300, height: 200 };
+chip.rect = { left: 12, top: 450, width: 100, height: 40 };
+key.rect = { left: 1000, top: 600, width: 200, height: 100 };
+glider.remember();
+map.rect = { left: 12, top: 666, width: 34, height: 34 };
+chip.rect = { left: 12, top: 616, width: 100, height: 40 };
+key.rect = { left: 900, top: 600, width: 300, height: 100 };
+glider.glide();
+check("an item that only shrinks toward its corner does not glide",
+      map.animations.length === 0, JSON.stringify(map.animations));
+check("a right-dock item that only grows leftwards does not glide",
+      key.animations.length === 0, JSON.stringify(key.animations));
+check("the neighbour it let down glides from where it was",
+      chip.animations.length === 1 && chip.animations[0].keyframes[0].translate === "0px -166px",
+      JSON.stringify(chip.animations));
 
 console.log(failures.length ? `\n${failures.length} of ${checks} check(s) failed`
                             : `\nall ${checks} checks passed`);

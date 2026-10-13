@@ -48,6 +48,7 @@ PLUGIN = Plugin(
     # route itself (routes._makes_a_solid), since the batch is mixed.
     endpoint_entitlements={"from_cells": "volume:objects"},
     icon="draw-polygon",
+    order=30,
     # I for Interest. Not mod+R, which reloads the page -- interceptable in
     # principle, but a shortcut that costs the user their session when this
     # script has not loaded yet is not worth the better mnemonic.

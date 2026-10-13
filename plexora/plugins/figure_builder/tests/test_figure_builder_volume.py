@@ -95,11 +95,11 @@ def test_a_3d_panel_reaches_the_exported_page(figure, tmp_path):
 
 def test_a_cut_3d_panel_says_how_it_was_cut(figure):
     """The cut the 3-D view drew (the viewer's inspect, in its own words) is in
-    the panel's report: a cropped or sectioned picture never passes for the
+    the panel's report: a cropped or cut-away picture never passes for the
     whole stack."""
     cut = "crop X 100–600 µm, Z planes 4–9 · 12.0 µm"
     _volume_panel(figure, extra={"cut": cut, "inspect": {"mode": "crop", "axes": {"x": True, "z": True}},
-                                 "z": 12, "section": {"x": 500, "y": 250}})
+                                 "z": 12})
     document = repository.load(figure)
     panel = document["panels"]["pnl_3d"]
     assert export.volume_state(panel)["inspect"]["mode"] == "crop"
