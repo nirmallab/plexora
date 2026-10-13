@@ -194,6 +194,7 @@ internal:
   - PLEXORA_MOUNT_DONE
   - PLEXORA_MOUNT_READONLY
   - PLEXORA_NOTEBOOK_MODE
+  - PLEXORA_SEGMENT3D_MAX_VOXELS
   - PLEXORA_SERVER_IS_REMOTE
   - PLEXORA_SERVER_URL
   - PLEXORA_STARTUP_DONE
@@ -220,6 +221,7 @@ ignore:
   PLEXORA_NODE_ORIGINS: Flask config key on a data node.
   PLEXORA_NODE_RESOURCES: Flask config key on a data node.
   PLEXORA_NS: UUID namespace constant.
+  PLEXORA_QC_CHANGED: JavaScript constant (services/numericData.js).
   PLEXORA_SERVER_CONCURRENCY: JavaScript global set by the page template.
   PLEXORA_SERVING: Flask config key.
   PLEXORA_SSH_OK: Marker string printed over SSH.

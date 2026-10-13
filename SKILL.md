@@ -921,7 +921,13 @@ Entry points:
   config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
   `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
   everything else asks it questions (`project.roles.x`, `project.has_table`).
-  Two invariants: keys it does not model round-trip through `extra`, and every
+  **A project's `name` is its key and its optional `title` is what people
+  see**, because the name is config.json's key, the folder, `<name>.db` and
+  every URL, so renaming it would move all of them. `Project.display_name` is
+  the title or else the name; `with_title`/`clean_title` store nothing for an
+  empty title or one equal to the name. `PlexoraProjectTitle`
+  (`views/imageViewer.js`) renames in place from the viewer's corner label
+  (tests: `tests/test_project_title.py`). Two invariants: keys it does not model round-trip through `extra`, and every
   change goes through `patch()`, which merges. There is deliberately no API for
   replacing an entry wholesale — that is what used to destroy AnnData projects
   on save. It also owns the **file access**: `read_config()` / `write_config()`
@@ -5226,6 +5232,41 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `volumeWindows.ensure` before fetching levels (a channel switched on in 3-D
   used to not draw until toggled twice). Motion off (viewerPrefs or
   reduced-motion) lands at once.
+- Depth controls: `services/viewControls.js` (`window.PlexoraViewControls`)
+  is the declarative registry of which control shows in which mode (plane,
+  slab, volume), under which capabilities (`depth`, `webgl2`,
+  `surfaceMaking`, `grid`) and state flags. **A control that does nothing in
+  a mode is hidden, never disabled.** An unknown capability or flag throws at
+  `register`, so a typo fails at load rather than as a control that never
+  shows. Plugins register through `ctx.view.controls.register(entry, {row})`
+  (`main.js`). Ids get the `<plugin>.` prefix, and the registration is taken
+  out with the plugin. The convention and the mode matrix are in
+  `docs/internal/3d/VIEW_CONTROLS.md`. `views/depthSettings.js`
+  (`window.PlexoraDepthSettings`) is the cog popover on the depth strip and
+  replaced the readout's menu. The readout is now a `role=status` label.
+  Rows come from its `ROWS` builder table plus `defineRow`. Script order in
+  `index.html`: `viewControls.js`, then `depthStrip.js`, then
+  `depthSettings.js`.
+- Play in 3-D auto-rotates the stack (`volumeRenderer.setAutoRotate`, the
+  controller's `rotate(on, opts)`). Speed, axis and direction are the per-user
+  `rotate` pref in `/viewer_prefs` (`normalize_rotate` in
+  `server/routes/volume_routes.py`). Whether it is turning is never stored.
+  The 3-D reference grid (`volumeRenderer.js`, drawn on the box's far faces so
+  it is always behind the data) is the `grid` pref in the same record.
+- Section panes (`sectionPanes.js`) resize both ways. A pane larger than the
+  stack stretches z by a CSS scale and says so in its label ("z ×2.4"). Panes
+  are clamped to leave `MIN_XY_PX` (240 px) of the main view. `MAX_SHARE` is
+  0.9 on the client, matching `SECTION_SHARE`'s upper bound in
+  `volume_routes.py`.
+- No 3-D flash: `volumeRenderer.js` keeps drawing a channel's last good
+  texture until its new one can replace it. `planeMotion.VolumeGhost` is the
+  same opaque crossfade for the 3-D canvas at rest. MIP keeps its step count
+  while moving.
+- Z navigation: a request more than `NEAR_PLANES` (2, `viewState.js`) from
+  the one before is a jump and supersedes the in-flight revision at once.
+  `tileFetch.js` schedules by `TIER` visible / handover / sharpen /
+  handoverSharpen / standby. Standby planes look ahead by the hand's pace
+  (`planeMotion.js` `STANDBY_LOOKAHEAD_MS`, `STANDBY_AHEAD`).
 - Server: `server/volume/serve.py` — the level payload builder
   (`parse_level`, `read_level`, `level_payload`, `forwarded_payload`, an
   LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
@@ -5306,7 +5347,14 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   lane, from the node tile route (`node/api._read_ahead`) and the primary
   (`data_model._read_ahead` in `generate_zarr_png`); it reads nothing where
   chunks are one plane deep or the chunk cache is under `MIN_BUDGET` (1 GB),
-  and `/volume/<ds>/perf` reports it as `plane_prefetch`. On a data node
+  and `/volume/<ds>/perf` reports it as `plane_prefetch`. Planes decoded one
+  at a time have no block to read ahead, so there `TILE_PREFETCHER` (same
+  module) makes the next planes' TILES ahead into the tile cache, plane-major,
+  in the direction of travel, under the key the route files them under
+  (`data_routes._tiles_ahead`, `node/api.py`). z-chunked OME-Zarr planes read
+  through the chunk cache (`sources/ngff.py`). The primary's encoded tile
+  cache is budgeted in bytes by `PLEXORA_TILE_CACHE_MB` (the node's rule).
+  Tests: `tests/test_volume_plane_read_ahead.py`. On a data node
   (`node/api.py`) a view's HD tile waits on no volume window; the tile cache
   is budgeted in bytes (`PLEXORA_NODE_TILE_CACHE_MB`, default a sixteenth of
   the allocation, 128 MB..2 GB);
@@ -5355,6 +5403,8 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_channel_fade_client.py`; `section_panes_probe.mjs` and
   `volume_renderer_probe.mjs` carry its hook checks, and the
   `test_viewer_3d_client.py` wrapper now expects at least 30 checks.
+  The depth controls have `tests/js/view_controls_probe.mjs` and
+  `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`.
 - Plane-by-plane gating (`docs/internal/3d/PLANE_GATING.md`):
   `server/volume/planes.py` is the per-plane cell index `objects_planes_v1/`,
   written by `measure.measure(planes=)` from the same reads as the object

@@ -391,6 +391,39 @@ function fadeBox({ motion = true } = {}) {
         && prefetch.ahead() === 5 && STANDBY_AHEAD[1] === 6, held.join());
     box.clock.now += 1500;
     check("still again: two ahead", prefetch.ahead() === 2);
+    // A jump is not travel: 50 planes 100 ms after a step set no pace, nor
+    // does the step that follows it.
+    for (const z of [20, 21, 71]) {
+        state.z = z;
+        prefetch.onRequested({ detail: { state: { z } } });
+        box.clock.now += 100;
+    }
+    check("a jump sets no pace: two ahead of it", prefetch.ahead() === 2 && prefetch.pace() === 0,
+        `ahead ${prefetch.ahead()}, pace ${prefetch.pace()}`);
+    state.z = 72;
+    prefetch.onRequested({ detail: { state: { z: 72 } } });
+    check("nor the step after a jump", prefetch.pace() === 0);
+}
+
+{
+    // A plane that covers the view but is not sharp yet: enough to start the
+    // standby planes while the hand moves, not after a step or a jump.
+    const box = sandbox();
+    load(box, "views/planeMotion.js");
+    const { NeighbourPrefetch } = box.PlexoraPlaneMotion;
+    const loading = { source: {}, getOpacity: () => 1, getFullyLoaded: () => false };
+    const viewer = { world: { getItemCount: () => 1, getItemAt: () => loading } };
+    box.PlexoraChannelFade = { covers: (item) => item === loading };
+    const state = { mode: "plane", z: 10, t: 0 };
+    const viewState = { depth: 40, get: () => ({ ...state }), spec: (s) => `z${s.z}` };
+    const prefetch = new NeighbourPrefetch(viewer, viewState);
+    check("at rest a covering plane sharpens before any standby", prefetch.planeLoaded() === false);
+    for (let z = 10; z <= 16; z += 1) {
+        state.z = z;
+        prefetch.onRequested({ detail: { state: { z } } });
+        box.clock.now += 83;
+    }
+    check("while the hand moves, covering is enough", prefetch.planeLoaded() === true);
 }
 
 // == volumeCamera.js: views and locked turns ==================================
@@ -738,6 +771,29 @@ function runFrames(box, renderer, ms, hz) {
         renderer.onFrame(box.clock.now);
     }
     check("slow frames while coasting lower the resolution", renderer.fastScale < 1);
+}
+
+{
+    // On a 120 Hz screen: a coast that keeps the display's pace keeps full
+    // resolution; one that misses a frame in four steps down, though it
+    // averages well under SLOW_FRAME_MS.
+    const { box, renderer } = volumeBox();
+    const coast = (gaps) => {
+        renderer.spin = { screen: [0, 0.02] };
+        renderer.lastStep = box.clock.now;
+        for (const gap of gaps) {
+            box.clock.now += gap;
+            box.frames.splice(0);
+            renderer.frame = 0;
+            renderer.onFrame(box.clock.now);
+        }
+    };
+    coast(Array(24).fill(8.3));
+    check("a coast at the screen's pace keeps full resolution", renderer.fastScale === 1,
+        String(renderer.fastScale));
+    coast(Array(6).fill([8.3, 8.3, 8.3, 16.6]).flat());
+    check("...one that misses a frame in four steps down", renderer.fastScale < 1,
+        String(renderer.fastScale));
 }
 
 // == sectionPanes.js: sizes ==================================================

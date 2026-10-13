@@ -1,0 +1,6534 @@
+{
+ "label": "post",
+ "sha": "ff5b2b7d8b7a",
+ "dirty": false,
+ "headed": false,
+ "date": "2026-10-12T22:59:10",
+ "reps": 3,
+ "machine": {
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "processor": "arm",
+  "python": "3.13.14"
+ },
+ "results": {
+  "small": {
+   "open": {
+    "scenario": "open",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T02:59:13.791Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "tMeaningful_cold": [
+      428.5
+     ],
+     "tFull_cold": [
+      428.59999990463257
+     ],
+     "lutMax": [
+      0,
+      0,
+      0
+     ],
+     "tMeaningful_warm": [
+      343.7000002861023,
+      226
+     ],
+     "tFull_warm": [
+      343.7000002861023,
+      226
+     ]
+    },
+    "log": [
+     {
+      "rep": 0,
+      "net": {
+       "other": {
+        "n": 177,
+        "bytes": 7859013,
+        "disk": 2,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "volume": {
+        "n": 3,
+        "bytes": 1512,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "shader": {
+        "n": 4,
+        "bytes": 21641,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "tile": {
+        "n": 2,
+        "bytes": 4197358,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {
+         "total": [
+          0.5,
+          0.5
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 5.1
+   },
+   "channels": {
+    "scenario": "channels",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T02:59:18.721Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "enable_cold_commit": [
+      44.799999713897705
+     ],
+     "enable_cold_paint": [
+      44.799999713897705
+     ],
+     "enable_shaderCompiles": [
+      0,
+      0,
+      0
+     ],
+     "enable_shaderXhrs": [
+      0,
+      0,
+      0
+     ],
+     "enable_tileRequests": [
+      4,
+      0,
+      0
+     ],
+     "enable_decodes": [
+      4,
+      0,
+      0
+     ],
+     "disable_commit": [
+      6.099999904632568,
+      10.299999713897705,
+      6.200000286102295
+     ],
+     "disable_shaderCompiles": [
+      0,
+      0,
+      0
+     ],
+     "switch_paint": [
+      11.600000381469727,
+      11.400000095367432,
+      9.300000190734863
+     ],
+     "switch_mixedMs": [
+      6.700000286102295,
+      7.5,
+      4.900000095367432
+     ],
+     "enable_commit": [
+      10.800000190734863,
+      11.600000381469727
+     ],
+     "enable_paint": [
+      10.800000190734863,
+      11.600000381469727
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 10.1
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "small",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T02:59:28.785Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "step_commit": [
+      12.699999809265137,
+      4,
+      4.599999904632568,
+      6.400000095367432,
+      10.400000095367432
+     ],
+     "step_full": [
+      18.59999990463257,
+      5.300000190734863,
+      6,
+      6.5,
+      10.5
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      316.09999990463257
+     ],
+     "scrub_paintedPlanes": [
+      17
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      8.800000190734863,
+      7.700000286102295,
+      6.099999904632568,
+      7.099999904632568,
+      4.300000190734863,
+      4.199999809265137,
+      3.4000000953674316,
+      6.599999904632568,
+      3.5,
+      2.5999999046325684,
+      2.5,
+      7.5,
+      8,
+      7.900000095367432,
+      6.599999904632568,
+      6.400000095367432,
+      -148.2999997138977
+     ],
+     "scrub_fps": [
+      119.9969621022252
+     ],
+     "scrub_frameP95": [
+      10.099999999998545
+     ],
+     "scrub_frameP99": [
+      10.400000000001455
+     ],
+     "scrub_dropped": [
+      0
+     ],
+     "scrub_tileRequests": [
+      26
+     ],
+     "scrub_tileMB": [
+      54.565718
+     ],
+     "scrub_canceled": [
+      0
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "step_firstVisibleChange": [
+      26.700000286102295,
+      22.300000190734863,
+      22.5,
+      20.699999809265137,
+      21.300000190734863
+     ],
+     "step_flashFrames": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_flashWorst": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 26,
+        "bytes": 54565718,
+        "canceled": 0
+       },
+       "other": {
+        "n": 3,
+        "bytes": 760,
+        "canceled": 1
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 22.3
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T02:59:51.156Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "jump_commit": [
+      42.39999961853027,
+      36.5,
+      17.699999809265137,
+      35.69999980926514,
+      44.200000286102295,
+      15.700000286102295,
+      36.39999961853027,
+      27.90000009536743,
+      15.799999713897705
+     ],
+     "jump_full": [
+      48.799999713897705,
+      47.299999713897705,
+      24.59999990463257,
+      47.59999990463257,
+      59,
+      20.300000190734863,
+      48.39999961853027,
+      38.30000019073486,
+      23.40000009536743
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      1.299999713897705,
+      7.599999904632568,
+      4.400000095367432,
+      7.5,
+      8.5,
+      3.1000003814697266,
+      7.5,
+      0.9000000953674316,
+      4.400000095367432
+     ],
+     "jumpBusy_commit": [
+      14.5,
+      13.5,
+      16
+     ],
+     "jumpBusy_full": [
+      21.200000286102295,
+      24.299999713897705,
+      26.199999809265137
+     ],
+     "jumpBusy_wastedTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      4.599999904632568,
+      3.5999999046325684,
+      5.599999904632568
+     ],
+     "jumpBusy_inFlight": [
+      0,
+      0,
+      0
+     ],
+     "jump_commit_L0": [
+      42.40000009536743,
+      41.80000019073486,
+      13.799999713897705,
+      31,
+      41.09999990463257,
+      15.5,
+      36.5,
+      42.69999980926514,
+      15.199999809265137
+     ],
+     "jump_full_L0": [
+      53.200000286102295,
+      52.59999990463257,
+      21.899999618530273,
+      46.40000009536743,
+      53,
+      25,
+      52.90000009536743,
+      52.59999990463257,
+      24.5
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      3.0999999046325684,
+      6,
+      3.5,
+      1.799999713897705,
+      4.5,
+      2.700000286102295,
+      7.400000095367432,
+      5.900000095367432,
+      1.8999996185302734
+     ],
+     "jumpBusy_commit_L0": [
+      14.099999904632568,
+      14.200000286102295,
+      13.599999904632568
+     ],
+     "jumpBusy_full_L0": [
+      24.09999990463257,
+      23.90000009536743,
+      21.40000009536743
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      3.6999998092651367,
+      3.5,
+      5.200000286102295
+     ],
+     "jumpBusy_inFlight_L0": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "route": [
+      23,
+      0,
+      6
+     ],
+     "o": 6,
+     "o2": 3,
+     "busyDest": 23,
+     "l0": {
+      "zoom": 0.9660377358490566,
+      "maxLevel": 2,
+      "finest": 2
+     },
+     "tiles": {
+      "home": {
+       "origin": 6,
+       "dest": 23,
+       "tiles": {
+        "23": 2
+       }
+      },
+      "L0": {
+       "origin": 6,
+       "dest": 23,
+       "tiles": {
+        "23": 2
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 38.6
+   },
+   "held": {
+    "scenario": "held",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:00:29.745Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "held_lag": [
+      0,
+      0,
+      0
+     ],
+     "held_settle": [
+      2.5,
+      1.5999999046325684,
+      1.6000003814697266
+     ],
+     "held_standbyAdopted": [
+      23,
+      23,
+      23
+     ],
+     "held_painted": [
+      23,
+      24,
+      23
+     ],
+     "held15_lag": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle": [
+      1.8000001907348633,
+      2.6999998092651367,
+      2.5
+     ],
+     "held15_standbyAdopted": [
+      23,
+      23,
+      23
+     ],
+     "held15_painted": [
+      23,
+      23,
+      23
+     ],
+     "held_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held_settle_L0": [
+      3,
+      2.200000286102295,
+      2.4000000953674316
+     ],
+     "held_standbyAdopted_L0": [
+      23,
+      23,
+      23
+     ],
+     "held_painted_L0": [
+      23,
+      24,
+      23
+     ],
+     "held15_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle_L0": [
+      1.8000001907348633,
+      1.1999998092651367,
+      2.1999998092651367
+     ],
+     "held15_standbyAdopted_L0": [
+      23,
+      23,
+      23
+     ],
+     "held15_painted_L0": [
+      23,
+      23,
+      23
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "input": "key",
+     "planes": 23,
+     "start": 0,
+     "held": {
+      "requested": 23,
+      "committed": 23,
+      "final": 23
+     },
+     "held15": {
+      "requested": 23,
+      "committed": 23,
+      "final": 23
+     },
+     "held_L0": {
+      "requested": 23,
+      "committed": 23,
+      "final": 23
+     },
+     "held15_L0": {
+      "requested": 23,
+      "committed": 23,
+      "final": 23
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 63.4
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:01:33.362Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      146.5,
+      74.30000019073486,
+      55.90000009536743
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      2,
+      2,
+      2
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 11.8
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:01:44.928Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      1,
+      1,
+      1
+     ],
+     "resize_frameP95": [
+      9.799999999999272,
+      10.200000000000728,
+      9.699999999998909
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0",
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0",
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-small-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-small-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 391 \u00b7 z \u00d75.0"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 16.2
+   },
+   "volume": {
+    "scenario": "volume",
+    "dataset": "small",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T03:02:01.148Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "enter_levelMB": [
+      100.664742
+     ],
+     "enter_serverReadMs": [
+      274.7
+     ],
+     "enter_errors": [
+      0
+     ],
+     "enter_first": [
+      473.80000019073486
+     ],
+     "enter_levelFetches": [
+      2
+     ],
+     "enter_texImage3D": [
+      2
+     ],
+     "volume_levelSpread": [
+      0
+     ],
+     "rotate_fps": [
+      119.90864103540157,
+      120,
+      120,
+      119.83757551748036,
+      120.15888778550149
+     ],
+     "rotate_frameP99": [
+      10.300000000000182,
+      10.299999999999272,
+      10.199999999999818,
+      10.100000000000364,
+      10.100000000000364
+     ],
+     "rotate_dropped": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "coast_fps": [
+      120.03556609365735,
+      120.09729401033745,
+      119.99400029998503,
+      119.95801469485687,
+      120.06079027355624
+     ],
+     "coast_dropped": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "toggle3d_off": [
+      10.400000095367432,
+      4.700000286102295,
+      6.5,
+      7.5,
+      8.5
+     ],
+     "toggle3d_on": [
+      6.099999904632568,
+      6.599999904632568,
+      6.300000190734863,
+      8.699999809265137,
+      7.400000095367432
+     ],
+     "toggle3d_levelFetches": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "toggle3d_texImage3D": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "reenter": [
+      17.59999990463257,
+      10.699999809265137,
+      12.599999904632568
+     ],
+     "reenter_levelFetches": [
+      0,
+      0,
+      0
+     ],
+     "reenter_beforeZoom": [
+      17.59999990463257
+     ],
+     "detail_levelGain": [
+      0
+     ],
+     "detail_fps": [
+      120.0350751843071
+     ],
+     "detail_dropped": [
+      0
+     ],
+     "volume_gpuMB": [
+      100.663296
+     ],
+     "reload_volumeReady": [
+      321.80000019073486
+     ],
+     "reload_levelRequests": [
+      2
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_levelMB": [
+      100.664588
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 52.9
+   },
+   "volume_flash": {
+    "scenario": "volume_flash",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:02:54.117Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "v3d_restJump": [
+      1.140625,
+      0.96875,
+      0.7239583333333339
+     ],
+     "v3d_settleJump": [
+      0.036458333333333925,
+      0.16145833333333393,
+      0.0625
+     ],
+     "v3d_flashFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_restFrames": [
+      152,
+      152,
+      153
+     ],
+     "v3d_lumRef": [
+      9.583333333333334,
+      11.927083333333334,
+      8.380208333333334
+     ],
+     "v3d_ghostCaptures": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1
+     ],
+     "v3d_ghostMs": [
+      0.6999998092651367,
+      0.5,
+      4.599999904632568
+     ],
+     "v3d_fillFlash": [
+      0,
+      0,
+      0
+     ],
+     "v3d_fillBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_fillSettle": [
+      1211.1000003814697,
+      1189.8000001907349,
+      1191.8999996185303
+     ],
+     "v3d_handoverBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverFlash": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverSettle": [
+      505.5,
+      523.6999998092651,
+      519.0999999046326
+     ],
+     "v3d_texmiss": [
+      1,
+      1,
+      1
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "ghost": true,
+     "handover": {
+      "name": "DNA",
+      "loads": 1,
+      "frames": 134,
+      "before": 88,
+      "ref": 88,
+      "cells": 17
+     },
+     "fill": [
+      {
+       "bricks": 0,
+       "detail": false,
+       "frames": 229,
+       "ref": 5.364583333333333
+      },
+      {
+       "bricks": 0,
+       "detail": false,
+       "frames": 226,
+       "ref": 5.364583333333333
+      },
+      {
+       "bricks": 0,
+       "detail": false,
+       "frames": 227,
+       "ref": 5.364583333333333
+      }
+     ],
+     "series": {
+      "rest": [
+       8.8,
+       9,
+       9.6,
+       9.1,
+       8.9,
+       8,
+       6.9,
+       6.8,
+       6.9,
+       7.8,
+       7.9,
+       7.8,
+       7,
+       6.8,
+       6.9,
+       6.6,
+       6.3,
+       5.8,
+       5.4,
+       5.2,
+       4.9,
+       4.8,
+       4.7,
+       4.6,
+       4.5,
+       4.3,
+       4.3,
+       4.4,
+       4.7,
+       5.2,
+       5.6,
+       5.9,
+       6.3,
+       6.7,
+       7.1,
+       7.3,
+       7.6,
+       7.7,
+       7.8,
+       7.7,
+       7.8,
+       7.9,
+       7.9,
+       7.9,
+       7.7,
+       7.8,
+       7.7,
+       7.8,
+       7.9,
+       8,
+       8,
+       8,
+       8.1,
+       8.1,
+       8.1,
+       8.2,
+       8.4,
+       8.5,
+       8.7,
+       8.7,
+       8.8,
+       8.9,
+       9,
+       9,
+       9.1,
+       9.1,
+       9.2,
+       9.3,
+       9.3,
+       9.4,
+       9.4,
+       9.4,
+       9.5,
+       9.5,
+       9.5,
+       9.6,
+       9.6,
+       9.6,
+       9.5,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6,
+       9.6
+      ],
+      "fill": [
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.4,
+       8.9,
+       10.6,
+       12.8,
+       10.8,
+       10.1,
+       9.7,
+       12.3,
+       12.3,
+       13.8,
+       13.3,
+       10.8,
+       8.7,
+       8.9,
+       9.1,
+       11.3,
+       11.9,
+       12.6,
+       10.5,
+       9.9,
+       11.1,
+       10.7,
+       10,
+       11.4,
+       11.4,
+       10,
+       9.7,
+       10,
+       10.9,
+       11.9,
+       10.4,
+       11.5,
+       11,
+       10.7,
+       11,
+       10.5,
+       10.6,
+       10,
+       10.5,
+       10.4,
+       10.6,
+       10.8,
+       9.5,
+       8.6,
+       8.7,
+       8.7,
+       9,
+       9.5,
+       10.2,
+       10.4,
+       10.4,
+       9.8,
+       8.8,
+       8.2,
+       7.4,
+       6.7,
+       6.5,
+       6.2,
+       5.9,
+       5.8,
+       5.8,
+       5.9,
+       5.9,
+       5.9,
+       6,
+       6.1,
+       6.2,
+       6.3,
+       6.3,
+       6.2,
+       6.2,
+       6.2,
+       6.2,
+       6.1,
+       6.1,
+       6.1,
+       6.1,
+       6,
+       6,
+       6,
+       5.9,
+       5.9,
+       5.8,
+       5.8,
+       5.8,
+       5.8,
+       5.7,
+       5.7,
+       5.7,
+       5.7,
+       5.7,
+       5.6,
+       5.6,
+       5.6,
+       5.6,
+       5.6,
+       5.6,
+       5.5,
+       5.5,
+       5.5,
+       5.5,
+       5.5,
+       5.5,
+       5.5,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4,
+       5.4
+      ],
+      "handover": [
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88,
+       88
+      ]
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 27.0
+   },
+   "zoom": {
+    "scenario": "zoom",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:03:20.961Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zoomIn_full": [
+      2.799999713897705,
+      3.5999999046325684,
+      4.900000095367432
+     ],
+     "zoomIn_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_full": [
+      6.699999809265137,
+      10.5,
+      3.4000000953674316
+     ],
+     "zoomOut_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_tileRequests": [
+      0,
+      0,
+      0
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 6.8
+   },
+   "contrast": {
+    "scenario": "contrast",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:03:27.747Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "contrast_main": [
+      13.5,
+      14.699999809265137,
+      13
+     ],
+     "contrast_xz": [
+      16,
+      17.199999809265137,
+      14.5
+     ],
+     "contrast_yz": [
+      17.09999990463257,
+      18.5,
+      16.100000381469727
+     ],
+     "contrast_fetches": [
+      0,
+      0,
+      0
+     ],
+     "contrast_volume": [
+      8,
+      10.5,
+      8
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 9.5
+   },
+   "tour": {
+    "scenario": "tour",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:03:37.213Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "first_tileRequests": [
+      26
+     ],
+     "first_tileDiskHits": [
+      0
+     ],
+     "first_tileMB": [
+      54.565802
+     ],
+     "first_sectionRequests": [
+      14
+     ],
+     "first_levelRequests": [
+      2
+     ],
+     "first_level304": [
+      0
+     ],
+     "first_shaderCompiles": [
+      2
+     ],
+     "first_shaderXhrs": [
+      0
+     ],
+     "first_decodes": [
+      38
+     ],
+     "first_imageBitmaps": [
+      0
+     ],
+     "first_decodeRatio": [
+      0.95
+     ],
+     "first_tile_total": [
+      0.3,
+      0.4,
+      0.3,
+      0.3,
+      1.1,
+      1,
+      0.5,
+      0.5,
+      1,
+      0.6,
+      0.4,
+      0.3,
+      0.5,
+      1,
+      0.6,
+      0.3,
+      0.3,
+      0.3,
+      0.4,
+      0.4,
+      7.9,
+      0.3,
+      0.3,
+      74.8,
+      75.5,
+      0.5
+     ],
+     "first_tile_read": [
+      6,
+      72.3,
+      72.6
+     ],
+     "first_tile_enc": [
+      1.5,
+      2.1,
+      2.7
+     ],
+     "first_section_read": [
+      128,
+      117.1,
+      118.6,
+      125.4,
+      110.9,
+      111.4,
+      68.4,
+      69.6,
+      57.9,
+      54.3,
+      54.3,
+      53.7
+     ],
+     "first_section_enc": [
+      0.4,
+      0.2,
+      0.2,
+      0.6,
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.1,
+      0.2,
+      0.1
+     ],
+     "first_section_total": [
+      128.7,
+      117.5,
+      119,
+      126.3,
+      111.4,
+      111.7,
+      68.9,
+      70.1,
+      58.3,
+      54.6,
+      54.7,
+      53.9
+     ],
+     "first_level_lut": [
+      0,
+      0
+     ],
+     "first_level_wait": [
+      0.1,
+      0
+     ],
+     "first_level_read": [
+      89.6,
+      89.1
+     ],
+     "first_level_quant": [
+      17.4,
+      17.6
+     ],
+     "first_level_hint": [
+      12.9,
+      9.6
+     ],
+     "first_level_enc": [
+      2.6,
+      2.2
+     ],
+     "first_level_total": [
+      123.5,
+      120
+     ],
+     "reload_tileRequests": [
+      26
+     ],
+     "reload_tileDiskHits": [
+      26
+     ],
+     "reload_tileMB": [
+      0
+     ],
+     "reload_sectionRequests": [
+      14
+     ],
+     "reload_levelRequests": [
+      2
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_shaderCompiles": [
+      4
+     ],
+     "reload_shaderXhrs": [
+      0
+     ],
+     "reload_decodes": [
+      38
+     ],
+     "reload_imageBitmaps": [
+      0
+     ],
+     "reload_decodeRatio": [
+      0.95
+     ],
+     "reload_tile_total": [
+      0.3,
+      0.3,
+      0.3,
+      0.4,
+      1.1,
+      1,
+      0.5,
+      0.5,
+      1,
+      0.6,
+      0.4,
+      0.3,
+      0.5,
+      1,
+      0.6,
+      0.3,
+      0.3,
+      0.3,
+      0.4,
+      0.4,
+      7.9,
+      0.3,
+      0.3,
+      74.8,
+      75.5,
+      0.5
+     ],
+     "reload_tile_read": [
+      6,
+      72.3,
+      72.6
+     ],
+     "reload_tile_enc": [
+      1.5,
+      2.1,
+      2.7
+     ],
+     "reload_section_read": [
+      128,
+      117.1,
+      118.6,
+      125.4,
+      110.9,
+      111.4,
+      68.4,
+      69.6,
+      57.9,
+      54.3,
+      54.3,
+      53.7
+     ],
+     "reload_section_enc": [
+      0.4,
+      0.2,
+      0.2,
+      0.6,
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.1,
+      0.2,
+      0.1
+     ],
+     "reload_section_total": [
+      128.7,
+      117.5,
+      119,
+      126.3,
+      111.4,
+      111.7,
+      68.9,
+      70.1,
+      58.3,
+      54.6,
+      54.7,
+      53.9
+     ],
+     "reload_level_lut": [
+      0,
+      0
+     ],
+     "reload_level_wait": [
+      0.1,
+      0
+     ],
+     "reload_level_read": [
+      89.6,
+      89.1
+     ],
+     "reload_level_quant": [
+      17.4,
+      17.6
+     ],
+     "reload_level_hint": [
+      12.9,
+      9.6
+     ],
+     "reload_level_enc": [
+      2.6,
+      2.2
+     ],
+     "reload_level_total": [
+      123.5,
+      120
+     ]
+    },
+    "extra": {
+     "passes": [
+      {
+       "counters": {
+        "fetch:tile": 26,
+        "req:tile": 26,
+        "worker:tileDecoder.js": 38,
+        "texImage2DCalls": 19,
+        "fetch:section": 14,
+        "req:section": 14,
+        "fetch:brick": 1,
+        "req:brick": 1,
+        "fetch:level": 2,
+        "req:level": 2,
+        "texImage3DCalls": 2,
+        "texImage3DBytes": 20299776,
+        "shaderCompiles": 2,
+        "programLinks": 1,
+        "uniformLookups": 13
+       }
+      },
+      {
+       "counters": {
+        "fetch:tile": 26,
+        "req:tile": 26,
+        "worker:tileDecoder.js": 38,
+        "texImage2DCalls": 19,
+        "fetch:section": 14,
+        "req:section": 14,
+        "fetch:brick": 1,
+        "req:brick": 1,
+        "fetch:level": 2,
+        "req:level": 2,
+        "texImage3DCalls": 2,
+        "texImage3DBytes": 20299776,
+        "shaderCompiles": 4,
+        "programLinks": 2,
+        "uniformLookups": 25
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 14.5
+   },
+   "memory": {
+    "scenario": "memory",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:03:51.749Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "heap_startMB": [
+      27.775948
+     ],
+     "heap_afterTourMB": [
+      84.810199,
+      88.655356,
+      88.164489
+     ],
+     "volumeTextureMB": [
+      20.299776,
+      20.299776,
+      20.299776
+     ],
+     "glTileMB": [
+      28.049408,
+      28.049408,
+      28.442624
+     ],
+     "osdTiles": [
+      20,
+      20,
+      20
+     ],
+     "heap_peakMB": [
+      88.655356
+     ],
+     "heap_endGrowth": [
+      1.042078028846507
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=xzy513",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=xzy513",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=yzx516",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=yzx516"
+    ],
+    "wall_s": 20.2
+   }
+  },
+  "twoplane": {
+   "flash": {
+    "scenario": "flash",
+    "dataset": "twoplane",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:04:11.950Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "flash_frames": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "flash_worst": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "flash_commit": [
+      8.800000190734863,
+      8.099999904632568,
+      8,
+      6.5,
+      2.1000003814697266,
+      2.4000000953674316
+     ]
+    },
+    "extra": {
+     "series": [
+      {
+       "flash": 0,
+       "worst": 0,
+       "from": 30.875,
+       "to": 91.59375,
+       "commit": 8.800000190734863,
+       "series": [
+        31,
+        31,
+        41,
+        50,
+        57,
+        62,
+        67,
+        71,
+        74,
+        78,
+        81,
+        83,
+        85,
+        87,
+        88,
+        89,
+        90,
+        91,
+        91,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92,
+        92
+       ]
+      },
+      {
+       "flash": 0,
+       "worst": 0,
+       "from": 91.59375,
+       "to": 30.875,
+       "commit": 8.099999904632568,
+       "series": [
+        92,
+        92,
+        81,
+        73,
+        66,
+        61,
+        56,
+        52,
+        48,
+        44,
+        43,
+        40,
+        38,
+        36,
+        35,
+        34,
+        32,
+        32,
+        32,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31,
+        31
+       ]
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 11.3
+   }
+  },
+  "ims": {
+   "open": {
+    "scenario": "open",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:04:23.326Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "tMeaningful_cold": [
+      495.69999980926514
+     ],
+     "tFull_cold": [
+      526.5999999046326
+     ],
+     "lutMax": [
+      0,
+      0,
+      0
+     ],
+     "tMeaningful_warm": [
+      287.40000009536743,
+      242.5
+     ],
+     "tFull_warm": [
+      299.2000002861023,
+      248.7999997138977
+     ]
+    },
+    "log": [
+     {
+      "rep": 0,
+      "net": {
+       "other": {
+        "n": 179,
+        "bytes": 7856177,
+        "disk": 2,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "volume": {
+        "n": 4,
+        "bytes": 1825,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "shader": {
+        "n": 4,
+        "bytes": 21641,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "tile": {
+        "n": 9,
+        "bytes": 8808456,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {
+         "total": [
+          0.2,
+          0.8,
+          0.3,
+          0.3,
+          1.9,
+          0.4,
+          0.3,
+          0.4,
+          0.4
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 2)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 1)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 2)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 1)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 1)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 5.4
+   },
+   "channels": {
+    "scenario": "channels",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:04:28.811Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "enable_cold_commit": [
+      77.40000009536743
+     ],
+     "enable_cold_paint": [
+      77.40000009536743
+     ],
+     "enable_shaderCompiles": [
+      0,
+      0,
+      0
+     ],
+     "enable_shaderXhrs": [
+      0,
+      0,
+      0
+     ],
+     "enable_tileRequests": [
+      12,
+      0,
+      0
+     ],
+     "enable_decodes": [
+      12,
+      0,
+      0
+     ],
+     "disable_commit": [
+      9.599999904632568,
+      10.699999809265137,
+      10.099999904632568
+     ],
+     "disable_shaderCompiles": [
+      0,
+      0,
+      0
+     ],
+     "switch_paint": [
+      11.300000190734863,
+      9.300000190734863,
+      11.100000381469727
+     ],
+     "switch_mixedMs": [
+      7.5,
+      3.5,
+      6
+     ],
+     "enable_commit": [
+      11.400000095367432,
+      12.699999809265137
+     ],
+     "enable_paint": [
+      11.400000095367432,
+      12.799999713897705
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 10.3
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "ims",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T03:04:39.066Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "step_commit": [
+      12.799999713897705,
+      5.900000095367432,
+      8.5,
+      7.100000381469727,
+      10
+     ],
+     "step_full": [
+      12.900000095367432,
+      6,
+      8.599999904632568,
+      7.100000381469727,
+      10.099999904632568
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      721.0999999046326
+     ],
+     "scrub_paintedPlanes": [
+      19
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      9.300000190734863,
+      9,
+      7,
+      6.199999809265137,
+      5.5,
+      3.4000000953674316,
+      4.400000095367432,
+      50.30000019073486,
+      51.80000019073486,
+      41.69999980926514,
+      29.199999809265137,
+      35.69999980926514,
+      19.09999990463257,
+      82.80000019073486,
+      108.5,
+      63.69999980926514,
+      63.5,
+      62.59999990463257,
+      71.30000019073486
+     ],
+     "scrub_fps": [
+      120.0023077366873
+     ],
+     "scrub_frameP95": [
+      9.899999999999636
+     ],
+     "scrub_frameP99": [
+      10.299999999999272
+     ],
+     "scrub_dropped": [
+      0
+     ],
+     "scrub_tileRequests": [
+      198
+     ],
+     "scrub_tileMB": [
+      193.79924
+     ],
+     "scrub_canceled": [
+      0
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "crossing_commit": [
+      3.200000286102295,
+      2.299999713897705
+     ],
+     "crossing_full": [
+      5.800000190734863,
+      4.900000095367432
+     ],
+     "step_firstVisibleChange": [
+      33.19999980926514,
+      29.199999809265137,
+      32.80000019073486,
+      40.299999713897705,
+      26.5
+     ],
+     "step_flashFrames": [
+      16,
+      15,
+      16,
+      15,
+      16
+     ],
+     "step_flashWorst": [
+      45,
+      45,
+      43,
+      44,
+      42
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 198,
+        "bytes": 193799240,
+        "canceled": 0
+       },
+       "other": {
+        "n": 4,
+        "bytes": 1335,
+        "canceled": 1
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 26.3
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:05:05.375Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "jump_commit": [
+      64.2000002861023,
+      82,
+      21.5,
+      75.7999997138977,
+      61.30000019073486,
+      19.199999809265137,
+      60.60000038146973,
+      54.40000009536743,
+      17.200000286102295
+     ],
+     "jump_full": [
+      80.40000009536743,
+      99.19999980926514,
+      26.800000190734863,
+      91,
+      81.30000019073486,
+      29.199999809265137,
+      70.80000019073486,
+      74.09999990463257,
+      23.100000381469727
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      1.3000001907348633,
+      4.699999809265137,
+      6.300000190734863,
+      3,
+      9.300000190734863,
+      5.699999809265137,
+      4.900000095367432,
+      2.5,
+      5.100000381469727
+     ],
+     "jumpBusy_commit": [
+      284.69999980926514,
+      262,
+      259.30000019073486
+     ],
+     "jumpBusy_full": [
+      598,
+      598.4000000953674,
+      571.0999999046326
+     ],
+     "jumpBusy_wastedTiles": [
+      110,
+      115,
+      115
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      5.199999809265137,
+      2.700000286102295,
+      3.3000001907348633
+     ],
+     "jumpBusy_inFlight": [
+      0,
+      0,
+      0
+     ],
+     "jump_commit_L0": [
+      112.89999961853027,
+      55.19999980926514,
+      13.900000095367432,
+      78.5,
+      60.40000009536743,
+      19.199999809265137,
+      77.40000009536743,
+      59,
+      20.5
+     ],
+     "jump_full_L0": [
+      124.7999997138977,
+      71.89999961853027,
+      21.300000190734863,
+      91.09999990463257,
+      78.30000019073486,
+      25.300000190734863,
+      89.40000009536743,
+      71.09999990463257,
+      26.700000286102295
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      8.5,
+      2.799999713897705,
+      2.5,
+      7.199999809265137,
+      6.699999809265137,
+      6.5,
+      7.400000095367432,
+      6.799999713897705,
+      8.599999904632568
+     ],
+     "jumpBusy_commit_L0": [
+      382.09999990463257,
+      245.19999980926514,
+      245
+     ],
+     "jumpBusy_full_L0": [
+      725.0999999046326,
+      558.4000000953674,
+      550.5
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      115,
+      112,
+      114
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      8.700000286102295,
+      5.099999904632568,
+      6.200000286102295
+     ],
+     "jumpBusy_inFlight_L0": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.299999999999955,
+    "extra": {
+     "route": [
+      135,
+      0,
+      85
+     ],
+     "o": 85,
+     "o2": 42,
+     "busyDest": 92,
+     "l0": {
+      "zoom": 1.450943396226415,
+      "maxLevel": 3,
+      "finest": 3
+     },
+     "tiles": {
+      "home": {
+       "origin": 85,
+       "dest": 135,
+       "tiles": {
+        "135": 9
+       }
+      },
+      "L0": {
+       "origin": 85,
+       "dest": 135,
+       "tiles": {
+        "135": 9
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z48",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z48",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_0/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_0/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z48",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z48",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_0/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_0/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/1_0.png?q=hd&view=z49"
+    ],
+    "wall_s": 45.1
+   },
+   "held": {
+    "scenario": "held",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:05:50.463Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "held_lag": [
+      0,
+      0,
+      0
+     ],
+     "held_settle": [
+      62.80000019073486,
+      1.4000000953674316,
+      1.1999998092651367
+     ],
+     "held_standbyAdopted": [
+      40,
+      40,
+      40
+     ],
+     "held_painted": [
+      40,
+      41,
+      40
+     ],
+     "held15_lag": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle": [
+      25.299999713897705,
+      19.59999990463257,
+      28.799999713897705
+     ],
+     "held15_standbyAdopted": [
+      40,
+      40,
+      40
+     ],
+     "held15_painted": [
+      40,
+      40,
+      41
+     ],
+     "held_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held_settle_L0": [
+      1.4000000953674316,
+      1.4000000953674316,
+      1.6000003814697266
+     ],
+     "held_standbyAdopted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held_painted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held15_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle_L0": [
+      22.800000190734863,
+      35,
+      24.5
+     ],
+     "held15_standbyAdopted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held15_painted_L0": [
+      40,
+      40,
+      40
+     ]
+    },
+    "F": 8.299999999999955,
+    "extra": {
+     "input": "key",
+     "planes": 40,
+     "start": 85,
+     "held": {
+      "requested": 125,
+      "committed": 125,
+      "final": 125
+     },
+     "held15": {
+      "requested": 125,
+      "committed": 125,
+      "final": 125
+     },
+     "held_L0": {
+      "requested": 125,
+      "committed": 125,
+      "final": 125
+     },
+     "held15_L0": {
+      "requested": 125,
+      "committed": 125,
+      "final": 125
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 85.2
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:07:15.909Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      111,
+      84.89999961853027,
+      74.5
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      2,
+      2,
+      2
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 11.9
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:07:27.596Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      1,
+      1,
+      1
+     ],
+     "resize_frameP95": [
+      10,
+      8.400000000001455,
+      8.700000000000728
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 170 \u00b7 z \u00d71.1",
+      "XZ \u00b7 y 170 \u00b7 z \u00d71.1",
+      "XZ \u00b7 y 170 \u00b7 z \u00d71.1"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-ims-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-ims-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 170 \u00b7 z \u00d71.1"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 16.7
+   },
+   "volume": {
+    "scenario": "volume",
+    "dataset": "ims",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T03:07:44.283Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "enter_levelMB": [
+      102.723675
+     ],
+     "enter_serverReadMs": [
+      49.599999999999994
+     ],
+     "enter_errors": [
+      0
+     ],
+     "enter_first": [
+      818
+     ],
+     "enter_levelFetches": [
+      3
+     ],
+     "enter_texImage3D": [
+      3
+     ],
+     "volume_levelSpread": [
+      0
+     ],
+     "rotate_fps": [
+      113.41083073433514,
+      119.99596652213363,
+      119.82570806100205,
+      120.00396707329176,
+      119.8494453248811
+     ],
+     "rotate_frameP99": [
+      16.800000000000182,
+      10,
+      10.299999999999272,
+      10,
+      10.300000000001091
+     ],
+     "rotate_dropped": [
+      7,
+      0,
+      0,
+      0,
+      0
+     ],
+     "coast_fps": [
+      87.17871636855551,
+      119.97600479904015,
+      78.06635640294246,
+      120.13815888271519,
+      94.5661963374361
+     ],
+     "coast_dropped": [
+      22,
+      0,
+      28,
+      0,
+      17
+     ],
+     "toggle3d_off": [
+      167.59999990463257,
+      11.900000095367432,
+      9.700000286102295,
+      12.300000190734863,
+      7.400000095367432
+     ],
+     "toggle3d_on": [
+      8.100000381469727,
+      13.800000190734863,
+      11.400000095367432,
+      14.400000095367432,
+      9.400000095367432
+     ],
+     "toggle3d_levelFetches": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "toggle3d_texImage3D": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "reenter": [
+      18.59999990463257,
+      17.40000009536743,
+      10.699999809265137
+     ],
+     "reenter_levelFetches": [
+      0,
+      0,
+      0
+     ],
+     "reenter_beforeZoom": [
+      13
+     ],
+     "detail_levelGain": [
+      0
+     ],
+     "detail_fps": [
+      117.70526472366747
+     ],
+     "detail_dropped": [
+      70
+     ],
+     "volume_gpuMB": [
+      102.72141
+     ],
+     "reload_volumeReady": [
+      327.7999997138977
+     ],
+     "reload_levelRequests": [
+      3
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_levelMB": [
+      102.723336
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 54.0
+   },
+   "volume_flash": {
+    "scenario": "volume_flash",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:08:38.321Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "v3d_restJump": [
+      0.890625,
+      1.8125,
+      1.9583333333333428
+     ],
+     "v3d_settleJump": [
+      0.234375,
+      0.265625,
+      0.4270833333333286
+     ],
+     "v3d_flashFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_restFrames": [
+      151,
+      149,
+      152
+     ],
+     "v3d_lumRef": [
+      90.86979166666667,
+      81.3125,
+      90.43229166666667
+     ],
+     "v3d_ghostCaptures": [
+      5,
+      5,
+      5,
+      5,
+      4,
+      4,
+      2,
+      6,
+      2
+     ],
+     "v3d_ghostMs": [
+      1.3999996185302734,
+      0.7999997138977051,
+      0.6999998092651367,
+      0.5,
+      0.5,
+      0.9000000953674316,
+      0.6999998092651367,
+      0.8000001907348633,
+      0.20000028610229492,
+      0.20000028610229492,
+      0.8999996185302734,
+      0.6000003814697266,
+      0.5999999046325684,
+      0.09999990463256836,
+      0.39999961853027344,
+      0.6999998092651367,
+      0.5,
+      0.7999997138977051,
+      0.09999990463256836,
+      0.8000001907348633,
+      0.6999998092651367,
+      0.7000002861022949,
+      1.0999999046325684,
+      0.6999998092651367,
+      0.8000001907348633,
+      0.5999999046325684,
+      0.7000002861022949,
+      0.7000002861022949,
+      0.9000000953674316,
+      0.5,
+      0.8000001907348633,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.5,
+      0,
+      0.10000038146972656,
+      1,
+      0.5999999046325684
+     ],
+     "v3d_fillFlash": [
+      0,
+      1,
+      1
+     ],
+     "v3d_fillBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_fillSettle": [
+      1197.3000001907349,
+      1201.9000000953674,
+      1189.6000003814697
+     ],
+     "v3d_handoverBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverFlash": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverSettle": [
+      453,
+      577.5999999046326,
+      458.59999990463257
+     ],
+     "v3d_texmiss": [
+      1,
+      1,
+      1
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "ghost": true,
+     "handover": {
+      "name": "Channel 1",
+      "loads": 1,
+      "frames": 124,
+      "before": 148.11428571428573,
+      "ref": 133.16190476190476,
+      "cells": 105
+     },
+     "fill": [
+      {
+       "bricks": 1,
+       "detail": false,
+       "frames": 216,
+       "ref": 100.515625
+      },
+      {
+       "bricks": 0,
+       "detail": false,
+       "frames": 217,
+       "ref": 100.515625
+      },
+      {
+       "bricks": 0,
+       "detail": false,
+       "frames": 217,
+       "ref": 100.515625
+      }
+     ],
+     "series": {
+      "rest": [
+       87.7,
+       87.1,
+       86.4,
+       85.9,
+       85.5,
+       85.3,
+       85.1,
+       85.7,
+       85.7,
+       86.2,
+       86.3,
+       87.1,
+       87.7,
+       87,
+       86.1,
+       85.6,
+       86.1,
+       86.4,
+       87.1,
+       87.7,
+       88.1,
+       87.9,
+       88.4,
+       88.3,
+       88,
+       87.2,
+       86.7,
+       86.8,
+       86.9,
+       86.8,
+       86.5,
+       86.6,
+       86.8,
+       87.2,
+       87.3,
+       87.9,
+       88.1,
+       88.3,
+       88.4,
+       89.1,
+       89.4,
+       89.6,
+       90.1,
+       90.5,
+       90.8,
+       90.8,
+       90.6,
+       90.5,
+       90.6,
+       90.5,
+       90.2,
+       89.8,
+       89.7,
+       89.7,
+       89.8,
+       89.7,
+       89.7,
+       89.7,
+       89.6,
+       89.6,
+       89.7,
+       89.6,
+       89.5,
+       89.4,
+       89.3,
+       89.3,
+       89.3,
+       89.3,
+       89.4,
+       89.5,
+       89.5,
+       89.5,
+       89.6,
+       89.4,
+       89.4,
+       89.4,
+       89.4,
+       89.5,
+       89.5,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.6,
+       89.7,
+       89.8,
+       90,
+       90,
+       90,
+       90.1,
+       90.2,
+       90.2,
+       90.3,
+       90.2,
+       90.3,
+       90.3,
+       90.3,
+       90.3,
+       90.3,
+       90.3,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.4,
+       90.6,
+       90.7,
+       90.8,
+       90.9,
+       90.9,
+       90.9,
+       90.9,
+       90.9,
+       90.9,
+       90.9,
+       90.9,
+       91.1,
+       91.3,
+       91.3,
+       91.4
+      ],
+      "fill": [
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       90.8,
+       89.7,
+       89.7,
+       90.7,
+       90.6,
+       91.7,
+       93.8,
+       100.1,
+       105.8,
+       107.6,
+       104.7,
+       105.2,
+       100.4,
+       104.2,
+       103.6,
+       103.3,
+       106,
+       106.8,
+       109.7,
+       106.7,
+       109.5,
+       108.8,
+       101.7,
+       102.8,
+       102,
+       105.7,
+       104.6,
+       107.6,
+       107,
+       105.7,
+       111.6,
+       110.7,
+       112.1,
+       114.5,
+       114.7,
+       112.4,
+       112.5,
+       111.3,
+       108.4,
+       107.8,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       104.6,
+       103.4,
+       103.4,
+       102.2,
+       101.7,
+       99.9,
+       99.1,
+       98.6,
+       98.7,
+       98.7,
+       98.7,
+       98.5,
+       98.4,
+       98.5,
+       98.9,
+       98.9,
+       99,
+       98.8,
+       98.6,
+       98.6,
+       98.5,
+       98.6,
+       98.7,
+       98.7,
+       98.6,
+       98.6,
+       98.5,
+       98.5,
+       98.5,
+       98.6,
+       98.6,
+       98.6,
+       98.6,
+       98.5,
+       98.6,
+       98.6,
+       98.6,
+       98.5,
+       98.6,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.6,
+       98.6,
+       98.6,
+       98.6,
+       98.6,
+       98.6,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.5,
+       98.8,
+       99.1,
+       99.1,
+       99.7,
+       99.8,
+       99.8,
+       99.9,
+       100.1,
+       100.1,
+       100.2,
+       100.3,
+       100.3,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.4,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5,
+       100.5
+      ],
+      "handover": [
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       149.8,
+       144.5,
+       142.7,
+       141.2,
+       139.8,
+       138.7,
+       137.8,
+       136.9,
+       136.2,
+       135.7,
+       135,
+       134.5,
+       134.2,
+       133.8,
+       133.6,
+       133.2,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1,
+       133.1
+      ]
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 27.9
+   },
+   "zoom": {
+    "scenario": "zoom",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:09:06.174Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zoomIn_full": [
+      7.599999904632568,
+      8.800000190734863,
+      3.200000286102295
+     ],
+     "zoomIn_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_full": [
+      8.899999618530273,
+      3.700000286102295,
+      7.200000286102295
+     ],
+     "zoomOut_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_tileRequests": [
+      0,
+      0,
+      0
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 6.9
+   },
+   "contrast": {
+    "scenario": "contrast",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:09:13.079Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "contrast_main": [
+      15.400000095367432,
+      13,
+      10.899999618530273
+     ],
+     "contrast_xz": [
+      17.300000190734863,
+      14.299999713897705,
+      12.599999904632568
+     ],
+     "contrast_yz": [
+      18.90000009536743,
+      16.09999990463257,
+      14.299999713897705
+     ],
+     "contrast_fetches": [
+      0,
+      0,
+      0
+     ],
+     "contrast_volume": [
+      17,
+      24.799999713897705,
+      23.59999990463257
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 9.8
+   },
+   "tour": {
+    "scenario": "tour",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:09:22.868Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "first_tileRequests": [
+      108
+     ],
+     "first_tileDiskHits": [
+      0
+     ],
+     "first_tileMB": [
+      105.70266
+     ],
+     "first_sectionRequests": [
+      32
+     ],
+     "first_levelRequests": [
+      3
+     ],
+     "first_level304": [
+      0
+     ],
+     "first_shaderCompiles": [
+      6
+     ],
+     "first_shaderXhrs": [
+      0
+     ],
+     "first_decodes": [
+      138
+     ],
+     "first_imageBitmaps": [
+      0
+     ],
+     "first_decodeRatio": [
+      0.9857142857142858
+     ],
+     "first_tile_total": [
+      0.5,
+      0.6,
+      0.5,
+      0.4,
+      0.6,
+      0.3,
+      0.5,
+      0.4,
+      0.3,
+      0.5,
+      0.6,
+      0.3,
+      0.3,
+      0.5,
+      1.1,
+      0.6,
+      0.4,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      0.3,
+      0.3,
+      0.2,
+      0.2,
+      0.2,
+      0.3,
+      0.5,
+      0.5,
+      0.9,
+      0.3,
+      0.9,
+      0.2,
+      0.3,
+      0.3,
+      0.2,
+      0.5,
+      0.3,
+      1.2,
+      0.5,
+      0.9,
+      4.2,
+      0.4,
+      0.3,
+      0.5,
+      0.4,
+      0.3,
+      0.3,
+      0.4,
+      0.6,
+      0.5,
+      0.6,
+      0.3,
+      0.5,
+      1.6,
+      0.6,
+      0.2,
+      4.2,
+      0.5,
+      0.4,
+      1.1,
+      0.3,
+      1.3,
+      0.3,
+      0.3,
+      2.8,
+      0.2,
+      0.5,
+      0.2,
+      0.4,
+      0.4,
+      0.5,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      0.2,
+      0.5,
+      0.2,
+      0.6,
+      0.6,
+      0.4,
+      0.4,
+      0.5,
+      0.3,
+      0.3,
+      0.5,
+      0.5,
+      0.6,
+      3,
+      6.3,
+      3.9,
+      1.2,
+      8.5,
+      1,
+      2,
+      1.5,
+      1.8,
+      2.6,
+      4.2,
+      3.6,
+      3.3,
+      2,
+      1.4,
+      2.3,
+      2.2,
+      1.8
+     ],
+     "first_tile_read": [
+      1.2,
+      3.6,
+      2.5,
+      0.3,
+      1.6,
+      0.3,
+      0.6,
+      0.4,
+      0.3,
+      0.8,
+      1.2,
+      1.4,
+      0.7,
+      0.6,
+      0.3,
+      0.8,
+      0.4,
+      0.3
+     ],
+     "first_tile_enc": [
+      1.6,
+      2.3,
+      1.2,
+      0.6,
+      6.4,
+      0.5,
+      1.2,
+      1,
+      1.1,
+      1.6,
+      2.4,
+      1.8,
+      2.3,
+      1.1,
+      0.9,
+      1.2,
+      1.2,
+      1.2
+     ],
+     "first_section_read": [
+      4.4,
+      8.3,
+      7.5,
+      2,
+      8,
+      11.5,
+      1.8,
+      9.6,
+      8.1,
+      3,
+      7.4,
+      5.1,
+      5.9,
+      16.3,
+      10.8,
+      6.8,
+      12.8,
+      12.2,
+      1.6,
+      2.6,
+      5.5,
+      7.7,
+      7.2,
+      4.6,
+      2.8,
+      0.7,
+      0.6,
+      0.5,
+      0.2,
+      0.5
+     ],
+     "first_section_enc": [
+      1,
+      1.8,
+      2.6,
+      1.1,
+      3.7,
+      2,
+      0.7,
+      2.9,
+      3,
+      1.1,
+      2.6,
+      1.1,
+      3.6,
+      1.3,
+      1.9,
+      3,
+      1.9,
+      1.3,
+      0.4,
+      2.9,
+      2.1,
+      1.8,
+      2.1,
+      1.4,
+      0.2,
+      2.3,
+      0.6,
+      1.2,
+      0.5,
+      0.3
+     ],
+     "first_section_total": [
+      5.6,
+      10.3,
+      10.3,
+      3.3,
+      11.9,
+      13.7,
+      3,
+      12.8,
+      11.5,
+      4.6,
+      10.5,
+      6.3,
+      9.7,
+      18.1,
+      13,
+      10,
+      14.9,
+      13.6,
+      2.1,
+      5.7,
+      7.9,
+      9.7,
+      9.5,
+      6.4,
+      3.3,
+      3.4,
+      1.6,
+      1.9,
+      0.8,
+      0.9
+     ],
+     "first_level_lut": [
+      0,
+      0,
+      0
+     ],
+     "first_level_wait": [
+      0.2,
+      0.1,
+      0.1
+     ],
+     "first_level_read": [
+      11.3,
+      11.4,
+      7.5
+     ],
+     "first_level_quant": [
+      27.6,
+      23.5,
+      26.6
+     ],
+     "first_level_hint": [
+      13.1,
+      7.6,
+      4.5
+     ],
+     "first_level_enc": [
+      1.5,
+      1.4,
+      1.9
+     ],
+     "first_level_total": [
+      55.2,
+      46.4,
+      42.5
+     ],
+     "reload_tileRequests": [
+      108
+     ],
+     "reload_tileDiskHits": [
+      108
+     ],
+     "reload_tileMB": [
+      0
+     ],
+     "reload_sectionRequests": [
+      32
+     ],
+     "reload_levelRequests": [
+      3
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_shaderCompiles": [
+      2
+     ],
+     "reload_shaderXhrs": [
+      0
+     ],
+     "reload_decodes": [
+      138
+     ],
+     "reload_imageBitmaps": [
+      0
+     ],
+     "reload_decodeRatio": [
+      0.9857142857142858
+     ],
+     "reload_tile_total": [
+      0.2,
+      0.2,
+      0.2,
+      0.3,
+      0.3,
+      0.2,
+      0.3,
+      0.3,
+      0.5,
+      0.5,
+      0.6,
+      0.5,
+      0.4,
+      0.4,
+      0.3,
+      0.3,
+      0.5,
+      0.6,
+      0.6,
+      0.4,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      0.2,
+      0.2,
+      0.3,
+      0.5,
+      0.5,
+      0.9,
+      0.3,
+      0.9,
+      0.2,
+      0.3,
+      0.3,
+      0.2,
+      4.2,
+      0.5,
+      0.3,
+      0.4,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      0.4,
+      0.6,
+      0.3,
+      4.2,
+      0.5,
+      1.2,
+      0.5,
+      0.9,
+      0.4,
+      0.4,
+      0.5,
+      1.6,
+      0.6,
+      2.8,
+      0.2,
+      0.5,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      1.1,
+      0.6,
+      0.2,
+      0.3,
+      0.3,
+      0.3,
+      0.5,
+      0.4,
+      0.3,
+      0.4,
+      1.3,
+      0.2,
+      0.4,
+      0.5,
+      0.5,
+      0.3,
+      0.3,
+      0.2,
+      0.6,
+      0.5,
+      0.2,
+      0.6,
+      0.4,
+      0.5,
+      0.5,
+      0.6,
+      3,
+      6.3,
+      3.9,
+      1.2,
+      8.5,
+      1,
+      2,
+      1.5,
+      1.8,
+      2.6,
+      4.2,
+      3.6,
+      3.3,
+      2,
+      1.4,
+      2.3,
+      2.2,
+      1.8
+     ],
+     "reload_tile_read": [
+      1.2,
+      3.6,
+      2.5,
+      0.3,
+      1.6,
+      0.3,
+      0.6,
+      0.4,
+      0.3,
+      0.8,
+      1.2,
+      1.4,
+      0.7,
+      0.6,
+      0.3,
+      0.8,
+      0.4,
+      0.3
+     ],
+     "reload_tile_enc": [
+      1.6,
+      2.3,
+      1.2,
+      0.6,
+      6.4,
+      0.5,
+      1.2,
+      1,
+      1.1,
+      1.6,
+      2.4,
+      1.8,
+      2.3,
+      1.1,
+      0.9,
+      1.2,
+      1.2,
+      1.2
+     ],
+     "reload_section_read": [
+      4.4,
+      8.3,
+      7.5,
+      2,
+      8,
+      11.5,
+      1.8,
+      9.6,
+      8.1,
+      3,
+      7.4,
+      5.1,
+      5.9,
+      16.3,
+      10.8,
+      6.8,
+      12.8,
+      12.2,
+      1.6,
+      2.6,
+      5.5,
+      7.7,
+      7.2,
+      4.6,
+      2.8,
+      0.7,
+      0.6,
+      0.5,
+      0.2,
+      0.5
+     ],
+     "reload_section_enc": [
+      1,
+      1.8,
+      2.6,
+      1.1,
+      3.7,
+      2,
+      0.7,
+      2.9,
+      3,
+      1.1,
+      2.6,
+      1.1,
+      3.6,
+      1.3,
+      1.9,
+      3,
+      1.9,
+      1.3,
+      0.4,
+      2.9,
+      2.1,
+      1.8,
+      2.1,
+      1.4,
+      0.2,
+      2.3,
+      0.6,
+      1.2,
+      0.5,
+      0.3
+     ],
+     "reload_section_total": [
+      5.6,
+      10.3,
+      10.3,
+      3.3,
+      11.9,
+      13.7,
+      3,
+      12.8,
+      11.5,
+      4.6,
+      10.5,
+      6.3,
+      9.7,
+      18.1,
+      13,
+      10,
+      14.9,
+      13.6,
+      2.1,
+      5.7,
+      7.9,
+      9.7,
+      9.5,
+      6.4,
+      3.3,
+      3.4,
+      1.6,
+      1.9,
+      0.8,
+      0.9
+     ],
+     "reload_level_lut": [
+      0,
+      0,
+      0
+     ],
+     "reload_level_wait": [
+      0.2,
+      0.1,
+      0.1
+     ],
+     "reload_level_read": [
+      11.3,
+      11.4,
+      7.5
+     ],
+     "reload_level_quant": [
+      27.6,
+      23.5,
+      26.6
+     ],
+     "reload_level_hint": [
+      13.1,
+      7.6,
+      4.5
+     ],
+     "reload_level_enc": [
+      1.5,
+      1.4,
+      1.9
+     ],
+     "reload_level_total": [
+      55.2,
+      46.4,
+      42.5
+     ]
+    },
+    "extra": {
+     "passes": [
+      {
+       "counters": {
+        "fetch:tile": 108,
+        "req:tile": 108,
+        "worker:tileDecoder.js": 138,
+        "texImage2DCalls": 69,
+        "fetch:section": 32,
+        "req:section": 32,
+        "fetch:brick": 3,
+        "req:brick": 3,
+        "fetch:level": 3,
+        "req:level": 3,
+        "texImage3DCalls": 3,
+        "texImage3DBytes": 25802190,
+        "texSubImage3DCalls": 130,
+        "texSubImage3DBytes": 36483984,
+        "shaderCompiles": 6,
+        "programLinks": 3,
+        "uniformLookups": 75,
+        "deleteTexture": 5
+       }
+      },
+      {
+       "counters": {
+        "fetch:tile": 108,
+        "req:tile": 108,
+        "worker:tileDecoder.js": 138,
+        "texImage2DCalls": 69,
+        "fetch:section": 32,
+        "req:section": 32,
+        "fetch:brick": 3,
+        "req:brick": 3,
+        "fetch:level": 3,
+        "req:level": 3,
+        "texImage3DCalls": 3,
+        "texImage3DBytes": 25802190,
+        "texSubImage3DCalls": 128,
+        "texSubImage3DBytes": 36469584,
+        "shaderCompiles": 2,
+        "programLinks": 1,
+        "uniformLookups": 27
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 14.6
+   },
+   "memory": {
+    "scenario": "memory",
+    "dataset": "ims",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:09:37.507Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "heap_startMB": [
+      33.114215
+     ],
+     "heap_afterTourMB": [
+      146.111853,
+      155.835761,
+      155.507292
+     ],
+     "volumeTextureMB": [
+      25.80219,
+      25.80219,
+      25.80219
+     ],
+     "glTileMB": [
+      67.095574,
+      67.095574,
+      68.835214
+     ],
+     "osdTiles": [
+      90,
+      90,
+      90
+     ],
+     "heap_peakMB": [
+      155.835761
+     ],
+     "heap_endGrowth": [
+      1.0739770989010726
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/ims/F8IIc-smallchunk.ims_0/0/0_0.png?q=hd&view=yzx742",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/ims/F8IIc-smallchunk.ims_1/0/0_0.png?q=hd&view=yzx742",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/ims/F8IIc-smallchunk.ims_2/0/0_0.png?q=hd&view=yzx742"
+    ],
+    "wall_s": 20.4
+   }
+  },
+  "meso": {
+   "open": {
+    "scenario": "open",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:09:57.944Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "tMeaningful_cold": [
+      412
+     ],
+     "tFull_cold": [
+      412
+     ],
+     "lutMax": [
+      0,
+      0,
+      0
+     ],
+     "tMeaningful_warm": [
+      282.90000009536743,
+      252.59999990463257
+     ],
+     "tFull_warm": [
+      283,
+      252.59999990463257
+     ]
+    },
+    "log": [
+     {
+      "rep": 0,
+      "net": {
+       "other": {
+        "n": 175,
+        "bytes": 7856101,
+        "disk": 2,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "volume": {
+        "n": 2,
+        "bytes": 1666,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "shader": {
+        "n": 4,
+        "bytes": 21641,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {}
+       },
+       "tile": {
+        "n": 5,
+        "bytes": 10493455,
+        "disk": 0,
+        "s304": 0,
+        "canceled": 0,
+        "failed": 0,
+        "phases": {
+         "total": [
+          0.3,
+          0.3,
+          0.3,
+          0.4,
+          0.8
+         ]
+        }
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 5.1
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "meso",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T03:10:02.990Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "step_commit": [
+      7.800000190734863,
+      10.800000190734863,
+      7.400000095367432,
+      3.799999713897705,
+      6.400000095367432
+     ],
+     "step_full": [
+      8,
+      11,
+      7.599999904632568,
+      5.099999904632568,
+      6.400000095367432
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      811
+     ],
+     "scrub_paintedPlanes": [
+      18
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      5.299999713897705,
+      3.3000001907348633,
+      2.9000000953674316,
+      9.5,
+      8.700000286102295,
+      7.599999904632568,
+      9.199999809265137,
+      72.30000019073486,
+      71.30000019073486,
+      87.2999997138977,
+      119.89999961853027,
+      48.200000286102295,
+      55.90000009536743,
+      89.69999980926514,
+      130.09999990463257,
+      98.09999990463257,
+      124,
+      155.09999990463257
+     ],
+     "scrub_fps": [
+      119.43065932268087
+     ],
+     "scrub_frameP95": [
+      9.899999999999636
+     ],
+     "scrub_frameP99": [
+      10.300000000001091
+     ],
+     "scrub_dropped": [
+      1
+     ],
+     "scrub_tileRequests": [
+      110
+     ],
+     "scrub_tileMB": [
+      230.857857
+     ],
+     "scrub_canceled": [
+      0
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "step_firstVisibleChange": [
+      38.5,
+      34,
+      35.799999713897705,
+      32.700000286102295,
+      39.90000009536743
+     ],
+     "step_flashFrames": [
+      16,
+      15,
+      16,
+      15,
+      15
+     ],
+     "step_flashWorst": [
+      25,
+      24,
+      24,
+      24,
+      23
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 110,
+        "bytes": 230857857,
+        "canceled": 0
+       },
+       "other": {
+        "n": 4,
+        "bytes": 1346,
+        "canceled": 1
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 23.9
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:10:26.897Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "jump_commit": [
+      87.7000002861023,
+      69.59999990463257,
+      19.40000009536743,
+      59.200000286102295,
+      68.2000002861023,
+      18.799999713897705,
+      72.30000019073486,
+      54.80000019073486,
+      15.900000095367432
+     ],
+     "jump_full": [
+      104.5,
+      88.19999980926514,
+      30,
+      71.7000002861023,
+      90.7000002861023,
+      25.40000009536743,
+      84.80000019073486,
+      73.90000009536743,
+      25
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      6.700000286102295,
+      1.5,
+      7.800000190734863,
+      1.700000286102295,
+      6.400000095367432,
+      5.799999713897705,
+      7.400000095367432,
+      2.4000000953674316,
+      2.1999998092651367
+     ],
+     "jumpBusy_commit": [
+      269.90000009536743,
+      188.2000002861023,
+      194.7000002861023
+     ],
+     "jumpBusy_full": [
+      794.5999999046326,
+      637.3000001907349,
+      539
+     ],
+     "jumpBusy_wastedTiles": [
+      53,
+      53,
+      54
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      1.5999999046325684,
+      2.200000286102295,
+      6.300000190734863
+     ],
+     "jumpBusy_inFlight": [
+      0,
+      0,
+      0
+     ],
+     "jump_commit_L0": [
+      73.2000002861023,
+      78.09999990463257,
+      20.09999990463257,
+      79.90000009536743,
+      67.2000002861023,
+      20.100000381469727,
+      95.40000009536743,
+      87.69999980926514,
+      15.700000286102295
+     ],
+     "jump_full_L0": [
+      86,
+      98.40000009536743,
+      27.199999809265137,
+      89.19999980926514,
+      85.40000009536743,
+      26.40000009536743,
+      114.80000019073486,
+      113.5,
+      22.5
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      2.9000000953674316,
+      7.300000190734863,
+      7,
+      2.9000000953674316,
+      7.300000190734863,
+      6.5,
+      7.099999904632568,
+      6,
+      3.3000001907348633
+     ],
+     "jumpBusy_commit_L0": [
+      184.69999980926514,
+      178,
+      189.69999980926514
+     ],
+     "jumpBusy_full_L0": [
+      539.2999997138977,
+      521.2000002861023,
+      534
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      54,
+      55,
+      53
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      7.299999713897705,
+      3.200000286102295,
+      7.599999904632568
+     ],
+     "jumpBusy_inFlight_L0": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.299999999999955,
+    "extra": {
+     "route": [
+      1008,
+      0,
+      958
+     ],
+     "o": 958,
+     "o2": 479,
+     "busyDest": 529,
+     "l0": {
+      "zoom": 1.9320754716981132,
+      "maxLevel": 5,
+      "finest": 5
+     },
+     "tiles": {
+      "home": {
+       "origin": 958,
+       "dest": 1008,
+       "tiles": {
+        "1008": 5
+       }
+      },
+      "L0": {
+       "origin": 958,
+       "dest": 1008,
+       "tiles": {
+        "1008": 5
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z486",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z484",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z484",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z484",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z484",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z485",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_1.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z486",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_1 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_1.png?q=hd&view=z486"
+    ],
+    "wall_s": 45.6
+   },
+   "held": {
+    "scenario": "held",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:11:12.563Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "held_lag": [
+      0,
+      0,
+      0
+     ],
+     "held_settle": [
+      91.2000002861023,
+      2.9000000953674316,
+      1.200000286102295
+     ],
+     "held_standbyAdopted": [
+      40,
+      40,
+      40
+     ],
+     "held_painted": [
+      40,
+      40,
+      40
+     ],
+     "held15_lag": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle": [
+      147,
+      44.09999990463257,
+      147
+     ],
+     "held15_standbyAdopted": [
+      39,
+      40,
+      40
+     ],
+     "held15_painted": [
+      39,
+      40,
+      40
+     ],
+     "held_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held_settle_L0": [
+      1.3000001907348633,
+      1.1999998092651367,
+      1.3000001907348633
+     ],
+     "held_standbyAdopted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held_painted_L0": [
+      41,
+      40,
+      40
+     ],
+     "held15_lag_L0": [
+      0,
+      0,
+      0
+     ],
+     "held15_settle_L0": [
+      25.700000286102295,
+      22.299999713897705,
+      13.900000095367432
+     ],
+     "held15_standbyAdopted_L0": [
+      40,
+      40,
+      40
+     ],
+     "held15_painted_L0": [
+      41,
+      41,
+      41
+     ]
+    },
+    "F": 8.299999999999955,
+    "extra": {
+     "input": "key",
+     "planes": 40,
+     "start": 958,
+     "held": {
+      "requested": 998,
+      "committed": 998,
+      "final": 998
+     },
+     "held15": {
+      "requested": 998,
+      "committed": 998,
+      "final": 998
+     },
+     "held_L0": {
+      "requested": 998,
+      "committed": 998,
+      "final": 998
+     },
+     "held15_L0": {
+      "requested": 998,
+      "committed": 998,
+      "final": 998
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z974",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z974",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/0_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/0_0.png?q=hd&view=z974",
+     "[warning] Ignoring tile %s loaded before reset: %s 5/1_0 /generated/data/meso/ExpA_VIP_ASLM_on_0/0/1_0.png?q=hd&view=z974",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 85.8
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:12:38.443Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      3107.199999809265,
+      172.69999980926514,
+      174.59999990463257
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      3,
+      2,
+      2
+     ]
+    },
+    "F": 8.300000000001091,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 20.7
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:12:59.005Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      0,
+      0,
+      0
+     ],
+     "resize_frameP95": [
+      9.700000000000728,
+      9.600000000000364,
+      9.600000000000364
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 566",
+      "XZ \u00b7 y 566",
+      "XZ \u00b7 y 566"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-meso-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/ff5b2b7d8b7a-post-meso-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 566"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 17.1
+   },
+   "volume": {
+    "scenario": "volume",
+    "dataset": "meso",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-13T03:13:15.980Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "enter_levelMB": [
+      31.851246
+     ],
+     "enter_serverReadMs": [
+      55.7
+     ],
+     "enter_errors": [
+      0
+     ],
+     "enter_first": [
+      276.19999980926514
+     ],
+     "enter_levelFetches": [
+      1
+     ],
+     "enter_texImage3D": [
+      1
+     ],
+     "volume_levelSpread": [
+      0
+     ],
+     "rotate_fps": [
+      118.09861234130506,
+      119.8019801980198,
+      120.00396707329176,
+      120.19230769230774,
+      120.11117728806833
+     ],
+     "rotate_frameP99": [
+      10.400000000000091,
+      10.300000000000182,
+      10.299999999999272,
+      10,
+      10.300000000001091
+     ],
+     "rotate_dropped": [
+      2,
+      0,
+      0,
+      0,
+      0
+     ],
+     "coast_fps": [
+      119.7877179681577,
+      119.99400029998503,
+      120.02430872075361,
+      119.8501872659176,
+      120.03556609365718
+     ],
+     "coast_dropped": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "reenter": [
+      20.09999990463257,
+      13.099999904632568,
+      18.699999809265137
+     ],
+     "reenter_levelFetches": [
+      0,
+      0,
+      0
+     ],
+     "reenter_beforeZoom": [
+      12.199999809265137
+     ],
+     "detail_levelGain": [
+      0
+     ],
+     "detail_fps": [
+      115.98055105348462
+     ],
+     "detail_dropped": [
+      128
+     ],
+     "volume_gpuMB": [
+      31.850496
+     ],
+     "reload_volumeReady": [
+      196.60000038146973
+     ],
+     "reload_levelRequests": [
+      1
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_levelMB": [
+      31.851145
+     ]
+    },
+    "F": 8.300000000000182,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at VolumeAtlas.fetch (http://127.0.0.1:63303/client/src/js/views/volumeRenderer.js?v=20261012_3d_controls:475:60)\n    at VolumeAtlas.fetchBatch (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:621:41)\n    at run (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:595:36)\n    at async Promise.all (index 0)\n    at async VolumeAtlas.update (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:604:13)",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at VolumeAtlas.fetch (http://127.0.0.1:63303/client/src/js/views/volumeRenderer.js?v=20261012_3d_controls:475:60)\n    at VolumeAtlas.fetchBatch (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:621:41)\n    at run (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:595:36)\n    at async Promise.all (index 1)\n    at async VolumeAtlas.update (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:604:13)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 50.0
+   },
+   "volume_flash": {
+    "scenario": "volume_flash",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:14:06.225Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "v3d_restJump": [
+      1.5625,
+      1.609375,
+      1.4375
+     ],
+     "v3d_settleJump": [
+      0.1875,
+      0.6145833333333357,
+      0.4166666666666572
+     ],
+     "v3d_flashFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "v3d_restFrames": [
+      152,
+      151,
+      156
+     ],
+     "v3d_lumRef": [
+      75.23958333333333,
+      55.609375,
+      84.69270833333333
+     ],
+     "v3d_ghostCaptures": [
+      5,
+      7,
+      8,
+      12,
+      13,
+      13,
+      1,
+      10,
+      9
+     ],
+     "v3d_ghostMs": [
+      2.5999999046325684,
+      1.0999999046325684,
+      0.19999980926513672,
+      0.8000001907348633,
+      0.8000001907348633,
+      1.299999713897705,
+      0.8000001907348633,
+      1.5,
+      0,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.09999990463256836,
+      1.4000000953674316,
+      1.0999999046325684,
+      0,
+      0.09999990463256836,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.09999990463256836,
+      0,
+      1.1999998092651367,
+      1.3000001907348633,
+      0.09999990463256836,
+      0.10000038146972656,
+      0,
+      0,
+      0.09999990463256836,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.7999997138977051,
+      0.09999990463256836,
+      0.09999990463256836,
+      2.0999999046325684,
+      1.3000001907348633,
+      1.700000286102295,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.20000028610229492,
+      0.8999996185302734,
+      0.19999980926513672,
+      0.10000038146972656,
+      0.20000028610229492,
+      0.10000038146972656,
+      0,
+      0.09999990463256836,
+      1.299999713897705,
+      1.299999713897705,
+      0.10000038146972656,
+      0.20000028610229492,
+      0.09999990463256836,
+      0.19999980926513672,
+      0.09999990463256836,
+      1,
+      0.19999980926513672,
+      0.10000038146972656,
+      0,
+      0.09999990463256836,
+      0.09999990463256836,
+      1.0999999046325684,
+      1,
+      0.10000038146972656,
+      0.09999990463256836,
+      0.20000028610229492,
+      0.09999990463256836,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.8000001907348633,
+      0.20000028610229492,
+      0.19999980926513672,
+      2,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.7999997138977051,
+      0.09999990463256836,
+      0.6999998092651367,
+      0.09999990463256836,
+      1.0999999046325684,
+      0.20000028610229492
+     ],
+     "v3d_fillFlash": [
+      0,
+      0,
+      0
+     ],
+     "v3d_fillBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_fillSettle": [
+      1182.2000002861023,
+      1208.7999997138977,
+      1163.2999997138977
+     ],
+     "v3d_handoverBlack": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverFlash": [
+      0,
+      0,
+      0
+     ],
+     "v3d_handoverSettle": [
+      473,
+      535.8000001907349,
+      602.7999997138977
+     ],
+     "v3d_texmiss": [
+      1,
+      1,
+      1
+     ]
+    },
+    "F": 8.300000000000182,
+    "extra": {
+     "ghost": true,
+     "handover": {
+      "name": "tdTomato",
+      "loads": 1,
+      "frames": 137,
+      "before": 102.16025641025641,
+      "ref": 100.99358974358974,
+      "cells": 156
+     },
+     "fill": [
+      {
+       "bricks": 12,
+       "detail": false,
+       "frames": 216,
+       "ref": 80.86458333333333
+      },
+      {
+       "bricks": 14,
+       "detail": false,
+       "frames": 217,
+       "ref": 80.859375
+      },
+      {
+       "bricks": 14,
+       "detail": false,
+       "frames": 210,
+       "ref": 80.94270833333333
+      }
+     ],
+     "series": {
+      "rest": [
+       64,
+       64.6,
+       66.2,
+       67.3,
+       66.8,
+       67.5,
+       67.6,
+       67.8,
+       68.6,
+       68.9,
+       69.2,
+       70.2,
+       70.4,
+       70.3,
+       70.5,
+       70.7,
+       70.9,
+       71.4,
+       71.2,
+       71.4,
+       71.3,
+       72.2,
+       72.2,
+       71.8,
+       71.6,
+       71.9,
+       71.8,
+       71.9,
+       72.2,
+       72.5,
+       72.5,
+       72.4,
+       72.6,
+       72.8,
+       73.3,
+       73,
+       72.8,
+       72.9,
+       73,
+       72.9,
+       72.8,
+       73.3,
+       73.3,
+       73.3,
+       73.3,
+       73.2,
+       73.6,
+       73.8,
+       74,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.5,
+       74.5,
+       74.5,
+       74.5,
+       74.6,
+       74.6,
+       74.7,
+       74.7,
+       74.7,
+       74.7,
+       74.7,
+       74.8,
+       74.8,
+       74.8,
+       74.9,
+       74.9,
+       74.8,
+       74.9,
+       74.9,
+       75,
+       75.1,
+       75.2,
+       75.2,
+       75.2,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.3,
+       75.2,
+       75.1,
+       75,
+       74.8,
+       74.8,
+       74.7,
+       74.7,
+       74.6,
+       74.6,
+       74.5,
+       74.5,
+       74.5,
+       74.5,
+       74.5,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.4,
+       74.5,
+       74.7,
+       74.9,
+       74.9,
+       74.9,
+       75,
+       75.1,
+       75.2,
+       75.2,
+       75.2,
+       75.2,
+       75.2,
+       75.2,
+       75.2,
+       75.3,
+       75.4,
+       75.4,
+       75.4,
+       75.4,
+       75.4,
+       75.4,
+       75.4
+      ],
+      "fill": [
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       84.7,
+       82.3,
+       84.4,
+       87.5,
+       87.2,
+       91.7,
+       90.4,
+       92.1,
+       94.4,
+       98.9,
+       99.8,
+       101.8,
+       101.2,
+       102.2,
+       103.5,
+       103.7,
+       101.7,
+       101.8,
+       102.7,
+       102.1,
+       101.9,
+       101.5,
+       101.1,
+       100.7,
+       102.3,
+       101.7,
+       100.1,
+       100.2,
+       99.8,
+       98.9,
+       99,
+       97.7,
+       98.8,
+       97.8,
+       97.4,
+       97.2,
+       95.8,
+       94.4,
+       95.8,
+       95.5,
+       94.7,
+       94.9,
+       93.8,
+       94.2,
+       92.1,
+       93.7,
+       91.7,
+       91.2,
+       89.4,
+       90.1,
+       89.9,
+       87.9,
+       86.4,
+       87.3,
+       85.9,
+       84.9,
+       84.4,
+       84.3,
+       82.6,
+       82.8,
+       82,
+       81.2,
+       80.4,
+       79.9,
+       79,
+       79,
+       78.7,
+       78.3,
+       77.7,
+       77.3,
+       77.6,
+       77.5,
+       77.4,
+       77,
+       76.8,
+       76.6,
+       76.8,
+       77,
+       77,
+       77,
+       77,
+       76.9,
+       76.8,
+       77,
+       76.9,
+       76.9,
+       77,
+       77,
+       76.9,
+       76.8,
+       76.8,
+       76.7,
+       76.6,
+       76.5,
+       76.4,
+       76.4,
+       76.3,
+       76.3,
+       76.3,
+       76.2,
+       76.2,
+       76.1,
+       76.1,
+       76.1,
+       76.1,
+       76,
+       76,
+       76,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       75.9,
+       76.8,
+       77,
+       77.6,
+       77.8,
+       77.9,
+       78.1,
+       78.3,
+       78.4,
+       78.5,
+       78.6,
+       78.7,
+       78.8,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       78.9,
+       79.1,
+       79.1,
+       79.1,
+       79.2,
+       79.2,
+       79.2,
+       79.2,
+       79.2,
+       79.2,
+       80,
+       80.1,
+       80.1,
+       80.2,
+       80.2,
+       80.2,
+       80.3,
+       80.5,
+       80.5,
+       80.7,
+       80.8,
+       80.8,
+       80.8,
+       80.8
+      ],
+      "handover": [
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       102.9,
+       101.9,
+       101.8,
+       101.6,
+       101.5,
+       101.4,
+       101.4,
+       101.3,
+       101.2,
+       101.1,
+       101.1,
+       101.1,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101,
+       101
+      ]
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 42.4
+   },
+   "zoom": {
+    "scenario": "zoom",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:14:48.624Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "zoomIn_full": [
+      7,
+      5.200000286102295,
+      2
+     ],
+     "zoomIn_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_full": [
+      9.800000190734863,
+      2.200000286102295,
+      5.800000190734863
+     ],
+     "zoomOut_decodes": [
+      0,
+      0,
+      0
+     ],
+     "zoomOut_tileRequests": [
+      0,
+      0,
+      0
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 7.1
+   },
+   "contrast": {
+    "scenario": "contrast",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:14:55.542Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "contrast_main": [
+      21,
+      16.799999713897705,
+      17.799999713897705
+     ],
+     "contrast_xz": [
+      23,
+      19.199999809265137,
+      21
+     ],
+     "contrast_yz": [
+      24,
+      20.899999618530273,
+      22.5
+     ],
+     "contrast_fetches": [
+      0,
+      0,
+      0
+     ],
+     "contrast_volume": [
+      23.300000190734863,
+      24.399999618530273,
+      27.59999990463257
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 11.4
+   },
+   "tour": {
+    "scenario": "tour",
+    "dataset": "meso",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:15:06.945Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "first_tileRequests": [
+      50
+     ],
+     "first_tileDiskHits": [
+      0
+     ],
+     "first_tileMB": [
+      104.934551
+     ],
+     "first_sectionRequests": [
+      16
+     ],
+     "first_levelRequests": [
+      1
+     ],
+     "first_level304": [
+      0
+     ],
+     "first_shaderCompiles": [
+      2
+     ],
+     "first_shaderXhrs": [
+      0
+     ],
+     "first_decodes": [
+      64
+     ],
+     "first_imageBitmaps": [
+      0
+     ],
+     "first_decodeRatio": [
+      0.9696969696969697
+     ],
+     "first_tile_total": [
+      1.6,
+      1.1,
+      1,
+      1.1,
+      1.1,
+      0.8,
+      0.7,
+      1,
+      0.7,
+      3.5,
+      0.7,
+      0.7,
+      0.5,
+      0.5,
+      0.5,
+      2,
+      1.7,
+      1.5,
+      6.9,
+      3.8,
+      12.1,
+      1.3,
+      1.5,
+      3.3,
+      1,
+      1.2,
+      1.8,
+      2.1,
+      6.1,
+      1.7,
+      1,
+      2.5,
+      1.4,
+      2.4,
+      2.2,
+      1.1,
+      1.2,
+      3.4,
+      1.5,
+      1.2,
+      1.1,
+      1.7,
+      2.5,
+      1.5,
+      1.1,
+      1.6,
+      1.5,
+      1.7,
+      2.2,
+      1.8
+     ],
+     "first_section_read": [
+      169.7,
+      35.2,
+      45,
+      44.6,
+      72,
+      67.3,
+      54.8,
+      58.6,
+      37.8,
+      29.3,
+      21.7,
+      14.1,
+      119.1,
+      115.8
+     ],
+     "first_section_enc": [
+      12.5,
+      6.6,
+      4.1,
+      3.2,
+      5.6,
+      5.8,
+      1.6,
+      13.2,
+      4.7,
+      6.9,
+      3.4,
+      2,
+      0.4,
+      0.4
+     ],
+     "first_section_total": [
+      182.6,
+      42.1,
+      49.6,
+      48.2,
+      78,
+      73.5,
+      56.7,
+      72.1,
+      43.1,
+      36.6,
+      25.6,
+      16.6,
+      119.7,
+      116.4
+     ],
+     "first_level_lut": [
+      0
+     ],
+     "first_level_wait": [
+      0.1
+     ],
+     "first_level_read": [
+      167.7
+     ],
+     "first_level_quant": [
+      32
+     ],
+     "first_level_hint": [
+      6.3
+     ],
+     "first_level_enc": [
+      4.9
+     ],
+     "first_level_total": [
+      216.9
+     ],
+     "reload_tileRequests": [
+      50
+     ],
+     "reload_tileDiskHits": [
+      50
+     ],
+     "reload_tileMB": [
+      0
+     ],
+     "reload_sectionRequests": [
+      16
+     ],
+     "reload_levelRequests": [
+      1
+     ],
+     "reload_level304": [
+      0
+     ],
+     "reload_shaderCompiles": [
+      2
+     ],
+     "reload_shaderXhrs": [
+      0
+     ],
+     "reload_decodes": [
+      64
+     ],
+     "reload_imageBitmaps": [
+      0
+     ],
+     "reload_decodeRatio": [
+      0.9696969696969697
+     ],
+     "reload_tile_total": [
+      0.3,
+      0.4,
+      0.3,
+      0.3,
+      0.3,
+      1.6,
+      1.1,
+      1.1,
+      1.1,
+      1,
+      0.7,
+      3.5,
+      0.7,
+      0.5,
+      0.5,
+      2,
+      1.7,
+      1.5,
+      6.9,
+      3.8,
+      12.1,
+      3.3,
+      1,
+      1.3,
+      1.5,
+      1.2,
+      1.8,
+      6.1,
+      1.7,
+      1.4,
+      2.4,
+      2.1,
+      1,
+      2.5,
+      2.2,
+      1.1,
+      1.2,
+      3.4,
+      1.1,
+      1.6,
+      1.5,
+      1.2,
+      1.7,
+      1.5,
+      1.7,
+      1.1,
+      2.5,
+      1.5,
+      2.2,
+      1.8
+     ],
+     "reload_section_read": [
+      24.3,
+      62.2,
+      64,
+      68.9,
+      41.4,
+      23.9,
+      36.7,
+      57.1,
+      48.8,
+      46.4,
+      40.6,
+      24.6,
+      119.1,
+      115.8
+     ],
+     "reload_section_enc": [
+      18.4,
+      5.4,
+      6.8,
+      2.4,
+      9.6,
+      3.9,
+      4.4,
+      2,
+      5.2,
+      6.6,
+      5.8,
+      6.9,
+      0.4,
+      0.4
+     ],
+     "reload_section_total": [
+      44,
+      68,
+      71.2,
+      71.7,
+      51.6,
+      28.5,
+      41.5,
+      59.4,
+      54.5,
+      53.4,
+      46.8,
+      32.2,
+      119.7,
+      116.4
+     ],
+     "reload_level_lut": [
+      0
+     ],
+     "reload_level_total": [
+      0.6
+     ]
+    },
+    "extra": {
+     "passes": [
+      {
+       "counters": {
+        "fetch:tile": 50,
+        "req:tile": 50,
+        "worker:tileDecoder.js": 64,
+        "texImage2DCalls": 35,
+        "fetch:section": 16,
+        "req:section": 16,
+        "fetch:brick": 17,
+        "req:brick": 17,
+        "fetch:level": 1,
+        "req:level": 1,
+        "texImage3DCalls": 1,
+        "texImage3DBytes": 51603030,
+        "texSubImage3DCalls": 352,
+        "texSubImage3DBytes": 105555200,
+        "shaderCompiles": 2,
+        "programLinks": 1,
+        "uniformLookups": 23
+       }
+      },
+      {
+       "counters": {
+        "fetch:tile": 50,
+        "req:tile": 50,
+        "worker:tileDecoder.js": 64,
+        "texImage2DCalls": 35,
+        "fetch:section": 16,
+        "req:section": 16,
+        "fetch:brick": 29,
+        "req:brick": 29,
+        "fetch:level": 1,
+        "req:level": 1,
+        "texImage3DCalls": 1,
+        "texImage3DBytes": 51603030,
+        "texSubImage3DCalls": 652,
+        "texSubImage3DBytes": 195385088,
+        "shaderCompiles": 2,
+        "programLinks": 1,
+        "uniformLookups": 23
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at VolumeAtlas.fetch (http://127.0.0.1:63303/client/src/js/views/volumeRenderer.js?v=20261012_3d_controls:475:60)\n    at VolumeAtlas.fetchBatch (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:621:41)\n    at run (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:595:36)\n    at async Promise.all (index 0)\n    at async VolumeAtlas.update (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:604:13)",
+     "[error] volumeAtlas: bricks could not be read TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at VolumeAtlas.fetch (http://127.0.0.1:63303/client/src/js/views/volumeRenderer.js?v=20261012_3d_controls:475:60)\n    at VolumeAtlas.fetchBatch (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:621:41)\n    at run (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:595:36)\n    at async Promise.all (index 1)\n    at async VolumeAtlas.update (http://127.0.0.1:63303/client/src/js/views/volumeAtlas.js?v=20261012_3d_controls:604:13)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 13.7
+   },
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      701.5
+     ]
+    }
+   }
+  },
+  "flat": {
+   "parity2d": {
+    "scenario": "parity2d",
+    "dataset": "flat",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-13T03:15:20.665Z",
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+    "metrics": {
+     "perfMarks": [
+      0
+     ]
+    },
+    "extra": {
+     "urls": [
+      "/generated/data/flat/flat_0/0/0_0.png?q=hd",
+      "/generated/data/flat/flat_0/0/0_1.png?q=hd",
+      "/generated/data/flat/flat_0/0/1_0.png?q=hd",
+      "/generated/data/flat/flat_0/0/1_1.png?q=hd",
+      "/generated/data/flat/flat_0/1/0_0.png?q=hd"
+     ],
+     "png": "$PLEXORA_BENCH_HOME/parity/ff5b2b7d8b7a-post-flat.png"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[log] Error Getting Channel GMM TypeError: Failed to fetch\n    at window.fetch (<anonymous>:113:40)\n    at plexoraFetch (http://127.0.0.1:63303/client/src/js/services/appStatus.js?v=20260926_help_menu:199:20)\n    at DataLayer.getChannelGMM (http://127.0.0.1:63303/client/src/js/services/dataLayer.js?v=20261012_table_fix:302:34)\n    at ChannelList.getAndDrawChannelGMM (http://127.0.0.1:63303/client/src/js/views/channelList.js?v=20260831_brightfield:576:45)\n    at async http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:41:17\n    at async Promise.all (index 0)\n    at async plexoraMapWithLimit (http://127.0.0.1:63303/client/src/js/views/viewerSidebar.js?v=20261012_3d_controls:45:5)",
+     "[warning] PlexoraShortcuts: \u2318I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 5.2
+   }
+  }
+ },
+ "server_env": [],
+ "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)",
+ "F": {
+  "small": 8.300000000000182,
+  "ims": 8.300000000000182,
+  "meso": 8.300000000000182
+ }
+}

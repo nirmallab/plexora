@@ -25,14 +25,15 @@
  * motion off -- the system's reduced-motion setting, or the Depth card's
  * switch (services/viewerPrefs.js) -- there is no ghost at all.
  *
- * NeighbourPrefetch: once a plane covers the view, the planes the hand is
- * heading to are made ready. With the tile scheduler (tileFetch.js) they are
- * BUILT -- every channel's pair at the next planes and the one behind, loaded
+ * NeighbourPrefetch: once a plane has loaded, the planes the hand is heading
+ * to are made ready. With the tile scheduler (tileFetch.js) they are BUILT --
+ * every channel's pair at the next planes and the one behind, loaded
  * invisibly and last in line (ViewerManager.prepareStandby) -- so a step to
- * one is a flip of opacity. How far ahead follows the hand's pace: two planes
- * for a step now and then, up to six for a held key (k = the planes it covers
- * in STANDBY_LOOKAHEAD_MS), and while it moves they are asked for as soon as
- * each plane lands rather than after the hand has been still.
+ * one is a flip of opacity. How far ahead follows the hand's pace, measured
+ * over consecutive steps (a jump sets none): two planes for a step now and
+ * then, up to six for a held key (k = the planes it covers in
+ * STANDBY_LOOKAHEAD_MS), and while it moves they are asked for as soon as
+ * each plane covers the view rather than once it is sharp and the hand still.
  * Without it, the tiles on screen are asked for at the next plane and the one
  * before at low priority, so the next step is served from the browser's cache.
  *
@@ -72,6 +73,10 @@
     const STANDBY_AHEAD = [2, 6];
     //: Requests further apart than this are not one movement.
     const RATE_GAP_MS = 1000;
+    //: A request more planes than this from the last is a jump (viewState's
+    //: NEAR_PLANES), not travel: it sets no pace, and neither does the step
+    //: after it.
+    const JUMP_PLANES = 2;
     const PREFETCH_LIMIT = 48;
     const PREFETCH_PARALLEL = 4;
 
@@ -447,13 +452,17 @@
                     this.direction = Math.sign(z - this.lastZ);
                     const at = now();
                     const gap = this.lastAt === null ? Infinity : at - this.lastAt;
-                    if (gap < RATE_GAP_MS && gap > 0) {
+                    const jump = Math.abs(z - this.lastZ) > JUMP_PLANES;
+                    if (!jump && gap < RATE_GAP_MS && gap > 0) {
                         const pace = (Math.abs(z - this.lastZ) * 1000) / gap;
                         this.rate = this.rate ? this.rate * 0.6 + pace * 0.4 : pace;
                     } else {
                         this.rate = 0;
                     }
-                    this.lastAt = at;
+                    // A jump measures nothing about the hand: 50 planes in
+                    // 100 ms read as a held key and sent six planes ahead of
+                    // the destination before it had sharpened.
+                    this.lastAt = jump ? null : at;
                 }
                 this.lastZ = z;
             }
@@ -563,12 +572,15 @@
             return this.neighbourStates().map((state) => this.viewState.spec(state));
         }
 
-        /** Whether every item of the plane on screen has what it needs --
-         *  covers the view at some level (channelFade.covers) is enough: its
-         *  sharpening outranks a prefetch anyway (tileFetch.js). */
+        /** Whether every item of the plane on screen has what it needs. While
+         *  the hand moves, covering the view at some level (channelFade.covers)
+         *  is enough: the hand will be gone before it sharpens, and its
+         *  sharpening outranks a prefetch anyway (tileFetch.js). After a step
+         *  or a jump it is fully loaded first, so a prefetch never shares the
+         *  wire or the server with the plane being looked at. */
         planeLoaded() {
             const world = this.viewer?.world;
-            const covers = global.PlexoraChannelFade?.covers;
+            const covers = this.pace() >= STANDBY_FAST_RATE ? global.PlexoraChannelFade?.covers : null;
             for (let i = 0; world && i < world.getItemCount(); i += 1) {
                 const item = world.getItemAt(i);
                 if (item?.source?.plexoraStandby || !(item?.getOpacity?.() > 0)) continue;
