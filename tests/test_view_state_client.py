@@ -61,11 +61,62 @@ def test_the_view_controls_probe_passes():
 
 
 def test_the_depth_strip_probe_passes():
-    """The strip follows the mode -- in 3-D the rail is the clip range and
+    """The strip follows the mode -- in 3-D the rail is the cut along Z and
     Play turns the stack -- and its cog popover follows it open
     (tests/js/depth_strip_probe.mjs)."""
     out = _run("depth_strip_probe.mjs")
     assert "all " in out and "checks passed" in out
+
+
+def test_the_inspect_geometry_probe_passes():
+    """How the 3-D view is cut, in numbers: every mode over every axis on an
+    anisotropic stack, the texture numbers relative to the area drawn, the
+    repairs, and lengths in microns only where the image states them
+    (tests/js/inspect_geometry_probe.mjs)."""
+    out = _run("inspect_geometry_probe.mjs")
+    assert "checks passed" in out
+    assert out.count("ok - ") >= 50
+
+
+def test_the_volume_dock_probe_passes():
+    """The 3-D dock shows each spatial mode's rows and no other, previews a
+    drag and commits it once, keeps a mode's settings, says lengths in the
+    image's units, undoes (tests/js/volume_dock_probe.mjs)."""
+    out = _run("volume_dock_probe.mjs")
+    assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 25
+
+
+def test_the_volume_handles_probe_passes():
+    """The cut's handles follow the hand along their axis, perspective and
+    all, never turn the stack, preview and commit, and stay inside the area
+    drawn (tests/js/volume_handles_probe.mjs)."""
+    out = _run("volume_handles_probe.mjs")
+    assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 18
+
+
+def test_the_viewer_page_loads_the_cut_scripts_in_order():
+    """The cut's geometry before the view state (which repairs `inspect` with
+    it), its controller after; the dock and the handles after the renderer
+    they draw over; all before main.js, which builds them."""
+    page = (CLIENT / "templates" / "index.html").read_text(encoding="utf-8")
+    order = [page.index(name) for name in (
+        "js/services/inspectGeometry.js?v=", "js/services/viewState.js?v=",
+        "js/services/inspectState.js?v=", "js/views/volumeRenderer.js?v=",
+        "js/views/volumeDock.js?v=", "js/views/volumeHandles.js?v=", "js/main.js?v=")]
+    assert order == sorted(order)
+
+
+def test_the_cut_scripts_parse():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    for path in ("services/inspectGeometry.js", "services/inspectState.js", "views/volumeDock.js",
+                 "views/volumeHandles.js"):
+        proc = subprocess.run([node, "--check", str(CLIENT / "src" / "js" / path)],
+                              capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 0, path + proc.stderr
 
 
 def test_the_canvas_layout_probe_passes():

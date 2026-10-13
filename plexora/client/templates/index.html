@@ -549,7 +549,12 @@
    badge on the canvas, and core's Depth card. Before main.js, which reads
    the state beside /config and mounts the strip. All three do nothing for a
    planar image. #}
+{# How the 3-D view may be cut, in numbers (before the state, which repairs
+   its `inspect` with it), and the controller every control changes it
+   through. #}
+<script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261012_slice_clip" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261012_3d_controls" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261012_slice_clip" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261012_3d_controls" defer></script>
@@ -574,6 +579,9 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_3d_controls" defer></script>
+{# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
+<script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261012_slice_clip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261012_slice_clip" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_3d_controls" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261012_plane_gating" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_3d_controls" defer></script>

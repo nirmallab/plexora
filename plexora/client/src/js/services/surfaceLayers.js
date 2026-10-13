@@ -615,6 +615,11 @@ window.PlexoraSurfaceLayers = (function () {
         return { mode: state.mode, composite: state.volume?.composite || "mip",
                  show: shown(), camera: volume?.cameraState?.() || null,
                  box: volume?.box || null, slab: state.slab || null, t: state.t || 0,
+                 // [inspect] How the stack was cut, where its sections were,
+                 // and the same in words for the panel's report.
+                 inspect: state.inspect || null, z: state.z, section: state.section || null,
+                 interpolation: state.volume?.interpolation || "linear",
+                 cut: vs?.cutLabel?.(state) || "",
                  surfaces: captureState() };
     }
 
@@ -623,8 +628,13 @@ window.PlexoraSurfaceLayers = (function () {
         if (!scene || !vs?.enabled?.()) return false;
         const volume = vs.get().volume || {};
         vs.set({ mode: "volume", t: scene.t || 0, slab: scene.slab || undefined,
+                 // [inspect] The cut, its sections' places, how voxels were read.
+                 ...(scene.inspect ? { inspect: scene.inspect } : {}),
+                 ...(Number.isFinite(scene.z) ? { z: scene.z } : {}),
+                 ...(scene.section ? { section: scene.section } : {}),
                  volume: { ...volume, composite: scene.composite || volume.composite,
                            show: scene.show || volume.show,
+                           ...(scene.interpolation ? { interpolation: scene.interpolation } : {}),
                            ...(scene.camera ? { camera: scene.camera } : {}) } }, { save: false });
         const restore = () => {
             const renderer = volumeView()?.renderer;

@@ -38,7 +38,9 @@ Cell surfaces need a label volume (a volumetric mask). Surface Studio is a Paid 
 3. Cells of a volumetric mask: `surface_create` with `type: "label_surfaces"` (all cells, or
    `ids`). Each surface carries its cell's id, so the table's rows and the surfaces line up.
 4. Look before you conclude: `viewer_set_volume_mode`, `viewer_set_camera`, then
-   `viewer_capture`. `viewer_set_surface` isolates or highlights objects in this tab only;
+   `viewer_capture`. `viewer_set_inspect` cuts the stack open -- a crop or cutaway to see
+   inside, a section through an object in its real intensities, a slab -- and the surfaces
+   are cut with it. `viewer_set_surface` isolates or highlights objects in this tab only;
    `surface_update` saves a look.
 5. Check it: `surface_inspect` (fragments, objects cut by the volume's edge, open objects,
    how far smoothing moved it, mesh versus voxel volume). Fix with `surface_refine`
@@ -54,8 +56,8 @@ Cell surfaces need a label volume (a volumetric mask). Surface Studio is a Paid 
 `inspect_volume`, `surface_list`, `surface_suggest_threshold`, `surface_create`,
 `surface_inspect`, `surface_refine`, `surface_measure`, `surface_objects`,
 `surface_neighbours`, `surface_update`, `surface_export`, `surface_delete`,
-`viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`, `viewer_capture`,
-`measure_objects`.
+`viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_inspect`, `viewer_set_surface`,
+`viewer_capture`, `measure_objects`.
 
 ## Evidence
 

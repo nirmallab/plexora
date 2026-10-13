@@ -407,9 +407,12 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
 
         /**
          * Which bricks the view needs: `view` = {eye, forward (clip from
-         * world), extent, fullLo, fullSpan, clip [z0, z1] planes, pixel
-         * (world size of a screen pixel at distance 1), baseVox (a base
-         * voxel in full-resolution pixels, pixels, planes)}. Returns
+         * world), extent, fullLo, fullSpan, clip [z0, z1] planes, box
+         * ({lo, hi} full-resolution pixels, pixels, planes: what the cut
+         * keeps), only (null, or [{axis, lo, hi}]: a section or slab drawn
+         * alone, whose bricks are the only ones it crosses), pixel (world
+         * size of a screen pixel at distance 1), baseVox (a base voxel in
+         * full-resolution pixels, pixels, planes)}. Returns
          * `{leaves: [{k, x, y, z, key, d}], refined: Set}`, nearest first,
          * within the atlas's room.
          */
@@ -437,6 +440,14 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             const lo = [view.fullLo[0], view.fullLo[1], view.clip[0]];
             const hi = [view.fullLo[0] + view.fullSpan[0], view.fullLo[1] + view.fullSpan[1],
                         view.clip[1] + 1];
+            // [inspect] Inside the box the cut keeps, too.
+            if (view.box) {
+                for (let a = 0; a < 2; a += 1) {
+                    lo[a] = Math.max(lo[a], view.box.lo[a]);
+                    hi[a] = Math.min(hi[a], view.box.hi[a]);
+                }
+            }
+            const only = Array.isArray(view.only) && view.only.length ? view.only : null;
             /** A brick inside what is drawn and on screen, or null. */
             const make = (k, x, y, z) => {
                 const level = levels[k];
@@ -444,6 +455,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
                 const box0 = [0, 1, 2].map((a) => Math.max(lo[a], b0[a]));
                 const box1 = [0, 1, 2].map((a) => Math.min(hi[a], b0[a] + level.brickFull[a]));
                 if (box0.some((v, a) => v >= box1[a])) return null;
+                if (only && !only.some((cut) => box0[cut.axis] < cut.hi && box1[cut.axis] > cut.lo)) return null;
                 const w0 = [0, 1, 2].map((a) => world(a, box0[a]));
                 const w1 = [0, 1, 2].map((a) => world(a, box1[a]));
                 if (!onScreen(view.forward, w0, w1)) return null;

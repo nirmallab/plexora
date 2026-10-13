@@ -53,6 +53,7 @@ and last keyframes are both shown exactly.
 from __future__ import annotations
 
 import copy
+import json
 import math
 import re
 import uuid
@@ -79,6 +80,10 @@ _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 #: What the viewer can be showing a stack as (`volume_routes.MODES`).
 VIEW_MODES = ("plane", "slab", "sections", "volume")
 COMPOSITES = ("mip", "additive")
+#: How the 3-D view may be cut (core's services/inspectGeometry.js MODES); a
+#: cut is kept with a frame's view up to this many bytes of JSON.
+INSPECT_MODES = ("full", "cutaway", "section", "slab", "crop")
+INSPECT_MAX_BYTES = 4096
 SLAB_OPS = ("max", "mean", "min", "std", "med", "pct")
 CELL_MODES = ("none", "centroids", "outlines", "filled")
 
@@ -354,6 +359,20 @@ def normalize_view(raw, *, depth=1, frames=1) -> dict:
             if axis in clip:
                 a, b = _pair(clip[axis], (0.0, 1.0), lo=0.0, hi=1.0)
                 view["clip"][axis] = [min(a, b), max(a, b)]
+    # How the 3-D view was cut when the video was made (core's inspect, image
+    # units): kept as the viewer wrote it, bounded; the browser repairs it
+    # against the image when a frame is applied (inspectGeometry.clean).
+    inspect = raw.get("inspect")
+    if isinstance(inspect, dict) and inspect.get("mode") in INSPECT_MODES:
+        try:
+            text = json.dumps(inspect)
+        except (TypeError, ValueError):
+            text = ""
+        if text and len(text) <= INSPECT_MAX_BYTES:
+            view["inspect"] = json.loads(text)
+    section = raw.get("section")
+    if isinstance(section, dict):
+        view["section"] = {axis: _number(section.get(axis), 0.0, lo=0.0) for axis in ("x", "y")}
     return view
 
 

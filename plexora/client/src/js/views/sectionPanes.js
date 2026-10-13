@@ -42,7 +42,12 @@
  * while it moves).
  *
  * The cut runs through the centre of the part of the plane NOT under a pane,
- * so a pane made large never hides the line it is a section along.
+ * so a pane made large never hides the line it is a section along -- unless
+ * it is PINNED: with the 3-D view's "panes follow the sections" on
+ * (`inspect.linkPanes`) and an X or Y section or slab cut there, that pane
+ * cuts at the section (`state.section.x/y`), the crosshair says so in the
+ * accent, and dragging the crosshair moves the section, as one change
+ * (services/inspectState.js).
  */
 (function (global) {
     "use strict";
@@ -940,6 +945,8 @@
                 this.bindDivider(pane);
             }
             this.wrapper.append(this.crossX, this.crossY);
+            this.bindCrosshair(this.crossX, "x");
+            this.bindCrosshair(this.crossY, "y");
             this.panes = panes;
             const viewer = imageViewer.viewer;
             viewer.addHandler("animation", () => this.follow(false));
@@ -993,12 +1000,37 @@
                 if (yz.width > 0) right = Math.min(right, yz.left);
                 if (xz.height > 0) bottom = Math.min(bottom, xz.top);
             }
-            const cutX = Math.max(0, (right - box.left) / 2);
-            const cutY = Math.max(0, (bottom - box.top) / 2);
+            let cutX = Math.max(0, (right - box.left) / 2);
+            let cutY = Math.max(0, (bottom - box.top) / 2);
             const point = item.viewportToImageCoordinates(
                 viewer.viewport.pointFromPixel(new OpenSeadragon.Point(cutX, cutY), !target));
             if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+            // [inspect] A pane pinned to the 3-D view's section cuts there.
+            const pinned = this.pinned();
+            if (pinned.x !== null || pinned.y !== null) {
+                const at = viewer.viewport.pixelFromPoint(item.imageToViewportCoordinates(
+                    new OpenSeadragon.Point(pinned.x ?? point.x, pinned.y ?? point.y)), !target);
+                if (pinned.x !== null && Number.isFinite(at?.x)) { point.x = pinned.x; cutX = at.x; }
+                if (pinned.y !== null && Number.isFinite(at?.y)) { point.y = pinned.y; cutY = at.y; }
+            }
             Object.assign(frame, { cx: point.x, cy: point.y, cutX, cutY });
+        }
+
+        /**
+         * [inspect] Where a pane is pinned: `{x, y}` image pixels, each null
+         * when that pane cuts at the view's centre. Pinned while the 3-D
+         * view's cut links the panes and sections or slabs cut along that
+         * axis: the YZ pane at the X section, the XZ pane at the Y section.
+         */
+        pinned() {
+            const state = this.viewState.get();
+            const inspect = state?.inspect;
+            const out = { x: null, y: null };
+            if (!inspect?.linkPanes || !["section", "slab"].includes(inspect.mode)) return out;
+            for (const axis of ["x", "y"]) {
+                if (inspect.axes?.[axis] && Number.isFinite(state.section?.[axis])) out[axis] = state.section[axis];
+            }
+            return out;
         }
 
         /**
@@ -1192,8 +1224,65 @@
             if (!host || !this.frame) return;
             const box = host.getBoundingClientRect();
             const outer = this.wrapper.getBoundingClientRect();
-            this.crossX.style.left = `${box.left - outer.left + this.frame.cutX}px`;
-            this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
+            if (this.crossDrag?.axis !== "x") this.crossX.style.left = `${box.left - outer.left + this.frame.cutX}px`;
+            if (this.crossDrag?.axis !== "y") this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
+            const pinned = this.pinned();
+            this.crossX.classList.toggle("is-pinned", pinned.x !== null);
+            this.crossY.classList.toggle("is-pinned", pinned.y !== null);
+            this.crossX.title = pinned.x !== null ? "The X section (drag to move it)" : "";
+            this.crossY.title = pinned.y !== null ? "The Y section (drag to move it)" : "";
+        }
+
+        /**
+         * [inspect] A pinned crosshair dragged: the section under it moves,
+         * previewed while the hand moves and committed on release; the panes
+         * follow the committed section.
+         */
+        bindCrosshair(node, axis) {
+            node.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0 || !node.classList.contains("is-pinned")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                node.setPointerCapture?.(event.pointerId);
+                const cutter = global.PlexoraInspect;
+                this.crossDrag = { axis };
+                const at = (e) => {
+                    const viewer = this.imageViewer?.viewer;
+                    const item = viewer?.world?.getItemAt?.(0);
+                    const host = this.mainElement?.getBoundingClientRect();
+                    if (!item || !host || typeof OpenSeadragon !== "function") return null;
+                    const point = item.viewportToImageCoordinates(viewer.viewport.pointFromPixel(
+                        new OpenSeadragon.Point(e.clientX - host.left, e.clientY - host.top), true));
+                    const info = this.viewState.info || {};
+                    const top = (axis === "x" ? Number(info.width) : Number(info.height)) || 1;
+                    return Math.max(0, Math.min(top - 1, Math.round(axis === "x" ? point.x : point.y)));
+                };
+                const move = (e) => {
+                    const value = at(e);
+                    if (value === null) return;
+                    const outer = this.wrapper.getBoundingClientRect();
+                    if (axis === "x") node.style.left = `${e.clientX - outer.left}px`;
+                    else node.style.top = `${e.clientY - outer.top}px`;
+                    if (cutter) cutter.preview({ section: { [axis]: value } });
+                };
+                const up = (e) => {
+                    node.removeEventListener("pointermove", move);
+                    node.removeEventListener("pointerup", up);
+                    node.removeEventListener("pointercancel", up);
+                    this.crossDrag = null;
+                    const value = at(e);
+                    if (cutter) {
+                        if (e.type === "pointercancel") cutter.cancel();
+                        else cutter.commit();
+                    } else if (value !== null && e.type !== "pointercancel") {
+                        this.viewState.set({ section: { [axis]: value } });
+                    }
+                    this.follow(true);
+                };
+                node.addEventListener("pointermove", move);
+                node.addEventListener("pointerup", up);
+                node.addEventListener("pointercancel", up);
+            });
         }
 
         paintLabels(tokens) {
@@ -1242,6 +1331,12 @@
             if (wanted !== this.enabled) {
                 this.setEnabled(wanted);
                 return;
+            }
+            // [inspect] A pinned pane follows its section.
+            const pinned = JSON.stringify(this.pinned());
+            if (this.enabled && this.panes && pinned !== this._lastPinned) {
+                this._lastPinned = pinned;
+                this.follow(true);
             }
             // Planes and frames reach the panes as revisions (prepare): the
             // z-line moves with the picture, not with the hand.

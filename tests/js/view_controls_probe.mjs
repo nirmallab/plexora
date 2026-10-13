@@ -44,15 +44,19 @@ const R = box.PlexoraViewControls;
 
 let sets = 0;
 function stack({ mode = "plane", follow = true, op = "max", z0 = 3, z1 = 9, depth = 40, frames = 1,
-                 color = false, layout = "single" } = {}) {
+                 color = false, layout = "single", inspect = null, show = null } = {}) {
     return {
         depth, frames, color,
         zStep: () => ({ value: 2, unit: "µm" }),
-        get: () => ({ mode, z: 6, t: 0, layout, slab: { z0, z1, op, follow, q: 95 }, volume: {} }),
+        get: () => ({ mode, z: 6, t: 0, layout, slab: { z0, z1, op, follow, q: 95 },
+                      volume: show ? { show } : {},
+                      inspect: { mode: "full", axes: { x: false, y: false, z: true },
+                                 crop: { z: [0, depth - 1] }, cutaway: { z: { at: 20, keep: "hi" } },
+                                 slab: { thickness: { x: 8, y: 8, z: 4 }, composite: "max" }, ...(inspect || {}) } }),
         set: () => { sets += 1; },
     };
 }
-const page = { volumeSupported: true, sectionsSupported: true, prefs: {}, openCard: () => {} };
+const page = { volumeSupported: true, sectionsSupported: true, prefs: {}, openCard: () => {}, cutSupported: true };
 const ids = (vs, surface, extras = page) => R.resolve(R.context(vs, extras), { surface }).map((e) => e.id);
 const strip = (vs, extras) => ids(vs, "strip", extras);
 const popover = (vs, extras) => ids(vs, "popover", extras);
@@ -128,13 +132,81 @@ check("a colour stack's popover offers no projection",
 
 // -- switching modes ---------------------------------------------------------------
 
-const into = R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume");
-check("into 3-D from a projection that follows the plane: the whole stack",
-      into.mode === "volume" && into.slab.z0 === 0 && into.slab.z1 === 39 && into.slab.follow === false);
-check("into 3-D from a fixed range: that range stays the clip",
-      same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), { mode: "volume" }));
+check("into 3-D is just the mode: the 3-D view keeps its own cut, the projection its range",
+      same(R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume"), { mode: "volume" })
+      && same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), { mode: "volume" }));
 check("back to a plane is just the mode",
       same(R.transition(R.context(stack({ mode: "volume" }), page), "plane"), { mode: "plane" }));
+
+// -- the 3-D cut: the rail and the dock (views/volumeDock.js) ------------------------
+
+const cutIn = (inspect, extra = {}) => stack({ mode: "volume", inspect, ...extra });
+const dock = (vs, extras = page) => ids(vs, "dock", extras);
+const RAIL3D = ["mode.plane", "mode.slab", "mode.volume", "play", "rail"];
+check("3-D, whole: the rail is the planes drawn, its band resized and moved -- a crop it becomes",
+      same(strip(cutIn({})), [...RAIL3D, "band", "readout", "cog"])
+      && same(railIn(cutIn({})), { plane: false, band: true, bandMove: true, cut: "full" }));
+check("a Z section: the rail's thumb is its plane, picked and dragged; no band",
+      same(strip(cutIn({ mode: "section" })), [...RAIL3D, "thumb", "hover", "readout", "cog"])
+      && railIn(cutIn({ mode: "section" })).plane === true && railIn(cutIn({ mode: "section" })).band === false);
+check("an X section only: nothing along Z on the rail",
+      same(strip(cutIn({ mode: "section", axes: { x: true, z: false } })), [...RAIL3D, "readout", "cog"]));
+check("a Z slab: its planes as a band and its plane as the thumb; the thumb moves it",
+      same(strip(cutIn({ mode: "slab" })), [...RAIL3D, "band", "thumb", "hover", "readout", "cog"])
+      && railIn(cutIn({ mode: "slab" })).plane === true && railIn(cutIn({ mode: "slab" })).band === false);
+check("a Z crop's range is resized and moved; a Z cutaway's one cut moves",
+      railIn(cutIn({ mode: "crop" })).bandMove === true
+      && railIn(cutIn({ mode: "cutaway" })).band === true && railIn(cutIn({ mode: "cutaway" })).bandMove === false);
+check("the popover's planes row is the planes the cut keeps",
+      R.context(cutIn({ mode: "crop", crop: { z: [4, 9] } }), page).keptZ0 === 4
+      && R.context(cutIn({ mode: "crop", crop: { z: [4, 9] } }), page).allPlanes === false
+      && R.context(cutIn({}), page).allPlanes === true);
+
+const TOOLS = ["cut.handles", "cut.reset", "cut.history", "cut.interpolation", "cut.handleOpacity"];
+check("the dock in 2-D: nothing", dock(stack()).length === 0 && dock(stack({ mode: "slab" })).length === 0);
+check("whole: the mode switch, undo, how voxels are read",
+      same(dock(cutIn({})), ["cut.mode", "cut.history", "cut.interpolation"]), dock(cutIn({})).join());
+check("a Z cutaway: the axes, its cut, the cut faces, the tools",
+      same(dock(cutIn({ mode: "cutaway" })), ["cut.mode", "cut.axes", "cut.z", "cut.face", ...TOOLS]),
+      dock(cutIn({ mode: "cutaway" })).join());
+check("X+Y sections: two positions, their opacity, the surroundings, the panes",
+      same(dock(cutIn({ mode: "section", axes: { x: true, y: true, z: false } })),
+           ["cut.mode", "cut.axes", "cut.x", "cut.y", "cut.opacity", "cut.context", ...TOOLS, "cut.link"]),
+      dock(cutIn({ mode: "section", axes: { x: true, y: true, z: false } })).join());
+check("a Z slab: how it combines and how thick, the surroundings",
+      same(dock(cutIn({ mode: "slab" })),
+           ["cut.mode", "cut.axes", "cut.z", "cut.combine", "cut.thickness", "cut.context", ...TOOLS, "cut.link"]),
+      dock(cutIn({ mode: "slab" })).join());
+check("a single-plane slab has no thickness",
+      !dock(cutIn({ mode: "slab", slab: { thickness: { z: 4 }, composite: "single" } })).includes("cut.thickness"));
+check("an X+Z crop: two ranges, the cut faces",
+      same(dock(cutIn({ mode: "crop", axes: { x: true, z: true } })),
+           ["cut.mode", "cut.axes", "cut.x", "cut.z", "cut.face", ...TOOLS]),
+      dock(cutIn({ mode: "crop", axes: { x: true, z: true } })).join());
+check("X+Y shows exactly the X and Y rows, X+Z the X and Z, Y+Z the Y and Z",
+      ["xy", "xz", "yz"].every((pair) => {
+          const axes = { x: pair.includes("x"), y: pair.includes("y"), z: pair.includes("z") };
+          return same(dock(cutIn({ mode: "crop", axes })).filter((id) => /^cut\.[xyz]$/.test(id)),
+                      [...pair].map((a) => `cut.${a}`));
+      }));
+const surfacesOnly = { volume: false, surfaces: true };
+check("surfaces only: nothing about voxels -- no combining, no surroundings, no faces",
+      !dock(cutIn({ mode: "slab" }, { show: surfacesOnly })).some((id) => ["cut.combine", "cut.context",
+                                                                          "cut.interpolation"].includes(id))
+      && !dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).includes("cut.face")
+      && dock(cutIn({ mode: "slab" }, { show: surfacesOnly })).includes("cut.thickness"));
+check("no section panes: no linking them",
+      !dock(cutIn({ mode: "section" }), { ...page, sectionsSupported: false }).includes("cut.link"));
+check("a page that cannot cut has no dock rows", dock(cutIn({ mode: "crop" }), { ...page, cutSupported: false }).length === 0);
+check("each axis row says what it does in the mode",
+      R.configOf("cut.x", R.context(cutIn({ mode: "crop", axes: { x: true } }), page)).kind === "range"
+      && R.configOf("cut.x", R.context(cutIn({ mode: "cutaway", axes: { x: true } }), page)).kind === "cut"
+      && R.configOf("cut.x", R.context(cutIn({ mode: "slab", axes: { x: true } }), page)).kind === "plane");
+const modesShown = ["full", "cutaway", "section", "slab", "crop"].map((mode) => dock(cutIn({ mode })));
+check("never an incompatible row: no slab rows outside Slab, no faces outside Crop and Cutaway",
+      modesShown.every((rows, i) => (i === 3 || !rows.some((id) => id === "cut.combine" || id === "cut.thickness"))
+          && ((i === 1 || i === 4) || !rows.includes("cut.face"))
+          && (i === 2 || !rows.includes("cut.opacity"))));
 
 // -- rules ------------------------------------------------------------------------------
 
@@ -191,7 +263,7 @@ check("unregistered, it is gone and that is announced too",
 
 sets = 0;
 for (const mode of ["plane", "slab", "volume"]) {
-    for (const surface of ["strip", "popover"]) ids(stack({ mode }), surface);
+    for (const surface of ["strip", "popover", "dock"]) ids(stack({ mode }), surface);
 }
 check("resolving never changes the view state", sets === 0);
 check("every core entry says what it is for",

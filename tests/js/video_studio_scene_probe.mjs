@@ -43,7 +43,10 @@ function viewer() {
     const calls = { set: [], slot: [], transform: [], fit: [], saves: 0 };
     const state = { t: 0, z: 3, mode: "plane", layout: "single",
                     slab: { z0: 2, z1: 4, op: "max", follow: true, thickness: 3 },
-                    volume: { composite: "mip", opacity: {} }, section: { x: 0, y: 0 } };
+                    volume: { composite: "mip", opacity: {} }, section: { x: 0, y: 0 },
+                    // As core's view state always has one (inspectGeometry.clean).
+                    inspect: { mode: "full", axes: { x: false, y: false, z: true },
+                               crop: { x: [0, 1000], y: [0, 800], z: [0, 9] } } };
     const vs = {
         depth: 10, frames: 2, info: { width: 1000, height: 800, spacing: { x: { value: 0.5, unit: "µm" } } },
         get: () => JSON.parse(JSON.stringify(state)),
@@ -185,6 +188,30 @@ check("entering 3-D opens the whole stack", calls.set[0]?.patch?.slab?.z0 === 0 
 check("the camera is the frame's", env.renderer.camera.dist === 1.5 && env.renderer.camera.panX === 0.1);
 check("the renderer's own motion is stopped", env.renderer.spin === null && env.renderer.zoomTarget === null);
 check("the clip reaches the renderer", env.renderer.clipXY && env.renderer.clipXY.x[1] === 0.5, env.renderer.clipXY);
+
+// The 3-D view's cut (core's inspect) rides with the frame's view.
+const cut = { mode: "crop", axes: { x: true, y: false, z: true }, crop: { x: [100, 600], z: [2, 5] } };
+const cutFrame = JSON.parse(JSON.stringify(volume));
+cutFrame.view.inspect = cut;
+cutFrame.view.section = { x: 400, y: 120 };
+calls.set.length = 0;
+await Scene.apply(env, cutFrame, { aspect: 16 / 9 });
+check("a frame's cut and sections reach the view, unsaved",
+      JSON.stringify(calls.set[0]?.patch?.inspect) === JSON.stringify(cut) && calls.set[0].patch.section.x === 400
+      && calls.set[0].options.save === false, calls.set[0]);
+check("capture records the cut", JSON.stringify(Scene.capture(env).view.inspect) === JSON.stringify(cut)
+      && Scene.capture(env).view.section.x === 400);
+calls.set.length = 0;
+await Scene.apply(env, cutFrame, { aspect: 16 / 9 });
+check("the same cut again is no revision", calls.set.length === 0, calls.set);
+// A video's slab in 3-D still narrows z, now through the clip.
+const slabbed = JSON.parse(JSON.stringify(volume));
+slabbed.view.slab = { z0: 2, z1: 4, op: "max" };
+slabbed.view.clip = { x: [0, 1], y: [0, 1], z: [0, 1] };
+await Scene.apply(env, slabbed, { aspect: 16 / 9 });
+check("a frame's slab in 3-D narrows the clip's z to its planes",
+      env.renderer.clipXY && Math.abs(env.renderer.clipXY.z[0] - 0.2) < 1e-9
+      && Math.abs(env.renderer.clipXY.z[1] - 0.5) < 1e-9, env.renderer.clipXY);
 
 // Restore.
 env.touchedWindows = true;

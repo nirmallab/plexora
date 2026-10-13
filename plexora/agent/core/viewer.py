@@ -297,10 +297,16 @@ def set_view(call, inp):
 class SetZInput(ViewInput):
     z: int = Field(ge=0, description="Plane index (0 = first).")
     t: int | None = Field(None, ge=0, description="Frame of a time series.")
+    mode: Literal["plane", "keep"] = Field(
+        "plane", description="plane: show that one plane; keep: move z and stay in the "
+                             "current view -- in 3-D it moves a Z section or slab "
+                             "(viewer_set_inspect).")
 
 
 def set_z(call, inp):
-    arguments = {"z": inp.z, "mode": "plane"}
+    arguments = {"z": inp.z}
+    if inp.mode == "plane":
+        arguments["mode"] = "plane"
     if inp.t is not None:
         arguments["t"] = inp.t
     _c, view, ack = _send(call, inp, "set_z", arguments, timeout=45)
@@ -362,6 +368,77 @@ def set_camera(call, inp):
     if not arguments:
         raise AgentError("invalid_input", "name a preset, or q / dist / pan")
     _c, view, ack = _send(call, inp, "set_camera", arguments, timeout=45)
+    return _receipted(call, view, ack)
+
+
+Axis = Literal["x", "y", "z"]
+
+
+class CutawayAxis(AgentModel):
+    at: float = Field(ge=0, description="Where the cut is: full-resolution pixels across x "
+                                        "and y, a plane index along z.")
+    keep: Literal["lo", "hi"] = Field("hi", description="hi keeps the far side (from `at` "
+                                                         "on), lo the near side.")
+
+
+class InspectInput(ViewInput):
+    """How the 3-D view is cut. Every length is in IMAGE units: full-resolution
+    pixels across x and y, plane indices along z (inspect_volume gives the
+    extent and the spacing). Anything left out keeps its value."""
+
+    mode: Literal["full", "cutaway", "section", "slab", "crop"] | None = Field(
+        None, description="full: the whole stack. cutaway: a side taken off along each "
+                          "axis (two or three axes: one corner). section: a plane per axis "
+                          "in real intensities. slab: a thick slice per axis, combined along "
+                          "each ray. crop: a range kept along each axis.")
+    axes: list[Axis] | None = Field(None, min_length=1, max_length=3,
+                                    description="Which axes are cut, e.g. ['x', 'z'].")
+    crop: dict[Axis, list[float]] | None = Field(
+        None, description="crop: the range kept per axis, {x: [x0, x1], z: [z0, z1]} "
+                          "(z inclusive planes).")
+    cutaway: dict[Axis, CutawayAxis] | None = Field(None, description="cutaway: the cut per axis.")
+    z: int | None = Field(None, ge=0, description="section / slab: the Z plane (the plane the "
+                                                  "2-D view comes back to).")
+    section_x: float | None = Field(None, ge=0, description="section / slab: the X plane, px.")
+    section_y: float | None = Field(None, ge=0, description="section / slab: the Y plane, px.")
+    thickness: dict[Axis, float] | None = Field(
+        None, description="slab: thickness per axis, px across x and y, planes along z.")
+    composite: Literal["single", "max", "mean", "min", "sum"] | None = Field(
+        None, description="slab: how its voxels combine along each ray.")
+    opacity: float | None = Field(None, ge=0.05, le=1, description="section: plane opacity.")
+    context: float | None = Field(None, ge=0, le=1, description="section / slab: how much of "
+                                                                "the rest of the stack shows.")
+    face: bool | None = Field(None, description="crop / cutaway: draw the cut faces solid.")
+
+
+def set_inspect(call, inp):
+    """Cut the 3-D view (entering it). Checked for form here; the browser
+    clamps to the image and answers with exactly what it drew."""
+    arguments = {}
+    for key in ("mode", "axes", "z", "section_x", "section_y", "composite", "opacity",
+                "context", "face"):
+        value = getattr(inp, key)
+        if value is not None:
+            arguments[key] = value
+    if inp.crop is not None:
+        for axis, pair in inp.crop.items():
+            if len(pair) != 2:
+                raise AgentError("invalid_input", f"crop.{axis} is a range: [first, last]")
+            if pair[1] < pair[0]:
+                raise AgentError("invalid_input", f"crop.{axis} ends before it starts")
+            if pair[0] < 0:
+                raise AgentError("invalid_input", f"crop.{axis} starts before the image")
+        arguments["crop"] = {axis: [float(a), float(b)] for axis, (a, b) in inp.crop.items()}
+    if inp.cutaway is not None:
+        arguments["cutaway"] = {axis: entry.model_dump() for axis, entry in inp.cutaway.items()}
+    if inp.thickness is not None:
+        if any(value < 1 for value in inp.thickness.values()):
+            raise AgentError("invalid_input", "a slab is at least one voxel thick")
+        arguments["thickness"] = dict(inp.thickness)
+    if not arguments:
+        raise AgentError("invalid_input", "say how to cut: a mode, axes, a crop, a cutaway, "
+                                          "a plane, a thickness ...")
+    _c, view, ack = _send(call, inp, "set_inspect", arguments, timeout=60)
     return _receipted(call, view, ack)
 
 
@@ -595,6 +672,12 @@ def capabilities():
             purpose="Turn the 3-D view: a named view (xy, xz, yz, iso) or an exact camera. "
                     "This tab only.",
             input_model=CameraInput, handler=set_camera),
+        cap(name="viewer.set_inspect", tool_name="viewer_set_inspect",
+            purpose="Cut the 3-D view open: a cutaway, sections in real intensities, slabs "
+                    "(max, mean, min, sum or one plane) or a crop, along any of X, Y and Z, in "
+                    "image units. Enters 3-D; answers with the cut drawn, in words. This tab "
+                    "only.",
+            input_model=InspectInput, handler=set_inspect),
         cap(name="viewer.set_surface", tool_name="viewer_set_surface",
             purpose="Show, hide, fade, recolour or restyle a surface in this tab, isolate "
                     "some of its objects or highlight one. Nothing is saved (surface_update "

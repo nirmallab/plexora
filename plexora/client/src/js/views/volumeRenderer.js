@@ -38,9 +38,13 @@
  * plane count suggests. With no stated z step the planes are drawn one pixel
  * deep, and the badge says "assumed".
  *
- * THE Z RANGE. The depth strip's slab band doubles as the clip range in this
- * mode: what is rendered is planes z0..z1, so cutting the stack down to the
- * planes of interest is the same gesture as choosing a projection's range.
+ * CUTTING IT. The view state's `inspect` (services/inspectGeometry.js) cuts
+ * the stack: a cutaway, sections, slabs or a crop, over any of X, Y and Z.
+ * Every one of them is uniforms -- the box a ray is clipped to, the corner a
+ * cutaway takes out, the planes or slabs and how a slab's voxels combine --
+ * read at every frame from services/inspectState.js, so a cut follows the
+ * hand with no texture, program or revision behind it. A section is sampled
+ * where each ray crosses its plane, never between two steps of the march.
  *
  * Draws on demand -- a frame only after the camera, the channels or the clip
  * changed. A channel new to the picture (switched on, the view just entered)
@@ -268,6 +272,7 @@ void main() {
         const locate = detail ? `
         bool inDetail = all(greaterThanEqual(p, u_detail_lo)) && all(lessThanEqual(p, u_detail_hi));
         vec3 q = (p - u_detail_lo) / max(u_detail_hi - u_detail_lo, vec3(1e-6));` : "";
+        const cut = cutSource(count, sample, locate, atlas ? chunk.sample : null);
         return `#version 300 es
 precision highp float;
 precision highp sampler3D;
@@ -275,8 +280,20 @@ precision highp sampler3D;
 ${samplers.join("\n")}
 uniform mat4 u_inverse;        // clip -> model (box in [0,1]^3, then scaled)
 uniform vec3 u_extent;         // physical box, longest side 1
-uniform vec2 u_clip_z;         // texture z range shown, [0,1]
-uniform vec4 u_clip_xy;        // texture x0, x1, y0, y1 shown, [0,1] (setClip)
+uniform vec3 u_box_lo;         // the box kept, texture space [0,1] (the cut, setClip)
+uniform vec3 u_box_hi;
+uniform int u_hole_on;         // a cutaway's corner taken out of the box
+uniform vec3 u_hole_lo;
+uniform vec3 u_hole_hi;
+uniform int u_cut;             // 0 nothing more, 1 planes, 2 slabs, 3 the cut faces
+uniform vec3 u_plane;          // each section's or slab's centre, texture space
+uniform vec3 u_plane_on;       // 1.0 along each axis that has one
+uniform vec3 u_slab_half;      // each slab's half thickness, texture space
+uniform int u_slab_op;         // 1 max, 2 mean, 3 min, 4 sum
+uniform float u_context;       // the surrounding volume beside a section or slab
+uniform float u_cut_alpha;     // a section plane's, or a cut face's, opacity
+uniform vec3 u_cut_color[NCH]; // the channels' colours, never dimmed by u_context
+uniform vec3 u_vox;            // one full-resolution voxel, box units (a slab's sum)
 uniform vec3 u_color[NCH];
 uniform vec2 u_window[NCH];    // [lo, hi] in 0..1 texture units
 uniform float u_opacity[NCH];
@@ -301,14 +318,14 @@ vec2 hitBox(vec3 origin, vec3 dir, vec3 lo, vec3 hi) {
 float level(float value, vec2 window) {
     return clamp((value - window.x) / max(window.y - window.x, 1e-4), 0.0, 1.0);
 }
-
+${cut}
 void main() {
     vec4 nearPoint = u_inverse * vec4(v_ndc, -1.0, 1.0);
     vec4 farPoint = u_inverse * vec4(v_ndc, 1.0, 1.0);
     vec3 origin = nearPoint.xyz / nearPoint.w;
     vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
-    vec3 lo = vec3(u_clip_xy.x, u_clip_xy.z, u_clip_z.x) * u_extent - 0.5 * u_extent;
-    vec3 hi = vec3(u_clip_xy.y, u_clip_xy.w, u_clip_z.y) * u_extent - 0.5 * u_extent;
+    vec3 lo = u_box_lo * u_extent - 0.5 * u_extent;
+    vec3 hi = u_box_hi * u_extent - 0.5 * u_extent;
     vec2 hit = hitBox(origin, dir, lo, hi);
     if (hit.x > hit.y || hit.y < 0.0) {
         outColor = vec4(u_ground, 1.0);
@@ -329,12 +346,19 @@ void main() {
     for (int c = 0; c < NCH; c++) peak[c] = 0.0;
     vec3 colour = vec3(0.0);
     float alpha = 0.0;
+    // [inspect] A section or slab with no surroundings: nothing to march.
+    bool skipMarch = (u_cut == 1 || u_cut == 2) && u_context <= 0.0;
 ${atlas ? ATLAS_MARCH(chunk.sample) : `    for (int i = 0; i < 4096; i++) {
-        if (i >= count) break;
+        if (i >= count || skipMarch) break;
         float t = t0 + (float(i) + jitter) * stepLength;
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;${locate}
 ${sample.join("\n")}`}
+        // [inspect] What a cut leaves out is not part of the march: a
+        // cutaway's corner, and the slabs, which are combined on their own.
+        if ((u_hole_on == 1 && inHole(p)) || (u_cut == 2 && inSlab(p))) {
+            for (int c = 0; c < NCH; c++) v[c] = 0.0;
+        }
         if (u_mode == 0) {
             for (int c = 0; c < NCH; c++) peak[c] = max(peak[c], v[c]);
         } else {
@@ -351,13 +375,216 @@ ${sample.join("\n")}`}
             if (alpha > 0.97) break;
         }${atlas ? "\n        t += stepLength;" : ""}
     }
+    // [inspect] The sections, the slabs or the cut faces the ray meets.
+    float cutT = 1e20;
+    vec4 cut = vec4(0.0);
+    if (u_cut == 1) cut = cutPlanes(origin, dir, t0, hit.y, cutT);
+    else if (u_cut == 2) cut = cutSlabs(origin, dir, t0, hit.y, jitter, stepLength, cutT);
+    else if (u_cut == 3) cut = cutFace(origin, dir, lo, hi, t0, hit.y, cutT);
     if (u_mode == 0) {
         for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c]);
         outColor = vec4(max(min(colour, vec3(1.0)), u_ground), 1.0);
     } else {
         outColor = vec4(min(colour + (1.0 - alpha) * u_ground, vec3(1.0)), 1.0);
     }
+    outColor.rgb = min(cut.rgb + (1.0 - cut.a) * outColor.rgb, vec3(1.0));
 }`;
+    }
+
+    /**
+     * [inspect] What a cut draws beyond the box (services/inspectGeometry.js):
+     * a point sampled anywhere in the stack (`sampleAt`, the same textures
+     * the march reads, bricks included), and from it the section planes a
+     * ray meets -- where it crosses them, exactly, so a plane one voxel thick
+     * is never missed between two steps -- the slabs, their voxels combined
+     * along the ray, and the cut faces, drawn solid.
+     */
+    function cutSource(count, sample, locate, atlasSample) {
+        let body;
+        if (atlasSample) {
+            body = `    vec3 full = u_full_lo + p * u_full_span;
+    if (any(lessThan(full, b.lo)) || any(greaterThanEqual(full, b.hi))) {
+        locate(full, b.lo, b.hi, b.state, b.base, b.vox, b.anchor);
+    }
+    if (b.state == 2) {
+        for (int c = 0; c < NCH; c++) v[c] = 0.0;
+        return;
+    }
+    vec3 a = (b.base + (full - b.anchor) / b.vox) / u_atlas_dim;
+    int cState = b.state;
+${atlasSample}`;
+        } else {
+            body = `${locate}
+${sample.join("\n")}`;
+        }
+        return `
+struct Brick { vec3 lo; vec3 hi; vec3 base; vec3 vox; vec3 anchor; int state; };
+
+Brick noBrick() {
+    return Brick(vec3(1.0), vec3(0.0), vec3(0.0), vec3(1.0), vec3(0.0), 0);
+}
+
+// One point of the stack, texture space; 'b' remembers the brick it was in.
+void sampleAt(vec3 p, inout Brick b, out float v[NCH]) {
+${body}
+}
+
+bool inHole(vec3 p) {
+    return all(greaterThan(p, u_hole_lo)) && all(lessThan(p, u_hole_hi));
+}
+
+bool inSlab(vec3 p) {
+    vec3 off = abs(p - u_plane) - u_slab_half;
+    return (u_plane_on.x > 0.5 && off.x <= 0.0) || (u_plane_on.y > 0.5 && off.y <= 0.0)
+        || (u_plane_on.z > 0.5 && off.z <= 0.0);
+}
+
+vec3 cutColour(float v[NCH]) {
+    vec3 c = vec3(0.0);
+    for (int i = 0; i < NCH; i++) c += u_cut_color[i] * level(v[i], u_window[i]);
+    return c;
+}
+
+// The planes met in [tNear, tFar], nearest first, each at u_cut_alpha.
+vec4 cutPlanes(vec3 origin, vec3 dir, float tNear, float tFar, out float tFirst) {
+    float ts[3];
+    ts[0] = 1e20; ts[1] = 1e20; ts[2] = 1e20;
+    int n = 0;
+    for (int a = 0; a < 3; a++) {
+        if (u_plane_on[a] < 0.5 || abs(dir[a]) < 1e-7) continue;
+        float t = ((u_plane[a] - 0.5) * u_extent[a] - origin[a]) / dir[a];
+        if (t < tNear || t > tFar) continue;
+        ts[n] = t;
+        n++;
+    }
+    if (ts[1] < ts[0]) { float s = ts[0]; ts[0] = ts[1]; ts[1] = s; }
+    if (ts[2] < ts[1]) { float s = ts[1]; ts[1] = ts[2]; ts[2] = s; }
+    if (ts[1] < ts[0]) { float s = ts[0]; ts[0] = ts[1]; ts[1] = s; }
+    tFirst = ts[0];
+    vec4 acc = vec4(0.0);
+    Brick brick = noBrick();
+    for (int i = 0; i < 3; i++) {
+        if (i >= n) break;
+        float v[NCH];
+        sampleAt((origin + dir * ts[i]) / u_extent + 0.5, brick, v);
+        acc.rgb += (1.0 - acc.a) * cutColour(v) * u_cut_alpha;
+        acc.a += (1.0 - acc.a) * u_cut_alpha;
+    }
+    return acc;
+}
+
+// The slabs met in [tNear, tFar]: their intervals along the ray, merged
+// where they overlap (the union is one region), sampled at half the march's
+// step -- a slab thinner than that still gets one sample -- and combined.
+vec4 cutSlabs(vec3 origin, vec3 dir, float tNear, float tFar, float jitter, float stepLength,
+              out float tFirst) {
+    float lo[3];
+    float hi[3];
+    lo[0] = 1e20; lo[1] = 1e20; lo[2] = 1e20;
+    hi[0] = 1e20; hi[1] = 1e20; hi[2] = 1e20;
+    int n = 0;
+    for (int a = 0; a < 3; a++) {
+        if (u_plane_on[a] < 0.5) continue;
+        float s0 = (u_plane[a] - u_slab_half[a] - 0.5) * u_extent[a];
+        float s1 = (u_plane[a] + u_slab_half[a] - 0.5) * u_extent[a];
+        float enter = tNear;
+        float leave = tFar;
+        if (abs(dir[a]) < 1e-7) {
+            if (origin[a] < s0 || origin[a] > s1) continue;
+        } else {
+            float ta = (s0 - origin[a]) / dir[a];
+            float tb = (s1 - origin[a]) / dir[a];
+            enter = max(min(ta, tb), tNear);
+            leave = min(max(ta, tb), tFar);
+        }
+        if (enter >= leave) continue;
+        lo[n] = enter;
+        hi[n] = leave;
+        n++;
+    }
+    tFirst = 1e20;
+    if (n == 0) return vec4(0.0);
+    for (int sweep = 0; sweep < 2; sweep++) {
+        for (int i = 0; i < 2; i++) {
+            if (lo[i + 1] < lo[i]) {
+                float s = lo[i]; lo[i] = lo[i + 1]; lo[i + 1] = s;
+                s = hi[i]; hi[i] = hi[i + 1]; hi[i + 1] = s;
+            }
+        }
+    }
+    float sMax[NCH];
+    float sMin[NCH];
+    float sSum[NCH];
+    for (int c = 0; c < NCH; c++) { sMax[c] = 0.0; sMin[c] = 1e9; sSum[c] = 0.0; }
+    float weight = 0.0;
+    float end = -1e20;
+    Brick brick = noBrick();
+    tFirst = lo[0];
+    for (int k = 0; k < 3; k++) {
+        if (k >= n) break;
+        // Merged: the part of this interval past the end of the last.
+        float start = max(lo[k], end);
+        float stop = hi[k];
+        end = max(end, stop);
+        float len = stop - start;
+        if (len <= 0.0) continue;
+        int cnt = int(clamp(ceil(len / (stepLength * 0.5)), 1.0, 512.0));
+        float dt = len / float(cnt);
+        for (int i = 0; i < 512; i++) {
+            if (i >= cnt) break;
+            float t = start + (float(i) + jitter) * dt;
+            float v[NCH];
+            sampleAt((origin + dir * t) / u_extent + 0.5, brick, v);
+            for (int c = 0; c < NCH; c++) {
+                sMax[c] = max(sMax[c], v[c]);
+                sMin[c] = min(sMin[c], v[c]);
+                sSum[c] += v[c] * dt;
+            }
+            weight += dt;
+        }
+    }
+    // A sum is the voxels added along the ray: dt in voxels, not box units.
+    float perVoxel = length(dir / max(u_vox, vec3(1e-9)));
+    vec3 colour = vec3(0.0);
+    float alpha = 0.0;
+    for (int c = 0; c < NCH; c++) {
+        float value = u_slab_op == 1 ? sMax[c]
+            : (u_slab_op == 2 ? sSum[c] / max(weight, 1e-9)
+            : (u_slab_op == 3 ? sMin[c] : sSum[c] * perVoxel));
+        float s = level(value, u_window[c]);
+        colour += u_cut_color[c] * s;
+        alpha = max(alpha, s);
+    }
+    return vec4(colour, clamp(alpha, 0.0, 1.0));
+}
+
+// Where the ray first meets kept voxels across a cut -- a cropped side of
+// the box, not the stack's own, or the face of a cutaway's corner -- the
+// voxel there, drawn solid.
+vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, out float tFirst) {
+    tFirst = 1e20;
+    float tFace = -1.0;
+    vec3 inv = 1.0 / dir;
+    vec3 tmin = min((lo - origin) * inv, (hi - origin) * inv);
+    float entry = max(max(tmin.x, tmin.y), tmin.z);
+    if (entry > 0.0) {
+        int a = entry == tmin.x ? 0 : (entry == tmin.y ? 1 : 2);
+        bool fromLow = dir[a] > 0.0;
+        if (fromLow ? u_box_lo[a] > 0.0005 : u_box_hi[a] < 0.9995) tFace = entry;
+    }
+    if (u_hole_on == 1) {
+        vec2 h = hitBox(origin, dir, u_hole_lo * u_extent - 0.5 * u_extent,
+                        u_hole_hi * u_extent - 0.5 * u_extent);
+        if (h.x <= h.y && h.x <= tNear + 1e-5 && h.y > tNear && h.y < tFar) tFace = h.y;
+    }
+    if (tFace < 0.0 || tFace > tFar) return vec4(0.0);
+    tFirst = tFace;
+    float v[NCH];
+    Brick brick = noBrick();
+    sampleAt((origin + dir * (tFace + 1e-4)) / u_extent + 0.5, brick, v);
+    return vec4(cutColour(v) * u_cut_alpha, u_cut_alpha);
+}
+`;
     }
 
     /**
@@ -375,7 +602,7 @@ ${sample.join("\n")}`}
     int cState = 0;
     float t = t0 + jitter * stepLength;
     for (int i = 0; i < 8192; i++) {
-        if (t > hit.y) break;
+        if (t > hit.y || skipMarch) break;
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;
         vec3 full = A + B * t;
@@ -640,6 +867,7 @@ ${sample}`;
             // The sentence goes with the canvas; refresh says it again on return.
             if (this.note && !visible) this.note.hidden = true;
             this.gizmo?.show(visible);
+            this.notifyDraw();
             if (!visible) {
                 // Leaving 3-D by any path stops Play's turn: nothing turns
                 // unseen, and coming back never finds it still going.
@@ -660,7 +888,9 @@ ${sample}`;
         engaged() {
             const within = (node) => Boolean(node) && (node.matches?.(":hover")
                 || node === document.activeElement || node.contains?.(document.activeElement));
-            return within(this.canvas) || within(this.gizmo?.root);
+            // [inspect] The 3-D dock and the handles are part of the view.
+            return within(this.canvas) || within(this.gizmo?.root) || within(global.PlexoraVolumeDock?.root)
+                || within(this.handles?.root);
         }
 
         /** Lock turns to image axis `name`, or release with null. The same
@@ -1018,14 +1248,86 @@ ${sample}`;
 
         // -- the contrast for what is drawn ---------------------------------
 
-        /** The clip range `[z0, z1]` (the strip's slab band), or null when it
-         *  is the whole stack. */
+        /**
+         * The planes the cut keeps, `[z0, z1]`, or null for the whole stack:
+         * what the contrast is levelled over. A Z crop's or cutaway's range;
+         * a Z section's plane, or slab's planes, when it is drawn alone.
+         */
         clipRange() {
-            const state = this.view || this.viewState?.get?.();
             const depth = Math.max(1, this.viewState?.depth || 1);
-            const z0 = Math.max(0, Number(state?.slab?.z0 ?? 0));
-            const z1 = Math.min(depth - 1, Number(state?.slab?.z1 ?? depth - 1));
+            const resolved = this.inspectNow();
+            if (!resolved) return null;
+            let z0 = Math.max(0, Math.floor(resolved.box.z[0]));
+            let z1 = Math.min(depth - 1, Math.ceil(resolved.box.z[1]) - 1);
+            const plane = resolved.planes.length === 1 ? resolved.planes[0] : null;
+            if (plane?.axis === "z" && resolved.context <= 0) {
+                z0 = Math.max(0, Math.floor(plane.lo));
+                z1 = Math.min(depth - 1, Math.max(z0, Math.ceil(plane.hi) - 1));
+            }
             return z0 <= 0 && z1 >= depth - 1 ? null : [z0, z1];
+        }
+
+        // -- the cut (services/inspectGeometry.js) -------------------------
+
+        /** What the 3-D view keeps now -- the cut controller's answer, a
+         *  preview included (services/inspectState.js), else the view
+         *  state's -- or null with no cut to read. */
+        inspectNow() {
+            const controller = global.PlexoraInspect;
+            if (controller && controller.viewState === this.viewState) return controller.resolved();
+            const G = global.PlexoraInspectGeometry;
+            const state = this.viewState?.get?.();
+            if (!G || !state?.inspect) return null;
+            const d = G.dims(this.viewState.info, this.viewState.depth);
+            return G.resolve(state.inspect, G.positions(state, d), d);
+        }
+
+        /**
+         * The cut in texture space for textures covering `covered`, narrowed
+         * by `setClip` (Video Studio's reveals): `{lo, hi, hole, plane,
+         * planeOn, half, cut, op, context, opacity, face}`.
+         */
+        cutUniforms(covered = this.covered) {
+            const G = global.PlexoraInspectGeometry;
+            const info = this.viewState?.info || {};
+            const area = covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const depth = Math.max(1, this.viewState?.depth || 1);
+            const resolved = G ? this.inspectNow() : null;
+            const out = resolved ? G.toTexture(resolved, area, depth)
+                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, plane: [0.5, 0.5, 0.5], planeOn: [0, 0, 0],
+                    half: [0, 0, 0], cut: 0, op: 0, context: 1, opacity: 1, face: 0 };
+            const clip = this.clipXY;
+            if (clip) {
+                ["x", "y", "z"].forEach((axis, i) => {
+                    const range = clip[axis];
+                    if (!range) return;
+                    out.lo[i] = Math.max(out.lo[i], range[0]);
+                    out.hi[i] = Math.max(out.lo[i], Math.min(out.hi[i], range[1]));
+                });
+            }
+            return out;
+        }
+
+        /** Set the cut's uniforms on the program in use. */
+        bindCut(uniform, cut, covered, extent) {
+            const gl = this.gl;
+            const info = this.viewState?.info || {};
+            const area = covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const depth = Math.max(1, this.viewState?.depth || 1);
+            gl.uniform3fv(uniform("u_box_lo"), cut.lo);
+            gl.uniform3fv(uniform("u_box_hi"), cut.hi);
+            gl.uniform1i(uniform("u_hole_on"), cut.hole ? 1 : 0);
+            gl.uniform3fv(uniform("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
+            gl.uniform3fv(uniform("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
+            gl.uniform1i(uniform("u_cut"), cut.cut);
+            gl.uniform3fv(uniform("u_plane"), cut.plane);
+            gl.uniform3fv(uniform("u_plane_on"), cut.planeOn);
+            gl.uniform3fv(uniform("u_slab_half"), cut.half);
+            gl.uniform1i(uniform("u_slab_op"), cut.op || 1);
+            gl.uniform1f(uniform("u_context"), cut.context);
+            gl.uniform1f(uniform("u_cut_alpha"), cut.cut === 3 ? 1 : cut.opacity);
+            const span = [Math.max(1e-9, area[2] - area[0]), Math.max(1e-9, area[3] - area[1]), depth];
+            gl.uniform3fv(uniform("u_vox"), extent.map((side, i) => side / span[i]));
         }
 
         /**
@@ -1118,11 +1420,11 @@ ${sample}`;
          */
         cameraKey() {
             const c = this.camera;
-            const state = this.view || this.viewState?.get?.();
             const pinned = this._pinnedSize;
             return [c.q.map((v) => v.toFixed(6)).join(","), c.dist.toFixed(6), c.panX.toFixed(6),
                     c.panY.toFixed(6), this.canvas?.clientWidth || 0, this.canvas?.clientHeight || 0,
-                    state?.slab?.z0, state?.slab?.z1, JSON.stringify(this.clipXY || null), this.boxKey(),
+                    // [inspect] A cut is a camera move: it never dissolves.
+                    JSON.stringify(this.cutUniforms()), this.boxKey(),
                     pinned ? `${pinned.width}x${pinned.height}` : ""].join("|");
         }
 
@@ -1375,6 +1677,8 @@ ${sample}`;
             const full = info.levels?.[0] || { width: info.width, height: info.height };
             const scale = (full.width || width) / width;
             const sx = Number(info.spacing?.x?.value) || 1;
+            // [inspect] Pixels are square unless the image says otherwise.
+            const sy = Number(info.spacing?.y?.value) || sx;
             const sz = Number(info.spacing?.z?.value) || sx;
             // The stack's own plane count: a texture's z may be max-pooled
             // (`X-Plexora-ZPool`), which changes its depth and not the stack's.
@@ -1383,7 +1687,7 @@ ${sample}`;
             const across = this.covered
                 ? [this.covered[2] - this.covered[0], this.covered[3] - this.covered[1]]
                 : [width * scale, height * scale];
-            const physical = [across[0] * sx, across[1] * sx, planes * sz];
+            const physical = [across[0] * sx, across[1] * sy, planes * sz];
             const longest = Math.max(...physical) || 1;
             return physical.map((side) => side / longest);
         }
@@ -1416,15 +1720,27 @@ ${sample}`;
             const depth = Math.max(1, this.viewState?.depth || 1);
             const extent = this.extent();
             const shape = lead.shape;                       // (z, y, x)
-            const state = this.view || this.viewState?.get?.();
             const camera = this.cameraMatrices();
+            // [inspect] What the cut keeps, in full-resolution pixels and planes.
+            const cut = this.cutUniforms(covered);
+            const span = [covered[2] - covered[0], covered[3] - covered[1], depth];
+            const full = (axis, v) => (axis < 2 ? covered[axis] : 0) + v * span[axis];
             return {
                 fullLo: [covered[0], covered[1], 0],
-                fullSpan: [covered[2] - covered[0], covered[3] - covered[1], depth],
+                fullSpan: span,
                 extent,
                 eye: camera.eye,
                 forward: camera.forward,
-                clip: state ? [state.slab.z0, state.slab.z1] : [0, depth - 1],
+                clip: [Math.max(0, Math.floor(cut.lo[2] * depth)),
+                       Math.min(depth - 1, Math.ceil(cut.hi[2] * depth) - 1)],
+                box: { lo: [0, 1, 2].map((a) => full(a, cut.lo[a])), hi: [0, 1, 2].map((a) => full(a, cut.hi[a])) },
+                // Sections and slabs drawn alone: only the bricks they cross.
+                only: (cut.cut === 1 || cut.cut === 2) && cut.context <= 0
+                    ? [0, 1, 2].filter((a) => cut.planeOn[a]).map((a) => ({
+                        axis: a,
+                        lo: full(a, Math.max(0, cut.plane[a] - cut.half[a])) - (a < 2 ? 1 : 0.5),
+                        hi: full(a, Math.min(1, cut.plane[a] + cut.half[a])) + (a < 2 ? 1 : 0.5) }))
+                    : null,
                 // A screen pixel's size at distance 1; a base voxel in
                 // full-resolution pixels, pixels and planes.
                 pixel: (2 * Math.tan(FOV_Y / 2)) / Math.max(1, this.canvas?.height || 1),
@@ -1580,6 +1896,7 @@ ${sample}`;
                     surf.finish(false);
                     this.paintGizmo(fast);
                 }
+                this.notifyDraw();
                 if (held) ghost.release();
                 return;
             }
@@ -1607,9 +1924,19 @@ ${sample}`;
                 if (!locations.has(name)) locations.set(name, gl.getUniformLocation(built, name));
                 return locations.get(name);
             };
+            // [inspect] How a texture is read between voxels (volume.interpolation).
+            const filter = (this.view || this.viewState?.get?.())?.volume?.interpolation === "nearest"
+                ? gl.NEAREST : gl.LINEAR;
+            const filtered = (entry) => {
+                if (entry.filter === filter) return;
+                gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, filter);
+                gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, filter);
+                entry.filter = filter;
+            };
             channels.forEach((channel, index) => {
                 gl.activeTexture(gl.TEXTURE0 + index);
                 gl.bindTexture(gl.TEXTURE_3D, channel.entry.texture);
+                filtered(channel.entry);
                 gl.uniform1i(uniform(`u_volume${index}`), index);
             });
             if (withDetail) {
@@ -1617,6 +1944,7 @@ ${sample}`;
                     entry.used = at;
                     gl.activeTexture(gl.TEXTURE0 + channels.length + index);
                     gl.bindTexture(gl.TEXTURE_3D, entry.texture);
+                    filtered(entry);
                     gl.uniform1i(uniform(`u_detail${index}`), channels.length + index);
                 });
                 gl.uniform3fv(uniform("u_detail_lo"), detail.lo);
@@ -1624,21 +1952,22 @@ ${sample}`;
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
+            // [inspect] The cut: the box, the corner, the planes or slabs. Beside
+            // a section or slab the rest of the stack is drawn at u_context.
+            const cut = this.cutUniforms(lead.covered);
+            const dim = cut.cut === 1 || cut.cut === 2 ? cut.context : 1;
             gl.uniform3fv(uniform("u_color"), channels.flatMap(
+                (channel, index) => channel.colour.map((value) => value * presence[index] * dim)));
+            gl.uniform3fv(uniform("u_cut_color"), channels.flatMap(
                 (channel, index) => channel.colour.map((value) => value * presence[index])));
             // Each channel in the window of the texture it is drawn from.
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => this.windowFor(channel)));
             gl.uniform1fv(uniform("u_opacity"), channels.map(
-                (channel, index) => channel.opacity * presence[index]));
+                (channel, index) => channel.opacity * presence[index] * dim));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());
-            gl.uniform3fv(uniform("u_extent"), this.extent());
-            // The revision on screen (attach's surface), not the one asked for.
-            const state = this.view || this.viewState?.get?.();
-            const depth = Math.max(1, this.viewState?.depth || 1);
-            const clip = this.clipRangeZ(state, depth);
-            gl.uniform2fv(uniform("u_clip_z"), clip);
-            const xy = this.clipXY || { x: [0, 1], y: [0, 1] };
-            gl.uniform4fv(uniform("u_clip_xy"), [xy.x[0], xy.x[1], xy.y[0], xy.y[1]]);
+            const extent = this.extent();
+            gl.uniform3fv(uniform("u_extent"), extent);
+            this.bindCut(uniform, cut, lead.covered, extent);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
             gl.uniform1i(uniform("u_steps"), steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
@@ -1652,7 +1981,26 @@ ${sample}`;
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             surf?.finish(true);
             this.paintGizmo(fast);
+            this.notifyDraw();
             if (held) ghost.release();
+        }
+
+        /** [inspect] Call `fn(renderer)` after every frame drawn (the
+         *  handles follow the camera); returns the undo. */
+        addDrawListener(fn) {
+            this._drawListeners = this._drawListeners || new Set();
+            this._drawListeners.add(fn);
+            return () => this._drawListeners.delete(fn);
+        }
+
+        notifyDraw() {
+            for (const fn of this._drawListeners || []) {
+                try {
+                    fn(this);
+                } catch (error) {
+                    console.error("volumeRenderer: a draw listener failed", error);
+                }
+            }
         }
 
         paintGizmo(fast = this.moving()) {
@@ -1873,10 +2221,19 @@ ${sample}`;
             const forward = inverse ? mat4Invert(inverse) : null;
             if (!forward) return null;
             const extent = this.extent();
-            const state = this.view || this.viewState?.get?.();
-            const depth = Math.max(1, this.viewState?.depth || 1);
-            const clip = this.clipRangeZ(state, depth);
-            const xy = this.clipXY || { x: [0, 1], y: [0, 1] };
+            // [inspect] Within what the cut keeps; a section or slab drawn
+            // alone along one axis is all that is seen along it.
+            const cut = this.cutUniforms();
+            const bounds = [0, 1, 2].map((a) => [cut.lo[a], cut.hi[a]]);
+            const alone = (cut.cut === 1 || cut.cut === 2) && cut.context <= 0;
+            const along = cut.planeOn.filter(Boolean).length === 1 ? cut.planeOn.indexOf(1) : -1;
+            if (alone && along >= 0) {
+                const pad = along === 2 ? 0.5 / Math.max(1, this.viewState?.depth || 1) : 0.002;
+                bounds[along] = [Math.max(bounds[along][0], cut.plane[along] - cut.half[along] - pad),
+                                 Math.min(bounds[along][1], cut.plane[along] + cut.half[along] + pad)];
+            }
+            const xy = { x: bounds[0], y: bounds[1] };
+            const clip = bounds[2];
             const n = REGION_LATTICE;
             const min = [Infinity, Infinity, Infinity];
             const max = [-Infinity, -Infinity, -Infinity];
@@ -1905,7 +2262,6 @@ ${sample}`;
             }
             if (!Number.isFinite(min[0])) return null;
             const step = [(xy.x[1] - xy.x[0]) / n, (xy.y[1] - xy.y[0]) / n, (clip[1] - clip[0]) / n];
-            const bounds = [xy.x, xy.y, clip];
             return {
                 lo: min.map((v, a) => Math.max(bounds[a][0], v - step[a])),
                 hi: max.map((v, a) => Math.min(bounds[a][1], v + step[a])),
@@ -1950,6 +2306,14 @@ ${sample}`;
             this.trackFill(this.considerDetail());
         }
 
+        /** [inspect] Whether what the cut shows has arrived: no level, brick
+         *  or detail in flight. Until then the base level is drawn, z-pooled
+         *  and coarser -- the dock says so (volumeDock "refining"). */
+        resolved() {
+            if (this._loads.size || this._filling) return false;
+            return !(this.atlas && (this.atlas.status === "loading" || this.atlas.inflight?.size > 0));
+        }
+
         /** Remember a detail fill in flight until it ends (settled()). */
         trackFill(promise) {
             this._filling = promise;
@@ -1958,21 +2322,17 @@ ${sample}`;
             });
         }
 
-        /** The texture z range drawn: the slab band, narrowed by setClip's z. */
-        clipRangeZ(state, depth) {
-            const slab = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
-            const z = this.clipXY?.z;
-            if (!z) return slab;
-            const lo = Math.max(slab[0], z[0]);
-            return [lo, Math.max(lo, Math.min(slab[1], z[1]))];
+        /** The texture z range drawn: the cut's, narrowed by setClip's z. */
+        clipRangeZ() {
+            const cut = this.cutUniforms();
+            return [cut.lo[2], cut.hi[2]];
         }
 
         /**
          * Clip the box to `{x: [a, b], y: [a, b], z?: [a, b]}` (texture space,
-         * [0, 1] along the stack's own axes), or null for none. Beside the
-         * slab band, which stays the z range: a caller that cuts the stack
-         * open from the side (Video Studio's reveals) uses x and y. Not saved,
-         * like the camera.
+         * [0, 1] along the stack's own axes), or null for none -- inside the
+         * cut (cutUniforms), for a caller that cuts the stack open on its own
+         * clock (Video Studio's reveals). Not saved, like the camera.
          */
         setClip(clip) {
             const range = (r) => (Array.isArray(r) && r.length === 2
@@ -2291,6 +2651,7 @@ ${sample}`;
         let lastT = null;
         let wasOn = false;
         let lastClip = "";
+        let lastCut = "";
         // [surfaces] The camera, remembered per project like the plane
         // (`volume.camera` of the view state), once it has rested a moment.
         let savedCamera = "";
@@ -2370,11 +2731,29 @@ ${sample}`;
                 } else {
                     renderer.invalidate();
                 }
-                // A new clip range: contrast for the planes it keeps.
-                const clip = `${state.slab?.z0},${state.slab?.z1}`;
+                // A new cut: contrast for the planes it keeps.
+                const clip = String(renderer.clipRange());
                 if (clip !== lastClip) {
                     lastClip = clip;
                     if (!entering) renderer.refreshHints();
+                }
+                lastCut = JSON.stringify(renderer.cutUniforms());
+            },
+            /** [inspect] The cut changed -- the dock, the strip, a handle, an
+             *  undo, the agent: drawn again from uniforms in the next frame
+             *  (no revision), a finer detail looked for once it rests, and the
+             *  contrast asked again for the planes it keeps. */
+            cutChanged() {
+                if (!renderer || !viewState.isVolume()) return;
+                const key = JSON.stringify(renderer.cutUniforms());
+                if (key === lastCut) return;
+                lastCut = key;
+                renderer.invalidate();
+                renderer.scheduleDetail();
+                const clip = String(renderer.clipRange());
+                if (clip !== lastClip) {
+                    lastClip = clip;
+                    renderer.refreshHints();
                 }
             },
             channelsChanged() {
@@ -2446,6 +2825,10 @@ ${sample}`;
             });
         }
         global.addEventListener?.("plexora:channels-applied", () => controller.channelsChanged());
+        // [inspect] Whoever changes the cut, and a preview under a hand.
+        viewState.subscribe(() => controller.cutChanged());
+        global.addEventListener?.("plexora:inspect-preview", () => controller.cutChanged());
+        global.addEventListener?.("plexora:inspect-changed", () => controller.cutChanged());
         controller.sync(viewState.get());
         return controller;
     }

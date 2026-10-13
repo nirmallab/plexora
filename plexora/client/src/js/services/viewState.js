@@ -9,8 +9,16 @@
  *
  *     info  = what the image IS: depth, frames, spacing, levels (from
  *             /volume/<ds>/info, read once at boot)
- *     state = { t, z, mode: "plane"|"slab", slab: {z0, z1, op, q, thickness,
- *               follow, clip}, section: {x, y}, layout, aux, volume }
+ *     state = { t, z, mode: "plane"|"slab"|"volume", slab: {z0, z1, op, q,
+ *               thickness, follow, clip}, section: {x, y}, layout, aux,
+ *               volume, inspect }
+ *
+ * `inspect` is how the 3-D view is cut -- cutaway, section, slab or crop
+ * over any of X, Y and Z (services/inspectGeometry.js has the rules). Its
+ * sections and slabs sit at `z` and `section.x/y`, so the Z section in 3-D
+ * is the plane the 2-D view comes back to. It is not part of a revision
+ * (revisionKey): the 3-D view reads it at every frame, so a cut follows the
+ * hand with no swap behind it. `slab` stays the 2-D projection's range.
  *
  * A FOLLOWING slab (`follow`) is recentred on z whenever z moves; at the ends
  * of the stack it slides back inside to keep its thickness, unless `clip`,
@@ -153,6 +161,11 @@
         return typeof global.plexoraUrl === "function" ? global.plexoraUrl(path) : `/${path}`;
     }
 
+    /** [inspect] services/inspectGeometry.js, when the page has it. */
+    function Geometry() {
+        return global.PlexoraInspectGeometry || null;
+    }
+
     /** A view token's parts, the same grammar as server/volume/viewspec.py. */
     function parseToken(token) {
         const text = String(token || "").trim();
@@ -217,7 +230,7 @@
             ]);
             if (info && info.volumetric) this.info = info;
             if (!this.enabled()) return this;
-            this.state = this._clean({ ...this._defaults(), ...(saved || {}) });
+            this.state = this._clean({ ...this._defaults(), ...(this._migrate(saved) || {}) });
             this._applyUrl(search);
             if (this.state.mode === "volume") this._frozen = { ...this.get(), mode: "plane" };
             this._applied = this.spec();
@@ -272,7 +285,16 @@
                 layout: "single",
                 aux: null,
                 volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto" },
+                // [inspect] How the 3-D view is cut (inspectGeometry.js).
+                ...(Geometry() ? { inspect: Geometry().defaults(this._dims(), Geometry().spacing(this.info)) } : {}),
             };
+        }
+
+        /** `{width, height, depth}` (inspectGeometry.dims). */
+        _dims() {
+            return Geometry() ? Geometry().dims(this.info, this.depth)
+                : { width: Math.max(1, int(this.info?.width, 1)), height: Math.max(1, int(this.info?.height, 1)),
+                    depth: this.depth };
         }
 
         /** The state, repaired: every index inside the stack, the slab ordered,
@@ -317,7 +339,23 @@
             slab.z1 = z1;
             out.slab = slab;
             delete out.__recentre;
+            if (Geometry()) out.inspect = Geometry().clean(raw.inspect, this._dims(), Geometry().spacing(this.info));
             return out;
+        }
+
+        /**
+         * [inspect] A view state saved before the 3-D view could be cut used
+         * the projection's range as its clip: a 3-D view saved with a range
+         * narrower than the stack opens cut to those planes (a Z crop).
+         */
+        _migrate(saved) {
+            if (!saved || saved.inspect || saved.mode !== "volume" || !Geometry()) return saved;
+            const slab = saved.slab || {};
+            const z0 = int(slab.z0, 0);
+            const z1 = int(slab.z1, this.depth - 1);
+            if (slab.follow !== false || (z0 <= 0 && z1 >= this.depth - 1)) return saved;
+            return { ...saved, inspect: { mode: "crop", axes: { x: false, y: false, z: true },
+                                          crop: { z: [z0, z1] } } };
         }
 
         _applyUrl(search) {
@@ -406,9 +444,7 @@
                 ? `t ${state.t + 1}/${this.frames}${this._frameTime(state.t)} · ` : "";
             if (state.mode === "volume") {
                 const composite = state.volume?.composite === "additive" ? "additive" : "MIP";
-                const { z0, z1 } = state.slab;
-                const range = z0 === 0 && z1 === this.depth - 1 ? "all planes" : `z ${z0}–${z1}`;
-                return `${prefix}Volume · ${composite} · ${range}`;
+                return `${prefix}Volume · ${composite} · ${this.cutLabel(state) || "all planes"}`;
             }
             if (state.mode === "slab") {
                 const { z0, z1, op, q } = state.slab;
@@ -420,6 +456,15 @@
             if (this.depth <= 1) return prefix.replace(/ · $/, "");
             const where = step ? ` · ${this._length(state.z * step.value, step.unit)}` : "";
             return `${prefix}z ${state.z}/${this.depth}${where}`;
+        }
+
+        /** [inspect] How the 3-D view is cut, in words ("" for the whole
+         *  stack): "crop X 100–600 µm, Z planes 4–9 · 12.0 µm". */
+        cutLabel(state = this.state) {
+            const G = Geometry();
+            if (!G || !state?.inspect) return "";
+            const d = this._dims();
+            return G.describe(state.inspect, G.positions(state, d), d, G.spacing(this.info));
         }
 
         _frameTime(t) {
@@ -453,6 +498,7 @@
                 section: { ...before.section, ...(patch.section || {}) },
                 volume: { ...before.volume, ...(patch.volume || {}) },
             };
+            if (patch.inspect && Geometry()) merged.inspect = Geometry().merge(before.inspect, patch.inspect);
             const zMoved = patch.z !== undefined && patch.slab === undefined;
             if (zMoved && merged.mode === "slab" && merged.slab.follow) merged.__recentre = true;
             if (patch.slab && patch.slab.thickness !== undefined
@@ -500,19 +546,42 @@
         }
 
         /** Step z by `dz` planes (the keys, the wheel, the play button). A
-         *  fixed projection's range moves instead, and so does 3-D's clip
-         *  range: there the plane is not what is drawn. */
+         *  fixed projection's range moves instead; in 3-D, whatever the view
+         *  cuts along Z (_stepCut). */
         step(dz) {
             if (!this.enabled() || this.depth < 2) return this.get();
             const top = this.depth - 1;
-            if (this.state.mode === "volume"
-                    || (this.state.mode === "slab" && !this.state.slab.follow)) {
+            if (this.state.mode === "volume") return this._stepCut(dz);
+            if (this.state.mode === "slab" && !this.state.slab.follow) {
                 const { z0, z1 } = this.state.slab;
                 const width = z1 - z0;
                 const start = clamp(z0 + dz, 0, top - width);
                 return this.set({ slab: { z0: start, z1: start + width } });
             }
             return this.set({ z: clamp(this.state.z + dz, 0, top) });
+        }
+
+        /**
+         * [inspect] A step in 3-D moves what is cut along Z: the Z section or
+         * slab (the plane), a Z crop's range whole, a Z cutaway's cut. With no
+         * cut along Z there is nothing to move.
+         */
+        _stepCut(dz) {
+            const top = this.depth - 1;
+            const inspect = this.state.inspect;
+            if (!inspect?.axes?.z) return this.get();
+            if (inspect.mode === "section" || inspect.mode === "slab") {
+                return this.set({ z: clamp(this.state.z + dz, 0, top) });
+            }
+            if (inspect.mode === "crop") {
+                const [z0, z1] = inspect.crop.z;
+                const start = clamp(z0 + dz, 0, top - (z1 - z0));
+                return this.set({ inspect: { crop: { z: [start, start + (z1 - z0)] } } });
+            }
+            if (inspect.mode === "cutaway") {
+                return this.set({ inspect: { cutaway: { z: { at: clamp(inspect.cutaway.z.at + dz, 0, top) } } } });
+            }
+            return this.get();
         }
 
         stepTime(dt) {

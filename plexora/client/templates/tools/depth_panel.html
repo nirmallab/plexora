@@ -10,7 +10,9 @@
    and exact range, playback speed, and the z step when the file states none. #}
 <section class="sidebar-section depth-panel" id="depth_panel_section">
     {# `data-depth-combine`: what combines or cuts planes, hidden for a colour
-       slide's stack, whose planes are shown one at a time (depthTools.js). #}
+       slide's stack, whose planes are shown one at a time (depthTools.js).
+       `data-depth-projection`: the projection's own rows, hidden in 3-D, which
+       keeps its own cut (services/viewControls.js "card.projection"). #}
     <div class="depth-panel-row" data-depth-combine>
         <div class="cell-mode-control is-compact" id="depth_mode_control"
              role="radiogroup" aria-label="Show">
@@ -38,8 +40,8 @@
             <span class="depth-panel-unit" data-depth-frames-of></span>
         </div>
 
-        <label class="depth-panel-label" for="depth_op_select" data-depth-combine>Projection</label>
-        <div class="depth-panel-field" data-depth-combine>
+        <label class="depth-panel-label" for="depth_op_select" data-depth-combine data-depth-projection>Projection</label>
+        <div class="depth-panel-field" data-depth-combine data-depth-projection>
             <select id="depth_op_select" class="sidebar-select depth-panel-select">
                 <option value="max">Maximum (MIP)</option>
                 <option value="mean">Mean</option>
@@ -52,8 +54,8 @@
                    min="0" max="100" step="1" title="Percentile" aria-label="Percentile" hidden>
         </div>
 
-        <label class="depth-panel-label" for="depth_z0_input" data-depth-combine>Planes</label>
-        <div class="depth-panel-field" data-depth-combine>
+        <label class="depth-panel-label" for="depth_z0_input" data-depth-combine data-depth-projection>Planes</label>
+        <div class="depth-panel-field" data-depth-combine data-depth-projection>
             <input id="depth_z0_input" class="depth-panel-number is-short" type="number"
                    min="0" step="1" aria-label="First plane">
             <span class="depth-panel-unit">to</span>
@@ -62,8 +64,8 @@
             <span class="depth-panel-unit" data-depth-thickness></span>
         </div>
 
-        <span class="depth-panel-label" data-depth-combine>Follow</span>
-        <label class="depth-panel-toggle" data-depth-combine title="Keep the projection centred on the current plane, at the same thickness">
+        <span class="depth-panel-label" data-depth-combine data-depth-projection>Follow</span>
+        <label class="depth-panel-toggle" data-depth-combine data-depth-projection title="Keep the projection centred on the current plane, at the same thickness">
             <input id="depth_follow_input" type="checkbox">
             <span>Centre on the current plane</span>
         </label>

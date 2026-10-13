@@ -63,9 +63,15 @@
             const framesOf = q("[data-depth-frames-of]");
             if (framesOf) framesOf.textContent = `of ${vs.frames}`;
             // A colour slide's planes are shown one at a time: nothing here
-            // combines or cuts them (viewState keeps it in plane mode).
+            // combines or cuts them (viewState keeps it in plane mode). In
+            // 3-D the projection's rows are not what is drawn -- the 3-D view
+            // keeps its own cut -- and go (viewControls "card.projection").
+            const controls = global.PlexoraViewControls;
+            const projection = controls
+                ? controls.visible("card.projection", controls.context(vs, global.depthControlExtras || {}))
+                : state.mode !== "volume";
             for (const node of root.querySelectorAll("[data-depth-combine]")) {
-                if (vs.color) node.hidden = true;
+                node.hidden = vs.color || (!projection && node.hasAttribute("data-depth-projection"));
             }
 
             const op = q("#depth_op_select");

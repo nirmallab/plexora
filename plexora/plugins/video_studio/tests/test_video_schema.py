@@ -99,6 +99,25 @@ def test_a_slab_in_the_base_view_is_ordered_and_clamped():
     assert doc["base"]["view"]["slab"] == {"z0": 2, "z1": 11, "op": "max"}
 
 
+def test_the_3d_views_cut_rides_in_the_base_view():
+    """How the 3-D view was cut (core's inspect, image units) is kept with
+    the view a video was made from, as the viewer wrote it and bounded -- the
+    browser repairs it against the image when a frame is applied -- and an
+    unknown or oversized one is dropped rather than guessed at."""
+    cut = {"mode": "crop", "axes": {"x": True, "z": True}, "crop": {"x": [100, 600], "z": [2, 5]}}
+    doc = schema.normalize_project({"source": STACK, "base": {"view": {
+        "mode": "volume", "inspect": cut, "section": {"x": 400, "y": -3}}}})
+    view = doc["base"]["view"]
+    assert view["inspect"] == cut
+    assert view["section"] == {"x": 400.0, "y": 0.0}
+    assert schema.normalize_project(doc) == doc
+    odd = schema.normalize_project({"source": STACK, "base": {"view": {"inspect": {"mode": "wedge"}}}})
+    assert "inspect" not in odd["base"]["view"]
+    huge = schema.normalize_project({"source": STACK, "base": {"view": {
+        "inspect": {"mode": "crop", "notes": "x" * 10000}}}})
+    assert "inspect" not in huge["base"]["view"]
+
+
 def test_duplicate_track_ids_are_made_unique():
     doc = _project([{**_sweep(), "track_id": "trk_same"},
                     {**_sweep("acquired_t", end=4), "track_id": "trk_same"}])

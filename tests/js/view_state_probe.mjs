@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const source = readFileSync(join(REPO, "plexora/client/src/js/services/viewState.js"), "utf8");
+const geometry = readFileSync(join(REPO, "plexora/client/src/js/services/inspectGeometry.js"), "utf8");
 
 const events = [];
 const sandbox = {
@@ -30,7 +31,9 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
-runInContext(source, createContext(sandbox));
+const context = createContext(sandbox);
+runInContext(geometry, context);
+runInContext(source, context);
 const ViewState = sandbox.PlexoraViewState;
 assert.ok(ViewState, "the service registers itself");
 
@@ -175,19 +178,57 @@ function check(condition, message) {
     check(vs.spec() === "z24-34p99.5", `a percentile spells its q (${vs.spec()})`);
 }
 
-// -- in 3-D a step moves the clip range, never the frozen plane --------------
+// -- in 3-D a step moves what is cut along Z, never the frozen plane ---------
 {
     const vs = new ViewState("vol", { fetchImpl: fakeFetch({
         "volume/vol/info": VOLUME, "view_state/vol": {} }) });
     await vs.load({ search: "" });
     vs.set({ z: 12 });
-    vs.set({ mode: "volume", slab: { z0: 5, z1: 9, follow: false } });
+    check(vs.get().inspect?.mode === "full", "the 3-D view starts whole");
+    vs.set({ mode: "volume" });
+    const spec = vs.spec();
     vs.step(3);
-    const state = vs.get();
-    check(state.slab.z0 === 8 && state.slab.z1 === 12 && state.z === 12,
-          `] in 3-D moves the clip range and leaves the plane (${JSON.stringify(state.slab)}, z ${state.z})`);
+    check(vs.get().z === 12 && vs.get().inspect.mode === "full", "with nothing cut along Z a step moves nothing");
+    vs.set({ inspect: { mode: "crop", axes: { z: true }, crop: { z: [5, 9] } } });
+    vs.step(3);
+    let state = vs.get();
+    check(state.inspect.crop.z[0] === 8 && state.inspect.crop.z[1] === 12 && state.z === 12,
+          `] in 3-D moves a Z crop whole and leaves the plane (${JSON.stringify(state.inspect.crop.z)}, z ${state.z})`);
     vs.step(-100);
-    check(vs.get().slab.z0 === 0 && vs.get().slab.z1 === 4, "and stops at the top of the stack");
+    check(vs.get().inspect.crop.z[0] === 0 && vs.get().inspect.crop.z[1] === 4, "and stops at the top of the stack");
+    check(vs.label().includes("crop Z planes 0–4"), `the caption says the cut (${vs.label()})`);
+    vs.set({ inspect: { mode: "cutaway", cutaway: { z: { at: 20 } } } });
+    vs.step(2);
+    check(vs.get().inspect.cutaway.z.at === 22, "a Z cutaway's cut moves");
+    check(vs.get().inspect.crop.z[1] === 4, "and the crop it is not keeps its range");
+    const key = vs.revisionKey();
+    vs.set({ inspect: { mode: "section", axes: { x: true, z: true } } });
+    check(vs.revisionKey() === key, "a cut is not a revision: the 3-D view reads it every frame");
+    vs.step(5);
+    state = vs.get();
+    check(state.z === 17 && state.inspect.mode === "section", "a Z section moves with the plane");
+    check(vs.spec() === spec, `the tiles under the 3-D view stay on the plane it was entered from (${vs.spec()})`);
+    vs.set({ mode: "plane" });
+    check(vs.spec() === "z17", "and leaving 3-D comes back to the Z section's plane");
+    vs.set({ mode: "volume", inspect: { crop: { x: [1900, 100] } } });
+    check(vs.get().inspect.crop.x[0] === 100 && vs.get().inspect.crop.y[1] === 1500,
+          "a patch to one axis keeps the others, repaired");
+}
+
+// -- a 3-D view saved with a clip range opens cut to those planes -------------
+{
+    const vs = new ViewState("vol", { fetchImpl: fakeFetch({
+        "volume/vol/info": VOLUME,
+        "view_state/vol": { mode: "volume", z: 12, slab: { z0: 5, z1: 9, follow: false } } }) });
+    await vs.load({ search: "" });
+    const state = vs.get();
+    check(state.inspect.mode === "crop" && state.inspect.axes.z && state.inspect.crop.z.join() === "5,9",
+          `the old clip range becomes a Z crop (${JSON.stringify(state.inspect)})`);
+    const whole = new ViewState("vol", { fetchImpl: fakeFetch({
+        "volume/vol/info": VOLUME,
+        "view_state/vol": { mode: "volume", slab: { z0: 0, z1: 39, follow: false } } }) });
+    await whole.load({ search: "" });
+    check(whole.get().inspect.mode === "full", "and a range over every plane stays whole");
 }
 
 // -- a colour stack's planes are shown one at a time -------------------------

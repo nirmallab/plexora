@@ -70,7 +70,7 @@ def test_the_3d_view_keeps_its_textures():
     first time is fetched under its window and drawn; a channel new to the
     picture fades in, at once with motion off or for a capture
     (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 47)
+    _passed(_run("volume_renderer_probe.mjs"), 70)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
