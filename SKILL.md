@@ -3627,7 +3627,7 @@ deliberately left out and what should be built next.
   `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
   capability), `gating`, `qc` and `volume` (z-stacks, including the
   `surface_*` tools and `viewer_set_volume_mode`/`viewer_set_camera`/
-  `viewer_set_surface`), each a shared `_COMMON` set plus one kind of
+  `viewer_set_surface`/`viewer_set_inspect`), each a shared `_COMMON` set plus one kind of
   work's tools, because every tool's name, description and schema is sent on
   every turn (all capabilities are ~300k characters — a 129k-token prefix for a
   coordinator that called a dozen of them). The five server tools are always
@@ -5374,6 +5374,54 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   (`tests/js/gating_planes_probe.mjs`), and the `clip` checks in
   `tests/js/view_state_probe.mjs`.
 
+**Slice & Clip** (branch `feature/slice-clip`; the design, the controls and
+the testing notes are `docs/internal/3d/SLICE_CLIP.md`, the controls matrix
+`docs/internal/3d/VIEW_CONTROLS.md`). The 3-D view is cut open — cutaway,
+section, slab or crop — along any of X, Y and Z.
+
+- Client: `services/inspectGeometry.js` (`PlexoraInspectGeometry`, pure
+  maths: `resolve`/`toTexture`/`clean`/`describe`, in image units, plane k
+  spanning [k, k+1)); every consumer asks this one module.
+  `services/inspectState.js` (`PlexoraInspectState`; `window.PlexoraInspect`
+  built by `main.js` on a z-stack) is the only way a control changes the cut:
+  `preview` (redrawn from uniforms, nothing saved, `plexora:inspect-preview`),
+  `commit`/`set` (one undo entry each), `undo`/`redo`/`reset`.
+  `views/volumeDock.js` (`PlexoraVolumeDock`, the 3-D dock — the registry's
+  `dock` surface) and `views/volumeHandles.js` (`PlexoraVolumeHandles`, SVG
+  grips that drag the cut's faces and never turn the camera). `index.html`
+  loads inspectGeometry before `viewState.js` (which repairs `inspect` with
+  it), inspectState after it, and the dock and handles after
+  `volumeRenderer.js`.
+- View state: `inspect` (mode full/cutaway/section/slab/crop, axes, crop,
+  cutaway, slab thickness/composite, opacity, context, face, linkPanes) and
+  `volume.interpolation`; `viewState._migrate` opens a 3-D view saved with a
+  narrowed projection range as a Z crop. Server: `routes/volume_routes.py`
+  `normalize_inspect`, `INSPECT_MODES`, `INSPECT_COMPOSITES`,
+  `INTERPOLATIONS`, and the viewer pref `handles` (`normalize_handles`).
+- Renderer: `volumeRenderer.js`'s `u_clip_z`/`u_clip_xy` are gone; the box is
+  `u_box_lo/hi`, plus hole/plane/slab/cut-face uniforms (`cutSource`,
+  `sampleAt`, `cutPlanes`, `cutSlabs`, `cutFace`), set by `cutUniforms()`/
+  `bindCut()` from `inspectNow()`; `resolved()` and `addDrawListener()` are
+  new. `surfaceRenderer.js`'s `volumeFragment` gained one swap (the cut's
+  composite line), and its mesh shader is cut by the same box, corner,
+  section band and slabs, with flat caps on back faces.
+- Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`; FLAGS
+  `cut.*`, `axis.*`, `cut.noPlane`, `cut.noBand`; dock GROUPS and the `cut.*`
+  entries; `card.projection`; the 3-D rail config. `transition()` no longer
+  rewrites the slab on entering 3-D.
+- Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`,
+  `agentBridge.js` `set_inspect`); `viewer_set_z` takes `mode: "keep"`;
+  `describeVolumeView` reports inspect/cut/section/camera/show/box. Figure
+  Builder: `export.volume_cut(panel)` and `cut` in a 3-D panel's report.
+  Video Studio frames carry `view.inspect`/`view.section` (bounded by the
+  schema).
+- Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles}_probe.mjs`
+  (wrapped in `tests/test_view_state_client.py`, with the script-order and
+  `node --check` tests), cut checks in the view_state, volume_renderer,
+  view_controls, depth_strip, section_panes and video_studio_scene probes;
+  `test_volume_routes`, `test_agent_viewer_api`, `test_figure_builder_volume`,
+  `test_video_schema`. Bench scenario `clip` in `tools/bench3d`.
+
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
 licence split, renderer passes, measurements, merge notes — is
 `docs/internal/3d/SURFACES.md`, the user page `website/content/docs/viewer/
@@ -5433,8 +5481,8 @@ ordering, restyling and deleting one are the generic layer routes.
   persists `volume.camera {q, dist, pan}` and `volume.show {volume,
   surfaces}`, which the 3-D camera never was before.
 - Agent: `plexora/agent/core/surface.py` (the `surface_*` tools), viewer
-  commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`
-  (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
+  commands `viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_surface`,
+  `viewer_set_inspect` (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
   profile, skill `plexora/ai/skills/surface-rendering`.
 - Figure Builder: a capture taken in 3-D has `figureCaptureTool.grabPreview`
   draw the volume renderer again at print size (`snapshot({width, height})`),
@@ -5519,7 +5567,8 @@ a copy of any of them would drift.
   `available_tools` data; `toolLoader.js` binds each to `toggleTool` and
   marks `aria-pressed`); `paths.videos_root()`/`VIDEOS_DIRNAME`;
   `volumeRenderer.js` `pinSize`, `settled`, `whenSettled`, `renderFrame`,
-  `setClip` (x/y/z clipping, `u_clip_xy`), `trackFill`, `clipRangeZ`;
+  `setClip` (x/y/z clipping; it narrows the cut's `u_box_lo/hi`, never
+  widens it), `trackFill`, `clipRangeZ`;
   `viewerPrefs.js` `hold()` (motion off without saving); `planeMotion.js`
   `PlaneFade.idle()`, `NeighbourPrefetch.pause(on)`; `tileFetch.js` `idle()`
   and coarse-tile marking (`tile._plexoraCoarse` from
@@ -8348,6 +8397,21 @@ in **5.6 s**.
   under a revision, never on its own schedule; a late surface commits under
   the same revision and never over a newer one, because surfaces that each
   followed Z separately are what put the panes' z-line ahead of the plane.
+- **A cut is uniforms, not a revision; `inspect` is not in `revisionKey`.**
+  The renderer reads `PlexoraInspect.resolved()` every frame (`inspectNow` →
+  `cutUniforms`), because a cut must follow the hand with no swap behind it;
+  there are no new program variants, every mode is uniforms on the one shader
+  per channel count. The cut is part of the renderer's `cameraKey`, so it
+  never dissolves through the crossfade ghost.
+- **Every original `volumeFragment` anchor stays byte-identical; the cut adds
+  one swap.** `surfaceRenderer.volumeFragment` patches the ray caster's own
+  source and fails loudly when an anchor is missing, so a shader edit that
+  reworded an anchor would break surfaces in the probe rather than draw
+  something subtly wrong.
+- **The slab is the 2-D projection only.** `state.slab` no longer clips the
+  3-D view and entering 3-D no longer rewrites it; the 3-D view's planes are
+  `inspect`'s (a Z crop, section or slab), whose sections sit at `z` and
+  `section.x/y`, so the Z section in 3-D is the plane 2-D comes back to.
 - **The plane fade's ghost is opaque.** OSD's canvas is transparent wherever
   a channel is dim (the ground is CSS), so a ghost copied from it alone let
   the next plane show through and the sum overshot both — the brightness
