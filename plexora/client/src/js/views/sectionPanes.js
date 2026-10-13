@@ -1332,11 +1332,17 @@
                 this.setEnabled(wanted);
                 return;
             }
-            // [inspect] A pinned pane follows its section.
+            // [inspect] A pinned pane follows its section; the cut's guides
+            // follow the cut.
             const pinned = JSON.stringify(this.pinned());
             if (this.enabled && this.panes && pinned !== this._lastPinned) {
                 this._lastPinned = pinned;
                 this.follow(true);
+            }
+            const cut = JSON.stringify([state.inspect || null, state.section || null]);
+            if (this.enabled && this.panes && cut !== this._lastCut) {
+                this._lastCut = cut;
+                this.paintOverlays();
             }
             // Planes and frames reach the panes as revisions (prepare): the
             // z-line moves with the picture, not with the hand.
@@ -1364,6 +1370,52 @@
         }
     }
 
+    //: The cut's axes in the gizmo's colours (views/orientationGizmo.js).
+    const CUT_COLOURS = { x: "#e5484d", y: "#46a758", z: "#4c7cf0" };
+
+    /**
+     * [inspect] The 3-D view's cut drawn where a pane cuts it, while the panes
+     * follow the sections (`inspect.linkPanes`): a crop's or cutaway's box as
+     * a dashed outline, an X or Y section's plane (or a slab's two faces) as
+     * a line through every plane, a Z slab's faces across the pane. A Z
+     * section is the pane's own z-line already.
+     */
+    function cutGuides(viewState) {
+        return (query) => {
+            const state = viewState.get();
+            const inspect = state?.inspect;
+            const G = global.PlexoraInspectGeometry;
+            if (!G || !inspect?.linkPanes || !inspect.mode || inspect.mode === "full") return [];
+            const d = G.dims(viewState.info, viewState.depth);
+            const resolved = G.resolve(inspect, G.positions(state, d), d);
+            const along = query.axis === "xz" ? "x" : "y";
+            const width = along === "x" ? d.width : d.height;
+            // A plane boundary k in the painter's rows (it adds half a plane).
+            const row = (z) => z - 0.5;
+            const shapes = [];
+            if ((resolved.mode === "crop" || resolved.mode === "cutaway")
+                    && (resolved.axes.includes(along) || resolved.axes.includes("z"))) {
+                const [a0, a1] = resolved.box[along];
+                const [z0, z1] = resolved.box.z;
+                shapes.push({ color: "#f8fafc", lines: [[a0, row(z0), a1, row(z0), a1, row(z1), a0, row(z1),
+                                                         a0, row(z0)]] });
+            }
+            for (const plane of resolved.planes) {
+                const faces = plane.hi > plane.lo ? [plane.lo, plane.hi] : [plane.at];
+                if (plane.axis === along) {
+                    for (const v of faces) {
+                        shapes.push({ color: CUT_COLOURS[along], lines: [[v, row(0), v, row(d.depth)]] });
+                    }
+                } else if (plane.axis === "z" && plane.hi > plane.lo) {
+                    for (const v of faces) {
+                        shapes.push({ color: CUT_COLOURS.z, lines: [[0, row(v), width, row(v)]] });
+                    }
+                }
+            }
+            return shapes;
+        };
+    }
+
     /** Wire the panes to the viewer. Null for a single-plane stack (a time
      *  series of planes has no sections to cut). */
     function attach(viewState, options) {
@@ -1383,11 +1435,12 @@
             // only need drawing again -- in the same frame as the plane.
             handler.bind(lists.events.BRUSH_MOVE, () => panes.scheduleRedraw());
         }
+        panes.addOverlay("core:cut", cutGuides(viewState));
         panes.onState(viewState.get());
         return panes;
     }
 
-    global.PlexoraSectionPanes = { attach, SectionPanes, Pane };
+    global.PlexoraSectionPanes = { attach, SectionPanes, Pane, cutGuides };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraSectionPanes;
     }

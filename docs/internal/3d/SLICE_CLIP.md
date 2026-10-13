@@ -146,6 +146,10 @@ would show caps everywhere while cut.
   - Dragging previews and commits once. Esc cancels; a double-click resets the axis; arrows nudge
     a focused grip a voxel (Shift ten).
   - The handles' visibility and strength are viewer prefs (`handles`).
+- **The section panes**, back in 2-D with "Panes follow the sections" on: the XZ and YZ panes cut
+  at the X and Y sections, and the crosshair is drawn in the accent and can be dragged. The panes
+  also draw the 3-D cut where they cut it (`cutGuides`): a crop's or cutaway's box as a dashed
+  outline, X/Y planes and slab faces as lines.
 - **Keys.** The 3-D view's X/Y/Z lock works over the dock and the handles too (`engaged()`), and
   Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z undo and redo a cut there.
 

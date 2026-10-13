@@ -307,6 +307,31 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
     box.requestAnimationFrame = () => 0;
 }
 
+// -- the 3-D view's cut, drawn where the panes cut it (sectionPanes.cutGuides) ----
+{
+    runInContext(readFileSync(join(JS, "services/inspectGeometry.js"), "utf8"), box);
+    const G = box.PlexoraInspectGeometry;
+    const d = G.dims({ width: 2000, height: 1000 }, 40);
+    let state = { z: 12, section: { x: 500, y: 250 }, inspect: G.clean({ mode: "crop", axes: { x: true, z: true },
+        crop: { x: [200, 1200], z: [4, 9] } }, d) };
+    const vs = { depth: 40, info: { width: 2000, height: 1000 }, get: () => state };
+    const guides = box.PlexoraSectionPanes.cutGuides(vs);
+    check("no guides unless the panes follow the 3-D view's sections", guides({ axis: "xz", at: 250 }).length === 0);
+    state = { ...state, inspect: { ...state.inspect, linkPanes: true } };
+    const box2 = guides({ axis: "xz", at: 250 });
+    check("a crop is its box in the XZ pane, a dashed outline",
+          box2.length === 1 && JSON.stringify(box2[0].lines[0].slice(0, 4)) === JSON.stringify([200, 3.5, 1200, 3.5]),
+          JSON.stringify(box2));
+    state = { ...state, inspect: G.clean({ mode: "slab", axes: { x: true, z: true }, linkPanes: true,
+                                           slab: { thickness: { x: 20, z: 4 } } }, d) };
+    const slab = guides({ axis: "xz", at: 250 });
+    check("an X slab's two faces through every plane, a Z slab's two faces across the pane",
+          slab.filter((s) => s.color === "#e5484d").length === 2 && slab.filter((s) => s.color === "#4c7cf0").length === 2,
+          JSON.stringify(slab));
+    check("the YZ pane shows no X plane (it is parallel to it)",
+          guides({ axis: "yz", at: 500 }).every((s) => s.color !== "#e5484d"));
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);
