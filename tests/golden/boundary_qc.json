@@ -441,7 +441,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261013_compact_popover",
-        "/client/src/css/viewer.css?v=20261013_compact_popover",
+        "/client/src/css/viewer.css?v=20261013_dock_visibility",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -862,7 +862,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261013_compact_popover",
-        "/client/src/css/viewer.css?v=20261013_compact_popover",
+        "/client/src/css/viewer.css?v=20261013_dock_visibility",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",

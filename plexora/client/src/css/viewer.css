@@ -4335,7 +4335,10 @@ body.sidebar-collapsed .viewer-shell,
     transition: clip-path var(--duration-base) var(--ease-standard),
                 opacity var(--duration-fast) var(--ease-standard),
                 visibility 0s;
-    visibility: visible;
+    /* `inherit`, never `visible`: an explicit value would punch through the
+       router's inherited `visibility: hidden` on #container and leave the
+       panel over whatever page replaced the viewer (test_app_router). */
+    visibility: inherit;
 }
 
 .plx-reduced-motion .volume-dock {
