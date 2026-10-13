@@ -71,6 +71,9 @@ CORE_QUESTIONS = frozenset({
     # a loose mask or table matches no sample's filename and there is more
     # than one sample it could belong to.
     "sample-for",
+    # Carries the image's path after a colon. Asked when a picked folder's
+    # subfolders hold several masks of an image's exact shape.
+    "mask-for",
     # Which Visium HD bin level -- or the segmented cells -- is the table.
     "bin-size",
     # Whether a large flat multiplex image gets a pyramidized copy. Put as a

@@ -13,9 +13,13 @@
  * store picked here brings its transcripts, its mask and its table with it,
  * and lands in the viewer with the layer stack already built.
  *
- * What this page deliberately does NOT do is ask questions. A pick that makes
- * several samples, or wants a name or a dataset chosen first, is a decision,
- * and decisions belong in the dialog -- which is what the footer link opens.
+ * What this page deliberately does NOT do is ask questions -- and it does not
+ * guess either. It reads the pick first (`uncertainty`): one sample with
+ * nothing to decide opens in the same press; several samples, any question,
+ * a warning or a file it could not read opens the import dialog on what was
+ * read, because the POST would otherwise take every default unseen and keep
+ * only the first sample. A name or a dataset is a decision too, which is what
+ * the footer link's dialog is for.
  *
  * The card is one question asked in reading order:
  *
@@ -333,23 +337,37 @@ PlexoraPage.register(function () {
 
     // -- the import ---------------------------------------------------------
 
-    /** Whether importing `path` would put a confirmation to the user. One
-     *  inspection, header reads only; any failure means "no", and the POST
-     *  reports it as it always has. */
-    async function needsConfirmation(path) {
-        if (!window.PlexoraImportSample?.open) return false;
+    /**
+     * The proposal for `path` when one press cannot honestly import it, else
+     * null. One inspection, header reads only; any failure means null, and
+     * the POST reports it as it always has.
+     *
+     * This page is for the case with nothing to decide. Anything else is a
+     * guess the POST would make silently -- the first of two samples and the
+     * other one dropped, the default of a question nobody saw, a file left
+     * out with a warning nobody read -- so it goes to the dialog, which shows
+     * the guess and lets it be corrected. A pick with nothing readable in it
+     * is not one of these: the POST says why, on this card.
+     */
+    async function uncertainty(path) {
+        if (!window.PlexoraImportSample?.open) return null;
         try {
             const response = await fetch(plexoraUrl("import/inspect"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({paths: [path]}),
             });
-            if (!response.ok) return false;
+            if (!response.ok) return null;
             const proposal = await response.json();
-            return (proposal.samples || []).some((sample) =>
-                (sample.questions || []).some((question) => question.kind === "confirm"));
+            const samples = proposal.samples || [];
+            if (!samples.length) return null;
+            const uncertain = samples.length > 1
+                || samples.some((sample) => (sample.questions || []).length > 0)
+                || (proposal.warnings || []).length > 0
+                || (proposal.unrecognised || []).length > 0;
+            return uncertain ? proposal : null;
         } catch (error) {
-            return false;
+            return null;
         }
     }
 
@@ -376,13 +394,15 @@ PlexoraPage.register(function () {
         phase = "loading";
         paint();
         try {
-            // A flat image large enough to need a pyramid is a decision -- and
-            // minutes of building -- that this one-press card must not make
-            // silently. The import dialog asks it and shows each step.
-            if (await needsConfirmation(path)) {
+            // Anything this one-press card would have to guess -- several
+            // samples, a question, a file left out, a flat image needing
+            // minutes of pyramid building -- goes to the import dialog, handed
+            // what was just read so it opens on it rather than reading again.
+            const proposal = await uncertainty(path);
+            if (proposal) {
                 phase = "idle";
                 paint();
-                window.PlexoraImportSample.open({paths: [path]});
+                window.PlexoraImportSample.open({paths: [path], proposal});
                 return;
             }
             const response = await fetch(plexoraUrl("import/sample"), {

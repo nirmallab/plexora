@@ -310,6 +310,24 @@ def _register_reference(name, reference, frame, layers, answers=None):
                                      pyramidize=pyramidize)
 
 
+def _name_reference_channels(name, reference):
+    """Rename the image's channels to the channel list picked with it.
+
+    After registration and through `rename_channels` -- what the viewer's
+    channel-names upload calls -- rather than as `channel_names=` to the
+    registration: the conversion counts the channels itself, and a count that
+    disagrees with the header detection read (a focus stack kept as one plane)
+    would refuse the whole import over a list of names. Here it only leaves
+    the image with the names it carries.
+    """
+    from plexora.datasource import rename_channels
+
+    try:
+        rename_channels(name, list(reference.channel_names))
+    except ValueError:
+        pass
+
+
 #: What a registered greyscale image layer is drawn in until somebody says
 #: otherwise. A neutral blue-grey, chosen the way a channel's first colour is:
 #: legible on the dark ground a fluorescence composite is drawn on, and not one
@@ -563,6 +581,8 @@ def _register(final, created, proposal, answers, layers, reference, mask,
             step(reference.id, "Preparing the image")
         _register_reference(final, reference, proposal.frame, layers,
                             answers=answers)
+        if reference is not None and reference.channel_names:
+            _name_reference_channels(final, reference)
         if reference is not None:
             step(reference.id, status="ready")
 

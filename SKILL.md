@@ -5979,7 +5979,8 @@ control instead — see "The dialog's `pick` state is one vertical run" below.
 
 **The dialog's `pick` state is one vertical run**, and the only surface built
 this way — every other field still gets a mode `"any"` browse control inside
-its own row. `views/importSample.js`'s `renderPick()` is, top to bottom: the
+its own row, except a proposal card's compact add row, whose Browse is a
+file/folder split (see "A card's add row is one line" below). `views/importSample.js`'s `renderPick()` is, top to bottom: the
 where-row — a direct child of the `<dialog>`, not of the body, because
 `renderProposal`/`renderImporting` clear the body with `innerHTML` and would
 tear the mounted switch out from under itself — carrying a "Data location"
@@ -12009,7 +12010,7 @@ file.
 list that gets rebuilt on every inspection, and `SampleProposal.missing` is
 which of `("mask", "table")` it lacks. The card draws one "+ Add segmentation
 mask" / "+ Add data" / "+ Add layer" action per missing role
-(`renderCardActions`), opening a picker INSIDE the card (`renderInlinePick`)
+(`renderCardActions`), opening a compact row INSIDE the card (`renderInlinePick`)
 rather than a modal over it, because which sample the file joins is the one
 thing the user must not have to remember. Answering it rides two new keys in
 `answers`, read by `_declared()`/`_attached()`: `added-as:<basename>` (mask/
@@ -12031,6 +12032,39 @@ disagrees with `proposal.samples[index].key`, because `index` alone is a
 position in a list this call has just rebuilt and would happily register
 whatever now sits there; `/import/sample` passes it.
 
+**A card's add row is one line, not the first-pick control.** It used to be
+`buildPickControl` -- File | Folder, a 46px field, format chips, "What's
+supported" -- inside the card; it is now the dialog's one machine chip moved
+into a 40px field, a path input, a clear ×, and one fixed-width (118px) action
+slot whose `data-face` is browse | load | busy | retry, because the card has
+already said which sample and as what, and a slot that never changes width
+keeps the path box still. `buildPickControl` is now the `pick` state's alone.
+Browse is a split: the face calls `pickWith("file")`, the chevron opens a
+fixed-position `plx-import-browse-menu` (`openBrowseMenu`/`closeBrowseMenu`/
+`buildBrowseMenu`; fixed because the scrolling body would clip it) with Choose
+file / Choose folder -- never mode `"any"`. A browsed path is read at once
+(`pickWith`'s `onPicked` calls `submitSlot(path, "browse", intent)`), because
+choosing it in the system's browser was the confirmation; a typed or pasted
+path shows Load, and Load or Enter calls `submitSlot(typed, "typed", …)`.
+`state.addFlight` (`{path, origin, intent, address, isNew}`) holds the pick
+while the server reads it: the slots, Import and "Add more samples" are
+disabled and a second submit is ignored, because Import pressed then would
+leave the file behind. `inspect()` then calls `landFlight()` (closes the row,
+lights the new rows `.is-arrived`, says "Added X to Y.", focus back to the
+card's slot) or, on a server failure, `failFlight()` (drops the pick if it was
+new, reopens the row holding the path and the reason); a detection refusal
+still goes through `bouncePendingPick`, which also clears `addFlight`. While
+it reads, the status line is `setStatus(msg, false, true)` → `.is-quiet`
+(opacity 0), so a screen reader hears it and nobody sees the row's news
+twice. `startFor(intent)` passes the folder of the sample's first pick on the
+machine being browsed as `browseForPath`'s `start` (honoured by the desktop
+shell's dialog and the listing fallback, not the server's native one).
+`rememberWhere()`/`restoreWhere()` (module `lastWhere` plus localStorage
+`plexora.import.where`) open the next dialog on the remote machine the last
+successful pick came from -- only while that place is still up in
+`PlexoraRemotes`' snapshot, because a default nobody can browse must be
+noticed and undone.
+
 The name/dataset row at the foot of a card is gone; `renderCardHead` draws
 name and dataset as a muted inline-editable line at the top instead
 (`editName`, `chooseDataset`), because both values arrive already filled in
@@ -12039,6 +12073,54 @@ and a form is the wrong weight for a correction. And the dialog now posts
 each POST carrying its own `index` and `key`) -- it used to post once no
 matter how many sample cards were on screen, so "Import 3 samples" silently
 created one project and dropped the other two.
+
+**A picked pipeline folder (2026-10-13).** Pointing the dialog at an mcmicro-
+style folder (`LSP11385.ome.tif`, `LSP11385_rv.ome.tif`,
+`LSP11385--mccellpose_cell.csv`, `markers.csv`, `mccellpose-LSP11385/cell.ome.tif`)
+used to propose `markers.csv` as a second cell table, ask which sample the CSV
+belonged to, and find no mask. In `import_proposal.py` now:
+- A delimited file whose header has `marker_name` (`MARKER_SHEET_COLUMN`), or a
+  one-column `markers.csv`, is a channel list (`_marker_sheet`, read through
+  `channel_file`), never a table: a `role="channels"` row taken out in
+  `inspect_paths` and applied by `_name_channels` to every sample's reference
+  whose channel count matches, nearest folder first (`_panel_for`). It wins over
+  the OME names; `import_sample._name_reference_channels` renames after
+  registration via `datasource.rename_channels`. A wrong-length list is a
+  warning, never applied.
+- `_masks_below` searches a plain folder's subfolders (`MASK_SEARCH_DEPTH` = 4,
+  `MASK_SEARCH_LIMIT` = 1000 entries; no hidden or store folders) for a mask of
+  an image's exact width × height that reads as ids. It belongs to the image
+  whose stem its PATH carries as a whole word, longest wins (`_named_owner`);
+  a candidate naming no image goes only to the one lacking image of its size.
+  `_mask_rank`: whole cell, then other, then nuclei. A Plexora label pyramid
+  beside its source is dropped (`_without_mask_copies`). The row carries
+  `found_for` (the image's src), which grouping and `_best_sample` follow
+  instead of its stem; several candidates ask `mask-for:<image src>` (options
+  plus "none", which moves the question to the card's scope).
+- `_best_sample` prefers a sample whose whole stem LEADS the filename as a word
+  (`_starts_with_word`), so `LSP11385--…` no longer ties with `LSP11385_rv`.
+- A row out of a picked FOLDER is asked `sample-for:<its own src>` and the
+  answer is read in `_place` (`_from_inside_a_folder`); it was filed under the
+  folder, so it was ignored. `Question.about` keeps a folder's per-row questions
+  on their own card.
+- A table row says `202k rows × 50 columns · csv` (`_table_size`: header and line
+  breaks, cached by path/size/mtime; estimated with "~" past
+  `TABLE_COUNT_LIMIT` = 1 GiB; an `.h5ad`'s X shape).
+- `looks_like_label_image` reads its 512² corner through `aszarr`
+  (`_tiff_corner`), not `pages[0].asarray()` -- 3 s and gigabytes per
+  slide-sized mask, now ~17 ms.
+In the dialog: a row's path is the name's hover title (no path line);
+`questionsUnder` puts a question under the row whose `needs` hold it when two
+rows share an id; a ✓ (`settleButton`) beside any question with a default
+records it as an answer and folds it to one line (`state.settled`,
+`renderSettled`); the first read is one sentence -- "Reading X…" with the
+agent's orb at 20 px (`readingOrb`, `searching`) -- over the card in outline
+(`readingSkeleton`, rows at the real 54 px). `services/orbDriver.js` moved from
+`index.html` to `base.html` for it. `open({paths, proposal})` (`showRead`) draws
+a proposal the caller already read: the home page's `uncertainty(path)` opens
+the dialog on it for several samples, any question, a warning or an
+unrecognised file, because `/import/sample` alone takes every default and keeps
+only the first sample.
 
 New `tests/test_import_dialog.py` (source-grep, companion to
 `test_import_help.py`: no DOM in this suite, so what is pinned is the shape of

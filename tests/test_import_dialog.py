@@ -47,6 +47,17 @@ CARD_CLASSES = (
     "plx-import-card-actions",
     "plx-import-slot",
     "plx-import-inline-pick",
+    "plx-import-compact-row",
+    "plx-import-compact-clear",
+    "plx-import-compact-action",
+    "plx-import-compact-split",
+    "plx-import-compact-browse",
+    "plx-import-compact-more",
+    "plx-import-compact-load",
+    "plx-import-compact-word",
+    "plx-import-compact-busy",
+    "plx-import-spinner",
+    "plx-import-browse-menu",
     "plx-import-back",
     "plx-import-steps-head",
     "plx-import-substeps",
@@ -204,19 +215,103 @@ def test_the_question_gate_is_still_the_one_line_it_was(dialog):
     assert 'part("go").disabled = !importable;' in dialog
 
 
-def test_both_pick_surfaces_are_the_one_home_style_control(dialog):
-    """The pick state and the inline picker inside a card are the same
-    control -- the home page's card: File | Folder, one field with the machine
-    chip, Browse/Add -- with the format examples of the slot that opened it,
-    not a second file-choosing control with its own manners."""
+def test_the_first_pick_is_the_home_style_control(dialog):
+    """The pick state -- the dialog's first question, before anything is on
+    screen -- is the home page's card: File | Folder, one field with the
+    machine chip, Browse/Add, format chips. Only there: a card's own "Add …"
+    row is the compact one below, because by then the card has already said
+    which sample and as what."""
     opened = re.findall(r"buildPickControl\(\{\s*examples: ([^,]+),", dialog)
-    assert opened == ['"sample"', "spec.examples"], opened
+    assert opened == ['"sample"'], opened
     assert "buildSplitControl(" not in dialog
     css = _read(MAIN_CSS)
     for rule in (".plx-import-kind-thumb {", ".plx-import-field {",
                  ".plx-import-machine {", ".plx-import-browse {",
                  ".plx-import-chip {", ".plx-import-menu {"):
         assert rule in css, rule
+
+
+def _inline_pick(dialog):
+    start = dialog.index("function renderInlinePick(sample)")
+    return dialog[start:dialog.index("function browseMenuOpen()", start)]
+
+
+def test_a_cards_add_row_is_one_line_with_nothing_repeated(dialog):
+    """Adding a mask to a sample already on screen used to open the whole
+    first-pick control inside the card -- File | Folder, a 46px field, a row of
+    format chips and "What's supported" -- 174px for a question the card had
+    already half answered. It is now one row: the dialog's own machine chip,
+    the path, and one action slot."""
+    row = _inline_pick(dialog)
+    assert "buildPickControl" not in row
+    for gone in ("plx-import-kind", "plx-import-chip", "plx-import-supported",
+                 "plx-import-formats"):
+        assert gone not in row, gone
+    assert "field.appendChild(state.machine.button);" in row
+    css = _read(MAIN_CSS)
+    assert ".plx-import-inline-pick .plx-import-field {\n    height: 40px;" in css
+    # One fixed-width slot, four faces, so the path box never changes width.
+    assert ".plx-import-compact-action {\n    display: flex;\n    flex: 0 0 auto;\n    width: 118px;" in css
+    for face, part in (("browse", "split"), ("load", "load"),
+                       ("retry", "load"), ("busy", "busy")):
+        assert (f'.plx-import-inline-pick[data-face="{face}"] '
+                f".plx-import-compact-{part}") in css, face
+
+
+def test_a_browsed_file_is_read_at_once_and_a_typed_one_waits_for_load(dialog):
+    """Choosing a file in the system's own browser IS the confirmation, so a
+    card's pick goes straight to `submitSlot` and never through the box's
+    input event -- which is the only thing that shows Load. A typed or pasted
+    path shows Load, and is read on Load or Enter."""
+    picked = dialog[dialog.index("function pickWith(mode)"):dialog.index("function startFor(intent)")]
+    assert 'if (intent) submitSlot(path, "browse", intent);' in picked
+    row = _inline_pick(dialog)
+    assert 'setFace(input.value.trim() ? "load" : "browse");' in row
+    assert 'if (typed) submitSlot(typed, "typed", adding);' in row
+    assert 'browse.addEventListener("click", () => pickWith("file"));' in row
+    # And the menu behind the arrow is the other kind, never "any" -- which
+    # would raise the "file or folder?" popup a second time.
+    assert 'pickWith("directory")' in dialog
+    assert 'pickWith("any")' not in dialog
+
+
+def test_one_card_pick_is_read_at_a_time(dialog):
+    """A second Load, a second Enter, a slot pressed meanwhile or Import
+    pressed before the mask has landed would each send something the screen
+    does not show yet."""
+    submit = dialog[dialog.index("function submitSlot(path, origin, intent)"):]
+    assert "if (!typed || !state || !intent || state.addFlight) return;" in submit
+    assert "button.disabled = Boolean(state.addFlight);" in dialog
+    assert ('if (state.addFlight) {\n            part("go").disabled = true;\n'
+            '            part("add").disabled = true;') in dialog
+
+
+def test_a_card_pick_that_fails_keeps_its_path_and_says_why(dialog):
+    """Refused by detection (`bouncePendingPick`) or by the server falling
+    over (`failFlight`): either way the row reopens holding the path, the
+    reason under it, and the pick is taken back out so Import cannot carry
+    it."""
+    inspect = dialog[dialog.index("async function inspect()"):dialog.index("function landFlight()")]
+    assert "if (failFlight(error.message)) return;" in inspect
+    fail = dialog[dialog.index("function failFlight(message)"):]
+    assert "state.picks = state.picks.filter((pick) => pick !== flight.address);" in fail
+    assert "state.addError = {typed: flight.path," in fail
+    bounce = dialog[dialog.index("function bouncePendingPick("):]
+    assert "state.addFlight = null;" in bounce[:bounce.index("return true;")]
+    row = _inline_pick(dialog)
+    assert 'setFace(refused.typed ? "retry" : "browse");' in row
+    assert '"plx-import-path-error"' in row
+
+
+def test_the_next_dialog_opens_on_the_machine_the_last_pick_came_from(dialog):
+    """A slide on hpc has its mask on hpc. Remembered only once a pick has
+    actually read, and offered only while that machine is still up."""
+    assert "restoreWhere();" in dialog[dialog.index("function mountLocation()"):]
+    inspect = dialog[dialog.index("async function inspect()"):dialog.index("function landFlight()")]
+    assert "rememberWhere();" in inspect
+    restore = dialog[dialog.index("function restoreWhere()"):]
+    assert 'if (!place || !(place.kind === "server" || place.node)) return;' in restore
+    assert "if (state !== owner || !state.location.isLocal()) return;" in restore
 
 
 def test_a_pasted_path_that_cannot_be_read_is_said_beside_its_box(dialog):
@@ -281,10 +376,33 @@ def test_each_card_keeps_its_own_muted_outline_while_the_dialog_is_open(dialog):
 def test_a_row_named_by_its_role_still_says_which_file(dialog):
     """Two cards that each say "Segmentation mask" give no way to check that
     sample 2's mask is sample 2's -- mcmicro names them all the same, so the
-    tail of the path is shown, read from the PICK rather than `src`."""
+    tail of the path is shown. The row's own file when `src` is a local path
+    (a picked FOLDER is the same pick for every row in it, so two tables both
+    read "…/LSP11385"); the PICK otherwise, since a node row's `src` is a
+    derived id. On hover of the row's name: a path line under every mask and
+    table was a third line per row that almost nobody read."""
     assert "function fileHint(layer)" in dialog
-    assert 'String(pickOf(layer) || layer.src || "")' in dialog
-    assert ".plx-import-row-file" in _read(MAIN_CSS)
+    assert "const full = local ? src : String(pickOf(layer) || src);" in dialog
+    assert "if (file) nameLine.title = file.full;" in dialog
+    assert ".plx-import-row-file" not in dialog
+
+
+def test_a_question_with_a_default_can_be_put_away_with_a_tick(dialog):
+    """✓ beside the control says "what it shows is right": the value is
+    recorded as an answer -- so registration does not mark it unresolved --
+    and the question shrinks to one line with a way back. Never on the one
+    question with no default, where there is nothing yet to confirm."""
+    render = dialog[dialog.index("function renderQuestion(question, sample)"):]
+    assert "if (!unanswered && state.settled[question.id])" in render
+    assert "if (!unanswered) control.appendChild(settleButton(" in render
+    settle = dialog[dialog.index("function settleButton(question, read)"):]
+    assert "state.answers[question.id] = read();" in settle
+    assert "state.settled[question.id] = true;" in settle
+    settled = dialog[dialog.index("function renderSettled(question, current)"):]
+    assert "delete state.settled[question.id];" in settled
+    css = _read(MAIN_CSS)
+    assert ".plx-import-settle {" in css
+    assert ".plx-import-settled-mark {" in css
 
 
 def test_the_dialog_scrolls_with_plexoras_scrollbar_not_the_platforms(dialog):
@@ -335,3 +453,43 @@ def test_what_the_post_finished_stays_finished(dialog):
     from its own answer rather than flipping back."""
     finish = dialog[dialog.index("function finishSamples(results, at)"):]
     assert 'paintLine(state.bars?.get(`${sampleAt}:${entry.id}`), {status: "ready"});' in finish
+
+
+def test_the_first_read_says_reading_once(dialog):
+    """It said it three times -- the subtitle, the body and the status line
+    each "Reading…" or "Looking at what is there…". The subtitle names what is
+    being read; the body holds no words; the status line is for a screen
+    reader until there is a proposal on screen to be re-read."""
+    assert '"plx-import-empty"' not in dialog
+    assert '`Reading ${basename(picks[0]) || "the files"}`' in dialog
+    assert 'setStatus("Looking at what is there…", false, !state.proposal);' in dialog
+
+
+def test_the_first_read_is_the_card_in_outline_and_an_orb_the_size_of_its_line(dialog):
+    """A 120 px orb in the middle of the dialog was oversized, and a graphic
+    that gives way to a layout makes the dialog jump when the answer lands.
+    So the agent panel's orb sits at its chip size in front of "Reading …",
+    and the body holds one sample card in outline -- the card's own classes,
+    rows at the real rows' height -- for the real card to replace in place.
+    Shapes only: a placeholder that said "Mask" would claim a file nobody has
+    read. The orb stops whenever the dialog redraws; base.html loads its
+    driver, because the dialog opens from the home page and the library as
+    well as the viewer."""
+    assert "body.appendChild(readingSkeleton());" in dialog
+    skeleton = dialog[dialog.index("function readingSkeleton()"):]
+    skeleton = skeleton[:skeleton.index("\n    }\n")]
+    assert 'el("div", "plx-import-sample plx-import-skeleton")' in skeleton
+    assert 'card.setAttribute("aria-hidden", "true");' in skeleton
+    orb = dialog[dialog.index("function readingOrb()"):]
+    assert 'state: "searching", size: 20, tint: accentColour(), dark: true,' in orb
+    subtitle = dialog[dialog.index("function paintSubtitle()"):]
+    assert "line.appendChild(readingOrb());" in subtitle
+    render = dialog[dialog.index("    function render(phase) {"):]
+    assert render.index("stopReadingOrb();") < render.index("state.phase = phase;")
+    css = _read(MAIN_CSS)
+    assert ".plx-import-skeleton .plx-import-row {\n    min-height: 54px;" in css
+    assert ".plx-import-reading-orb {" in css
+    assert "@media (prefers-reduced-motion: reduce) {\n    .plx-import-bone { animation: none; }" in css
+    base = _read(CLIENT / "templates" / "base.html")
+    assert base.index("/orbDriver.js?v=") < base.index("/importSample.js?v=")
+    assert "/orbDriver.js?v=" not in _read(CLIENT / "templates" / "index.html")

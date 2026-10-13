@@ -6618,20 +6618,6 @@ dialog .file-source .data-location-place {
     color: var(--text-primary);
 }
 
-/* The file behind a row whose label is a role ("Segmentation mask"): the
-   tail of its path, muted and monospaced so it reads as a path and not as
-   more description. Truncated from the LEFT by the text itself (`…/`), since
-   the end is the part that differs. */
-.plx-import-row-file {
-    color: var(--text-muted);
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 11px;
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 /* "Use for all", beside a dataset that differs from the other cards'. A
    link-weight action, the size of the metadata it sits in: it is a shortcut,
    and the card's title line must still read as one sentence about a sample. */
@@ -6729,9 +6715,20 @@ dialog .file-source .data-location-place {
     padding: 4px var(--space-2);
 }
 
-.plx-import-slot:hover {
+.plx-import-slot:hover:not(:disabled) {
     border-color: var(--accent-channel);
     color: var(--text-primary);
+}
+
+.plx-import-slot:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+/* Held while a card's pick is being read. */
+.plx-import-slot:disabled {
+    cursor: default;
+    opacity: 0.55;
 }
 
 .plx-import-slot .fas {
@@ -6748,14 +6745,349 @@ dialog .file-source .data-location-place {
 
 /* The picker, INSIDE the card. Which sample a file joins is the one thing the
    user must not have to remember, and a modal picker takes it off the screen
-   at the moment they choose -- so the card stays put and the row opens under
-   the slot that asked for it. */
+   at the moment they choose -- so the card stays put and ONE row opens under
+   the slot that asked for it (`renderInlinePick` in importSample.js):
+
+       [Local ▾ | Paste a file or folder path…   ✕] [Browse | ▾]
+
+   No divider and no panel of its own: it continues the slot strip above it,
+   so it reads as that slot's answer box rather than as a second form. The
+   right-hand action is one fixed-width slot with four faces -- browse, load,
+   retry, busy -- so the path box never changes width under the cursor. */
 .plx-import-inline-pick {
-    border-top: 1px solid var(--border-subtle);
+    padding: 0 var(--space-3) 10px;
+}
+
+.plx-import-inline-pick.is-entering {
+    animation: plx-import-compact-in 200ms var(--plx-import-ease-out);
+}
+
+@keyframes plx-import-compact-in {
+    from { opacity: 0; transform: translateY(-4px); }
+}
+
+.plx-import-compact-row {
     display: flex;
-    flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-3);
+}
+
+.plx-import-inline-pick .plx-import-field {
+    height: 40px;
+}
+
+.plx-import-inline-pick.is-over .plx-import-field {
+    background: rgba(5, 7, 10, 0.75);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.plx-import-inline-pick.is-refused .plx-import-field {
+    border-color: var(--accent-danger);
+}
+
+.plx-import-inline-pick.is-refused .plx-import-field:focus-within {
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
+}
+
+.plx-import-inline-pick .plx-import-machine {
+    font-size: 12px;
+    height: 28px;
+    margin: 0 8px 0 5px;
+}
+
+.plx-import-inline-pick .plx-import-input {
+    font-size: 13px;
+    padding-right: 6px;
+}
+
+.plx-import-inline-pick .plx-import-input::placeholder {
+    font-size: 13.5px;
+}
+
+/* Being read: the path stays where it was typed or browsed to, quieter, so
+   it is plainly what the spinner beside it is about. */
+.plx-import-inline-pick .plx-import-input[readonly] {
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+/* Clear, inside the box at its end -- only while there is something in it to
+   clear, and not while it is being read. */
+.plx-import-compact-clear {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    margin-right: 6px;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    width: 26px;
+}
+
+.plx-import-compact-clear:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.plx-import-compact-clear:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.plx-import-inline-pick[data-face="browse"] .plx-import-compact-clear,
+.plx-import-inline-pick[data-face="busy"] .plx-import-compact-clear {
+    display: none;
+}
+
+/* The action slot and its four faces. */
+.plx-import-compact-action {
+    display: flex;
+    flex: 0 0 auto;
+    width: 118px;
+}
+
+.plx-import-compact-split,
+.plx-import-compact-load,
+.plx-import-compact-busy {
+    display: none;
+}
+
+.plx-import-inline-pick[data-face="browse"] .plx-import-compact-split,
+.plx-import-inline-pick[data-face="load"] .plx-import-compact-load,
+.plx-import-inline-pick[data-face="retry"] .plx-import-compact-load,
+.plx-import-inline-pick[data-face="busy"] .plx-import-compact-busy {
+    display: flex;
+}
+
+/* Browse | ▾ -- one glass control split by a hairline: the face opens a file
+   (the common case, so a mask is Browse and a double-click), the arrow
+   offers a folder as well. */
+.plx-import-compact-split {
+    background: linear-gradient(180deg, rgba(31, 40, 53, 0.92) 0%, rgba(18, 24, 32, 0.92) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-md);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 1px 2px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.plx-import-compact-split:hover {
+    border-color: rgba(255, 255, 255, 0.24);
+}
+
+.plx-import-compact-browse,
+.plx-import-compact-more {
+    align-items: center;
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    justify-content: center;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-import-compact-browse {
+    flex: 1 1 auto;
+    font-size: 13px;
+    font-weight: 600;
+    gap: 7px;
+    min-width: 0;
+    padding: 0 6px 0 10px;
+}
+
+.plx-import-compact-browse svg {
+    color: var(--accent-channel);
+}
+
+.plx-import-compact-more {
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    color: var(--text-muted);
+    flex: 0 0 28px;
+    font-size: 10px;
+}
+
+.plx-import-compact-more svg {
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.plx-import-compact-more[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+}
+
+.plx-import-compact-browse:hover:not(:disabled),
+.plx-import-compact-more:hover:not(:disabled),
+.plx-import-compact-more[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.plx-import-compact-browse:focus-visible,
+.plx-import-compact-more:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.plx-import-compact-browse:disabled,
+.plx-import-compact-more:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+/* Load: the one place this row spends the accent, because it is the one
+   thing left to press. Near-black text on the cyan, as the footer's primary. */
+.plx-import-compact-load {
+    align-items: center;
+    background: linear-gradient(180deg, #5cc9fb 0%, var(--accent-channel) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.9);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    color: #05070a;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    justify-content: center;
+    transition: box-shadow var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.plx-import-compact-load:hover {
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 6px 18px -8px rgba(56, 189, 248, 0.6);
+}
+
+.plx-import-compact-load:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-import-compact-word {
+    align-items: center;
+    display: none;
+    gap: 7px;
+}
+
+.plx-import-inline-pick[data-face="load"] .plx-import-compact-word.is-load,
+.plx-import-inline-pick[data-face="retry"] .plx-import-compact-word.is-retry {
+    display: inline-flex;
+}
+
+/* Retry is calm glass, not the accent: the same path read again usually gets
+   the same answer, and a loud button would invite exactly that press. */
+.plx-import-inline-pick[data-face="retry"] .plx-import-compact-load {
+    background: linear-gradient(180deg, rgba(31, 40, 53, 0.92) 0%, rgba(18, 24, 32, 0.92) 100%);
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.plx-import-inline-pick[data-face="retry"] .plx-import-compact-load svg {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Being read: a spinner where the button was, the same size, so nothing
+   moves; the button is gone, so there is nothing to press twice. */
+.plx-import-compact-busy {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    gap: 8px;
+    justify-content: center;
+    width: 100%;
+}
+
+.plx-import-spinner {
+    animation: plx-import-spin 0.8s linear infinite;
+    border: 2px solid rgba(56, 189, 248, 0.22);
+    border-radius: 50%;
+    border-top-color: var(--accent-channel);
+    flex: 0 0 auto;
+    height: 14px;
+    width: 14px;
+}
+
+@keyframes plx-import-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Why it could not be read, directly under the box that still holds it. */
+.plx-import-inline-pick .plx-import-path-error {
+    align-items: baseline;
+    display: flex;
+    gap: 6px;
+    margin: 6px 0 0 2px;
+}
+
+.plx-import-inline-pick .plx-import-path-error svg {
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+.plx-import-inline-pick .plx-import-machine-status .data-location-status {
+    font-size: 12px;
+    padding-top: 6px;
+}
+
+/* A card's Browse menu: the machine menu's look, at its two items' width. */
+.plx-import-browse-menu {
+    min-width: 168px;
+    transform-origin: 100% 0;
+}
+
+/* A file just added from a card's row, on the render that first shows it. */
+.plx-import-row.is-arrived {
+    animation: plx-import-arrive 1.6s var(--ease-standard) both;
+}
+
+@keyframes plx-import-arrive {
+    from { background-color: rgba(56, 189, 248, 0.14); }
+    to { background-color: rgba(56, 189, 248, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-import-inline-pick.is-entering {
+        animation: none;
+    }
+
+    .plx-import-spinner {
+        animation: none;
+        border-color: var(--accent-channel);
+        opacity: 0.6;
+    }
+}
+
+/* A narrow dialog keeps the path box usable: the chip drops its word (the
+   laptop or the green dot still says which), Browse drops its icon. */
+@media (max-width: 520px) {
+    .plx-import-inline-pick .plx-import-machine-label {
+        display: none;
+    }
+
+    .plx-import-compact-action {
+        width: 100px;
+    }
+
+    .plx-import-compact-browse svg {
+        display: none;
+    }
 }
 
 /* The way back to the cards from the pick state. Without it, the only route
@@ -7002,7 +7334,56 @@ dialog .file-source .data-location-place {
     font-size: 13px;
     height: var(--control-height);
     max-width: 320px;
+    min-width: 0;
     padding: 0 var(--space-2);
+}
+
+/* The control and its ✓ on one line. */
+.plx-import-question-control {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+/* ✓ -- "what it shows is right". Square, the control's own height, so it
+   reads as part of the select rather than as a second action; the success
+   colour only on hover, because until pressed it is an offer, not a state. */
+.plx-import-settle {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: var(--control-height);
+    justify-content: center;
+    width: var(--control-height);
+}
+
+.plx-import-settle:hover,
+.plx-import-settle:focus-visible {
+    border-color: var(--accent-success);
+    color: var(--accent-success);
+}
+
+/* Beside the radio-like choices it is the height of a choice, not a select. */
+.plx-import-question-choices .plx-import-settle {
+    height: auto;
+    padding: var(--space-1) var(--space-2);
+    width: auto;
+}
+
+/* A settled question: the pyramid note's one line, with the mark in front. */
+.plx-import-settled-mark {
+    color: var(--accent-success);
+    font-size: 11px;
+}
+
+.plx-import-settled-value {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
 }
 
 /* "Set endpoint / access…", under a layer read from a bucket -- see
@@ -7104,10 +7485,69 @@ dialog .file-source .data-location-place {
     background: var(--accent-channel);
 }
 
-.plx-import-empty {
-    color: var(--text-secondary);
-    font-size: 12px;
-    margin: 0;
+/* The first read: "Reading LSP11385…" with the thinking orb working at the
+   front of it, the size of the line -- and below, the card about to arrive,
+   in outline. */
+.plx-import-subtitle.is-reading {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-import-reading-orb {
+    flex: 0 0 auto;
+    height: 20px;
+    margin-left: -2px;
+    width: 20px;
+}
+
+/* No engine (it failed to load): a still dot, as the agent panel's does. */
+.plx-import-reading-orb[data-orb="static"] {
+    background: radial-gradient(circle, var(--accent-channel) 0 22%, transparent 24%);
+}
+
+/* The card's own frame, head and rows (they are the real classes), holding
+   bars where the text will be. Sized to the real lines -- a 13px name, an
+   11px detail, the role badge -- so the answer replaces it without the
+   dialog changing height under the eye. */
+.plx-import-skeleton .plx-import-row {
+    min-height: 54px;
+}
+
+.plx-import-bone {
+    background: linear-gradient(90deg,
+        rgba(255, 255, 255, 0.045) 0%,
+        rgba(255, 255, 255, 0.09) 45%,
+        rgba(255, 255, 255, 0.045) 90%);
+    background-size: 220% 100%;
+    border-radius: var(--radius-sm);
+    display: block;
+    animation: plx-import-bone 1.6s ease-in-out infinite;
+}
+
+.plx-import-bone.is-head   { height: 8px; margin: 6px 0; width: 112px; }
+.plx-import-bone.is-icon   { border-radius: 4px; flex: 0 0 auto; height: 16px; width: 16px; }
+.plx-import-bone.is-name   { height: 9px; margin: 4px 0; }
+.plx-import-bone.is-detail { height: 7px; margin: 3px 0; }
+/* Inset by the row's ✕ and its gap, so it sits where the real badge lands. */
+.plx-import-bone.is-role   { flex: 0 0 auto; height: 16px; margin: 0 42px 0 auto; width: 76px; }
+
+/* Three rows of three lengths, the way an image, a mask and a table read --
+   identical bars would look like a list nobody has filled in. */
+.plx-import-skeleton .plx-import-row:nth-child(2) .is-name   { width: 34%; }
+.plx-import-skeleton .plx-import-row:nth-child(2) .is-detail { width: 68%; }
+.plx-import-skeleton .plx-import-row:nth-child(3) .is-name   { width: 26%; }
+.plx-import-skeleton .plx-import-row:nth-child(3) .is-detail { width: 44%; }
+.plx-import-skeleton .plx-import-row:nth-child(4) .is-name   { width: 18%; }
+.plx-import-skeleton .plx-import-row:nth-child(4) .is-detail { width: 52%; }
+
+@keyframes plx-import-bone {
+    from { background-position: 100% 0; }
+    to   { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-import-bone { animation: none; }
 }
 
 /* Empty until it has something to say, rather than toggled with `hidden`: a
@@ -7122,6 +7562,13 @@ dialog .file-source .data-location-place {
 
 .plx-import-status.is-error {
     color: var(--accent-danger);
+}
+
+/* Said to a screen reader only: a card's row is showing the same thing in
+   place. Transparent rather than hidden, so the line keeps its height and
+   stays in the accessibility tree. */
+.plx-import-status.is-quiet {
+    opacity: 0;
 }
 
 .plx-import-foot {

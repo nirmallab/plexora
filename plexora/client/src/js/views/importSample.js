@@ -11,6 +11,9 @@
  *   proposal   One card per sample, one row per detected layer, each saying
  *              what it becomes. A question appears UNDER the row it concerns,
  *              with its default already chosen, and never blocks Import.
+ *              A card's "+ Add segmentation mask / data / layer" opens ONE
+ *              compact row under it -- machine chip, path, Browse -- where a
+ *              browsed file is read at once and a typed path waits for Load.
  *   importing  The same rows become a progress rail, and the sample opens as
  *              soon as its record exists -- whatever is still building keeps
  *              building behind the viewer, which already knows how to wait.
@@ -120,6 +123,14 @@ window.PlexoraImportSample = (function () {
     let dialog = null;
     let state = null;
 
+    //: The machine the last pick that read was on, so the next dialog opens
+    //: there: a slide on hpc has its mask on hpc. Kept for the page and in
+    //: localStorage across reloads, and offered only while that machine is
+    //: still connected -- opening on one nobody can browse is a wrong default
+    //: the user then has to notice and undo.
+    const WHERE_KEY = "plexora.import.where";
+    let lastWhere = null;
+
     function el(tag, className, text) {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -191,12 +202,17 @@ window.PlexoraImportSample = (function () {
             state?.pickFocus?.focus();
         });
         // A click anywhere else in the dialog puts the machine menu away, as
-        // every menu in the navbar does.
+        // every menu in the navbar does. The same for a card's Browse menu.
         node.addEventListener("click", (event) => {
             const machine = state && state.machine;
             if (machine && menuOpen() && !machine.menu.contains(event.target)
                 && !machine.button.contains(event.target)) {
                 closeMenu(false);
+            }
+            const browse = state && state.browseMenu;
+            if (browse && !browse.menu.hidden && !browse.menu.contains(event.target)
+                && !(browse.anchor && browse.anchor.contains(event.target))) {
+                closeBrowseMenu(false);
             }
         });
         // Wrapped rather than passed straight in: `submit` takes the name of a
@@ -239,11 +255,19 @@ window.PlexoraImportSample = (function () {
         return dialog ? dialog.querySelector(`[data-role="${role}"]`) : null;
     }
 
-    function setStatus(message, isError) {
+    /**
+     * The dialog's one live line. `quiet` keeps it in the accessibility tree
+     * but off the screen, for what a card's row is already showing in place:
+     * a screen reader still hears "Reading mask.tif…", and nobody sees the
+     * same news twice. Transparent rather than hidden, so the footer under it
+     * does not move.
+     */
+    function setStatus(message, isError, quiet) {
         const status = part("status");
         if (!status) return;
         status.textContent = message || "";
         status.classList.toggle("is-error", Boolean(message) && Boolean(isError));
+        status.classList.toggle("is-quiet", Boolean(message) && Boolean(quiet));
     }
 
     function close() {
@@ -255,6 +279,7 @@ window.PlexoraImportSample = (function () {
         // close): a resource about to be bound must not be pulled first.
         if (state && state.phase !== "importing") release(state.picks);
         if (state && state.machine && state.machine.unwatch) state.machine.unwatch();
+        stopReadingOrb();
         state = null;
         try {
             dialog.close();
@@ -306,10 +331,34 @@ window.PlexoraImportSample = (function () {
             datasetSaid: false,
             //: `SampleProposal.key` -> outline colour index. See `tintFor`.
             tints: {},
+            //: Question id -> true once its ✓ was pressed: drawn as one line
+            //: saying what was chosen rather than as the control. The answer
+            //: itself is in `answers`; this is only how much room it takes.
+            settled: {},
             //: `{key, role}` while a card's inline "choose a file" row is
             //: open. One at a time: two open rows on one screen is two places
-            //: a path could go and no way to tell which.
+            //: a path could go and no way to tell which. `fresh` until it has
+            //: been drawn once (it eases in once, not on every render) and
+            //: `draft` holding what was typed but not yet sent, which a
+            //: re-render for some other card must not throw away.
             adding: null,
+            //: The card's pick while the server reads it: `{path, origin,
+            //: intent, address, isNew}`. The row stays open, holding the path
+            //: and a spinner, until the answer lands -- then it closes, or
+            //: says why not. One at a time; a second Load is ignored.
+            //: `origin` is "browse" or "typed": a path the native picker
+            //: returned is read at once and never passes through the typed
+            //: state, so it never shows a Load button.
+            addFlight: null,
+            //: The pick whose rows to light once, as they first appear.
+            arrived: null,
+            //: Where the keyboard goes after the next render: `{key, role}`
+            //: names a card's slot, `focusTarget` the element itself.
+            focusAfter: null,
+            focusTarget: null,
+            //: A card's Browse menu (Choose file / Choose folder), built
+            //: once and hung under whichever row is open.
+            browseMenu: null,
             node: null,
             location: null,
             //: The machine chip, its menu and the location service's status
@@ -330,8 +379,26 @@ window.PlexoraImportSample = (function () {
         mountLocation();
         render("pick");
         dialog.showModal();
-        if (Array.isArray(options.paths) && options.paths.length) addPaths(options.paths);
+        if (Array.isArray(options.paths) && options.paths.length) {
+            if (options.proposal) showRead(options.paths, options.proposal);
+            else addPaths(options.paths);
+        }
         return dialog;
+    }
+
+    /**
+     * Paths the caller already inspected, drawn as they were read rather than
+     * read again. The home page reads a pick to decide whether one press can
+     * open it; when it cannot, the dialog it hands over to would otherwise
+     * spend the same seconds learning the same thing. Only ever an inspection
+     * of exactly these paths with no answers -- what a fresh dialog's own
+     * first read would have been.
+     */
+    function showRead(paths, proposal) {
+        state.picks = paths.slice();
+        state.picked = paths.slice();
+        state.proposal = proposal;
+        render("proposal");
     }
 
     /** Several picks at once, inspected once. */
@@ -387,6 +454,59 @@ window.PlexoraImportSample = (function () {
         }
         if (state.location) state.machine = machine;
         paintMachine();
+        restoreWhere();
+    }
+
+    /** Note the machine a pick that just read was on, for the next dialog. */
+    function rememberWhere() {
+        if (!state || !state.location) return;
+        const place = state.location.isLocal() ? null : state.location.place();
+        lastWhere = place ? {id: place.id, kind: place.kind, label: place.label,
+                             node: place.node || null} : null;
+        try {
+            if (lastWhere) localStorage.setItem(WHERE_KEY, JSON.stringify(lastWhere));
+            else localStorage.removeItem(WHERE_KEY);
+        } catch (error) { /* storage refused: this page remembers it anyway */ }
+    }
+
+    /**
+     * Open on the machine the last successful pick came from, if it is still
+     * up. The list of machines may not have arrived yet, so this waits for it
+     * once -- and gives up if the user has chosen a machine by then, or the
+     * dialog has gone.
+     */
+    function restoreWhere() {
+        let wanted = lastWhere;
+        if (!wanted) {
+            try {
+                wanted = JSON.parse(localStorage.getItem(WHERE_KEY) || "null");
+            } catch (error) { wanted = null; }
+        }
+        if (!wanted || !wanted.id || !state.location || !Remotes()) return;
+        const owner = state;
+        const apply = (snapshot) => {
+            if (state !== owner || !state.location.isLocal()) return;
+            const place = (snapshot.places || []).find((entry) => entry.id === wanted.id);
+            if (!place || !(place.kind === "server" || place.node)) return;
+            state.location.setWhere("remote", {id: place.id, kind: place.kind,
+                                               label: place.label, node: place.node || null});
+            paintMachine();
+        };
+        const now = Remotes().snapshot();
+        if (now && now.loaded) {
+            apply(now);
+            return;
+        }
+        let stop = null;
+        let done = false;
+        stop = Remotes().subscribe((snapshot) => {
+            if (done) return;
+            done = true;
+            apply(snapshot);
+            if (stop) stop();
+        });
+        // Answered from inside subscribe(), before `stop` existed.
+        if (done) stop();
     }
 
     const Remotes = () => window.PlexoraRemotes;
@@ -469,6 +589,7 @@ window.PlexoraImportSample = (function () {
     function openMenu() {
         const machine = state.machine;
         if (!machine || menuOpen() || machine.button.disabled) return;
+        closeBrowseMenu(false);
         machine.key = "";
         drawMenu((Remotes() && Remotes().snapshot().places) || []);
         const rect = machine.button.getBoundingClientRect();
@@ -725,7 +846,10 @@ window.PlexoraImportSample = (function () {
 
         const row = el("div", "plx-import-pick-row");
         const field = el("div", "plx-import-field");
-        if (state.machine) field.appendChild(state.machine.button);
+        if (state.machine) {
+            field.appendChild(state.machine.button);
+            state.machine.button.disabled = false;
+        }
         const input = el("input", "plx-import-input");
         input.type = "text";
         input.placeholder = placeholder;
@@ -901,20 +1025,89 @@ window.PlexoraImportSample = (function () {
             mode,
             filter: "any",
             node: browseNode(),
+            start: startFor(intent),
             onPicked: (path) => {
                 clearTimeout(settle);
                 setStatus(null);
-                addPick(path, intent);
+                // A card's row reads what was chosen at once: choosing it
+                // in the system's own browser WAS the confirmation, and a
+                // Load button after it would ask for it twice.
+                if (intent) submitSlot(path, "browse", intent);
+                else addPick(path, intent);
             },
             onUnavailable: () => {
                 clearTimeout(settle);
-                setStatus("The file browser could not be opened — paste the "
-                          + "full path instead.", true);
+                const why = "The file browser could not be opened — paste the "
+                          + "full path instead.";
+                if (intent && state && sameIntent(state.adding, intent)) {
+                    setStatus(null);
+                    state.addError = {typed: "", reason: why};
+                    render("proposal");
+                } else {
+                    setStatus(why, true);
+                }
             },
         }).finally(() => {
             clearTimeout(settle);
             setBusy(false);
         });
+    }
+
+    /**
+     * Where a card's browser opens: beside the files already in that sample,
+     * because a mask or a table almost always sits next to its slide. Only on
+     * the machine being browsed -- a folder on hpc means nothing to this
+     * computer's dialog -- and the folder rather than the file, or a file
+     * dialog would offer the slide itself as the answer. The native dialog on
+     * the server's own desktop ignores it and remembers its own last folder;
+     * the desktop app's dialog and a cluster's listing both open there.
+     */
+    function startFor(intent) {
+        if (!intent || !state) return "";
+        const sample = (state.proposal?.samples || []).find((entry) => entry.key === intent.key);
+        const node = browseNode();
+        for (const layer of sample?.layers || []) {
+            let path = String(pickOf(layer) || "");
+            if (!path || window.PlexoraLocators?.isRemoteLocator(path)) continue;
+            if (path.startsWith("node://")) {
+                const prefix = `node://${node}/`;
+                if (!node || !path.startsWith(prefix)) continue;
+                path = path.slice(prefix.length);
+            } else if (node) {
+                continue;
+            }
+            const trimmed = path.replace(/[\\/]+$/, "");
+            const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+            if (cut > 0) return trimmed.slice(0, cut);
+            if (cut === 0) return trimmed.slice(0, 1);
+        }
+        return "";
+    }
+
+    function sameIntent(left, right) {
+        return Boolean(left && right && left.key === right.key && left.role === right.role);
+    }
+
+    /**
+     * Send what a card's row holds -- browsed or typed -- and keep the row
+     * open and busy until the server has said what it is.
+     *
+     * The validation and the attaching are the dialog's own: `addPick` files
+     * the pick against the card (`sample-for`, `added-as`) and `inspect()`
+     * asks `/import/inspect`, so a mask added here is exactly a mask added
+     * any other way. What this adds is only the waiting in place: the row
+     * closes when the file lands on the card (`landFlight`), or keeps the
+     * path and says why when it does not (`bouncePendingPick`, `failFlight`).
+     */
+    function submitSlot(path, origin, intent) {
+        const typed = String(path || "").trim();
+        if (!typed || !state || !intent || state.addFlight) return;
+        closeBrowseMenu(false);
+        state.adding = intent;
+        intent.draft = "";
+        state.addError = null;
+        state.addFlight = {path: typed, origin, intent};
+        addPick(typed, intent);
     }
 
     /**
@@ -956,7 +1149,11 @@ window.PlexoraImportSample = (function () {
             } : null;
         }
         state.addError = null;
-        state.adding = null;
+        state.justPicked = true;
+        // A card's row stays open, busy, while this is read (`submitSlot`);
+        // every other way in closes whatever row was open.
+        if (state.addFlight) Object.assign(state.addFlight, {address, isNew});
+        else state.adding = null;
         inspect();
     }
 
@@ -990,8 +1187,10 @@ window.PlexoraImportSample = (function () {
                 (layer.needs || []).forEach((id) => { delete state.answers[id]; });
                 // A confirmation is not in `needs` -- it never holds anything
                 // up -- but a file removed and picked again is asked again.
+                // So is anything its ✓ put away.
                 questionsFor(sample, `layer:${layer.id}`).forEach((question) => {
                     if (question.kind === "confirm") delete state.answers[question.id];
+                    delete state.settled[question.id];
                 });
             });
         });
@@ -1043,7 +1242,12 @@ window.PlexoraImportSample = (function () {
     async function inspect() {
         const token = ++inspectToken;
         render("proposal");
-        setStatus("Looking at what is there…");
+        // A card's row shows its own reading, in place, and so does the
+        // subtitle before the first proposal; this line then says it only to
+        // a screen reader.
+        const flight = state.addFlight;
+        if (flight) setStatus(`Reading ${basename(flight.path)}…`, false, true);
+        else setStatus("Looking at what is there…", false, !state.proposal);
         //: The exact array this proposal's `pick` indices will refer to.
         const sent = state.picks.slice();
         try {
@@ -1063,11 +1267,67 @@ window.PlexoraImportSample = (function () {
             state.proposal = proposal;
             state.picked = sent;
             setStatus(null);
+            if (state.justPicked) {
+                state.justPicked = false;
+                rememberWhere();
+            }
+            const landed = landFlight();
             render("proposal");
+            if (landed) setStatus(landed);
         } catch (error) {
             if (token !== inspectToken || !state) return;
+            if (failFlight(error.message)) return;
             setStatus(error.message || "Plexora could not read those files.", true);
         }
+    }
+
+    /**
+     * A card's pick was read and is on the card: close its row, light the
+     * rows it became, and put the keyboard back on the card. Returns the
+     * line to say so, or null when no card's pick was in flight.
+     *
+     * The row closes only if it is still the one the pick came from --
+     * somebody who opened another card's row meanwhile keeps it.
+     */
+    function landFlight() {
+        const flight = state.addFlight;
+        if (!flight) return null;
+        state.addFlight = null;
+        state.arrived = flight.address || null;
+        if (sameIntent(state.adding, flight.intent)) {
+            state.adding = null;
+            state.focusAfter = {key: flight.intent.key, role: flight.intent.role};
+        }
+        const sample = (state.proposal?.samples || []).find(
+            (entry) => entry.key === flight.intent.key);
+        const name = sample && (state.meta[sample.key]?.name || sample.name);
+        return name ? `Added ${basename(flight.path)} to ${name}.`
+                    : `Added ${basename(flight.path)}.`;
+    }
+
+    /**
+     * The server could not be asked at all while a card's pick was in flight
+     * -- a dropped connection, a crash. The pick goes back out (it was never
+     * read, and Import pressed now must not carry it) and the row reopens
+     * holding the path, with the reason under it. True when it did.
+     */
+    function failFlight(message) {
+        const flight = state.addFlight;
+        if (!flight) return false;
+        state.addFlight = null;
+        state.pending = null;
+        if (flight.isNew && flight.address) {
+            state.picks = state.picks.filter((pick) => pick !== flight.address);
+            delete state.answers[`sample-for:${flight.address}`];
+            delete state.answers[`added-as:${flight.address}`];
+            release([flight.address]);
+        }
+        state.adding = flight.intent;
+        state.addError = {typed: flight.path,
+                          reason: message || "Plexora could not read that path."};
+        setStatus(null);
+        render("proposal");
+        return true;
     }
 
     /**
@@ -1087,6 +1347,8 @@ window.PlexoraImportSample = (function () {
         state.picks = state.picks.filter((pick) => pick !== pending.address);
         delete state.answers[`sample-for:${pending.address}`];
         delete state.answers[`added-as:${pending.address}`];
+        state.addFlight = null;
+        state.justPicked = false;
         state.adding = pending.intent;
         state.addError = {typed: pending.path, reason: refused.reason};
         if (pending.proposal) {
@@ -1101,6 +1363,71 @@ window.PlexoraImportSample = (function () {
         return true;
     }
 
+    /**
+     * The body while the first read is out: one sample card in outline -- its
+     * head and three rows, at the sizes the real ones take -- so what arrives
+     * replaces it in place rather than a graphic giving way to a layout.
+     * Shapes only, never words: a placeholder row that said "Mask" would be a
+     * claim about files nobody has read yet.
+     */
+    function readingSkeleton() {
+        const card = el("div", "plx-import-sample plx-import-skeleton");
+        card.setAttribute("aria-hidden", "true");
+        const head = el("div", "plx-import-card-head");
+        head.appendChild(el("span", "plx-import-bone is-head"));
+        card.appendChild(head);
+        for (let index = 0; index < 3; index += 1) {
+            const row = el("div", "plx-import-row");
+            row.appendChild(el("span", "plx-import-bone is-icon"));
+            const text = el("div", "plx-import-row-text");
+            text.appendChild(el("span", "plx-import-bone is-name"));
+            text.appendChild(el("span", "plx-import-bone is-detail"));
+            row.appendChild(text);
+            row.appendChild(el("span", "plx-import-bone is-role"));
+            card.appendChild(row);
+        }
+        return card;
+    }
+
+    /**
+     * The orb beside "Reading …": the agent panel's thinking orb at its chip
+     * size, in its "searching" state and the dialog's accent -- a working
+     * indicator the size of the line it belongs to. A spinner on a page with
+     * no orb driver.
+     */
+    function readingOrb() {
+        const orb = window.PlexoraOrb;
+        if (!orb || typeof orb.mount !== "function") {
+            const spinner = el("span", "plx-import-spinner");
+            spinner.setAttribute("aria-hidden", "true");
+            return spinner;
+        }
+        const canvas = el("canvas", "plx-import-reading-orb");
+        try {
+            state.readingOrb = orb.mount(canvas, {
+                state: "searching", size: 20, tint: accentColour(), dark: true,
+            });
+        } catch (error) {
+            canvas.setAttribute("data-orb", "static");
+        }
+        return canvas;
+    }
+
+    function stopReadingOrb() {
+        if (!state || !state.readingOrb) return;
+        state.readingOrb.destroy();
+        state.readingOrb = null;
+    }
+
+    function accentColour() {
+        try {
+            return window.getComputedStyle(dialog || document.documentElement)
+                .getPropertyValue("--accent-channel").trim() || undefined;
+        } catch (error) {
+            return undefined;
+        }
+    }
+
     function renderProposal() {
         const body = part("body");
         body.innerHTML = "";
@@ -1108,7 +1435,11 @@ window.PlexoraImportSample = (function () {
         part("add").hidden = false;
 
         if (!proposal) {
-            body.appendChild(el("p", "plx-import-empty", "Reading…"));
+            // The subtitle says what is being read, with the orb working
+            // beside it; the body holds the shape of the card about to arrive,
+            // so the answer lands where the eye already is. Three lines saying
+            // "Reading…" once each was the same news three times.
+            body.appendChild(readingSkeleton());
             part("go").disabled = true;
             setReason("");
             return;
@@ -1147,6 +1478,17 @@ window.PlexoraImportSample = (function () {
         part("go").textContent = goLabel(samples);
         setReason(importable ? "" : "Nothing to import");
         part("go").disabled = !importable;
+        // Held while a card's pick is being read: Import pressed now would
+        // import the sample without the file just chosen for it, and "Add
+        // more samples" would be pulled back here when the answer landed.
+        if (state.addFlight) {
+            part("go").disabled = true;
+            part("add").disabled = true;
+        } else {
+            part("add").disabled = false;
+        }
+        // Lit once, on the render that first shows them.
+        state.arrived = null;
     }
 
     /**
@@ -1279,7 +1621,7 @@ window.PlexoraImportSample = (function () {
             block.appendChild(renderLayer(layer));
             const remoteOptions = renderRemoteOptions(layer);
             if (remoteOptions) block.appendChild(remoteOptions);
-            questionsFor(sample, `layer:${layer.id}`).forEach((question) => {
+            questionsUnder(sample, layer).forEach((question) => {
                 block.appendChild(renderQuestion(question, sample));
             });
         });
@@ -1295,12 +1637,12 @@ window.PlexoraImportSample = (function () {
         return block;
     }
 
-    //: What each missing modality's slot says, and which set of format
-    //: examples its picker shows (browsePicker's KIND_EXAMPLES).
+    //: What each missing modality's slot says, and what its row's path box
+    //: is called to a screen reader.
     const SLOT = {
-        mask: {label: "Add segmentation mask", examples: "mask"},
-        table: {label: "Add data", examples: "data"},
-        layer: {label: "Add layer", examples: "sample"},
+        mask: {label: "Add segmentation mask", noun: "the segmentation mask"},
+        table: {label: "Add data", noun: "the data"},
+        layer: {label: "Add layer", noun: "the layer"},
     };
 
     /**
@@ -1320,6 +1662,7 @@ window.PlexoraImportSample = (function () {
     function renderCardActions(sample) {
         const strip = el("div", "plx-import-card-actions");
         const wanted = [...(sample.missing || []), "layer"];
+        const buttons = [];
         wanted.forEach((role) => {
             const spec = SLOT[role];
             if (!spec) return;
@@ -1327,8 +1670,12 @@ window.PlexoraImportSample = (function () {
                          && state.adding.role === role;
             const button = el("button", "plx-import-slot");
             button.type = "button";
+            button.dataset.slot = role;
             button.classList.toggle("is-open", Boolean(open));
             button.setAttribute("aria-expanded", open ? "true" : "false");
+            // Held while a pick is being read: the row it would open or close
+            // is the one showing the wait.
+            button.disabled = Boolean(state.addFlight);
             const glyph = el("span", `fas ${open ? "fa-xmark" : "fa-plus"}`);
             glyph.setAttribute("aria-hidden", "true");
             button.appendChild(glyph);
@@ -1336,47 +1683,311 @@ window.PlexoraImportSample = (function () {
             button.addEventListener("click", () => {
                 // A second press on the open slot closes it, which is the only
                 // way out of a row nobody meant to open.
-                state.adding = open ? null : {key: sample.key, role};
+                state.adding = open ? null : {key: sample.key, role, fresh: true, draft: ""};
                 state.addError = null;
+                if (open) state.focusAfter = {key: sample.key, role};
                 render("proposal");
             });
+            buttons.push(button);
             strip.appendChild(button);
         });
+        // The keyboard back on this card after its row closed: on the slot
+        // that closed, or -- when that slot went because the file filled it --
+        // on the first one left.
+        const after = state.focusAfter;
+        if (after && after.key === sample.key) {
+            state.focusAfter = null;
+            state.focusTarget = buttons.find((button) => button.dataset.slot === after.role)
+                || buttons[0] || null;
+        }
         return strip;
     }
 
     /**
-     * The picker, opened INSIDE the card rather than over it.
+     * A card's "Add …", as ONE row opened under the slot that asked for it:
      *
-     * The card is the context: which sample this file joins is the one thing
-     * the user must not have to remember, and a modal picker takes it off the
-     * screen at the moment they choose. The same control the pick state uses
-     * -- File | Folder, the field with its machine chip, Browse -- with the
-     * format examples of the slot that opened it.
+     *     [Local ▾ | Paste a file or folder path…      ✕] [Browse | ▾]
+     *
+     * The card is the context -- which sample the file joins, and the slot
+     * already said as what -- so the row repeats none of it: no File | Folder
+     * switch, no format chips, no heading. The machine chip is the dialog's
+     * one chip, moved in, so whichever machine the slide came from is where
+     * this row starts.
+     *
+     * The right-hand action is one slot with four faces (`data-face`), the
+     * same width in each so the path box never jumps:
+     *
+     *   browse  the box is empty. Browse opens a file; the arrow offers
+     *           Choose file / Choose folder. Whatever comes back is read AT
+     *           ONCE -- picking it was the confirmation.
+     *   load    a path was typed or pasted. Load, or Enter, reads it.
+     *   busy    it is being read: the path stays, read-only, beside a spinner.
+     *   retry   it could not be read: the path stays, the reason is under it.
+     *
+     * When it lands on the card the row closes (`landFlight`). Clearing the
+     * box goes back to Browse; Escape clears it, then closes the row.
      */
     function renderInlinePick(sample) {
-        const spec = SLOT[state.adding.role] || SLOT.layer;
-        const wrap = el("div", "plx-import-inline-pick");
-        const pick = buildPickControl({
-            examples: spec.examples,
-            placeholder: `Paste a path for ${sample.name || "this sample"}…`,
-            onTyped: (typed) => addPick(typed, state.adding),
-        });
-        wrap.appendChild(pick);
+        const adding = state.adding;
+        const spec = SLOT[adding.role] || SLOT.layer;
+        const flight = sameIntent(state.addFlight?.intent, adding) ? state.addFlight : null;
+        const refused = flight ? null : state.addError;
 
-        const refused = state.addError;
-        if (refused) {
-            state.pickInput.value = refused.typed;
-            state.pickInput.setAttribute("aria-invalid", "true");
-            pick.dataset.face = "add";
-            pick.classList.add("is-refused");
-            const why = el("p", "plx-import-path-error", refused.reason);
-            why.setAttribute("role", "alert");
-            pick.insertBefore(why, pick.querySelector(".plx-import-formats"));
-            const box = state.pickInput;
-            setTimeout(() => box.focus(), 0);
+        const wrap = el("div", "plx-import-inline-pick");
+        wrap.dataset.slot = adding.role;
+        if (adding.fresh) {
+            // Eased in on the render that opens it, and only that one -- the
+            // body is rebuilt on every render, and a row that slid in again
+            // each time anything changed would never sit still.
+            wrap.classList.add("is-entering");
         }
+
+        const row = el("div", "plx-import-compact-row");
+        const field = el("div", "plx-import-field");
+        if (state.machine) {
+            field.appendChild(state.machine.button);
+            // Not while a path is being read: the answer is about the
+            // machine it was read on.
+            state.machine.button.disabled = Boolean(flight);
+        }
+        const input = el("input", "plx-import-input");
+        input.type = "text";
+        input.placeholder = "Paste a file or folder path…";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.setAttribute("aria-label", `Path to ${spec.noun}`);
+        field.appendChild(input);
+        const clear = el("button", "plx-import-compact-clear");
+        clear.type = "button";
+        clear.title = "Clear";
+        clear.setAttribute("aria-label", "Clear the path");
+        clear.innerHTML = '<span class="fas fa-xmark" aria-hidden="true"></span>';
+        field.appendChild(clear);
+        row.appendChild(field);
+
+        const action = el("div", "plx-import-compact-action");
+        const split = el("div", "plx-import-compact-split");
+        const browse = el("button", "plx-import-compact-browse");
+        browse.type = "button";
+        browse.title = "Choose a file";
+        browse.innerHTML = '<span class="fas fa-folder-open" aria-hidden="true"></span><span>Browse</span>';
+        const more = el("button", "plx-import-compact-more");
+        more.type = "button";
+        more.title = "Choose a file or a folder";
+        more.setAttribute("aria-label", "Choose a file or a folder");
+        more.setAttribute("aria-haspopup", "menu");
+        more.setAttribute("aria-expanded", "false");
+        more.innerHTML = '<span class="fas fa-chevron-down" aria-hidden="true"></span>';
+        split.append(browse, more);
+        // Load and Retry are one button: both read the path in the box.
+        const load = el("button", "plx-import-compact-load");
+        load.type = "button";
+        load.innerHTML = `
+            <span class="plx-import-compact-word is-load">Load</span>
+            <span class="plx-import-compact-word is-retry"><span class="fas fa-rotate-right" aria-hidden="true"></span><span>Retry</span></span>`;
+        const busy = el("span", "plx-import-compact-busy");
+        busy.innerHTML = '<span class="plx-import-spinner" aria-hidden="true"></span><span>Reading</span>';
+        action.append(split, load, busy);
+        row.appendChild(action);
+        wrap.appendChild(row);
+
+        const setFace = (face) => {
+            wrap.dataset.face = face;
+            load.title = face === "retry" ? "Read this path again" : "Add this path (Enter)";
+        };
+
+        let why = null;
+        if (flight) {
+            input.value = flight.path;
+            input.readOnly = true;
+            field.setAttribute("aria-busy", "true");
+            wrap.dataset.origin = flight.origin;
+            setFace("busy");
+            // Once, on the render that starts the wait: a Load pressed by
+            // keyboard has just been taken off the screen under its focus.
+            if (!flight.focused) {
+                flight.focused = true;
+                state.focusTarget = input;
+            }
+        } else if (refused) {
+            input.value = refused.typed;
+            wrap.classList.add("is-refused");
+            if (refused.typed) input.setAttribute("aria-invalid", "true");
+            setFace(refused.typed ? "retry" : "browse");
+            why = el("p", "plx-import-path-error");
+            why.setAttribute("role", "alert");
+            const mark = el("span", "fas fa-circle-exclamation");
+            mark.setAttribute("aria-hidden", "true");
+            why.append(mark, el("span", null, refused.reason));
+            wrap.appendChild(why);
+            if (!refused.focused) {
+                refused.focused = true;
+                state.focusTarget = input;
+            }
+        } else {
+            input.value = adding.draft || "";
+            setFace(input.value.trim() ? "load" : "browse");
+        }
+        if (adding.fresh) {
+            adding.fresh = false;
+            state.focusTarget = input;
+        }
+
+        const forgetRefusal = () => {
+            if (!state.addError) return;
+            state.addError = null;
+            wrap.classList.remove("is-refused");
+            input.removeAttribute("aria-invalid");
+            if (why) why.remove();
+            why = null;
+        };
+        const clearBox = () => {
+            input.value = "";
+            adding.draft = "";
+            forgetRefusal();
+            setFace("browse");
+            input.focus();
+        };
+        const take = () => {
+            const typed = input.value.trim();
+            if (typed) submitSlot(typed, "typed", adding);
+        };
+
+        input.addEventListener("input", () => {
+            // Only a person typing or pasting reaches here: a browsed path
+            // goes straight to `submitSlot`, never through the box's events,
+            // so it can never be mistaken for one waiting on Load.
+            adding.draft = input.value;
+            forgetRefusal();
+            setFace(input.value.trim() ? "load" : "browse");
+        });
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                if (!input.readOnly) take();
+            } else if (event.key === "Escape" && !input.readOnly) {
+                // The dialog's own Escape would close the whole dialog.
+                event.preventDefault();
+                event.stopPropagation();
+                if (input.value) {
+                    clearBox();
+                } else {
+                    state.adding = null;
+                    state.addError = null;
+                    state.focusAfter = {key: adding.key, role: adding.role};
+                    render("proposal");
+                }
+            }
+        });
+        clear.addEventListener("click", clearBox);
+        load.addEventListener("click", take);
+        browse.addEventListener("click", () => pickWith("file"));
+        more.addEventListener("click", () => {
+            if (browseMenuOpen()) closeBrowseMenu(true);
+            else openBrowseMenu(more, split);
+        });
+        more.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" && !browseMenuOpen()) {
+                event.preventDefault();
+                openBrowseMenu(more, split);
+            }
+        });
+
+        // The service's own line -- "Sharing…", "Not connected to hpc yet" --
+        // under the row it is about. Empty, it takes no room.
+        if (state.machine) wrap.appendChild(state.machine.status);
+
+        // Small tables dropped on the row, as on the pick state's control.
+        wrap.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            wrap.classList.add("is-over");
+        });
+        wrap.addEventListener("dragleave", (event) => {
+            if (!wrap.contains(event.relatedTarget)) wrap.classList.remove("is-over");
+        });
+        wrap.addEventListener("drop", onDrop);
+
+        //: Held so a second press while the system's file browser is opening
+        //: cannot open a second one.
+        state.pickControls = [browse, more];
+        state.pickFocus = browse;
+        state.pickInput = input;
         return wrap;
+    }
+
+    // -- a card's Browse menu ----------------------------------------------
+
+    function browseMenuOpen() {
+        return Boolean(state && state.browseMenu && !state.browseMenu.menu.hidden);
+    }
+
+    /**
+     * Choose file / Choose folder, under a card's Browse. Fixed-positioned in
+     * the dialog rather than inside the card, which the scrolling body would
+     * clip; right-aligned to the split it opened from, flipped above it when
+     * there is no room below.
+     */
+    function openBrowseMenu(trigger, alignTo) {
+        if (!state || browseMenuOpen() || trigger.disabled) return;
+        closeMenu(false);
+        if (!state.browseMenu) state.browseMenu = buildBrowseMenu();
+        const browse = state.browseMenu;
+        browse.anchor = trigger;
+        browse.menu.replaceChildren(
+            menuItem({icon: "file", name: "Choose file",
+                      onPick: () => { closeBrowseMenu(false); pickWith("file"); }}),
+            menuItem({icon: "folder", name: "Choose folder",
+                      onPick: () => { closeBrowseMenu(false); pickWith("directory"); }}));
+        browse.menu.hidden = false;
+        const rect = (alignTo || trigger).getBoundingClientRect();
+        const spread = browse.menu.getBoundingClientRect();
+        let top = rect.bottom + 6;
+        if (top + spread.height > window.innerHeight - 8 && rect.top > spread.height + 8) {
+            top = rect.top - spread.height - 6;
+        }
+        browse.menu.style.left = `${Math.round(Math.max(8, rect.right - spread.width))}px`;
+        browse.menu.style.top = `${Math.round(top)}px`;
+        trigger.setAttribute("aria-expanded", "true");
+        browse.menu.querySelector(".plx-import-menu-item")?.focus();
+    }
+
+    function closeBrowseMenu(refocus) {
+        const browse = state && state.browseMenu;
+        if (!browse || browse.menu.hidden) return;
+        browse.menu.hidden = true;
+        const anchor = browse.anchor;
+        browse.anchor = null;
+        if (anchor) {
+            anchor.setAttribute("aria-expanded", "false");
+            if (refocus && anchor.isConnected) anchor.focus();
+        }
+    }
+
+    function buildBrowseMenu() {
+        const menu = el("div", "plx-import-menu plx-import-browse-menu");
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Browse for");
+        menu.hidden = true;
+        menu.addEventListener("keydown", (event) => {
+            const items = Array.from(menu.querySelectorAll(".plx-import-menu-item"));
+            const at = items.indexOf(document.activeElement);
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                closeBrowseMenu(true);
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                items[(at + step + items.length) % items.length]?.focus();
+            } else if (event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+            } else if (event.key === "Tab") {
+                closeBrowseMenu(false);
+            }
+        });
+        dialog.appendChild(menu);
+        return {menu, anchor: null};
     }
 
     /**
@@ -1480,6 +2091,19 @@ window.PlexoraImportSample = (function () {
         return (sample.questions || []).filter((q) => q.scope === scope);
     }
 
+    /**
+     * The questions drawn under one row. By scope, except where two rows share
+     * an id -- a folder's two cell tables are both `table` -- and then each
+     * question goes under the row whose `needs` hold it, not under both.
+     */
+    function questionsUnder(sample, layer) {
+        return questionsFor(sample, `layer:${layer.id}`).filter((question) => {
+            const owner = (sample.layers || []).find(
+                (row) => (row.needs || []).indexOf(question.id) !== -1);
+            return !owner || owner === layer;
+        });
+    }
+
     function iconFor(kind) {
         const wrap = el("span", "plx-import-row-icon");
         const glyph = el("span", `fas ${KIND_ICON[kind] || "fa-circle-question"}`);
@@ -1489,20 +2113,25 @@ window.PlexoraImportSample = (function () {
     }
 
     /**
-     * `{short, full}` naming the file a row came from, or null when the row's
+     * `{full}`, the path of the file a row came from, or null when the row's
      * own label already is that filename, or the row came out of a run folder
-     * (whose files are the run's, and named by it). Read from the PICK, not
-     * `src`: a node file's `src` is a derived resource id.
+     * (whose files are the run's, and named by it). Read from the PICK when
+     * `src` is not a local path: a node file's `src` is a derived resource id.
+     * A local `src` is the file itself, and the pick may be the FOLDER it was
+     * found in -- two tables out of one folder both read "…/LSP11385", which
+     * looked like one table listed twice.
      */
     function fileHint(layer) {
         if (layer.bundle) return null;
-        const full = String(pickOf(layer) || layer.src || "");
+        const src = String(layer.src || "");
+        const local = src && !src.startsWith("node://")
+            && !(window.PlexoraLocators && window.PlexoraLocators.isRemoteLocator(src));
+        const full = local ? src : String(pickOf(layer) || src);
         if (!full) return null;
         const parts = full.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
         const name = parts[parts.length - 1];
         if (!name || name === layer.label) return null;
-        const tail = parts.slice(-3).join("/");
-        return {short: parts.length > 3 ? `…/${tail}` : tail, full};
+        return {full};
     }
 
     function renderLayer(layer) {
@@ -1523,15 +2152,11 @@ window.PlexoraImportSample = (function () {
         text.appendChild(el("span", "plx-import-row-detail", layer.detail || ""));
         // WHICH file, when the label is a role rather than a filename: two
         // cards that each say "Segmentation mask" give no way to check that
-        // sample 2's mask is sample 2's. The tail of the path, because an
-        // mcmicro run's masks are all `cellRing.ome.tif` and only the folder
-        // above tells them apart; the whole path on hover.
+        // sample 2's mask is sample 2's. On hover of the name, not as a line
+        // of its own: a path under every mask and table was a third line of
+        // text per row that almost nobody needed to read.
         const file = fileHint(layer);
-        if (file) {
-            const hint = el("span", "plx-import-row-file", file.short);
-            hint.title = file.full;
-            text.appendChild(hint);
-        }
+        if (file) nameLine.title = file.full;
         if (layer.dependency && layer.dependency.install) {
             // A package this environment has not got. The row stays -- what is
             // missing is an install, not the data -- and the command to fix it
@@ -1548,6 +2173,9 @@ window.PlexoraImportSample = (function () {
                             : ROLE_BADGE[layer.role] || "Layer"));
         const pick = pickOf(layer);
         if (pick) row.appendChild(removeButton(pick));
+        // Just added from this card's row, which has closed: a brief tint so
+        // the eye lands on where the file went rather than on the gap it left.
+        if (pick && pick === state.arrived) row.classList.add("is-arrived");
         return row;
     }
 
@@ -1774,12 +2402,15 @@ window.PlexoraImportSample = (function () {
         // A confirmation is asked as a modal when Import is pressed, so under
         // the row it is only a note saying it will be -- or what was said.
         if (question.kind === "confirm") return renderConfirmNote(question, sample);
-        const row = el("div", "plx-import-question");
         const current = state.answers[question.id] ?? question.default;
         // The one question with no default: a store with several tables,
         // where guessing would silently give you a different set of cells.
         // Said out loud, with what happens if it is left alone.
         const unanswered = current === null || current === undefined;
+        if (!unanswered && state.settled[question.id]) {
+            return renderSettled(question, current);
+        }
+        const row = el("div", "plx-import-question");
         row.classList.toggle("is-unanswered", unanswered);
 
         const label = el("label", "plx-import-question-label", question.label);
@@ -1805,7 +2436,10 @@ window.PlexoraImportSample = (function () {
             });
             select.addEventListener("change", () => answer(question.id, select.value));
             label.htmlFor = select.id = `q_${cssId(question.id)}`;
-            row.appendChild(select);
+            const control = el("div", "plx-import-question-control");
+            control.appendChild(select);
+            if (!unanswered) control.appendChild(settleButton(question, () => select.value));
+            row.appendChild(control);
         } else {
             const group = el("div", "plx-import-question-choices");
             (question.options || []).forEach((option) => {
@@ -1823,6 +2457,7 @@ window.PlexoraImportSample = (function () {
                 button.addEventListener("click", () => answer(question.id, option.value));
                 group.appendChild(button);
             });
+            if (!unanswered) group.appendChild(settleButton(question, () => current));
             row.appendChild(group);
         }
         if (unanswered) {
@@ -1830,6 +2465,53 @@ window.PlexoraImportSample = (function () {
                 "The import goes ahead either way — Plexora asks again when a "
                 + "tool needs it."));
         }
+        return row;
+    }
+
+    /**
+     * ✓ beside a question's control: "what it shows is right". Records what
+     * is showing as the answer -- a default nobody confirmed is written down
+     * as `unresolved` at registration, and a confirmed one is not -- and puts
+     * the question away (`renderSettled`). Nothing to re-inspect: a default
+     * is applied whether or not it is answered, so saying it changes no row.
+     */
+    function settleButton(question, read) {
+        const button = el("button", "plx-import-settle");
+        button.type = "button";
+        button.title = "Use this";
+        button.setAttribute("aria-label", `Use this: ${question.label}`);
+        button.innerHTML = '<span class="fas fa-check" aria-hidden="true"></span>';
+        button.addEventListener("click", () => {
+            state.answers[question.id] = read();
+            state.settled[question.id] = true;
+            render("proposal");
+        });
+        return button;
+    }
+
+    /**
+     * A question its ✓ settled: one line saying what was chosen, and the way
+     * back to the control. The pyramid note's answered state, for the same
+     * reason -- a decision taken should stop taking a callout's room.
+     */
+    function renderSettled(question, current) {
+        const row = el("div", "plx-import-question is-confirm is-settled");
+        const head = el("div", "plx-import-question-label");
+        const mark = el("span", "fas fa-check plx-import-settled-mark");
+        mark.setAttribute("aria-hidden", "true");
+        head.appendChild(mark);
+        head.appendChild(el("span", null, question.label));
+        const chosen = (question.options || []).find((option) => option.value === current);
+        head.appendChild(el("span", "plx-import-settled-value",
+            chosen ? chosen.label : String(current)));
+        const change = el("button", "plx-import-link", "Change…");
+        change.type = "button";
+        change.addEventListener("click", () => {
+            delete state.settled[question.id];
+            render("proposal");
+        });
+        head.appendChild(change);
+        row.appendChild(head);
         return row;
     }
 
@@ -2466,10 +3148,15 @@ window.PlexoraImportSample = (function () {
 
     function render(phase) {
         if (!state) return;
+        // Every phase rebuilds the body, and an orb whose canvas is gone
+        // would go on drawing it every frame.
+        stopReadingOrb();
         state.phase = phase;
         dialog.dataset.phase = phase;
-        // The chip it opened from is about to be moved or taken off screen.
+        // The chip it opened from is about to be moved or taken off screen,
+        // and so is the Browse a card's menu hangs from.
         closeMenu(false);
+        closeBrowseMenu(false);
         // The machine chip lives in the pick control, so it is on screen in
         // `pick` and while a card's inline picker is open -- which browses
         // exactly as the pick state does -- and nowhere else.
@@ -2479,6 +3166,11 @@ window.PlexoraImportSample = (function () {
         else if (phase === "proposal") renderProposal();
         else renderImporting();
         paintSubtitle();
+        // The body was just rebuilt, so whatever had the keyboard is gone;
+        // a render that knows where it should go now says so.
+        const target = state.focusTarget;
+        state.focusTarget = null;
+        if (target && target.isConnected) target.focus();
     }
 
     /**
@@ -2491,6 +3183,16 @@ window.PlexoraImportSample = (function () {
     function paintSubtitle() {
         const line = part("subtitle");
         if (!line) return;
+        line.classList.toggle("is-reading", state.phase === "proposal" && !state.proposal);
+        if (state.phase === "proposal" && !state.proposal) {
+            const picks = state.picks || [];
+            line.textContent = "";
+            line.appendChild(readingOrb());
+            line.appendChild(el("span", null,
+                `Reading ${basename(picks[0]) || "the files"}`
+                + `${picks.length > 1 ? ` and ${picks.length - 1} more` : ""}…`));
+            return;
+        }
         if (state.phase === "pick") {
             // The modality path is always scoped -- it is the requirements
             // modal asking for the one thing a tool needs -- so it names both
@@ -2506,8 +3208,7 @@ window.PlexoraImportSample = (function () {
                         : "Point Plexora at a file or a folder. It works out "
                           + "what each one is.";
         } else if (state.phase === "proposal") {
-            line.textContent = state.proposal
-                ? summarize(state.proposal) : "Reading…";
+            line.textContent = summarize(state.proposal);
         } else {
             const names = state.registered || [];
             const building = !names.length && !scoped() && pyramidRowName();

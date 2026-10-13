@@ -139,7 +139,9 @@ window.PlexoraImportHelp = (function () {
             marker: ".ome.tif · .tif · .tiff · .qptiff · .ims",
             produces: ["multiplex"],
             mayAsk: ["pyramidize"],
-            note: "Channel names come from the file's own metadata.",
+            note: "Channel names come from a markers.csv picked with it "
+                + "(a marker_name column, one row per channel), else from "
+                + "the file's own metadata.",
         },
         {
             name: "H&E / brightfield slide", shape: "file",
@@ -156,9 +158,11 @@ window.PlexoraImportHelp = (function () {
                   + "integer ids, one plane or a volume — or a name saying "
                   + "mask, label, seg, nuclei, cells",
             produces: ["mask"],
-            mayAsk: ["mask-or-image"],
+            mayAsk: ["mask-or-image", "mask-for"],
             note: "Must match the image's width and height. Not a JPEG or a "
-                + "scanner slide: those cannot hold cell ids.",
+                + "scanner slide: those cannot hold cell ids. In a picked "
+                + "folder, masks up to four folders down are found too, "
+                + "whole cells before nuclei.",
         },
         {
             name: "Cell table", shape: "file",
@@ -223,6 +227,8 @@ window.PlexoraImportHelp = (function () {
         image: "which image, when a store holds several",
         "mask-or-image": "whether a single-plane image is a mask",
         "sample-for": "which sample a loose file belongs to",
+        "mask-for": "which of the segmentation masks found in a folder's "
+            + "subfolders to use, or none",
         "bin-size": "which Visium HD bin size (or the segmented cells) is the table",
         pyramidize: "whether to build a pyramidized copy of a large image "
             + "that has none",

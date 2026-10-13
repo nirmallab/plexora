@@ -1,6 +1,8 @@
 /**
  * orbDriver.js -- the agent panel's "thinking" orb, drawn by the vendored
  * thinking-orbs engine (client/external/thinking-orbs-0.3.2/orbs.js, MIT).
+ * Also the import dialog's while it reads a pick, which is why base.html
+ * loads it on every page rather than index.html on the viewer's alone.
  *
  * The engine is pure geometry plus a 2D-canvas painter: `resolvePreset(state,
  * size)` picks a mode and its tuning, `MODE_FRAMES[mode](size, t, opts)`

@@ -299,3 +299,28 @@ def test_the_import_dialog_is_reachable_from_every_surface_it_was(landing,
     # And the viewer's own "+ Add Layer", which is scoped to one sample.
     assert "PlexoraImportSample?.open({" in source(
         "src", "js", "views", "layerManager.js")
+
+
+def test_a_pick_with_anything_to_decide_opens_the_dialog_rather_than_guessing():
+    """The page is a quick start, not a place to tolerate a guess.
+
+    POSTing straight to `/import/sample` takes every default unseen and keeps
+    only the FIRST sample: a folder holding two slides imported one and
+    dropped the other without a word. So the pick is read first, and several
+    samples, any question, a warning or a file it could not read opens the
+    dialog -- on the proposal already read, so nobody waits for it twice. One
+    sample with nothing to decide still opens in the same press.
+    """
+    landing = source("src", "js", "views", "quickViewLanding.js")
+    body = landing[landing.index("async function uncertainty(path)"):]
+    body = body[:body.index("\n    }\n")]
+    assert "samples.length > 1" in body
+    assert "(sample.questions || []).length > 0" in body
+    assert "(proposal.warnings || []).length > 0" in body
+    assert "(proposal.unrecognised || []).length > 0" in body
+    # Nothing readable is not a guess: the POST says why, on the card.
+    assert "if (!samples.length) return null;" in body
+    assert "window.PlexoraImportSample.open({paths: [path], proposal});" in landing
+
+    dialog = source("src", "js", "views", "importSample.js")
+    assert "if (options.proposal) showRead(options.paths, options.proposal);" in dialog

@@ -674,3 +674,236 @@ def test_every_row_says_which_pick_it_came_from(tmp_path):
     # removing any of them removes the run.
     assert picks == {0, 2}
     assert proposal.unrecognised[0]["pick"] == 3
+
+
+# -- a pipeline's folder ---------------------------------------------------
+#
+# What an mcmicro-style output folder holds: the slides at the top, the cell
+# table named after one of them, the panel in `markers.csv`, and the masks a
+# level down in a folder named for the segmenter and the slide. Picked as ONE
+# folder, which is the case every rule below is about.
+
+MARKERS = "channel_number,cycle_number,marker_name\n1,1,DAPI\n2,1,CD45\n3,1,CD3\n"
+
+
+def _pipeline_folder(root, *, markers=MARKERS):
+    root.mkdir(parents=True, exist_ok=True)
+    _image(root / "LSP1.ome.tif")
+    _image(root / "LSP1_rv.ome.tif")
+    (root / "LSP1--mccellpose_cell.csv").write_text(
+        "CellID,X_centroid,Y_centroid,DAPI,CD45,CD3\n1,10,10,5,6,7\n",
+        encoding="utf-8")
+    if markers is not None:
+        (root / "markers.csv").write_text(markers, encoding="utf-8")
+    masks = root / "mccellpose-LSP1"
+    masks.mkdir()
+    _mask_file(masks / "nucleus.ome.tif")
+    _mask_file(masks / "cell.ome.tif")
+    # The filled pyramid Plexora builds beside a mask it served: the same
+    # mask, which registering `cell.ome.tif` adopts.
+    _mask_file(masks / "cell.labels.pyramid.ome.tiff")
+    return root
+
+
+def _sample(proposal, name):
+    return next(sample for sample in proposal.samples if sample.name == name)
+
+
+def test_a_channel_list_names_every_slide_and_is_not_a_table(tmp_path):
+    """`markers.csv` is the panel of every slide in the folder.
+
+    It used to be proposed as a second cell table, under a "which sample
+    does markers.csv belong to?" that has one honest answer: all of them.
+    """
+    proposal = inspect_paths([str(_pipeline_folder(tmp_path / "LSP1"))])
+
+    rows = [layer for sample in proposal.samples for layer in sample.layers]
+    assert not [layer for layer in rows if "markers" in str(layer.src)]
+    assert not any("markers.csv" in q.label
+                   for sample in proposal.samples for q in sample.questions)
+    for name in ("lsp1", "lsp1_rv"):
+        reference = next(l for l in _sample(proposal, name).layers if l.reference)
+        assert reference.channel_names == ("DAPI", "CD45", "CD3")
+        assert reference.detail.endswith("channel names from markers.csv")
+    assert proposal.warnings == []
+
+
+def test_a_channel_list_of_another_length_is_not_applied(tmp_path):
+    """A list one name short renames every channel after the gap to its
+    neighbour's marker, and nothing on screen would say so."""
+    proposal = inspect_paths([str(_pipeline_folder(
+        tmp_path / "LSP1", markers="marker_name\nDAPI\nCD45\n"))])
+
+    reference = next(l for l in _sample(proposal, "lsp1").layers if l.reference)
+    assert reference.channel_names == ()
+    assert any("does not list 3 channel names" in warning
+               for warning in proposal.warnings), proposal.warnings
+
+
+def test_a_one_column_markers_file_is_read_against_the_channel_count(tmp_path):
+    """The older mcmicro spelling: names only, with or without a title."""
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "markers.csv").write_text("marker\nDAPI\nCD45\nCD3\n",
+                                          encoding="utf-8")
+    reference = next(l for l in _only(inspect_paths([str(tmp_path)])).layers
+                     if l.reference)
+    assert reference.channel_names == ("DAPI", "CD45", "CD3")
+
+
+def test_a_channel_list_picked_on_its_own_is_said_to_need_its_images(tmp_path):
+    (tmp_path / "markers.csv").write_text(MARKERS, encoding="utf-8")
+    proposal = inspect_paths([str(tmp_path / "markers.csv")])
+    assert proposal.samples == []
+    assert "lists channel names" in proposal.unrecognised[0]["reason"]
+
+
+def test_a_table_led_by_one_slides_whole_name_is_that_slides(tmp_path):
+    """`LSP1--mccellpose_cell.csv` is LSP1's, not LSP1_rv's.
+
+    By shared letters the two slides tie -- `lsp1` and `lsp1_rv` both share
+    four with it -- and the table was asked about. LSP1 is the whole leading
+    word of its name; LSP1_rv is not in it at all.
+    """
+    proposal = inspect_paths([str(_pipeline_folder(tmp_path / "LSP1"))])
+
+    holder = _sample(proposal, "lsp1")
+    assert [l.role for l in holder.layers].count("table") == 1
+    assert not [q for sample in proposal.samples for q in sample.questions
+                if q.id.startswith("sample-for:")]
+    assert "table" in _sample(proposal, "lsp1_rv").missing
+
+    # And the longer name wins where both lead: the `_rv` slide's own table.
+    (tmp_path / "LSP1" / "LSP1_rv--mccellpose_cell.csv").write_text(
+        "CellID,X_centroid,Y_centroid,DAPI\n1,10,10,5\n", encoding="utf-8")
+    again = inspect_paths([str(tmp_path / "LSP1")])
+    table = next(l for l in _sample(again, "lsp1_rv").layers if l.role == "table")
+    assert table.src.endswith("LSP1_rv--mccellpose_cell.csv")
+
+
+def test_a_mask_in_a_subfolder_is_found_for_the_slide_its_folder_names(tmp_path):
+    """The folder says whose mask it is; the file only says what kind.
+
+    Whole cells over nuclei, the label pyramid Plexora built beside the
+    source never offered as a third mask, and the other slide -- the same
+    size, but named by nothing here -- left without one rather than given
+    LSP1's.
+    """
+    root = _pipeline_folder(tmp_path / "LSP1")
+    proposal = inspect_paths([str(root)])
+
+    holder = _sample(proposal, "lsp1")
+    mask = next(l for l in holder.layers if l.role == "mask")
+    assert mask.src == str(root / "mccellpose-LSP1" / "cell.ome.tif")
+    assert holder.missing == ()
+    asked = next(q for q in holder.questions if q.id.startswith("mask-for:"))
+    assert asked.scope == f"layer:{mask.id}"
+    assert asked.default == mask.src
+    assert [option["label"] for option in asked.options] == [
+        "mccellpose-LSP1/cell.ome.tif", "mccellpose-LSP1/nucleus.ome.tif",
+        "None"]
+
+    other = _sample(proposal, "lsp1_rv")
+    assert "mask" in other.missing
+    assert not [q for q in other.questions if q.id.startswith("mask-for:")]
+
+
+def test_the_mask_found_can_be_changed_or_left_out(tmp_path):
+    """The default is a guess, so it is a choice: another mask, or none --
+    and "None" keeps the question on the card so it can be taken back."""
+    root = _pipeline_folder(tmp_path / "LSP1")
+    question = f"mask-for:{root / 'LSP1.ome.tif'}"
+
+    nuclei = _sample(inspect_paths([str(root)], answers={
+        question: str(root / "mccellpose-LSP1" / "nucleus.ome.tif")}), "lsp1")
+    assert next(l for l in nuclei.layers if l.role == "mask").src.endswith(
+        "nucleus.ome.tif")
+
+    none = _sample(inspect_paths([str(root)], answers={question: "none"}),
+                   "lsp1")
+    assert not [l for l in none.layers if l.role == "mask"]
+    asked = next(q for q in none.questions if q.id == question)
+    assert asked.scope == "sample"
+
+
+def test_a_mask_naming_no_slide_goes_to_the_only_slide_of_its_size(tmp_path):
+    """Nothing in `segmentation/cells.tif` names the slide -- but it is the
+    slide's exact shape and reads as cell ids, and there is one slide. A label
+    image of another size is somebody else's."""
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "segmentation").mkdir()
+    _mask_file(tmp_path / "segmentation" / "cells.tif")
+    (tmp_path / "other").mkdir()
+    _mask_file(tmp_path / "other" / "cell.tif", size=128)
+
+    sample = _only(inspect_paths([str(tmp_path)]))
+
+    assert sample.name == "slide"
+    mask = next(l for l in sample.layers if l.role == "mask")
+    assert mask.src == str(tmp_path / "segmentation" / "cells.tif")
+    assert sample.questions == []
+
+
+def test_a_mask_below_the_search_depth_is_not_looked_for(tmp_path):
+    _image(tmp_path / "slide.ome.tif")
+    deep = tmp_path.joinpath(*["level"] * (import_proposal.MASK_SEARCH_DEPTH + 1))
+    deep.mkdir(parents=True)
+    _mask_file(deep / "cell.tif")
+    assert _only(inspect_paths([str(tmp_path)])).missing == ("mask", "table")
+
+
+def test_a_folder_rows_sample_question_is_asked_about_the_file(tmp_path):
+    """A folder is ONE pick holding every sample's files.
+
+    The question about its loose table used to be filed under the folder, so
+    the screen drew every such question under every table row (they shared
+    an id), and an answer said "the whole folder belongs to sample 2".
+    """
+    _image(tmp_path / "LSP1.ome.tif")
+    _image(tmp_path / "MEL2.ome.tif")
+    table = tmp_path / "quantification.csv"
+    table.write_text("CellID,X_centroid,Y_centroid,CD3\n1,10,10,5\n",
+                     encoding="utf-8")
+
+    asked = inspect_paths([str(tmp_path)])
+    question_id = f"sample-for:{table}"
+    holder = next(s for s in asked.samples
+                  if any(q.id == question_id for q in s.questions))
+    assert holder.name == "lsp1"
+
+    moved = inspect_paths([str(tmp_path)],
+                          answers={question_id: "stem:mel2"})
+    mel = _sample(moved, "mel2")
+    assert any(l.src == str(table) for l in mel.layers)
+    # Still asked, on the card it moved to, so it can be moved back.
+    assert any(q.id == question_id for q in mel.questions)
+    assert not any(l.src == str(table) for l in _sample(moved, "lsp1").layers)
+
+
+def test_a_cell_table_says_how_many_rows_and_columns_it_has(tmp_path):
+    """The mask row says its size; the table's said only "csv". Its header is
+    its columns and its line breaks are its rows -- nothing is parsed -- and
+    a last row with no line break after it still counts."""
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "slide_cells.csv").write_text(
+        "CellID,X_centroid,Y_centroid,CD3\n1,10,10,5\n2,20,20,6\n3,30,30,7",
+        encoding="utf-8")
+
+    table = next(l for l in _only(inspect_paths([str(tmp_path)])).layers
+                 if l.role == "table")
+
+    assert table.detail == "Cell table · 3 rows × 4 columns · csv"
+
+
+def test_a_very_large_table_is_estimated_and_says_so(tmp_path, monkeypatch):
+    """Counting reads the whole file; past the limit the first megabyte is
+    the sample, and the number carries a "~"."""
+    monkeypatch.setattr(import_proposal, "TABLE_COUNT_LIMIT", 10)
+    _image(tmp_path / "slide.ome.tif")
+    rows = "".join(f"{i},10,10,5\n" for i in range(1, 501))
+    (tmp_path / "slide_cells.csv").write_text(
+        "CellID,X_centroid,Y_centroid,CD3\n" + rows, encoding="utf-8")
+
+    table = next(l for l in _only(inspect_paths([str(tmp_path)])).layers
+                 if l.role == "table")
+
+    assert table.detail == "Cell table · ~500 rows × 4 columns · csv"

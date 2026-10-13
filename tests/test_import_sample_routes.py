@@ -407,3 +407,20 @@ def test_a_blank_entry_keeps_the_positions_the_dialog_sent(client):
     picks = {layer["pick"] for sample in response.get_json()["samples"]
              for layer in sample["layers"]}
     assert picks == {1, 2}
+
+
+def test_a_channel_list_beside_the_slide_names_the_registered_channels(client):
+    """`markers.csv` is the panel, so the record carries ITS names rather than
+    the generic ones the file would otherwise get -- the names gating matches
+    the cell table's marker columns against."""
+    (_source(client) / "markers.csv").write_text(
+        "channel_number,cycle_number,marker_name\n1,1,DAPI\n2,1,CD45\n",
+        encoding="utf-8")
+
+    response = client.post("/import/sample", json={
+        "paths": [str(_source(client))]})
+
+    assert response.status_code == 200, response.get_json()
+    channels = Project.load(response.get_json()["name"]).image.channels
+    assert [c["name"] for c in channels if c.get("name") != "Area"] == [
+        "DAPI", "CD45"]

@@ -74,6 +74,34 @@ GROUPING_SUFFIXES = ("_mask", "_masks", "_seg", "_segmentation", "_labels",
                      "_label", "_cells", "_nuclei", "_transcripts", "_quant",
                      "_data")
 
+#: The column that makes a delimited file a channel list rather than a table
+#: of cells. mcmicro's `markers.csv` is the common one -- `channel_number,
+#: cycle_number,marker_name`, one row per image channel -- and it sits at the
+#: root of a run, shared by every slide in it. Read as the panel, never as
+#: data: one row per channel is not one row per cell.
+MARKER_SHEET_COLUMN = "marker_name"
+
+#: Filenames that are a channel list even without that column: a one-column
+#: `markers.csv`, the older mcmicro spelling.
+MARKER_SHEET_FILES = ("markers.csv",)
+
+#: How many folder levels below a picked folder a segmentation mask is looked
+#: for when none sits beside its images. Pipelines file masks a level or two
+#: down -- mcmicro's `segmentation/unmicst-<sample>/cell.ome.tif`, a folder per
+#: segmenter -- and four covers what they write.
+MASK_SEARCH_DEPTH = 4
+
+#: How many entries that search looks at before giving up. A run holds tens of
+#: files; a pick of somebody's home directory holds a great many more, and the
+#: honest answer there is "no mask found" rather than a minute of stats.
+MASK_SEARCH_LIMIT = 1000
+
+#: Words in a path that say a segmentation lives there, for a candidate whose
+#: pixels cannot settle it on their own (a window of pure background). Broader
+#: than `MASK_HINTS`, which judges a file somebody picked: this only ever
+#: judges a file that already has an image's exact shape.
+DEEP_MASK_HINTS = MASK_HINTS + ("cell", "nucle", "segment")
+
 #: Which raster image a sample prefers as its reference, most preferred first.
 #: A Xenium run's own morphology beats an H&E somebody added beside it: every
 #: transcript in the run is already expressed in the morphology image's frame,
@@ -150,6 +178,10 @@ class Question:
     #: Which of the caller's picks asked it, by position -- so a question
     #: about one run folder goes on that run's card and no other. Internal.
     pick: int | None = None
+    #: The `src` of the row it is about, when a pick holds several samples'
+    #: rows: a folder of two slides asks "which mask?" of one of them, and
+    #: `pick` alone would draw it on both cards. Internal.
+    about: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -233,6 +265,15 @@ class LayerProposal:
     #: fraction of that frame) and clears it, so finishing twice cannot scale
     #: twice. Internal, like `attach`.
     frame: str | None = None
+    #: The image this row was found FOR, by its `src`, when its own name says
+    #: nothing: `mccellpose-LSP11385/cell.ome.tif` is LSP11385's mask because
+    #: of the folder it sits in, and grouping by its stem ("cell") would put it
+    #: nowhere. Internal, like `attach`.
+    found_for: str | None = None
+    #: Names for the image's channels, in channel order, from a channel list
+    #: picked beside it (`markers.csv`). Empty means the image keeps its own.
+    #: Internal: the row's detail says where the names came from.
+    channel_names: tuple = ()
 
     def to_dict(self) -> dict:
         return {
@@ -544,10 +585,34 @@ def looks_like_label_image(path):
                         handle, path, dtype):
                     return True
                 return False
-            return _plane_verdict(path, dtype,
-                                  lambda: handle.pages[0].asarray()[:512, :512])
+            return _plane_verdict(path, dtype, lambda: _tiff_corner(handle))
     except Exception:
         return None
+
+
+def _tiff_corner(handle):
+    """The top-left 512x512 of a TIFF's first plane, reading only the tiles
+    that cover it.
+
+    `pages[0].asarray()` decodes the WHOLE plane before the slice: three
+    seconds and gigabytes for a slide-sized mask, paid on every inspection --
+    which a folder scan now does for each mask it finds. Through the same
+    lazy zarr view the tile route reads, it is one tile. The old read is the
+    fallback for a file that view cannot open.
+    """
+    import numpy as np
+    import zarr
+
+    try:
+        store = handle.series[0].aszarr(level=0)
+        try:
+            array = zarr.open(store, mode="r")
+            lead = (0,) * max(array.ndim - 2, 0)
+            return np.asarray(array[lead + (slice(0, 512), slice(0, 512))])
+        finally:
+            store.close()
+    except Exception:
+        return handle.pages[0].asarray()[:512, :512]
 
 
 def _plane_verdict(path, dtype, window_of):
@@ -1336,14 +1401,211 @@ def _detect_directory(path, answers, declared=None):
         found.extend(layers)
         questions.extend(child_questions)
         warnings.extend(child_warnings)
-    if not found:
+    # A channel list is not something to import on its own, so a folder
+    # holding one beside a run is still a folder that only wraps the run.
+    panels = [layer for layer in found if layer.role == "channels"]
+    if len(panels) == len(found):
         nested = _lone_bundle(path)
         if nested is not None:
-            return _detect_directory(nested, answers, declared)
-        return [], [], None, []
+            layers, nested_questions, bundle, nested_warnings = \
+                _detect_directory(nested, answers, declared)
+            return layers + panels, nested_questions, bundle, nested_warnings
+        return panels, [], None, []
+    masks, mask_questions = _masks_below(path, found, answers)
+    found.extend(masks)
+    questions.extend(mask_questions)
     if declared:
         warnings = _a_folder_is_not_one_file(path, found, warnings)
     return found, questions, None, warnings
+
+
+def _masks_below(root, found, answers):
+    """Segmentation masks in the folders under `root`, for the images in it
+    that have none beside them. `(layers, questions)`.
+
+    The images sit at the top of the folder and the masks a few levels down --
+    `mccellpose-LSP11385/cell.ome.tif` -- so a one-level scan offered a slide
+    with no mask and a "+ Add segmentation mask" to go and find the file it
+    had walked straight past.
+
+    A candidate has to have the image's exact width and height and read as
+    label ids. It belongs to the image whose name its PATH carries (the folder
+    usually says it, not the file); a candidate naming no image goes to an
+    image only when that image is the one of its size still without a mask.
+    Several for one image: whole cells first, then anything else, nuclei last
+    -- and a question to change it, defaulting to that choice.
+    """
+    images = [layer for layer in found
+              if layer.kind == "image" and layer.role == "image"
+              and layer.src and not _unsettled(layer)]
+    covered = {_group_stem(_named_by(layer)) for layer in found
+               if layer.role == "mask"}
+    lacking, seen = [], set()
+    for image in images:
+        stem = _group_stem(_named_by(image))
+        if stem in covered or stem in seen or _size_of(image) is None:
+            continue
+        seen.add(stem)
+        lacking.append(image)
+    if not lacking:
+        return [], []
+
+    sizes = {_size_of(image) for image in lacking}
+    candidates = []
+    for path in _mask_files_below(Path(root)):
+        geometry = _geometry_of(path)
+        size = _size_of_geometry(geometry)
+        if size not in sizes or int((geometry or {}).get("numChannels") or 1) != 1:
+            continue
+        relative = path.relative_to(root).as_posix()
+        verdict = looks_like_label_image(path)
+        if verdict is False or (verdict is None and not any(
+                hint in relative.lower() for hint in DEEP_MASK_HINTS)):
+            continue
+        candidates.append({"path": path, "relative": relative,
+                           "geometry": geometry, "size": size,
+                           "owner": _named_owner(relative, images)})
+    if not candidates:
+        return [], []
+
+    masks, questions = [], []
+    for image in lacking:
+        size = _size_of(image)
+        pool = [c for c in candidates
+                if c["size"] == size and c["owner"] is image]
+        if not pool and sum(1 for other in lacking
+                            if _size_of(other) == size) == 1:
+            pool = [c for c in candidates
+                    if c["size"] == size and c["owner"] is None]
+        if not pool:
+            continue
+        pool.sort(key=_mask_rank)
+        question_id = f"mask-for:{image.src}"
+        said = answers.get(question_id)
+        chosen = (None if said == "none" else
+                  next((c for c in pool if str(c["path"]) == said), pool[0]))
+        if chosen is not None:
+            layer = LayerProposal(
+                id=_layer_id(chosen["path"]), kind="labels", role="mask",
+                modality="mask", label="Segmentation mask",
+                src=str(chosen["path"]), geometry=chosen["geometry"])
+            layer.found_for = str(image.src)
+            layer.detail = describe(layer)
+            masks.append(layer)
+        if len(pool) > 1 or chosen is None:
+            # Under the row while there is one; on the card once "None" has
+            # taken the row away, so the choice can still be undone.
+            questions.append(Question(
+                id=f"mask-for:{image.src}", label="Which segmentation mask?",
+                kind="select",
+                options=tuple({"value": str(c["path"]), "label": c["relative"]}
+                              for c in pool)
+                + ({"value": "none", "label": "None"},),
+                default=str(pool[0]["path"]),
+                scope=f"layer:{layer.id}" if chosen is not None else "sample",
+                about=str(image.src)))
+    return masks, questions
+
+
+def _size_of(layer):
+    return _size_of_geometry(layer.geometry)
+
+
+def _size_of_geometry(geometry):
+    """`(width, height)`, or None when the file did not say."""
+    width = (geometry or {}).get("width")
+    height = (geometry or {}).get("height")
+    return (int(width), int(height)) if width and height else None
+
+
+def _mask_files_below(root):
+    """Files under `root` that could hold a mask, nearest first.
+
+    Breadth-first to `MASK_SEARCH_DEPTH` levels, within `MASK_SEARCH_LIMIT`
+    entries. A store is a folder of chunks and never a mask file, so neither
+    it nor anything hidden is entered. A label pyramid Plexora built beside
+    its source is the same mask as that source -- registering the source
+    adopts it -- so only the source is offered.
+    """
+    files, level, budget = [], [root], MASK_SEARCH_LIMIT
+    # One pass more than the depth: the first lists `root` itself, whose own
+    # files were read by the plain-folder scan already.
+    for _depth in range(MASK_SEARCH_DEPTH + 1):
+        below = []
+        for folder in level:
+            try:
+                children = sorted(folder.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                budget -= 1
+                if budget < 0:
+                    return _without_mask_copies(files)
+                name = child.name.lower()
+                if name.startswith(".") or name.endswith(_CONTAINER_SUFFIXES):
+                    continue
+                try:
+                    if child.is_dir():
+                        below.append(child)
+                        continue
+                except OSError:
+                    continue
+                if folder is not root and child.suffix.lower() in (
+                        ".tif", ".tiff", ".png"):
+                    files.append(child)
+        level = below
+        if not level:
+            break
+    return _without_mask_copies(files)
+
+
+def _without_mask_copies(files):
+    """`files` less any label pyramid whose source is also among them."""
+    from plexora.server.utils import segmentation_pyramid
+
+    derived = set()
+    for path in files:
+        for mode in (segmentation_pyramid.MODE_FILLED,
+                     segmentation_pyramid.MODE_OUTLINES):
+            copy = segmentation_pyramid.derived_output_path(path, None, mode=mode)
+            if copy != path:
+                derived.add(copy)
+    return [path for path in files if path not in derived]
+
+
+def _named_owner(relative, images):
+    """The image whose name a mask's path carries as a whole word, or None.
+
+    The longest such name wins, so `seg-LSP11385_rv/cell.tif` is
+    LSP11385_rv's even though it also says LSP11385. Four characters at least,
+    for the reason `_best_sample` gives.
+    """
+    text = relative.lower()
+    best, best_length = None, 0
+    for image in images:
+        stem = _group_stem(_named_by(image))
+        if len(stem) < 4 or len(stem) <= best_length:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(stem)}(?![a-z0-9])", text):
+            best, best_length = image, len(stem)
+    return best
+
+
+def _mask_rank(candidate):
+    """Which of one image's masks is proposed: a whole-cell one, then anything
+    that is not nuclei, then nuclei; nearest, then by name, within each."""
+    relative = candidate["relative"]
+    name = relative.rsplit("/", 1)[-1].lower().split(".", 1)[0]
+    words = set(re.split(r"[^a-z0-9]+", name))
+    if words & {"cell", "cells", "wholecell"}:
+        tier = 0
+    elif "nucle" in name or "nuc" in words:
+        tier = 3
+    elif "cell" in name:
+        tier = 1
+    else:
+        tier = 2
+    return (tier, relative.count("/"), relative.lower())
 
 
 def _not_offered():
@@ -1810,7 +2072,8 @@ def _detect_parquet(path):
         layer = LayerProposal(
             id="cells", kind="table", role="table", modality="cells",
             label="Cells", src=str(path),
-            render={"detail": f"{_count(peek['rows'])} cells"})
+            render={"detail": f"{_count(peek['rows'])} rows × "
+                              f"{len(names)} columns · parquet"})
         layer.detail = describe(layer)
         return [layer], [], None, []
 
@@ -1998,9 +2261,74 @@ def _looks_like_a_table(path) -> bool:
     return any(header.count(delimiter) >= 1 for delimiter in (",", "	", ";"))
 
 
+def _marker_sheet(path):
+    """`(grid, column, has_header)` for a channel list, or None for any other
+    file.
+
+    Decided from the header line alone, so a 200 MB cell table costs one
+    readline here; only a file that IS a channel list is read whole, through
+    `channel_file` -- the parser the viewer's channel-names upload uses, so a
+    sheet that works there reads the same here. `has_header` is None for a
+    one-column `markers.csv`, whose first row may be a title or a marker:
+    the image's channel count decides (`_panel_names`).
+    """
+    from plexora.server.utils import channel_file
+
+    path = Path(path)
+    if path.suffix.lower() not in (".csv", ".tsv", ".txt"):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as handle:
+            header = handle.readline().strip()
+    except OSError:
+        return None
+    delimiter = next((d for d in (",", "\t", ";") if d in header), None)
+    columns = [cell.strip().strip('"').strip().lower()
+               for cell in (header.split(delimiter) if delimiter else [header])]
+    if MARKER_SHEET_COLUMN in columns:
+        column, has_header = columns.index(MARKER_SHEET_COLUMN), True
+    elif path.name.lower() in MARKER_SHEET_FILES and len(columns) == 1:
+        column, has_header = 0, None
+    else:
+        return None
+    try:
+        grid = channel_file.read_grid(path=str(path))
+    except channel_file.ChannelFileError:
+        return None
+    return grid, column, has_header
+
+
+def _panel_names(path, count):
+    """The `count` channel names a channel list holds, or None when it does
+    not hold exactly that many: a list of the wrong length renames every
+    channel after the first missing one to its neighbour's marker, and
+    nothing on screen would say so."""
+    from plexora.server.utils import channel_file
+
+    sheet = _marker_sheet(path)
+    if sheet is None or count <= 0:
+        return None
+    grid, column, has_header = sheet
+    if has_header is None:
+        has_header = channel_file.autodetect(grid, count)
+        if has_header is None:
+            return None
+    names = channel_file.names(grid, column, has_header)
+    return names if len(names) == count else None
+
+
 def _detect_table(path):
     from plexora.server.models.adapters import detect_data_type
 
+    if _marker_sheet(path) is not None:
+        # Not a table: the names of the image's channels. Carried as a row so
+        # it travels with its pick, and taken out again before grouping
+        # (`inspect_paths`) -- it belongs to every sample its images make,
+        # and asking which one would be asking a question with one answer.
+        # No modality: it never reaches the screen as a row of its own.
+        layer = LayerProposal(id="channel_names", kind="channels",
+                              role="channels", label=path.name, src=str(path))
+        return [layer], [], None, []
     if path.suffix.lower() in (".csv", ".tsv", ".txt") and not _looks_like_a_table(path):
         return [], [], None, [
             f"{path.name} has no delimited header — it does not look like "
@@ -2009,12 +2337,96 @@ def _detect_table(path):
         data_type = detect_data_type(path)
     except ValueError as error:
         return [], [], None, [str(error)]
+    size = _table_size(path)
+    detail = data_type
+    if size is not None:
+        rows, columns, estimated = size
+        detail = (f"{'~' if estimated else ''}{_count(rows)} rows × "
+                  f"{columns} columns · {data_type}")
     layer = LayerProposal(
         id="table", kind="table", role="table", modality="cells",
         label="Cells", src=str(path), table=None,
-        render={"detail": data_type})
+        render={"detail": detail})
     layer.detail = describe(layer)
     return [layer], [], None, []
+
+
+#: Over this, a delimited table's rows are ESTIMATED from its first megabyte
+#: rather than counted. Counting reads the file -- a tenth of a second for a
+#: 200 MB mcmicro table, which is worth it to say the number exactly, and not
+#: worth it for a 20 GB one on every inspection.
+TABLE_COUNT_LIMIT = 1 << 30
+
+#: `(path, size, mtime) -> (rows, columns, estimated) | None`. Inspection
+#: re-runs on every answer, and a table that has not changed has not changed
+#: size: counting it once per dialog is the whole cost.
+_TABLE_SIZES: dict = {}
+
+
+def _table_size(path):
+    """`(rows, columns, estimated)` for a feature table, or None.
+
+    Never a parse: a delimited file's columns are its header line and its rows
+    are its line breaks; an `.h5ad` states its matrix's shape in metadata.
+    """
+    path = Path(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    if key in _TABLE_SIZES:
+        return _TABLE_SIZES[key]
+    try:
+        size = (_h5ad_size(path) if path.suffix.lower() == ".h5ad"
+                else _delimited_size(path, stat.st_size))
+    except Exception:
+        size = None
+    if len(_TABLE_SIZES) >= 256:
+        _TABLE_SIZES.clear()
+    _TABLE_SIZES[key] = size
+    return size
+
+
+def _delimited_size(path, total):
+    import csv
+
+    with open(path, "rb") as handle:
+        head = handle.read(1 << 20)
+        line = head.split(b"\n", 1)[0].decode("utf-8-sig", errors="ignore")
+        delimiter = "\t" if path.suffix.lower() == ".tsv" else max(
+            (",", "\t", ";"), key=line.count)
+        columns = len(next(csv.reader([line], delimiter=delimiter), []))
+        if not columns or not head:
+            return None
+        if total > TABLE_COUNT_LIMIT:
+            breaks = head.count(b"\n")
+            if breaks < 2:
+                return None
+            return max(round(total * breaks / len(head)) - 1, 0), columns, True
+        breaks, last = head.count(b"\n"), head[-1:]
+        while True:
+            block = handle.read(1 << 22)
+            if not block:
+                break
+            breaks += block.count(b"\n")
+            last = block[-1:]
+    # The header is a line and not a row; a last row with no line break after
+    # it is a row all the same.
+    rows = breaks - 1 + (0 if last == b"\n" else 1)
+    return max(rows, 0), columns, False
+
+
+def _h5ad_size(path):
+    import h5py
+
+    from plexora.server.models.adapters.anndata_adapter import (_child,
+                                                                _matrix_shape)
+
+    with h5py.File(path, "r") as handle:
+        matrix = _child(handle, "X")
+        rows, columns = _matrix_shape(matrix) if matrix is not None else (None, None)
+    return (rows, columns, False) if rows is not None else None
 
 
 # -- grouping --------------------------------------------------------------
@@ -2417,7 +2829,19 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
             bundles.append(bundle)
 
     proposal.warnings.extend(warnings)
-    found = _without_image_copies(found)
+    panels = [layer for layer in found if layer.role == "channels"]
+    found = _without_image_copies(
+        [layer for layer in found if layer.role != "channels"])
+    if panels and (sample or not found):
+        # A channel list names an image's channels; on its own, or added to a
+        # sample that already has its names, there is nothing for it to name.
+        for panel in panels:
+            proposal.unrecognised.append({
+                "pick": panel.pick, "path": str(panel.said or panel.src),
+                "reason": (f"{Path(panel.src).name} lists channel names. Pick "
+                           "it with the images it names, or rename a sample's "
+                           "channels from the viewer."),
+            })
     if not found:
         return proposal
 
@@ -2427,7 +2851,63 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
 
     for group in _split_samples(found, bundles, questions, answers, proposal):
         proposal.samples.append(group)
+    _name_channels(proposal.samples, panels, proposal.warnings)
     return proposal
+
+
+def _name_channels(samples, panels, warnings):
+    """Give each sample's image the names a picked channel list holds.
+
+    Applied to every sample, never asked about: a run's `markers.csv` is the
+    panel of every slide in it. Each image takes the list nearest it -- in its
+    own folder, else the closest folder above -- or the only list picked. One
+    whose length is not the image's channel count is not applied, and said so;
+    the image keeps the names it carries itself.
+    """
+    if not panels:
+        return
+    for sample in samples:
+        reference = next((layer for layer in sample.layers
+                          if layer.reference and layer.kind == "image"), None)
+        if reference is None or (reference.render or {}).get("rgb"):
+            continue
+        count = int((reference.geometry or {}).get("numChannels") or 0)
+        panel = _panel_for(reference, panels)
+        if panel is None or count <= 0:
+            continue
+        sheet = Path(panel.src).name
+        names = _panel_names(panel.src, count)
+        if names is None:
+            warnings.append(
+                f"{sheet} does not list {count} channel names, so "
+                f"{reference.label} keeps the names it carries.")
+            continue
+        reference.channel_names = tuple(names)
+        # Last, after the calibration: the row is one line and clips, and the
+        # size and pixel size are what a person checks first.
+        reference.detail = f"{describe(reference)} · channel names from {sheet}"
+
+
+def _panel_for(image, panels):
+    """The channel list for one image: the nearest one at or above its folder,
+    else the only one picked, else None."""
+    best, best_distance = None, None
+    if image.src and not _is_node_address(image.src) \
+            and not is_remote_locator(image.src):
+        folder = Path(image.src).parent
+        for panel in panels:
+            home = Path(panel.src).parent
+            if home == folder:
+                distance = 0
+            elif home in folder.parents:
+                distance = len(folder.parts) - len(home.parts)
+            else:
+                continue
+            if best_distance is None or distance < best_distance:
+                best, best_distance = panel, distance
+    if best is None and len(panels) == 1:
+        best = panels[0]
+    return best
 
 
 def _without_image_copies(found):
@@ -2517,16 +2997,21 @@ def _split_samples(found, bundles, questions, answers, proposal):
             shared[stem] = shared.get(stem, 0) + 1
         claimed = set()
         for (stem, folder), group in anchors.items():
+            srcs = {str(image.src) for image in group}
             if shared[stem] > 1:
                 # The stem names several samples, so it cannot say which of
                 # them anything else belongs to: only what sits in the same
                 # folder joins, and the rest are placed like any loose file.
                 mine = [l for l in rest if l.src and id(l) not in claimed
-                        and _group_stem(_named_by(l)) == stem
-                        and _folder_of(l) == folder]
+                        and (l.found_for in srcs if l.found_for else
+                             _group_stem(_named_by(l)) == stem
+                             and _folder_of(l) == folder)]
             else:
+                # A row found FOR one of these images joins by that, and only
+                # by that: its own stem is a folder's choice of filename.
                 mine = [l for l in rest if l.src and id(l) not in claimed
-                        and _group_stem(_named_by(l)) == stem]
+                        and (l.found_for in srcs if l.found_for else
+                             _group_stem(_named_by(l)) == stem)]
             claimed.update(id(l) for l in mine)
             sample = _assemble(_clean_name(stem), mine, questions, [])
             if shared[stem] > 1:
@@ -2536,20 +3021,27 @@ def _split_samples(found, bundles, questions, answers, proposal):
         orphans = [l for l in rest if id(l) not in claimed]
 
     if not samples:
-        samples = [_assemble(_sample_name([_named_by(l) for l in rest if l.src],
+        # Named by what was picked, not by what was found for it: a mask out
+        # of `mccellpose-LSP11385/` is called `cell`, which is not the slide.
+        samples = [_assemble(_sample_name([_named_by(l) for l in rest
+                                           if l.src and not l.found_for],
                                           bundles),
                              rest, questions, bundles)]
-    _place(samples, held, orphans, proposal)
+    _place(samples, held, orphans, proposal, answers)
     if len(samples) > 1:
         # Every card was handed every question, so "which image in this
         # store?" about sample 2's pick was drawn on sample 1's card too, and
         # answered there. Each card keeps the questions its own picks asked;
         # one no pick asked (`sample-for`, from `_place`) was only ever given
-        # to the card it is about.
+        # to the card it is about. A folder is ONE pick holding several
+        # samples, so a question that says which row it is about goes only
+        # where that row is.
         for sample in samples:
             picks = {layer.pick for layer in sample.layers}
+            srcs = {str(layer.src) for layer in sample.layers if layer.src}
             sample.questions = [q for q in sample.questions
-                                if q.pick is None or q.pick in picks]
+                                if (q.pick is None or q.pick in picks)
+                                and (q.about is None or q.about in srcs)]
     return samples
 
 
@@ -2584,12 +3076,14 @@ def _split_bundles(found, bundles, questions, proposal):
     # A loose row's own questions go where the row went.
     for sample in samples:
         picks = {l.pick for l in sample.layers if id(l) not in claimed}
+        srcs = {str(l.src) for l in sample.layers if l.src}
         sample.questions.extend(q for q in questions
-                                if q.pick in picks and q not in sample.questions)
+                                if q.pick in picks and q not in sample.questions
+                                and (q.about is None or q.about in srcs))
     return samples
 
 
-def _place(samples, held, orphans, proposal):
+def _place(samples, held, orphans, proposal, answers=None):
     """Put the rows that anchored nothing into the sample they belong to.
 
     Three ways in, in descending order of how much is known:
@@ -2605,7 +3099,14 @@ def _place(samples, held, orphans, proposal):
     3. Nothing says so, and there is more than one sample it could be. That is
        a question, asked on the card of the sample it provisionally joined --
        which is the first one, so the default never leaves a file out.
+
+    A row out of a picked FOLDER is asked about under its own file, not the
+    folder: the folder is one pick holding every sample's files, and "the
+    folder belongs to sample 2" is not what anybody answered. That answer is
+    read here, and the question stays on the card it moved the row to, so it
+    can be changed back.
     """
+    answers = answers or {}
     by_key = {sample.key: sample for sample in samples if sample.key}
     loose = []
     touched = set()
@@ -2620,18 +3121,20 @@ def _place(samples, held, orphans, proposal):
     for layer in list(orphans) + loose:
         target = _best_sample(layer, samples)
         if target is None:
-            target = samples[0]
             name = Path(_named_by(layer)).name
+            inside = _from_inside_a_folder(layer)
             # Filed under the pick, not the filename: two samples' loose
             # `cellRing.ome.tif` are two questions with two answers.
             question = Question(
-                id=f"sample-for:{layer.said or name}",
+                id=f"sample-for:{layer.src if inside else (layer.said or name)}",
                 label=f"Which sample does {name} belong to?",
                 kind="select",
                 options=tuple({"value": s.key, "label": s.name}
                               for s in samples),
                 default=samples[0].key,
                 scope=f"layer:{layer.id}")
+            target = (by_key.get(answers.get(question.id)) if inside
+                      else None) or samples[0]
             target.questions.append(question)
             layer.needs = tuple(layer.needs) + (question.id,)
         target.layers.append(layer)
@@ -2660,18 +3163,57 @@ def _shared_prefix(left, right) -> int:
     return count
 
 
+def _from_inside_a_folder(layer) -> bool:
+    """Whether this row is one file out of a picked folder, rather than the
+    file that was picked. Local paths only: a node's rows carry a derived id,
+    and a web address is always the thing that was picked."""
+    src, said = str(layer.src or ""), str(layer.said or "")
+    if not src or not said or _is_node_address(src) or is_remote_locator(src):
+        return False
+    try:
+        return Path(src).resolve() != Path(said).expanduser().resolve()
+    except OSError:
+        return False
+
+
+def _starts_with_word(stem, prefix) -> bool:
+    """Whether `stem` begins with the whole of `prefix`, followed by nothing
+    or by a separator: `lsp11385--mccellpose_cell` begins with the word
+    `lsp11385`, and not with `lsp11385_rv`, which shares as many letters."""
+    return bool(prefix) and stem.startswith(prefix) and (
+        len(stem) == len(prefix) or not stem[len(prefix)].isalnum())
+
+
 def _best_sample(layer, samples):
     """The one sample whose stem this row's filename matches, or None.
 
-    Four characters, because two and three match half a study: `ls` is every
-    slide in an mcmicro run. Outright, because a row that matches two samples
-    equally well is exactly the row a person has to decide about.
+    A row found for one image (`found_for`) goes to that image's sample. Then
+    a sample whose whole name LEADS the filename, as a word: mcmicro writes
+    `LSP11385--mccellpose_cell.csv` beside `LSP11385_rv.ome.tif` too, and by
+    shared letters alone the two slides tied and the table was asked about.
+    The longest such name wins, so `LSP11385_rv--…` is the `_rv` slide's.
+
+    Otherwise the longest shared prefix, four characters at least, because two
+    and three match half a study: `ls` is every slide in an mcmicro run.
+    Outright, because a row that matches two samples equally well is exactly
+    the row a person has to decide about.
     """
     if len(samples) == 1:
         return samples[0]
+    if layer.found_for:
+        owner = next((sample for sample in samples
+                      if any(str(other.src) == layer.found_for
+                             for other in sample.layers)), None)
+        if owner is not None:
+            return owner
     stem = _group_stem(_named_by(layer))
     if not stem:
         return None
+    worded = sorted(((len(_stem_of(sample)), sample) for sample in samples
+                     if _starts_with_word(stem, _stem_of(sample))),
+                    key=lambda pair: pair[0], reverse=True)
+    if worded and (len(worded) == 1 or worded[1][0] < worded[0][0]):
+        return worded[0][1]
     ranked = sorted(
         ((_shared_prefix(stem, _stem_of(sample)), sample)
          for sample in samples),
