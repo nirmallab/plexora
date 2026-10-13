@@ -34,6 +34,7 @@ import logging
 import os
 import threading
 from collections import OrderedDict, deque
+from time import perf_counter
 
 from flask import Blueprint, Response, current_app, jsonify, request, send_file
 
@@ -1502,8 +1503,11 @@ def image_tile(resource_id, channel, level, tile):
             if view is not None:
                 # Resolved again under this read lock: a reopen between the
                 # two sections closes the sources the first one found.
+                opened = perf_counter()
                 again = _volume_view(resource, request.args, served=True)
                 pyramid = _view_pyramid(resource, again)
+                # The read's `open` part (Server-Timing), as on the primary.
+                _perf.part("open", (perf_counter() - opened) * 1000.0)
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
         _perf.mark("read")
         # Encoded outside the lock. It is pure over the array and the window,
@@ -1518,15 +1522,21 @@ def image_tile(resource_id, channel, level, tile):
     # pictures, and a key that conflated them would keep serving the guess.
     # A view adds itself to both, and only a view: a plain tile's key and tag
     # are the ones they have always been.
-    key = (resource.id, _open_generation(resource), "tile", index,
-           str(level), str(tile), quality, width, height, qmin, qmax)
+    generation = _open_generation(resource)
+    base = (resource.id, generation, "tile", index,
+            str(level), str(tile), quality, width, height, qmin, qmax)
+    key = base
     parts = ("tile", channel, level, tile, quality, qmin, qmax)
     if view is not None:
         key += view.key
         parts += view.key
+    with _tile_cache_lock:
+        hit = key in _tile_cache
     encoded, mimetype = _cached_tile(key, encode)
     if view is not None:
         _read_ahead(resource, view, index, level, tile, width, height)
+        _tiles_ahead(resource, generation, view, base, index, level, tile, width, height,
+                     quality, qmin, qmax, hit)
     return _viewed(_stamped(
         _image(encoded, mimetype, _etag(resource, *parts), durable=exact),
         resource), view)
@@ -1537,7 +1547,7 @@ def _read_ahead(resource, view, index, level, tile, width, height):
     (server/volume/prefetch.py): read the same tile there, in the background,
     so stepping across the block's edge finds its chunks decoded."""
     from plexora.server.models import data_model
-    from plexora.server.volume.model import block_depth
+    from plexora.server.volume.bricks import z_decode
     from plexora.server.volume.prefetch import PREFETCHER
 
     spec = view.spec
@@ -1545,7 +1555,8 @@ def _read_ahead(resource, view, index, level, tile, width, height):
         return
     base = view.base
     try:
-        block = block_depth(base, 0)
+        # What one read decodes, as the primary strides (data_model._read_ahead).
+        block = z_decode(base)
         depth = int(base.volume.depth)
     except Exception:  # noqa: BLE001 -- a source that cannot say reads nothing ahead
         return
@@ -1561,6 +1572,59 @@ def _read_ahead(resource, view, index, level, tile, width, height):
     region = (resource.id, getattr(resource, "generation", 0), view.reading, t, index,
               str(level), str(tile))
     PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
+
+
+def _tiles_ahead(resource, generation, view, base, index, level, tile, width, height,
+                 quality, qmin, qmax, hit):
+    """Make this tile at the planes ahead of the hand (prefetch.py
+    `TILE_PREFETCHER`), into this node's tile cache under the key `image_tile`
+    would file it under, when it is a plane of a stack decoded a plane at a
+    time -- the primary's `data_routes._tiles_ahead`, for a node: the
+    browser's standby request for the next plane, direct or forwarded, is
+    then answered from memory. `base` is the key without its view."""
+    from dataclasses import replace
+
+    from plexora.server.models import data_model
+    from plexora.server.volume.bricks import z_decode
+    from plexora.server.volume.plane_view import plane_pyramid
+    from plexora.server.volume.prefetch import TILE_PREFETCHER
+
+    spec = view.spec
+    if spec.kind != "plane" or spec.default:
+        return
+    try:
+        if z_decode(view.base) > 1:
+            return
+        depth = int(view.base.volume.depth)
+    except Exception:  # noqa: BLE001 -- a source that cannot say makes nothing ahead
+        return
+    zs, ts = view.zs, view.ts
+
+    def key_at(z):
+        return base + (replace(spec, z=int(z)).token(), zs or "", ts or "", "")
+
+    def held(z):
+        with _tile_cache_lock:
+            return key_at(z) in _tile_cache
+
+    def encode(z):
+        if held(z):
+            return False
+        with _reading(resource):
+            source = _volume_source(resource, zs, ts)
+            if source is None or getattr(resource, "generation", 0) != generation:
+                return False
+            pyramid = plane_pyramid(source, replace(spec, z=int(z)), served=True)
+            array = data_model.read_tile(pyramid, index, level, tile, width, height)
+        _store_tile(key_at(z), data_model.encode_tile_array(array, False, quality, qmin, qmax))
+        return True
+
+    region = (resource.id, generation, view.reading, spec.t, index, str(level), str(tile),
+              quality, width, height, qmin, qmax)
+    try:
+        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit)
+    except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
+        pass
 
 
 @node_bp.route("/image/<resource_id>/level")
@@ -2366,6 +2430,13 @@ def _cached_tile(key, encode):
     _perf.note("cache", "miss")
     _perf.skip()
     value = encode()
+    _store_tile(key, value)
+    return value
+
+
+def _store_tile(key, value):
+    """File an encoded tile under `key`, evicting the least recently used past
+    the budget."""
     global _tile_cache_bytes
     size = _tile_bytes(value)
     with _tile_cache_lock:
@@ -2383,7 +2454,6 @@ def _cached_tile(key, encode):
                                         or _tile_cache_bytes > _TILE_CACHE_BYTES):
             _, dropped = _tile_cache.popitem(last=False)
             _tile_cache_bytes -= _tile_bytes(dropped)
-    return value
 
 
 def _tile_bytes(value):

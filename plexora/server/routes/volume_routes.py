@@ -736,14 +736,21 @@ def volume_window(datasource):
 def volume_perf(datasource):
     """What the volume caches hold now, for the 3-D benchmark and for a person
     asking why a stack is slow: the level payload cache and, once the stack
-    has been read, its decoded-chunk cache and window state."""
+    has been read, its decoded-chunk cache and window state; the encoded tile
+    cache; and how much of what was read ahead landed -- of the blocks a hand
+    stepped into, how many the block read-ahead had read (`plane_prefetch`
+    `hit_rate`), and of the plane tiles served, how many came from those the
+    tile read-ahead had made (`tile_prefetch` `tile_hit_rate`)."""
     _project_or_404(datasource)
     from plexora.server.models import data_model
+    from plexora.server.routes import data_routes
     from plexora.server.volume import chunk_cache
-    from plexora.server.volume.prefetch import PREFETCHER
+    from plexora.server.volume.prefetch import PREFETCHER, TILE_PREFETCHER
 
     out = {"level_cache": serve.stats(), "chunk_cache": chunk_cache.CACHE.stats(),
+           "tile_cache": data_routes.tile_cache_stats(),
            "plane_prefetch": PREFETCHER.snapshot(),
+           "tile_prefetch": TILE_PREFETCHER.snapshot(),
            "exact_window_queue": len(data_model._exact_window_queue),
            "provisional_windows": sorted(name for (_scope, name)
                                          in list(data_model._provisional_windows))}

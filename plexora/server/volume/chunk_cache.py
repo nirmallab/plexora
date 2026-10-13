@@ -40,8 +40,11 @@ import os
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from time import perf_counter
 
 import numpy as np
+
+from plexora.telemetry import performance as _perf
 
 
 def _env_int(name, default):
@@ -116,7 +119,24 @@ class ChunkCache:
 
     def fetch(self, keys, load_many, *, keep: bool = True) -> dict:
         """`{key: array}` for every key: from the cache, from a load another
-        thread has under way, or from `load_many(missing)` here."""
+        thread has under way, or from `load_many(missing)` here.
+
+        On a tile's thread the time is the read's `chunk` part (`Server-
+        Timing`), a hit when every chunk was held and a miss when any had to
+        be loaded or waited for."""
+        phases = _perf.current()
+        if phases is None:
+            return self._fetch(keys, load_many, keep)[0]
+        started = perf_counter()
+        found, cold = self._fetch(keys, load_many, keep)
+        _perf.part("chunk", (perf_counter() - started) * 1000.0, phases)
+        if cold or phases.notes.get("chunk") != "miss":
+            phases.notes["chunk"] = "miss" if cold else "hit"
+        return found
+
+    def _fetch(self, keys, load_many, keep):
+        """`(found, cold)`: `fetch`'s answer, and whether any of it was not
+        already held."""
         keys = list(dict.fromkeys(keys))
         found = {}
         mine = []
@@ -164,7 +184,7 @@ class ChunkCache:
             if flight["error"] is not None:
                 raise flight["error"]
             found[key] = flight["array"]
-        return found
+        return found, bool(mine or theirs)
 
     def forget(self, source_id) -> None:
         """Drop every chunk of `source_id` (a source closed or found changed)."""

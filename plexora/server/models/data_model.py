@@ -27,6 +27,7 @@ import pickle
 import tifffile as tf
 import re
 import collections
+import contextlib
 import heapq
 import itertools
 import sys
@@ -692,6 +693,9 @@ def load_datasource(datasource_name, reload=False):
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
+        if getattr(_ahead_lane, "active", False):
+            raise NotLoaded(f"{datasource_name} is not the project loaded; a read ahead "
+                            "never loads one")
         # What the viewer shows while this runs (get_load_status). Begun
         # once the project is known, finished however this ends.
         progress = LoadProgress(datasource_name)
@@ -3150,7 +3154,11 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
         # A plane, projection or section of a volume (server/models/views.py).
         from plexora.server.models import views
 
+        opened = time.perf_counter()
         pyramid = views.plane_pyramid_for(datasource_name, view)
+        # Finding the view's pyramid -- a TIFF plane's pages walked, a store's
+        # level views built -- is the read's `open` part (Server-Timing).
+        _perf.part("open", (time.perf_counter() - opened) * 1000.0)
     elif view and segmentation and hasattr(seg, "plane"):
         # A 3-D label volume: the labels of the plane the view names (a slab's
         # middle plane). A 2-D mask is one plane drawn on every view and
@@ -3179,9 +3187,14 @@ def generate_zarr_png(datasource_name, channel, level, tile, view=""):
 def _read_ahead(datasource_name, channel_num, level, tile, view):
     """Queue the block of planes ahead of a plane tile just read
     (server/volume/prefetch.py), as a node does for its own: the same tile,
-    read in the background, so stepping across a block's edge is a hit."""
+    read in the background, so stepping across a block's edge is a hit.
+
+    A block is what one of the source's reads decodes (`bricks.z_decode`),
+    since that is what the decoded-chunk cache holds: a sharded store's inner
+    chunk, not its shard. Planes decoded one at a time have their next tiles
+    encoded ahead instead (`tiles_ahead_of`)."""
     from plexora.server.models import views
-    from plexora.server.volume.model import block_depth
+    from plexora.server.volume.bricks import z_decode
     from plexora.server.volume.prefetch import PREFETCHER
 
     source = volume_source
@@ -3189,7 +3202,7 @@ def _read_ahead(datasource_name, channel_num, level, tile, view):
         spec = views.resolve(datasource_name, view)
         if source is None or spec is None or spec.kind != "plane" or spec.default:
             return
-        block = block_depth(source, 0)
+        block = z_decode(source)
         depth = int(source.volume.depth)
     except Exception:  # noqa: BLE001 -- nothing to read ahead of
         return
@@ -3206,6 +3219,55 @@ def _read_ahead(datasource_name, channel_num, level, tile, view):
 
     region = (generation, datasource_name, t, channel_num, str(level), str(tile))
     PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
+
+
+def tiles_ahead_of(datasource_name, channel, view):
+    """`(spec, depth)` when the tiles of `view` should be encoded ahead of the
+    hand (`prefetch.TILE_PREFETCHER`, fed by the tile route), else None.
+
+    A plane of a local stack whose reads decode one plane at a time -- a TIFF
+    stored plane by plane, a zarr store chunked one plane deep: nothing a
+    plane's read decodes holds the next plane, so the block read-ahead
+    (`_read_ahead`) has nothing to warm, and the next plane's tile itself is
+    what is made ahead. Not a mask's tile, and not a node's image: its node
+    encodes ahead into its own cache (node/api.py `_tiles_ahead`), and asking
+    from here would send every tile across the link twice."""
+    from plexora.server.models import views
+    from plexora.server.volume.bricks import z_decode
+
+    if not view or _parse_channel(channel)[1] or _remote_image() is not None:
+        return None
+    source = volume_source
+    try:
+        spec = views.resolve(datasource_name, view)
+        if source is None or spec is None or spec.kind != "plane" or spec.default:
+            return None
+        if z_decode(source) > 1:
+            return None
+        return spec, int(source.volume.depth)
+    except Exception:  # noqa: BLE001 -- nothing to encode ahead of
+        return None
+
+
+class NotLoaded(RuntimeError):
+    """A read ahead found its project no longer loaded (`reading_ahead`)."""
+
+
+_ahead_lane = threading.local()
+
+
+@contextlib.contextmanager
+def reading_ahead():
+    """Run a read ahead of the viewer: it reads the project loaded now or
+    nothing. `load_datasource` raises `NotLoaded` on this thread rather than
+    load a project -- one switched away from while the read waited in a
+    queue must not be loaded back over the one on screen."""
+    previous = getattr(_ahead_lane, "active", False)
+    _ahead_lane.active = True
+    try:
+        yield
+    finally:
+        _ahead_lane.active = previous
 
 
 def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):

@@ -18,9 +18,26 @@ decoded. What it reads is exactly what a tile read would read (the caller's
 Bounded every way that matters: newest first (where the hand is now, not
 where it was), at most `QUEUE_MAX` waiting (older ones are dropped, the hand
 has moved on), a block read once until it has had time to leave the cache,
-and nothing at all where the chunks are one plane deep (the browser's own
-neighbour prefetch already covers those) or the chunk cache is too small to
-hold a block beside the one on screen (`MIN_BUDGET`).
+and nothing at all where the chunks are one plane deep or the chunk cache is
+too small to hold a block beside the one on screen (`MIN_BUDGET`).
+
+PLANES DECODED ONE AT A TIME -- a TIFF stored plane by plane, a zarr store
+chunked one plane deep -- have no block to read: nothing a plane's read
+decodes holds the next plane, and no decoded cache keeps it. There the TILE
+is made ahead instead (`after_plane_tile`, `TILE_PREFETCHER`): the same tile
+of the next `TILE_AHEAD` planes in the direction of travel, read and encoded
+into the tile cache the route answers from, under the key the route would
+file it under -- so the browser's standby request for the next plane is a
+cache hit. One worker, newest first, a tile the cache already holds skipped,
+and never anything a request waits on.
+
+A read ahead never reads ahead of itself: a tile read in the background lane
+(`chunk_cache.background`) moves no hand and queues nothing.
+
+`snapshot()` says how much of it landed: of the blocks a hand stepped into,
+how many the read-ahead had read (`entered`, `warmed`); of the planes' tiles
+served, how many were cache hits the tile read-ahead had made (`served`,
+`warmed`).
 """
 
 from __future__ import annotations
@@ -46,6 +63,11 @@ MIN_BUDGET = 1 << 30
 #: Threads reading ahead. Each read fans its chunks out over the background
 #: pool, so two keep it busy without crowding a tile anybody is waiting on.
 WORKERS = 2
+#: Planes whose tiles are made ahead of a tile served from a stack decoded a
+#: plane at a time: the browser's standby planes are the next two.
+TILE_AHEAD = 2
+#: Tiles made ahead that are remembered, for the hit rate.
+MADE_MAX = 8192
 
 
 class PlanePrefetcher:
@@ -55,10 +77,28 @@ class PlanePrefetcher:
         self._jobs: OrderedDict = OrderedDict()
         self._done: OrderedDict = OrderedDict()
         self._last: OrderedDict = OrderedDict()
+        #: (region, z) of the tiles `after_plane_tile` made, for the hit rate.
+        self._made: OrderedDict = OrderedDict()
         self._threads: list[threading.Thread] = []
         self._workers = max(1, int(workers))
+        #: Jobs a worker has taken and not finished (`drain`).
+        self._running = 0
         self.min_budget = int(min_budget)
-        self.stats = {"queued": 0, "read": 0, "dropped": 0, "failed": 0}
+        self.stats = {"queued": 0, "read": 0, "dropped": 0, "failed": 0,
+                      # blocks: stepped into, and of those read ahead first
+                      "entered": 0, "warmed": 0,
+                      # tiles: served, made ahead, skipped as already held,
+                      # and served from the cache having been made ahead
+                      "served": 0, "made": 0, "skipped": 0, "tiles_warmed": 0}
+
+    def _moved(self, region, z):
+        """The plane `region` was last served at, now that it is `z`."""
+        with self._lock:
+            last = self._last.pop(region, None)
+            self._last[region] = z
+            while len(self._last) > REGIONS_MAX:
+                self._last.popitem(last=False)
+        return last
 
     def after_tile(self, region, z: int, depth: int, block: int, read) -> list[int]:
         """A tile of `region` was served at plane `z`: queue the block ahead.
@@ -70,11 +110,15 @@ class PlanePrefetcher:
         z, depth, block = int(z), int(depth), int(block)
         if block <= 1 or depth <= block or chunk_cache.CACHE.budget < self.min_budget:
             return []
-        with self._lock:
-            last = self._last.pop(region, None)
-            self._last[region] = z
-            while len(self._last) > REGIONS_MAX:
-                self._last.popitem(last=False)
+        if chunk_cache.in_background():
+            return []
+        last = self._moved(region, z)
+        if last is None or last // block != z // block:
+            # Stepped into a block: was it read ahead (or being read)?
+            with self._lock:
+                self.stats["entered"] += 1
+                if (region, z // block) in self._done:
+                    self.stats["warmed"] += 1
         direction = 0 if last is None or last == z else (1 if z > last else -1)
         start = z // block * block
         targets = []
@@ -88,13 +132,64 @@ class PlanePrefetcher:
                 queued.append(target)
         return queued
 
-    def _submit(self, key, job) -> bool:
+    def after_plane_tile(self, region, z: int, depth: int, encode, held=None, hit=None,
+                         ahead: int = TILE_AHEAD) -> list[int]:
+        """A tile of `region` was served at plane `z` of a stack decoded a plane
+        at a time: queue the same tile, encoded, at the next `ahead` planes in
+        the direction of travel (the planes either side until one is known).
+
+        `encode(z)` reads and encodes the tile at plane `z` into the cache the
+        route answers from, under the key the route would use, and returns
+        whether it did (False when it was already there, or the project has
+        changed since). `held(z)`, when given, says whether the cache already
+        has it, so a tile held is never queued. `hit` is whether this tile
+        came from that cache, for the hit rate. Returns the planes queued
+        nearest first (for a test to read)."""
+        z, depth = int(z), int(depth)
+        if depth <= 1 or chunk_cache.in_background():
+            return []
+        last = self._moved(region, z)
         with self._lock:
-            read_at = self._done.get(key)
+            self.stats["served"] += 1
+            if hit and (region, z) in self._made:
+                self.stats["tiles_warmed"] += 1
+        direction = 0 if last is None or last == z else (1 if z > last else -1)
+        if direction:
+            targets = [z + direction * step for step in range(1, max(1, int(ahead)) + 1)]
+        else:
+            targets = [z + 1, z - 1]
+        targets = [target for target in targets if 0 <= target < depth
+                   and not (held is not None and held(target))]
+        queued = []
+        # Farthest first: the newest job runs first, so the nearest plane is
+        # made before the one after it.
+        for target in reversed(targets):
+            def job(target=target):
+                made = encode(target)
+                with self._lock:
+                    if made:
+                        self.stats["made"] += 1
+                        self._made.pop((region, target), None)
+                        self._made[(region, target)] = True
+                        while len(self._made) > MADE_MAX:
+                            self._made.popitem(last=False)
+                    else:
+                        self.stats["skipped"] += 1
+
+            if self._submit((region, "tile", target), job, remember=False):
+                queued.append(target)
+        return queued[::-1]
+
+    def _submit(self, key, job, remember: bool = True) -> bool:
+        """Queue `job` under `key`. `remember`: refuse it again for
+        DONE_SECONDS once read (a block); a tile is asked again whenever its
+        cache does not hold it."""
+        with self._lock:
+            read_at = self._done.get(key) if remember else None
             if key in self._jobs or (read_at is not None
                                      and time.monotonic() - read_at < DONE_SECONDS):
                 return False
-            self._jobs[key] = job
+            self._jobs[key] = (job, remember)
             self.stats["queued"] += 1
             while len(self._jobs) > QUEUE_MAX:
                 self._jobs.popitem(last=False)
@@ -117,21 +212,27 @@ class PlanePrefetcher:
             with self._lock:
                 while not self._jobs:
                     self._wake.wait()
-                key, job = self._jobs.popitem(last=True)
-                # Marked before the read, so a tile served while it runs does
-                # not queue the same block again.
-                self._done.pop(key, None)
-                self._done[key] = time.monotonic()
-                while len(self._done) > DONE_MAX:
-                    self._done.popitem(last=False)
+                key, (job, remember) = self._jobs.popitem(last=True)
+                if remember:
+                    # Marked before the read, so a tile served while it runs
+                    # does not queue the same block again.
+                    self._done.pop(key, None)
+                    self._done[key] = time.monotonic()
+                    while len(self._done) > DONE_MAX:
+                        self._done.popitem(last=False)
+                self._running += 1
+            outcome = "read"
             try:
                 with chunk_cache.background():
                     job()
-                self.stats["read"] += 1
             except Exception:  # noqa: BLE001 -- a read ahead is never anybody's error
-                self.stats["failed"] += 1
+                outcome = "failed"
+            finally:
                 with self._lock:
-                    self._done.pop(key, None)
+                    self._running -= 1
+                    self.stats[outcome] += 1
+                    if outcome == "failed":
+                        self._done.pop(key, None)
 
     def forget(self) -> None:
         """Drop everything queued and remembered (a source closed)."""
@@ -139,12 +240,34 @@ class PlanePrefetcher:
             self._jobs.clear()
             self._done.clear()
             self._last.clear()
+            self._made.clear()
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {**self.stats, "waiting": len(self._jobs)}
+            stats = dict(self.stats)
+            waiting = len(self._jobs)
+        stats["waiting"] = waiting
+        # None until there is something to divide.
+        stats["hit_rate"] = (round(stats["warmed"] / stats["entered"], 3)
+                             if stats["entered"] else None)
+        stats["tile_hit_rate"] = (round(stats["tiles_warmed"] / stats["served"], 3)
+                                  if stats["served"] else None)
+        return stats
+
+    def drain(self, seconds: float = 10.0) -> bool:
+        """Wait until nothing is queued or running (tests). True if it got there."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            with self._lock:
+                if not self._jobs and not self._running:
+                    return True
+            time.sleep(0.005)
+        return False
 
 
-#: The process's one prefetcher: the node's tile route and the primary's both
-#: feed it, and the chunk cache it fills is process-wide too.
+#: The process's one block prefetcher: the node's tile route and the
+#: primary's both feed it, and the chunk cache it fills is process-wide too.
 PREFETCHER = PlanePrefetcher()
+#: The process's one tile prefetcher (`after_plane_tile`): one worker, since
+#: each job reads and encodes on its own thread rather than fanning out.
+TILE_PREFETCHER = PlanePrefetcher(workers=1, min_budget=0)
