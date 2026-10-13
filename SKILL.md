@@ -116,6 +116,7 @@ Entry points:
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
 | `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
+| `plexora/licensing/` | Free/Paid. `manifest.py` says what the roots ARE (which a plan carries is the BioCognia platform's to say): `ai` (every AI path), `volume` ("Plexora 3D" -- `volume:surfaces`, `volume:objects`, `volume:segmentation`, `volume:analysis`; *viewing* a stack -- planes, projections, sections, the volume view, a 3-D mask over it -- stays Free), `transcriptomics` (`transcriptomics:xenium`, `transcriptomics:visium`; without it a 10x run is not even offered at import, `import_proposal._licensed`), and the add-on `mcp`, sold separately. `paid_default()` is every root but the add-ons -- what the platform's `plexora.paid` and `plexora.trial` plans must grant exactly, which `tools/bioc_sync.py --check` fails on, because plans are edited only on the platform and would otherwise drift from the roots declared here. `guards.require_entitlement` is the server's refusal (the `license` block). See Key Invariants for "not granted means not shown". |
 | `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `model_files.py` is the verified download every model shares (a file gets its real name only after its sha256 matched, so a half-finished download is never loaded); `sam_weights.py` delegates to it. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
 | `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
 | `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
@@ -1546,6 +1547,17 @@ Entry points:
   `satisfied_by`: a transcript layer whose tile cache is still building still
   APPLIES (the run has transcripts in it), and requiring readiness would make
   the section vanish for exactly as long as it had something to say.
+  `unlocked(plugin)` filters `tools_for`, `ready_tools`, `layer_sections_for`
+  and `nav_items`: a Paid plugin the licence does not unlock is still
+  installed (routes refuse, its `layer_jobs` builders keep serving what it
+  made) but on no page -- no menu row, launcher, layer section or scripts.
+  `installed`, `tools` and `find` stay unfiltered. Asked per request, so a
+  licence activated in Settings shows the plugin on the next page load; a
+  licensing error reads as locked, never as a broken page.
+  `endpoint_entitlements` never hide a plugin -- its panel leaves out what it
+  cannot use via the `licensed(entitlement)` template global
+  (`page_routes.inject_licensed`, a context processor so it stays out of the
+  golden-tested `flaskVariables`).
 - `core_tools.py` — the tool core ships itself: Rotate & Flip (`ROTATE`, name
   still `rotate` so `?tool=rotate` links and a sample's remembered arrangement
   keep working), an ordinary `Plugin` descriptor (`menu="view"`,
@@ -2443,8 +2455,10 @@ A third-party pip package and a bundled one get exactly the same thing.
   one-click button in the viewer's top-right launcher dock; it is data only —
   core renders it from `icon`/`label`/`shortcut` and wires it to the same
   `toggleTool` a Tools-menu row uses, so a launcher can never open a tool the
-  menu would not. `Plugin.entitlement` (`plugin:<name>`) makes the whole
-  plugin Paid. `Requires.first_layer(project)` returns the project
+  menu would not. `Plugin.entitlement` (`plugin:<name>`, or a declared
+  manifest entitlement such as `volume:segmentation`) makes the whole plugin
+  Paid, and hidden until unlocked (`plugins.unlocked`); `describe()` carries
+  no `locked` flag any more. `Requires.first_layer(project)` returns the project
   layer its first `layers` entry names, or None — which LAYER a layer-section
   plugin is a section FOR. Needed server-side because the panel is now the
   body of that layer's card and the card is built from `/config` before the
@@ -5397,13 +5411,14 @@ ordering, restyling and deleting one are the generic layer routes.
   `/volume/<ds>/surfaces...` (make, list, `preview`, `suggest`, `estimate`,
   `import`, and per surface `manifest`, `mesh`, `objects`, `cancel`,
   `sections`, `export`, `refine`, `neighbours`).
-- Licence: a root entitlement `surfaces` ("Surface Studio") in
-  `plexora/licensing/manifest.py`, beside `ai` rather than under it. Making
+- Licence: `volume:surfaces` ("Surface Studio") in
+  `plexora/licensing/manifest.py`, under the `volume` root ("Plexora 3D")
+  rather than beside `ai` as it once was (`surfaces`). Making
   and analysing (the POST, `preview`, `suggest`, `estimate`, `refine`,
   `neighbours`, `import`) is guarded by `guards.require_entitlement`; reading,
   exporting, cancelling and deleting a surface that exists stay Free, because
   what a Paid feature produced stays usable on any plan (SURFACES.md §1 has
-  the table, agent tools included). Tests mint `issue(ent=["surfaces"])`.
+  the table, agent tools included). Tests mint `issue(ent=["volume"])`.
 - Client: `views/surfaceRenderer.js` (mesh passes on the volume renderer's
   own GL context — opaque to a depth FBO, translucent by weighted blended OIT,
   then the ray caster's surface variant built by
@@ -7792,12 +7807,35 @@ in **5.6 s**.
   the picture in front of the user, not a layer in the stack; each carries its
   own close button and marks its dock `data-viewer-furniture` so core's canvas
   popups keep off it without naming a plugin's class.
-- **A whole plugin is Paid only through `entitlement="plugin:<name>"`.** Video
-  Studio is the first shipped one, and `tests/test_licensing_plugins.py`'s
-  `PAID_SHIPPED` allows exactly it, so a plugin turning Paid by accident fails
-  there; its capabilities must carry `plugin:<owner>` and nothing else
-  (`test_licensing_enforcement.py`). On a Free licence it is still listed in
-  the Tools menu and the launcher, badged, but `?tool=` mounts nothing.
+- **A whole plugin is Paid only through `Plugin.entitlement`.** Video Studio
+  (`plugin:video_studio`), segmentation (`volume:segmentation`), transcripts
+  (`transcriptomics:xenium`) and Visium HD (`transcriptomics:visium`) are the
+  shipped ones, and `tests/test_licensing_plugins.py`'s `PAID_SHIPPED` allows
+  exactly them, so a plugin turning Paid by accident fails there; every
+  entitlement a plugin names must be one the manifest declares. Video Studio's
+  capabilities carry `plugin:<owner>` and nothing else
+  (`test_licensing_enforcement.py`). On a licence that does not unlock it the
+  plugin is in no menu and no launcher, and `?tool=` renders the plain viewer.
+- **Not granted means not shown; the server still refuses; what Paid made
+  stays readable.** A tool, button, menu row or card action whose entitlement
+  the licence does not carry is absent -- not greyed, not badged, not
+  explained -- through `plugins.unlocked` (plugin lists), the `licensed()`
+  template global (controls inside a panel) and `PlexoraPaid.allows` in the
+  client. No upsell modal is opened anywhere and the Tools-menu "Paid" badges
+  are gone; `paidFeature.js`'s `explain`/`badge` are dormant. Hiding is a
+  courtesy, not the lock: routes, `endpoint_entitlements` and capabilities
+  still answer with the `license` block, because a page is not the only
+  caller. MCP still lists every tool, because its list is built once per
+  server and the licence can change under it -- the call refuses instead
+  (`test_mcp_lists_paid_tools_on_free_too`). And a surface, a 3-D object
+  table, a region carried through planes, an imported transcript or bin
+  layer is drawn, exported, measured and deleted on Free -- core's layer
+  route still serves a locked plugin's built tiles; only making more is Paid.
+  Pinned by `tests/test_license_visibility.py`, `test_license_volume.py` and
+  `test_license_transcriptomics.py`. Tests: the `paid` marker and
+  `paid_license` install `conftest.PAID_TEST_GRANTS` (`ai`, `volume`,
+  `transcriptomics`, `mcp`); `license_issuer.issue()` alone still mints
+  `["ai"]`, the narrowest Paid licence.
 - **Acquired data is never interpolated.** In a Video Studio document,
   timepoint, plane, slab and view mode change only in whole steps — the
   normaliser in `video_studio/server/schema.py` raises `IntegrityError` for

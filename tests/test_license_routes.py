@@ -30,15 +30,16 @@ def test_status_on_free_says_free_and_carries_no_secrets(client):
 
 def test_status_on_paid(client, paid_license):
     info = client.get("/license/status").get_json()["license"]
-    assert info["plan"] == "paid" and info["entitlements"] == ["ai", "mcp"]
+    assert info["plan"] == "paid" and info["entitlements"] == ["ai", "mcp", "transcriptomics", "volume"]
     assert paid_license.issue()[:30] not in json.dumps(info)
 
 
-def test_status_lists_what_each_root_unlocks(client, license_issuer):
+def test_status_lists_what_each_root_and_plugin_unlocks(client, license_issuer):
     license_issuer.install()  # ["ai"]
     unlocks = {row["entitlement"]: row["granted"]
                for row in client.get("/license/status").get_json()["license"]["unlocks"]}
-    assert unlocks == {"ai": True, "surfaces": False, "mcp": False}
+    assert unlocks == {"ai": True, "volume": False, "transcriptomics": False, "mcp": False,
+                       "plugin:video_studio": False}
 
 
 def test_the_page_carries_a_licence_hint_and_nothing_more(client, paid_license):

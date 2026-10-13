@@ -915,7 +915,7 @@ class QcSidebarController {
     askForSession() {
         const words = "QC this image";
         const say = (copied) => this.message(`Ask your AI agent to "${words}"`
-            + (copied ? " (copied)" : "") + ". It needs Plexora Paid.");
+            + (copied ? " (copied)" : "") + ".");
         try {
             if (navigator.clipboard?.writeText) {
                 navigator.clipboard.writeText(words).then(() => say(true), () => say(false));

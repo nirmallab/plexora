@@ -26,11 +26,11 @@
                    gone (base.html). The key cap keyboardShortcuts.js prints is
                    hidden on an icon button (viewer.css). #}
                 <div class="sidebar-header-actions">
-                    {# Plexora AI: always here. With an `ai` licence it opens the
-                       launcher (Gate / QC / chat with Plexora AI,
-                       views/agentPanel.js); without one it says Plexora AI
-                       needs a licence. The one coloured control in a muted
-                       header, on purpose. #}
+                    {# Plexora AI: with an `ai` licence it opens the launcher
+                       (Gate / QC / chat with Plexora AI, views/agentPanel.js);
+                       without one it is not here at all. The one coloured
+                       control in a muted header, on purpose. #}
+                    {% if licensed('ai') %}
                     <button id="plexora_ai_button" class="icon-button plx-ai-spark" type="button"
                             title="Plexora AI" aria-label="Plexora AI"
                             aria-haspopup="dialog" aria-expanded="false">
@@ -42,6 +42,7 @@
                         </svg>
                         <span class="plx-ai-spark-label" aria-hidden="true">AI</span>
                     </button>
+                    {% endif %}
                     <button id="sidebar_collapse_button" class="icon-button" title="Collapse controls" type="button"
                             data-shortcut="mod+\">
                         <span class="fas fa-chevron-left"></span>
@@ -247,12 +248,14 @@
                        same dialog the library page does, scoped to this
                        sample. #}
                     {# Surface Studio: a surface of a z-stack (shown by main.js
-                       for a volume only). Paid; a click on Free explains. #}
+                       for a volume only). Plexora 3D: absent without it. #}
+                    {% if licensed('volume:surfaces') %}
                     <button id="layer_surface_button" class="icon-button" type="button"
                             title="New surface (Surface Studio)"
                             aria-label="New surface" hidden>
                         <span class="fas fa-cubes"></span>
                     </button>
+                    {% endif %}
                     <button id="layer_add_button" class="icon-button" type="button"
                             title="Add a layer to this sample"
                             aria-label="Add a layer to this sample">
@@ -441,7 +444,6 @@
                         {% if tool.shortcut %}data-launcher-shortcut="{{ tool.shortcut }}"{% endif %}
                         title="{{ tool.label }}" aria-label="{{ tool.label }}" aria-pressed="false">
                     <span class="fas fa-{{ tool.icon or 'puzzle-piece' }}" aria-hidden="true"></span>
-                    {% if tool.locked %}<span class="viewer-launcher-paid" aria-hidden="true"></span>{% endif %}
                 </button>
                 {% endfor %}
             </div>
@@ -560,19 +562,19 @@
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261012_fluid_planes" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261012_grid3d" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261011_depth" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261011_atlas" defer></script>
 {# Surfaces (plexora/server/surface): the meshes drawn in the 3-D view, the
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
-<script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261012_grid3d" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_video_merge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261011_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261012_grid3d_floor" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261012_main_merge2" defer></script>
@@ -587,11 +589,11 @@
    agent session's phase, evidence and controls. Before agentBridge.js, which
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261011_fold" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261012_license_tiers" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
-<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_project_title" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_project_title" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261012_merge_main" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}

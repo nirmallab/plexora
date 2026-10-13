@@ -19,7 +19,7 @@ suspicious -- and draws them; you say what the pictures show.
 ## Required features
 
 A z-stack with a mask in depth (one id per cell through the planes) whose cells were
-measured (`measure_objects`).
+measured (`measure_objects`). A licence with `volume`; over MCP also `mcp`.
 
 ## Decision logic
 

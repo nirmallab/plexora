@@ -49,6 +49,24 @@ def test_the_sync_tool_prints_what_it_would_upload():
     assert payload["manifest"]["id"] == "plexora"
 
 
+def test_the_sync_check_wants_the_paid_plans_to_carry_the_paid_default():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("bioc_sync", ROOT / "tools" / "bioc_sync.py")
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+
+    default = ["ai", "transcriptomics", "volume"]
+    assert sync.plan_problems([{"id": "plexora.paid", "entitlements": default},
+                               {"id": "plexora.trial", "entitlements": default[::-1]},
+                               {"id": "plexora.ai_mcp", "entitlements": ["mcp"]}]) == []
+    assert sync.plan_problems([{"id": "plexora.paid", "entitlements": default}]) == []
+    stale = sync.plan_problems([{"id": "plexora.paid", "entitlements": ["ai"]},
+                                {"id": "plexora.trial", "entitlements": [*default, "mcp"]}])
+    assert len(stale) == 2 and "plexora.paid" in stale[0] and "plexora.trial" in stale[1]
+    assert sync.plan_problems([]) == ["The platform has no active plexora.paid plan."]
+
+
 def test_every_task_is_well_formed():
     registry = tasks.tasks()
     assert {t.module for t in registry.values()} == {"gating", "qc", "chat"}

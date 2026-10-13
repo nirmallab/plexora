@@ -29,6 +29,10 @@ from plexora.server.models.project import ImageSpec, LayerSpec, Project
 from tests.helpers import use_data_root
 
 
+#: The plugin's routes need `transcriptomics:xenium`; on Free they 403.
+pytestmark = pytest.mark.paid
+
+
 GENES = ["EPCAM", "CD3E", "PTPRC"]
 
 

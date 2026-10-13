@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
+from plexora.licensing import guards
+
 segment_bp = Blueprint("segment_v1", __name__)
 
 _SESSION = None
@@ -53,7 +55,13 @@ def status():
                    through_planes=sam_video.status().to_dict())
 
 
+#: Carrying an outline through a z-stack's planes, and the model it needs, is
+#: Plexora 3D (plexora/licensing/manifest.py); segmenting one plane is Free.
+CARRY_ENTITLEMENT = "volume:objects"
+
+
 @segment_bp.route("/install3d", methods=["POST"])
+@guards.require_entitlement(CARRY_ENTITLEMENT)
 def install3d():
     from plexora.vision import sam_video
 
@@ -138,6 +146,7 @@ def segment():
 
 
 @segment_bp.route("/carry", methods=["POST"])
+@guards.require_entitlement(CARRY_ENTITLEMENT)
 def carry():
     """Carry an outline on plane `z` up and down the stack.
 

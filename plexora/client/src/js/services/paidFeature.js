@@ -1,6 +1,12 @@
 /**
  * paidFeature.js -- the one way the page talks about a Paid feature.
  *
+ * Not granted means not shown: a control whose entitlement `allows` says no
+ * is never built (and a template leaves it out with `licensed()`), so on a
+ * Free page nothing below ever opens. `explain`, `badge`, `startTrial` and
+ * `goToLicense` are kept for the upsell the product will add later; nothing
+ * calls them today. Settings uses `adopt` and `forget`.
+ *
  *   PlexoraPaid.explain({entitlement, label, summary, state})
  *       The modal a locked feature opens: what it is, that it is part of
  *       Paid, and two ways forward -- start a trial (the trial page at

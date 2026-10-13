@@ -18,6 +18,10 @@ from plexora.vision import propagate, sam, sam_backend, sam_video
 from plexora.vision import segment as segmenter
 from tests import volume_fixtures as vf
 
+#: Plexora 3D's analysis paths (plexora/licensing/manifest.py `volume`): these
+#: tests exercise them, so they run on a Paid test licence.
+pytestmark = pytest.mark.paid
+
 
 def _disc(radius, centre=(48, 48), shape=(96, 96)):
     yy, xx = np.mgrid[0:shape[0], 0:shape[1]]

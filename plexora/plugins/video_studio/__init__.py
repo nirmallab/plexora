@@ -35,7 +35,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_project_title"
+VERSION = "20261012_merge_main"
 
 
 def _blueprint():

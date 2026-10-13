@@ -68,6 +68,33 @@ def inject_layout():
     return {'layout': '_fragment.html' if fragment else 'base.html'}
 
 
+def licensed(entitlement):
+    """Whether this licence unlocks `entitlement`, for a template to decide
+    whether a Paid control is drawn at all: `{% if licensed('volume:objects') %}`.
+
+    Not granted means not shown -- no badge, no greyed button, no "needs a
+    licence" text; the server still refuses the action if it is called
+    directly. Never raises: licensing misbehaving reads as not granted.
+    """
+    if not entitlement:
+        return True
+    try:
+        from plexora import licensing
+
+        return bool(licensing.allows(entitlement))
+    except Exception:
+        return False
+
+
+@app.context_processor
+def inject_licensed():
+    """`licensed(entitlement)` in every template. A context processor rather
+    than a `template_data` key, for the reason `inject_server_concurrency`
+    gives: `data` reaches the page as `window.flaskVariables` and is
+    golden-tested, and this is a function of the licence on this machine."""
+    return {'licensed': licensed}
+
+
 def _client_node_name():
     """The node on the browser's own machine, named, or ''.
 
@@ -196,26 +223,6 @@ def template_data(**values):
     }
     data.update(values)
     return data
-
-
-def _tool_locked(plugin) -> bool:
-    if not getattr(plugin, "entitlement", None):
-        return False
-    try:
-        from plexora import licensing
-
-        return not licensing.allows(plugin.entitlement)
-    except Exception:
-        return True
-
-
-def _tool_entry(plugin):
-    """A Tools-menu row. A Paid plugin's row says whether it is locked, so the
-    menu can badge it; a Free plugin's row is exactly `describe()`."""
-    entry = plugin.describe()
-    if entry.get("entitlement"):
-        entry["locked"] = _tool_locked(plugin)
-    return entry
 
 
 def _license_summary():
@@ -613,10 +620,9 @@ def image_viewer(datasource):
     offered = plugin_registry.tools_for(app, project)
     ready = plugin_registry.ready_tools(app, project)
     requested_tool = request.args.get('tool', '')
-    # A locked Paid tool is never activated from a URL: `?tool=` is a link
-    # anybody can hold, and the Tools menu is where its lock is explained.
-    active_tool = requested_tool if any(p.name == requested_tool and not _tool_locked(p)
-                                        for p in ready) else ''
+    # A Paid tool this licence does not unlock is not in `ready`, so a `?tool=`
+    # link to it renders the plain viewer (plugins.unlocked).
+    active_tool = requested_tool if any(p.name == requested_tool for p in ready) else ''
 
     active = next((p for p in ready if p.name == active_tool), None)
 
@@ -626,9 +632,8 @@ def image_viewer(datasource):
     # lazy fetch, no close button. `applies_to` rather than `satisfied_by`:
     # see plugins.layer_sections_for.
     # A Paid layer plugin is not mounted on a licence that does not unlock
-    # it -- the same rule as a Paid tool; its data stays on disk untouched.
-    sections = [section for section in plugin_registry.layer_sections_for(app, project)
-                if not _tool_locked(section)]
+    # it (plugins.unlocked); its data stays on disk untouched.
+    sections = plugin_registry.layer_sections_for(app, project)
     section_scripts, section_styles = [], []
     section_entries = []
     for section in sections:
@@ -661,8 +666,8 @@ def image_viewer(datasource):
             # HD only when it does not (main.js).
             image_streamed=image_streamed(project),
             active_tool=active_tool,
-            available_tools=[_tool_entry(p) for p in offered if p.menu == 'tools'],
-            view_tools=[_tool_entry(p) for p in offered if p.menu == 'view'],
+            available_tools=[p.describe() for p in offered if p.menu == 'tools'],
+            view_tools=[p.describe() for p in offered if p.menu == 'view'],
             active_tool_scripts=(active.asset_urls('scripts', base_url)
                                  if active else []) + section_scripts,
             active_tool_styles=(active.asset_urls('styles', base_url)

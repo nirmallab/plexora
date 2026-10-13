@@ -30,7 +30,7 @@ def client():
 
 @pytest.fixture()
 def surfaces_license(license_issuer):
-    license_issuer.install(license_issuer.issue(ent=["surfaces"]))
+    license_issuer.install(license_issuer.issue(ent=["volume"]))
     return license_issuer
 
 

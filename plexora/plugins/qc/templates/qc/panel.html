@@ -122,7 +122,8 @@
        fading with depth, empty or repeated; tile seams; a cycle drifting in z;
        3-D objects that are not one whole cell. Its findings are plane ranges,
        written as regions limited to those planes. The plane line says which
-       plane every other check here reads. #}
+       plane every other check here reads. Plexora 3D: absent without it. #}
+    {% if licensed('volume:analysis') %}
     <div class="qc-tool" id="qc_tool_stack" data-tool="stack" data-open="false" data-state="idle" hidden>
         <div class="qc-tool-head">
             <button class="qc-tool-fold" id="qc_stack_fold" type="button" aria-expanded="false"
@@ -156,6 +157,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
     <div class="qc-tool" id="qc_tool_blur" data-tool="blur" data-open="true" data-state="idle">
         <div class="qc-tool-head">
@@ -370,8 +372,10 @@
         <div class="qc-tool-body" id="qc_roi_body">
             <div class="qc-tool-sub">
                 <span class="qc-tool-views" role="toolbar" aria-label="ROI QC views">
+                    {% if licensed('ai:qc:session') %}
                     <button id="qc_start_ai" class="qc-tool-icon" type="button"
                             title="An AI QC session is run by your agent: ask it to &quot;QC this image&quot; (click to copy that)"><span class="fas fa-robot"></span></button>
+                    {% endif %}
                     <button id="qc_refresh" class="qc-tool-icon" type="button" hidden
                             title="Apply my ROI edits: take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells"><span class="fas fa-arrows-rotate"></span></button>
                     <button id="qc_download" class="qc-tool-icon" type="button" aria-haspopup="true" aria-expanded="false" hidden
