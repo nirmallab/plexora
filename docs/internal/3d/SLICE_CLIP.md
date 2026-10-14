@@ -149,8 +149,8 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
 - With bricks served, the atlas plans only the bricks the cut keeps (`view.box`).
 - `renderer.resolved()` is false while a level, a brick batch or a detail is in flight, and the
   panel shows a breathing dot meanwhile.
-- The contrast is levelled over the planes the cut keeps (`clipRange`): a Z crop's or cutaway's
-  range (`/volume/<ds>/hint`).
+- A cut does not touch the contrast: a stack has one per channel for every view
+  (views/viewerSidebar.js `autoChannel`), so dragging a cut reads nothing for it.
 
 ## Elsewhere
 

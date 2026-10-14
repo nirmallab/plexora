@@ -544,9 +544,10 @@ async function init(config, savedViewTransform = null) {
         // Every change of plane, frame or projection is ONE navigation
         // revision drawn by every surface in the same frame
         // (services/viewState.js): the plane's tiles decide the moment; a 3-D
-        // label volume's outlines, the section panes (sectionPanes.js), the
-        // 3-D view (volumeRenderer.js) and the contrast that follows a
-        // projection (viewerSidebar.prepareContrast) commit with them.
+        // label volume's outlines, the section panes (sectionPanes.js) and the
+        // 3-D view (volumeRenderer.js) commit with them. Contrast is not a
+        // surface: a z-stack has one per channel for every view
+        // (viewerSidebar.autoChannel), so a view change never waits for it.
         viewState.registerSurface("main", {
             order: 20, prepare: (rev) => viewerManager.setView(rev.spec, rev) });
         if (viewState.labelsAre3d()) {

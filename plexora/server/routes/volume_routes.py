@@ -604,10 +604,8 @@ def volume_level(datasource):
     finest level under `budget` bytes and `max_side`; the headers say which:
     `X-Plexora-Shape: Z,H,W`, `X-Plexora-Level`, `X-Plexora-Window: qmin,qmax`.
 
-    `X-Plexora-Hint: lo,hi` is the default contrast for what the renderer will
-    draw -- `channel_stats_of`'s hints over this block's maximum along z, in raw
-    units. A coarse level's voxels are averages, so its maxima sit well below a
-    full-resolution projection's, and the projection's window draws it black.
+    No contrast comes with it: the 3-D view is drawn with the channel's one
+    contrast, the same as every plane and projection (views/viewerSidebar.js).
 
     `box=x,y,width,height` (full-resolution pixels) is an area instead of the
     whole plane: the 3-D view of what is on screen. The level is then the
@@ -654,8 +652,6 @@ def volume_level(datasource):
         return response
     key = (identity, datasource, index, ask.t, ask.level, tuple(window), ask.voxel_format,
            covered, pool, ask.z0, ask.z1)
-    hint_key = (identity, datasource, index, ask.t, ask.level, tuple(window), covered, pool,
-                ask.z0, ask.z1)
     performance.note("cache", "miss" if serve.cached(key) is None else "hit")
     if remote:
         # A volume on a data node: built there by the same functions, with
@@ -672,23 +668,23 @@ def volume_level(datasource):
             return got
 
         try:
-            data, shape, hint = serve.forwarded_payload(key, fetch, performance.mark)
+            data, shape = serve.forwarded_payload(key, fetch, performance.mark)
         except BadView as error:
             return jsonify(error=str(error)), 400
     else:
-        data, shape, hint = serve.level_payload(
-            key, hint_key, lambda: serve.read_level(source, ask, index, rows, cols, pool),
-            window, ask.voxel_format, data_model.channel_stats_of, performance.mark)
+        data, shape = serve.level_payload(
+            key, lambda: serve.read_level(source, ask, index, rows, cols, pool),
+            window, ask.voxel_format, performance.mark)
     response = app.response_class(data, mimetype='application/octet-stream')
     response.set_etag(tag)
     response.headers.update(headers)
-    response.headers.update(serve.payload_headers(shape, hint))
+    response.headers.update(serve.payload_headers(shape))
     return _maybe_gzip(response)
 
 
 def _level_context(datasource):
-    """What the level and hint routes share: the source, the channel, the
-    parsed ask, the window, the area and the pooling -- or the error answer."""
+    """What the level route needs: the source, the channel, the parsed ask,
+    the window, the area and the pooling -- or the error answer."""
     _project_or_404(datasource)
     from plexora.server.models import data_model, views
 
@@ -726,49 +722,6 @@ def _level_context(datasource):
     return SimpleNamespace(source=source, volume=volume, index=index, name=name, ask=ask,
                            window=window, exact=exact, rows=rows, cols=cols, covered=covered,
                            pool=pool, remote=remote, identity=identity)
-
-
-@app.route('/volume/<string:datasource>/hint', methods=['GET'])
-def volume_hint(datasource):
-    """The default contrast for some planes of a level the 3-D view drew:
-    `{hint: [lo, hi] | null, level, z: [z0, z1]}` in raw units.
-
-    The same numbers as the level's `X-Plexora-Hint`, over planes `z=z0,z1`
-    only. The 3-D view asks when its clip range is narrower than the stack,
-    naming the `level` (and `box`, `w`) it drew, so a thin clip range through
-    a dim part of the stack is levelled by what it shows rather than by the
-    brightest plane outside it. Takes the level route's query."""
-    from plexora.server.models import data_model
-    from plexora.server.volume.viewspec import BadView
-
-    context = _level_context(datasource)
-    if not isinstance(context, SimpleNamespace):
-        return context
-    ask, window = context.ask, context.window
-    hint_key = (context.identity, datasource, context.index, ask.t, ask.level, tuple(window),
-                context.covered, context.pool, ask.z0, ask.z1)
-    if context.remote:
-        node = data_model._remote_image()
-        if node is None:
-            return jsonify(error="this volume's data node is not attached"), 503
-        key = (context.identity, datasource, context.index, ask.t, ask.level, tuple(window),
-               ask.voxel_format, context.covered, context.pool, ask.z0, ask.z1)
-        try:
-            _, _, hint = serve.forwarded_payload(
-                key, lambda: node.level(context.name, ask, context.covered, context.pool, window))
-        except BadView as error:
-            return jsonify(error=str(error)), 400
-    else:
-        hint = serve.hint_over(
-            hint_key,
-            lambda: serve.read_level(context.source, ask, context.index, context.rows,
-                                     context.cols, context.pool),
-            window, data_model.channel_stats_of)
-    response = jsonify(hint=list(hint) if hint else None, level=ask.level, z=[ask.z0, ask.z1])
-    # Fixed by the address when it names its window.
-    response.headers['Cache-Control'] = ('private, max-age=31536000, immutable'
-                                         if ask.named is not None else 'no-store')
-    return response
 
 
 def _maybe_gzip(response, started=None):

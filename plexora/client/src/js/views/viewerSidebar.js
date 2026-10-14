@@ -72,24 +72,6 @@ async function plexoraMapWithLimit(items, limit, fn) {
  * all.
  */
 
-//: How long a navigation revision's tiles wait for the statistics of the view
-//: they show (prepareContrast) before showing with the contrast there is.
-const CONTRAST_HOLD_MS = 1500;
-//: A step of the same projection (a following slab, a range dragged) is not
-//: held for its statistics: it shows at once, and its contrast is asked for
-//: once the hand has been still this long, then eased in.
-const CONTRAST_STILL_MS = 150;
-
-/** Whether projection `next` is `shown` moved along the stack: the same
- *  operation, thickness and frame, other planes. */
-function sameProjectionMoved(shown, next) {
-    const parse = (spec) => /^(t\d+)?z(\d+)-(\d+)(.+)$/.exec(spec || "");
-    const a = parse(shown);
-    const b = parse(next);
-    return Boolean(a && b) && (a[1] || "") === (b[1] || "") && a[4] === b[4]
-        && Number(a[3]) - Number(a[2]) === Number(b[3]) - Number(b[2]);
-}
-
 //: How long an auto-levelled range takes to arrive on screen (easeSlotRange):
 //: the channel fade's own length, so a channel switched on comes in and
 //: develops its contrast in one movement.
@@ -168,30 +150,17 @@ class ViewerSidebar {
         //: it; a scoped copy shows somebody else's channels.
         this.viewClass = "volume";
         this._viewClassListener = null;
-        //: Per-view statistics (`viewStats`) and the view auto-contrast last
-        //: levelled for (`onViewRequested`).
-        this._viewStats = new Map();
-        this._volumeHints = new Map();
-        this._contrastViewShown = "";
-        this._contrastTimer = null;
-        this._viewRequestedListener = null;
-        this._volumeHintListener = null;
+        //: A z-stack's contrast is ONE level per channel, the channel's own
+        //: (autoChannel), shared by every plane, projection and the 3-D view.
+        //: Nothing re-levels when the view changes: levelling each view from
+        //: its own statistics cost a request and a server-side overview per
+        //: projection, held its tiles up to 1.5 s, and read the level again
+        //: from disk for every cut -- to set a range the user then moved.
+        this._volumeWindowListener = null;
         if (this.hdModeOverride === undefined && this.root === document && !this.idPrefix) {
             this._viewClassListener = (e) => this.onViewClassChanged(
                 e.detail?.from || "volume", e.detail?.to || "volume");
             window.addEventListener("plexora:view-class-changed", this._viewClassListener);
-            this._viewRequestedListener = () => this.onViewRequested();
-            window.addEventListener("plexora:view-requested", this._viewRequestedListener);
-            // The view's contrast changes with the view's tiles, in one
-            // navigation revision (services/viewState.js), when the viewer
-            // has one; on its own timer (onViewRequested) otherwise.
-            const vs = window.__plexora?.viewState;
-            if (typeof vs?.registerSurface === "function") {
-                this._contrastSurface = vs.registerSurface("ranges", {
-                    order: 10, hold: CONTRAST_HOLD_MS, prepare: (rev) => this.prepareContrast(rev) });
-            }
-            this._volumeHintListener = (e) => this.onVolumeHint(e.detail || {});
-            window.addEventListener("plexora:volume-hint", this._volumeHintListener);
             this._volumeWindowListener = (e) => this.onVolumeWindow(e.detail || {});
             window.addEventListener("plexora:volume-window", this._volumeWindowListener);
         }
@@ -214,17 +183,9 @@ class ViewerSidebar {
             window.removeEventListener("plexora:hd-mode-changed", this._hdModeListener);
             this._hdModeListener = null;
         }
-        if (this._viewRequestedListener) {
-            this._contrastSurface?.();
-            this._contrastSurface = null;
-            window.removeEventListener("plexora:view-requested", this._viewRequestedListener);
-            window.removeEventListener("plexora:volume-hint", this._volumeHintListener);
+        if (this._volumeWindowListener) {
             window.removeEventListener("plexora:volume-window", this._volumeWindowListener);
-            this._viewRequestedListener = null;
-            this._volumeHintListener = null;
             this._volumeWindowListener = null;
-            clearTimeout(this._contrastTimer);
-            clearTimeout(this._contrastStillTimer);
         }
         if (this._viewClassListener) {
             window.removeEventListener("plexora:view-class-changed", this._viewClassListener);
@@ -1280,6 +1241,11 @@ class ViewerSidebar {
      *
      * Both passes re-check userRangeChanged, so a user who grabs the slider
      * mid-flight is never overridden by a late-arriving fit.
+     *
+     * On a z-stack this is the channel's contrast everywhere: every plane,
+     * every projection and the 3-D view are drawn with it, and changing the
+     * view never levels again (see the constructor). A projection or a coarse
+     * 3-D level may want the slider moved; that is the user's, not a fetch's.
      */
     async autoChannel(slotIndex, options = {}) {
         const slot = this.channelSlots[slotIndex];
@@ -1288,36 +1254,13 @@ class ViewerSidebar {
             return;
         }
         const markerName = slot.name;
-        // The newest levelling of this slot wins: one asked for by an older
-        // view and still waiting on a fetch must not land after it.
+        // The newest levelling of this slot wins: an older one still waiting
+        // on a fetch must not land after it.
         const turn = slot.levelTurn = (slot.levelTurn || 0) + 1;
         const stillCurrent = () => slot.name === markerName && slot.levelTurn === turn &&
             (options.force || !slot.userRangeChanged);
         slot.autoLeveling = true;
         try {
-            // A projection, or the 3-D view, has its own brightness: a maximum
-            // over 200 planes sits far above any one plane, and the plane's
-            // window saturates it. Its hints are the view's own statistics --
-            // for the 3-D view, those of the level it draws (`viewStats`).
-            // Nothing is saved, so the project's channel ranges stay the plane's.
-            // `options.view` is the view a navigation revision is showing
-            // (prepareContrast), which may trail the one asked for.
-            const viewToken = options.view !== undefined ? options.view : this.contrastView();
-            if (viewToken) {
-                await this.channelList.ensureChannelStats(markerName);
-                const stats = await this.viewStats(markerName, viewToken);
-                if (!stillCurrent()
-                    || (options.view === undefined && this.contrastView() !== viewToken)) return;
-                if (stats && stats.vmin_hint !== undefined) {
-                    const packet = this.quantWindow(markerName) || stats;
-                    slot.autoSilent = true;
-                    this.applyAutoRange(slotIndex, slot, [stats.vmin_hint, stats.vmax_hint], packet);
-                    this.askForHdIfCoarse({ ...packet, vmin_hint: stats.vmin_hint,
-                                            vmax_hint: stats.vmax_hint });
-                }
-                return;
-            }
-
             // Pass 1 -- provisional, so the channel is visible right away.
             await this.channelList.ensureChannelStats(markerName);
             if (!stillCurrent()) return;
@@ -1349,115 +1292,6 @@ class ViewerSidebar {
     }
 
     /**
-     * The view whose statistics auto-contrast reads: a projection's token,
-     * `3d` for the 3-D view, or "" for a plane (the channel's own statistics,
-     * as on a flat image). Only the viewer's own sidebar follows the view.
-     */
-    contrastView(state = null) {
-        if (this.hdModeOverride !== undefined || this.root !== document || this.idPrefix) return "";
-        const vs = window.__plexora?.viewState;
-        if (!vs?.enabled?.()) return "";
-        state = state || vs.get?.();
-        if (!state) return "";
-        if (state.mode === "slab") return vs.spec(state);
-        if (state.mode === "volume") return "3d";
-        return "";
-    }
-
-    /**
-     * The contrast's part of a navigation revision: when the view auto-contrast
-     * follows changes (a plane, a projection, the 3-D view), the statistics of
-     * the new one are fetched while its tiles load, and the channels are
-     * levelled in the same task that shows them. Levelled on a timer of its
-     * own, a projection's first frames were drawn with the plane's window
-     * (too bright) or the plane's with the projection's (too dark) for as long
-     * as the two disagreed. Channels the user set are never touched.
-     */
-    prepareContrast(rev) {
-        const view = this.contrastView(rev.state);
-        if (view === this._contrastViewShown) return null;
-        // The same projection a plane or two on: what is on screen is the
-        // right contrast to within a step, and holding the step for its
-        // statistics is what made a following projection slow to step.
-        if (sameProjectionMoved(this._contrastViewShown, view)) {
-            return () => this.relevelWhenStill(view);
-        }
-        clearTimeout(this._contrastStillTimer);
-        const auto = this.channelSlots.filter((slot) => slot.enabled && slot.name
-                                              && !slot.userRangeChanged);
-        const commit = () => {
-            this._contrastViewShown = view;
-            for (const slot of auto) {
-                if (slot.enabled && slot.name && !slot.userRangeChanged) {
-                    this.autoChannel(slot.index, { force: true, view });
-                }
-            }
-        };
-        if (!view || view === "3d" || !auto.length) return commit;
-        return Promise.all(auto.map((slot) => this.channelList.ensureChannelStats(slot.name)
-            .then(() => this.viewStats(slot.name, view)).catch(() => null)))
-            .then(() => (rev.superseded ? null : commit));
-    }
-
-    /** A step's contrast (prepareContrast): asked for once the hand has
-     *  been still CONTRAST_STILL_MS on `view`, eased in (applyAutoRange). */
-    relevelWhenStill(view) {
-        clearTimeout(this._contrastStillTimer);
-        this._contrastStillTimer = setTimeout(() => {
-            if (this.contrastView() !== view) return;     // moved on: its own step follows
-            this._contrastViewShown = view;
-            for (const slot of this.channelSlots) {
-                if (slot.enabled && slot.name && !slot.userRangeChanged) {
-                    this.autoChannel(slot.index, { force: true, view });
-                }
-            }
-        }, CONTRAST_STILL_MS);
-    }
-
-    /**
-     * One channel's statistics in `view`, fetched once per view. The 3-D
-     * view's are the hints its renderer received with the level it uploaded
-     * (`plexora:volume-hint`): a coarse level's voxels are averages, far
-     * dimmer than a full-resolution projection's maxima. Null until it has.
-     */
-    viewStats(name, view) {
-        const fullName = this.dataLayer.getFullChannelName(name);
-        if (view === "3d") {
-            const hint = this._volumeHints.get(fullName);
-            return Promise.resolve(hint ? { vmin_hint: hint[0], vmax_hint: hint[1] } : null);
-        }
-        const key = `${fullName}|${view}`;
-        if (!this._viewStats.has(key)) {
-            this._viewStats.set(key, this.dataLayer.getImageChannelStats(fullName, view)
-                .then((stats) => (stats && stats.vmin_hint !== undefined ? stats : null),
-                      () => null));
-        }
-        return this._viewStats.get(key);
-    }
-
-    /**
-     * Re-level every channel whose range the user has not set, when the view
-     * on screen changes between a plane, a projection and the 3-D view (see
-     * `contrastView`). Settles for a moment first: dragging a projection's
-     * range asks for one view, not one per step.
-     */
-    onViewRequested() {
-        // Levelled with the tiles instead (prepareContrast).
-        if (this._contrastSurface) return;
-        clearTimeout(this._contrastTimer);
-        this._contrastTimer = setTimeout(() => {
-            const view = this.contrastView();
-            if (view === this._contrastViewShown) return;
-            this._contrastViewShown = view;
-            this.channelSlots.forEach((slot, index) => {
-                if (slot.enabled && slot.name && !slot.userRangeChanged) {
-                    this.autoChannel(index, { force: true });
-                }
-            });
-        }, 250);
-    }
-
-    /**
      * A channel's window changed (services/volumeWindows.js -- the exact one
      * replacing the provisional one): the bytes the tiles are made of now map
      * to other raw values, so each slot showing that channel keeps the SAME
@@ -1481,19 +1315,6 @@ class ViewerSidebar {
             if (slot.preAutoRange) slot.preAutoRange.range = remap(slot.preAutoRange.range);
             this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
             this.syncChannelSlider(slot);
-        });
-    }
-
-    /** A 3-D level arrived with its hints: level its channel if it is auto. */
-    onVolumeHint({ name, hint }) {
-        if (!name || !Array.isArray(hint)) return;
-        this._volumeHints.set(name, hint);
-        if (this.contrastView() !== "3d") return;
-        this.channelSlots.forEach((slot, index) => {
-            if (slot.enabled && slot.name && !slot.userRangeChanged
-                && this.dataLayer.getFullChannelName(slot.name) === name) {
-                this.autoChannel(index, { force: true });
-            }
         });
     }
 

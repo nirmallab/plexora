@@ -15,9 +15,8 @@
  *   drawn;
  * - a request names the window its bytes are quantized with (`w=`), which is
  *   what lets the browser keep them;
- * - the default contrast follows the clip range: the level's own hint over
- *   the whole stack, the planes kept (`/hint?z=`, at the level drawn) when
- *   the range is narrower, asked once per range;
+ * - the 3-D view asks for no contrast of its own, whole or cut: a channel's
+ *   one contrast (views/viewerSidebar.js) is every view's;
  * - the reference grid: 1-2-5 steps, microns only from a stated spacing (pixels
  *   and planes otherwise), its numbers where the camera puts them, the
  *   preference repaired, and the uniforms that turn it on and off;
@@ -205,7 +204,7 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     check("and is not asked for again while the view stays", detailRequests.length === asked);
 }
 
-// -- the contrast follows the clip range -----------------------------------------
+// -- the 3-D view asks for no contrast of its own ----------------------------------
 {
     const sent = [];
     const hintAsks = [];
@@ -214,41 +213,20 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     box.dispatchEvent = (event) => { if (event.type === "plexora:volume-hint") sent.push(event.detail); return true; };
     const clipState = { depth: 4, info: { width: 32, height: 32 },
                         get: () => ({ t: 0, z: 1, slab: { z0: 0, z1: 3 }, inspect }) };
-    const fetchHint = (url) => {
-        if (url.includes("/hint?")) {
-            hintAsks.push(url);
-            return Promise.resolve({ ok: true, json: async () => ({ hint: [5, 50], level: 1, z: [1, 2] }) });
-        }
-        const response = fetchImpl(url);
-        return response.then((r) => ({ ...r, headers: { get: (name) => (name === "X-Plexora-Hint" ? "1,900" : r.headers.get(name)) } }));
+    const counting = (url) => {
+        if (url.includes("/hint?")) hintAsks.push(url);
+        return fetchImpl(url);
     };
-    const clipped = new VolumeRenderer({ viewState: clipState, datasource: "vol", fetchImpl: fetchHint });
+    const clipped = new VolumeRenderer({ viewState: clipState, datasource: "vol", fetchImpl: counting });
     clipped.gl = fakeGl();
     clipped.maxTexture = 2048;
     await clipped.refresh();
-    check("over the whole stack the level's own hint is sent",
-          sent.length >= 1 && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === 0,
-          JSON.stringify(sent));
-    sent.length = 0;
     inspect = G.clean({ mode: "crop", axes: { x: false, z: true }, crop: { z: [1, 2] } }, dims4);
-    clipped.refreshHints({ now: true });
+    clipped.invalidate();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const asked = hintAsks.map((url) => new URLSearchParams(url.split("?")[1]));
-    check("a narrower clip range asks for its planes' contrast at the level drawn",
-          asked.length >= 1 && asked.every((q) => q.get("z") === "1,2" && q.get("level") === "1" && q.get("w")),
-          hintAsks.join(" "));
-    check("and sends it", sent.length >= 1 && sent.every((d) => d.hint.join() === "5,50"), JSON.stringify(sent));
-    const before = hintAsks.length;
-    clipped.refreshHints({ now: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    check("the same range is not asked again", hintAsks.length === before);
-    sent.length = 0;
-    inspect = G.clean({ mode: "full" }, dims4);
-    clipped.refreshHints({ now: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    check("back to the whole stack, the level's hint again", sent.length >= 1
-          && sent.every((d) => d.hint.join() === "1,900") && hintAsks.length === before);
+    check("neither the whole stack nor a cut asks for contrast, or sends any",
+          hintAsks.length === 0 && sent.length === 0 && typeof clipped.refreshHints === "undefined",
+          JSON.stringify({ hintAsks, sent }));
 }
 
 // -- the cut is uniforms (services/inspectGeometry.js) ------------------------------
@@ -280,11 +258,6 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     check("Video Studio's clip narrows the cut and never widens it", near(u.lo[0], 0.3) && near(u.hi[0], 0.6));
     cutter.setClip(null);
     check("the surfaces' z range follows the cut", near(cutter.clipRangeZ()[0], 0.1) && near(cutter.clipRangeZ()[1], 0.25));
-    check("the contrast is levelled over the cropped planes", same(cutter.clipRange(), [4, 9]));
-    set({ mode: "cutaway", axes: { x: false, z: true }, cutaway: { z: { at: 30, keep: "lo" } } });
-    check("and over the planes a Z cut keeps", same(cutter.clipRange(), [0, 30]));
-    set({ mode: "cutaway", axes: { x: true, z: false } });
-    check("a cut across the plane is levelled by the whole stack", cutter.clipRange() === null);
     cutter.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600 };
     set({ mode: "crop", axes: { x: false, z: true }, crop: { z: [10, 19] } });
     const kept = cutter.visibleRegion();

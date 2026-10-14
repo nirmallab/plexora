@@ -105,8 +105,6 @@
 (function (global) {
     "use strict";
 
-    //: How long the clip range must rest before its contrast is asked for (ms).
-    const HINT_SETTLE_MS = 220;
     const MAX_CHANNELS = 6;
     //: The camera's vertical field of view, in radians.
     const FOV_Y = 0.7;
@@ -940,13 +938,6 @@ ${sample}`;
             this.covered = null;
             this.shape = null;
             this._loads = new Map();
-            //: name -> {hint, level, box, t, stamp}: the default contrast of
-            //: the level each channel was last drawn from, over every plane.
-            this.levelHints = new Map();
-            //: The same over the clip range's planes, fetched once per
-            //: `${name}|${level}|${box}|${t}|${stamp}|${z0},${z1}`.
-            this._clipHints = new Map();
-            this._hintTimer = 0;
             //: Finer levels where the camera needs them (views/volumeAtlas.js),
             //: made the first time the view is drawn; the detail sub-volume
             //: (considerDetail) stands in where bricks are not served.
@@ -1418,37 +1409,12 @@ ${sample}`;
                 this.textures.set(key, entry);
                 this.textureBytes += entry.bytes;
                 this.covered = entry.covered;
-                // The default contrast for what is drawn here (the level's own
-                // maxima, in raw units): the sidebar levels auto channels by it
-                // -- over the clip range's planes when that is narrower than
-                // the stack (refreshHints).
-                const hint = String(response.headers.get("X-Plexora-Hint") || "")
-                    .split(",").map(Number);
-                if (hint.length === 2 && hint.every(Number.isFinite)) {
-                    this.levelHints.set(name, { hint, level: entry.level, box: area, t, stamp });
-                    this.refreshHints({ now: true, only: name });
-                }
                 this.level = Number(response.headers.get("X-Plexora-Level") || 0);
                 this.shape = [depth, height, width];
                 this.invalidate();
             })().finally(() => this._loads.delete(key));
             this._loads.set(key, load);
             return load;
-        }
-
-        // -- the contrast for what is drawn ---------------------------------
-
-        /**
-         * The planes the cut keeps, `[z0, z1]`, or null for the whole stack:
-         * what the contrast is levelled over -- a Z crop's or cutaway's range.
-         */
-        clipRange() {
-            const depth = Math.max(1, this.viewState?.depth || 1);
-            const resolved = this.inspectNow();
-            if (!resolved) return null;
-            const z0 = Math.max(0, Math.floor(resolved.box.z[0]));
-            const z1 = Math.min(depth - 1, Math.ceil(resolved.box.z[1]) - 1);
-            return z0 <= 0 && z1 >= depth - 1 ? null : [z0, z1];
         }
 
         // -- the cut (services/inspectGeometry.js) -------------------------
@@ -1498,63 +1464,6 @@ ${sample}`;
             gl.uniform3fv(uniform("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
             gl.uniform3fv(uniform("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
             gl.uniform1i(uniform("u_cut"), cut.cut);
-        }
-
-        /**
-         * Tell the sidebar the default contrast for each channel drawn: the
-         * level's hint over every plane, or -- with a clip range narrower than
-         * the stack -- the same numbers over the clipped planes only
-         * (`/volume/<ds>/hint`, at the level drawn), so a thin range through a
-         * dim part of a stack is not levelled by the brightest plane outside
-         * it. Settles briefly while the range is dragged.
-         */
-        refreshHints({ now: soon = false, only = null } = {}) {
-            clearTimeout(this._hintTimer);
-            const run = () => this._sendHints(only);
-            if (soon) run();
-            else this._hintTimer = setTimeout(run, HINT_SETTLE_MS);
-        }
-
-        async _sendHints(only) {
-            const clip = this.clipRange();
-            const send = (name, hint) => global.dispatchEvent?.(new CustomEvent(
-                "plexora:volume-hint", { detail: { name, hint } }));
-            for (const [name, held] of this.levelHints) {
-                if (only && name !== only) continue;
-                if (!clip) {
-                    send(name, held.hint);
-                    continue;
-                }
-                const key = [name, held.level, held.box, held.t, held.stamp, clip.join(",")].join("|");
-                let hint = this._clipHints.get(key);
-                if (hint === undefined) {
-                    const query = new URLSearchParams({ channel: name, t: String(held.t),
-                                                        level: String(held.level),
-                                                        z: clip.join(",") });
-                    if (held.box) query.set("box", held.box);
-                    if (held.stamp) query.set("w", held.stamp);
-                    const ds = encodeURIComponent(this.datasource);
-                    const address = typeof global.plexoraUrl === "function"
-                        ? global.plexoraUrl(`volume/${ds}/hint?${query}`)
-                        : `/volume/${ds}/hint?${query}`;
-                    try {
-                        const response = await this.fetch(address);
-                        const body = response.ok ? await response.json() : null;
-                        hint = Array.isArray(body?.hint) && body.hint.every(Number.isFinite)
-                            ? body.hint : null;
-                    } catch (error) {
-                        hint = null;
-                    }
-                    this._clipHints.set(key, hint);
-                    if (this._clipHints.size > 256) {
-                        this._clipHints.delete(this._clipHints.keys().next().value);
-                    }
-                }
-                // The range moved on while this was asked: the next call sends.
-                const still = this.clipRange();
-                if (String(still) !== String(clip)) return;
-                send(name, hint || held.hint);
-            }
         }
 
         // -- drawing -------------------------------------------------------
@@ -2927,7 +2836,6 @@ ${sample}`;
         let renderer = null;
         let lastT = null;
         let wasOn = false;
-        let lastClip = "";
         let lastCut = "";
         // [surfaces] The camera, remembered per project like the plane
         // (`volume.camera` of the view state), once it has rested a moment.
@@ -3008,18 +2916,12 @@ ${sample}`;
                 } else {
                     renderer.invalidate();
                 }
-                // A new cut: contrast for the planes it keeps.
-                const clip = String(renderer.clipRange());
-                if (clip !== lastClip) {
-                    lastClip = clip;
-                    if (!entering) renderer.refreshHints();
-                }
                 lastCut = JSON.stringify(renderer.cutUniforms());
             },
             /** [inspect] The cut changed -- the dock, the strip, a handle, an
              *  undo, the agent: drawn again from uniforms in the next frame
-             *  (no revision), a finer detail looked for once it rests, and the
-             *  contrast asked again for the planes it keeps. */
+             *  (no revision), and a finer detail looked for once it rests. The
+             *  contrast stays the channel's (views/viewerSidebar.js). */
             cutChanged() {
                 if (!renderer || !viewState.isVolume()) return;
                 const key = JSON.stringify(renderer.cutUniforms());
@@ -3027,11 +2929,6 @@ ${sample}`;
                 lastCut = key;
                 renderer.invalidate();
                 renderer.scheduleDetail();
-                const clip = String(renderer.clipRange());
-                if (clip !== lastClip) {
-                    lastClip = clip;
-                    renderer.refreshHints();
-                }
             },
             channelsChanged() {
                 if (renderer && viewState.isVolume()) renderer.refresh();

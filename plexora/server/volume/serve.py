@@ -18,8 +18,11 @@ once and named:
 - GATED (PLEXORA_LEVEL_GATE builds at once) and SINGLE-FLIGHT per payload: the
   3-D view asks for every channel together, and two asks for one payload are
   one read;
-- held in a byte-budgeted LRU (PLEXORA_LEVEL_CACHE_MB) for the next asker, and
-  the contrast hint cached apart from the format (HD and fast share it).
+- held in a byte-budgeted LRU (PLEXORA_LEVEL_CACHE_MB) for the next asker.
+
+No contrast is computed here. A z-stack's contrast is one level per channel
+for every plane, projection and the 3-D view (views/viewerSidebar.js
+autoChannel), so a level costs its read and its quantization and nothing else.
 
 A data node builds the same payload for a volume it holds (node/api.py
 `/image/<rid>/level`) from the same functions here, and the primary forwards
@@ -59,7 +62,6 @@ LEVEL_GATE = threading.BoundedSemaphore(max(1, _env_int("PLEXORA_LEVEL_GATE", 3)
 
 _cache: OrderedDict = OrderedDict()
 _cache_bytes = 0
-_hints: OrderedDict = OrderedDict()
 _lock = threading.Lock()
 _flights: dict = {}
 
@@ -352,7 +354,7 @@ def read_level(source, ask: LevelAsk, index, rows, cols, pool):
 
 #: The headers a level payload's reader needs, readable across origins.
 EXPOSED = ('X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, '
-           'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box, X-Plexora-Z')
+           'X-Plexora-ZPool, X-Plexora-Box, X-Plexora-Z')
 
 
 def level_headers(ask: LevelAsk, covered, pool, window) -> dict:
@@ -368,12 +370,9 @@ def level_headers(ask: LevelAsk, covered, pool, window) -> dict:
     }
 
 
-def payload_headers(shape, hint) -> dict:
-    """What only a built payload knows: its shape and its contrast hint."""
-    headers = {'X-Plexora-Shape': ",".join(str(int(side)) for side in shape)}
-    if hint is not None:
-        headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
-    return headers
+def payload_headers(shape) -> dict:
+    """What only a built payload knows: its shape."""
+    return {'X-Plexora-Shape': ",".join(str(int(side)) for side in shape)}
 
 
 # -- the payload ------------------------------------------------------------------
@@ -399,40 +398,8 @@ def _remember(key, payload):
             _cache_bytes -= len(dropped[0])
 
 
-def hint_of(key, block, qmin, qmax, stats_of):
-    """The contrast hint for what is drawn (raw units), once per level and
-    window whatever the format: `stats_of` over the block's maximum along z."""
-    with _lock:
-        if key in _hints:
-            _hints.move_to_end(key)
-            return _hints[key]
-    try:
-        stats = stats_of(np.asarray(block.max(axis=0), dtype=np.float64), qmin, qmax)
-        hint = (stats["vmin_hint"], stats["vmax_hint"])
-    except Exception:  # an all-zero level has no positive voxel to log
-        hint = None
-    with _lock:
-        _hints[key] = hint
-        while len(_hints) > 256:
-            _hints.popitem(last=False)
-    return hint
-
-
-def hint_over(key, read, window, stats_of):
-    """`hint_of` for a block read only when the hint is not already known:
-    `read()` returns it. The hint route's (some planes of a level)."""
-    with _lock:
-        if key in _hints:
-            _hints.move_to_end(key)
-            return _hints[key]
-    with LEVEL_GATE:
-        block = read()
-    qmin, qmax = window
-    return hint_of(key, block, qmin, qmax, stats_of)
-
-
-def level_payload(key, hint_key, read, window, voxel_format, stats_of, mark=None):
-    """`(bytes, shape, hint)` for `key`, built at most once at a time.
+def level_payload(key, read, window, voxel_format, mark=None):
+    """`(bytes, shape)` for `key`, built at most once at a time.
 
     `read()` returns the (pooled) block; `mark(name)` ends a Server-Timing
     phase. A second request for a payload being built waits for that build
@@ -449,10 +416,7 @@ def level_payload(key, hint_key, read, window, voxel_format, stats_of, mark=None
             voxels = quantize(block, qmin, qmax, voxel_format)
             if mark:
                 mark("quant")
-            hint = hint_of(hint_key, block, qmin, qmax, stats_of)
-            if mark:
-                mark("hint")
-            payload = (np.ascontiguousarray(voxels).tobytes(), tuple(block.shape), hint)
+            payload = (np.ascontiguousarray(voxels).tobytes(), tuple(block.shape))
             if mark:
                 mark("enc")
         return payload
@@ -462,7 +426,7 @@ def level_payload(key, hint_key, read, window, voxel_format, stats_of, mark=None
 
 def forwarded_payload(key, fetch, mark=None):
     """`level_payload` for bytes built elsewhere -- a data node's: `fetch()`
-    returns `(bytes, shape, hint)` as they arrived, kept and shared alike."""
+    returns `(bytes, shape)` as they arrived, kept and shared alike."""
     return _single(key, fetch, mark)
 
 
@@ -499,12 +463,11 @@ def _single(key, build, mark):
 def stats() -> dict:
     with _lock:
         return {"entries": len(_cache), "bytes": _cache_bytes, "budget": LEVEL_CACHE_BYTES,
-                "hints": len(_hints), "building": len(_flights)}
+                "building": len(_flights)}
 
 
 def clear() -> None:
     global _cache_bytes
     with _lock:
         _cache.clear()
-        _hints.clear()
         _cache_bytes = 0

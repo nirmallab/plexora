@@ -32,9 +32,9 @@
  * move under the user's hand. The PICTURE follows as one NAVIGATION REVISION:
  * an immutable snapshot of the state with an id, handed to every SURFACE that
  * draws it (`registerSurface`) -- the plane's tiles, a 3-D label volume's
- * outlines, the section panes, the 3-D view, the contrast that follows a
- * projection. Each prepares off screen (`prepare(rev)` resolves to a commit
- * closure: new tiles loaded at opacity 0, a label plane read, a level
+ * outlines, the section panes, the 3-D view. Each prepares off screen
+ * (`prepare(rev)` resolves to a commit closure: new tiles loaded at
+ * opacity 0, a label plane read, a level
  * fetched) and every closure that is ready runs in ONE task, so the main
  * plane, its outlines, the panes' z-line and the 3-D view change in the same
  * frame. The plane decides the moment; another surface gets SYNC_WAIT_MS more

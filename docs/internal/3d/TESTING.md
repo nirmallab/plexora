@@ -39,9 +39,8 @@ built ahead, invisibly, so the next step is immediate: two ahead at rest, up to 
 you hold a key, asked for as each plane lands. A jump (a click far down the rail, Alt+`]`, a
 typed plane) no longer waits behind a plane still loading: the plane on its way is dropped and
 the jump goes at once. A step shows the next plane's coarse tiles before the last plane finishes
-sharpening. In a projection that follows the plane, a step no longer waits for the new range's
-contrast statistics: it shows at once, and the contrast eases to the new range a moment after
-you stop.
+sharpening. In a projection that follows the plane, a step shows at once: the contrast is the
+channel's own and does not change with the range.
 
 **Scrubbing (2026-10-13).** Drag the rail fast, or hold `]`: while the hand moves every plane
 shows as soon as its coarsest tiles cover the view, and nothing sharpens until the hand stops
@@ -70,8 +69,8 @@ and the light-sheet stack, with the section panes on:
 
 - *No brightness flash on a Z step.* Step with `]` through a bright and a dim plane: the picture
   dissolves from one to the other and is never brighter than both mid-fade.
-- *Everything moves together.* Step or hold `]`: the plane, the panes' z-line, the 3-D label
-  outlines and (in a projection) the contrast change in the same frame. Pan and zoom: the panes
+- *Everything moves together.* Step or hold `]`: the plane, the panes' z-line and the 3-D label
+  outlines change in the same frame. Pan and zoom: the panes
   follow within about a tenth of a second rather than over a second later.
 - *Channels.* Switch a channel off and on, or swap one for another, in the plane and in 3-D:
   it should be immediate (a channel already seen is not downloaded again). In 3-D, entering,
@@ -94,11 +93,12 @@ projection too deep to compute at the zoom on screen (about 1 GB of planes per t
 1937 planes of a 2048² light-sheet stack) is drawn from a coarser level: a thinner range is
 sharper, and the pinned layer is exact.
 
-**Contrast on a stack.** Channels you have not set follow the view: a projection and the 3-D
-view get their own auto-contrast, and going back to a plane restores the plane's. The wand
-auto-contrasts whatever is on screen. Ranges you set, or that were saved earlier, are kept. A
-stack whose 8-bit tiles cannot show its default range (a dim stack with a few saturated voxels)
-turns HD on by itself and says so once.
+**Contrast on a stack.** One contrast per channel for the whole stack: every plane, every
+projection and the 3-D view are drawn with it, and changing the view never re-levels a channel
+or asks the server for anything. A maximum projection can therefore look brighter, and a coarse
+3-D level dimmer, than the plane; move the slider. The wand puts back the channel's own level.
+Ranges you set, or that were saved earlier, are kept. A stack whose 8-bit tiles cannot show its
+default range (a dim stack with a few saturated voxels) turns HD on by itself and says so once.
 
 **Sections.** The strip's grid button: XZ along the bottom and YZ along the right, cut through
 the centre of the view and lined up with it. Zoom in to see them grow to the stack's real depth.
@@ -162,11 +162,8 @@ double-click) turn there rather than cut. With the view focused, the arrow keys 
 zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower resolution if
 frames come slowly; it is redrawn in full once it rests.
 
-*Contrast that follows the cut.* In 3-D, crop Z to a dim part of the stack (say the deepest few
-planes), or cut along Z: channels whose range you have not set
-re-level to the planes kept, about a quarter of a second after you stop dragging, and back to the
-whole stack's when you widen it again. A channel whose range you set (or that was saved) is left
-alone.
+*Contrast holds through a cut.* In 3-D, crop Z to a dim part of the stack, or cut along Z: no
+channel re-levels and nothing is fetched for contrast while you drag or after you stop.
 
 **Slice & Clip** (docs/internal/3d/SLICE_CLIP.md). In 3-D, the strip's Cut and Crop cut the stack:
 - **The two tools.** Press Cut (scissors): the stack loses a side along X, and the cut panel

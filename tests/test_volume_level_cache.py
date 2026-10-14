@@ -133,17 +133,14 @@ def test_two_asks_for_one_payload_are_one_read(monkeypatch):
         release.wait(5)
         return np.arange(24, dtype=np.uint16).reshape(2, 3, 4)
 
-    def stats_of(image, qmin, qmax):
-        return {"vmin_hint": 0.0, "vmax_hint": 1.0}
-
     serve.clear()
     results = []
     first = threading.Thread(target=lambda: results.append(
-        serve.level_payload(("k",), ("h",), read, (0.0, 23.0), "u8", stats_of)))
+        serve.level_payload(("k",), read, (0.0, 23.0), "u8")))
     first.start()
     assert started.wait(5)
     second = threading.Thread(target=lambda: results.append(
-        serve.level_payload(("k",), ("h",), read, (0.0, 23.0), "u8", stats_of)))
+        serve.level_payload(("k",), read, (0.0, 23.0), "u8")))
     second.start()
     release.set()
     first.join(5)

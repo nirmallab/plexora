@@ -969,7 +969,7 @@ class NodeImageProvider(_NodeBacked):
         return (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
 
     def level(self, channel_name, ask, covered, pool, window):
-        """`(bytes, shape, hint)`: one channel's 3-D level, built on the node.
+        """`(bytes, shape)`: one channel's 3-D level, built on the node.
 
         Every choice is the primary's and goes out explicitly -- the level,
         the area it `covered`, the planes, `pool` (from the project's z step,
@@ -996,9 +996,7 @@ class NodeImageProvider(_NodeBacked):
         if len(shape) != 3:
             raise ResourceError(f"data node {self._binding.node!r} sent a level without "
                                 f"its shape")
-        raw_hint = response.headers.get("X-Plexora-Hint")
-        hint = tuple(float(v) for v in raw_hint.split(",")) if raw_hint else None
-        return data, shape, hint
+        return data, shape
 
     def volume_window_state(self, channel_name) -> tuple:
         """`((qmin, qmax), exact)`: a volume channel's window, answered now --

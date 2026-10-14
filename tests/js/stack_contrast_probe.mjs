@@ -8,10 +8,12 @@
  *   the default contrast range got about two of them: a posterised picture.
  *   `askForHdIfCoarse` asks for HD (16-bit tiles) when that happens -- on a
  *   stack only, never on a flat image.
- * - A projection or the 3-D view kept the single plane's window, and a maximum
- *   over 1937 planes saturated it. `contrastView` says which view's statistics
- *   auto-contrast reads; `onVolumeHint` levels auto channels by the hints the
- *   3-D renderer received with the level it draws.
+ *
+ * And one thing it does on purpose: a stack has ONE contrast per channel.
+ * Every plane, projection and the 3-D view is drawn with the channel's own
+ * level (`autoChannel`), and no view asks for statistics of its own -- that
+ * cost a request and a server-side overview per projection, held its tiles
+ * up to 1.5 s, and read the level again from disk for every cut.
  *
  * The methods are sliced out of viewerSidebar.js and run against stand-ins, so
  * this measures the shipped code rather than a copy of it.
@@ -30,10 +32,10 @@ const source = await readFile(
 
 /** One method's text, by brace matching that skips comments and strings. */
 function extractMethod(text, name) {
-    const signature = new RegExp(`\\n    ${name}\\(`).exec(text);
+    const signature = new RegExp(`\\n    (?:async )?${name}\\(`).exec(text);
     if (!signature) throw new Error(`method ${name} not found`);
     const start = signature.index + 1;
-    // The body's brace, not a destructured parameter's: `onVolumeHint({ name })`.
+    // The body's brace, not a destructured parameter's: `f({ name })`.
     let i = text.indexOf(") {", start) + 2;
     let depth = 0;
     let state = "code";
@@ -61,7 +63,7 @@ function extractMethod(text, name) {
 const levels = Number(/ViewerSidebar\.MIN_DEFAULT_LEVELS = (\d+);/.exec(source)?.[1]);
 assert.ok(levels > 0, "ViewerSidebar.MIN_DEFAULT_LEVELS is gone");
 
-const METHODS = ["askForHdIfCoarse", "contrastView", "viewStats", "onVolumeHint"];
+const METHODS = ["askForHdIfCoarse", "autoChannel"];
 const body = METHODS.map((name) => extractMethod(source, name)).join(",\n");
 
 /** A sidebar on a page whose view state is `state` (null: a flat image). */
@@ -82,25 +84,37 @@ function page({ state = null, hd = false, scoped = false } = {}) {
         Promise,
     });
     const methods = runInContext(`({\n${body}\n})`, context);
-    const levelled = [];
+    const asked = [];
+    const fits = [];
+    const applied = [];
+    const gmm = {};
     const sidebar = Object.assign(Object.create(methods), {
         root: scoped ? {} : document,
         idPrefix: "",
         hdModeOverride: undefined,
         isHdMode: () => hd,
-        _viewStats: new Map(),
-        _volumeHints: new Map(),
         dataLayer: {
             getFullChannelName: (name) => `full:${name}`,
-            getImageChannelStats: () => Promise.resolve(null),
+            // Any statistics request at all -- a view's would carry its token.
+            getImageChannelStats: (...args) => { asked.push(args); return Promise.resolve(null); },
         },
+        channelList: {
+            hasChannelGMM: gmm,
+            ensureChannelStats: () => Promise.resolve(),
+            getAndDrawChannelGMM: (name) => {
+                fits.push(name);
+                gmm[name] = { vmin: 50, vmax: 70 };
+                return Promise.resolve();
+            },
+        },
+        quantWindow: () => IMARIS,
+        applyAutoRange: (index, slot, range) => applied.push([index, [...range]]),
         channelSlots: [
-            { name: "tdTomato", enabled: true, userRangeChanged: false },
-            { name: "DAPI", enabled: true, userRangeChanged: true },
+            { index: 0, name: "tdTomato", enabled: true, userRangeChanged: false },
+            { index: 1, name: "DAPI", enabled: true, userRangeChanged: true },
         ],
-        autoChannel: (index) => levelled.push(index),
     });
-    return { sidebar, events, levelled };
+    return { sidebar, events, asked, fits, applied };
 }
 
 const PLANE = { mode: "plane", z: 968, slab: { z0: 0, z1: 1936, op: "max" } };
@@ -141,76 +155,39 @@ const IMARIS = { qmin: 0, qmax: 114, vmin_hint: 42, vmax_hint: 73 };
     console.log("a flat image, an HD page and a scoped sidebar are left alone");
 }
 
-// -- 4. which view's statistics auto-contrast reads ---------------------------
+// -- 4. a plane, a projection and the 3-D view share one contrast -------------
 {
-    assert.equal(page({ state: PLANE }).sidebar.contrastView(), "");
-    assert.equal(page({ state: SLAB }).sidebar.contrastView(), "z0-1936max");
-    assert.equal(page({ state: VOLUME }).sidebar.contrastView(), "3d");
-    assert.equal(page({ state: null }).sidebar.contrastView(), "");
-    assert.equal(page({ state: SLAB, scoped: true }).sidebar.contrastView(), "");
-    console.log("a plane reads the channel's statistics, a projection its own, the 3-D view its level's");
+    const seen = {};
+    for (const [label, state] of [["plane", PLANE], ["projection", SLAB], ["3-D view", VOLUME]]) {
+        const { sidebar, asked, fits, applied } = page({ state });
+        await sidebar.autoChannel(0);
+        assert.deepEqual(asked, [], `the ${label} asked for statistics of its own`);
+        assert.deepEqual(fits, ["tdTomato"], `the ${label} did not use the channel's fit`);
+        // The channel's provisional level, then its fit -- the same everywhere.
+        assert.deepEqual(applied, [[0, [42, 73]], [0, [50, 70]]],
+                         `${label}: ${JSON.stringify(applied)}`);
+        seen[label] = JSON.stringify(applied);
+        // A channel the user set is left alone in every view.
+        await sidebar.autoChannel(1);
+        assert.equal(applied.length, 2, `the ${label} levelled a channel the user set`);
+    }
+    assert.equal(new Set(Object.values(seen)).size, 1);
+    console.log("a plane, a projection and the 3-D view share the channel's one contrast, "
+                + "with no request of their own");
 }
 
-// -- 5. the 3-D view levels auto channels by its renderer's hints -------------
+// -- 5. nothing levels a channel again because the view changed ---------------
 {
-    const { sidebar, levelled } = page({ state: VOLUME });
-    assert.equal(await sidebar.viewStats("tdTomato", "3d"), null);
-    sidebar.onVolumeHint({ name: "full:tdTomato", hint: [976, 2616] });
-    // Spread: the object was made in the probe's vm realm, with its own Object.
-    assert.deepEqual({ ...(await sidebar.viewStats("tdTomato", "3d")) },
-                     { vmin_hint: 976, vmax_hint: 2616 });
-    assert.deepEqual(levelled, [0]);
-    // A channel whose range the user set keeps it.
-    sidebar.onVolumeHint({ name: "full:DAPI", hint: [10, 20] });
-    assert.deepEqual(levelled, [0]);
-    // Off the 3-D view the hint is kept for later and nothing moves.
-    const plane = page({ state: PLANE });
-    plane.sidebar.onVolumeHint({ name: "full:tdTomato", hint: [976, 2616] });
-    assert.deepEqual(plane.levelled, []);
-    console.log("the 3-D view's hints level only channels the user has not set, and only in 3-D");
+    const renderer = await readFile(
+        path.join(repoRoot, "plexora/client/src/js/views/volumeRenderer.js"), "utf8");
+    // Code, not prose: a comment may say why these are gone.
+    const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    assert.ok(!/registerSurface\(/.test(code(source)),
+              "the sidebar holds navigation revisions for contrast again");
+    for (const [name, text] of [["viewerSidebar.js", source], ["volumeRenderer.js", renderer]]) {
+        for (const gone of ["plexora:volume-hint", "plexora:view-requested", "X-Plexora-Hint", "/hint?"]) {
+            assert.ok(!code(text).includes(gone), `${name} still uses ${gone}`);
+        }
+    }
+    console.log("nothing re-levels a channel when the view changes");
 }
-
-// -- 6. a step of the same projection is shown at once, levelled when still ---
-{
-    const helper = /\nfunction sameProjectionMoved[\s\S]*?\n}\n/.exec(source)?.[0];
-    const still = Number(/const CONTRAST_STILL_MS = (\d+);/.exec(source)?.[1]);
-    assert.ok(helper && still > 0, "sameProjectionMoved / CONTRAST_STILL_MS are gone");
-    let state = { ...SLAB, slab: { z0: 10, z1: 20, op: "max" } };
-    const timers = [];
-    const viewState = {
-        frames: 1, enabled: () => true, get: () => state,
-        spec: (s) => (s.mode === "slab" ? `z${s.slab.z0}-${s.slab.z1}${s.slab.op}` : `z${s.z}`),
-    };
-    const context = createContext({
-        document: {}, Promise,
-        window: { __plexora: { viewState } },
-        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-        clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
-    });
-    runInContext(`${helper}\nvar CONTRAST_STILL_MS = ${still};`, context);
-    const methods = runInContext(`({\n${["contrastView", "prepareContrast", "relevelWhenStill"]
-        .map((name) => extractMethod(source, name)).join(",\n")}\n})`, context);
-    const levelled = [];
-    const sidebar = Object.assign(Object.create(methods), {
-        root: context.document, idPrefix: "", hdModeOverride: undefined,
-        _contrastViewShown: "z10-20max",
-        channelSlots: [{ index: 0, name: "tdTomato", enabled: true, userRangeChanged: false }],
-        channelList: { ensureChannelStats: () => Promise.resolve() },
-        viewStats: () => Promise.resolve(null),
-        autoChannel: (index, options) => levelled.push([index, options.view]),
-    });
-    state = { ...state, slab: { z0: 11, z1: 21, op: "max" } };
-    const commit = sidebar.prepareContrast({ state, superseded: false });
-    assert.equal(typeof commit, "function", "a step is not held for its statistics");
-    commit();
-    assert.deepEqual(levelled, [], "nor levelled in the step's own frame");
-    assert.equal(timers.at(-1).ms, still);
-    timers.at(-1).fn();
-    assert.deepEqual(levelled, [[0, "z11-21max"]], "levelled once the hand is still");
-    // Another operation is another picture: held for its statistics as before.
-    state = { ...state, slab: { z0: 11, z1: 21, op: "mean" } };
-    const held = sidebar.prepareContrast({ state, superseded: false });
-    assert.ok(held && typeof held.then === "function", "a new operation waits for its statistics");
-    console.log("a projection's step shows at once and is levelled once the hand is still");
-}
-

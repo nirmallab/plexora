@@ -190,35 +190,11 @@ def test_the_hd_level_is_half_floats_with_its_own_contrast_hint(tmp_path, client
     unit = np.frombuffer(response.data, dtype="<f2").reshape(shape)
     expected = np.clip((data[0, 1].astype(np.float32) - qmin) / (qmax - qmin), 0, 1)
     assert np.array_equal(unit, expected.astype("<f2"))
-    # The default contrast for what is drawn: the hints over its z maximum.
-    stats = data_model.channel_stats_of(data[0, 1].max(0).astype(np.float64), qmin, qmax)
-    hint = tuple(float(v) for v in response.headers["X-Plexora-Hint"].split(","))
-    assert hint == (stats["vmin_hint"], stats["vmax_hint"])
+    # No contrast of its own: the 3-D view is drawn with the channel's one
+    # contrast, like every plane and projection, so a level costs no more
+    # than its read and its quantization.
+    assert "X-Plexora-Hint" not in response.headers
     assert client.get(f"/volume/vol/level?channel={name}&format=rgb").status_code == 400
-
-
-def test_a_clip_range_gets_the_contrast_of_the_planes_it_keeps(tmp_path, client):
-    """The 3-D view's clip range draws only some planes; their default contrast
-    is the level's hint over those planes, not over the whole stack's brightest."""
-    path, data = vf.write_ome_volume(tmp_path / "clip.ome.tif", axes="CZYX", channels=1,
-                                     depth=6)
-    data = data.copy()
-    entry = register_image_datasource("clip", path)
-    data_model.load_datasource("clip")
-    name = entry["imageData"][0]["fullname"]
-    whole = client.get(f"/volume/clip/level?channel={name}&level=0")
-    _, qmin, qmax = _level(whole)
-    answer = client.get(f"/volume/clip/hint?channel={name}&level=0&z=1,2&w={qmin},{qmax}")
-    assert answer.status_code == 200
-    body = answer.get_json()
-    stats = data_model.channel_stats_of(data[0, 0, 1:3].max(0).astype(np.float64), qmin, qmax)
-    assert body["hint"] == [stats["vmin_hint"], stats["vmax_hint"]]
-    assert body["z"] == [1, 2] and body["level"] == 0
-    assert "immutable" in answer.headers["Cache-Control"], "named window: fixed by its address"
-    every = client.get(f"/volume/clip/hint?channel={name}&level=0&w={qmin},{qmax}").get_json()
-    assert every["hint"] == [float(v) for v in whole.headers["X-Plexora-Hint"].split(",")], \
-        "over every plane it is the level's own hint"
-    assert client.get(f"/volume/clip/hint?channel={name}&z=9,12").status_code == 400
 
 
 def test_a_fine_z_step_is_max_pooled_into_cubic_voxels(tmp_path, client):

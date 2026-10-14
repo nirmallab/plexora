@@ -1679,12 +1679,10 @@ def image_level(resource_id):
             return serve.read_level(again.base, ask, index, rows, cols, pool)
 
     key = (resource.id, _open_generation(resource)) + parts
-    data, shape, hint = serve.level_payload(key, key + ("hint",), read, window,
-                                            ask.voxel_format, data_model.channel_stats_of,
-                                            _perf.mark)
+    data, shape = serve.level_payload(key, read, window, ask.voxel_format, _perf.mark)
     response = _image(data, "application/octet-stream", etag)
     response.headers.update(headers)
-    response.headers.update(serve.payload_headers(shape, hint))
+    response.headers.update(serve.payload_headers(shape))
     return _viewed(_stamped(response, resource), view)
 
 
