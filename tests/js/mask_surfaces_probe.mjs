@@ -138,6 +138,9 @@ function boot({ licensed = true, labels3d = true, volume = true, mode = "none",
         service, posts, styles, waits, stack, frames, loaded, surfacesShown, view, deleted,
         get adopts() { return adopts; },
         setLut(value) { lut = value; emit("plexora:cell-lut-changed", { name: "tool" }); },
+        /** A data node's mask known to be 3-D only after load (main.js
+         *  `trackLabelPlanes`). */
+        setLabels3d(value) { labels3d = value; emit("plexora:labels-changed", { ndim: 3 }); },
         setMode(value) {
             win.__plexora.viewerControls.mode = value;
             emit("plexora:cell-mode-changed", { mode: value, volume: view.mode === "volume" });
@@ -194,6 +197,20 @@ function boot({ licensed = true, labels3d = true, volume = true, mode = "none",
     app.service.init();
     await flush();
     check("a 2-D mask is never built as surfaces", app.posts.length === 0);
+}
+
+{
+    // A data node that could not say at load that its mask is 3-D: the page
+    // read it as 2-D, and builds once it learns otherwise -- without the
+    // Cells control being touched again.
+    const app = boot({ labels3d: false, mode: "outlines" });
+    app.service.init();
+    await flush();
+    check("a mask not yet known to be 3-D is not built", app.posts.length === 0);
+    app.setLabels3d(true);
+    await flush();
+    check("a mask known to be 3-D after load builds then, in the mode chosen",
+        app.posts.length === 1, `${app.posts.length}`);
 }
 
 // -- the first build: preview, then standard -------------------------------------

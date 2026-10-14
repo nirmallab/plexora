@@ -550,19 +550,44 @@ async function init(config, savedViewTransform = null) {
         // (viewerSidebar.autoChannel), so a view change never waits for it.
         viewState.registerSurface("main", {
             order: 20, prepare: (rev) => viewerManager.setView(rev.spec, rev) });
-        if (viewState.labelsAre3d()) {
+        let labelPlanes = false;
+        const trackLabels = () => {
+            if (labelPlanes || !viewState.labelsAre3d()) return false;
+            labelPlanes = true;
             viewState.registerSurface("labels", {
                 order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
-        }
-        // A 3-D mask a data node finishes converting after this page opened
-        // was read as 2-D until then (the node reports no label volume while
-        // it builds one): track the plane from now on.
-        __plexora.trackLabelPlanes = async () => {
-            if (!(await viewState.refreshLabels()) || !viewState.labelsAre3d()) return;
-            viewState.registerSurface("labels", {
-                order: 30, prepare: (rev) => viewerManager.prepareLabelPlane(rev.labelSpec, rev) });
-            viewerManager.presetLabelPlane(viewState.labelSpec());
+            return true;
         };
+        trackLabels();
+        // A 3-D mask a data node could not vouch for when this page opened --
+        // still converting it, or slow to answer -- is known only later: track
+        // the plane from then on, and tell what draws the mask in depth (the
+        // section panes' cells, the Cells row, the 3-D view's cell surfaces),
+        // which each decided at load. Resolves true when the mask became 3-D.
+        __plexora.trackLabelPlanes = async () => {
+            if (!(await viewState.refreshLabels()) || !trackLabels()) return false;
+            viewerManager.presetLabelPlane(viewState.labelSpec());
+            window.dispatchEvent(new CustomEvent("plexora:labels-changed", { detail: { ndim: 3 } }));
+            return true;
+        };
+        // Not known yet (`/volume/info`'s ndim null): ask again, less often
+        // the longer it takes, until the node says, for ten minutes at most.
+        // A conversion that finishes is also reported by the resource status
+        // (onMaskReady below); this is for a node that was merely slow.
+        if (!viewState.labelsKnown()) {
+            const delays = [2000, 4000, 8000, 15000];
+            const deadline = Date.now() + 10 * 60 * 1000;
+            const ask = async (attempt) => {
+                if (viewState.labelsKnown() || Date.now() > deadline) return;
+                if (await __plexora.trackLabelPlanes() && viewerManager.labelLayerRequested) {
+                    viewerManager.reloadLabelLayer();
+                }
+                if (!viewState.labelsKnown()) {
+                    setTimeout(() => ask(attempt + 1), delays[attempt] ?? 30000);
+                }
+            };
+            setTimeout(() => ask(1), delays[0]);
+        }
         // A time series' object table (one row per cell per frame): the rows
         // the viewer reads follow the frame on screen -- the cells, their
         // centroids, the nearest cell to a click and every gate.

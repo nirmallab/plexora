@@ -175,16 +175,12 @@ def volume_prepare(datasource):
 def _segmentation_info(project):
     """Whether the mask is a 3-D label volume (one id per cell across planes)
     or one 2-D mask drawn on every plane -- which decides whether the viewer
-    asks for its outlines plane by plane."""
+    asks for its outlines plane by plane. `ndim` is null while a data node
+    holding the mask cannot say (volume_labels.project_mask_ndim): the viewer
+    asks again rather than settling on 2-D."""
     from plexora.server.volume import labels as volume_labels
 
-    seg = project.segmentation
-    if not seg.available:
-        return {"ndim": 0}
-    # Wherever the mask is held: a data node says whether its mask is a label
-    # volume (volume_labels.project_has_label_volume), where a local one is
-    # answered by its path.
-    return {"ndim": 3 if volume_labels.project_has_label_volume(project) else 2}
+    return {"ndim": volume_labels.project_mask_ndim(project)}
 
 
 def _int(value, default=0, low=None, high=None):

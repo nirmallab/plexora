@@ -474,3 +474,34 @@ def project_label_volume(project, t: int = 0):
 def project_has_label_volume(project) -> bool:
     """Whether `project`'s mask is a 3-D label volume, local or on a node."""
     return project_label_volume(project) is not None
+
+
+def project_mask_ndim(project):
+    """What `/volume/info` reports of `project`'s mask: 3 for a label volume,
+    2 for a 2-D mask, 0 for none -- or None when a data node holds it and
+    cannot say yet: unreachable, slow to answer, or still converting it.
+
+    "Not known" is not "2-D". The viewer decides at load whether to draw a
+    mask in depth (the section panes' cells, the 3-D view's cell surfaces),
+    and a page told 2-D never does; told None, it asks again
+    (viewState.refreshLabels). A node whose conversion failed has said what
+    it is going to say, and reads as 2-D.
+    """
+    seg = project.segmentation
+    if not seg.available:
+        return 0
+    binding = project.resource("segmentation") if hasattr(project, "resource") else None
+    if binding is None:
+        return 3 if project_has_label_volume(project) else 2
+    from plexora.server.node.resources import PREPARING
+    from plexora.server.providers.node import NodeSegmentationProvider
+
+    try:
+        status = NodeSegmentationProvider(binding).status() or {}
+    except Exception:
+        return None
+    if status.get("label_volume"):
+        return 3
+    if status.get("state") == PREPARING:
+        return None
+    return 2

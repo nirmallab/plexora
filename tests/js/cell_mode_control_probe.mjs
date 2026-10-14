@@ -373,6 +373,12 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
             license.entitlements = paid ? ["volume"] : [];
             (winHandlers.get("plexora:license-changed") || []).forEach((fn) => fn({}));
         },
+        /** A data node's mask known to be 3-D only after load (main.js
+         *  `trackLabelPlanes`). */
+        setLabels3d(value) {
+            labels3d = value;
+            (winHandlers.get("plexora:labels-changed") || []).forEach((fn) => fn({}));
+        },
         /** Press a bare key the way the document would deliver it. */
         press(key, init = {}) {
             const event = { key, preventDefault() { this.defaultPrevented = true; },
@@ -1270,6 +1276,19 @@ const shownNow = (buttons) => MODES.filter((mode) => buttons.get(mode).shown);
     const app = build({ labels3d: false, licensed: true, volume: true });
     check("a 2-D mask offers nothing in 3-D, even with Surface Studio",
         !app.buttons.get("outlines").shown && app.control.hidden === true);
+}
+
+{
+    // A data node that could not say at load that its mask is 3-D (slow, or
+    // still converting): the page read it as 2-D. Once it learns otherwise,
+    // in 3-D already, the row comes back without leaving 3-D.
+    const app = build({ labels3d: false, licensed: true, volume: true });
+    check("a mask not yet known to be 3-D offers nothing in 3-D",
+        app.control.hidden === true);
+    app.setLabels3d(true);
+    check("...and Outlines and Filled the moment it is known to be 3-D",
+        app.control.hidden === false && app.buttons.get("outlines").shown
+        && app.buttons.get("filled").shown, String(shownNow(app.buttons)));
 }
 
 {

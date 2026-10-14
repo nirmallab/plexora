@@ -560,7 +560,7 @@
    its `inspect` with it), and the controller every control changes it
    through. #}
 <script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261013_cut_panel" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261013_stack_contrast" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261014_late_mask" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261013_cut_show" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
@@ -584,7 +584,7 @@
 {# A 3-D mask drawn in 3-D: the Cells control's Outlines and Filled as cell
    surfaces, and the wait while the mask is converted. #}
 <script src="{{ data.base_url }}/client/src/js/views/maskSurfaceWait.js?v=20261013_mask_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261013_mask_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261014_late_mask" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
@@ -595,7 +595,7 @@
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261013_cut_panel" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261013_znav" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261012_plane_gating" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261014_late_mask" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261013_znav" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
@@ -614,7 +614,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261013_mask_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261014_late_mask" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

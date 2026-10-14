@@ -195,6 +195,44 @@ def test_the_primary_reports_a_node_mask_as_3d(project_on_a_node):
     assert info.get("segmentation") == {"ndim": 3}, info
 
 
+@pytest.mark.parametrize("answer", ["unreachable", "converting"])
+def test_a_node_that_cannot_say_yet_is_not_reported_as_2d(project_on_a_node, monkeypatch,
+                                                          answer):
+    """A node slow to answer, or still converting its 3-D mask, reports
+    `ndim: null`, not 2: a page told 2-D never drew the mask in depth (the
+    section panes' cells, the 3-D Cells row), and kept that for its life. On
+    null it asks again -- and gets 3 once the node answers."""
+    import plexora
+    from plexora.server.node.resources import PREPARING
+    from plexora.server.providers.node import NodeSegmentationProvider
+
+    def status(self):
+        if answer == "unreachable":
+            raise TimeoutError("the node did not answer")
+        return {"state": PREPARING}
+
+    client = plexora.app.test_client()
+    with monkeypatch.context() as patch:
+        patch.setattr(NodeSegmentationProvider, "status", status)
+        info = client.get("/volume/v3/info").get_json()
+    assert info.get("segmentation") == {"ndim": None}, info
+
+    NodeSegmentationProvider._statuses.clear()
+    assert client.get("/volume/v3/info").get_json()["segmentation"] == {"ndim": 3}
+
+
+def test_a_node_mask_that_is_2d_says_so(project_on_a_node, monkeypatch):
+    """A node that answers without a label volume holds a 2-D mask: known."""
+    import plexora
+    from plexora.server.node.resources import READY
+    from plexora.server.providers.node import NodeSegmentationProvider
+
+    monkeypatch.setattr(NodeSegmentationProvider, "status",
+                        lambda self: {"state": READY})
+    info = plexora.app.test_client().get("/volume/v3/info").get_json()
+    assert info.get("segmentation") == {"ndim": 2}, info
+
+
 def test_the_primary_forwards_the_plane_to_the_node(project_on_a_node):
     import plexora
     from plexora.server.models.project import Project

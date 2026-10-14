@@ -7791,9 +7791,16 @@ in **5.6 s**.
   `project_label_volume(project, t)`/`project_has_label_volume` answer for a
   mask wherever it is held, so `volume_routes`, `agent/sections.py`,
   `SegHandle.label_volume` and `volume/objects` never ask where it lives.
-  Client side, `__plexora.trackLabelPlanes()` runs on `onMaskReady` so a node
-  mask that finishes converting after load still registers the "labels"
-  surface. 3-D object measurement runs on the node that holds the image:
+  `/volume/info`'s `segmentation.ndim` comes from
+  `volume_labels.project_mask_ndim`: 3, 2, 0 -- or null when a node holding
+  the mask cannot say yet (status call failed, or PREPARING). Never report
+  "unknown" as 2: the page decides at load whether to draw the mask in depth.
+  Client side, `__plexora.trackLabelPlanes()` runs on `onMaskReady`, and is
+  polled (2 s backing off to 30 s, 10 min cap) while `viewState.labelsKnown()`
+  is false; when the mask turns out 3-D it registers the "labels" surface and
+  fires `plexora:labels-changed`, on which `sectionCells` attaches (XZ/YZ
+  cells), `viewerControls` re-offers the Cells row and `maskSurfaces` builds.
+  3-D object measurement runs on the node that holds the image:
   `volume/objects.measure_columns` is the pixel-reading half,
   `measure_project_objects` writes the table here, and the job is
   `POST /volume/measure` -> `GET /volume/measure/<job>` (`.../result` parquet,

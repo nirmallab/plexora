@@ -135,6 +135,15 @@ def test_a_3d_mask_is_drawn_as_cell_surfaces_in_3d():
     assert out.count("PASS ") >= 45, out
 
 
+def test_a_3d_mask_known_late_still_draws_in_the_section_panes():
+    """The XZ / YZ panes' cells (views/sectionCells.js) for a mask a data node
+    could not vouch for at load: they come when the page learns it is 3-D,
+    reading the cut on screen at once (tests/js/section_cells_probe.mjs)."""
+    out = _run("section_cells_probe.mjs")
+    assert "all checks passed" in out, out
+    assert out.count("PASS ") >= 9, out
+
+
 def test_one_modal_and_chip_serve_every_background_job():
     """views/jobWait.js: the mask pyramid's wait and the cell surfaces' wait
     are two instances on two mounts, Escape closes the one on top, leaving

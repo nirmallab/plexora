@@ -215,10 +215,14 @@ class ViewerControls {
             this.paintLayerOpacity();
             this.announce();
         });
-        window.addEventListener("plexora:license-changed", () => {
+        // The licence, or a data node's mask known to be 3-D only after load
+        // (main.js `trackLabelPlanes`), changes what 3-D can draw.
+        const reoffer = () => {
             this.refreshAvailability();
             this.announce();
-        });
+        };
+        window.addEventListener("plexora:license-changed", reoffer);
+        window.addEventListener("plexora:labels-changed", reoffer);
     }
 
     /** Whether the 3-D view, not the plane, is the picture. */

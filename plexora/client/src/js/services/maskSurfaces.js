@@ -438,6 +438,9 @@ window.PlexoraMaskSurfaces = (function () {
         });
         window.addEventListener("plexora:view-requested", onView);
         window.addEventListener("plexora:license-changed", update);
+        // A data node's mask known to be 3-D only after load (main.js
+        // `trackLabelPlanes`).
+        window.addEventListener("plexora:labels-changed", update);
         window.addEventListener("plexora:layer-progress", onProgress);
         window.addEventListener("plexora:layer-ready", (event) => onReady(event.detail?.layer));
         window.addEventListener("plexora:layer-failed", onFailed);

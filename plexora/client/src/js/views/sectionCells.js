@@ -44,7 +44,21 @@
         }
 
         attach() {
-            if (!this.sections?.addOverlay || !this.viewState?.labelsAre3d?.()) return this;
+            if (!this.sections?.addOverlay || this.off) return this;
+            if (!this.viewState?.labelsAre3d?.()) {
+                // A data node that could not say at load that its mask is 3-D
+                // says so later (main.js `trackLabelPlanes`): the cells come
+                // then.
+                if (!this.waiting) {
+                    this.waiting = () => this.attach();
+                    global.addEventListener?.("plexora:labels-changed", this.waiting);
+                }
+                return this;
+            }
+            if (this.waiting) {
+                global.removeEventListener?.("plexora:labels-changed", this.waiting);
+                this.waiting = null;
+            }
             this.off = this.sections.addOverlay("core:cells", (query) => this.shapes(query));
             const repaint = () => this.sections.paintOverlays?.();
             global.addEventListener?.("plexora:sections-moved", (event) => this.read(event.detail));
@@ -60,6 +74,9 @@
                 }
             });
             this.frame = this.viewState.get?.().t || 0;
+            // Attached late, with the panes already open: the cut on screen
+            // now, not at their next move. (A closed pane reads nothing.)
+            this.read(null);
             return this;
         }
 

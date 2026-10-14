@@ -432,6 +432,14 @@
             return Number(this.info?.segmentation?.ndim) === 3;
         }
 
+        /** Whether the server could say what the mask is: false while a data
+         *  node holding it is slow to answer or still converting it
+         *  (`ndim` null), and the page should ask again (refreshLabels). */
+        labelsKnown() {
+            const segmentation = this.info?.segmentation;
+            return !segmentation || segmentation.ndim !== null;
+        }
+
         /** Ask again what the mask is, for a mask that changed after boot: a
          *  data node converting a 3-D mask reports none until its label
          *  volume lands. Resolves true when `labelsAre3d()` changed. */
