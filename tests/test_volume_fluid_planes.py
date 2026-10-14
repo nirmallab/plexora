@@ -379,4 +379,4 @@ def test_planes_and_channels_show_from_coverage_and_the_hovered_plane_is_made_re
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "checks passed" in proc.stdout, proc.stdout
-    assert proc.stdout.count("ok - ") >= 20, proc.stdout
+    assert proc.stdout.count("ok - ") >= 45, proc.stdout

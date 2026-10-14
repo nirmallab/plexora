@@ -21,6 +21,10 @@
  *   signal aborts and it commits nothing; so does one stuck loading while a
  *   newer one waits, and one a jump far from it leaves behind (a step to the
  *   next plane, or a fast drag, lets it land);
+ * - while the hand moves, a revision whose plane has not covered gives way to
+ *   the newest after SCRUB_SUPERSEDE_MS rather than a second; one whose plane
+ *   is ready is never superseded by a newer request -- it commits, giving the
+ *   others SCRUB_SYNC_WAIT_MS, and the newest follows;
  * - revision ids only grow, and view-changed says which one is on screen.
  *
  * Run directly:  node tests/js/nav_revision_probe.mjs
@@ -60,7 +64,7 @@ box.window = box;
 box.globalThis = box;
 runInContext(source, createContext(box));
 const ViewState = box.PlexoraViewState;
-const { SYNC_WAIT_MS, SUPERSEDE_AFTER_MS } = ViewState;
+const { SYNC_WAIT_MS, SUPERSEDE_AFTER_MS, SCRUB_SUPERSEDE_MS } = ViewState;
 
 const VOLUME = { volumetric: true, depth: 40, frames: 3, width: 2000, height: 1500, default_view: "z10" };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -164,6 +168,67 @@ function contiguous(names) {
 }
 
 {
+    // ...in the request's own task, not at the next frame's pump: until then
+    // each of its tiles that landed let the next one it had queued go -- tiles
+    // of a plane nobody will see (the bench's jumpBusy_wastedTiles).
+    const vs = await volume();
+    const aborted = [];
+    vs.registerSurface("main", { order: 20, ...surface("main", (rev) => sleep(rev.spec === "z11" ? 600 : 20), { aborted }) });
+    vs.set({ z: 11 });
+    await sleep(120);
+    vs.set({ z: 35 });
+    const atOnce = aborted.includes("main:z11");
+    await vs.settled();
+    check("and in the request's own task, before the next frame",
+        atOnce && vs.appliedSpec() === "z35", `aborted ${aborted.join()}; on screen ${vs.appliedSpec()}`);
+}
+
+{
+    // The hand let go (views/depthStrip.js: a drag released, a step key up,
+    // Play stopped): it stops counting as moving at once, not SCRUB_HOLD_MS
+    // after its last request, and `plexora:scrub-ended` says so.
+    const vs = await volume();
+    vs.registerSurface("main", { order: 20, ...surface("main", 5) });
+    vs.set({ z: 11 });
+    vs.set({ z: 12 });                     // within SCRUB_GAP_MS: a scrub
+    const moving = vs.scrubbing();
+    const before = events.length;
+    vs.endScrub();
+    const said = events.slice(before).filter((e) => e.type === "plexora:scrub-ended");
+    check("endScrub: scrubbing() is false at once, and plexora:scrub-ended says so",
+        moving && !vs.scrubbing() && said.length === 1 && said[0].detail?.spec === "z12",
+        JSON.stringify({ moving, now: vs.scrubbing(), said: said.length }));
+    await vs.settled();
+}
+
+{
+    // A revision is a scrub one if the REQUEST it serves was made while the
+    // hand moved, not if the hand still moves when it is pumped: a drag's last
+    // plane, waiting behind the one in flight and pumped after the pointer let
+    // go (endScrub), still previews at coverage (grace 0), never the 140 ms of
+    // a plane asked for at rest. A far click at rest is not a scrub.
+    const vs = await volume();
+    const seen = [];
+    vs.registerSurface("main", { order: 20, prepare: (rev) => {
+        seen.push({ spec: rev.spec, scrub: rev.scrub, moving: vs.scrubbing() });
+        return sleep(rev.spec === "z11" ? 60 : 5).then(() => () => {});
+    } });
+    vs.set({ z: 11 });
+    await sleep(20);                       // the drag's next event: a scrub request
+    vs.set({ z: 12 });
+    vs.endScrub();                         // ...and the pointer let go
+    await vs.settled();
+    const last = seen.find((s) => s.spec === "z12");
+    check("a drag's final request, pumped after endScrub, is still a scrub revision",
+        last?.scrub === true && last.moving === false && vs.appliedSpec() === "z12", JSON.stringify(seen));
+    await sleep(120);                      // the hand at rest
+    vs.set({ z: 30 });
+    await vs.settled();
+    const click = seen.find((s) => s.spec === "z30");
+    check("a far click at rest is not a scrub", click?.scrub === false, JSON.stringify(seen));
+}
+
+{
     const vs = await volume();
     const aborted = [];
     const slow = { z11: 300 };
@@ -179,9 +244,11 @@ function contiguous(names) {
 }
 
 {
+    // A plane that covers inside SCRUB_SUPERSEDE_MS: a preview on the way.
+    // (One slower than that gives way to the newest -- the next block.)
     const vs = await volume();
     const aborted = [];
-    const slow = { z11: 300 };
+    const slow = { z11: 120 };
     vs.registerSurface("main", { order: 20, ...surface("main", (rev) => sleep(slow[rev.spec] ?? 20), { aborted }) });
     const from = log.length;
     vs.set({ z: 11 });
@@ -190,6 +257,126 @@ function contiguous(names) {
     await vs.settled();
     check("a fast drag is a scrub, not a jump: planes still land on the way",
         !aborted.includes("main:z11") && log.slice(from).includes("main:z11"), aborted.join());
+}
+
+{
+    // The FIRST revision of a drag -- made before the hand was known to be
+    // moving -- is slow: once the drag is under way it gives way after
+    // SCRUB_SUPERSEDE_MS too, not a second.
+    const vs = await volume();
+    const aborted = [];
+    let abortedAfter = null;
+    const slowly = (rev) => {
+        if (rev.spec !== "z11") return sleep(20);
+        rev.signal?.addEventListener?.("abort", () => { abortedAfter = performance.now() - rev.started; });
+        return sleep(600);
+    };
+    vs.registerSurface("main", { order: 20, ...surface("main", slowly, { aborted }) });
+    const from = log.length;
+    const t0 = performance.now();
+    vs.set({ z: 11 });
+    for (let z = 12; z <= 20; z += 1) {
+        await sleep(30);                   // a drag down the rail
+        vs.set({ z });
+    }
+    await vs.settled();
+    const took = performance.now() - t0;
+    check("a drag's 600 ms first revision is aborted at SCRUB_SUPERSEDE_MS or later, not after a second",
+        aborted.includes("main:z11") && !log.slice(from).includes("main:z11")
+        && log.slice(from).includes("main:z20") && vs.appliedSpec() === "z20"
+        && abortedAfter >= SCRUB_SUPERSEDE_MS - 2 && abortedAfter < SUPERSEDE_AFTER_MS && took < 600,
+        `aborted after ${abortedAfter?.toFixed(0)} ms, all in ${took.toFixed(0)} ms`);
+}
+
+// -- while the hand moves: the newest wins sooner, a ready plane always lands ----------
+
+{
+    // The hand already moving (z11 lands quickly); the first plane it asks for
+    // after that is slow. It gives way once it has loaded for
+    // SCRUB_SUPERSEDE_MS -- not a second, nor until it lands -- and the
+    // newest lands instead.
+    const vs = await volume();
+    const aborted = [];
+    let slowOne = null;
+    let abortedAfter = null;
+    const slowly = (rev) => {
+        if (rev.spec === "z11" || slowOne !== null) return sleep(20);
+        slowOne = rev.spec;
+        rev.signal?.addEventListener?.("abort", () => { abortedAfter = performance.now() - rev.started; });
+        return sleep(600);
+    };
+    vs.registerSurface("main", { order: 20, ...surface("main", slowly, { aborted }) });
+    const from = log.length;
+    const t0 = performance.now();
+    vs.set({ z: 11 });
+    for (let z = 12; z <= 20; z += 1) {
+        await sleep(30);                   // a drag down the rail
+        vs.set({ z });
+    }
+    await vs.settled();
+    const took = performance.now() - t0;
+    check("during a drag a revision that has not covered gives way after SCRUB_SUPERSEDE_MS, not a second",
+        slowOne !== null && aborted.includes(`main:${slowOne}`) && !log.slice(from).includes(`main:${slowOne}`)
+        && log.slice(from).includes("main:z20") && vs.appliedSpec() === "z20"
+        && abortedAfter >= SCRUB_SUPERSEDE_MS - 2 && took < 600,
+        `slow ${slowOne}, aborted after ${abortedAfter?.toFixed(0)} ms, all in ${took.toFixed(0)} ms`);
+}
+
+{
+    // The plane of z11 is ready when z12 is asked for, the second surface not
+    // yet: z11 is not thrown away for it. And z12, made while the hand moves,
+    // gives the second surface SCRUB_SYNC_WAIT_MS (it joins late), not the
+    // SYNC_WAIT_MS that would let it in.
+    const vs = await volume();
+    const aborted = [];
+    vs.registerSurface("main", { order: 20, ...surface("main", 20, { aborted }) });
+    vs.registerSurface("second", { order: 30, ...surface("second", 100, { aborted }) });
+    const from = log.length;
+    vs.set({ z: 11 });
+    await sleep(30);
+    vs.set({ z: 12 });
+    await vs.settled();
+    await sleep(SYNC_WAIT_MS + 150);       // the late commits
+    const part = log.slice(from);
+    const at = (name) => part.indexOf(name);
+    check("a revision whose main is ready is not superseded by the next request: both commit, in order",
+        !aborted.length && at("main:z11") >= 0 && at("main:z11") < at("main:z12")
+        && at("second:z11") >= 0 && at("second:z11") < at("second:z12"), `aborted ${aborted.join()}`);
+    // A tick between them: two tasks, the plane first.
+    check("and one made while the hand moves gives the others SCRUB_SYNC_WAIT_MS, then commits them late",
+        at("main:z12") >= 0 && at("main:z12") < at("second:z12")
+        && part.slice(at("main:z12"), at("second:z12")).includes("tick"),
+        part.filter((entry) => entry !== "tick").join());
+}
+
+{
+    // Ready, but held: z14 is asked for while z13's plane is still loading
+    // (so the scrub deadline is armed), the plane is ready ~100 ms in, and a
+    // surface with `hold` keeps it waiting past SCRUB_SUPERSEDE_MS. When the
+    // deadline comes the plane is ready: it is not thrown away for the newer
+    // request -- it lands, then the newest.
+    const vs = await volume();
+    const aborted = [];
+    let release = null;
+    const gate = new Promise((resolve) => { release = resolve; });
+    vs.registerSurface("main", { order: 20,
+                                 ...surface("main", (rev) => sleep(rev.spec === "z13" ? 100 : 10), { aborted }) });
+    vs.registerSurface("ranges", { order: 10, hold: 1500,
+                                   ...surface("ranges", (rev) => (rev.spec === "z13" ? gate : sleep(5)), { aborted }) });
+    const from = log.length;
+    vs.set({ z: 12 });
+    await sleep(30);
+    vs.set({ z: 13 });                     // the hand moving: z13 is made as a scrub
+    await sleep(30);
+    vs.set({ z: 14 });                     // before z13's plane is ready
+    await sleep(SCRUB_SUPERSEDE_MS + 150);
+    release();
+    await vs.settled();
+    const part = log.slice(from);
+    const at = (name) => part.indexOf(name);
+    check("a revision whose plane is ready outlives SCRUB_SUPERSEDE_MS: it lands, then the newest",
+        !aborted.includes("main:z13") && at("main:z13") >= 0 && at("main:z13") < at("main:z14")
+        && vs.appliedSpec() === "z14", `aborted ${aborted.join()}`);
 }
 
 // -- a slow surface commits late, never over a newer revision --------------------------
@@ -293,13 +480,13 @@ function contiguous(names) {
     vs.registerSurface("main", { order: 20, ...surface("main", slowly, { aborted }) });
     const t0 = performance.now();
     vs.set({ z: 21 });
-    await sleep(50);
+    await sleep(120);                      // the hand at rest: the 1 s rule, not the scrub one
     vs.set({ z: 22 });
     await vs.settled();
     const at = performance.now() - t0;
     check("a revision stuck loading past SUPERSEDE_AFTER_MS gives way to the newest",
         aborted.includes("main:z21") && log.includes("main:z22") && !log.includes("main:z21")
-        && at < SUPERSEDE_AFTER_MS + 400, `${at.toFixed(0)} ms`);
+        && at >= SUPERSEDE_AFTER_MS && at < SUPERSEDE_AFTER_MS + 400, `${at.toFixed(0)} ms`);
 }
 
 // -- a scrub: few revisions, ids only grow, nothing older after newer -----------------
@@ -319,6 +506,39 @@ function contiguous(names) {
     check("ids only grow, and no plane older than one shown is shown after it",
         ids.every((id, i) => i === 0 || id > ids[i - 1]) && zs.every((z, i) => i === 0 || z > zs[i - 1]));
     check("and the last is where the hand stopped", zs[zs.length - 1] === 39 && vs.appliedSpec() === "z39");
+}
+
+{
+    // The same scrub under the scrub rules: a second surface slower than
+    // SCRUB_SYNC_WAIT_MS (it commits late), and one revision slow enough to be
+    // superseded on the way. Still a handful of revisions, and what each
+    // surface shows only ever moves forward.
+    const vs = await volume();
+    const made = [];
+    const abortedIds = new Set();
+    const commits = { main: [], panes: [] };
+    const record = (name, rev) => () => commits[name].push([rev.id, rev.state.z]);
+    vs.registerSurface("main", { order: 20, prepare: (rev) => {
+        made.push(rev.id);
+        rev.signal?.addEventListener?.("abort", () => abortedIds.add(rev.id));
+        return sleep(made.length === 2 ? 400 : 60).then(() => record("main", rev));
+    } });
+    vs.registerSurface("panes", { order: 40, prepare: (rev) => sleep(90).then(() => record("panes", rev)) });
+    for (let i = 0; i < 30; i += 1) {
+        vs.step(1);
+        await sleep(5);
+    }
+    await vs.settled();
+    await sleep(200);                      // the late commits
+    const monotone = (list) => list.every(([id, z], i) => i === 0
+        || (id > list[i - 1][0] && z > list[i - 1][1]));
+    const shown = [...commits.main, ...commits.panes].map(([id]) => id);
+    check("thirty steps 5 ms apart are still a handful of revisions and commits are monotone",
+        made.length <= 10 && abortedIds.size >= 1 && !shown.some((id) => abortedIds.has(id))
+        && monotone(commits.main) && monotone(commits.panes)
+        && commits.main.at(-1)?.[1] === 39 && commits.panes.at(-1)?.[1] === 39 && vs.appliedSpec() === "z39",
+        `made ${made.length}, superseded ${[...abortedIds].join()}; main ${JSON.stringify(commits.main)}; `
+        + `panes ${JSON.stringify(commits.panes)}`);
 }
 
 // -- in 3-D, the hidden plane's tiles stay where they were ------------------------------

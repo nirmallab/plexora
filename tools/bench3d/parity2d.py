@@ -19,7 +19,7 @@ from PIL import Image
 
 
 def load(path, dataset):
-    run = json.loads(Path(path).read_text())
+    run = json.loads(Path(path).read_text(encoding="utf-8"))
     extra = run["results"][dataset]["parity2d"]["extra"]
     png = extra["png"].replace("$PLEXORA_BENCH_HOME",
                                os.environ.get("PLEXORA_BENCH_HOME", str(Path.home() / "plexora-bench")))

@@ -324,15 +324,8 @@ async function zsteps(ctx) {
             const fl = before && after ? k.flashFrames(t0, t0 + r.full + 400, before, after) : null;
             // The first frame the picture moves at all: a crossfade between
             // two similar planes changes little per frame, so any cell moving
-            // by two levels or more, not an average.
-            let change = null;
-            if (before && after) {
-                const moves = after.some((v, j) => Math.abs(v - before[j]) >= 2);
-                for (const [t, grid] of __bench.lum) {
-                    if (t < t0 || !moves) continue;
-                    if (grid.some((v, j) => Math.abs(v - before[j]) >= 2)) { change = t - t0; break; }
-                }
-            }
+            // by two levels or more, not an average (pagekit lumFirstChange).
+            const change = before && after ? k.lumFirstChange(t0, before, 2, after) : null;
             out.push({ flash: fl?.flash ?? null, worst: fl?.worst ?? null, change });
         }
         __bench.stop();
@@ -720,9 +713,14 @@ async function contrast(ctx) {
         const probe = document.createElement("canvas");
         probe.width = 16; probe.height = 16;
         const pc = probe.getContext("2d");
-        const mean = (canvas) => {
+        // A section pane: only the part on screen (probes.js paneCrop) -- a
+        // scrolled pane's canvas reaches rows past both edges, never shown.
+        const mean = (canvas, name) => {
+            const pane = name === "xz" || name === "yz" ? k.P().sectionPanes?.panes?.[name] : null;
+            const src = pane ? __bench.paneCrop?.(name, pane, canvas) : null;
             pc.clearRect(0, 0, 16, 16);
-            pc.drawImage(canvas, 0, 0, 16, 16);
+            if (src) pc.drawImage(canvas, ...src, 0, 0, 16, 16);
+            else pc.drawImage(canvas, 0, 0, 16, 16);
             const d = pc.getImageData(0, 0, 16, 16).data;
             let s = 0;
             for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2] + d[i + 3];
@@ -734,7 +732,7 @@ async function contrast(ctx) {
             await k.quiet(300);
             await k.sleep(200);
             const list = canvases();
-            const base = Object.fromEntries(Object.entries(list).map(([n, c]) => [n, mean(c)]));
+            const base = Object.fromEntries(Object.entries(list).map(([n, c]) => [n, mean(c, n)]));
             const c0 = k.counters();
             const lo = original[0];
             const hi = original[1];
@@ -746,7 +744,7 @@ async function contrast(ctx) {
             await new Promise((resolve) => {
                 const tick = () => {
                     for (const [n, c] of Object.entries(list)) {
-                        if (seen[n] === undefined && Math.abs(mean(c) - base[n]) > 0.5) seen[n] = performance.now() - t0;
+                        if (seen[n] === undefined && Math.abs(mean(c, n) - base[n]) > 0.5) seen[n] = performance.now() - t0;
                     }
                     if (Object.keys(seen).length === Object.keys(list).length || performance.now() > end) resolve();
                     else requestAnimationFrame(() => setTimeout(tick, 0));
@@ -1541,6 +1539,438 @@ async function clip(ctx) {
     return { metrics, F };
 }
 
+// -- 7. Z navigation as seen: preview first, never black, three panes in step ----------
+//
+// zreveal, raildrag and panesync (README). Luminance always through the bitmap
+// path (probes.js luminanceAsync), never a read of the plane's canvas.
+
+/** The server's cache counters (`GET /volume/<ds>/perf`), fetched from node,
+ *  not the page: null where the route does not exist (404) or does not answer. */
+async function serverPerf(ctx) {
+    try {
+        const reply = await fetch(`${ctx.base}/volume/${encodeURIComponent(ctx.dataset)}/perf`,
+                                  { signal: AbortSignal.timeout(10000) });
+        if (!reply.ok) return null;
+        return await reply.json();
+    } catch (error) {
+        return null;
+    }
+}
+
+/** What the server's decoded-chunk and encoded-tile caches did between two
+ *  serverPerf() snapshots; null when either is missing. */
+function perfDelta(before, after) {
+    if (!before || !after) return null;
+    const d = (group, key) => {
+        const a = Number(after?.[group]?.[key]);
+        const b = Number(before?.[group]?.[key]);
+        return Number.isFinite(a) && Number.isFinite(b) ? a - b : null;
+    };
+    const chunkCacheHits = d("chunk_cache", "hits");
+    const chunkCacheMisses = d("chunk_cache", "misses");
+    const chunks = (chunkCacheHits ?? 0) + (chunkCacheMisses ?? 0);
+    return { chunkCacheHits, chunkCacheMisses,
+             tileCacheHits: d("tile_cache", "hits"), tileCacheMisses: d("tile_cache", "misses"),
+             chunkHitRate: chunks > 0 ? chunkCacheHits / chunks : null };
+}
+
+/** Nearest-rank percentile of a list of numbers, or null. */
+function percentile(values, p) {
+    const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+    return sorted.length ? sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))] : null;
+}
+
+/** One window's requests (CDP log) and server caches under `prefix`: plane
+ *  tile requests and cancels, section requests, the P95 of the server's
+ *  `read` phase and the share its tile cache held (Server-Timing
+ *  `cache;desc=hit`) over plane and section tiles both (a read that hit the
+ *  cache has no `read`), and perfDelta's cache counts. */
+function loadMetrics(metrics, prefix, records, delta) {
+    const net = netSummary(records);
+    const tile = net.tile || {};
+    const section = net.section || {};
+    put(metrics, `${prefix}_tileRequests`, tile.n || 0);
+    put(metrics, `${prefix}_tileCanceled`, tile.canceled || 0);
+    put(metrics, `${prefix}_sectionRequests`, section.n || 0);
+    put(metrics, `${prefix}_serverReadP95`,
+        percentile([...(tile.phases?.read || []), ...(section.phases?.read || [])], 0.95));
+    const hits = (tile.cacheHit || 0) + (section.cacheHit || 0);
+    const verdicts = hits + (tile.cacheMiss || 0) + (section.cacheMiss || 0);
+    put(metrics, `${prefix}_serverCacheHitShare`, verdicts ? hits / verdicts : null);
+    for (const [name, value] of Object.entries(delta || {})) put(metrics, `${prefix}_${name}`, value);
+    return net;
+}
+
+/**
+ * A step and a far jump, as the screen shows them. Warm steps (one plane on,
+ * from rest, the page's standby planes in): `step_previewMs` the first frame
+ * any cell of the picture moves (lumFirstChange), `step_fullResMs` loaded at
+ * the level the plane drew at rest (waitFull), `step_blackFrames` frames under
+ * a tenth of the settled picture over [t0, full + 400 ms], `step_statusShows`
+ * the times the plane's loading indicator showed (a build with one). Cold
+ * jumps (HTTP cache cleared, a fresh page, +50 planes or as far as the stack
+ * allows, a different destination each repetition so the server's caches are
+ * cold too): `jump_previewMs`, `jump_fullResMs`, `jump_blackFrames`,
+ * `jump_statusShows`. Each with its requests and server caches (loadMetrics).
+ */
+async function zreveal(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    const F = await period(ctx);
+    const top = ctx.info.depth - 1;
+    const z0 = Math.max(0, Math.min(top, ctx.params.z0 ?? Math.floor(ctx.info.depth / 2)));
+    const extra = { z0, steps: [], jumps: [] };
+    // Warm steps, the luminance traced on this page throughout.
+    await reset(ctx, { z: z0 });
+    await atRest(ctx);
+    await ctx.browser.eval(() => { __bench.reset({ counters: false }); __bench.start({ lum: true }); return true; });
+    for (let rep = 0; rep < ctx.reps; rep += 1) {
+        await atRest(ctx);
+        const perf0 = await serverPerf(ctx);
+        const mark = ctx.browser.net.length;
+        const s = await ctx.browser.eval(async () => {
+            const k = __bench.k;
+            const vs = k.vs();
+            await k.sleep(200);   // frames of the picture at rest
+            const before = __bench.lum[__bench.lum.length - 1]?.[1] || null;
+            const level = k.finestDrawn();
+            const shows0 = k.statusShows("main");
+            const dir = vs.get().z >= vs.depth - 1 ? -1 : 1;
+            const t0 = performance.now();
+            vs.step(dir);
+            const spec = vs.spec();
+            const r = await k.waitPlane(spec, t0);
+            const full = r.commit === null ? null : await k.waitFull(spec, t0, level);
+            await k.quiet(300, 30000);
+            await k.sleep(400);   // the fade's end, and the settled picture
+            const after = __bench.lum[__bench.lum.length - 1]?.[1] || null;
+            const trace = full === null ? null : k.lumBlack(t0, t0 + full + 400, t0 + full);
+            const shows1 = k.statusShows("main");
+            return { spec, commit: r.commit, full, preview: k.lumFirstChange(t0, before, 2, after),
+                     black: trace?.black ?? null, ref: trace?.ref ?? null,
+                     shows: shows0 === null || shows1 === null ? null : shows1 - shows0 };
+        });
+        loadMetrics(metrics, "step", ctx.browser.netSince(mark), perfDelta(perf0, await serverPerf(ctx)));
+        put(metrics, "step_previewMs", s.preview);
+        put(metrics, "step_fullResMs", s.full);
+        put(metrics, "step_blackFrames", s.black);
+        put(metrics, "step_statusShows", s.shows);
+        extra.steps.push({ spec: s.spec, commit: s.commit, full: s.full, preview: s.preview, ref: s.ref });
+    }
+    await ctx.browser.eval(() => { __bench.stop(); return true; });
+    // Cold jumps.
+    let plus = Math.min(top, z0 + 50);
+    if (plus === z0) plus = Math.max(0, z0 - 50);
+    if (plus !== z0) {
+        const sign = plus > z0 ? 1 : -1;
+        // Destinations 4 planes apart (out of the last one's standby), all
+        // more than 8 planes from the origin.
+        const room = Math.max(1, Math.floor((Math.abs(plus - z0) - 8) / 4) + 1);
+        for (let rep = 0; rep < ctx.reps; rep += 1) {
+            const dest = plus - sign * 4 * (rep % room);
+            await ctx.browser.clearCache();
+            await boot(ctx, { z: z0 });
+            await reset(ctx, { z: z0 });
+            await atRest(ctx);
+            await ctx.browser.eval(async () => {
+                __bench.reset({ counters: false });
+                __bench.start({ lum: true });
+                await __bench.k.sleep(300);
+                return true;
+            });
+            const perf0 = await serverPerf(ctx);
+            const mark = ctx.browser.net.length;
+            const j = await ctx.browser.eval(async (dest) => {
+                const k = __bench.k;
+                const before = __bench.lum[__bench.lum.length - 1]?.[1] || null;
+                const shows0 = k.statusShows("main");
+                const r = await k.jumpTo(dest);
+                const t0 = r.from - performance.timeOrigin;
+                await k.quiet(300, 30000);
+                await k.sleep(400);
+                const after = __bench.lum[__bench.lum.length - 1]?.[1] || null;
+                const trace = r.full === null ? null : k.lumBlack(t0, t0 + r.full + 400, t0 + r.full);
+                const shows1 = k.statusShows("main");
+                __bench.stop();
+                return { dest, commit: r.commit, full: r.full, wait: r.wait,
+                         preview: k.lumFirstChange(t0, before, 2, after),
+                         black: trace?.black ?? null, ref: trace?.ref ?? null,
+                         series: trace?.series?.slice(0, 40) ?? null,
+                         shows: shows0 === null || shows1 === null ? null : shows1 - shows0 };
+            }, dest);
+            loadMetrics(metrics, "jump", ctx.browser.netSince(mark), perfDelta(perf0, await serverPerf(ctx)));
+            put(metrics, "jump_previewMs", j.preview);
+            put(metrics, "jump_fullResMs", j.full);
+            put(metrics, "jump_blackFrames", j.black);
+            put(metrics, "jump_statusShows", j.shows);
+            extra.jumps.push(j);
+        }
+    }
+    return { metrics, F, extra };
+}
+
+//: Rail drags: planes per second, and how far one leg goes.
+const DRAG_SPEEDS = { slow: { rate: 3, span: 9 }, fast: { rate: 40, span: 40 } };
+const DRAG_MOVE_MS = 16;
+
+/** The Z rail's track on screen: {x, top, height, depth, onRail}, or null. */
+async function railBox(ctx) {
+    return ctx.browser.eval(() => {
+        const k = __bench.k;
+        const strip = k.P().depthStrip;
+        const track = strip?.track;
+        if (!track) return null;
+        const r = track.getBoundingClientRect();
+        if (!(r.height > 0)) return null;
+        const x = r.left + r.width / 2;
+        const hit = document.elementFromPoint(x, r.top + r.height / 2);
+        const rail = strip.rail || track.parentElement;
+        return { x, top: r.top, height: r.height, depth: k.vs().depth,
+                 onRail: Boolean(hit && rail && rail.contains(hit)) };
+    });
+}
+
+/** The pointer's y for plane `z` (fractional): depthStrip.zExact inverted. */
+function railY(box, z) {
+    return box.top + (z / Math.max(1, box.depth - 1)) * box.height;
+}
+
+/** [[ms, plane], ...]: down `span` planes from `start` and back, `sweeps`
+ *  times, at `rate` planes/s, a move every DRAG_MOVE_MS. */
+function sweepPath(start, span, rate, sweeps) {
+    const leg = (span / rate) * 1000;
+    const total = 2 * leg * sweeps;
+    const path = [];
+    for (let ms = 0; ms < total; ms += DRAG_MOVE_MS) {
+        const phase = (ms % (2 * leg)) / leg;
+        path.push([ms, start + (phase <= 1 ? phase : 2 - phase) * span]);
+    }
+    path.push([total, start]);
+    return path;
+}
+
+/** The real mouse along `path` on the rail: a hover, a press, the moves on a
+ *  fixed clock (a late one is not made up), the release where it ends. */
+async function dragRail(ctx, box, path) {
+    const event = (type, z, buttons) => ctx.browser.send("Input.dispatchMouseEvent", {
+        type, x: box.x, y: railY(box, z), button: type === "mouseMoved" && !buttons ? "none" : "left",
+        buttons, clickCount: type === "mouseMoved" ? 0 : 1 });
+    await event("mouseMoved", path[0][1], 0);
+    await sleep(60);
+    const begin = Date.now();
+    await event("mousePressed", path[0][1], 1);
+    for (const [ms, z] of path.slice(1)) {
+        const wait = begin + ms - Date.now();
+        if (wait > 0) await sleep(wait);
+        await event("mouseMoved", z, 1);
+    }
+    await event("mouseReleased", path[path.length - 1][1], 0);
+}
+
+/**
+ * The Z rail dragged with the real mouse (CDP), as a hand drags it: slow
+ * (3 planes/s) and fast (40 planes/s), down a leg and back, with the plane
+ * alone and with the section panes on (`_sections`); a stack under 40 planes
+ * gets three fast sweeps. Each repetition of each case is two passes on fresh
+ * pages (HTTP cache cleared): A without the luminance trace for the frame
+ * statistics -- fps, frame P95/P99, dropped frames over the drag; stale frames
+ * (staleFrames: the plane committed two or more planes behind the revision the
+ * app had started), their share and the largest lag; `handLagMax` (the hand
+ * against the plane committed); planes painted (the plane's transitions, the
+ * drag and its settling) and requested (the hand's); `settleMs` pointer up to
+ * the final plane loaded at the level drawn at rest; the requests and caches
+ * (loadMetrics) -- and B with it, for `blackFrames` (under a tenth of the
+ * settled picture, from the press to 400 ms after the settle).
+ */
+async function raildrag(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 4) return { metrics, skipped: "depth under 4" };
+    const F = await period(ctx);
+    const top = ctx.info.depth - 1;
+    const extra = { cases: {} };
+    for (const layout of ["single", "sections"]) {
+        for (const [speed, { rate, span: wanted }] of Object.entries(DRAG_SPEEDS)) {
+            const span = Math.min(wanted, top);
+            const start = Math.max(0, Math.min(top - span, ctx.params.z0 ?? Math.floor((top - span) / 2)));
+            const sweeps = speed === "fast" && ctx.info.depth < 40 ? 3 : 1;
+            const path = sweepPath(start, span, rate, sweeps);
+            const name = `drag_${speed}${layout === "sections" ? "_sections" : ""}`;
+            extra.cases[name] = { start, span, sweeps, rate, moves: path.length };
+            for (let rep = 0; rep < ctx.reps; rep += 1) {
+                for (const lum of [false, true]) {
+                    await ctx.browser.clearCache();
+                    await boot(ctx, { z: start });
+                    await reset(ctx, { z: start, layout });
+                    if (layout === "sections") await ctx.browser.eval(() => __bench.k.quiet(800, 120000));
+                    await atRest(ctx);
+                    const box = await railBox(ctx);
+                    if (!box) return { metrics, F, extra, skipped: "no Z rail" };
+                    extra.cases[name].onRail = box.onRail;
+                    const rest = await ctx.browser.eval((lum) => {
+                        __bench.reset({ counters: false });
+                        __bench.start({ lum });
+                        return { level: __bench.k.finestDrawn(), shows: __bench.k.statusShows("main") };
+                    }, lum);
+                    await sleep(200);
+                    const perf0 = lum ? null : await serverPerf(ctx);
+                    const mark = ctx.browser.net.length;
+                    await dragRail(ctx, box, path);
+                    const r = await ctx.browser.eval(async (F, rest, lum) => {
+                        const k = __bench.k;
+                        const vs = k.vs();
+                        const last = (type) => {
+                            const list = __bench.inputs.filter(([, t]) => t === type);
+                            return list.length ? list[list.length - 1][0] : null;
+                        };
+                        const tDown = last("pointerdown") ?? __bench.frames[0] ?? performance.now();
+                        const tUp = last("pointerup") ?? performance.now();
+                        const spec = vs.spec();
+                        const w = await k.waitPlane(spec, tUp);
+                        const settle = w.commit === null ? null : await k.waitFull(spec, tUp, rest.level);
+                        await k.quiet(300, 30000);
+                        await k.sleep(400);
+                        const tEnd = performance.now();
+                        const fs = k.frameStats(tDown, tUp, F);
+                        const stale = k.staleFrames(tDown, tUp);
+                        const painted = new Set();
+                        for (const [t, surface, value] of __bench.trans) {
+                            if (surface === "main" && t >= tDown && t <= tEnd) painted.add(k.zOfSig(value));
+                        }
+                        painted.delete(null);
+                        const requested = new Set(__bench.hand.filter(([t]) => t >= tDown && t <= tUp)
+                            .map(([, s]) => k.planeOf(s)).filter((z) => z !== null));
+                        const trace = lum ? k.lumBlack(tDown, tEnd, tEnd - 400) : null;
+                        const shows = k.statusShows("main");
+                        __bench.stop();
+                        return { fs, stale, handLag: k.handLagMax(tDown, tUp), painted: painted.size,
+                                 requested: requested.size, settle, black: trace?.black ?? null,
+                                 ref: trace?.ref ?? null, series: trace?.series?.slice(0, 120) ?? null,
+                                 dragMs: tUp - tDown, final: spec,
+                                 shows: shows === null || rest.shows === null ? null : shows - rest.shows };
+                    }, F, rest, lum);
+                    if (lum) {
+                        put(metrics, `${name}_blackFrames`, r.black);
+                        // The plane's means from the press on, to look at.
+                        if (rep === 0) extra.cases[name].lum = { ref: r.ref, black: r.black, series: r.series };
+                        continue;
+                    }
+                    put(metrics, `${name}_fps`, r.fs.fps);
+                    put(metrics, `${name}_frameP95`, r.fs.p95);
+                    put(metrics, `${name}_frameP99`, r.fs.p99);
+                    put(metrics, `${name}_dropped`, r.fs.dropped);
+                    put(metrics, `${name}_staleFrames`, r.stale?.stale ?? null);
+                    put(metrics, `${name}_staleShare`, r.stale?.share ?? null);
+                    put(metrics, `${name}_staleMax`, r.stale?.maxLag ?? null);
+                    put(metrics, `${name}_handLagMax`, r.handLag);
+                    put(metrics, `${name}_paintedPlanes`, r.painted);
+                    put(metrics, `${name}_requestedPlanes`, r.requested);
+                    put(metrics, `${name}_settleMs`, r.settle);
+                    put(metrics, `${name}_statusShows`, r.shows);
+                    loadMetrics(metrics, name, ctx.browser.netSince(mark), perfDelta(perf0, await serverPerf(ctx)));
+                    if (rep === 0) extra.cases[name].first = { dragMs: r.dragMs, frames: r.fs.frames, final: r.final };
+                }
+            }
+        }
+    }
+    await reset(ctx, { layout: "single" });
+    return { metrics, F, extra };
+}
+
+/**
+ * The `sync` scenario's pan with the section panes on, watched as pixels:
+ * the plane's and each pane's luminance (probes.js, panes too).
+ * `pan_planeChangeMs` press to the plane's first visible change;
+ * `pan_{xz,yz}LeadMs` the pane's first change minus the plane's (0: in step;
+ * positive: the pane trails); `pan_{xz,yz}RecutMs` pointer up to the pane's
+ * new section on screen (its token; negative: during the pan);
+ * `pan_{xz,yz}BlackFrames` pane frames under a tenth of its settled picture;
+ * `pan_{xz,yz}StatusShows` its loading indicator (a build with one); and the
+ * requests and caches (loadMetrics, `pan_`).
+ */
+async function panesync(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx, { layout: "sections" });
+    const on = await ctx.browser.eval(async () => {
+        await __bench.k.quiet(800, 120000);
+        const sp = __bench.k.P().sectionPanes;
+        return Boolean(sp?.enabled && sp.panes);
+    });
+    if (!on) return { metrics, skipped: "no section panes" };
+    const F = await period(ctx);
+    const box = await ctx.browser.eval(() => {
+        const r = document.getElementById("openseadragon").getBoundingClientRect();
+        return { x: r.left + r.width * 0.35, y: r.top + r.height * 0.35 };
+    });
+    const extra = { pans: [] };
+    for (let rep = 0; rep < ctx.reps; rep += 1) {
+        await atRest(ctx);
+        const before = await ctx.browser.eval(async () => {
+            const k = __bench.k;
+            __bench.reset({ counters: false });
+            __bench.start({ lum: true, panes: true });
+            await k.sleep(300);   // frames of all three at rest
+            return { xz: __bench.sig.xz, yz: __bench.sig.yz,
+                     main: __bench.lum[__bench.lum.length - 1]?.[1] ?? null,
+                     shows: { xz: k.statusShows("xz"), yz: k.statusShows("yz") } };
+        });
+        const perf0 = await serverPerf(ctx);
+        const mark = ctx.browser.net.length;
+        const dx = rep % 2 ? -120 : 120;
+        const moves = [["press", box.x, box.y, 16]];
+        for (let i = 1; i <= 10; i += 1) moves.push(["move", box.x + (dx * i) / 10, box.y + (dx * i) / 20, 16]);
+        moves.push(["release", box.x + dx, box.y + dx / 2, 0]);
+        await ctx.browser.mouse(moves);
+        const r = await ctx.browser.eval(async (before) => {
+            const k = __bench.k;
+            const last = (type) => {
+                const list = __bench.inputs.filter(([, t]) => t === type);
+                return list.length ? list[list.length - 1][0] : null;
+            };
+            const tDown = last("pointerdown") ?? performance.now();
+            const tUp = last("pointerup") ?? performance.now();
+            await __bench.until((sig) => sig.xz && sig.xz !== before.xz, 20000);
+            await __bench.until((sig) => sig.yz && sig.yz !== before.yz, 20000);
+            await k.quiet(300, 30000);
+            await k.sleep(400);
+            const tEnd = performance.now();
+            const plane = k.lumFirstChange(tDown, before.main);
+            const out = { plane, panes: {} };
+            for (const axis of ["xz", "yz"]) {
+                const first = k.paneFirstChange(axis, tDown);
+                const recut = __bench.firstTrans(axis, tDown, (value) => Boolean(value) && value !== before[axis]);
+                const trace = k.paneTrace(axis, tDown, tEnd, tEnd - 400);
+                const shows = k.statusShows(axis);
+                out.panes[axis] = {
+                    first, lead: first === null || plane === null ? null : first - plane,
+                    recut: recut ? recut.at - tUp : null, black: trace.black, frames: trace.frames,
+                    ref: trace.ref,
+                    shows: shows === null || before.shows[axis] === null ? null : shows - before.shows[axis],
+                    // The means from the press on, to look at (black: < ref / 10).
+                    series: trace.series.slice(0, 60),
+                };
+            }
+            __bench.stop();
+            return out;
+        }, before);
+        loadMetrics(metrics, "pan", ctx.browser.netSince(mark), perfDelta(perf0, await serverPerf(ctx)));
+        put(metrics, "pan_planeChangeMs", r.plane);
+        for (const axis of ["xz", "yz"]) {
+            const p = r.panes[axis];
+            put(metrics, `pan_${axis}LeadMs`, p.lead);
+            put(metrics, `pan_${axis}RecutMs`, p.recut);
+            put(metrics, `pan_${axis}BlackFrames`, p.black);
+            put(metrics, `pan_${axis}StatusShows`, p.shows);
+        }
+        extra.pans.push(r);
+    }
+    await reset(ctx, { layout: "single" });
+    return { metrics, F, extra };
+}
+
 export const SCENARIOS = {
     open: { run: open },
     channels: { run: channels },
@@ -1558,4 +1988,7 @@ export const SCENARIOS = {
     volume_flash: { run: volumeFlash },
     panes_resize: { run: panesResize },
     clip: { run: clip },
+    zreveal: { run: zreveal },
+    raildrag: { run: raildrag },
+    panesync: { run: panesync },
 };

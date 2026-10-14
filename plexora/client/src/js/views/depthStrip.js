@@ -103,9 +103,17 @@
             this.hoveredZ = null;
             this.hoverOn = true;
             this.settings = null;
+            //: () => whether the plane is still loading, or null: then the
+            //: requested spec against the applied one (paint). Set by
+            //: views/paneStatus.js from the plane's first status.
+            this.loadingSource = null;
             this._unsubscribe = null;
             this._onKey = (event) => this.onKey(event);
+            this._onKeyUp = (event) => this.onKeyUp(event);
             this._onRepaint = () => this.paint();
+            //: The step key held down (its `code`), or null: its keyup is the
+            //: hand letting go (viewState.endScrub).
+            this.stepKey = null;
         }
 
         mount() {
@@ -127,6 +135,7 @@
             // stopped by a press, a surface arriving, the 3-D view built.
             for (const name of REPAINT_ON) global.addEventListener(name, this._onRepaint);
             document.addEventListener("keydown", this._onKey);
+            document.addEventListener("keyup", this._onKeyUp);
             this.bindWheel();
             this.paint();
             return true;
@@ -138,6 +147,7 @@
             this.settings?.close?.();
             this._unsubscribe?.();
             document.removeEventListener("keydown", this._onKey);
+            document.removeEventListener("keyup", this._onKeyUp);
             global.removeEventListener("plexora:view-changed", this._onSettled);
             for (const name of REPAINT_ON) global.removeEventListener(name, this._onRepaint);
             this.root?.remove();
@@ -325,6 +335,7 @@
                 const steps = { ArrowUp: -1, ArrowDown: 1, PageUp: -10, PageDown: 10 };
                 if (event.key in steps) {
                     event.preventDefault();
+                    this.stepKey = event.code || event.key;
                     this.viewState.step(steps[event.key]);
                 } else if (event.key === "Home" || event.key === "End") {
                     event.preventDefault();
@@ -441,7 +452,10 @@
                 this.frameNext.disabled = state.t >= vs.frames - 1;
             }
             this.paintPlay();
-            this.paintLoading(vs.spec() !== vs.appliedSpec());
+            // Whether the plane asked for is still on its way: the plane's
+            // status once it has one (views/paneStatus.js), so the thumb and
+            // the pill above the strip never disagree.
+            this.paintLoading(this.loadingSource ? this.loadingSource() : vs.spec() !== vs.appliedSpec());
             // The popover follows the mode, open (depthSettings.js).
             this.settings?.refresh?.();
         }
@@ -574,6 +588,8 @@
                 this.rail.classList.remove("is-dragging");
                 global.removeEventListener("pointermove", move);
                 global.removeEventListener("pointerup", up);
+                // The hand let go: what waited for it to stop goes now.
+                this.viewState.endScrub?.();
                 // Onto the plane on screen (a short glide, viewer.css).
                 if (kind === "z") this.paint();
             };
@@ -663,6 +679,7 @@
                 clearInterval(this.playing);
                 this.playing = null;
                 this.playingKind = null;
+                this.viewState.endScrub?.();
                 // The plane playback stopped on is the one to reopen on.
                 if (persist) this.viewState.persist();
             }
@@ -684,13 +701,25 @@
                 } else {
                     // A plane; in 3-D and in a fixed projection, the range
                     // (viewState.step).
+                    this.stepKey = event.code;
                     vs.step(sign * (event.shiftKey ? 10 : 1));
                 }
             } else if ((event.code === "Period" || event.code === "Comma") && vs.frames > 1
                        && !event.altKey) {
                 event.preventDefault();
+                this.stepKey = event.code;
                 vs.stepTime(event.code === "Period" ? 1 : -1);
             }
+        }
+
+        /** A step key let go (`]`, `[`, `.`, `,`, or the rail's arrows and
+         *  pages): the hand stopped (viewState.endScrub) -- a held key has no
+         *  other end than this. Any other key's keyup is not the hand's. */
+        onKeyUp(event) {
+            const code = event?.code || event?.key;
+            if (!this.stepKey || code !== this.stepKey) return;
+            this.stepKey = null;
+            this.viewState.endScrub?.();
         }
 
         /** Shift+wheel over the image does what `]` and `[` do. */

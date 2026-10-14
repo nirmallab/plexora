@@ -10,6 +10,9 @@
   tiles of the next planes encoded ahead into the tile cache, under the key
   the route would use, on the primary and on a data node alike -- and a read
   ahead never loads a project.
+- Any other stack (Imaris, a zarr store chunked across z) has the tiles of
+  its two coarsest levels made ahead, four planes deep: never its full
+  resolution, and never levels still to be derived.
 - `/volume/<ds>/perf` reports the tile cache and how much of the read-ahead
   landed.
 """
@@ -288,6 +291,15 @@ def test_after_plane_tile_follows_the_hand_nearest_first():
         assert ahead.after_tile("block", 9, 40, 8, encode) == []
     assert ahead.after_plane_tile("flat", 0, 1, encode) == [], "a single plane"
     assert ahead.after_plane_tile("tile", 12, 20, encode, ahead=0) == [], "no planes ahead"
+    # Four ahead (a coarse tile of a chunked stack): still one either side
+    # until a direction is known, then the next four nearest first, to the edge.
+    assert ahead.after_plane_tile("coarse", 10, 20, encode, ahead=4) == [11, 9]
+    assert ahead.after_plane_tile("coarse", 11, 20, encode, ahead=4) == [12, 13, 14, 15]
+    assert ahead.after_plane_tile("coarse", 17, 20, encode, ahead=4) == [18, 19]
+    assert ahead.drain()
+    assert ahead.after_plane_tile("coarse", 14, 20, encode, ahead=4) == [13, 12, 11, 10]
+    assert ahead.drain()
+    assert {11, 9, 12, 13, 14, 15, 18, 19, 10} <= set(made)
 
 
 def _plane_major(tmp_path, name="pm", depth=8):
@@ -353,6 +365,79 @@ def test_nothing_is_made_ahead_of_a_stack_whose_reads_span_planes(tmp_path, clie
     assert len(data_routes._tile_png_cache) == 1
 
 
+def test_only_the_coarsest_levels_of_a_pyramid_are_coarse(tmp_path):
+    coarse = prefetch_module.coarse_level
+    assert prefetch_module.COARSE_LEVELS == 2 and prefetch_module.COARSE_TILE_AHEAD == 4
+    # One level is the full resolution: never coarse.
+    assert not coarse(1, 0)
+    # Two: only the second. More: the two coarsest.
+    assert [coarse(2, level) for level in range(2)] == [False, True]
+    assert [coarse(3, level) for level in range(3)] == [False, True, True]
+    assert [coarse(6, level) for level in range(6)] == [False] * 4 + [True, True]
+    # The level as the route has it; a level the pyramid has not.
+    assert coarse(3, "2") and not coarse(3, 3) and not coarse(3, -1)
+    assert not coarse(3, None) and not coarse(3, "x") and not coarse(None, 1)
+    # Stand-ins for levels yet to be derived are not cheap: none is coarse.
+    assert not any(coarse(6, level, pending=True) for level in range(6))
+    # How far ahead: planes decoded one at a time, every level, as before;
+    # any other stack, its coarse levels only.
+    planes = prefetch_module.planes_ahead
+    assert planes(1, 1, 0) == planes(1, 3, 0) == prefetch_module.TILE_AHEAD
+    assert planes(4, 3, 2) == planes(64, 3, "1") == prefetch_module.COARSE_TILE_AHEAD
+    assert planes(4, 3, 0) is None and planes(4, 1, 0) is None
+    assert planes(4, 3, 2, pending=True) is None
+    # Pending: an OME-Zarr stack serving its coarse levels as subsamples.
+    path, _ = vf.write_ngff_volume(tmp_path / "v.zarr", channels=1, depth=8, height=64,
+                                   width=64, levels=2, chunks_z=4)
+    source = ngff_source.open_ngff_volume(path)
+    try:
+        assert not prefetch_module.levels_pending(source)
+        source.plan_extension(tmp_path / "derived.zarr")
+        assert prefetch_module.levels_pending(source)
+    finally:
+        source.close()
+    # Subsamples for good (no derivation could be written): pending all the same.
+    assert prefetch_module.levels_pending(type("Interim", (), {"_interim": [(8, 8)]})())
+
+
+def test_the_coarsest_levels_of_a_chunked_stack_are_made_ahead(tmp_path, client, fresh_cache,
+                                                               tiles_ahead):
+    path, data = vf.write_ims(tmp_path / "c.ims", channels=1, depth=12, height=64, width=64,
+                              chunks=(4, 16, 16), levels=3)
+    entry = register_image_datasource("chunked", path)
+    channel = _key(entry, 0)
+    url = f"/generated/data/chunked/{channel}/{{}}/0_0.png?q=hd&view=z{{}}"
+    cache = data_routes._tile_png_cache
+    first = client.get(url.format(2, 3))
+    assert first.status_code == 200 and _timing(first)["cache"]["desc"] == "miss"
+    assert tiles_ahead.drain()
+    generation = data_model.load_generation
+    key = lambda level, z: data_routes._tile_key(  # noqa: E731
+        generation, "chunked", channel, str(level), "0_0.png", "hd", f"z{z}")
+    # The coarsest level, direction unknown: the planes either side.
+    assert key(2, 4) in cache and key(2, 2) in cache
+    step = client.get(url.format(2, 4))
+    assert _timing(step)["cache"]["desc"] == "hit"
+    assert np.array_equal(_png16(step.data), data[0, 0, 4, ::4, ::4])
+    # Moving deeper: the next four.
+    assert tiles_ahead.drain()
+    assert all(key(2, z) in cache for z in range(5, 9)), [k for k in cache]
+    assert key(2, 9) not in cache
+    assert cache[key(2, 6)] == data_model.encode_tile("chunked", channel, "2", "0_0.png", "hd",
+                                                      "z6"), \
+        "a tile made ahead is the tile the route would encode"
+    # The next level is coarse too.
+    assert client.get(url.format(1, 4)).status_code == 200
+    assert tiles_ahead.drain()
+    assert key(1, 5) in cache and key(1, 3) in cache
+    # The full resolution: its tiles are the block read-ahead's, none made ahead.
+    queued, held = tiles_ahead.snapshot()["queued"], len(cache)
+    assert client.get(url.format(0, 4)).status_code == 200
+    assert tiles_ahead.drain()
+    assert tiles_ahead.snapshot()["queued"] == queued
+    assert len(cache) == held + 1
+
+
 def test_a_read_ahead_never_loads_a_project(tmp_path, client, tiles_ahead):
     entry, _ = _plane_major(tmp_path, "one")
     _plane_major(tmp_path, "two")
@@ -386,7 +471,7 @@ def test_volume_perf_reports_the_tile_cache_and_what_landed(tmp_path, client, ti
 # -- the same on a data node ------------------------------------------------------
 
 
-def test_a_node_makes_the_next_planes_tiles_ahead(tmp_path, tiles_ahead):
+def test_a_node_makes_the_next_planes_tiles_ahead(tmp_path, fresh_cache, tiles_ahead):
     from plexora.server.node import api as node_api
     from plexora.server.node.app import create_node_app
 
@@ -407,6 +492,30 @@ def test_a_node_makes_the_next_planes_tiles_ahead(tmp_path, tiles_ahead):
     node_api._tile_cache.clear()
     assert client.get(url.format(5), headers=TOKEN).data == step.data
     assert tiles_ahead.drain()
+    node_api._tile_cache.clear()
+
+    # A stack read a block of planes at a time: only its coarse tiles are made
+    # ahead -- four planes deep once the hand has a direction.
+    path, data = vf.write_ims(tmp_path / "n.ims", channels=1, depth=12, height=64, width=64,
+                              chunks=(4, 16, 16), levels=3)
+    client = create_node_app([f"image:ims={path}"], token="x", log=_quiet).test_client()
+    url = "/node/v1/image/ims/tile/ch_0/{}/0_0?view=z{}&zs=depth&tw=128&th=128&q=hd"
+    first = client.get(url.format(2, 3), headers=TOKEN)
+    assert first.status_code == 200, first.data[:200]
+    assert tiles_ahead.drain()
+    assert len(node_api._tile_cache) == 3, "the plane served and one either side"
+    step = client.get(url.format(2, 4), headers=TOKEN)
+    assert _timing(step)["cache"]["desc"] == "hit"
+    assert np.array_equal(_png16(step.data), data[0, 0, 4, ::4, ::4])
+    assert tiles_ahead.drain()
+    assert len(node_api._tile_cache) == 7, "and the next four"
+    assert _timing(client.get(url.format(2, 8), headers=TOKEN))["cache"]["desc"] == "hit"
+    assert tiles_ahead.drain()
+    queued, held = tiles_ahead.snapshot()["queued"], len(node_api._tile_cache)
+    assert client.get(url.format(0, 4), headers=TOKEN).status_code == 200
+    assert tiles_ahead.drain()
+    assert tiles_ahead.snapshot()["queued"] == queued, "nothing ahead at full resolution"
+    assert len(node_api._tile_cache) == held + 1
     node_api._tile_cache.clear()
 
 

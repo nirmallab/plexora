@@ -300,6 +300,142 @@ Every run is under `perf/` as `<sha>-<label>.json`: pre, pre-dev, pre-small, pos
 fix-dev, fix-noahead, step15-pre/post/main. Regenerate the tables with
 `python tools/bench3d/report.py perf/<before>.json perf/<after>.json`.
 
+## Z navigation: never black, preview first, the panes in step (2026-10-13, Windows)
+
+Plan: `~/.claude/plans/pasted-content-id-bfed-improve-virtual-clarke.md`. User-facing notes in
+`TESTING.md` ("Scrubbing", "Loading and failure"). Measured here for the first time on Windows
+11 (RTX 3080, Chrome headless on ANGLE D3D11 -- the real GPU, F = 16.7 ms), on the synthetic
+fixtures only: `ims`, `meso` and `xenium` are not on this machine.
+
+### What was wrong (code-traced, then seen live)
+
+1. **Black at the deadline.** `planeSwapGroup` handed over after 8 s whether or not a tile had
+   loaded, and the commit dropped the old pair in the same call: a plane the server could not
+   serve in time, or at all, showed the ground. The panes did the same at 6 s.
+2. **A failed tile was coverage.** OSD marks a failed tile `exists=false` and no longer counts
+   it as loading, so `covers()` took it for a tile past the edge and `getFullyLoaded()` went
+   true over the hole. A plane whose tiles all answered 500 committed EMPTY at ~95 ms and the
+   view was black for the nine seconds of retries (seen live; the pre tree does the same).
+3. **A drag never previewed.** Pointer events less than 80 ms apart were never a "jump", so the
+   revision in flight was kept for up to a second before the newest request started from zero;
+   the swap waited the 140 ms grace even while the hand moved; a rail drag on a deep stack
+   moves more than two planes per event and so read as a jump (no pace, two standby planes,
+   full-load gate). And every preview fetched its FULL-RESOLUTION tiles too: OSD's first update
+   of a new item issues ten tiles, so each revision put one coarse and four full-resolution
+   16-bit tiles per channel on the wire, and the next plane's coarse tiles queued behind them.
+   One cycle cost 126-157 ms (p50) with the server warm; at 40 planes/s that is 16-19 planes
+   painted of 41 asked, the picture up to 8 planes behind the hand.
+4. **The panes** swapped only on full load, XZ and YZ independently, labelled the new cut before
+   it arrived, and a pan during a deferred new-frame handover cancelled it with the old frame's
+   tokens. A pane shorter than its stack exposed unloaded rows on a Z scroll.
+5. **No feedback** beyond the rail's thumb, which stopped breathing at the coarse commit.
+
+### What changed
+
+| Where | Change |
+|---|---|
+| `services/channelFade.js` | A tile tagged `retrying` is not coverage; `final` is a hole. `settledLoaded`, `blank`, `failedOut`, `coveringLevel`, `progress` (loaded/needed/failed at the display level). `whenCanDraw(item, done, {grace, onFailed})`: `null` = coverage never counts, `0` = ready as soon as any level covers, `>0` = grace then coverage; never ready while the item is blank; fully-loaded is believed only while no tile is retrying. `COVER_POLL_MS` 40 → 16. |
+| `views/tileFetch.js` | Failures tagged (`fail`); `retryFailed(items)`. A scrub hold (`setScrubbing` / `endScrubbing`): while the hand moves, a plane coming in loads only its one-tile level (`SCRUB_COVER_SPAN` 0), the plane on screen does not sharpen (`SCRUB_SHARPEN_SPAN` 0), a standby plane loads its two coarsest levels (`SCRUB_STANDBY_SPAN` 1); held requests stay queued, never batched, still cancelled with their item; a request on the wire is never overtaken. |
+| `services/viewState.js` | `scrubbing()` (requests < `SCRUB_GAP_MS` 80 apart, held `SCRUB_HOLD_MS` 100), `endScrub()`; a revision's `scrub` follows the REQUEST it serves; a scrub revision that has not reached coverage gives way after `SCRUB_SUPERSEDE_MS` 250 (a drag's first revision too); a revision whose main is ready is never superseded; a far jump supersedes in the request's own task; others get `SCRUB_SYNC_WAIT_MS` 40 to join a preview. |
+| `views/viewerManager.js` | Grace 0 for a scrub revision. `PLANE_SWAP_SLOW_MS` 2000 reports "slow" and never hands over: the old plane stays until the new one covers; a plane with nothing drawable is never shown (status `error`, retry re-asks); a partial failure shows with holes. `plexora:surface-status` events for the loading UI. The 8 s deadline stays for the label plane and the brightfield base. |
+| `views/imageViewer.js` | Stacks: `maxTilesPerFrame` 32, loader `jobLimit` 256 -- the scheduler, not OSD's FIFO, orders the queue. |
+| `views/planeMotion.js` | A close-spaced far move is travel (pace, up to six ahead); the hold is armed per scrub request and released on `plexora:scrub-ended`; standby waits behind the visible plane's retries. |
+| `views/depthStrip.js` | Pointer-up, the step key's keyup and Play's stop end the scrub. The thumb follows the main status. |
+| `views/sectionPanes.js` | Coverage handover (`PANE_GRACE_MS` 140, 0 while the view moves or the hand scrubs); `PANE_SLOW_MS` 2000 never hands over; each pane of a pan lands on its own as soon as it covers (an older pan's late result never lands); labels painted at each pane's commit; `pendingT` for the frame race; `PANE_ROW_MARGIN_PX` 96 of rows kept loaded beyond a scrolled pane; `tileRetryMax` 3; status events. |
+| `views/paneStatus.js` (new) | One pill per view: breathing dot after 220 ms, a ring that fills with `loaded/needed` once a preview has committed, amber retry on error; 300 ms minimum, 150 ms fade; still under reduced motion. |
+| `server/volume/prefetch.py` | The two coarsest levels of a chunked stack are made ahead (`COARSE_TILE_AHEAD` 4) regardless of `z_decode`; a pyramid whose extension levels are pending is left alone. |
+| `tools/bench3d` | Runs on Windows (process groups, `taskkill`, UTF-8, the scratch profile's AppData, D3D11). Scenarios `zreveal` (preview / full-resolution / black frames by luminance), `raildrag` (a real mouse drag on the rail, 3 and 40 planes/s, with and without sections: frame times, stale frames from the marks, black frames), `panesync` (pane first-change vs plane, re-cut time, pane black frames, sampled inside the visible run); server cache deltas from `/volume/<ds>/perf`. `waitPlane`/`waitFull` ignore standby planes. |
+
+Decisions: no overlay of the new pair over the old (the layer stack interleaves pairs by
+`ITEM_Z`, so two planes add); the `scrub` supersede limit stays at 250 ms -- 120 ms starved a
+drag on medium (23 of 29 revisions superseded, the picture 14-37 planes behind) and gained
+nothing once previews stopped fetching full resolution.
+
+### Results (pre `aad219d` → this change, p50 unless stated, 3 reps, new harness on both)
+
+Records: `perf/aad219d7c0cb-znav-pre-final.json` and `perf/d7d979226e9e-dirty-znav-post-final.json`
+(the earlier `znav-pre` / `znav-post` pair was measured with a harness whose "fully loaded" wait
+counted the invisible standby planes, which the pace rules now build 30 ms after a drag ends;
+its `settleMs` rows are the standby planes, not the picture). "dirty" because the other work in
+the tree that day was not yet committed. 40 planes/s is one plane per 25 ms, faster than any hand.
+
+| | small | medium | flatstack | large |
+|---|---|---|---|---|
+| black frames, every drag / step / jump / pan (max) | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 |
+| fast rail drag (40 planes/s, 41 asked): planes painted | 23 → 24 | 14 → 31 | 14 → 32 | – |
+| … with the panes on | 23 → 23 | 16 → 30 | 15 → 29 | – |
+| … furthest the picture trailed the hand (planes, max) | 3 → 3 | 8 → 3 | 8 → 3 | – |
+| … requests behind the hand at the worst moment (`handLagMax`) | 4 → 5 | 14 → 6 | 14 → 5 | – |
+| … share of frames ≥ 2 planes behind (`staleShare`) | 0.23 → 0.19 | 0.78 → 0.75 | 0.83 → 0.77 | – |
+| … tile requests for the drag | 44 → 44 | 160 → 112 | 166 → 112 | – |
+| … frame time p95 (ms) | 16.9 → 16.8 | 16.8 → 16.8 | 16.9 → 16.9 | – |
+| … final plane sharp after release (ms) | 21 → 21 | 55 → 52 | 53 → 53 | – |
+| slow drag (3 planes/s): stale frames / black frames | 0 / 0 | 0 / 0 | 0 / 0 | – |
+| step: first visible change (ms) | 28 → 35 | 50 → 37 | 42 → 37 | 86 → 72 |
+| step: full resolution (ms) | 39 → 33 | 59 → 43 | 52 → 36 | 51 → 46 |
+| cold 50-plane jump: first visible change (ms) | 119 → 112 | 282 → 218 | 225 → 214 | 256 → 266 |
+| cold jump: full resolution (ms) | 125 → 117 | 345 → 254 | 255 → 272 | 319 → 409 |
+| pan with the panes on: pane changes before the plane (ms, p95) | 0 → 20 | 18 / 43 → 0 / 0 | 0 / 0 → 0 / 20 | – |
+| pan: re-cut landed after release, XZ / YZ (ms) | 67 → 79 | 188 / 259 → 344 / 344 | 102 / 154 → 172 / 172 | – |
+| pane black frames (max) | 0 → 0 | 0 → 0 | 0 → 0 | – |
+| z-line ahead of the picture (ms, max) | 0 → 0 | 0 → 0 | 0 → 0 | 0 → 0 |
+
+What the table says: at 40 planes/s the picture now follows the hand two or three planes
+behind instead of eight, paints twice the planes with a third fewer requests, and the frame
+time never moves; a step previews a frame sooner on the large stacks and is sharp 15-30 %
+sooner; a cold jump on `medium` previews and sharpens a quarter sooner. `staleShare` stays near
+0.75 because one revision is in flight at a time and a cycle is ~53 ms (see Open). Two rows
+are not improvements as measured: the pan's re-cut, where a first version revealed XZ and YZ
+in one task and so made XZ wait for the slower YZ, and `large`'s cold-jump full resolution.
+Both were measured again the same evening, panesync alone, 3 reps, same server for each pair:
+
+- **Per-pane reveal** (the spec: each view lands on its own; the generation guard still keeps
+  an older cut from landing over a newer one). Re-cut after release, XZ / YZ p50 (ms): medium
+  pre tree 130 / 203 → one task 153 / 153 → per pane 89-126 / 129-187; flatstack 97 / 113 →
+  144 / 144 → 95-146 / 128-167 (its two panes cover at about the same time, so independence
+  buys little there). Lead over the plane 0 ms in every post run (pre 17-43 on medium).
+- **`large`'s cold jump** is run-order noise: 5 reps each, on → off → on with the coarse
+  read-ahead, full resolution p50 310 / 281 / 301 ms against the pre tree's 331 under the same
+  conditions, each run spanning ~200 ms rep to rep. The read-ahead never fires in this scenario
+  anyway: at the home view the browser asks for no tile of the two coarsest levels (only a
+  request at those levels queues planes ahead).
+
+`step_previewMs` on `small` (28 → 35, n = 3) is one frame of jitter on a 25-plane TIFF;
+`step_flashFrames` fails before and after (the sharpening swell, Open).
+
+### Seen live (Playwright on the fixture server, `medium` with sections)
+
+- A fast rail drag over 60 planes in 1.5 s: 0 black frames, 9-15 distinct planes painted (the
+  pre tree 6), the final plane sharp 0.5-1.5 s after release (pre 1.3-2.0 s).
+- `]` held two seconds: 0 black frames, 16 planes, both panes' z-line on the committed plane in
+  every one of 350 frames.
+- A cold 50-plane jump: the old plane unchanged until the commit at 235 ms, first visible change
+  at 300-330 ms, full at 385 ms (pre: 769 / 1148 ms).
+- A plane whose tiles answer 500: the old plane at full brightness (ratio 1.000) from the jump
+  through 12 s; the pill says fetching at 50 ms, slow at 2 s, error with retry at 9.1 s; retry
+  loads the plane in 0.4 s. Before: black from 194 ms.
+- A planar project is unchanged (`parity2d`: identical tile URLs, screenshot difference 0.000).
+
+### Open
+
+- **The sharpening swell.** While a plane sharpens, OSD blends each finer tile over the coarse
+  level (`blendTime` 0.18), and both carry coverage as alpha, so the sum overshoots: +28 % of
+  the screen mean for 100-250 ms on a cold jump (`step_flashFrames` fails before and after).
+  Replacing rather than adding within an item is a drawer change, not a constant.
+- **`staleShare` at 40 planes/s** floors near 0.6-0.7: one revision in flight, a cycle of
+  ~53 ms, the hand moves two planes per cycle. Under 50 ms needs the channel items added in one
+  frame and coverage read on OSD's update rather than polled.
+- **Deep zoom while scrubbing** previews from the one-tile level, which is blurry at full zoom; a
+  budget by tile count rather than by level would keep it sharper.
+- **A remote node**: `SCRUB_SUPERSEDE_MS` should scale with the link's measured wait.
+- `POST /volume/<ds>/prepare` answers 409 on a stack without a bricked copy, on every pan with
+  the panes on (pre-existing, logged in the console).
+- **The first cold jump of a fresh page is slow on this tree and not on the pre tree**: in
+  every `zreveal` run the first rep's full resolution was 802-852 ms on medium (pre 221) and
+  385-406 on large (pre 329), its server read p95 292-328 ms (pre 18); the other four reps
+  are level with or faster than pre. The coarse read-ahead is off in that scenario, so it is
+  something the client asks for around its first page -- not found yet.
+
 ## Beyond 2 TB: what is left
 
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;

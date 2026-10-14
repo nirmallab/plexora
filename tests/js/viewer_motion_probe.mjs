@@ -406,6 +406,88 @@ function fadeBox({ motion = true } = {}) {
 }
 
 {
+    // A drag down the rail of a deep stack: five planes a pointer event, 30 ms
+    // apart. That is travel, not a string of jumps -- the hand has a pace and
+    // six planes ahead are made ready -- and while it moves the tile scheduler
+    // is asked to keep standby planes to their coarsest levels.
+    const box = sandbox();
+    load(box, "views/planeMotion.js");
+    const { NeighbourPrefetch } = box.PlexoraPlaneMotion;
+    const state = { mode: "plane", z: 10, t: 0 };
+    const viewState = { depth: 80, get: () => ({ ...state }), spec: (s) => `z${s.z}` };
+    const holds = [];
+    const tileFetch = { setScrubbing: (until) => holds.push([box.clock.now, until]) };
+    const prefetch = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState,
+                                           { viewerManager: { imageViewer: { tileFetch } } });
+    const ask = (z, detail = {}) => {
+        state.z = z;
+        prefetch.onRequested({ detail: { state: { z }, ...detail } });
+    };
+    for (let z = 10; z <= 30; z += 5) {
+        ask(z);                              // no `scrub` given: the gap decides
+        box.clock.now += 30;
+    }
+    const planes = prefetch.neighbourStates().map((s) => s.z);
+    check("a rail drag that moves five planes per event 30 ms apart is travel: pace > 0 and six ahead",
+        prefetch.pace() > 0 && prefetch.ahead() === 6 && planes.join() === "31,32,33,34,35,36,29",
+        `pace ${prefetch.pace()}, ahead ${prefetch.ahead()}, planes ${planes.join()}`);
+    const dragHolds = holds.length;
+    box.clock.now += 100;                    // the hand still, then a click far away
+    ask(70);
+    check("a far click after the hand rested is still a jump: no pace, two ahead",
+        prefetch.pace() === 0 && prefetch.ahead() === 2, `pace ${prefetch.pace()}`);
+    box.clock.now += 500;
+    ask(71, { scrub: true });                // viewState says the hand moves
+    box.clock.now += 20;
+    ask(72, { scrub: false });               // ...and that it does not
+    // viewState's SCRUB_HOLD_MS (100: just past the widest gap that is still
+    // a scrub, SCRUB_GAP_MS 80) -- 250 until the drag benchmark showed the
+    // hold delaying the final plane's sharpening by that much.
+    check("a scrub request asks the scheduler to hold (setScrubbing called with a time ≥ now+100)",
+        dragHolds === 4 && holds.length === 5
+        && holds.every(([at, until]) => until >= at + 100), JSON.stringify(holds));
+    const bare = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState,
+                                       { viewerManager: { imageViewer: { tileFetch: {} } } });
+    let threw = null;
+    try {
+        bare.onRequested({ detail: { state: { z: 11 }, scrub: true } });
+        new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState)
+            .onRequested({ detail: { state: { z: 11 }, scrub: true } });
+    } catch (error) {
+        threw = error;
+    }
+    check("a scheduler without setScrubbing, or none at all, is left alone", threw === null, String(threw));
+}
+
+{
+    // The hand let go (viewState.endScrub raises `plexora:scrub-ended`): the
+    // scheduler's hold ends then, not SCRUB_HOLD_MS after the last request.
+    const listeners = {};
+    const box = sandbox({ addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); } });
+    load(box, "views/planeMotion.js");
+    const { NeighbourPrefetch } = box.PlexoraPlaneMotion;
+    const calls = [];
+    const tileFetch = { setScrubbing: (until) => calls.push(["hold", until]),
+                        endScrubbing: () => calls.push(["end"]) };
+    const viewState = { depth: 80, get: () => ({ mode: "plane", z: 10, t: 0 }), spec: (s) => `z${s.z}` };
+    new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState,
+                          { viewerManager: { imageViewer: { tileFetch } } }).attach();
+    const raise = (name, detail = {}) => { for (const fn of listeners[name] || []) fn({ detail }); };
+    raise("plexora:view-requested", { state: { z: 11 }, scrub: true });
+    raise("plexora:scrub-ended");
+    check("release ends the hold: endScrubbing called", calls.map(([kind]) => kind).join() === "hold,end",
+          JSON.stringify(calls));
+    let threw = null;
+    try {
+        delete tileFetch.endScrubbing;
+        raise("plexora:scrub-ended");
+    } catch (error) {
+        threw = error;
+    }
+    check("...and a scheduler without endScrubbing is left alone", threw === null, String(threw));
+}
+
+{
     // A plane that covers the view but is not sharp yet: enough to start the
     // standby planes while the hand moves, not after a step or a jump.
     const box = sandbox();

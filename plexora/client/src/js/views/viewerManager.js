@@ -17,11 +17,21 @@ export const tileQuality = { hd: false };
 //: keeps fetching its own plane while its replacement loads.
 export const viewSelection = { spec: "", labels: "" };
 
-//: How long a plane swap waits for its replacements before handing over
-//: anyway. Shorter than a quality swap's: scrubbing asks for a new plane every
-//: frame, and a plane that will not load should not hold the one before it on
-//: screen for twenty seconds.
-const PLANE_SWAP_TIMEOUT_MS = 8000;
+//: A PLANE SWAP NEVER HANDS OVER TO NOTHING (planeSwapGroup). It waits for
+//: the new plane to cover the view -- at full resolution, or at any level
+//: after the grace below -- and for nothing else. It used to hand over at a
+//: deadline whether or not a tile had landed, and the commit drops the old
+//: pairs in the same call, so what showed until the tiles came was the ground:
+//: black. The old picture is a better thing to leave on screen than a black
+//: one. A tile whose retries are spent counts as covered, with a hole
+//: (channelFade.covers, tileFetch.js `fail`), so a plane with holes still
+//: hands over -- and the status says "error" -- but one with NOTHING loaded
+//: never does (channelFade.failedOut): the old plane stays, the status says
+//: "error" before the commit, and `retry()` asks again. One that is only
+//: slow keeps the old plane and is reported "slow" after this long. The
+//: revision stays in flight meanwhile; viewState's supersede rules hand
+//: control to a newer request.
+const PLANE_SWAP_SLOW_MS = 2000;
 //: How long a plane swap holds out for the new plane at full resolution
 //: before handing over to it at whatever level covers the view
 //: (whenItemCanDraw). A plane the tiles are quick for -- a prefetched one, a
@@ -30,6 +40,17 @@ const PLANE_SWAP_TIMEOUT_MS = 8000;
 //: rather than leaving the old plane frozen on screen for seconds. The
 //: dissolve (planeMotion.js) runs over the swap either way.
 const PLANE_SWAP_GRACE_MS = 140;
+//: ...and while the hand moves (a revision requested mid-drag, `rev.scrub`):
+//: none. What a drag wants is a preview at the hand's pace, so the plane
+//: commits the moment any level covers the view and sharpens in place if the
+//: hand stops there.
+const PLANE_SWAP_SCRUB_GRACE_MS = 0;
+//: The deadline the swaps that still hand over at one keep: a 3-D mask's
+//: label plane (prepareLabelPlane), a colour stack's base
+//: (handOverBrightfieldBase) and a channel that adopts a prefetched pair with
+//: nothing on screen to replace (addChannelItems with no group). The
+//: reference channels' plane swap has none any more (PLANE_SWAP_SLOW_MS).
+const PLANE_SWAP_TIMEOUT_MS = 8000;
 
 //: `tileFormat` for a brightfield/H&E layer: one tiled image carrying all
 //: three colour samples, drawn by OpenSeadragon itself. The other two are 16
@@ -127,13 +148,17 @@ function global_mark(surface, name, rev) {
  * `done` once `item` can draw: at full resolution, or -- with `grace` -- that
  * long after it was asked, at whatever level covers the view
  * (services/channelFade.js `whenCanDraw` and `covers` say how). A plane swap
- * passes a grace; a quality swap does not, and waits for the new quality in
- * full.
+ * passes a grace (0: as soon as it covers); a quality swap does not (null),
+ * and waits for the new quality in full. Either way through the fade's wait
+ * where the page has it: OSD's fully-loaded is not believed while a failed
+ * tile is being retried (channelFade.js `settledLoaded`), and an item with
+ * nothing to draw is never ready -- `onFailed(item)` hears when every tile
+ * it needs failed for good (channelFade.js `failedOut`).
  */
-function whenItemCanDraw(item, done, grace = 0) {
+function whenItemCanDraw(item, done, grace = null, onFailed = null) {
     const fade = globalThis.PlexoraChannelFade;
-    if (grace > 0 && typeof fade?.whenCanDraw === "function") {
-        return fade.whenCanDraw(item, done, { grace });
+    if (typeof fade?.whenCanDraw === "function") {
+        return fade.whenCanDraw(item, done, { grace, onFailed });
     }
     if (typeof item?.getFullyLoaded !== "function"
         || typeof item?.addHandler !== "function") {
@@ -155,6 +180,57 @@ function whenItemCanDraw(item, done, grace = 0) {
     };
     item.addHandler("fully-loaded-change", onChange);
     return stop;
+}
+
+/** The clock a plane status's `since` is read on. */
+function statusNow() {
+    return globalThis.performance?.now?.() ?? Date.now();
+}
+
+/** `run` on the next animation frame -- or soon, where there are none (a
+ *  node probe without a fake one). */
+function nextFrame(run) {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+        return globalThis.requestAnimationFrame(run);
+    }
+    return setTimeout(run, 16);
+}
+
+/** Whether `item` has nothing loaded and its tiles failed for good
+ *  (services/channelFade.js `failedOut`): a swap waits on it, saying
+ *  "error", rather than hand over to it. False without the fade. */
+function failedOut(item) {
+    const fade = globalThis.PlexoraChannelFade;
+    return Boolean(item) && typeof fade?.failedOut === "function" && fade.failedOut(item);
+}
+
+/**
+ * How far a plane's items are with the view, summed for its status:
+ * services/channelFade.js `progress` over each channel's PAINT item alone.
+ * The cover half of a pair asks for the very same tile addresses (tileFetch.js
+ * serves both from one request) and loads in step with it, so counting both
+ * would double every number and say nothing more. `level` is the coarsest
+ * display level among them (they share one geometry, so it is one level).
+ * `settled`: nothing more is on its way -- every tile in view has loaded or
+ * failed for good. An item without OSD's coverage maps (not updated yet, or a
+ * probe's) counts nothing and is settled when it says it is fully loaded.
+ */
+function planeProgress(items) {
+    const fade = globalThis.PlexoraChannelFade;
+    const out = { loaded: 0, needed: 0, failed: 0, level: null, settled: true };
+    for (const item of items || []) {
+        if (typeof fade?.progress === "function" && item?.coverage && item?.tilesMatrix) {
+            const p = fade.progress(item);
+            out.loaded += p.loaded;
+            out.needed += p.needed;
+            out.failed += p.failed;
+            if (p.level !== null && (out.level === null || p.level < out.level)) out.level = p.level;
+            if (p.loaded + p.failed < p.needed) out.settled = false;
+        } else if (typeof item?.getFullyLoaded === "function" && !item.getFullyLoaded()) {
+            out.settled = false;
+        }
+    }
+    return out;
 }
 
 
@@ -682,7 +758,7 @@ export class ViewerManager {
                 .map((srcIdx) => [srcIdx, this.referenceItemsFor(
                     this.channelList.currentChannels[srcIdx]?.url)]);
             group = this.planeSwapGroup(
-                replacing.filter(([, outgoing]) => outgoing.filter(Boolean).length).length, rev);
+                replacing.filter(([, outgoing]) => outgoing.filter(Boolean).length).length, rev, next);
             // The plane prefetched (prepareStandby): every channel's pair is
             // already on the world and loading, so the swap is a flip.
             const prefetched = this.takeStandby(next);
@@ -740,23 +816,147 @@ export class ViewerManager {
      * able to draw and is committed in one go -- after the picture on screen
      * was held for the fade (`planeFade.capture`), which then runs over the
      * new plane. Nothing to wait for (`expected` 0) commits nothing.
+     *
+     * IT HANDS OVER ONLY ONCE THE NEW PLANE CAN DRAW: every new item covers
+     * the view (whenItemCanDraw, with PLANE_SWAP_GRACE_MS -- or none while
+     * the hand moves, `rev.scrub`) or has left the world. There is no
+     * deadline: past PLANE_SWAP_SLOW_MS the old plane stays and the status
+     * says "slow" (see PLANE_SWAP_SLOW_MS for why). A new item with nothing
+     * loaded never hands over, not even with every tile failed for good
+     * (channelFade.failedOut): the old plane stays, the status says "error"
+     * while any is so, and `retry()` asks for its tiles again.
+     *
+     * AND IT SAYS HOW IT IS GOING: `plexora:surface-status` on window for
+     * surface "main" (views/paneStatus.js draws it; `onPlaneStatus` listens
+     * too), `{surface, rev, spec, phase, loaded, needed, failed, level, since,
+     * retry}`. "fetching" from the start, "slow" past PLANE_SWAP_SLOW_MS;
+     * from the commit on, what the revealed items say (planeProgress):
+     * "preview" while the view is covered but not yet at its own level,
+     * "refining" once a tile has landed since, "idle" once every tile in view
+     * has, "error" once what is left failed for good -- held until `retry()`
+     * (tileFetch.retryFailed on this swap's items) or the next swap. The
+     * revealed items are listened to only until idle or error, and never past
+     * the next swap (`stopPlaneStatus`). At most one status a frame.
+     *
+     * @param spec - the view token the swap is to, for the status
      */
-    planeSwapGroup(expected, rev = null) {
+    planeSwapGroup(expected, rev = null, spec = viewSelection.spec) {
         let pending = expected;
         const entries = [];
         //: Committed or abandoned: either way nothing more happens.
         let closed = false;
         const stops = [];
-        let timer = null;
+        let slowTimer = null;
         let resolvePrepared = null;
         //: For a revision: the commit, held, or null (nothing to swap, or
         //: superseded).
         const prepared = new Promise((resolve) => { resolvePrepared = resolve; });
         const stopWaiting = () => {
-            if (timer !== null) clearTimeout(timer);
-            timer = null;
+            if (slowTimer !== null) clearTimeout(slowTimer);
+            slowTimer = null;
             for (const stop of stops.splice(0)) stop();
         };
+
+        // -- the status ------------------------------------------------------
+        // The last swap's status ends where this one starts: what it reported
+        // on is about to be replaced. Only the newest swap speaks (`owner`).
+        this.stopPlaneStatus?.();
+        const owner = {};
+        this.planeStatusOwner = owner;
+        const since = statusNow();
+        const onWorld = (item) => {
+            const world = this.viewer?.world;
+            return !world?.getIndexOfItem || world.getIndexOfItem(item) >= 0;
+        };
+        //: "fetching", "slow" or "idle" until the commit; read off the
+        //: revealed items after it (`current`).
+        let phase = expected > 0 ? "fetching" : "idle";
+        let committed = false;
+        //: A tile has landed since the commit, or a retry asked again.
+        let refining = false;
+        //: The items the counts are read off: each incoming pair's paint
+        //: item (planeProgress says why only those), the revealed ones once
+        //: committed, none once abandoned.
+        let counted = () => entries.flatMap((entry) => entry.paint);
+        let shown = [];
+        let unwatch = null;
+        const scheduler = this.imageViewer?.tileFetch;
+        const report = () => this.emitPlaneStatus(current);
+        // Every tile of this swap's items whose retries are spent, asked for
+        // again; the revealed items are then listened to until they land.
+        const retry = typeof scheduler?.retryFailed === "function" ? () => {
+            if (this.planeStatusOwner !== owner) return 0;
+            const items = (committed ? shown : entries.flatMap((entry) => entry.items))
+                .filter(onWorld);
+            const count = scheduler.retryFailed(items);
+            if (count > 0 && committed) {
+                refining = true;
+                watch();
+            }
+            report();
+            return count;
+        } : null;
+        // After the commit, until idle or error: a tile landing or failing,
+        // or an item's fully-loaded flag moving, is a reason to look again.
+        // OSD raises `tile-loaded` and `tile-load-failed` on the VIEWER, with
+        // the item as `tiledImage`.
+        const watch = () => {
+            if (unwatch || this.planeStatusOwner !== owner) return;
+            const viewer = this.viewer;
+            const mine = new Set(shown);
+            const onTile = (event) => {
+                if (!mine.has(event?.tiledImage)) return;
+                refining = true;
+                report();
+                // Raised before OSD marks the tile loaded (its handlers are
+                // awaited first, tileDecode.js among them); the event's
+                // promise resolves once it has.
+                event.promise?.then?.(() => report(), () => {});
+            };
+            const onFailed = (event) => {
+                if (mine.has(event?.tiledImage)) report();
+            };
+            const onChange = () => report();
+            viewer?.addHandler?.("tile-loaded", onTile);
+            viewer?.addHandler?.("tile-load-failed", onFailed);
+            for (const item of mine) item.addHandler?.("fully-loaded-change", onChange);
+            unwatch = () => {
+                unwatch = null;
+                viewer?.removeHandler?.("tile-loaded", onTile);
+                viewer?.removeHandler?.("tile-load-failed", onFailed);
+                for (const item of mine) item.removeHandler?.("fully-loaded-change", onChange);
+            };
+        };
+        //: The status as it stands, read when its frame comes (emitPlaneStatus).
+        const current = () => {
+            if (this.planeStatusOwner !== owner) return null;
+            const p = planeProgress(counted());
+            let said = phase;
+            if (committed) {
+                if (p.settled) {
+                    phase = p.failed > 0 ? "error" : "idle";
+                    unwatch?.();
+                } else {
+                    phase = refining ? "refining" : "preview";
+                }
+                said = phase;
+            } else if (!closed && entries.some((entry) => entry.items.some(failedOut))) {
+                // Still waiting, on an item that failed for good: the old
+                // plane stays, and a retry is offered. Not kept in `phase`:
+                // once retried, it is fetching or slow again.
+                said = "error";
+            }
+            return { surface: "main", rev: rev?.id ?? null, spec, phase: said,
+                     loaded: p.loaded, needed: p.needed, failed: p.failed, level: p.level,
+                     since, retry };
+        };
+        this.stopPlaneStatus = () => {
+            if (slowTimer !== null) clearTimeout(slowTimer);
+            slowTimer = null;
+            unwatch?.();
+        };
+        report();
+
         const commitAll = () => {
             if (closed) return;
             closed = true;
@@ -769,6 +969,17 @@ export class ViewerManager {
             }
             for (const entry of entries) entry.commit();
             if (held) fade.release();
+            // From here on the status is what the revealed items say.
+            committed = true;
+            shown = entries.flatMap((entry) => entry.items).filter(onWorld);
+            const paint = entries.flatMap((entry) => entry.paint).filter(onWorld);
+            counted = () => paint;
+            if (this.planeStatusOwner !== owner) return;
+            if (!planeProgress(paint).settled) {
+                global_mark("main", "preview", rev);
+                watch();
+            }
+            report();
         };
         //: Superseded: every new pair goes, the old ones stay on screen.
         const abandon = () => {
@@ -777,23 +988,33 @@ export class ViewerManager {
             stopWaiting();
             for (const entry of entries) entry.abort?.();
             resolvePrepared(null);
+            // The old plane stays, and nothing is on its way for this swap.
+            counted = () => [];
+            phase = "idle";
+            report();
         };
         commitAll.discard = abandon;
         rev?.onSupersede?.(abandon);
         // `handOverWhenReady`'s wait, plus one case it never meets alone: an
         // item taken off the world mid-swap -- its channel switched off --
         // never becomes loaded, and would hold every OTHER channel at the old
-        // plane until the deadline. Gone counts as ready; its own commit then
-        // finds it gone and drops the pair.
+        // plane for as long as the swap waits. Gone counts as ready; its own
+        // commit then finds it gone and drops the pair.
         const close = () => {
             if (closed) return;
             if (!entries.length) {
+                // No channel's pair could be built: the old plane stays.
                 resolvePrepared(null);
+                counted = () => [];
+                phase = "idle";
+                report();
                 return;
             }
             const world = this.viewer?.world;
             const waiting = new Set(entries.flatMap((entry) => entry.items));
             let handed = false;
+            // ONLY from `ready`: the new plane covers the view, or what is
+            // still awaited has left the world.
             const hand = () => {
                 if (handed || closed) return;
                 handed = true;
@@ -813,15 +1034,26 @@ export class ViewerManager {
                 world.addHandler("remove-item", onRemove);
                 stops.push(() => world.removeHandler?.("remove-item", onRemove));
             }
+            const grace = rev?.scrub ? PLANE_SWAP_SCRUB_GRACE_MS : PLANE_SWAP_GRACE_MS;
             for (const item of [...waiting]) {
                 if (handed) break;
                 if (world?.getIndexOfItem && world.getIndexOfItem(item) < 0) {
                     ready(item);
                 } else {
-                    stops.push(whenItemCanDraw(item, () => ready(item), PLANE_SWAP_GRACE_MS));
+                    stops.push(whenItemCanDraw(item, () => ready(item), grace, report));
                 }
             }
-            if (!handed) timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
+            // After the loop, as handOverWhenReady's timer is: a harness world
+            // (and a warm plane) answers synchronously.
+            if (handed) return;
+            report();
+            slowTimer = setTimeout(() => {
+                slowTimer = null;
+                if (handed || closed) return;
+                global_mark("main", "slow", rev);
+                phase = "slow";
+                report();
+            }, PLANE_SWAP_SLOW_MS);
         };
         const answered = () => {
             pending -= 1;
@@ -829,18 +1061,57 @@ export class ViewerManager {
         };
         if (expected <= 0) resolvePrepared(null);
         return {
-            join(items, commit, abort = null) {
+            /** `paint`: the pair's paint item(s), what its status counts. */
+            join(items, commit, abort = null, paint = items) {
                 // A pair that lands after the swap was abandoned goes at once.
                 if (closed && rev?.superseded) {
                     abort?.();
                     return;
                 }
-                entries.push({ items, commit, abort });
+                entries.push({ items, commit, abort, paint });
                 answered();
             },
             leave: answered,
             prepared,
         };
+    }
+
+    /**
+     * Listen to the plane's loading status -- what `plexora:surface-status`
+     * carries for surface "main" (planeSwapGroup). Returns a function that
+     * stops listening.
+     */
+    onPlaneStatus(fn) {
+        if (!this.planeStatusListeners) this.planeStatusListeners = new Set();
+        this.planeStatusListeners.add(fn);
+        return () => this.planeStatusListeners?.delete(fn);
+    }
+
+    /**
+     * Say how the plane is loading, at most once a frame. `make` is read when
+     * the frame comes -- so the counts are that frame's -- and replaces
+     * whatever was queued before it; it answers null when its swap no longer
+     * speaks for the plane. The last status said is `planeStatus`.
+     */
+    emitPlaneStatus(make) {
+        this.planeStatusQueued = make;
+        if (this.planeStatusFrame != null) return;
+        this.planeStatusFrame = nextFrame(() => {
+            this.planeStatusFrame = null;
+            const queued = this.planeStatusQueued;
+            this.planeStatusQueued = null;
+            const detail = typeof queued === "function" ? queued() : queued;
+            if (!detail) return;
+            this.planeStatus = detail;
+            window.dispatchEvent(new CustomEvent("plexora:surface-status", { detail }));
+            for (const fn of [...(this.planeStatusListeners || [])]) {
+                try {
+                    fn(detail);
+                } catch (error) {
+                    console.error("ViewerManager: a plane status listener failed", error);
+                }
+            }
+        });
     }
 
     /**
@@ -1499,18 +1770,22 @@ export class ViewerManager {
                 // A plane left behind is kept in OSD's cache rather than
                 // unloaded, so stepping back to it is free (see setView).
                 if (zombie) for (const item of held) item.allowZombieCache?.(true);
+                // Gone in the same call as the new pair comes in: a plane swap
+                // commits only once that pair covers the view (planeSwapGroup
+                // has no deadline), so the ground never shows between them.
                 this.dropWorldItems(held);
                 this.applyWorldOrder();
                 this.viewer?.forceRedraw?.();
                 settle();
             };
-            // A plane swap commits every channel in one frame (planeSwapGroup).
+            // A plane swap commits every channel in one frame (planeSwapGroup),
+            // and counts the paint half for its status (planeProgress).
             if (group) {
                 group.join(landed.map((entry) => entry.item), commit, () => {
                     // The swap was superseded: this pair never shows.
                     this.dropWorldItems(landed.map((entry) => entry.item));
                     settle();
-                });
+                }, landed.filter((entry) => entry.z === PAINT_Z).map((entry) => entry.item));
             } else {
                 this.handOverWhenReady(landed.map((entry) => entry.item), commit,
                                        zombie ? PLANE_SWAP_TIMEOUT_MS : QUALITY_SWAP_TIMEOUT_MS);

@@ -22,13 +22,23 @@
  *   plane's tiles that would cover the view go first (a step shows the next
  *   plane coarse before the last one finishes sharpening); the plane before
  *   the panes; coarse levels before fine ones; near the centre before the
- *   edge. MAX_IN_FLIGHT at a time;
+ *   edge. MAX_IN_FLIGHT at a time. While the hand moves (`setScrubbing`)
+ *   what only sharpens waits in line -- a plane coming in loads only its
+ *   coarsest level, the plane on screen stays at the level that covers it,
+ *   a prefetched plane loads its two coarsest levels -- and goes when the
+ *   hand stops;
  * - DECODED ONCE, in a worker, with the response's buffer TRANSFERRED (no
  *   copy); the job is finished as an empty `context2d` -- the only format the
  *   canvas drawer draws -- so OSD's own image decode never runs, and the
  *   colorize pass (tileColorize.js) fills that canvas at draw time as before;
  * - CANCELLED when nobody wants it: an item removed from its world gives up
  *   its jobs, and a request whose every job is gone is aborted.
+ * - A FAILURE SAYS WHICH: OSD asks again for a failed tile up to its viewer's
+ *   `tileRetryMax` times, and marks it `exists` false in between -- what it
+ *   also calls a tile past the image's edge. `fail` tags the tile
+ *   (`_plexoraFailed`: "retrying", "final" once the retries are spent,
+ *   "aborted"), so channelFade.covers waits for a retry and counts only a
+ *   spent one as a hole; `retryFailed(items)` asks for the holes again.
  *
  * - BATCHED ON A SLOW LINK: each server's link is measured -- a tile's wait
  *   for its first byte, less the server's own time (`Server-Timing`) -- and
@@ -71,6 +81,34 @@
     //: screen sharpening, the one coming in sharpening, a prefetch.
     const TIER = { visible: 0, handover: 1, sharpen: 2, handoverSharpen: 3, standby: 4 };
     const OWNER = { main: 0, pane: 1 };
+    //: While the hand moves (`setScrubbing`), how far a plane already
+    //: covering the view (the sharpen tiers) may sharpen: this many levels
+    //: past the level that covers it -- none. The hand is gone before a
+    //: finer level lands, and the wire is for the next plane's coarse tiles;
+    //: the rest goes when the hand stops. (At a stack's home view only two
+    //: levels are in play, the one-tile level and full resolution, so one
+    //: level past the cover was everything: a drag fetched every plane it
+    //: passed at full resolution, four times the tiles that cover it.) OSD
+    //: numbers a pyramid's levels from the coarsest (the source's minLevel,
+    //: usually 0) up to full resolution (maxLevel): a HIGHER level is FINER,
+    //: as `rank`'s coarse-first (ascending level) says.
+    const SCRUB_SHARPEN_SPAN = 0;
+    //: ...and how much of a prefetched plane (the standby tier) loads: its
+    //: coarsest visited level and this many finer, its two coarsest. One
+    //: tile a channel buys the preview; the rest fills in at rest.
+    const SCRUB_STANDBY_SPAN = 1;
+    //: ...and how much of a plane coming in that does not cover the view yet
+    //: (the visible and handover tiers): its coarsest visited level -- the
+    //: one-tile level OSD's walk down stops at -- and this many finer. That
+    //: level covers the view by itself, so it is all a preview needs; the
+    //: finer ones OSD asks for alongside would only sharpen it, and on the
+    //: wire with it they made each preview wait for full-resolution reads
+    //: (and the next plane's preview behind them: a request on the wire
+    //: cannot be overtaken).
+    const SCRUB_COVER_SPAN = 0;
+    //: How many times OSD asks again for a failed tile when its viewer does
+    //: not say (`tileRetryMax`; the plane and the panes both set 3).
+    const RETRY_MAX = 3;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -103,8 +141,16 @@
             //: unbatchable}: one per server the tiles come from.
             this.links = new Map();
             this.batching = true;
+            //: The watched viewer's `tileRetryMax` (`watch`), for a job
+            //: whose own viewer cannot be reached.
+            this.retryMax = RETRY_MAX;
+            //: Until when the hand counts as moving (`setScrubbing`; the
+            //: performance.now clock), and the timer that pumps once it stops.
+            this.scrubUntil = 0;
+            this._scrubTimer = null;
+            //: `retried`: failures OSD will ask again for.
             this.stats = { requests: 0, shared: 0, aborted: 0, cancelled: 0, decoded: 0,
-                           failed: 0, bytes: 0, batches: 0, batchedTiles: 0 };
+                           failed: 0, retried: 0, bytes: 0, batches: 0, batchedTiles: 0 };
         }
 
         /**
@@ -202,9 +248,64 @@
             return tileSource;
         }
 
-        /** Give up the jobs of items taken off `viewer`'s world. */
+        /** Give up the jobs of items taken off `viewer`'s world; and how many
+         *  times its loader asks again for a failed tile (`tileRetryMax`). */
         watch(viewer) {
             viewer?.world?.addHandler?.("remove-item", (event) => this.cancelItem(event.item));
+            if (Number.isFinite(viewer?.tileRetryMax)) this.retryMax = viewer.tileRetryMax;
+            return this;
+        }
+
+        /** How many times OSD asks again for `job`'s tile: its own viewer's
+         *  `tileRetryMax` (one scheduler serves the plane and both panes, each
+         *  with its own loader), else the watched viewer's. */
+        retryMaxOf(job) {
+            const own = job?.tile?.tiledImage?.viewer?.tileRetryMax;
+            return Number.isFinite(own) ? own : this.retryMax;
+        }
+
+        /** Whether the hand is moving (`setScrubbing`): what only sharpens
+         *  waits in line (`held`). */
+        scrubbing() {
+            return now() < this.scrubUntil;
+        }
+
+        /**
+         * The hand moves until `untilMs` (the performance.now clock; a drag
+         * or a held key says so with each request, planeMotion.js). Never
+         * shortens what is set. One timer pumps when it runs out, so the
+         * tiles held meanwhile go without waiting for another request.
+         */
+        setScrubbing(untilMs) {
+            const until = Number(untilMs);
+            if (!Number.isFinite(until) || until <= this.scrubUntil) return this;
+            this.scrubUntil = until;
+            clearTimeout(this._scrubTimer);
+            this._scrubTimer = setTimeout(() => this._scrubEnded(), Math.max(0, Math.ceil(until - now())));
+            return this;
+        }
+
+        _scrubEnded() {
+            this._scrubTimer = null;
+            const left = this.scrubUntil - now();
+            if (left > 0) {
+                // The timer's clock ran ahead of performance.now.
+                this._scrubTimer = setTimeout(() => this._scrubEnded(), Math.ceil(left));
+                return;
+            }
+            this.pump();
+        }
+
+        /**
+         * The hand let go (`plexora:scrub-ended`, planeMotion.js): what was
+         * held goes now rather than when `setScrubbing`'s time runs out --
+         * which never shortens, so this ends it outright.
+         */
+        endScrubbing() {
+            this.scrubUntil = 0;
+            clearTimeout(this._scrubTimer);
+            this._scrubTimer = null;
+            this.pump();
             return this;
         }
 
@@ -223,6 +324,73 @@
                 answer = false;
             }
             cache?.set(item, answer);
+            return answer;
+        }
+
+        /** The finest level at which `item` covers the view
+         *  (channelFade.coveringLevel): a number, or null (none does, or
+         *  nothing says). Asked once per item per pump. */
+        coveringLevel(item) {
+            const covering = global.PlexoraChannelFade?.coveringLevel;
+            if (!item || typeof covering !== "function") return null;
+            const cache = this._covering;
+            if (cache?.has(item)) return cache.get(item);
+            let answer = null;
+            try {
+                const level = covering(item);
+                answer = Number.isFinite(level) ? level : null;
+            } catch (error) {
+                answer = null;
+            }
+            cache?.set(item, answer);
+            return answer;
+        }
+
+        /**
+         * The coarsest level OSD visited for `item` on its updates: the least
+         * key of its `coverage`. OSD walks down from the level it shows and
+         * stops at `savedCutOffLevel` (the finest level that is one tile), so
+         * that is usually this -- one tile a channel. Before any update, that
+         * level itself, else the source's coarsest.
+         */
+        coarsestLevel(item) {
+            let least = null;
+            for (const key of Object.keys(item?.coverage || {})) {
+                const level = Number(key);
+                if (Number.isFinite(level) && (least === null || level < least)) least = level;
+            }
+            if (least !== null) return least;
+            if (Number.isFinite(item?.savedCutOffLevel)) return item.savedCutOffLevel;
+            const min = Number(item?.source?.minLevel);
+            return Number.isFinite(min) ? min : 0;
+        }
+
+        /**
+         * Whether `job` waits in line while the hand moves: a tile that only
+         * sharpens a plane already covering the view more than
+         * SCRUB_SHARPEN_SPAN levels past its cover, a prefetched plane's
+         * past its two coarsest visited levels (SCRUB_STANDBY_SPAN), or one
+         * of a plane that does not cover the view yet finer than its
+         * coarsest visited level (SCRUB_COVER_SPAN) -- that level covers it.
+         * Never at rest. Asked once per job per pump.
+         */
+        held(job, rank = null) {
+            if (!this.scrubbing()) return false;
+            const cache = this._held;
+            if (cache?.has(job)) return cache.get(job);
+            const [tier, , level] = rank || this.rank(job);
+            const item = job.tile?.tiledImage;
+            let answer = false;
+            if (tier === TIER.sharpen || tier === TIER.handoverSharpen) {
+                // Higher is finer (see SCRUB_SHARPEN_SPAN).
+                answer = typeof global.PlexoraChannelFade?.coveringLevel === "function"
+                    && level > (this.coveringLevel(item) ?? -Infinity) + SCRUB_SHARPEN_SPAN;
+            } else if (tier === TIER.standby) {
+                answer = level > this.coarsestLevel(item) + SCRUB_STANDBY_SPAN;
+            } else {
+                answer = level > this.coarsestLevel(item) + SCRUB_COVER_SPAN;
+            }
+            cache?.set(job, answer);
             return answer;
         }
 
@@ -337,25 +505,42 @@
 
         pump() {
             this._covered = new Map();
+            this._covering = new Map();
+            this._held = new Map();
             try {
                 this._pump();
             } finally {
                 this._covered = null;
+                this._covering = null;
+                this._held = null;
             }
         }
 
         _pump() {
             while (this.inFlight < this.maxInFlight && this.queue.length) {
                 for (const request of this.queue) {
+                    // Keyed by its best job the hand's moving does not hold
+                    // back; a request whose every job is held waits in line
+                    // under its best held one (`held`).
                     let best = null;
+                    let bestHeld = null;
                     for (const job of request.jobs) {
                         const rank = this.rank(job);
-                        if (!best || compare(rank, best) < 0) best = rank;
+                        if (this.held(job, rank)) {
+                            if (!bestHeld || compare(rank, bestHeld) < 0) bestHeld = rank;
+                        } else if (!best || compare(rank, best) < 0) {
+                            best = rank;
+                        }
                     }
-                    request.key = best || [9];
+                    request.held = !best && Boolean(bestHeld);
+                    request.key = best || bestHeld || [9];
                 }
                 this.queue.sort((a, b) => compare(a.key, b.key));
-                const request = this.queue[0];
+                const at = this.queue.findIndex((queued) => !queued.held);
+                if (at < 0) {
+                    return;   // only held tiles left: setScrubbing's timer pumps when the hand stops
+                }
+                const request = this.queue[at];
                 // Only prefetches are waiting (the queue is in order of need):
                 // a second may go while nothing else is on the wire either.
                 const share = this.inFlight === this.standbyInFlight
@@ -365,18 +550,19 @@
                         && this.standbyInFlight >= share) {
                     return;   // only prefetches left, and their share is in use
                 }
-                this.queue.shift();
+                this.queue.splice(at, 1);
                 if (!request.jobs.size) {
                     this.drop(request);
                     continue;
                 }
                 if (this.batching && request.link?.batching && !request.link.unbatchable) {
                     // The next queued tiles from the same server, in the same
-                    // tier, ride along (the queue is in order of need).
+                    // tier, ride along (the queue is in order of need); a
+                    // held one waits for the hand to stop.
                     const batch = [request];
                     for (let i = 0; i < this.queue.length && batch.length < BATCH_MAX;) {
                         const other = this.queue[i];
-                        if (other.link === request.link && other.jobs.size
+                        if (other.link === request.link && other.jobs.size && !other.held
                                 && other.key[0] === request.key[0]) {
                             this.queue.splice(i, 1);
                             batch.push(other);
@@ -554,6 +740,7 @@
                 tile._array = decoded.array;
                 tile._format = decoded.format;
                 tile._plexoraCoarse = Boolean(decoded.coarse);
+                delete tile._plexoraFailed;
             }
             if (decoded.coarse) this.stats.coarse = (this.stats.coarse || 0) + 1;
             try {
@@ -564,17 +751,64 @@
             }
         }
 
+        /**
+         * A request failed: so does its job, and OSD's loader asks again
+         * while `job.tries` (counted by OSD, 1 on the first ask) is under
+         * 1 + `tileRetryMax` -- the same test as ImageLoader's. The tile says
+         * which (`_plexoraFailed`, read by channelFade.covers).
+         */
         fail(job, error) {
             this.stats.failed += 1;
+            let failed;
             if (error?.name === "AbortError") {
                 // Nobody wants it; OSD must not retry it either.
                 job.tries = Infinity;
+                failed = "aborted";
+            } else if ((Number(job.tries) || 0) >= 1 + this.retryMaxOf(job)) {
+                failed = "final";
+            } else {
+                failed = "retrying";
+                this.stats.retried += 1;
             }
+            if (job.tile) job.tile._plexoraFailed = failed;
             try {
                 job.fail(`[tileFetch] ${error?.message || error || "failed"}`, null);
             } catch (caught) {
                 // A job OSD already let go of.
             }
+        }
+
+        /**
+         * Ask again for every tile of `items` whose retries are spent (tagged
+         * "final"). OSD never asks for a tile it marked `exists` false, so
+         * each is made an unloaded tile again and its item told to update:
+         * the next update finds it wanted, not loaded and not loading, and
+         * loads it like any other (TiledImage._updateLevel). Returns how many
+         * tiles were asked for again.
+         */
+        retryFailed(items) {
+            let count = 0;
+            for (const item of items || []) {
+                let mine = 0;
+                for (const level of Object.values(item?.tilesMatrix || {})) {
+                    for (const column of Object.values(level || {})) {
+                        for (const tile of Object.values(column || {})) {
+                            if (tile?._plexoraFailed !== "final") continue;
+                            delete tile._plexoraFailed;
+                            tile.exists = true;
+                            tile.loaded = false;
+                            tile.loading = false;
+                            mine += 1;
+                        }
+                    }
+                }
+                if (!mine) continue;
+                count += mine;
+                item._needsDraw = true;
+                item._needsUpdate = true;
+                item.viewer?.forceRedraw?.();
+            }
+            return count;
         }
     }
 
@@ -599,7 +833,8 @@
         return 0;
     }
 
-    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, MAX_STANDBY_IN_FLIGHT, TIER, kindOf,
+    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, MAX_STANDBY_IN_FLIGHT, TIER, RETRY_MAX, kindOf,
+                                SCRUB_SHARPEN_SPAN, SCRUB_STANDBY_SPAN, SCRUB_COVER_SPAN,
                                 splitBatch, BATCH: { ENTER_MS: BATCH_ENTER_MS, LEAVE_MS: BATCH_LEAVE_MS,
                                                      SAMPLES: BATCH_SAMPLES, MAX: BATCH_MAX,
                                                      WINDOW: BATCH_WINDOW } };

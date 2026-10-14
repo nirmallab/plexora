@@ -17,8 +17,13 @@
  * - optionally a luminance grid of what is on screen: the viewer's ground,
  *   the plane canvas over it, the fade's ghost at its current opacity over that,
  *   the 3-D canvas and its own ghost (a build that has one) -- composited the
- *   way the browser composites them;
- * - input timestamps (capture phase) and the viewer's own events.
+ *   way the browser composites them; and (`start({lum: true, panes: true})`)
+ *   one of each visible section pane's canvas (`lumPanes.xz`, `lumPanes.yz`);
+ * - input timestamps (capture phase) and the viewer's own events; every plane
+ *   the hand asked for (`hand`: `plexora:view-requested`, which fires on each
+ *   request, where the app's `view:requested` mark waits for a revision to
+ *   start); the surfaces' loading status (`plexora:surface-status`, a build
+ *   that sends it).
  *
  * Everything lives on `window.__bench`. Nothing here reads anything the app
  * would not show the user, and nothing is written into the app.
@@ -28,19 +33,26 @@
     if (window.__bench) return;
     const now = () => performance.now();
     const B = window.__bench = {
-        version: 1,
+        version: 2,
         counters: Object.create(null),
         events: [],
         inputs: [],
         trans: [],
         frames: [],
         lum: [],
+        //: [t, grid] per section pane while `start({panes: true})` records.
+        lumPanes: { xz: [], yz: [] },
+        //: [t, spec] for every plane the hand asked for (plexora:view-requested).
+        hand: [],
         longTasks: [],
         //: [t, ms] per 3-D ghost capture (hookApp), when the build has one.
         vghostMs: [],
         recording: false,
         lumOn: false,
+        lumPanesOn: false,
         lumGrid: [32, 20],
+        //: A pane's grid: XZ is wide and short, YZ narrow and tall.
+        paneGrid: { xz: [32, 4], yz: [4, 20] },
         lumRegion: null,
         sig: Object.create(null),
     };
@@ -149,6 +161,16 @@
                 : (d.status !== undefined ? { status: d.status } : null));
         });
     }
+    window.addEventListener("plexora:view-requested", (event) => {
+        const spec = event.detail?.spec;
+        if (typeof spec === "string") B.hand.push([now(), spec]);
+    });
+    window.addEventListener("plexora:surface-status", (event) => {
+        const d = event.detail || {};
+        B.event("surface-status", { surface: d.surface ?? null, phase: d.phase ?? null,
+                                    rev: d.rev ?? null, loaded: d.loaded ?? null,
+                                    needed: d.needed ?? null });
+    });
     try {
         new PerformanceObserver((list) => {
             for (const entry of list.getEntries()) {
@@ -281,6 +303,7 @@
         if (B.lumOn) {
             if (B.lumMode === "bitmap") {
                 luminanceAsync(t);
+                if (B.lumPanesOn) paneLuminanceAsync(t);
             } else {
                 const grid = luminance();
                 if (grid) B.lum.push([t, grid, ghostOpacity()]);
@@ -348,6 +371,83 @@
             .finally(() => { lumBusy -= 1; });
     }
     B.sample = sample;
+
+    /**
+     * The part of a section pane's canvas that is on screen, as a source rect
+     * [sx, sy, sw, sh] in canvas px; null when that is the whole canvas. A
+     * scrolled pane's own viewer reaches `view.margin` CSS px past each edge
+     * along its stack (views/sectionPanes.js layout(): the host is
+     * `size + 2 * margin` tall for XZ, wide for YZ, moved back by `margin`)
+     * and the pane's root clips those rows: loaded, never shown. The canvas
+     * fills its host, so canvas px per CSS px along the stack is the canvas's
+     * length over the host's -- the device pixel ratio, and still what shows
+     * for a canvas a frame behind its host, which the browser stretches to
+     * fit. No margin (a pane that holds every plane; a build before margins):
+     * null, and the whole canvas is read as before.
+     */
+    function paneCrop(axis, pane, canvas) {
+        const view = pane?.view;
+        const margin = Number(view?.margin) || 0;
+        if (!(margin > 0) || !canvas?.width || !canvas.height) return null;
+        const xz = axis === "xz";
+        const shown = Number(view.size)
+            || (xz ? pane.root?.clientHeight : pane.root?.clientWidth) || 0;
+        if (!(shown > 0)) return null;
+        const reach = (Number(view.inner) || shown) + 2 * margin;
+        const length = xz ? canvas.height : canvas.width;
+        const ratio = length / reach;
+        const start = Math.min(length - 1, Math.round(margin * ratio));
+        const span = Math.max(1, Math.min(length - start, Math.round(shown * ratio)));
+        return xz ? [0, start, canvas.width, span] : [start, 0, span, canvas.height];
+    }
+    B.paneCrop = paneCrop;
+
+    /**
+     * Each visible section pane's canvas (its own OSD viewer, a canvas
+     * drawer), the part on screen (paneCrop), downscaled the same way --
+     * createImageBitmap, never a read of the canvas itself -- onto a black
+     * ground, into `lumPanes[axis]`.
+     */
+    let paneBusy = 0;
+    const paneCanvases = Object.create(null);
+    function paneLuminanceAsync(t) {
+        const sp = window.__plexora?.sectionPanes;
+        if (!sp?.enabled || !sp.panes || paneBusy > 3) return;
+        for (const axis of ["xz", "yz"]) {
+            const pane = sp.panes[axis];
+            const canvas = pane?.osd?.drawer?.canvas;
+            if (!canvas || !canvas.width || !canvas.height || pane.root?.hidden) continue;
+            const [gw, gh] = B.paneGrid[axis];
+            const [sx, sy, sw, sh] = paneCrop(axis, pane, canvas) || [0, 0, canvas.width, canvas.height];
+            paneBusy += 1;
+            createImageBitmap(canvas, sx, sy, sw, sh,
+                              { resizeWidth: gw, resizeHeight: gh, resizeQuality: "medium" })
+                .then((bitmap) => {
+                    let entry = paneCanvases[axis];
+                    if (!entry) {
+                        const small = document.createElement("canvas");
+                        small.width = gw;
+                        small.height = gh;
+                        entry = paneCanvases[axis] = small.getContext("2d", { willReadFrequently: true });
+                    }
+                    entry.globalAlpha = 1;
+                    entry.fillStyle = "#000";
+                    entry.fillRect(0, 0, gw, gh);
+                    entry.drawImage(bitmap, 0, 0);
+                    bitmap.close();
+                    const data = entry.getImageData(0, 0, gw, gh).data;
+                    const grid = new Array(gw * gh);
+                    for (let i = 0, j = 0; i < data.length; i += 4, j += 1) {
+                        grid[j] = Math.round(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]);
+                    }
+                    const list = (B.lumPanes[axis] ||= []);
+                    list.push([t, grid]);
+                    list.sort((a, b) => a[0] - b[0]);
+                })
+                .catch(() => count("lumPaneErrors"))
+                .finally(() => { paneBusy -= 1; });
+        }
+    }
 
     function elementOpacity(node) {
         if (!node || node.hidden || typeof node.width !== "number") return 0;
@@ -445,10 +545,12 @@
         return frame;
     }
 
-    /** Start recording: frames, transitions, luminance when asked. */
-    B.start = ({ lum = false, grid = null, region = null } = {}) => {
+    /** Start recording: frames, transitions, luminance when asked (`panes`:
+     *  the section panes' too, bitmap mode only). */
+    B.start = ({ lum = false, grid = null, region = null, panes = false } = {}) => {
         B.lumOn = Boolean(lum);
         B.lumMode = lum === "sync" ? "sync" : "bitmap";
+        B.lumPanesOn = Boolean(lum) && Boolean(panes);
         if (grid) B.lumGrid = grid;
         B.lumRegion = region;
         if (B.recording) return now();
@@ -457,7 +559,13 @@
         requestAnimationFrame(loop(generation));
         return now();
     };
-    B.stop = () => { B.recording = false; B.lumOn = false; generation += 1; return now(); };
+    B.stop = () => {
+        B.recording = false;
+        B.lumOn = false;
+        B.lumPanesOn = false;
+        generation += 1;
+        return now();
+    };
     /** Forget what was recorded (counters too, unless told otherwise). */
     B.reset = ({ counters = true } = {}) => {
         B.events.length = 0;
@@ -465,6 +573,8 @@
         B.trans.length = 0;
         B.frames.length = 0;
         B.lum.length = 0;
+        B.lumPanes = { xz: [], yz: [] };
+        B.hand.length = 0;
         B.longTasks.length = 0;
         B.vghostMs.length = 0;
         B.sig = Object.create(null);

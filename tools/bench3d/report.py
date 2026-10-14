@@ -1,12 +1,15 @@
 """Before/after tables from two benchmark runs.
 
     python tools/bench3d/report.py BEFORE.json AFTER.json [--md PERF.md] [--regressions-only]
+                                   [--metrics REGEX]
     python tools/bench3d/report.py RUN.json            # one run against the targets
 
 For every dataset and metric: n, median, P95 (nearest rank) and P99, the
 change in the median, and PASS/FAIL against targets.json (a value ending in F is
 a multiple of that run's measured display period). Runs with different
-renderers or one headed and one headless are not compared.
+renderers or one headed and one headless are not compared. `--metrics` keeps
+the metrics whose name the regular expression finds (`re.search`), e.g.
+`"^(step|jump|drag|pan)_"`.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -81,13 +86,15 @@ def fmt(value):
     return f"{value:.2f}"
 
 
-def table(before, after, targets, regressions_only=False):
+def table(before, after, targets, regressions_only=False, pattern=None):
     lines = []
     bm = metrics_of(before) if before else {}
     am = metrics_of(after)
     for dataset in am:
         rows = []
         for metric in sorted(am[dataset]):
+            if pattern is not None and not pattern.search(metric):
+                continue
             a = am[dataset][metric]
             b = bm.get(dataset, {}).get(metric, [])
             a50, b50 = stat(a, "p50"), stat(b, "p50")
@@ -121,25 +128,31 @@ def main(argv=None):
     parser.add_argument("runs", nargs="+")
     parser.add_argument("--md", help="append the tables to this markdown file")
     parser.add_argument("--regressions-only", action="store_true")
+    parser.add_argument("--metrics", default=None, metavar="REGEX",
+                        help="only the metrics whose name this regular expression finds")
     args = parser.parse_args(argv)
-    runs = [json.loads(Path(p).read_text()) for p in args.runs]
+    # The tables carry "Δ" and "—": a Windows console's code page has neither.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    pattern = re.compile(args.metrics) if args.metrics else None
+    runs = [json.loads(Path(p).read_text(encoding="utf-8")) for p in args.runs]
     before, after = (runs[0], runs[1]) if len(runs) > 1 else (None, runs[0])
     if before is not None:
         same = lambda run: ("SwiftShader" in str(run.get("renderer")), bool(run.get("headed")))  # noqa: E731
         if same(before) != same(after):
             raise SystemExit("the runs differ in renderer family or headed mode; not comparable")
-    targets = json.loads((HERE / "targets.json").read_text())["targets"]
+    targets = json.loads((HERE / "targets.json").read_text(encoding="utf-8"))["targets"]
     title = (f"### {after['label']} ({after['sha']}{'-dirty' if after.get('dirty') else ''})"
              + (f" vs {before['label']} ({before['sha']})" if before else "")
              + f" — {after['date']}{' — headed' if after.get('headed') else ''}")
-    body = table(before, after, targets, args.regressions_only)
+    body = table(before, after, targets, args.regressions_only, pattern)
     text = f"{title}\n\nRenderer: {after.get('renderer')}\n{body}\n"
     errors = [f"- {d}/{s}: {r.get('error').splitlines()[0]}" for d, ss in after.get("results", {}).items()
               for s, r in ss.items() if r.get("error")]
     if errors:
         text += "\nErrors:\n" + "\n".join(errors) + "\n"
     if args.md:
-        with open(args.md, "a") as handle:
+        with open(args.md, "a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n" + text)
     print(text)
 

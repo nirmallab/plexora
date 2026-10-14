@@ -7,7 +7,8 @@
  * could not be dragged, a Play that stepped planes nobody could see -- and the
  * popover's manners: it shows the mode's settings, follows a mode change
  * without closing, and gives focus back on Escape. Painting never changes the
- * view state.
+ * view state. The hand letting go -- a rail drag released, a step key up, Play
+ * stopped -- ends the scrub (viewState.endScrub), once.
  *
  * Run directly:  node tests/js/depth_strip_probe.mjs
  */
@@ -336,6 +337,47 @@ check("Escape closes it and gives focus back to the cog",
 asked.length = 0;
 for (let i = 0; i < 5; i += 1) strip.paint();
 check("painting never changes the view state", asked.length === 0);
+
+// -- the hand letting go ends the scrub (viewState.endScrub) ------------------------------
+// A drag or a held key says nothing when it ends but this: without it the tile
+// scheduler held what only sharpens until SCRUB_HOLD_MS after the last request.
+
+const ended = [];
+vs.endScrub = () => ended.push(true);
+vs.set({ mode: "plane" });
+asked.length = 0;
+press(at(12));
+box.dispatchEvent({ type: "pointermove", clientY: at(16) });
+const duringDrag = ended.length;
+box.dispatchEvent({ type: "pointerup" });
+check("a rail drag let go ends the scrub (endScrub), not before",
+      duringDrag === 0 && ended.length === 1 && asked.filter((p) => p.z !== undefined).length >= 2,
+      JSON.stringify({ duringDrag, ended: ended.length, asked }));
+const keyUp = (code) => { for (const fn of [...(documentListeners.keyup || [])]) fn({ code, key: code }); };
+ended.length = 0;
+strip.onKey({ code: "BracketRight", shiftKey: false, altKey: false, preventDefault() {} });
+strip.onKey({ code: "BracketRight", shiftKey: false, altKey: false, preventDefault() {} });   // a repeat
+keyUp("KeyA");
+const otherKey = ended.length;
+keyUp("BracketRight");
+check("a held ] let go ends the scrub; another key's keyup does not", otherKey === 0 && ended.length === 1,
+      JSON.stringify({ otherKey, ended: ended.length }));
+keyUp("BracketRight");
+check("...once: a keyup with no step key down says nothing", ended.length === 1);
+asked.length = 0;
+strip.rail.fire("keydown", { key: "ArrowDown", code: "ArrowDown" });
+keyUp("ArrowDown");
+check("the rail's own step keys too (arrows, pages)", ended.length === 2 && asked.some((p) => p.step === 1),
+      JSON.stringify({ ended: ended.length, asked }));
+ended.length = 0;
+strip.play();
+strip.stop();
+check("Play stopped ends the scrub", ended.length === 1);
+const keyUpHandler = strip._onKeyUp;
+strip.destroy();
+check("destroy takes the keyup listener off with the strip's others",
+      !(documentListeners.keyup || []).includes(keyUpHandler)
+      && !(documentListeners.keydown || []).includes(strip._onKey));
 
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);

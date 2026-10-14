@@ -70,7 +70,30 @@
     const TARGET_STILL_MS = 60;
     //: How long the view stays put before its area is prepared in 3-D.
     const PREPARE_DELAY_MS = 2000;
-    const HANDOVER_TIMEOUT_MS = 6000;
+    //: How long a new section waits for its full resolution once it covers
+    //: the pane at some level, before it comes in with that level: the
+    //: plane's (viewerManager PLANE_SWAP_GRACE_MS), for the same reason -- a
+    //: warm section arrives sharp, a cold one shows at the level that covers
+    //: and sharpens in place. None while the view moves (SectionPanes.grace).
+    const PANE_GRACE_MS = 140;
+    //: A handover still waiting after this says so (`slow`, the status
+    //: event). It never hands over for want of tiles: the old section stays
+    //: until the new one covers the pane.
+    const PANE_SLOW_MS = 2000;
+    //: Rows kept loaded just outside a pane too short for its stack, before
+    //: its first row and after its last: a z step that scrolls the pane never
+    //: brings rows on screen that have not loaded.
+    const PANE_ROW_MARGIN_PX = 96;
+
+    function now() {
+        return global.performance?.now?.() ?? Date.now();
+    }
+
+    /** The frame a section token is at (`t3xzy10` -> 3; no prefix -> 0). */
+    function frameOf(token) {
+        const match = /^t(\d+)/.exec(token || "");
+        return match ? Number(match[1]) : 0;
+    }
 
     function el(tag, className, attrs = {}) {
         const node = document.createElement(tag);
@@ -166,10 +189,22 @@
             this.token = "";
             this.items = new Map();         // srcIdx -> TiledImage
             //: The show() still loading, if any: {token, generation, promise,
-            //: cancel}. Each show() takes a new generation; anything a
-            //: superseded one still has in flight drops itself on arrival.
+            //: cancel, defer, rev, landed, claims}. Each show() takes a new
+            //: generation; anything a superseded one still has in flight
+            //: drops itself on arrival.
             this.loading = null;
             this.generation = 0;
+            //: A pan's section waiting for a new frame's handover to land
+            //: (show): {token, options, behind, resolve}, or null.
+            this.after = null;
+            //: The loading status of the last handover (statusBegin), and
+            //: the frame its next event goes out in.
+            this.tracker = null;
+            this.statusFrame = 0;
+            //: Set by a reload of the same cut (SectionPanes.rebuild): its
+            //: handover waits for full resolution, as the plane's quality
+            //: swap does, rather than dipping to a coarser level.
+            this.refresh = false;
             this.view = { top: 0, rows: 0, scale: 1 };
             this.root = el("div", `viewer-section-pane is-${axis}`, {
                 role: "img", "aria-label": axis === "xz" ? "XZ section" : "YZ section" });
@@ -208,9 +243,32 @@
                 immediateRender: false,
                 maxImageCacheCount: 96,
                 // The tile scheduler (tileFetch.js) decides the order across
-                // the plane and both panes; this only hands it the jobs.
-                imageLoaderLimit: owner.imageViewer?.tileFetch ? 16 : 6,
+                // the plane and both panes; this only hands it the jobs. 64,
+                // not 16: OSD's ImageLoader starts at most this many jobs and
+                // holds the rest in its own queue, first come first served,
+                // where the scheduler cannot see them -- and a handover now
+                // asks for a whole section at every level at once
+                // (maxTilesPerFrame). The wire is still the scheduler's
+                // MAX_IN_FLIGHT: a started job is only a place in its line.
+                // Without the scheduler OSD's own loader runs them, 6 at a time.
+                imageLoaderLimit: owner.imageViewer?.tileFetch ? 64 : 6,
+                // How many tiles one update of an item may ask for (OSD's
+                // default is 1). OSD caps each update's load candidates at
+                // `_currentMaxTilesPerFrame` -- ten times this on an item's
+                // first update, halved per level it visits down to this
+                // (TiledImage._updateLevel) -- so at 1 a new section hands
+                // over ten tiles and then ONE A FRAME, and the scheduler can
+                // only order what it has been handed. At 16 the first update
+                // asks for every level's tiles in the pane at once, before
+                // any are loading; OSD ranks the coarsest first, the
+                // scheduler then decides. Half the plane's 32: a pane is a
+                // strip, a few tiles a level.
+                maxTilesPerFrame: 16,
                 timeout: 90000,
+                // A failed tile is otherwise never asked for again (OSD's
+                // default is 0): a hole until the section changes. As the plane's.
+                tileRetryMax: 3,
+                tileRetryDelay: 1500,
                 preserveViewport: true,
                 visibilityRatio: 0,
                 minZoomImageRatio: 0,
@@ -293,8 +351,9 @@
             });
         }
 
-        /** The token on screen, or the one loading to replace it. */
+        /** The token on screen, or the one loading (or queued) to replace it. */
         wanted() {
+            if (this.after) return this.after.token;
             return this.loading ? this.loading.token : this.token;
         }
 
@@ -302,28 +361,75 @@
          * Show the section at `token`: new items load invisibly, the old ones
          * go once the new can draw -- the plane swap's handover.
          *
+         * CAN DRAW is coverage (services/channelFade.js whenCanDraw): every
+         * item covers the pane at some level, and has had PANE_GRACE_MS to
+         * finish its full resolution (none while the view moves:
+         * SectionPanes.grace). A reload of the same cut waits for full
+         * resolution (`refresh`). There is no deadline: a section that never
+         * covers keeps the old one on screen, says `slow` at PANE_SLOW_MS,
+         * and lands when it covers -- a tile whose retries are spent counts
+         * as covered (a hole), so a section with holes still hands over, and
+         * says `error`. One with NOTHING loaded never does
+         * (channelFade.failedOut): the old section stays, the status says
+         * `error`, and its retry asks again. An item that cannot be added
+         * counts as answered.
+         *
          * ONE HANDOVER AT A TIME, and only the newest ever lands: a show()
          * superseded by another (a pan that kept going, a new frame) drops its
-         * items -- arrived or still to arrive -- and never fades up, and its
-         * deadline never fires. `defer` hands the commit back instead of
-         * running it (resolves to the closure, or null), for a navigation
-         * revision that reveals every surface in one task; `rev` superseded
-         * cancels it.
+         * items -- arrived or still to arrive -- and never fades up. `defer`
+         * hands the commit back instead of running it (resolves to the
+         * closure, or null): a pan commits it as it resolves, if no newer pan
+         * came (SectionPanes.showAt); a navigation revision reveals both
+         * panes in one task; `rev` superseded cancels it. A deferred
+         * closure's `discard()` drops it, unless a newer pan asked for the
+         * same section and holds it too.
+         *
+         * A pan while a new frame's sections load for a revision (`rev`, at
+         * the same frame) does not cancel them -- the frame would never land
+         * -- but waits its turn: queued (`after`), and asked for once they
+         * land, or dropped with them.
          *
          * @returns a promise of the commit closure (with `defer`) or null
          */
         show(token, { defer = false, rev = null } = {}) {
             if (!this.osd || !this.geometry) return Promise.resolve(null);
             const count = this.owner.channelCount();
-            if (!this.loading && token === this.token && this.items.size === count) {
+            // A reload asked for (`refresh`) is never answered by what is on
+            // screen or already on its way: those have the old look.
+            const current = token === this.token && this.items.size === count && !this.refresh;
+            if (!this.loading && current) {
+                this.dropQueued();
                 return Promise.resolve(null);
             }
-            if (this.loading && this.loading.token === token && !defer && !this.loading.defer) {
-                return this.loading.promise;
+            const loading = this.loading;
+            if (loading && !rev) {
+                if (loading.rev) {
+                    if (frameOf(token) === frameOf(loading.token)) {
+                        if (token === loading.token && !this.refresh) {
+                            // The revision is bringing this very section.
+                            this.dropQueued();
+                            return loading.landed.then(() => null);
+                        }
+                        return this.queue(token, { defer }, loading);
+                    }
+                } else if (loading.token === token && loading.defer === defer && !this.refresh) {
+                    // Asked for again (a pan that ended where it was heading):
+                    // the one loading answers both.
+                    loading.claims += 1;
+                    return loading.promise;
+                } else if (current) {
+                    // Back to the section on screen: nothing to load.
+                    loading.cancel();
+                    return Promise.resolve(null);
+                }
             }
+            this.dropQueued();
             this.loading?.cancel();
             const generation = ++this.generation;
-            const live = () => generation === this.generation;
+            //: Dropped (cancel) with no newer show() yet: items still to
+            //: arrive drop themselves all the same.
+            let dead = false;
+            const live = () => !dead && generation === this.generation;
             const world = this.osd.world;
             const channels = this.owner.channels();
             const outgoing = [...this.items.values()];
@@ -333,22 +439,52 @@
             const before = new Set(this.items.keys());
             const fresh = (srcIdx) => Boolean(Fade) && !before.has(srcIdx);
             const added = new Map();
+            //: A reload of the cut on screen waits for full resolution; a new
+            //: cut takes the level that covers (SectionPanes.grace).
+            const full = this.refresh && outgoing.length > 0;
+            this.refresh = false;
+            const grace = () => {
+                if (full) return null;
+                if (rev?.scrub) return 0;
+                const owned = this.owner.grace?.();
+                return Number.isFinite(owned) ? owned : PANE_GRACE_MS;
+            };
             let pending = channels.length;
             let settled = false;
             let finished = false;
             let timer = null;
             let resolve = null;
+            let land = null;
             const promise = new Promise((done) => { resolve = done; });
+            //: Settles when this handover is over, landed or dropped.
+            const landed = new Promise((done) => { land = done; });
+            //: Stops the waits for the items' coverage (whenCanDraw).
+            const stops = [];
             const dropAdded = () => {
                 for (const item of added.values()) {
                     if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
                 }
                 added.clear();
             };
+            /** A pan queued behind this handover (show): asked for once it
+             *  landed; dropped with it, and the sections asked for afresh. */
+            const release = (done) => {
+                const after = this.after;
+                if (!after || after.behind !== generation) return;
+                this.after = null;
+                if (done) {
+                    after.resolve(this.show(after.token, after.options));
+                } else {
+                    after.resolve(null);
+                    this.owner.requeue?.();
+                }
+            };
             const cancel = () => {
                 if (finished) return;
+                dead = true;
                 if (timer !== null) clearTimeout(timer);
                 timer = null;
+                for (const stop of stops.splice(0)) stop();
                 if (this.loading?.generation === generation) this.loading = null;
                 if (!settled) {
                     settled = true;
@@ -356,6 +492,9 @@
                     resolve(null);
                 }
                 dropAdded();
+                land();
+                this.statusLanded(generation, { dropped: true });
+                release(false);
             };
             const finish = () => {
                 if (!live()) {
@@ -378,8 +517,16 @@
                 }
                 this.align();
                 global.PlexoraViewPerf?.mark?.(this.axis, "committed", rev ? rev.id : null, token);
+                this.statusLanded(generation);
+                land();
+                release(true);
             };
-            finish.discard = cancel;
+            const record = { token, generation, promise, cancel, defer, rev, landed, claims: 1 };
+            finish.discard = () => {
+                // Another pan asked for the same section and holds it too.
+                record.claims -= 1;
+                if (record.claims <= 0) cancel();
+            };
             const hand = () => {
                 if (settled || !live()) return;
                 settled = true;
@@ -392,17 +539,22 @@
                     resolve(null);
                 }
             };
-            this.loading = { token, generation, promise, cancel, defer };
+            this.loading = record;
+            this.statusBegin(generation, token, rev, () => [...added.values()]);
             rev?.onSupersede?.(cancel);
+            if (dead) return promise;
             if (!pending) {
                 hand();
                 return promise;
             }
+            // Not a deadline: the old section stays, and says it is waiting.
             timer = setTimeout(() => {
-                if (!live()) return;
-                this.owner.timeouts += 1;
-                hand();
-            }, HANDOVER_TIMEOUT_MS);
+                timer = null;
+                if (settled || !live()) return;
+                this.owner.slow += 1;
+                global.PlexoraViewPerf?.mark?.(this.axis, "slow", rev ? rev.id : null, token);
+                this.statusSlow(generation);
+            }, PANE_SLOW_MS);
             for (const [srcIdx, channel] of channels) {
                 this.osd.addTiledImage({
                     tileSource: this.tileSource(srcIdx, channel, token),
@@ -417,8 +569,8 @@
                             return;
                         }
                         if (finished) {
-                            // Late, after its handover (the deadline): part of
-                            // what is on screen now.
+                            // Late, after its handover: part of what is on
+                            // screen now.
                             if (fresh(srcIdx)) Fade.fadeIn([event.item]);
                             else event.item.setOpacity(1);
                             this.items.set(srcIdx, event.item);
@@ -436,11 +588,17 @@
                             if (live()) requestAnimationFrame(() => this.redraw());
                         });
                         this.align();
+                        this.statusPoke();
                         const ready = () => {
                             pending -= 1;
                             if (pending <= 0) hand();
                         };
-                        if ((!outgoing.length && !defer) || event.item.getFullyLoaded?.()) {
+                        if (!outgoing.length && !defer) {
+                            ready();
+                        } else if (typeof Fade?.whenCanDraw === "function") {
+                            stops.push(Fade.whenCanDraw(event.item, ready, {
+                                grace: grace(), onFailed: () => this.statusPoke() }));
+                        } else if (event.item.getFullyLoaded?.()) {
                             ready();
                         } else {
                             const onChange = () => {
@@ -449,6 +607,7 @@
                                 ready();
                             };
                             event.item.addHandler("fully-loaded-change", onChange);
+                            stops.push(() => event.item.removeHandler?.("fully-loaded-change", onChange));
                         }
                     },
                     error: () => {
@@ -458,6 +617,200 @@
                 });
             }
             return promise;
+        }
+
+        /** Wait behind `loading` (a new frame's handover) to show `token`;
+         *  a pan queued before is superseded by this one. */
+        queue(token, options, loading) {
+            this.dropQueued();
+            let resolve = null;
+            const promise = new Promise((done) => { resolve = done; });
+            this.after = { token, options, behind: loading.generation, resolve };
+            return promise;
+        }
+
+        dropQueued() {
+            const after = this.after;
+            this.after = null;
+            after?.resolve(null);
+        }
+
+        // -- loading status (views/paneStatus.js draws it) -----------------------
+        //
+        // One `plexora:surface-status` event at most a frame, from
+        // ChannelFade.progress summed over the pane's items: `fetching` when
+        // a handover starts, `slow` at PANE_SLOW_MS, then -- once it landed
+        // -- `preview` while what shows is coarser than the pane's level,
+        // `refining` from the first tile after, `idle` when every tile it
+        // needs has loaded, `error` when the only ones missing failed for good
+        // (`retry` asks for them again).
+
+        /** A handover to `token` started: `items()` are the ones it loads. */
+        statusBegin(generation, token, rev, items) {
+            this.statusStop();
+            this.tracker = {
+                generation, token, rev: rev ? rev.id : null, since: now(), phase: "fetching",
+                landed: false, refined: false, items, sent: "", off: null,
+            };
+            this.statusPoke();
+        }
+
+        statusSlow(generation) {
+            const tracker = this.tracker;
+            if (tracker?.generation !== generation || tracker.landed) return;
+            tracker.phase = "slow";
+            this.statusPoke();
+        }
+
+        /** The handover landed -- or was dropped, `dropped`, the section on
+         *  screen staying: what the pane shows is counted from now on. */
+        statusLanded(generation, { dropped = false } = {}) {
+            const tracker = this.tracker;
+            if (tracker?.generation !== generation || tracker.landed) return;
+            tracker.landed = true;
+            tracker.refined = dropped;
+            tracker.items = () => [...this.items.values()];
+            if (!dropped && this.statusPhase(tracker, this.statusCounts(tracker.items())) === "preview") {
+                global.PlexoraViewPerf?.mark?.(this.axis, "preview", tracker.rev, tracker.token);
+            }
+            this.statusListen(tracker);
+            this.statusPoke();
+        }
+
+        /**
+         * Count again whenever one of the pane's items moves: a tile landing
+         * or failing, or its fully-loaded flag. OSD raises `tile-loaded` and
+         * `tile-load-failed` on the VIEWER, with the item as `tiledImage` --
+         * the pane's viewer also hosts the next handover's hidden items, so
+         * only the ones on screen count (as viewerManager.planeSwapGroup).
+         */
+        statusListen(tracker) {
+            const osd = this.osd;
+            if (tracker.off || typeof osd?.addHandler !== "function") return;
+            const mine = new Set(tracker.items());
+            const onTile = (event) => {
+                if (!mine.has(event?.tiledImage)) return;
+                tracker.refined = true;
+                this.statusPoke();
+                // Raised before OSD marks the tile loaded (its handlers are
+                // awaited first, tileDecode.js among them); the event's
+                // promise resolves once it has.
+                event.promise?.then?.(() => this.statusPoke(), () => {});
+            };
+            const onFailed = (event) => {
+                if (mine.has(event?.tiledImage)) this.statusPoke();
+            };
+            const onChange = () => this.statusPoke();
+            osd.addHandler("tile-loaded", onTile);
+            osd.addHandler("tile-load-failed", onFailed);
+            for (const item of mine) item.addHandler?.("fully-loaded-change", onChange);
+            tracker.off = () => {
+                osd.removeHandler?.("tile-loaded", onTile);
+                osd.removeHandler?.("tile-load-failed", onFailed);
+                for (const item of mine) item.removeHandler?.("fully-loaded-change", onChange);
+            };
+        }
+
+        statusStop() {
+            const tracker = this.tracker;
+            if (tracker?.off) {
+                tracker.off();
+                tracker.off = null;
+            }
+        }
+
+        /** The status, at the next frame (once however often it is asked). */
+        statusPoke() {
+            if (!this.tracker || this.statusFrame) return;
+            const run = () => {
+                this.statusFrame = 0;
+                this.statusEmit();
+            };
+            this.statusFrame = typeof global.requestAnimationFrame === "function"
+                ? global.requestAnimationFrame(run) : setTimeout(run, 16);
+        }
+
+        /**
+         * `{loaded, needed, failed, level, settled}` summed over `items`
+         * (ChannelFade.progress); `level` the coarsest display level among
+         * them (one geometry: one level). `settled`: nothing more is on its
+         * way -- every tile in view has loaded or failed for good. OSD's own
+         * `fully loaded` flips true while a failed tile waits for its retry,
+         * so the counts decide; it only for an item OSD has given none yet.
+         * `failedOut`: one of them has nothing loaded and its tiles failed
+         * for good (ChannelFade.failedOut) -- a handover never lands on it.
+         */
+        statusCounts(items) {
+            const Fade = global.PlexoraChannelFade;
+            const out = { loaded: 0, needed: 0, failed: 0, level: null, settled: true, failedOut: false };
+            for (const item of items) {
+                if (Fade?.failedOut?.(item)) out.failedOut = true;
+                const counted = typeof Fade?.progress === "function" ? Fade.progress(item) : null;
+                if (counted && counted.level !== null) {
+                    out.loaded += counted.loaded;
+                    out.needed += counted.needed;
+                    out.failed += counted.failed;
+                    if (out.level === null || counted.level < out.level) out.level = counted.level;
+                    if (counted.loaded + counted.failed < counted.needed) out.settled = false;
+                } else if (!item.getFullyLoaded?.()) {
+                    out.settled = false;
+                }
+            }
+            return out;
+        }
+
+        /** The plane's rules (viewerManager.planeSwapGroup): settled is idle,
+         *  or error when what is left failed for good -- and, before the
+         *  handover, error while an item it waits on failed out. */
+        statusPhase(tracker, counts) {
+            if (!tracker.landed) return counts.failedOut ? "error" : tracker.phase;
+            if (counts.settled) return counts.failed > 0 ? "error" : "idle";
+            return tracker.refined ? "refining" : "preview";
+        }
+
+        statusEmit() {
+            const tracker = this.tracker;
+            if (!tracker) return;
+            const counts = this.statusCounts(tracker.items());
+            const phase = this.statusPhase(tracker, counts);
+            const sent = [tracker.generation, phase, counts.loaded, counts.needed, counts.failed,
+                          counts.level].join("|");
+            if (sent === tracker.sent) return;
+            tracker.sent = sent;
+            // Before the handover the phase is fetching or slow; an error
+            // then is read off the items, and gone once they are retried.
+            if (tracker.landed) tracker.phase = phase;
+            // Nothing more on its way: nothing more to say until the next
+            // handover, or a retry (retryFailed listens again).
+            if (phase === "idle" || phase === "error") this.statusStop();
+            const detail = {
+                surface: this.axis, rev: tracker.rev, token: tracker.token, phase,
+                loaded: counts.loaded, needed: counts.needed, failed: counts.failed,
+                level: counts.level, since: tracker.since,
+                retry: () => this.retryFailed(),
+            };
+            this.lastStatus = detail;
+            if (typeof global.CustomEvent !== "function" || typeof global.dispatchEvent !== "function") return;
+            global.dispatchEvent(new global.CustomEvent("plexora:surface-status", { detail }));
+        }
+
+        /** Ask again for the tiles whose retries are spent
+         *  (tileFetch.retryFailed) -- of the section on screen, and of one
+         *  still waiting to hand over; how many were asked for. */
+        retryFailed() {
+            const fetcher = this.owner.imageViewer?.tileFetch;
+            if (typeof fetcher?.retryFailed !== "function") return 0;
+            const tracker = this.tracker;
+            const waiting = tracker && !tracker.landed ? tracker.items() : [];
+            const count = fetcher.retryFailed([...new Set([...this.items.values(), ...waiting])]);
+            if (count && tracker?.landed) {
+                tracker.refined = true;
+                this.statusListen(tracker);
+                this.statusPoke();
+            } else if (count) {
+                this.statusPoke();
+            }
+            return count;
         }
 
         /** Match the plane's scale and position (x for XZ, y for YZ). */
@@ -474,9 +827,13 @@
          * plane on screen in view; a pane taller than its stack shows every
          * plane, stretched along z by `factor` to fill it.
          *
-         * `view`: {top, rows, scale, size, inner, factor, natural, whole} --
-         * `size` the pane's screen px across, `inner` its own viewer's (size /
-         * factor), `natural` the whole stack's at the plane's scale.
+         * `view`: {top, rows, scale, size, inner, factor, natural, whole,
+         * margin} -- `size` the pane's screen px across, `inner` its own
+         * viewer's (size / factor), `natural` the whole stack's at the plane's
+         * scale, `margin` the screen px of rows its own viewer reaches past
+         * each edge of a scrolled pane (PANE_ROW_MARGIN_PX; 0 for a pane that
+         * holds every plane). The pane's root clips them: they are loaded,
+         * not shown.
          */
         layout() {
             const owner = this.owner;
@@ -503,18 +860,26 @@
             }
             //: Whether the pane holds every plane (to the pixel it is rounded to).
             const whole = natural <= shown + 0.5;
-            this.view = { top, rows: rowsShown, scale, size: shown, inner, factor, natural, whole };
+            // A scrolled pane's viewer reaches past both edges by the same
+            // amount, so its centre -- and everything apply() lines up -- is
+            // where it was. Never a stretched one (factor > 1 is whole).
+            const margin = whole ? 0
+                : Math.floor(Math.min(PANE_ROW_MARGIN_PX, Math.max(0, (natural - shown) / 2)));
+            this.view = { top, rows: rowsShown, scale, size: shown, inner, factor, natural, whole, margin };
             const stretch = factor > 1;
             this.root.classList.toggle("is-stretched", stretch);
+            const reach = inner + 2 * margin;
             if (this.axis === "xz") {
                 this.root.style.height = `${shown}px`;
-                this.canvasHost.style.height = `${inner}px`;
-                this.canvasHost.style.transform = stretch ? `scaleY(${factor})` : "";
+                this.canvasHost.style.height = `${reach}px`;
+                this.canvasHost.style.transform = stretch ? `scaleY(${factor})`
+                    : margin ? `translateY(${-margin}px)` : "";
                 owner.wrapper?.style.setProperty("--plx-section-xz-h", `${shown}px`);
             } else {
                 this.root.style.width = `${shown}px`;
-                this.canvasHost.style.width = `${inner}px`;
-                this.canvasHost.style.transform = stretch ? `scaleX(${factor})` : "";
+                this.canvasHost.style.width = `${reach}px`;
+                this.canvasHost.style.transform = stretch ? `scaleX(${factor})`
+                    : margin ? `translateX(${-margin}px)` : "";
                 owner.wrapper?.style.setProperty("--plx-section-yz-w", `${shown}px`);
             }
             // The pane's band in the canvas layout (services/canvasLayout.js):
@@ -537,12 +902,15 @@
             const geometry = this.geometry;
             const { top, rows: rowsShown, scale } = view;
             // The pane's own viewer is `inner` across; a stretched pane scales
-            // it up to its size on screen (layout).
+            // it up to its size on screen (layout). A scrolled one reaches
+            // `margin` past each edge (layout moves it back by as much): the
+            // same centre, the same scale, rows loaded beyond what shows.
             const inner = view.inner ?? view.size;
+            const reach = inner + 2 * (view.margin || 0);
             const along = this.axis === "xz" ? [frame.x0, frame.x1] : [frame.y0, frame.y1];
             const width = geometry.width;                    // image px along the section
-            const containerWidth = this.axis === "xz" ? frame.width : inner;
-            const containerHeight = this.axis === "xz" ? inner : frame.height;
+            const containerWidth = this.axis === "xz" ? frame.width : reach;
+            const containerHeight = this.axis === "xz" ? reach : frame.height;
             // The pane was just resized; tell the viewport now rather than at
             // its next frame, or the zoom below is computed for the old size.
             this.osd.viewport.resize(new OpenSeadragon.Point(containerWidth, containerHeight),
@@ -733,10 +1101,23 @@
             //: Whether navigation reaches the panes as revisions (main.js
             //: registers them as a surface); the old subscriber path otherwise.
             this.surface = false;
-            //: Counters, for the benchmark and a person asking: handovers that
-            //: hit their deadline, and shows superseded before they landed.
-            this.timeouts = 0;
+            //: Counters, for the benchmark and a person asking: handovers still
+            //: waiting at PANE_SLOW_MS, and shows superseded before they landed.
+            this.slow = 0;
             this.superseded = 0;
+            //: Whether the plane's view is easing (OSD `animation` until
+            //: `animation-finish`): a section then comes in at the level that
+            //: covers, with no grace (grace()).
+            this.moving = false;
+            //: Each showAt() is a pan; only the newest commits what it loaded
+            //: (each pane on its own, as it covers).
+            this.panGeneration = 0;
+            //: The frame `t` a navigation revision is loading the sections at
+            //: (prepare), until it lands or is superseded: a pan meanwhile
+            //: cuts at it (tokens), and waits for it (Pane.show).
+            this.pendingT = null;
+            this.pendingRev = null;
+            this._requeue = 0;
             this.targetTimer = 0;
             this.targetKey = "";
             //: The pane whose divider is being dragged ("xz" | "yz"), or null:
@@ -942,8 +1323,14 @@
             this.wrapper.append(this.crossX, this.crossY);
             this.panes = panes;
             const viewer = imageViewer.viewer;
-            viewer.addHandler("animation", () => this.follow(false));
-            viewer.addHandler("animation-finish", () => this.follow(true));
+            viewer.addHandler("animation", () => {
+                this.moving = true;
+                this.follow(false);
+            });
+            viewer.addHandler("animation-finish", () => {
+                this.moving = false;
+                this.follow(true);
+            });
             viewer.addHandler("resize", () => this.follow(true));
             global.addEventListener("plexora:hd-mode-changed", () => this.rebuild());
             // A channel's exact window replacing its provisional one: sections
@@ -1002,14 +1389,16 @@
         }
 
         /**
-         * The section tokens for `frame` (the view's, by default) at frame `t`.
+         * The section tokens for `frame` (the view's, by default) at frame `t`
+         * -- by default the frame a revision is loading the sections at, if
+         * one is (`pendingT`), else the one they draw.
          *
          * A cut that moved by less than one screen pixel keeps the token the
          * pane already has: the section through the next image row is the
          * same picture at this zoom, and a new token is a new set of tiles for
          * every channel. Zoomed out, one screen pixel is many image rows.
          */
-        tokens(frame = this.frame, t = this.drawn()?.t || 0) {
+        tokens(frame = this.frame, t = this.pendingT ?? (this.drawn()?.t || 0)) {
             const info = this.viewState.info || {};
             const width = Number(info.width) || 1;
             const height = Number(info.height) || 1;
@@ -1028,13 +1417,73 @@
             return { xz: `${prefix}xzy${y}`, yz: `${prefix}yzx${x}`, x, y };
         }
 
-        /** Ask both panes for the section through `frame` (the view's). */
+        /**
+         * Ask both panes for the section through `frame` (the view's). EACH
+         * PANE REVEALS ON ITS OWN, as soon as its new section can draw: the
+         * pane slower to cover never holds the other back. Both load
+         * deferred, and each is committed as it resolves if no newer pan came
+         * since (`panGeneration`) -- an older pan's section never lands over a
+         * newer one: it is dropped (`discard`), or, where the newer pan asked
+         * for the same section and shares it (Pane.show's claims), left for
+         * that pan to commit. A pane's label names its new section at the
+         * pane's own commit, `data-pending` until then. Resolves true when
+         * this pan was revealed in both panes (a pane whose section is
+         * unchanged counts as revealed).
+         */
         showAt(frame = this.frame) {
-            if (!frame || !this.panes) return;
+            if (!frame || !this.panes) return Promise.resolve(false);
             const tokens = this.tokens(frame);
-            this.panes.xz.show(tokens.xz);
-            this.panes.yz.show(tokens.yz);
-            this.paintLabels(tokens);
+            const pan = ++this.panGeneration;
+            const axes = ["xz", "yz"];
+            for (const axis of axes) {
+                if (tokens[axis] !== this.panes[axis].token) this.flagPending(this.panes[axis], true);
+            }
+            const reveal = (axis) => this.panes[axis].show(tokens[axis], { defer: true })
+                .then((closure) => {
+                    if (pan !== this.panGeneration) {
+                        closure?.discard?.();
+                        return false;
+                    }
+                    closure?.();
+                    this.paintLabels(tokens, [axis]);
+                    this.settlePending();
+                    return true;
+                });
+            return Promise.all(axes.map(reveal)).then((revealed) => revealed.every(Boolean));
+        }
+
+        /** Mark `pane`'s label as naming a section about to be replaced. */
+        flagPending(pane, on) {
+            const data = pane?.label?.dataset;
+            if (!data) return;
+            if (on) data.pending = "1";
+            else delete data.pending;
+        }
+
+        /** After a commit: pending only where a newer section is still coming. */
+        settlePending() {
+            for (const pane of Object.values(this.panes || {})) {
+                const loading = pane.loading;
+                this.flagPending(pane, Boolean(pane.after || (loading && loading.token !== pane.token)));
+            }
+        }
+
+        /** How long a section's handover waits for full resolution once it
+         *  covers its pane (Pane.show): none while the view moves or the hand
+         *  scrubs through planes -- where it is going is what it wants to see
+         *  -- and PANE_GRACE_MS at rest. */
+        grace() {
+            return this.moving || this.viewState?.scrubbing?.() ? 0 : PANE_GRACE_MS;
+        }
+
+        /** showAt() once this task is done: a pan that was queued behind a new
+         *  frame's sections, which were dropped (Pane.show). */
+        requeue() {
+            if (this._requeue) return;
+            this._requeue = setTimeout(() => {
+                this._requeue = 0;
+                if (this.enabled && this.panes && this.frame) this.showAt(this.frame);
+            }, 0);
         }
 
         /**
@@ -1130,7 +1579,12 @@
 
         rebuild() {
             if (!this.enabled || !this.panes) return;
-            for (const pane of Object.values(this.panes)) pane.token = "";
+            for (const pane of Object.values(this.panes)) {
+                pane.token = "";
+                // The same cut again (another quality, window or channel set):
+                // it never dips to a coarser level on the way.
+                pane.refresh = true;
+            }
             this.follow(true);
         }
 
@@ -1139,7 +1593,8 @@
          * the z-line (and the scroll of a pane too small for its stack) moves
          * in the same frame as the plane's picture, never ahead of it; a new
          * frame `t` rebuilds both sections invisibly and reveals them in that
-         * frame too.
+         * frame too. Until then a pan cuts at the new frame (`pendingT`) and
+         * waits for it rather than cancelling it (Pane.show).
          */
         prepare(rev) {
             const state = rev.state;
@@ -1153,21 +1608,41 @@
             }
             this.frame = this.measure() || this.frame;
             if (!this.frame) return show;
-            const tokens = this.tokens(this.frame, state.t || 0);
+            const t = state.t || 0;
+            this.pendingT = t;
+            this.pendingRev = rev;
+            const release = () => {
+                if (this.pendingRev !== rev) return;
+                this.pendingT = null;
+                this.pendingRev = null;
+            };
+            rev.onSupersede?.(release);
+            const tokens = this.tokens(this.frame, t);
+            for (const [axis, pane] of Object.entries(this.panes)) {
+                if (tokens[axis] !== pane.token) this.flagPending(pane, true);
+            }
             return Promise.all([
                 this.panes.xz.show(tokens.xz, { defer: true, rev }),
                 this.panes.yz.show(tokens.yz, { defer: true, rev }),
             ]).then(([xz, yz]) => {
-                if (rev.superseded) return null;
+                if (rev.superseded) {
+                    release();
+                    this.settlePending();
+                    return null;
+                }
                 const commit = () => {
                     xz?.();
                     yz?.();
                     show();
+                    release();
                     this.paintLabels(tokens);
+                    this.settlePending();
                 };
                 commit.discard = () => {
                     xz?.discard?.();
                     yz?.discard?.();
+                    release();
+                    this.settlePending();
                 };
                 return commit;
             });
@@ -1196,8 +1671,17 @@
             this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
         }
 
-        paintLabels(tokens) {
-            this.labelled = tokens;
+        /**
+         * Name the section each pane draws. `axes`: the panes whose section
+         * `tokens` names now (showAt paints a pane at its own commit; both by
+         * default); the other keeps the one it named. `labelled` holds each
+         * pane's, so a repaint (follow) names what each has on screen.
+         */
+        paintLabels(tokens, axes = ["xz", "yz"]) {
+            const labelled = { ...this.labelled };
+            if (axes.includes("xz")) labelled.y = tokens.y;
+            if (axes.includes("yz")) labelled.x = tokens.x;
+            this.labelled = labelled;
             // "z ×2.4" when z is stretched to fill the pane, "all planes" when
             // the pane holds the whole stack at the plane's proportions.
             const whole = (pane) => {
@@ -1205,13 +1689,15 @@
                 if (factor > 1.001) return ` · z ×${factor.toFixed(1)}`;
                 return pane.view?.whole ? " · all planes" : "";
             };
-            this.panes.xz.label.textContent = `XZ · y ${tokens.y.toLocaleString()}${whole(this.panes.xz)}`;
-            this.panes.yz.label.textContent = `YZ · x ${tokens.x.toLocaleString()}${whole(this.panes.yz)}`;
             const assumed = (this.viewState.info?.spacing?.z?.source || "missing");
             const note = ["metadata", "manual"].includes(assumed) ? "" : " · z step assumed";
-            if (note) {
-                this.panes.xz.label.textContent += note;
-                this.panes.yz.label.textContent += note;
+            if (Number.isFinite(labelled.y)) {
+                this.panes.xz.label.textContent =
+                    `XZ · y ${labelled.y.toLocaleString()}${whole(this.panes.xz)}${note}`;
+            }
+            if (Number.isFinite(labelled.x)) {
+                this.panes.yz.label.textContent =
+                    `YZ · x ${labelled.x.toLocaleString()}${whole(this.panes.yz)}${note}`;
             }
         }
 
@@ -1264,7 +1750,10 @@
 
         channelsChanged() {
             if (!this.enabled || !this.panes) return;
-            for (const pane of Object.values(this.panes)) pane.token = "";
+            for (const pane of Object.values(this.panes)) {
+                pane.token = "";
+                pane.refresh = true;
+            }
             this.follow(true);
         }
     }

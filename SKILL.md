@@ -5184,10 +5184,30 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   keep the next planes in the direction of travel built invisibly, so a step
   to one is an opacity flip. A plane swap does not wait for full resolution:
   `viewerManager.whenItemCanDraw(item, done, PLANE_SWAP_GRACE_MS)` (140 ms,
-  through `channelFade.whenCanDraw`'s `grace`) hands over once the new plane
+  through `channelFade.whenCanDraw(item, done, {grace = null, onFailed})`:
+  `null` means coverage never counts, `0` ready as soon as it covers, `> 0`
+  the grace then coverage) hands over once the new plane
   `covers` the view at ANY level, so a far jump to a cold plane shows up soft
   in a beat and sharpens in place instead of leaving the old plane frozen; a
-  quality swap passes no grace and still waits in full. Volumes get OSD
+  quality swap passes no grace and still waits in full. While the hand moves
+  (`rev.scrub`) the grace is `PLANE_SWAP_SCRUB_GRACE_MS` (0): a drag wants a
+  preview at the hand's pace. A swap that has not covered after
+  `PLANE_SWAP_SLOW_MS` (2000) is reported "slow" and NEVER hands over -- the
+  old plane stays, however slow the server; the old 8 s
+  `PLANE_SWAP_TIMEOUT_MS` is kept only by the swaps that still hand over at
+  the deadline (a 3-D mask's label plane, a colour stack's brightfield base).
+  How a swap is going is a `plexora:surface-status` event on `window`
+  (`{surface: main|xz|yz, phase: idle|fetching|preview|refining|slow|error,
+  loaded, needed, failed, level, since, retry}`; `onPlaneStatus(fn)` on the
+  manager), which the new `views/paneStatus.js` (`window.PlexoraPaneStatus`,
+  loaded from `index.html` after `sectionPanes.js`, built by `main.js` as
+  `__plexora.paneStatus`; `state(surface)` is what the bench reads) draws as a
+  small light on each of the three views. A tile that failed is tagged
+  `tile._plexoraFailed` (`"retrying"` | `"final"` | `"aborted"`) by
+  `tileFetch.js`'s `fail`, and the status's `retry` is
+  `tileFetch.retryFailed(items)`. `channelFade.js` also exports
+  `coveringLevel`, `progress`, `settledLoaded`, `blank`, `failedOut` and
+  `COVER_POLL_MS` (16) for those readings. Volumes get OSD
   `blendTime` 0.18 (`imageViewer.js`; planar stays 0) so the finer levels
   dissolve over the coarse one. `main.js` makes a volume HD from the start
   even when streamed, and an HD add asks `/volume/window` alongside rather
@@ -5198,7 +5218,8 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   thumb breathes (`.viewer-depth-strip.is-loading`, `viewer.css`) while a
   plane loads. `viewerSidebar.easeSlotRange` eases an auto-levelled range in
   over `RANGE_EASE_MS` (240 ms) rather than jumping, never the user's drag.
-  `viewerManager.js` is bundled, so a change to it means `npm run build`.
+  `viewerManager.js` is bundled, so a change to it means `npm run build`
+  (`npm ci` in `plexora/client` now installs `node_modules` in place).
   `planeMotion.compose` lays an OPAQUE ghost
   (ground + canvas) for the plane fade. `GLRenderer.ready()` builds the tile
   program once per page. `volumeRenderer.js` keeps 3-D textures by what their
@@ -5289,7 +5310,19 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   stack stretches z by a CSS scale and says so in its label ("z ×2.4"). Panes
   are clamped to leave `MIN_XY_PX` (240 px) of the main view. `MAX_SHARE` is
   0.9 on the client, matching `SECTION_SHARE`'s upper bound in
-  `volume_routes.py`.
+  `volume_routes.py`. A pane re-cuts by coverage handover like the plane:
+  after `PANE_GRACE_MS` (140) the new section commits at whatever level
+  covers first, each pane on its own as soon as it covers (an older pan's late
+  result never lands: `panGeneration` / `discard`), the old section sliding
+  along until then; one still waiting at `PANE_SLOW_MS` (2000) says so (the old
+  `timeouts` counter is now `slow`) and the pane raises the same
+  `plexora:surface-status` events as the plane. A scrolled pane's OSD canvas
+  is `2 * PANE_ROW_MARGIN_PX` (96) larger than what shows (`pane.view.margin`),
+  so a pan has pixels to slide into. A Z or frame change still commits both
+  panes with the plane in one revision (`pendingT` keeps a pan during a
+  deferred frame handover on the new frame), and a pane's label is painted at
+  its own commit, `data-pending` meanwhile, so the label never names a section
+  that is not yet on screen.
 - No 3-D flash: `volumeRenderer.js` keeps drawing a channel's last good
   texture until its new one can replace it. `planeMotion.VolumeGhost` is the
   same opaque crossfade for the 3-D canvas at rest. MIP keeps its step count
@@ -5298,7 +5331,25 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   the one before is a jump and supersedes the in-flight revision at once.
   `tileFetch.js` schedules by `TIER` visible / handover / sharpen /
   handoverSharpen / standby. Standby planes look ahead by the hand's pace
-  (`planeMotion.js` `STANDBY_LOOKAHEAD_MS`, `STANDBY_AHEAD`).
+  (`planeMotion.js` `STANDBY_LOOKAHEAD_MS`, `STANDBY_AHEAD`); a close-spaced
+  far move counts as travel. Scrubbing: while the hand moves
+  (`viewState.scrubbing()`, held `SCRUB_HOLD_MS` (100) past the last request;
+  a revision requested then carries `rev.scrub`, and a scrub revision that
+  has not covered the view in `SCRUB_SUPERSEDE_MS` (250) gives way to the
+  newest request, `_supersedeJumped()`; `rev.mainReady`,
+  `SCRUB_SYNC_WAIT_MS` (40)) every plane shows as soon as its coarsest tiles
+  cover and nothing sharpens, because the wire is kept for the next plane:
+  `tileFetch.setScrubbing(until)` / `endScrubbing()` / `scrubbing()` hold
+  sharpen, standby and cover tiles finer than a span (`SCRUB_SHARPEN_SPAN` 0,
+  `SCRUB_COVER_SPAN` 0, `SCRUB_STANDBY_SPAN` 1), wired from `planeMotion.js`.
+  The hand letting go is `viewState.endScrub()` (`depthStrip.js` on
+  pointer-up, a step key's keyup and Play stopping), which raises
+  `plexora:scrub-ended` so the plane under the hand sharpens in place at
+  once. `planeMotion.planeLoaded` reads `channelFade.settledLoaded`, and the
+  strip's thumb breathes off its `loadingSource` hook (the plane's status) so
+  it stops only once the plane it points at is on screen. A stack's OSD gets
+  `maxTilesPerFrame` 32 and a loader `jobLimit` of 256 (`imageViewer.js`), so
+  a coarse plane's tiles land in one frame rather than one a frame.
 - Server: `server/volume/serve.py` — the level payload builder
   (`parse_level`, `read_level`, `level_payload`, `forwarded_payload`, an
   LRU under `PLEXORA_LEVEL_CACHE_MB`, `LEVEL_GATE`) shared by
@@ -5383,7 +5434,13 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   at a time have no block to read ahead, so there `TILE_PREFETCHER` (same
   module) makes the next planes' TILES ahead into the tile cache, plane-major,
   in the direction of travel, under the key the route files them under
-  (`data_routes._tiles_ahead`, `node/api.py`). z-chunked OME-Zarr planes read
+  (`data_routes._tiles_ahead`, `node/api.py`); `TILE_AHEAD` (2) planes there,
+  and `COARSE_TILE_AHEAD` (4) at a coarse level of ANY stack, because a
+  coarse tile costs a few chunks and a drag's next planes can all be previews
+  (`planes_ahead`; `coarse_level` is the `COARSE_LEVELS` (2) coarsest of a
+  pyramid, never while `levels_pending` says they are stand-ins for levels
+  yet to be derived; `data_model.tiles_ahead_of(..., level)` returns
+  `(spec, depth, ahead)`). z-chunked OME-Zarr planes read
   through the chunk cache (`sources/ngff.py`). The primary's encoded tile
   cache is budgeted in bytes by `PLEXORA_TILE_CACHE_MB` (the node's rule).
   Tests: `tests/test_volume_plane_read_ahead.py`. On a data node
@@ -5408,7 +5465,11 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   Further env (all in `tools/docs/env_vars.yaml`, group Z-stacks):
   `PLEXORA_PROJECTION_GATE`, `PLEXORA_PLANE_CACHE`, `PLEXORA_WINDOW_SCAN`.
 - Benchmark: `tools/bench3d/` (README there; Chrome over CDP with the GPU,
-  scratch data root), results as `docs/internal/3d/perf/<sha>-<label>.json`.
+  scratch data root), results as `docs/internal/3d/perf/<sha>-<label>.json`
+  (or `run.py --out DIR`); it runs on Windows now, with everything generated
+  under `$PLEXORA_BENCH_HOME`. Scenarios `zreveal` (warm steps, then cold
+  jumps), `raildrag` (the rail dragged with the real mouse) and `panesync`
+  (the `sync` pan with the panes on) sample the panes' luminance too.
   Fixtures include `mediumz` (OME-Zarr whose coarse levels halve z) and
   `flatstack` (3 x 100 x 2048², one level). `fixtures.py register --tree
   <tree> --data <root>` gives each checkout its own data root, because what
@@ -5417,15 +5478,18 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `volume_levelSpread`, `bricks_diskMB` and `pyramid_diskMB`, with targets in
   `targets.json`.
 - Tests: JS probes
-  `tests/js/{plane_flash,gl_init,nav_revision,section_panes,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
-  (wrapped in `tests/test_viewer_3d_client.py`), `test_volume_level_cache.py`,
+  `tests/js/{plane_flash,gl_init,nav_revision,section_panes,pane_status,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
+  (wrapped in `tests/test_viewer_3d_client.py`; `pane_status_probe.mjs` is
+  `test_each_pane_says_when_it_is_loading`, floor 14; the floors are now
+  nav_revision 35, section_panes 48, tile_fetch 47), `test_volume_level_cache.py`,
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, `test_volume_depth_levels.py`, node level
   parity in `test_volume_backend.py`, and `test_volume_fluid_planes.py`
   (offset reads, the background lane, read-ahead, the node tile cache and
   persisted packets, allocation sizing; it runs
   `tests/js/coverage_ready_probe.mjs` for `covers`/grace and the hovered
-  plane, skipping without `node`). Picking a cell on a plane:
+  plane, floor 45, skipping without `node`); `test_volume_plane_read_ahead.py`
+  carries the coarse-level tests. Picking a cell on a plane:
   `test_spatial_index.py`, `test_nearest_cell.py`, `test_nearest_cell_3d.py`
   and `tests/js/nearest_cell_query_probe.mjs` (wrapped in
   `test_datalayer_requests.py`) -- the client's `dataLayer.tablePlanes` /
@@ -5433,10 +5497,15 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   volume mode), and `/volume/<ds>/info`'s `table_z`.
   The fade has `tests/js/channel_fade_probe.mjs` wrapped by
   `test_channel_fade_client.py`; `section_panes_probe.mjs` and
-  `volume_renderer_probe.mjs` carry its hook checks, and the
-  `test_viewer_3d_client.py` wrapper now expects at least 30 checks.
+  `volume_renderer_probe.mjs` carry its hook checks (floors 48 and 70 in the
+  `test_viewer_3d_client.py` wrapper).
   The depth controls have `tests/js/view_controls_probe.mjs` and
-  `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`.
+  `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`,
+  whose floors are plane_swap 40, viewer_motion 111, depth_strip 36. On
+  Windows two of `nav_revision_probe.mjs`'s 35 checks fail on timer
+  resolution ("but only up to its hold", "a scrub of thirty steps is a few
+  revisions"), so `test_every_surface_draws_one_navigation_revision` fails
+  there (seen 2026-10-13); treat any other failure in these wrappers as new.
 - Plane-by-plane gating (`docs/internal/3d/PLANE_GATING.md`):
   `server/volume/planes.py` is the per-plane cell index `objects_planes_v1/`,
   written by `measure.measure(planes=)` from the same reads as the object
@@ -8567,6 +8636,13 @@ in **5.6 s**.
 - **Prefetch never fills the wire.** Standby planes take at most one request
   at a time and start only once the plane on screen has loaded, because a
   cold channel enable regressed to 2.9 s while standby tiles held the server.
+  While the hand moves nothing sharpens either (`tileFetch.setScrubbing`):
+  the wire is for the next plane's coarse tiles, so the picture follows the
+  hand a few planes behind instead of trailing it by a second.
+- **Nothing ever goes black.** The plane on screen stays until the next one
+  can draw, however slow the server: a slow swap is reported
+  (`PLANE_SWAP_SLOW_MS`, `plexora:surface-status`) and a failed one offers a
+  retry, but neither hands over to a blank. The section panes hold the same.
 - **Volume readers decompress outside their locks.** Raw chunks are read
   under the file or store lock and inflated with the lock released (`ims.py`
   on `chunk_cache.pool()`: `DECODE_POOL`, or `BACKGROUND_POOL` inside

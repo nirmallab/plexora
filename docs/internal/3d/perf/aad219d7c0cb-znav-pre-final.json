@@ -1,0 +1,7620 @@
+{
+ "label": "znav-pre-final",
+ "sha": "aad219d7c0cb",
+ "dirty": false,
+ "headed": false,
+ "date": "2026-10-13T21:21:02",
+ "reps": 3,
+ "machine": {
+  "platform": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+  "python": "3.13.15"
+ },
+ "results": {
+  "small": {
+   "zreveal": {
+    "scenario": "zreveal",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:21:07.075Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_tileRequests": [
+      2,
+      2,
+      2
+     ],
+     "step_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "step_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "step_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "step_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "step_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheHits": [
+      2,
+      2,
+      2
+     ],
+     "step_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_previewMs": [
+      38.700000047683716,
+      21.40000009536743,
+      28.09999990463257
+     ],
+     "step_fullResMs": [
+      38.700000047683716,
+      31.90000009536743,
+      38.700000047683716
+     ],
+     "step_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileRequests": [
+      4,
+      8,
+      8
+     ],
+     "jump_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "jump_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "jump_serverReadP95": [
+      19.1,
+      19.9,
+      20.6
+     ],
+     "jump_serverCacheHitShare": [
+      0,
+      0.5,
+      0.5
+     ],
+     "jump_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "jump_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileCacheHits": [
+      0,
+      4,
+      4
+     ],
+     "jump_tileCacheMisses": [
+      4,
+      4,
+      4
+     ],
+     "jump_previewMs": [
+      171.99990248680115,
+      100.50004887580872,
+      118.99995112419128
+     ],
+     "jump_fullResMs": [
+      159.39999985694885,
+      107.79999995231628,
+      124.79999995231628
+     ],
+     "jump_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "z0": 6,
+     "steps": [
+      {
+       "spec": "z7",
+       "commit": 19.800000190734863,
+       "full": 38.700000047683716,
+       "preview": 38.700000047683716,
+       "ref": 26.19375
+      },
+      {
+       "spec": "z8",
+       "commit": 2.5999999046325684,
+       "full": 31.90000009536743,
+       "preview": 21.40000009536743,
+       "ref": 25.5
+      },
+      {
+       "spec": "z9",
+       "commit": 9,
+       "full": 38.700000047683716,
+       "preview": 28.09999990463257,
+       "ref": 24.26875
+      }
+     ],
+     "jumps": [
+      {
+       "dest": 23,
+       "commit": 141.29999995231628,
+       "full": 159.39999985694885,
+       "wait": 1.2000000476837158,
+       "preview": 171.99990248680115,
+       "black": 0,
+       "ref": 4.39375,
+       "series": [
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        18.7,
+        14.1,
+        10.8,
+        8.5,
+        6.9,
+        5.6,
+        5,
+        4.5,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4,
+        4.4
+       ],
+       "shows": null
+      },
+      {
+       "dest": 19,
+       "commit": 81.89999985694885,
+       "full": 107.79999995231628,
+       "wait": 0.5,
+       "preview": 100.50004887580872,
+       "black": 0,
+       "ref": 12.88125,
+       "series": [
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        19.7,
+        16.5,
+        14.6,
+        13.4,
+        13,
+        12.8,
+        12.8,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9,
+        12.9
+       ],
+       "shows": null
+      },
+      {
+       "dest": 15,
+       "commit": 98.70000004768372,
+       "full": 124.79999995231628,
+       "wait": 1.1000001430511475,
+       "preview": 118.99995112419128,
+       "black": 0,
+       "ref": 17.23125,
+       "series": [
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        26.3,
+        20.3,
+        18,
+        16.9,
+        16.4,
+        16.4,
+        16.6,
+        16.9,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2,
+        17.2
+       ],
+       "shows": null
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 27.1
+   },
+   "raildrag": {
+    "scenario": "raildrag",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:21:34.466Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "drag_slow_fps": [
+      60.005426022565864,
+      60.00864124433918,
+      60.00096001536025
+     ],
+     "drag_slow_frameP95": [
+      17.100000000000364,
+      17,
+      17.09999999999991
+     ],
+     "drag_slow_frameP99": [
+      17.599999999999454,
+      17.600000000000364,
+      17.59999999999991
+     ],
+     "drag_slow_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_settleMs": [
+      8.099999904632568,
+      3.3999998569488525,
+      4.200000047683716
+     ],
+     "drag_slow_tileRequests": [
+      20,
+      20,
+      20
+     ],
+     "drag_slow_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_slow_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_tileCacheHits": [
+      20,
+      20,
+      20
+     ],
+     "drag_slow_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_fps": [
+      59.74176141838505,
+      59.72672975700221,
+      59.99778809997789
+     ],
+     "drag_fast_frameP95": [
+      16.90000000000009,
+      16.900000000000546,
+      16.800000000000182
+     ],
+     "drag_fast_frameP99": [
+      17.5,
+      17.699999999999818,
+      16.800000000000182
+     ],
+     "drag_fast_dropped": [
+      1,
+      1,
+      0
+     ],
+     "drag_fast_staleFrames": [
+      50,
+      70,
+      48
+     ],
+     "drag_fast_staleShare": [
+      0.23255813953488372,
+      0.3225806451612903,
+      0.22325581395348837
+     ],
+     "drag_fast_staleMax": [
+      3,
+      2,
+      3
+     ],
+     "drag_fast_handLagMax": [
+      4,
+      4,
+      4
+     ],
+     "drag_fast_paintedPlanes": [
+      23,
+      24,
+      23
+     ],
+     "drag_fast_requestedPlanes": [
+      24,
+      24,
+      24
+     ],
+     "drag_fast_settleMs": [
+      19.5,
+      20.90000009536743,
+      52
+     ],
+     "drag_fast_tileRequests": [
+      44,
+      42,
+      44
+     ],
+     "drag_fast_tileCanceled": [
+      0,
+      0,
+      1
+     ],
+     "drag_fast_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_fast_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_tileCacheHits": [
+      42,
+      42,
+      42
+     ],
+     "drag_fast_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_fps": [
+      60.00159578712201,
+      59.99776604062615,
+      59.99680868038934
+     ],
+     "drag_slow_sections_frameP95": [
+      17.200000000000728,
+      17.299999999999272,
+      17.199999999999818
+     ],
+     "drag_slow_sections_frameP99": [
+      17.699999999999818,
+      18,
+      17.699999999999818
+     ],
+     "drag_slow_sections_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_settleMs": [
+      4.299999952316284,
+      9.599999904632568,
+      6.200000047683716
+     ],
+     "drag_slow_sections_tileRequests": [
+      20,
+      20,
+      20
+     ],
+     "drag_slow_sections_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_slow_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_tileCacheHits": [
+      20,
+      20,
+      20
+     ],
+     "drag_slow_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_fps": [
+      59.998333379628356,
+      59.99944700970497,
+      60
+     ],
+     "drag_fast_sections_frameP95": [
+      16.800000000000182,
+      16.800000000000182,
+      16.800000000000182
+     ],
+     "drag_fast_sections_frameP99": [
+      16.800000000000182,
+      16.900000000000546,
+      17.100000000000364
+     ],
+     "drag_fast_sections_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_staleFrames": [
+      46,
+      50,
+      56
+     ],
+     "drag_fast_sections_staleShare": [
+      0.21395348837209302,
+      0.23255813953488372,
+      0.26046511627906976
+     ],
+     "drag_fast_sections_staleMax": [
+      3,
+      2,
+      2
+     ],
+     "drag_fast_sections_handLagMax": [
+      4,
+      4,
+      4
+     ],
+     "drag_fast_sections_paintedPlanes": [
+      23,
+      23,
+      23
+     ],
+     "drag_fast_sections_requestedPlanes": [
+      24,
+      24,
+      24
+     ],
+     "drag_fast_sections_settleMs": [
+      19.200000047683716,
+      55.5,
+      21.700000047683716
+     ],
+     "drag_fast_sections_tileRequests": [
+      44,
+      44,
+      42
+     ],
+     "drag_fast_sections_tileCanceled": [
+      2,
+      2,
+      2
+     ],
+     "drag_fast_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_fast_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_tileCacheHits": [
+      43,
+      44,
+      42
+     ],
+     "drag_fast_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "cases": {
+      "drag_slow": {
+       "start": 6,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6277.100000143051,
+        "frames": 377,
+        "final": "z6"
+       },
+       "lum": {
+        "ref": 26.30625,
+        "black": 0,
+        "series": [
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.2,
+         26.1,
+         26.1,
+         26,
+         26.1,
+         26.1,
+         26.1,
+         26.1,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         25.8,
+         25.6,
+         25.6,
+         25.4,
+         25.5,
+         25.5,
+         25.5,
+         25.4,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25,
+         24.7,
+         24.5,
+         24.4,
+         24.4,
+         24.2,
+         24.2,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         23.6,
+         23.2,
+         22.9,
+         22.6,
+         22.5,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         21.6,
+         21.2,
+         21,
+         20.8,
+         20.7,
+         20.5,
+         20.6,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20,
+         19.7,
+         19.5
+        ]
+       }
+      },
+      "drag_fast": {
+       "start": 0,
+       "span": 23,
+       "sweeps": 3,
+       "rate": 40,
+       "moves": 217,
+       "onRail": true,
+       "first": {
+        "dragMs": 3636,
+        "frames": 218,
+        "final": "z0"
+       },
+       "lum": {
+        "ref": 8.33125,
+        "black": 0,
+        "series": [
+         8.3,
+         8.3,
+         8.3,
+         9.4,
+         10,
+         13.6,
+         15.4,
+         16,
+         16.1,
+         16.1,
+         18.3,
+         19.3,
+         19.8,
+         20.1,
+         23.2,
+         24.8,
+         25.5,
+         25.6,
+         24.4,
+         25,
+         25.4,
+         23,
+         22.3,
+         22.3,
+         19.8,
+         19.3,
+         19.2,
+         18,
+         17.9,
+         18,
+         16.7,
+         16.4,
+         16.6,
+         16.6,
+         15.1,
+         14.5,
+         14.5,
+         14.5,
+         11.9,
+         11.1,
+         10.7,
+         10.7,
+         6.8,
+         9.1,
+         10.1,
+         10.7,
+         10.7,
+         10.7,
+         11.9,
+         12.3,
+         12.7,
+         12.9,
+         12.9,
+         14.3,
+         15,
+         15.5,
+         15.8,
+         16.3,
+         17.7,
+         18.5,
+         19.2,
+         19.9,
+         20.5,
+         22.2,
+         23.5,
+         24.2,
+         24.3,
+         24.8,
+         25.7,
+         26.1,
+         26.2,
+         23.7,
+         18.6,
+         14.1,
+         12.4,
+         9.9,
+         11,
+         11.5,
+         14.3,
+         17.7,
+         19.4,
+         21.8,
+         24,
+         25,
+         25.5,
+         25.6,
+         25.6,
+         25.9,
+         24.9,
+         24,
+         22.6,
+         22.3,
+         21,
+         19.5,
+         19.3,
+         18.6,
+         18,
+         17.9,
+         18,
+         18,
+         18,
+         17.4,
+         15.9,
+         14.9,
+         13.4,
+         13,
+         11.5,
+         11,
+         10.8,
+         9.2,
+         8.4,
+         8.2,
+         8.2,
+         8.2,
+         8.2,
+         9.2,
+         10,
+         11.7,
+         13.3,
+         14.2
+        ]
+       }
+      },
+      "drag_slow_sections": {
+       "start": 6,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6281.600000143051,
+        "frames": 377,
+        "final": "z6"
+       },
+       "lum": {
+        "ref": 26.30625,
+        "black": 0,
+        "series": [
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.3,
+         26.1,
+         26.1,
+         26.1,
+         26.1,
+         26.1,
+         26.1,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         26.2,
+         25.8,
+         25.6,
+         25.6,
+         25.4,
+         25.5,
+         25.5,
+         25.5,
+         25.4,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25.5,
+         25,
+         24.7,
+         24.5,
+         24.4,
+         24.4,
+         24.2,
+         24.2,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         24.3,
+         23.6,
+         23.2,
+         22.9,
+         22.6,
+         22.5,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         22.3,
+         21.6,
+         21.2,
+         21,
+         20.8,
+         20.7,
+         20.5,
+         20.6,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20.5,
+         20,
+         19.7,
+         19.5
+        ]
+       }
+      },
+      "drag_fast_sections": {
+       "start": 0,
+       "span": 23,
+       "sweeps": 3,
+       "rate": 40,
+       "moves": 217,
+       "onRail": true,
+       "first": {
+        "dragMs": 3615.2999999523163,
+        "frames": 217,
+        "final": "z0"
+       },
+       "lum": {
+        "ref": 8.33125,
+        "black": 0,
+        "series": [
+         8.3,
+         8.3,
+         8.3,
+         9.3,
+         10,
+         13.6,
+         15.2,
+         16,
+         16.1,
+         16.1,
+         18.3,
+         19.4,
+         19.9,
+         20.1,
+         23.3,
+         24.9,
+         25.5,
+         25.6,
+         24.4,
+         24.8,
+         25.4,
+         25.5,
+         23,
+         22.5,
+         22.3,
+         18.8,
+         18.3,
+         18.6,
+         18.6,
+         17.3,
+         17.2,
+         17.2,
+         17.2,
+         15.9,
+         15.7,
+         15.8,
+         15.8,
+         12.3,
+         11.1,
+         10.7,
+         10.7,
+         7.7,
+         6.4,
+         5.8,
+         5.8,
+         7.3,
+         8,
+         8.2,
+         8.2,
+         11.9,
+         13.5,
+         14.4,
+         14.5,
+         15.6,
+         16.4,
+         17.6,
+         18.5,
+         18.6,
+         18.6,
+         18.8,
+         20.2,
+         21.5,
+         22.2,
+         23.3,
+         23.9,
+         24.2,
+         24.8,
+         24.5,
+         25,
+         25.6,
+         24.2,
+         18.9,
+         17,
+         13.7,
+         12.4,
+         9.9,
+         11,
+         11.5,
+         14.3,
+         17.7,
+         19.4,
+         21.8,
+         24,
+         25.1,
+         25.5,
+         25.6,
+         25.9,
+         24.9,
+         25.2,
+         24.4,
+         24.2,
+         22.9,
+         22.4,
+         22.3,
+         22.3,
+         21,
+         20.6,
+         20.5,
+         20.5,
+         18,
+         16.3,
+         16.4,
+         15.9,
+         14.9,
+         14.6,
+         14.5,
+         13.4,
+         10.1,
+         8.8,
+         6.9,
+         6.2,
+         5.8,
+         5.8,
+         5.8,
+         7.1,
+         9.2,
+         10.3,
+         11.8,
+         13.3,
+         14.2
+        ]
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z23",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z22",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z22",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z22",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z22",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z0",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_0/0/0_0.png?q=hd&view=z0",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z0",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/small/small_1/0/0_0.png?q=hd&view=z0"
+    ],
+    "wall_s": 230.7
+   },
+   "panesync": {
+    "scenario": "panesync",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:25:25.236Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "pan_tileRequests": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "pan_sectionRequests": [
+      4,
+      4,
+      4
+     ],
+     "pan_serverReadP95": [
+      181.5,
+      181.5
+     ],
+     "pan_serverCacheHitShare": [
+      0,
+      1,
+      0
+     ],
+     "pan_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "pan_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCacheMisses": [
+      4,
+      0,
+      0
+     ],
+     "pan_planeChangeMs": [
+      63.700000047683716,
+      41.39999985694885,
+      34.60000014305115
+     ],
+     "pan_xzLeadMs": [
+      0,
+      16.40000009536743,
+      0
+     ],
+     "pan_xzRecutMs": [
+      269.2000000476837,
+      61.5,
+      67.20000004768372
+     ],
+     "pan_xzBlackFrames": [
+      0,
+      0,
+      0
+     ],
+     "pan_yzLeadMs": [
+      0,
+      0,
+      0
+     ],
+     "pan_yzRecutMs": [
+      269.2000000476837,
+      61.5,
+      67.20000004768372
+     ],
+     "pan_yzBlackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "pans": [
+      {
+       "plane": 63.700000047683716,
+       "panes": {
+        "xz": {
+         "first": 63.700000047683716,
+         "lead": 0,
+         "recut": 269.2000000476837,
+         "black": 0,
+         "frames": 83,
+         "ref": 9.75,
+         "shows": null,
+         "series": [
+          22.9,
+          23.4,
+          23.7,
+          22.8,
+          22.8,
+          22.8,
+          22.1,
+          22.1,
+          21.8,
+          21.8,
+          21.8,
+          21.5,
+          21.5,
+          21.3,
+          22.2,
+          23,
+          23.3,
+          23.5,
+          22.8,
+          22.1,
+          21.8,
+          22.1,
+          22.9,
+          23.4,
+          23.4,
+          22.8,
+          22.3,
+          22.2,
+          21.9,
+          21.9,
+          22.3,
+          22.4,
+          22.7,
+          22.6,
+          22.8,
+          23.1,
+          23,
+          23.1,
+          23.2,
+          9.8,
+          9.8,
+          9.9,
+          9.5,
+          9.5,
+          9.5,
+          9.4,
+          9.5,
+          9.5,
+          9.4,
+          9.4,
+          9.4,
+          9.4,
+          9.5,
+          9.4,
+          9.7,
+          9.7,
+          9.7,
+          9.7,
+          9.8,
+          9.6
+         ]
+        },
+        "yz": {
+         "first": 63.700000047683716,
+         "lead": 0,
+         "recut": 269.2000000476837,
+         "black": 0,
+         "frames": 83,
+         "ref": 28.6,
+         "shows": null,
+         "series": [
+          28.1,
+          27.7,
+          27.7,
+          28.1,
+          28.1,
+          28.1,
+          28.7,
+          28.7,
+          28.6,
+          28.6,
+          28.6,
+          29.6,
+          29.6,
+          30,
+          30.9,
+          31.7,
+          31.6,
+          31.9,
+          31.9,
+          31.6,
+          30.6,
+          29.9,
+          29.8,
+          28.2,
+          28.2,
+          27.7,
+          27.4,
+          28.3,
+          29,
+          29.5,
+          30.2,
+          30.3,
+          30.9,
+          31.3,
+          31.5,
+          31.8,
+          32.3,
+          32.6,
+          32.8,
+          24.5,
+          24.6,
+          24.9,
+          25.3,
+          25.8,
+          25.9,
+          25.9,
+          26.1,
+          26.2,
+          26.5,
+          26.6,
+          27,
+          27.1,
+          27.3,
+          27.4,
+          27.4,
+          27.6,
+          27.8,
+          28,
+          27.7,
+          27.8
+         ]
+        }
+       }
+      },
+      {
+       "plane": 41.39999985694885,
+       "panes": {
+        "xz": {
+         "first": 57.799999952316284,
+         "lead": 16.40000009536743,
+         "recut": 61.5,
+         "black": 0,
+         "frames": 69,
+         "ref": 23.375,
+         "shows": null,
+         "series": [
+          9.7,
+          9.7,
+          9.8,
+          9.8,
+          9.4,
+          9.5,
+          9.6,
+          9.8,
+          10.1,
+          10.3,
+          10.4,
+          10.3,
+          10,
+          9.8,
+          9.7,
+          9.6,
+          10,
+          10.4,
+          10.2,
+          10.2,
+          9.8,
+          9.5,
+          9.8,
+          10,
+          10.1,
+          23.3,
+          22.8,
+          22.2,
+          21.6,
+          21.4,
+          21.5,
+          21.7,
+          21.8,
+          22.1,
+          22.4,
+          22.7,
+          23.2,
+          23.1,
+          23.5,
+          23.6,
+          23.8,
+          23.8,
+          23.7,
+          23.6,
+          23.6,
+          23.6,
+          23.5,
+          23.6,
+          23.6,
+          23.5,
+          23.6,
+          23.5,
+          23.6,
+          23.6,
+          23.6,
+          23.4,
+          23.4,
+          23.3,
+          23.3,
+          23.2
+         ]
+        },
+        "yz": {
+         "first": 41.39999985694885,
+         "lead": 0,
+         "recut": 61.5,
+         "black": 0,
+         "frames": 69,
+         "ref": 27.9,
+         "shows": null,
+         "series": [
+          28.8,
+          28.8,
+          28.3,
+          27.7,
+          27.1,
+          26.2,
+          25.4,
+          24.6,
+          24.7,
+          24.7,
+          24.8,
+          25.4,
+          26.1,
+          27.3,
+          28.3,
+          28.6,
+          28.7,
+          28.5,
+          27.7,
+          28.1,
+          27.4,
+          25.2,
+          25.5,
+          27.1,
+          28.7,
+          31.6,
+          31.2,
+          30.9,
+          30.3,
+          30.2,
+          29.7,
+          29.3,
+          29,
+          28.8,
+          28.7,
+          28.2,
+          28,
+          27.7,
+          27.5,
+          27.4,
+          27.5,
+          27.6,
+          27.6,
+          27.9,
+          27.7,
+          28,
+          27.8,
+          27.8,
+          27.8,
+          27.9,
+          28,
+          27.8,
+          27.8,
+          27.9,
+          27.8,
+          27.7,
+          27.8,
+          27.8,
+          28,
+          28.1
+         ]
+        }
+       }
+      },
+      {
+       "plane": 34.60000014305115,
+       "panes": {
+        "xz": {
+         "first": 34.60000014305115,
+         "lead": 0,
+         "recut": 67.20000004768372,
+         "black": 0,
+         "frames": 67,
+         "ref": 9.65625,
+         "shows": null,
+         "series": [
+          22.9,
+          23.3,
+          23.4,
+          23.3,
+          23.6,
+          23.6,
+          23.6,
+          22.8,
+          22,
+          21.7,
+          21.3,
+          21.9,
+          22.7,
+          23.4,
+          23.6,
+          23.1,
+          22.3,
+          21.8,
+          21.8,
+          22.9,
+          23.3,
+          23.1,
+          22.9,
+          22.3,
+          9.7,
+          9.8,
+          10.1,
+          10.1,
+          10.3,
+          10.3,
+          10.3,
+          10.4,
+          10.3,
+          10.4,
+          10.1,
+          10.1,
+          9.8,
+          9.9,
+          9.8,
+          9.5,
+          9.5,
+          9.5,
+          9.3,
+          9.5,
+          9.5,
+          9.4,
+          9.4,
+          9.4,
+          9.3,
+          9.5,
+          9.4,
+          9.7,
+          9.7,
+          9.7,
+          9.7,
+          9.7,
+          9.6,
+          9.6,
+          9.7,
+          9.6
+         ]
+        },
+        "yz": {
+         "first": 34.60000014305115,
+         "lead": 0,
+         "recut": 67.20000004768372,
+         "black": 0,
+         "frames": 67,
+         "ref": 27.8,
+         "shows": null,
+         "series": [
+          28.1,
+          27.9,
+          27.8,
+          27.8,
+          27.9,
+          27.6,
+          27.5,
+          27.9,
+          28.5,
+          29.3,
+          29.6,
+          30.5,
+          31.4,
+          31.8,
+          31.9,
+          31.9,
+          31.5,
+          30.8,
+          30,
+          30.1,
+          29.5,
+          28.5,
+          27.6,
+          27.7,
+          28.1,
+          27.1,
+          26.3,
+          25.3,
+          25.4,
+          25.2,
+          24.8,
+          24.6,
+          24.6,
+          24.7,
+          24.7,
+          24.6,
+          24.5,
+          24.5,
+          24.9,
+          25.2,
+          25.4,
+          25.8,
+          25.9,
+          26.1,
+          26.2,
+          26.5,
+          26.6,
+          26.9,
+          27,
+          27.4,
+          27.4,
+          27.6,
+          27.6,
+          27.8,
+          27.9,
+          27.8,
+          27.8,
+          27.9,
+          28.2,
+          27.9
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 14.9
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "small",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-14T01:25:39.711Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_commit": [
+      18.100000143051147,
+      4.300000190734863,
+      15.099999904632568,
+      18.5,
+      16
+     ],
+     "step_full": [
+      18.200000047683716,
+      5.400000095367432,
+      16.700000047683716,
+      20.299999952316284,
+      18.700000047683716
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      314.40000009536743
+     ],
+     "scrub_paintedPlanes": [
+      17
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      4,
+      35.40000009536743,
+      36.59999990463257,
+      8.799999952316284,
+      15.900000095367432,
+      17.09999990463257,
+      11.400000095367432,
+      16.700000047683716,
+      6.8999998569488525,
+      16.59999990463257,
+      15.400000095367432,
+      10.100000143051147,
+      17.5,
+      18.299999952316284,
+      18.700000047683716,
+      12.099999904632568,
+      -148.90000009536743
+     ],
+     "scrub_fps": [
+      60.04366812227073
+     ],
+     "scrub_frameP95": [
+      16.899999999999636
+     ],
+     "scrub_frameP99": [
+      17.700000000000728
+     ],
+     "scrub_dropped": [
+      0
+     ],
+     "scrub_tileRequests": [
+      22
+     ],
+     "scrub_tileMB": [
+      46.170958
+     ],
+     "scrub_canceled": [
+      0
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "step_firstVisibleChange": [
+      50.09999990463257,
+      34.39999985694885,
+      38.09999990463257,
+      84.29999995231628,
+      36.200000047683716
+     ],
+     "step_flashFrames": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_flashWorst": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 22,
+        "bytes": 46170958,
+        "canceled": 0
+       },
+       "other": {
+        "n": 3,
+        "bytes": 1062,
+        "canceled": 1
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 25.7
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:26:05.475Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "jump_commit": [
+      57.09999990463257,
+      60.90000009536743,
+      25.799999952316284,
+      65.20000004768372,
+      65.90000009536743,
+      28.699999809265137,
+      57.5,
+      69.20000004768372,
+      32.799999952316284
+     ],
+     "jump_full": [
+      72.79999995231628,
+      83.20000004768372,
+      40.39999985694885,
+      86.59999990463257,
+      86,
+      45.59999990463257,
+      77.60000014305115,
+      86.60000014305115,
+      47.10000014305115
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      1.4000000953674316,
+      9,
+      4.799999952316284,
+      13.899999856948853,
+      13.100000143051147,
+      9.799999952316284,
+      3.700000047683716,
+      15.600000143051147,
+      12.100000143051147
+     ],
+     "jumpBusy_commit": [
+      34.40000009536743,
+      33.59999990463257,
+      28.90000009536743
+     ],
+     "jumpBusy_full": [
+      41.5,
+      49.700000047683716,
+      45.5
+     ],
+     "jumpBusy_wastedTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      7.700000047683716,
+      14.099999904632568,
+      12.099999904632568
+     ],
+     "jumpBusy_inFlight": [
+      0,
+      0,
+      0
+     ],
+     "jump_commit_L0": [
+      44.90000009536743,
+      58.299999952316284,
+      26.799999952316284,
+      46.5,
+      68.79999995231628,
+      51.700000047683716,
+      48.200000047683716,
+      67.60000014305115,
+      21
+     ],
+     "jump_full_L0": [
+      63.90000009536743,
+      79.5,
+      42.5,
+      64.69999980926514,
+      88.40000009536743,
+      54.10000014305115,
+      66.59999990463257,
+      87.79999995231628,
+      36.09999990463257
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      6.299999952316284,
+      5.099999904632568,
+      6.3999998569488525,
+      10.899999856948853,
+      15.599999904632568,
+      14.900000095367432,
+      12.299999952316284,
+      15.5,
+      0.8999998569488525
+     ],
+     "jumpBusy_commit_L0": [
+      32.89999985694885,
+      21.299999952316284,
+      23.5
+     ],
+     "jumpBusy_full_L0": [
+      45.799999952316284,
+      37.299999952316284,
+      40
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      11,
+      1.0999999046325684,
+      3.6000001430511475
+     ],
+     "jumpBusy_inFlight_L0": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "route": [
+      23,
+      0,
+      6
+     ],
+     "o": 6,
+     "o2": 3,
+     "busyDest": 23,
+     "l0": {
+      "zoom": 0.9660377358490566,
+      "maxLevel": 2,
+      "finest": 2
+     },
+     "tiles": {
+      "home": {
+       "origin": 6,
+       "dest": 23,
+       "tiles": {
+        "23": 2
+       }
+      },
+      "L0": {
+       "origin": 6,
+       "dest": 23,
+       "tiles": {
+        "23": 2
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 44.9
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:26:50.341Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      54,
+      70.89999985694885,
+      75.09999990463257
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      2,
+      2,
+      2
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 14.5
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:27:05.132Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      1,
+      1,
+      1
+     ],
+     "resize_frameP95": [
+      16.900000000000546,
+      17.100000000000364,
+      17.600000000000364
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0",
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0",
+      "XZ \u00b7 y 391 \u00b7 z \u00d75.0"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-small-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-small-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 391 \u00b7 z \u00d75.0"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 20.5
+   }
+  },
+  "medium": {
+   "zreveal": {
+    "scenario": "zreveal",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:27:25.778Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_tileRequests": [
+      10,
+      10,
+      10
+     ],
+     "step_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "step_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "step_serverReadP95": [
+      3.2,
+      2.8,
+      3.3
+     ],
+     "step_serverCacheHitShare": [
+      0,
+      0,
+      0
+     ],
+     "step_chunkCacheHits": [
+      640,
+      640,
+      640
+     ],
+     "step_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheMisses": [
+      10,
+      10,
+      10
+     ],
+     "step_chunkHitRate": [
+      1,
+      1,
+      1
+     ],
+     "step_previewMs": [
+      59.200000047683716,
+      50.30000019073486,
+      38
+     ],
+     "step_fullResMs": [
+      59.09999990463257,
+      59.60000014305115,
+      43.59999990463257
+     ],
+     "step_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileRequests": [
+      40,
+      40,
+      40
+     ],
+     "jump_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "jump_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "jump_serverReadP95": [
+      443.1,
+      22.9,
+      8.7
+     ],
+     "jump_serverCacheHitShare": [
+      0,
+      0,
+      0
+     ],
+     "jump_chunkCacheHits": [
+      2196,
+      2652,
+      3200
+     ],
+     "jump_chunkCacheMisses": [
+      1644,
+      548,
+      0
+     ],
+     "jump_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileCacheMisses": [
+      40,
+      40,
+      40
+     ],
+     "jump_chunkHitRate": [
+      0.571875,
+      0.82875,
+      1
+     ],
+     "jump_previewMs": [
+      621.2000975608826,
+      281.5000488758087,
+      258.4000976085663
+     ],
+     "jump_fullResMs": [
+      962.6000001430511,
+      344.60000014305115,
+      307.89999985694885
+     ],
+     "jump_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "z0": 90,
+     "steps": [
+      {
+       "spec": "z91",
+       "commit": 19.59999990463257,
+       "full": 59.09999990463257,
+       "preview": 59.200000047683716,
+       "ref": 11.95
+      },
+      {
+       "spec": "z92",
+       "commit": 13.300000190734863,
+       "full": 59.60000014305115,
+       "preview": 50.30000019073486,
+       "ref": 11.6625
+      },
+      {
+       "spec": "z93",
+       "commit": 8.099999904632568,
+       "full": 43.59999990463257,
+       "preview": 38,
+       "ref": 10.9
+      }
+     ],
+     "jumps": [
+      {
+       "dest": 140,
+       "commit": 604.5,
+       "full": 962.6000001430511,
+       "wait": 4.299999952316284,
+       "preview": 621.2000975608826,
+       "black": 0,
+       "ref": 12.05,
+       "series": [
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        9.9,
+        9.8,
+        10.4
+       ],
+       "shows": null
+      },
+      {
+       "dest": 136,
+       "commit": 205.5,
+       "full": 344.60000014305115,
+       "wait": 5.799999952316284,
+       "preview": 281.5000488758087,
+       "black": 0,
+       "ref": 11.16875,
+       "series": [
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        9.8,
+        9.5,
+        9.7,
+        10.2,
+        11.1,
+        11.6,
+        12.5,
+        13.4,
+        14,
+        14.5,
+        15.1,
+        13.2,
+        13.5,
+        13.8,
+        14.1,
+        14.4,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2,
+        11.2
+       ],
+       "shows": null
+      },
+      {
+       "dest": 132,
+       "commit": 166.89999985694885,
+       "full": 307.89999985694885,
+       "wait": 5.299999952316284,
+       "preview": 258.4000976085663,
+       "black": 0,
+       "ref": 11.425,
+       "series": [
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        11.9,
+        9.8,
+        10.7,
+        11.5,
+        12.2,
+        12.8,
+        13.5,
+        14.1,
+        14.5,
+        15.1,
+        13.1,
+        13.5,
+        13.7,
+        14,
+        14.4,
+        13,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4,
+        11.4
+       ],
+       "shows": null
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 38.3
+   },
+   "raildrag": {
+    "scenario": "raildrag",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:28:04.511Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "drag_slow_fps": [
+      60.01308796067228,
+      60.009601536245796,
+      60.00638365783594
+     ],
+     "drag_slow_frameP95": [
+      17.100000000000364,
+      16.800000000000182,
+      16.900000000000546
+     ],
+     "drag_slow_frameP99": [
+      17.899999999999636,
+      17,
+      17.399999999999636
+     ],
+     "drag_slow_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_settleMs": [
+      8.5,
+      3.9000000953674316,
+      6.299999952316284
+     ],
+     "drag_slow_tileRequests": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_serverReadP95": [
+      14.9
+     ],
+     "drag_slow_serverCacheHitShare": [
+      0.3,
+      1,
+      1
+     ],
+     "drag_slow_chunkCacheHits": [
+      5212,
+      0,
+      0
+     ],
+     "drag_slow_chunkCacheMisses": [
+      548,
+      0,
+      0
+     ],
+     "drag_slow_tileCacheHits": [
+      30,
+      100,
+      100
+     ],
+     "drag_slow_tileCacheMisses": [
+      70,
+      0,
+      0
+     ],
+     "drag_slow_chunkHitRate": [
+      0.9048611111111111
+     ],
+     "drag_slow_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_fps": [
+      58.18248984115258,
+      57.737249690693304,
+      58.653756633460574
+     ],
+     "drag_fast_frameP95": [
+      16.800000000000182,
+      16.90000000000009,
+      16.800000000000182
+     ],
+     "drag_fast_frameP99": [
+      18,
+      33.40000000000009,
+      17.5
+     ],
+     "drag_fast_dropped": [
+      4,
+      5,
+      3
+     ],
+     "drag_fast_staleFrames": [
+      112,
+      89,
+      98
+     ],
+     "drag_fast_staleShare": [
+      0.9032258064516129,
+      0.712,
+      0.784
+     ],
+     "drag_fast_staleMax": [
+      16,
+      8,
+      7
+     ],
+     "drag_fast_handLagMax": [
+      23,
+      14,
+      13
+     ],
+     "drag_fast_paintedPlanes": [
+      13,
+      14,
+      15
+     ],
+     "drag_fast_requestedPlanes": [
+      41,
+      41,
+      41
+     ],
+     "drag_fast_settleMs": [
+      83.79999995231628,
+      51.89999985694885,
+      55.200000047683716
+     ],
+     "drag_fast_tileRequests": [
+      150,
+      160,
+      170
+     ],
+     "drag_fast_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_serverReadP95": [
+      273.5,
+      32.7,
+      13.8
+     ],
+     "drag_fast_serverCacheHitShare": [
+      0.26666666666666666,
+      0.625,
+      0.9176470588235294
+     ],
+     "drag_fast_chunkCacheHits": [
+      10199,
+      3840,
+      896
+     ],
+     "drag_fast_chunkCacheMisses": [
+      1096,
+      0,
+      0
+     ],
+     "drag_fast_tileCacheHits": [
+      40,
+      100,
+      156
+     ],
+     "drag_fast_tileCacheMisses": [
+      110,
+      60,
+      14
+     ],
+     "drag_fast_chunkHitRate": [
+      0.9029659141212926,
+      1,
+      1
+     ],
+     "drag_fast_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_fps": [
+      60.000638304662814,
+      59.999680852761415,
+      60.00063830466282
+     ],
+     "drag_slow_sections_frameP95": [
+      16.800000000000182,
+      16.800000000000182,
+      17
+     ],
+     "drag_slow_sections_frameP99": [
+      16.80000000000109,
+      17.100000000000364,
+      17.399999999999636
+     ],
+     "drag_slow_sections_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_settleMs": [
+      6.5,
+      5.8999998569488525,
+      6.099999904632568
+     ],
+     "drag_slow_sections_tileRequests": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_sections_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_slow_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_tileCacheHits": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_fps": [
+      57.30398399126796,
+      57.74518790100825,
+      58.6373790022338
+     ],
+     "drag_fast_sections_frameP95": [
+      16.800000000000182,
+      16.800000000000182,
+      16.800000000000182
+     ],
+     "drag_fast_sections_frameP99": [
+      17,
+      17.5,
+      17.5
+     ],
+     "drag_fast_sections_dropped": [
+      6,
+      5,
+      3
+     ],
+     "drag_fast_sections_staleFrames": [
+      111,
+      84,
+      113
+     ],
+     "drag_fast_sections_staleShare": [
+      0.8951612903225806,
+      0.6774193548387096,
+      0.904
+     ],
+     "drag_fast_sections_staleMax": [
+      7,
+      7,
+      7
+     ],
+     "drag_fast_sections_handLagMax": [
+      12,
+      13,
+      12
+     ],
+     "drag_fast_sections_paintedPlanes": [
+      16,
+      14,
+      16
+     ],
+     "drag_fast_sections_requestedPlanes": [
+      41,
+      41,
+      41
+     ],
+     "drag_fast_sections_settleMs": [
+      91.59999990463257,
+      52.799999952316284,
+      93.60000014305115
+     ],
+     "drag_fast_sections_tileRequests": [
+      180,
+      170,
+      180
+     ],
+     "drag_fast_sections_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_fast_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_tileCacheHits": [
+      180,
+      170,
+      180
+     ],
+     "drag_fast_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "cases": {
+      "drag_slow": {
+       "start": 90,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6271.799999952316,
+        "frames": 377,
+        "final": "z90"
+       },
+       "lum": {
+        "ref": 11.8625,
+        "black": 0,
+        "series": [
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         12.4,
+         12.7,
+         13.4,
+         13.9,
+         14.7,
+         15.4,
+         16,
+         16.6,
+         17.1,
+         17.7,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         11.8,
+         12.2,
+         12.2,
+         12.5,
+         12.9,
+         13.6,
+         14,
+         14.7,
+         15.5,
+         16.2,
+         16.7,
+         17.2,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.4,
+         11.4,
+         11.5,
+         11.7,
+         12.1,
+         12.8,
+         13.2,
+         13.9,
+         14.6,
+         15.2,
+         15.6,
+         16.1,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.6,
+         10.6,
+         10.6,
+         10.9,
+         11.2,
+         11.6,
+         11.9,
+         12.6,
+         13.3,
+         13.7,
+         14.2,
+         14.6,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         9.8,
+         9.8,
+         9.9,
+         10.1,
+         10.5,
+         10.9,
+         11.1,
+         11.8,
+         12.3,
+         12.7,
+         13.1,
+         13.6,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         7.8,
+         7.8,
+         7.7
+        ]
+       }
+      },
+      "drag_fast": {
+       "start": 90,
+       "span": 40,
+       "sweeps": 1,
+       "rate": 40,
+       "moves": 126,
+       "onRail": true,
+       "first": {
+        "dragMs": 2179,
+        "frames": 127,
+        "final": "z90"
+       },
+       "lum": {
+        "ref": 11.8625,
+        "black": 0,
+        "series": [
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.7,
+         11.9,
+         11.9,
+         12.7,
+         13.3,
+         14.2,
+         14.8,
+         14.8,
+         14.8,
+         15.4,
+         15.9,
+         16.4,
+         17.3,
+         17.6,
+         15.4,
+         14.5,
+         13.8,
+         13.5,
+         13.5,
+         13.7,
+         13.7,
+         13.7,
+         14.3,
+         14.6,
+         15.2,
+         15.6,
+         15.6,
+         15.6,
+         12.7,
+         11.8,
+         11.9,
+         12.5,
+         13.5,
+         15.2,
+         16.1,
+         16.1,
+         16.7,
+         17.3,
+         17.3,
+         13.8,
+         12.3,
+         11.8,
+         11.9,
+         12.6,
+         13,
+         13,
+         14.1,
+         14.9,
+         15.4,
+         16,
+         13,
+         13,
+         11.1,
+         11.1,
+         11,
+         12,
+         12.9,
+         14.1,
+         15.2,
+         16.3,
+         17.3,
+         18,
+         17.9,
+         17.9,
+         14.1,
+         12.5,
+         12,
+         12.1,
+         12.7,
+         14.2,
+         14.2,
+         15,
+         15.6,
+         16.1,
+         12.3,
+         12.4,
+         11.7,
+         10.8,
+         10.8,
+         10.8,
+         10.8,
+         10.8,
+         10.8,
+         10.8,
+         11,
+         11.5,
+         11.5,
+         10.6,
+         12.7,
+         15.1,
+         15.7,
+         15.7,
+         16.3,
+         16.9,
+         17.4,
+         18,
+         18,
+         16,
+         14.9,
+         14.3,
+         14.3,
+         14.5,
+         14.8,
+         15.4,
+         16,
+         16.6,
+         17.2,
+         17.2,
+         15,
+         15,
+         12.3,
+         11.4,
+         11.9,
+         11.9,
+         12.7,
+         12.7
+        ]
+       }
+      },
+      "drag_slow_sections": {
+       "start": 90,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6276.099999904633,
+        "frames": 377,
+        "final": "z90"
+       },
+       "lum": {
+        "ref": 11.8625,
+        "black": 0,
+        "series": [
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         12.3,
+         12.6,
+         13.4,
+         13.8,
+         14.6,
+         15.2,
+         15.9,
+         16.5,
+         17,
+         17.5,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         12,
+         11.8,
+         12.1,
+         12.1,
+         12.5,
+         12.9,
+         13.6,
+         14,
+         14.7,
+         15.5,
+         16.2,
+         16.7,
+         17.2,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.7,
+         11.4,
+         11.4,
+         11.5,
+         11.8,
+         12.2,
+         12.8,
+         13.2,
+         13.9,
+         14.6,
+         15.2,
+         15.6,
+         16.2,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.9,
+         10.6,
+         10.6,
+         10.6,
+         10.9,
+         11.2,
+         11.7,
+         11.9,
+         12.7,
+         13.3,
+         13.7,
+         14.2,
+         14.7,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         10,
+         9.8,
+         9.8,
+         9.8,
+         10,
+         10.3,
+         10.8,
+         11,
+         11.6,
+         12.1,
+         12.7,
+         13,
+         13.4,
+         13.7,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         9.3,
+         7.9,
+         9.6,
+         10.4,
+         11.1
+        ]
+       }
+      },
+      "drag_fast_sections": {
+       "start": 90,
+       "span": 40,
+       "sweeps": 1,
+       "rate": 40,
+       "moves": 126,
+       "onRail": true,
+       "first": {
+        "dragMs": 2206.7000000476837,
+        "frames": 127,
+        "final": "z90"
+       },
+       "lum": {
+        "ref": 11.8625,
+        "black": 0,
+        "series": [
+         11.9,
+         11.9,
+         11.9,
+         11.9,
+         11.7,
+         12.1,
+         12.1,
+         12.9,
+         13.5,
+         14.5,
+         14.5,
+         15.1,
+         15.1,
+         15.6,
+         16.2,
+         16.7,
+         17.3,
+         11.7,
+         11.7,
+         11.6,
+         11.7,
+         12.1,
+         12.1,
+         12.7,
+         13.3,
+         13.6,
+         14.4,
+         15.1,
+         11.8,
+         11.4,
+         11.4,
+         12.3,
+         12.3,
+         13.1,
+         14.1,
+         15.1,
+         15.7,
+         16.2,
+         16.7,
+         17.2,
+         13.8,
+         11.7,
+         11.7,
+         11.9,
+         11.9,
+         12.6,
+         13.2,
+         14.1,
+         14.9,
+         15.5,
+         15.9,
+         15.9,
+         13.1,
+         12.3,
+         12.6,
+         12.6,
+         13.2,
+         14.2,
+         15,
+         16,
+         17,
+         17.6,
+         13.8,
+         12.2,
+         12,
+         12,
+         12.4,
+         13.1,
+         13.7,
+         14.7,
+         15.3,
+         15.9,
+         11.7,
+         9.8,
+         9.8,
+         9,
+         9,
+         9.3,
+         9.9,
+         10.5,
+         10.9,
+         10.9,
+         9,
+         8.9,
+         9.8,
+         9.8,
+         10.8,
+         11.8,
+         13,
+         13.7,
+         14.2,
+         11.4,
+         11.6,
+         11.6,
+         12.3,
+         13.1,
+         13.1,
+         14.1,
+         14.9,
+         15.6,
+         16.1,
+         16.7,
+         13.7,
+         12.8,
+         12.8,
+         13,
+         13,
+         13.8,
+         14.4,
+         15.5,
+         16.2,
+         16.8,
+         17.3,
+         17.3,
+         13.9,
+         12,
+         12,
+         12.1,
+         12.1,
+         12.9
+        ]
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z130",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z130",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z130",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z130",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z130",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z130",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_0/1/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_0/0/0_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_0/0/1_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_0/1/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_0/0/0_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_0/0/1_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z129",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z129",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 240.6
+   },
+   "panesync": {
+    "scenario": "panesync",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:32:04.630Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "pan_tileRequests": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "pan_sectionRequests": [
+      12,
+      12,
+      12
+     ],
+     "pan_serverReadP95": [
+      895.4,
+      895.4
+     ],
+     "pan_serverCacheHitShare": [
+      0,
+      1,
+      0
+     ],
+     "pan_chunkCacheHits": [
+      1740,
+      0,
+      0
+     ],
+     "pan_chunkCacheMisses": [
+      660,
+      0,
+      0
+     ],
+     "pan_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCacheMisses": [
+      12,
+      0,
+      0
+     ],
+     "pan_chunkHitRate": [
+      0.725
+     ],
+     "pan_planeChangeMs": [
+      61.799999952316284,
+      34.299999952316284,
+      32.700000047683716
+     ],
+     "pan_xzLeadMs": [
+      0,
+      20.799999952316284,
+      18.199999809265137
+     ],
+     "pan_xzRecutMs": [
+      219.70000004768372,
+      188.09999990463257,
+      158.60000014305115
+     ],
+     "pan_xzBlackFrames": [
+      0,
+      0,
+      0
+     ],
+     "pan_yzLeadMs": [
+      43.09999990463257,
+      51.700000047683716,
+      36.09999990463257
+     ],
+     "pan_yzRecutMs": [
+      1193.6000001430511,
+      258.59999990463257,
+      225.40000009536743
+     ],
+     "pan_yzBlackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "pans": [
+      {
+       "plane": 61.799999952316284,
+       "panes": {
+        "xz": {
+         "first": 61.799999952316284,
+         "lead": 0,
+         "recut": 219.70000004768372,
+         "black": 0,
+         "frames": 139,
+         "ref": 10.5,
+         "shows": null,
+         "series": [
+          9.2,
+          9,
+          8.8,
+          8.8,
+          9,
+          8.9,
+          8.9,
+          9,
+          9.3,
+          9.3,
+          9.6,
+          9.6,
+          9.9,
+          9.9,
+          10.4,
+          10.4,
+          10.7,
+          10.2,
+          10.4,
+          10.3,
+          9.9,
+          9.4,
+          9,
+          8.8,
+          8.8,
+          8.7,
+          8.6,
+          8.7,
+          8.8,
+          8.7,
+          8.9,
+          9.3,
+          9.5,
+          9.6,
+          9.5,
+          9.5,
+          10.9,
+          10.8,
+          10.8,
+          10.9,
+          10.8,
+          10.9,
+          11,
+          11.1,
+          11,
+          10.9,
+          10.9,
+          10.9,
+          10.8,
+          10.7,
+          10.7,
+          10.7,
+          10.7,
+          10.7,
+          10.6,
+          10.6,
+          10.5,
+          10.5,
+          10.5,
+          10.5
+         ]
+        },
+        "yz": {
+         "first": 104.89999985694885,
+         "lead": 43.09999990463257,
+         "recut": 1193.6000001430511,
+         "black": 0,
+         "frames": 139,
+         "ref": 9.85,
+         "shows": null,
+         "series": [
+          10,
+          9.7,
+          9.3,
+          9.3,
+          9.4,
+          9.4,
+          9.4,
+          9.2,
+          8.3,
+          8.3,
+          8.1,
+          8.1,
+          7.9,
+          7.9,
+          7.6,
+          7.5,
+          7.6,
+          8.1,
+          8.5,
+          8.8,
+          9.2,
+          9.8,
+          10.4,
+          9.9,
+          9.6,
+          9.5,
+          8.8,
+          8.4,
+          8.4,
+          8.6,
+          8.3,
+          8.3,
+          8.2,
+          8,
+          8.1,
+          8.1,
+          8.3,
+          8.4,
+          8.5,
+          8.5,
+          8.6,
+          8.7,
+          8.6,
+          8.8,
+          8.7,
+          8.6,
+          8.7,
+          8.6,
+          8.7,
+          8.7,
+          8.5,
+          8.6,
+          8.6,
+          8.6,
+          8.7,
+          8.6,
+          8.6,
+          8.7,
+          8.7,
+          8.7
+         ]
+        }
+       }
+      },
+      {
+       "plane": 34.299999952316284,
+       "panes": {
+        "xz": {
+         "first": 55.09999990463257,
+         "lead": 20.799999952316284,
+         "recut": 188.09999990463257,
+         "black": 0,
+         "frames": 81,
+         "ref": 9.21875,
+         "shows": null,
+         "series": [
+          10.5,
+          10.5,
+          10.6,
+          10.7,
+          10.9,
+          11,
+          10.9,
+          10.8,
+          10.8,
+          9.9,
+          9.6,
+          9.2,
+          9.1,
+          8.9,
+          9.1,
+          9.3,
+          9.6,
+          10.2,
+          10.4,
+          10.8,
+          11.1,
+          11,
+          11,
+          10.8,
+          10.1,
+          9.8,
+          9.6,
+          9.5,
+          9.7,
+          9.6,
+          9.4,
+          9,
+          8.9,
+          8.8,
+          8.9,
+          8.9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          8.8,
+          8.9,
+          8.9,
+          8.9,
+          8.8,
+          8.8,
+          8.9,
+          8.9,
+          8.9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9.1,
+          9.1,
+          9.1,
+          9,
+          9.1
+         ]
+        },
+        "yz": {
+         "first": 86,
+         "lead": 51.700000047683716,
+         "recut": 258.59999990463257,
+         "black": 0,
+         "frames": 81,
+         "ref": 9.85,
+         "shows": null,
+         "series": [
+          9.9,
+          9.7,
+          9.6,
+          9.7,
+          9.5,
+          9.5,
+          9.4,
+          9.2,
+          9.1,
+          8.8,
+          8.5,
+          8.2,
+          8.3,
+          8.4,
+          8.4,
+          8.4,
+          8.4,
+          8.8,
+          8.9,
+          9.4,
+          9.3,
+          9.2,
+          9.4,
+          9.2,
+          9,
+          8.8,
+          8.5,
+          8.4,
+          8.1,
+          8,
+          7.9,
+          8,
+          8,
+          8.1,
+          8.2,
+          9.4,
+          9.4,
+          9.4,
+          9.5,
+          9.5,
+          9.5,
+          9.5,
+          9.3,
+          9.3,
+          9.3,
+          9.3,
+          9.3,
+          9.3,
+          9.4,
+          9.5,
+          9.6,
+          9.7,
+          9.7,
+          9.6,
+          9.7,
+          9.6,
+          9.8,
+          9.8,
+          9.7,
+          9.7
+         ]
+        }
+       }
+      },
+      {
+       "plane": 32.700000047683716,
+       "panes": {
+        "xz": {
+         "first": 50.89999985694885,
+         "lead": 18.199999809265137,
+         "recut": 158.60000014305115,
+         "black": 0,
+         "frames": 78,
+         "ref": 10.5625,
+         "shows": null,
+         "series": [
+          9.2,
+          9.1,
+          9.1,
+          9,
+          8.8,
+          9.1,
+          8.9,
+          8.8,
+          9,
+          9.2,
+          9.6,
+          9.7,
+          10.3,
+          10.4,
+          10.5,
+          10.2,
+          10.3,
+          10.1,
+          9.4,
+          9.1,
+          8.8,
+          8.7,
+          8.6,
+          8.5,
+          8.7,
+          8.7,
+          8.8,
+          9.1,
+          9.3,
+          9.9,
+          10.3,
+          10.7,
+          10.9,
+          10.8,
+          10.8,
+          10.9,
+          10.8,
+          10.8,
+          11,
+          10.8,
+          11.1,
+          11,
+          11,
+          11,
+          11.1,
+          10.8,
+          10.7,
+          10.7,
+          10.6,
+          10.7,
+          10.7,
+          10.5,
+          10.5,
+          10.6,
+          10.6,
+          10.5,
+          10.5,
+          10.5,
+          10.5,
+          10.6
+         ]
+        },
+        "yz": {
+         "first": 68.79999995231628,
+         "lead": 36.09999990463257,
+         "recut": 225.40000009536743,
+         "black": 0,
+         "frames": 78,
+         "ref": 9.75,
+         "shows": null,
+         "series": [
+          10,
+          9.8,
+          9.6,
+          9.5,
+          9.3,
+          9.5,
+          9.5,
+          9.6,
+          9.2,
+          8.5,
+          8.2,
+          8,
+          8,
+          7.3,
+          7.8,
+          8.4,
+          8.7,
+          8.9,
+          9.6,
+          10.5,
+          9.9,
+          9.7,
+          9.4,
+          9.3,
+          8.4,
+          8.2,
+          8.5,
+          8.4,
+          8.2,
+          8.2,
+          8,
+          8.1,
+          8.2,
+          9.2,
+          9.3,
+          9.4,
+          9.5,
+          9.4,
+          9.5,
+          9.5,
+          9.5,
+          9.6,
+          9.3,
+          9.4,
+          9.3,
+          9.5,
+          9.4,
+          9.6,
+          9.6,
+          9.7,
+          9.7,
+          9.7,
+          9.7,
+          9.6,
+          9.6,
+          9.6,
+          9.6,
+          9.6,
+          9.6,
+          9.8
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 16.6
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "medium",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-14T01:32:21.185Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_commit": [
+      5.800000190734863,
+      7,
+      18.200000047683716,
+      9.299999952316284,
+      8.299999952316284
+     ],
+     "step_full": [
+      6.1000001430511475,
+      10.100000143051147,
+      19.700000047683716,
+      11,
+      9.5
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      1912.1000001430511
+     ],
+     "scrub_paintedPlanes": [
+      12
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      3.5999999046325684,
+      33.5,
+      27.299999952316284,
+      21.399999856948853,
+      18.799999952316284,
+      19.200000047683716,
+      14.799999952316284,
+      115.10000014305115,
+      127.70000004768372,
+      235,
+      302.2000000476837,
+      206.60000014305115
+     ],
+     "scrub_fps": [
+      60.00400026668442
+     ],
+     "scrub_frameP95": [
+      16.899999999999636
+     ],
+     "scrub_frameP99": [
+      17.399999999999636
+     ],
+     "scrub_dropped": [
+      0
+     ],
+     "scrub_tileRequests": [
+      154
+     ],
+     "scrub_tileMB": [
+      321.098469
+     ],
+     "scrub_canceled": [
+      1
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "crossing_commit": [
+      17.90000009536743,
+      6.699999809265137
+     ],
+     "crossing_full": [
+      23.100000143051147,
+      11.5
+     ],
+     "step_firstVisibleChange": [
+      50.09999990463257,
+      41.5,
+      47.30000019073486,
+      33.60000014305115,
+      49.09999990463257
+     ],
+     "step_flashFrames": [
+      2,
+      2,
+      2,
+      1,
+      0
+     ],
+     "step_flashWorst": [
+      9,
+      10,
+      10,
+      6,
+      5
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 154,
+        "bytes": 321098469,
+        "canceled": 1
+       },
+       "other": {
+        "n": 2,
+        "bytes": 1471,
+        "canceled": 0
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z101",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_0/0/0_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z103",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z103",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 35.8
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:32:57.354Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "jump_commit": [
+      147.90000009536743,
+      415.7999999523163,
+      30.799999952316284,
+      160.69999980926514,
+      161,
+      19.699999809265137,
+      174.5,
+      161.20000004768372,
+      22.90000009536743
+     ],
+     "jump_full": [
+      179.40000009536743,
+      690.7000000476837,
+      48.5,
+      194.89999985694885,
+      195.5,
+      39.39999985694885,
+      207.60000014305115,
+      200.5,
+      37.700000047683716
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      7.200000047683716,
+      2.299999952316284,
+      12,
+      5.699999809265137,
+      8.099999904632568,
+      0.5999999046325684,
+      3.799999952316284,
+      7.400000095367432,
+      3
+     ],
+     "jumpBusy_commit": [
+      162,
+      174.5,
+      180.70000004768372
+     ],
+     "jumpBusy_full": [
+      186.20000004768372,
+      204.29999995231628,
+      206
+     ],
+     "jumpBusy_wastedTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      20.5,
+      11.199999809265137,
+      16.399999856948853
+     ],
+     "jumpBusy_inFlight": [
+      1,
+      1,
+      1
+     ],
+     "jump_commit_L0": [
+      162.69999980926514,
+      140.69999980926514,
+      19.200000047683716,
+      175.59999990463257,
+      154.60000014305115,
+      23.59999990463257,
+      169.70000004768372,
+      160.20000004768372,
+      31.90000009536743
+     ],
+     "jump_full_L0": [
+      193.5,
+      172.89999985694885,
+      35.5,
+      208.70000004768372,
+      186.60000014305115,
+      41.700000047683716,
+      194.79999995231628,
+      188.59999990463257,
+      48.200000047683716
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      11.199999809265137,
+      3,
+      0.6000001430511475,
+      3.299999952316284,
+      1.7000000476837158,
+      4.8999998569488525,
+      0.7999999523162842,
+      7.5,
+      13.099999904632568
+     ],
+     "jumpBusy_commit_L0": [
+      165.70000004768372,
+      169.20000004768372,
+      165.70000004768372
+     ],
+     "jumpBusy_full_L0": [
+      194.10000014305115,
+      201.70000004768372,
+      192.5
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      0,
+      0,
+      1
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      18.300000190734863,
+      5.599999904632568,
+      17.799999952316284
+     ],
+     "jumpBusy_inFlight_L0": [
+      1,
+      1,
+      1
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "route": [
+      140,
+      0,
+      90
+     ],
+     "o": 90,
+     "o2": 45,
+     "busyDest": 95,
+     "l0": {
+      "zoom": 1.9320754716981132,
+      "maxLevel": 3,
+      "finest": 3
+     },
+     "tiles": {
+      "home": {
+       "origin": 90,
+       "dest": 140,
+       "tiles": {
+        "140": 10
+       }
+      },
+      "L0": {
+       "origin": 90,
+       "dest": 140,
+       "tiles": {
+        "140": 10
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_0/0/1_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z46",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_0/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_0/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_0/0/1_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_0/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_0/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_0/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_0/0/1_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/medium/medium_1/1/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_0 /generated/data/medium/medium_1/0/0_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/0_1 /generated/data/medium/medium_1/0/0_1.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_0 /generated/data/medium/medium_1/0/1_0.png?q=hd&view=z46",
+     "[warning] Ignoring tile %s loaded before reset: %s 3/1_1 /generated/data/medium/medium_1/0/1_1.png?q=hd&view=z46"
+    ],
+    "wall_s": 55.0
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:33:52.345Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      184.20000004768372,
+      166.59999990463257,
+      125.29999995231628
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      2,
+      2,
+      2
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 16.3
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "medium",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:34:08.416Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      1,
+      1,
+      1
+     ],
+     "resize_frameP95": [
+      17.100000000000364,
+      16.799999999999272,
+      16.80000000000109
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 566 \u00b7 z \u00d71.1",
+      "XZ \u00b7 y 566 \u00b7 z \u00d71.1",
+      "XZ \u00b7 y 566 \u00b7 z \u00d71.1"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-medium-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-medium-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 566 \u00b7 z \u00d71.1"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 20.3
+   },
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      21.9
+     ]
+    }
+   }
+  },
+  "flatstack": {
+   "zreveal": {
+    "scenario": "zreveal",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:34:29.099Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_tileRequests": [
+      10,
+      10,
+      10
+     ],
+     "step_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "step_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "step_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "step_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "step_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheHits": [
+      10,
+      10,
+      10
+     ],
+     "step_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_previewMs": [
+      54.39999985694885,
+      42.200000047683716,
+      37.799999952316284
+     ],
+     "step_fullResMs": [
+      52.299999952316284,
+      53.10000014305115,
+      37.799999952316284
+     ],
+     "step_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileRequests": [
+      20,
+      40,
+      40
+     ],
+     "jump_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "jump_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "jump_serverReadP95": [
+      36.4,
+      43.9
+     ],
+     "jump_serverCacheHitShare": [
+      0,
+      0.5,
+      1
+     ],
+     "jump_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "jump_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileCacheHits": [
+      0,
+      20,
+      40
+     ],
+     "jump_tileCacheMisses": [
+      20,
+      20,
+      0
+     ],
+     "jump_previewMs": [
+      225.79995131492615,
+      224.90009760856628,
+      185.60000014305115
+     ],
+     "jump_fullResMs": [
+      254.79999995231628,
+      284.2000000476837,
+      190.80000019073486
+     ],
+     "jump_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "z0": 50,
+     "steps": [
+      {
+       "spec": "z51",
+       "commit": 17.899999856948853,
+       "full": 52.299999952316284,
+       "preview": 54.39999985694885,
+       "ref": 15.5
+      },
+      {
+       "spec": "z52",
+       "commit": 11.900000095367432,
+       "full": 53.10000014305115,
+       "preview": 42.200000047683716,
+       "ref": 15.50625
+      },
+      {
+       "spec": "z53",
+       "commit": 9.400000095367432,
+       "full": 37.799999952316284,
+       "preview": 37.799999952316284,
+       "ref": 15.925
+      }
+     ],
+     "jumps": [
+      {
+       "dest": 99,
+       "commit": 217.09999990463257,
+       "full": 254.79999995231628,
+       "wait": 1.1999998092651367,
+       "preview": 225.79995131492615,
+       "black": 0,
+       "ref": 13.6875,
+       "series": [
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        12.9,
+        12.2,
+        12.6,
+        13.2,
+        14.2,
+        15.2,
+        16.1,
+        17.1,
+        17.7,
+        18.3,
+        18.7,
+        15.4,
+        14.9,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7,
+        13.7
+       ],
+       "shows": null
+      },
+      {
+       "dest": 95,
+       "commit": 211.20000004768372,
+       "full": 284.2000000476837,
+       "wait": 9.799999952316284,
+       "preview": 224.90009760856628,
+       "black": 0,
+       "ref": 16.75625,
+       "series": [
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        13.6,
+        13.5,
+        14.4,
+        15.5,
+        16.9,
+        18.1,
+        19.2,
+        20.5,
+        21.3,
+        22,
+        22.9,
+        19.4,
+        19.8,
+        18.3,
+        17.7,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8,
+        16.8
+       ],
+       "shows": null
+      },
+      {
+       "dest": 91,
+       "commit": 148.90000009536743,
+       "full": 190.80000019073486,
+       "wait": 12.300000190734863,
+       "preview": 185.60000014305115,
+       "black": 0,
+       "ref": 15.95625,
+       "series": [
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        15.8,
+        13.5,
+        13,
+        13.6,
+        14.8,
+        16.1,
+        17.3,
+        18.5,
+        19.7,
+        20.4,
+        21,
+        21.9,
+        22.4,
+        19.5,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16
+       ],
+       "shows": null
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 30.9
+   },
+   "raildrag": {
+    "scenario": "raildrag",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:35:00.372Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "drag_slow_fps": [
+      59.999680852761415,
+      60.010214504596526,
+      59.99297954494687
+     ],
+     "drag_slow_frameP95": [
+      16.800000000000182,
+      16.899999999999636,
+      17
+     ],
+     "drag_slow_frameP99": [
+      16.899999999999636,
+      17.799999999999272,
+      17.399999999999636
+     ],
+     "drag_slow_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_settleMs": [
+      9.099999904632568,
+      5.200000047683716,
+      5.6000001430511475
+     ],
+     "drag_slow_tileRequests": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_slow_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_tileCacheHits": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_fps": [
+      59.06896066757303,
+      57.28951830973005,
+      57.296166613614666
+     ],
+     "drag_fast_frameP95": [
+      16.90000000000009,
+      16.800000000000182,
+      16.90000000000009
+     ],
+     "drag_fast_frameP99": [
+      33.20000000000027,
+      20.59999999999991,
+      33.5
+     ],
+     "drag_fast_dropped": [
+      2,
+      6,
+      6
+     ],
+     "drag_fast_staleFrames": [
+      107,
+      103,
+      79
+     ],
+     "drag_fast_staleShare": [
+      0.8629032258064516,
+      0.8306451612903226,
+      0.6370967741935484
+     ],
+     "drag_fast_staleMax": [
+      9,
+      8,
+      7
+     ],
+     "drag_fast_handLagMax": [
+      17,
+      14,
+      14
+     ],
+     "drag_fast_paintedPlanes": [
+      13,
+      15,
+      14
+     ],
+     "drag_fast_requestedPlanes": [
+      41,
+      41,
+      41
+     ],
+     "drag_fast_settleMs": [
+      51.299999952316284,
+      83.79999995231628,
+      52.700000047683716
+     ],
+     "drag_fast_tileRequests": [
+      150,
+      180,
+      166
+     ],
+     "drag_fast_tileCanceled": [
+      0,
+      0,
+      6
+     ],
+     "drag_fast_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_serverReadP95": [
+      47.8,
+      53.7
+     ],
+     "drag_fast_serverCacheHitShare": [
+      0.6266666666666667,
+      0.9444444444444444,
+      1
+     ],
+     "drag_fast_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_tileCacheHits": [
+      94,
+      170,
+      166
+     ],
+     "drag_fast_tileCacheMisses": [
+      56,
+      10,
+      0
+     ],
+     "drag_fast_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_fps": [
+      59.98915089824182,
+      60.01117229271408,
+      59.9891508982418
+     ],
+     "drag_slow_sections_frameP95": [
+      16.80000000000109,
+      16.800000000000182,
+      16.900000000001455
+     ],
+     "drag_slow_sections_frameP99": [
+      17.100000000000364,
+      17.099999999999454,
+      17.5
+     ],
+     "drag_slow_sections_dropped": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleShare": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_staleMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_handLagMax": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_paintedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_requestedPlanes": [
+      10,
+      10,
+      10
+     ],
+     "drag_slow_sections_settleMs": [
+      6.599999904632568,
+      6.700000047683716,
+      5.800000190734863
+     ],
+     "drag_slow_sections_tileRequests": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_sections_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_slow_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_tileCacheHits": [
+      100,
+      100,
+      100
+     ],
+     "drag_slow_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_slow_sections_blackFrames": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_fps": [
+      59.94005994005993,
+      57.71539384984763,
+      60.00285727891806
+     ],
+     "drag_fast_sections_frameP95": [
+      16.899999999999636,
+      16.800000000000182,
+      16.800000000000182
+     ],
+     "drag_fast_sections_frameP99": [
+      16.900000000000546,
+      17.800000000000182,
+      16.900000000000546
+     ],
+     "drag_fast_sections_dropped": [
+      0,
+      5,
+      0
+     ],
+     "drag_fast_sections_staleFrames": [
+      112,
+      88,
+      109
+     ],
+     "drag_fast_sections_staleShare": [
+      0.9032258064516129,
+      0.7096774193548387,
+      0.872
+     ],
+     "drag_fast_sections_staleMax": [
+      8,
+      7,
+      7
+     ],
+     "drag_fast_sections_handLagMax": [
+      13,
+      12,
+      13
+     ],
+     "drag_fast_sections_paintedPlanes": [
+      16,
+      14,
+      15
+     ],
+     "drag_fast_sections_requestedPlanes": [
+      41,
+      41,
+      41
+     ],
+     "drag_fast_sections_settleMs": [
+      118.40000009536743,
+      52.299999952316284,
+      54.60000014305115
+     ],
+     "drag_fast_sections_tileRequests": [
+      180,
+      170,
+      170
+     ],
+     "drag_fast_sections_tileCanceled": [
+      0,
+      4,
+      0
+     ],
+     "drag_fast_sections_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_serverCacheHitShare": [
+      1,
+      1,
+      1
+     ],
+     "drag_fast_sections_chunkCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_tileCacheHits": [
+      180,
+      170,
+      170
+     ],
+     "drag_fast_sections_tileCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "drag_fast_sections_blackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "cases": {
+      "drag_slow": {
+       "start": 50,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6272.700000047684,
+        "frames": 377,
+        "final": "z50"
+       },
+       "lum": {
+        "ref": 15.79375,
+        "black": 0,
+        "series": [
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.6,
+         15.8,
+         15.8,
+         16.2,
+         16.9,
+         17.6,
+         18.1,
+         19,
+         19.7,
+         20.4,
+         21,
+         21.5,
+         18.8,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.4,
+         15.4,
+         15.7,
+         16.1,
+         16.8,
+         17.6,
+         18.3,
+         18.8,
+         19.7,
+         20.5,
+         21.2,
+         21.8,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.9,
+         16.4,
+         17.1,
+         17.9,
+         18.8,
+         19.4,
+         20.4,
+         21.2,
+         21.8,
+         22.4,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         16.1,
+         16.1,
+         16.5,
+         17.2,
+         17.9,
+         18.8,
+         19.7,
+         20.3,
+         21.4,
+         22.2,
+         22.8,
+         23.4,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.7,
+         16.7,
+         17,
+         17.7,
+         18.3,
+         19.2,
+         20.1,
+         20.7,
+         21.6,
+         22.5,
+         23.2,
+         23.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.8,
+         16.8,
+         17.2
+        ]
+       }
+      },
+      "drag_fast": {
+       "start": 50,
+       "span": 40,
+       "sweeps": 1,
+       "rate": 40,
+       "moves": 126,
+       "onRail": true,
+       "first": {
+        "dragMs": 2149.5,
+        "frames": 127,
+        "final": "z50"
+       },
+       "lum": {
+        "ref": 15.79375,
+        "black": 0,
+        "series": [
+         15.8,
+         15.8,
+         15.8,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         16.1,
+         16.7,
+         17.4,
+         18.1,
+         18.7,
+         19.4,
+         19.9,
+         20.5,
+         18.3,
+         18.2,
+         18.2,
+         18.5,
+         18.7,
+         18.7,
+         19.2,
+         19.7,
+         20.4,
+         20.5,
+         17.5,
+         16.4,
+         16.4,
+         16.5,
+         17.3,
+         17.9,
+         18.8,
+         19.6,
+         20.2,
+         20.9,
+         20.9,
+         20.9,
+         16.8,
+         15.2,
+         14.8,
+         15.4,
+         16.4,
+         17.3,
+         18.3,
+         19.3,
+         19.8,
+         20.5,
+         16.6,
+         16.9,
+         16.9,
+         15,
+         15,
+         14.9,
+         15.6,
+         16.7,
+         18,
+         19,
+         20,
+         21.2,
+         22.1,
+         22,
+         16.7,
+         14,
+         12.8,
+         12.4,
+         12.4,
+         12.8,
+         12.8,
+         13.2,
+         13.8,
+         14.2,
+         14.6,
+         14.6,
+         14.6,
+         13.6,
+         13.9,
+         15,
+         16.3,
+         17.7,
+         19,
+         20.1,
+         21.3,
+         22.1,
+         22.7,
+         19,
+         19,
+         19,
+         18,
+         17.7,
+         17.9,
+         18.2,
+         18.8,
+         19.6,
+         20.2,
+         21.1,
+         21.9,
+         22.4,
+         15.9,
+         15.9,
+         15.9,
+         13.7,
+         13.7,
+         14.6,
+         15.9,
+         17.4,
+         18.5,
+         19.6,
+         20.8,
+         21.6,
+         22.3,
+         16.7,
+         16.7,
+         16.7,
+         14.6,
+         14.3,
+         15.8,
+         17,
+         17,
+         18.1,
+         19.1
+        ]
+       }
+      },
+      "drag_slow_sections": {
+       "start": 50,
+       "span": 9,
+       "sweeps": 1,
+       "rate": 3,
+       "moves": 376,
+       "onRail": true,
+       "first": {
+        "dragMs": 6280.799999952316,
+        "frames": 377,
+        "final": "z50"
+       },
+       "lum": {
+        "ref": 15.79375,
+        "black": 0,
+        "series": [
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.8,
+         15.6,
+         16.5,
+         16.8,
+         16.8,
+         16.8,
+         17.4,
+         18,
+         18.8,
+         19.5,
+         20.1,
+         20.8,
+         21.4,
+         22,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.4,
+         15.4,
+         15.7,
+         16.1,
+         16.8,
+         17.5,
+         18.3,
+         18.8,
+         19.7,
+         20.4,
+         21.1,
+         21.7,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         16,
+         16.6,
+         17.3,
+         18.1,
+         19,
+         19.6,
+         20.5,
+         21.4,
+         22,
+         22.7,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         16.1,
+         16.1,
+         16.4,
+         17.1,
+         17.9,
+         18.7,
+         19.6,
+         20.2,
+         21.3,
+         22.2,
+         22.7,
+         23.4,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         16.6,
+         17,
+         17.7,
+         18.3,
+         19.2,
+         20,
+         20.7,
+         21.6,
+         22.5,
+         23.1,
+         23.8,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.9,
+         16.8,
+         16.8,
+         17.2
+        ]
+       }
+      },
+      "drag_fast_sections": {
+       "start": 50,
+       "span": 40,
+       "sweeps": 1,
+       "rate": 40,
+       "moves": 126,
+       "onRail": true,
+       "first": {
+        "dragMs": 2111.7999999523163,
+        "frames": 127,
+        "final": "z50"
+       },
+       "lum": {
+        "ref": 15.79375,
+        "black": 0,
+        "series": [
+         15.8,
+         15.8,
+         15.8,
+         15.5,
+         15.3,
+         15.7,
+         16.5,
+         16.5,
+         17.2,
+         17.8,
+         19,
+         19,
+         19.6,
+         19.6,
+         20.3,
+         21.8,
+         15.5,
+         15.5,
+         15.5,
+         15.5,
+         16.3,
+         16.7,
+         16.7,
+         16.7,
+         17.5,
+         17.5,
+         18.1,
+         18.1,
+         19.1,
+         19.7,
+         19.7,
+         20.8,
+         21.5,
+         22.2,
+         17.1,
+         17.3,
+         17.4,
+         13.4,
+         13.4,
+         13.5,
+         13.5,
+         14.2,
+         15.1,
+         16.1,
+         17.1,
+         17.9,
+         17.9,
+         15.1,
+         15.1,
+         15.1,
+         16,
+         17.5,
+         19,
+         20.2,
+         21.4,
+         22.1,
+         17.8,
+         16.2,
+         15.7,
+         15.7,
+         16.1,
+         16.6,
+         17.4,
+         18.1,
+         18.8,
+         18.8,
+         15.2,
+         14.6,
+         15.5,
+         15.5,
+         16.8,
+         18,
+         19.3,
+         20.5,
+         21.1,
+         21.8,
+         22.3,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         15.9,
+         12.7,
+         12.7,
+         14.7,
+         16.2,
+         16.8,
+         17.4,
+         18,
+         18.6,
+         19.1,
+         19.7,
+         20.2,
+         20.2,
+         18.5,
+         18.5,
+         18.7,
+         18.7,
+         18.7,
+         19.3,
+         19.8,
+         20.3,
+         21,
+         21.7,
+         22.3,
+         22.3,
+         22.3,
+         18.5,
+         18.5,
+         13.6,
+         14.5,
+         15.7,
+         16.4,
+         17,
+         17.6,
+         18.2,
+         18.7,
+         18.7
+        ]
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z90",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z90",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z89",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z89",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 1/0_0 /generated/data/flatstack/flatstack_0/1/0_0.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_0/0/1_1.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_0/0/0_0.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_0/0/1_0.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 1/0_0 /generated/data/flatstack/flatstack_1/1/0_0.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z87",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z87",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z56",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z56",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z56",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z56",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z56",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z56"
+    ],
+    "wall_s": 241.0
+   },
+   "panesync": {
+    "scenario": "panesync",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:39:01.379Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "pan_tileRequests": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "pan_sectionRequests": [
+      12,
+      12,
+      12
+     ],
+     "pan_serverReadP95": [
+      1376.9,
+      1376.9
+     ],
+     "pan_serverCacheHitShare": [
+      0,
+      1,
+      0
+     ],
+     "pan_chunkCacheHits": [
+      24,
+      0,
+      0
+     ],
+     "pan_chunkCacheMisses": [
+      104,
+      0,
+      0
+     ],
+     "pan_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "pan_tileCacheMisses": [
+      12,
+      0,
+      0
+     ],
+     "pan_chunkHitRate": [
+      0.1875
+     ],
+     "pan_planeChangeMs": [
+      33.299999952316284,
+      42.80000019073486,
+      41.700000047683716
+     ],
+     "pan_xzLeadMs": [
+      0,
+      0,
+      0
+     ],
+     "pan_xzRecutMs": [
+      1565.6000001430511,
+      80.39999985694885,
+      102.09999990463257
+     ],
+     "pan_xzBlackFrames": [
+      0,
+      0,
+      0
+     ],
+     "pan_yzLeadMs": [
+      0,
+      17,
+      0
+     ],
+     "pan_yzRecutMs": [
+      2373.5,
+      128.20000004768372,
+      154.09999990463257
+     ],
+     "pan_yzBlackFrames": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "pans": [
+      {
+       "plane": 33.299999952316284,
+       "panes": {
+        "xz": {
+         "first": 33.299999952316284,
+         "lead": 0,
+         "recut": 1565.6000001430511,
+         "black": 0,
+         "frames": 206,
+         "ref": 12.4375,
+         "shows": null,
+         "series": [
+          14.3,
+          14,
+          13.9,
+          13.7,
+          13.6,
+          14.3,
+          13.9,
+          13.9,
+          14.3,
+          14,
+          14.2,
+          13.6,
+          14.2,
+          13.5,
+          13.8,
+          13.7,
+          14.3,
+          14.2,
+          13.8,
+          13.9,
+          13.2,
+          13.8,
+          13.9,
+          14,
+          13.8,
+          14.1,
+          13.6,
+          13.7,
+          13.8,
+          13.6,
+          13.2,
+          12.9,
+          13.1,
+          13.3,
+          13.3,
+          13,
+          13.1,
+          13.1,
+          13.3,
+          13.5,
+          13.7,
+          13.7,
+          13.7,
+          13.5,
+          13.6,
+          13.6,
+          13.4,
+          13.4,
+          13.5,
+          13.4,
+          13.5,
+          13.5,
+          13.4,
+          13.6,
+          13.6,
+          13.7,
+          13.8,
+          13.8,
+          13.8,
+          13.8
+         ]
+        },
+        "yz": {
+         "first": 33.299999952316284,
+         "lead": 0,
+         "recut": 2373.5,
+         "black": 0,
+         "frames": 206,
+         "ref": 15.35,
+         "shows": null,
+         "series": [
+          15.7,
+          15.5,
+          15.1,
+          15.4,
+          15.4,
+          15.6,
+          15.7,
+          15.9,
+          15.4,
+          15.3,
+          15.8,
+          17.2,
+          16.7,
+          16.1,
+          15.5,
+          16.5,
+          16.4,
+          15.6,
+          15.3,
+          15.1,
+          14.8,
+          14.9,
+          14.8,
+          14.3,
+          14.6,
+          14.9,
+          15.7,
+          16.1,
+          15.6,
+          15.5,
+          15.2,
+          15,
+          14.8,
+          14.4,
+          14.8,
+          15.1,
+          15.6,
+          15.6,
+          15.4,
+          15.4,
+          15.3,
+          15.3,
+          15.4,
+          15.2,
+          15.2,
+          14.8,
+          14.8,
+          14.7,
+          14.8,
+          14.6,
+          14.6,
+          14.6,
+          14.5,
+          14.5,
+          14.6,
+          14.6,
+          14.5,
+          14.5,
+          14.5,
+          14.4
+         ]
+        }
+       }
+      },
+      {
+       "plane": 42.80000019073486,
+       "panes": {
+        "xz": {
+         "first": 42.80000019073486,
+         "lead": 0,
+         "recut": 80.39999985694885,
+         "black": 0,
+         "frames": 73,
+         "ref": 14.03125,
+         "shows": null,
+         "series": [
+          12.4,
+          12.4,
+          12.5,
+          12.4,
+          12.3,
+          12.6,
+          12.6,
+          12.4,
+          12.7,
+          12.6,
+          12.8,
+          12.6,
+          12.7,
+          12.8,
+          12.4,
+          12.4,
+          12.6,
+          12.4,
+          12.6,
+          12.2,
+          12.4,
+          12.5,
+          12.6,
+          12.8,
+          12.3,
+          12.9,
+          14.1,
+          13.8,
+          14,
+          14.2,
+          14,
+          13.9,
+          14.1,
+          14.3,
+          14.1,
+          13.9,
+          13.8,
+          13.7,
+          13.8,
+          14.1,
+          14.1,
+          14.2,
+          14.2,
+          14,
+          13.9,
+          13.7,
+          13.5,
+          13.7,
+          13.6,
+          13.7,
+          13.7,
+          13.8,
+          13.7,
+          13.7,
+          13.7,
+          13.9,
+          13.9,
+          14,
+          14,
+          14
+         ]
+        },
+        "yz": {
+         "first": 59.80000019073486,
+         "lead": 17,
+         "recut": 128.20000004768372,
+         "black": 0,
+         "frames": 73,
+         "ref": 15.3,
+         "shows": null,
+         "series": [
+          15.4,
+          15.4,
+          15.1,
+          15.2,
+          15,
+          14.7,
+          14.7,
+          15.1,
+          15.5,
+          15.6,
+          15.3,
+          15.4,
+          14.9,
+          15.3,
+          15.8,
+          15.2,
+          14.6,
+          15.3,
+          15.8,
+          15.8,
+          16.2,
+          15.4,
+          15.1,
+          15.4,
+          15.8,
+          15.7,
+          15.5,
+          14.7,
+          14.2,
+          15.9,
+          15.8,
+          15.4,
+          15.4,
+          15.5,
+          15.7,
+          15.8,
+          15.9,
+          15.8,
+          15.7,
+          15.8,
+          15.7,
+          15.6,
+          15.6,
+          15.5,
+          15.4,
+          15.4,
+          15.5,
+          15.4,
+          15.4,
+          15.3,
+          15.3,
+          15.1,
+          15.2,
+          15.3,
+          15.3,
+          15.2,
+          15.2,
+          15.2,
+          15.1,
+          15.2
+         ]
+        }
+       }
+      },
+      {
+       "plane": 41.700000047683716,
+       "panes": {
+        "xz": {
+         "first": 41.700000047683716,
+         "lead": 0,
+         "recut": 102.09999990463257,
+         "black": 0,
+         "frames": 74,
+         "ref": 12.40625,
+         "shows": null,
+         "series": [
+          14.3,
+          14.3,
+          14,
+          13.9,
+          13.7,
+          13.8,
+          14.3,
+          13.9,
+          13.8,
+          14.2,
+          14,
+          14.1,
+          13.6,
+          14.2,
+          13.4,
+          13.7,
+          13.6,
+          14.2,
+          14.2,
+          13.8,
+          14,
+          13.3,
+          13.9,
+          13.6,
+          14.1,
+          13.7,
+          14.1,
+          12.7,
+          12.5,
+          12.7,
+          12.9,
+          12.7,
+          12.7,
+          12.5,
+          12.5,
+          12.8,
+          12.7,
+          12.6,
+          12.5,
+          12.6,
+          12.5,
+          12.6,
+          12.6,
+          12.5,
+          12.6,
+          12.5,
+          12.5,
+          12.4,
+          12.3,
+          12.3,
+          12.3,
+          12.3,
+          12.3,
+          12.3,
+          12.3,
+          12.5,
+          12.5,
+          12.4,
+          12.4,
+          12.4
+         ]
+        },
+        "yz": {
+         "first": 41.700000047683716,
+         "lead": 0,
+         "recut": 154.09999990463257,
+         "black": 0,
+         "frames": 74,
+         "ref": 15.15,
+         "shows": null,
+         "series": [
+          15.7,
+          15.7,
+          15.5,
+          15.1,
+          15.4,
+          15.4,
+          15.6,
+          15.7,
+          15.9,
+          15.5,
+          15.4,
+          15.8,
+          17.2,
+          16.7,
+          16,
+          15.3,
+          16.6,
+          16.4,
+          15.7,
+          15.3,
+          15,
+          14.8,
+          14.9,
+          14.9,
+          14.4,
+          14.4,
+          14.8,
+          15.6,
+          16.2,
+          15.7,
+          15.2,
+          15.3,
+          15.6,
+          15.5,
+          15.4,
+          15.4,
+          15.3,
+          15.3,
+          15.2,
+          15.1,
+          14.9,
+          14.7,
+          14.7,
+          14.5,
+          14.7,
+          14.7,
+          14.9,
+          14.9,
+          14.9,
+          15,
+          15,
+          15,
+          15.1,
+          15.2,
+          15.1,
+          15.2,
+          15.2,
+          15.2,
+          15.1,
+          15.1
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 17.2
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "flatstack",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-14T01:39:18.573Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_commit": [
+      14.099999904632568,
+      2.5999999046325684,
+      11.199999809265137,
+      16.90000009536743,
+      3.4000000953674316
+     ],
+     "step_full": [
+      14.299999952316284,
+      6.5,
+      11.299999952316284,
+      18.600000143051147,
+      5
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      1949.8000001907349
+     ],
+     "scrub_paintedPlanes": [
+      12
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      10.799999952316284,
+      21.200000047683716,
+      34.60000014305115,
+      7.5,
+      15.900000095367432,
+      16.5,
+      11.700000047683716,
+      113.79999995231628,
+      175.90000009536743,
+      238.5,
+      247.29999995231628,
+      314
+     ],
+     "scrub_fps": [
+      59.67064470964733
+     ],
+     "scrub_frameP95": [
+      16.80000000000109
+     ],
+     "scrub_frameP99": [
+      18.600000000000364
+     ],
+     "scrub_dropped": [
+      1
+     ],
+     "scrub_tileRequests": [
+      157
+     ],
+     "scrub_tileMB": [
+      325.29664
+     ],
+     "scrub_canceled": [
+      2
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "step_firstVisibleChange": [
+      48.799999952316284,
+      39.5,
+      45.299999952316284,
+      40.59999990463257,
+      36.299999952316284
+     ],
+     "step_flashFrames": [
+      4,
+      4,
+      4,
+      3,
+      4
+     ],
+     "step_flashWorst": [
+      8,
+      7,
+      8,
+      10,
+      12
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 157,
+        "bytes": 325296640,
+        "canceled": 2
+       },
+       "other": {
+        "n": 2,
+        "bytes": 1464,
+        "canceled": 0
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z61",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z61",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_0/0/0_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_0/0/1_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_0/0/0_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_0/0/1_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z62",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z62",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 29.9
+   },
+   "jump": {
+    "scenario": "jump",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:39:48.161Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "jump_commit": [
+      146.60000014305115,
+      218.09999990463257,
+      32.700000047683716,
+      180.90000009536743,
+      122.09999990463257,
+      22.199999809265137,
+      169,
+      149,
+      24.100000143051147
+     ],
+     "jump_full": [
+      179.79999995231628,
+      219.09999990463257,
+      46,
+      216.5,
+      151,
+      37.799999952316284,
+      202.59999990463257,
+      182.10000014305115,
+      40.30000019073486
+     ],
+     "jump_wastedTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs": [
+      6.5,
+      7.5,
+      11,
+      8.400000095367432,
+      1.9000000953674316,
+      1.5999999046325684,
+      15,
+      11.700000047683716,
+      5.400000095367432
+     ],
+     "jumpBusy_commit": [
+      163.09999990463257,
+      163.90000009536743,
+      156.30000019073486
+     ],
+     "jumpBusy_full": [
+      190.79999995231628,
+      199,
+      187.80000019073486
+     ],
+     "jumpBusy_wastedTiles": [
+      1,
+      0,
+      0
+     ],
+     "jumpBusy_originTiles": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs": [
+      15,
+      15.5,
+      8.900000095367432
+     ],
+     "jumpBusy_inFlight": [
+      1,
+      1,
+      1
+     ],
+     "jump_commit_L0": [
+      139.09999990463257,
+      142.5,
+      34.5,
+      164.19999980926514,
+      139.79999995231628,
+      24.09999990463257,
+      186.89999985694885,
+      136.60000014305115,
+      19.5
+     ],
+     "jump_full_L0": [
+      168.70000004768372,
+      170.90000009536743,
+      51.200000047683716,
+      202.5,
+      169.20000004768372,
+      40.5,
+      222.5,
+      162.80000019073486,
+      38
+     ],
+     "jump_wastedTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_originTiles_L0": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "jump_waitMs_L0": [
+      3.5,
+      5.300000190734863,
+      15.600000143051147,
+      10.199999809265137,
+      3.200000047683716,
+      5.3999998569488525,
+      15.5,
+      16,
+      0.7000000476837158
+     ],
+     "jumpBusy_commit_L0": [
+      152.20000004768372,
+      163.09999990463257,
+      181.39999985694885
+     ],
+     "jumpBusy_full_L0": [
+      181,
+      195.69999980926514,
+      207.39999985694885
+     ],
+     "jumpBusy_wastedTiles_L0": [
+      0,
+      1,
+      4
+     ],
+     "jumpBusy_originTiles_L0": [
+      0,
+      0,
+      0
+     ],
+     "jumpBusy_waitMs_L0": [
+      5.400000095367432,
+      14.699999809265137,
+      15.799999952316284
+     ],
+     "jumpBusy_inFlight_L0": [
+      1,
+      1,
+      1
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "route": [
+      99,
+      0,
+      50
+     ],
+     "o": 50,
+     "o2": 25,
+     "busyDest": 75,
+     "l0": {
+      "zoom": 1.9320754716981132,
+      "maxLevel": 2,
+      "finest": 2
+     },
+     "tiles": {
+      "home": {
+       "origin": 50,
+       "dest": 99,
+       "tiles": {
+        "99": 10
+       }
+      },
+      "L0": {
+       "origin": 50,
+       "dest": 99,
+       "tiles": {
+        "99": 10
+       }
+      }
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_0/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_0/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_0/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_0/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_0/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_0/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_0/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 1/0_0 /generated/data/flatstack/flatstack_1/1/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 1/0_0 /generated/data/flatstack/flatstack_1/1/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/flatstack/flatstack_1/0/0_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_1 /generated/data/flatstack/flatstack_1/0/0_1.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/flatstack/flatstack_1/0/1_0.png?q=hd&view=z26",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_1 /generated/data/flatstack/flatstack_1/0/1_1.png?q=hd&view=z26"
+    ],
+    "wall_s": 52.4
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:40:40.616Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      126.40000009536743,
+      110.70000004768372,
+      133
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      2,
+      2,
+      2
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 15.9
+   },
+   "panes_resize": {
+    "scenario": "panes_resize",
+    "dataset": "flatstack",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:40:56.575Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "panes_showsDuring": [
+      0,
+      0,
+      0
+     ],
+     "panes_showsAfter": [
+      1,
+      1,
+      1
+     ],
+     "panes_monotonic": [
+      1,
+      1,
+      1
+     ],
+     "panes_grownPx": [
+      200,
+      200,
+      200
+     ],
+     "panes_labelStretch": [
+      1,
+      1,
+      1
+     ],
+     "resize_frameP95": [
+      17.100000000000364,
+      16.799999999999272,
+      16.799999999999272
+     ],
+     "resize_dropped": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "labels": [
+      "XZ \u00b7 y 631 \u00b7 z \u00d72.0",
+      "XZ \u00b7 y 631 \u00b7 z \u00d72.0",
+      "XZ \u00b7 y 631 \u00b7 z \u00d72.0"
+     ],
+     "shots": {
+      "before": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-flatstack-panes_resize-before.png",
+      "after": "$PLEXORA_BENCH_HOME/shots/aad219d7c0cb-znav-pre-final-flatstack-panes_resize-after.png"
+     },
+     "onDivider": true,
+     "panes_label": "XZ \u00b7 y 631 \u00b7 z \u00d72.0"
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 20.2
+   },
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      378.3
+     ]
+    }
+   }
+  },
+  "large": {
+   "zreveal": {
+    "scenario": "zreveal",
+    "dataset": "large",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:41:17.347Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_tileRequests": [
+      10,
+      10,
+      10
+     ],
+     "step_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "step_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "step_serverReadP95": [
+      10.6,
+      10.1,
+      9.2
+     ],
+     "step_serverCacheHitShare": [
+      0,
+      0,
+      0
+     ],
+     "step_chunkCacheHits": [
+      160,
+      160,
+      160
+     ],
+     "step_chunkCacheMisses": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "step_tileCacheMisses": [
+      10,
+      10,
+      10
+     ],
+     "step_chunkHitRate": [
+      1,
+      1,
+      1
+     ],
+     "step_previewMs": [
+      86.09999990463257
+     ],
+     "step_fullResMs": [
+      49.299999952316284,
+      50.700000047683716,
+      78.60000014305115
+     ],
+     "jump_tileRequests": [
+      40,
+      40,
+      40
+     ],
+     "jump_tileCanceled": [
+      0,
+      0,
+      0
+     ],
+     "jump_sectionRequests": [
+      0,
+      0,
+      0
+     ],
+     "jump_serverReadP95": [
+      128.8,
+      34.3,
+      20.3
+     ],
+     "jump_serverCacheHitShare": [
+      0,
+      0,
+      0
+     ],
+     "jump_chunkCacheHits": [
+      320,
+      800,
+      640
+     ],
+     "jump_chunkCacheMisses": [
+      640,
+      0,
+      160
+     ],
+     "jump_tileCacheHits": [
+      0,
+      0,
+      0
+     ],
+     "jump_tileCacheMisses": [
+      40,
+      40,
+      40
+     ],
+     "jump_chunkHitRate": [
+      0.3333333333333333,
+      1,
+      0.8
+     ],
+     "jump_previewMs": [
+      284.2999999523163,
+      256.4000976085663,
+      244.90009760856628
+     ],
+     "jump_fullResMs": [
+      488.2000000476837,
+      319.19999980926514,
+      301.5
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "z0": 1990,
+     "steps": [
+      {
+       "spec": "z1991",
+       "commit": 20.09999990463257,
+       "full": 49.299999952316284,
+       "preview": 86.09999990463257,
+       "ref": 0.05625
+      },
+      {
+       "spec": "z1992",
+       "commit": 18.200000047683716,
+       "full": 50.700000047683716,
+       "preview": null,
+       "ref": 0.05625
+      },
+      {
+       "spec": "z1993",
+       "commit": 18.600000143051147,
+       "full": 78.60000014305115,
+       "preview": null,
+       "ref": 0.0625
+      }
+     ],
+     "jumps": [
+      {
+       "dest": 2040,
+       "commit": 268.59999990463257,
+       "full": 488.2000000476837,
+       "wait": 15.599999904632568,
+       "preview": 284.2999999523163,
+       "black": null,
+       "ref": 0.03125,
+       "series": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+       ],
+       "shows": null
+      },
+      {
+       "dest": 2036,
+       "commit": 241.79999995231628,
+       "full": 319.19999980926514,
+       "wait": 8,
+       "preview": 256.4000976085663,
+       "black": null,
+       "ref": 0.0375,
+       "series": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+       ],
+       "shows": null
+      },
+      {
+       "dest": 2032,
+       "commit": 217,
+       "full": 301.5,
+       "wait": 9.799999952316284,
+       "preview": 244.90009760856628,
+       "black": null,
+       "ref": 0.08125,
+       "series": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0.1,
+        0.1,
+        0,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1
+       ],
+       "shows": null
+      }
+     ]
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 32.1
+   },
+   "zsteps": {
+    "scenario": "zsteps",
+    "dataset": "large",
+    "reps": 5,
+    "headed": false,
+    "started": "2026-10-14T01:41:49.576Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "step_commit": [
+      12.400000095367432,
+      17.799999952316284,
+      2.700000047683716,
+      17.200000047683716,
+      12.700000047683716
+     ],
+     "step_full": [
+      12.600000143051147,
+      19.299999952316284,
+      5.599999904632568,
+      17.299999952316284,
+      17.200000047683716
+     ],
+     "step_shaderCompiles": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_shaderXhrs": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "scrub_settle": [
+      2439.5999999046326
+     ],
+     "scrub_paintedPlanes": [
+      12
+     ],
+     "scrub_stale": [
+      0
+     ],
+     "scrub_paintLatency": [
+      4.300000190734863,
+      34.10000014305115,
+      34.40000009536743,
+      21,
+      23.799999952316284,
+      17.40000009536743,
+      9.799999952316284,
+      135.5,
+      227.10000014305115,
+      174.20000004768372,
+      684.1000001430511,
+      670
+     ],
+     "scrub_fps": [
+      60.00112151629002
+     ],
+     "scrub_frameP95": [
+      16.80000000000109
+     ],
+     "scrub_frameP99": [
+      17.100000000000364
+     ],
+     "scrub_dropped": [
+      0
+     ],
+     "scrub_tileRequests": [
+      155
+     ],
+     "scrub_tileMB": [
+      325.306146
+     ],
+     "scrub_canceled": [
+      0
+     ],
+     "scrub_shaderCompiles": [
+      0
+     ],
+     "step_firstVisibleChange": [
+      68.70000004768372,
+      102.70000004768372
+     ],
+     "step_flashFrames": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "step_flashWorst": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [
+     {
+      "scrubNet": {
+       "tile": {
+        "n": 155,
+        "bytes": 325306146,
+        "canceled": 0
+       },
+       "other": {
+        "n": 3,
+        "bytes": 1492,
+        "canceled": 1
+       }
+      }
+     }
+    ],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\"",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_0/3/1_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_0/3/1_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_1/3/0_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_1/3/1_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_1/3/0_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_1/3/1_0.png?q=hd&view=z2001",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_0/3/0_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_0/3/1_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_0/3/0_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_0/3/1_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_1/3/0_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_1/3/1_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/0_0 /generated/data/large/large_1/3/0_0.png?q=hd&view=z2002",
+     "[warning] Ignoring tile %s loaded before reset: %s 2/1_0 /generated/data/large/large_1/3/1_0.png?q=hd&view=z2002",
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 30.8
+   },
+   "sync": {
+    "scenario": "sync",
+    "dataset": "large",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-14T01:42:20.410Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "zline_leadMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "zstep_spread": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneLag": [
+      3358.399999856949,
+      2691,
+      3211.2999999523163
+     ],
+     "pan_staleTokens": [
+      0,
+      0,
+      0
+     ],
+     "pan_paneShows": [
+      4,
+      4,
+      4
+     ]
+    },
+    "F": 16.799999999999272,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 30.5
+   },
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      0.1
+     ],
+     "pyramid_diskMB": [
+      0.3
+     ]
+    }
+   }
+  }
+ },
+ "server_env": [],
+ "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+ "F": {
+  "small": 16.699999999999818,
+  "medium": 16.699999999999818,
+  "flatstack": 16.699999999999818,
+  "large": 16.799999999999272
+ }
+}

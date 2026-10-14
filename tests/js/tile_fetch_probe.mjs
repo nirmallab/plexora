@@ -11,12 +11,20 @@
  *   next plane covering the view before the plane on screen sharpening -- the
  *   plane before the panes, coarse levels before fine, near before far;
  *   never more than MAX_IN_FLIGHT at once;
+ * - while the hand moves (`setScrubbing`) what only sharpens waits in line,
+ *   not dropped: a covering plane past its cover, a plane coming in past its
+ *   coarsest level, a prefetched plane past its two coarsest; still shared, still
+ *   cancelled with its item, never batched; and it goes when the hand stops,
+ *   with no new job asking -- at once when it lets go (`endScrubbing`);
  * - decoded once, the response's buffer TRANSFERRED to the worker (8-bit) and
  *   the job finished as a `context2d` the size of the tile -- so OSD's own
  *   image decode never runs;
  * - an item removed from its world gives up its jobs: finished at once (its
  *   loader slot freed), and a request nobody wants any more is aborted;
- * - an aborted download is never retried; a failed one is, by OSD;
+ * - an aborted download is never retried; a failed one is, by OSD, and its
+ *   tile says so: "retrying" while OSD has retries left (its viewer's
+ *   `tileRetryMax`), "final" after; `retryFailed` makes a final one a tile
+ *   OSD asks for again;
  * - batched only on a slow link: the wait for a first byte, less the
  *   server's own time, over BATCH_ENTER_MS -- a slow server is not a slow
  *   link; a batch carries one server's tiles of one tier in order of need,
@@ -227,6 +235,198 @@ function scheduler(extra = {}) {
         net.calls.length === 3, net.calls.map((c) => c.url).join());
 }
 
+// -- while the hand moves -----------------------------------------------------------
+
+/** A clock the probe moves, and the timers set on it (setScrubbing's). */
+function fakeTime(start = 1000) {
+    const real = { performance: box.performance, setTimeout: box.setTimeout,
+                   clearTimeout: box.clearTimeout };
+    const timers = new Map();
+    let ids = 0;
+    const time = {
+        at: start,
+        timers,
+        /** Move to `to`, running every timer due by then, earliest first. */
+        advance(to) {
+            time.at = to;
+            for (;;) {
+                let due = null;
+                for (const entry of timers) {
+                    if (entry[1].at <= time.at && (!due || entry[1].at < due[1].at)) due = entry;
+                }
+                if (!due) return;
+                timers.delete(due[0]);
+                due[1].run();
+            }
+        },
+        restore() { Object.assign(box, real); },
+    };
+    box.performance = { now: () => time.at };
+    box.setTimeout = (run, ms = 0) => {
+        ids += 1;
+        timers.set(ids, { run, at: time.at + Math.max(0, Number(ms) || 0) });
+        return ids;
+    };
+    box.clearTimeout = (id) => { timers.delete(id); };
+    return time;
+}
+/** channelFade's answers, read off a fake item's `covering` level. */
+const coveringFade = {
+    covers: (it) => Number.isFinite(it.covering),
+    coveringLevel: (it) => (Number.isFinite(it.covering) ? it.covering : null),
+};
+
+{
+    // The plane on screen covers the view at level 2 (OSD counts levels up
+    // from the coarsest): while the hand moves it does not sharpen -- level
+    // 3 and 4 wait. A plane that does not cover the view yet, whose
+    // coarsest visited level (the least key of OSD's `coverage`) is 5,
+    // loads that level, which covers it; its level 6 waits too. (Before
+    // the drag benchmark, a covering plane sharpened one level past its
+    // cover and a plane coming in was never held: at a stack's home view
+    // that is every level, and each preview waited behind full-resolution
+    // tiles.)
+    box.PlexoraChannelFade = coveringFade;
+    const time = fakeTime();
+    const { s, net } = scheduler();
+    for (let i = 0; i < MAX_IN_FLIGHT; i += 1) s.start(job(`/t/blocker/${i}`, item()));
+    const onScreen = Object.assign(item(), { covering: 2 });
+    const comingCovered = Object.assign(item({ opacity: 0 }), { covering: 2 });
+    const coming = Object.assign(item({ opacity: 0 }), { coverage: { 5: {}, 6: {} } });
+    s.setScrubbing(time.at + 250);
+    const one = job("/t/sharpen-3", onScreen, { level: 3 });
+    const two = job("/t/sharpen-4", onScreen, { level: 4 });
+    const nextTwo = job("/t/next-sharpen-4", comingCovered, { level: 4 });
+    const fine = job("/t/cover-6", coming, { level: 6 });
+    const cover = job("/t/cover-5", coming, { level: 5 });
+    for (const j of [two, nextTwo, one, fine, cover]) s.start(j);
+    for (const call of net.calls.slice(0, MAX_IN_FLIGHT)) call.respond();
+    for (let i = 0; i < 6; i += 1) await tick();
+    const order = net.calls.slice(MAX_IN_FLIGHT).map((call) => call.url.split("/").pop());
+    check("while the hand moves, a covering plane does not sharpen and a plane coming in loads only its coarsest level",
+        order.join() === "cover-5", order.join());
+    check("the held tiles wait in line, not dropped",
+        s.queue.length === 4 && ["/t/sharpen-3", "/t/sharpen-4", "/t/next-sharpen-4", "/t/cover-6"]
+            .every((url) => s.requests.has(url))
+        && s.stats.aborted === 0 && !one.finished && !two.finished && !nextTwo.finished && !fine.finished,
+        JSON.stringify({ queued: s.queue.map((r) => r.url), stats: s.stats }));
+    // The same tile asked for by a plane that needs it to cover the view
+    // (its coarsest level): still one request, keyed by the job that is not
+    // held -- it goes.
+    const shared = s.stats.shared;
+    s.start(job("/t/sharpen-4", Object.assign(item({ opacity: 0 }), { coverage: { 4: {} } }),
+                { level: 4 }));
+    const sent = net.calls.filter((call) => call.url === "/t/sharpen-4").length;
+    check("a held tile that another plane needs to cover the view shares its request, and goes",
+        s.stats.shared === shared + 1 && sent === 1 && s.queue.length === 3,
+        JSON.stringify({ shared: s.stats.shared, sent, queued: s.queue.map((r) => r.url) }));
+    s.cancelItem(comingCovered);
+    check("a held request is cancelled with its item, never having gone",
+        nextTwo.finished?.dataType === "context2d" && s.queue.length === 2
+        && !s.requests.has("/t/next-sharpen-4")
+        && !net.calls.some((call) => call.url === "/t/next-sharpen-4"),
+        JSON.stringify({ queued: s.queue.map((r) => r.url), finished: nextTwo.finished }));
+    // The hand stops: what was held goes, with no new job asking.
+    time.advance(time.at + 300);
+    const after = net.calls.map((call) => call.url.split("/").pop());
+    check("when the hand stops, the plane on screen sharpens and the one coming in loads its finer level",
+        !s.scrubbing() && after.includes("sharpen-3") && after.includes("cover-6") && s.queue.length === 0,
+        after.join());
+    time.restore();
+    delete box.PlexoraChannelFade;
+}
+
+{
+    // A prefetched plane whose coarsest visited level (the least key of
+    // OSD's `coverage`) is 3: while the hand moves only 3 and 4 load; when
+    // it stops, the rest go -- no new job asks, setScrubbing's timer pumps.
+    const time = fakeTime(1000);
+    const { s, net } = scheduler();
+    const ahead = Object.assign(item({ opacity: 0, standby: true }),
+                                { coverage: { 3: {}, 4: {}, 5: {}, 6: {} } });
+    s.setScrubbing(time.at + 250);
+    for (const level of [6, 5, 4, 3]) s.start(job(`/t/ahead-${level}`, ahead, { level }));
+    const urls = () => net.calls.map((call) => call.url.split("/").pop()).sort().join();
+    check("while the hand moves, a prefetched plane loads only its two coarsest levels",
+        urls() === "ahead-3,ahead-4" && s.queue.length === 2, urls());
+    for (const call of net.calls) call.respond();
+    for (let i = 0; i < 6; i += 1) await tick();
+    time.advance(1100);
+    s.setScrubbing(1350);                   // the hand moves on
+    s.setScrubbing(1200);                   // an earlier end does not shorten it
+    time.advance(1260);                     // past the first end
+    check("a later request keeps the hold, and an earlier end does not shorten it",
+        urls() === "ahead-3,ahead-4" && s.scrubbing() && s.scrubUntil === 1350
+        && time.timers.size === 1, JSON.stringify({ sent: urls(), until: s.scrubUntil }));
+    time.advance(1360);
+    check("when the hand stops the rest go, with no new job asking",
+        urls() === "ahead-3,ahead-4,ahead-5,ahead-6" && !s.scrubbing() && s.queue.length === 0,
+        urls());
+    time.restore();
+}
+
+{
+    // Before OSD's first update has written `coverage`: the level its walk
+    // down stops at (`savedCutOffLevel`, the finest one-tile level).
+    const time = fakeTime();
+    const { s, net } = scheduler();
+    const fresh = Object.assign(item({ opacity: 0, standby: true }), { savedCutOffLevel: 4 });
+    s.setScrubbing(time.at + 250);
+    for (const level of [6, 5]) s.start(job(`/t/fresh-${level}`, fresh, { level }));
+    check("a prefetched plane with nothing visited yet counts from its one-tile level",
+        net.calls.map((call) => call.url).join() === "/t/fresh-5" && s.queue.length === 1,
+        net.calls.map((call) => call.url).join());
+    time.restore();
+}
+
+{
+    // The hand let go (`plexora:scrub-ended`, planeMotion.js): what was held
+    // goes at once, not when setScrubbing's time runs out -- which never
+    // shortens, so the end is its own call -- and its timer is gone.
+    box.PlexoraChannelFade = coveringFade;
+    const time = fakeTime();
+    const { s, net } = scheduler();
+    const onScreen = Object.assign(item(), { covering: 2 });
+    s.setScrubbing(time.at + 100);
+    s.start(job("/t/end-3", onScreen, { level: 3 }));
+    const heldBefore = net.calls.length === 0 && s.queue.length === 1;
+    s.endScrubbing();
+    check("endScrubbing releases held tiles at once, its timer gone",
+        heldBefore && !s.scrubbing() && net.calls.map((call) => call.url).join() === "/t/end-3"
+        && s.queue.length === 0 && time.timers.size === 0,
+        JSON.stringify({ heldBefore, sent: net.calls.map((call) => call.url), timers: time.timers.size }));
+    s.setScrubbing(time.at + 100);
+    check("...and the next drag holds again", s.scrubbing() && time.timers.size === 1);
+    time.restore();
+    delete box.PlexoraChannelFade;
+}
+
+{
+    // On a slow (batched) link: the held tiles of the same server and tier
+    // stay behind.
+    box.PlexoraChannelFade = coveringFade;
+    const time = fakeTime();
+    const { s, net } = scheduler();
+    const base = "/generated/data/held/held_0";
+    s.linkOf(`${base}/0/0_0.png`).link.batching = true;
+    const onScreen = Object.assign(item(), { covering: 2 });
+    s.setScrubbing(time.at + 250);
+    // Its covering level goes (a tile of it still missing at an edge); the
+    // next one only sharpens, and waits (SCRUB_SHARPEN_SPAN 0).
+    for (const [level, x] of [[2, 0], [3, 0], [2, 1], [3, 1]]) {
+        s.start(job(`${base}/${level}/${x}_0.png`, onScreen, { level }));
+    }
+    await tick();
+    const posts = net.calls.filter((call) => call.options?.method === "POST");
+    const tiles = posts.flatMap((call) => JSON.parse(call.options.body).tiles);
+    check("a held tile never rides in a batch",
+        posts.length === 1 && net.calls.length === 1 && s.queue.length === 2
+        && tiles.join() === `${base}/2/0_0.png,${base}/2/1_0.png`,
+        JSON.stringify({ calls: net.calls.length, tiles }));
+    time.restore();
+    delete box.PlexoraChannelFade;
+}
+
 // -- cancelled with the item that wanted it ----------------------------------------
 
 {
@@ -275,6 +475,58 @@ function scheduler(extra = {}) {
     const b = job("/t/500", item());
     s.start(b);
     check("a retry is a new request", net.calls.length === 2);
+}
+
+{
+    // OSD asks again with the same job, `tries` counted up by ImageJob.start,
+    // while tries < 1 + tileRetryMax; between asks the tile is `exists` false.
+    const { s, net } = scheduler();
+    s.watch({ tileRetryMax: 3, world: { addHandler() {} } });
+    const shown = item();
+    const a = job("/t/flaky", shown);
+    s.start(a);
+    net.calls[0].respond(webp(), 500);
+    await tick(); await tick();
+    check("a 500 tags the tile retrying while OSD has retries left",
+        a.tile._plexoraFailed === "retrying" && s.stats.retried === 1, JSON.stringify(s.stats));
+    for (let tries = 2; tries <= 4; tries += 1) {
+        a.tries = tries;
+        s.start(a);
+        net.calls[net.calls.length - 1].respond(webp(), 500);
+        await tick(); await tick();
+        if (tries === 3) check("still retrying on the third ask", a.tile._plexoraFailed === "retrying");
+    }
+    check("past tileRetryMax it is final: a hole, not a wait",
+        a.tile._plexoraFailed === "final" && s.stats.retried === 3 && net.calls.length === 4,
+        `${a.tile._plexoraFailed} after ${net.calls.length} asks`);
+    // OSD's own mark for it; retryFailed makes it a tile OSD will ask for.
+    Object.assign(a.tile, { exists: false, loaded: false, loading: false });
+    let redraws = 0;
+    shown.viewer = { forceRedraw() { redraws += 1; } };
+    const untouched = { exists: false, loaded: false, loading: false };   // past the edge
+    shown.tilesMatrix = { 3: { 0: { 0: a.tile, 1: untouched } } };
+    const asked = s.retryFailed([shown, item()]);
+    check("retryFailed clears it and has the tile asked for again",
+        asked === 1 && !("_plexoraFailed" in a.tile) && a.tile.exists === true
+        && a.tile.loaded === false && a.tile.loading === false && untouched.exists === false
+        && shown._needsUpdate === true && shown._needsDraw === true && redraws === 1,
+        JSON.stringify({ asked, tile: a.tile._plexoraFailed, exists: a.tile.exists, redraws }));
+    const again = job("/t/flaky", shown);
+    again.tile = a.tile;
+    s.start(again);
+    net.calls[net.calls.length - 1].respond();
+    await tick(); await tick();
+    check("and asked again, it loads with nothing left to say",
+        net.calls.length === 5 && again.finished && !("_plexoraFailed" in a.tile));
+    // One scheduler, several viewers: each job's own loader decides.
+    const pane = item({ owner: "pane" });
+    pane.viewer = { tileRetryMax: 0 };
+    const once = job("/t/never-again", pane);
+    s.start(once);
+    net.calls[net.calls.length - 1].respond(webp(), 500);
+    await tick(); await tick();
+    check("a viewer that never retries makes the first failure final",
+        once.tile._plexoraFailed === "final");
 }
 
 // -- batched on a slow link ---------------------------------------------------------------

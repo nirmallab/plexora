@@ -3221,19 +3221,24 @@ def _read_ahead(datasource_name, channel_num, level, tile, view):
     PREFETCHER.after_tile(region, int(spec.z), depth, block, read)
 
 
-def tiles_ahead_of(datasource_name, channel, view):
-    """`(spec, depth)` when the tiles of `view` should be encoded ahead of the
-    hand (`prefetch.TILE_PREFETCHER`, fed by the tile route), else None.
+def tiles_ahead_of(datasource_name, channel, view, level=None):
+    """`(spec, depth, ahead)` when the tiles of `view` at `level` should be
+    encoded ahead of the hand, at the next `ahead` planes
+    (`prefetch.TILE_PREFETCHER`, fed by the tile route), else None.
 
     A plane of a local stack whose reads decode one plane at a time -- a TIFF
     stored plane by plane, a zarr store chunked one plane deep: nothing a
     plane's read decodes holds the next plane, so the block read-ahead
     (`_read_ahead`) has nothing to warm, and the next plane's tile itself is
-    what is made ahead. Not a mask's tile, and not a node's image: its node
-    encodes ahead into its own cache (node/api.py `_tiles_ahead`), and asking
-    from here would send every tile across the link twice."""
+    what is made ahead, at every level. Any other stack has only its coarse
+    levels' tiles made ahead (`prefetch.planes_ahead`): cheap on every
+    format, and the preview the browser shows first. Not a mask's tile, and
+    not a node's image: its node encodes ahead into its own cache (node/api.py
+    `_tiles_ahead`), and asking from here would send every tile across the
+    link twice."""
     from plexora.server.models import views
     from plexora.server.volume.bricks import z_decode
+    from plexora.server.volume.prefetch import levels_pending, planes_ahead
 
     if not view or _parse_channel(channel)[1] or _remote_image() is not None:
         return None
@@ -3242,9 +3247,11 @@ def tiles_ahead_of(datasource_name, channel, view):
         spec = views.resolve(datasource_name, view)
         if source is None or spec is None or spec.kind != "plane" or spec.default:
             return None
-        if z_decode(source) > 1:
+        ahead = planes_ahead(z_decode(source), len(source.volume.levels), level,
+                             levels_pending(source))
+        if ahead is None:
             return None
-        return spec, int(source.volume.depth)
+        return spec, int(source.volume.depth), ahead
     except Exception:  # noqa: BLE001 -- nothing to encode ahead of
         return None
 

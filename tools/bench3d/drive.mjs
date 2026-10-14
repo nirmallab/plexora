@@ -3,14 +3,16 @@
 //   node drive.mjs --base http://127.0.0.1:PORT --dataset NAME --scenario z_steps
 //                  [--reps 7] [--headed] [--out result.json] [--cache on|off]
 //
-// Chrome is launched with the GPU (Metal through ANGLE): SwiftShader frames are
-// 5-10x slower and would make every number meaningless, so a run whose WebGL
-// renderer is software refuses to measure. The page gets probes.js before any
+// Chrome is launched with the GPU (ANGLE on Metal on macOS, on D3D11
+// elsewhere): SwiftShader frames are 5-10x slower and would make every number
+// meaningless, so a run whose WebGL renderer is software refuses to measure.
+// PLEXORA_BENCH_CHROME names another Chrome. The page gets probes.js before any
 // of its own scripts; scenarios (scenarios.mjs) drive it through `ctx` and
 // return {metric: [values...]}. The network is recorded through CDP: requests
 // by kind, bytes, status, disk-cache hits, aborts and the server's
-// Server-Timing phases.
-import { spawn } from "node:child_process";
+// Server-Timing phases (and its cache verdicts: `cache;desc=hit|miss` for the
+// tile, `chunk;dur=..;desc=hit|miss` for the decoded-chunk cache).
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,8 +20,14 @@ import { fileURLToPath } from "node:url";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CHROME = process.env.PLEXORA_BENCH_CHROME
-    || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const DEFAULT_CHROME = {
+    win32: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    darwin: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+}[process.platform] || "google-chrome";
+const CHROME = process.env.PLEXORA_BENCH_CHROME || DEFAULT_CHROME;
+//: ANGLE's backend: Metal on macOS, Direct3D 11 elsewhere (the Windows bench
+//: machine; untried on Linux).
+const ANGLE = process.platform === "darwin" ? "metal" : "d3d11";
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function parseArgs(argv) {
@@ -50,15 +58,21 @@ function kindOf(address) {
     return "other";
 }
 
+/**
+ * `read;dur=7.9, chunk;dur=6.9;desc=miss, total;dur=30.5, cache;desc=hit` ->
+ * {read: 7.9, chunk: 6.9, total: 30.5, desc: {chunk: "miss", cache: "hit"}}.
+ * A phase's duration stays a number (netSummary's phases), its `desc` is kept
+ * beside it -- a metric with only a desc (`cache`) has no duration at all.
+ */
 function parseServerTiming(value) {
     const out = {};
     for (const part of String(value || "").split(",")) {
         const [name, ...params] = part.trim().split(";");
-        if (!name) continue;
+        if (!name?.trim()) continue;
         for (const param of params) {
-            const [key, raw] = param.split("=");
+            const [key, raw = ""] = param.split("=");
             if (key.trim() === "dur") out[name.trim()] = Number(raw);
-            if (key.trim() === "desc") out[name.trim()] = raw;
+            if (key.trim() === "desc") (out.desc ||= {})[name.trim()] = raw.trim().replace(/^"|"$/g, "");
         }
     }
     return out;
@@ -79,7 +93,7 @@ export class Browser {
         this.profile = mkdtempSync(path.join(tmpdir(), "plx-bench-"));
         const args = [
             `--remote-debugging-port=${port}`, `--user-data-dir=${this.profile}`,
-            "--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist",
+            `--use-angle=${ANGLE}`, "--enable-gpu", "--ignore-gpu-blocklist",
             "--window-size=1440,900", "--no-first-run", "--no-default-browser-check",
             "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
             "--disable-backgrounding-occluded-windows", "--enable-precise-memory-info",
@@ -287,18 +301,42 @@ export class Browser {
         });
     }
 
-    close() {
+    /** End Chrome and remove its profile. On Windows a profile cannot be
+     *  removed while any of Chrome's processes holds it open, and killing the
+     *  browser process leaves its GPU and renderer children to exit after it:
+     *  the whole tree is ended (taskkill /T), its exit awaited, and the removal
+     *  retried -- otherwise every run leaves ~170 MB behind in %TEMP%. */
+    async close() {
         try { this.ws?.close(); } catch (error) { /* gone */ }
-        try { this.chrome?.kill(); } catch (error) { /* gone */ }
-        try { rmSync(this.profile, { recursive: true, force: true }); } catch (error) { /* in use */ }
+        const chrome = this.chrome;
+        if (chrome && chrome.exitCode === null && chrome.signalCode === null) {
+            const exited = new Promise((resolve) => chrome.once("exit", resolve));
+            try {
+                if (process.platform === "win32" && chrome.pid) {
+                    spawnSync("taskkill", ["/PID", String(chrome.pid), "/T", "/F"], { stdio: "ignore" });
+                } else {
+                    chrome.kill();
+                }
+            } catch (error) { /* gone */ }
+            await Promise.race([exited, sleep(5000)]);
+        }
+        if (!this.profile) return;
+        try {
+            rmSync(this.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+        } catch (error) {
+            console.error(`drive: could not remove the profile ${this.profile}: ${error.message}`);
+        }
     }
 }
 
-/** Summarise network records by kind. */
+/** Summarise network records by kind. `cacheHit`/`cacheMiss`: responses whose
+ *  Server-Timing says the server's tile cache held them or not;
+ *  `chunkHit`/`chunkMiss`: its decoded-chunk cache, for reads that went to it. */
 export function netSummary(records) {
     const out = {};
     for (const r of records) {
         const k = (out[r.kind] ||= { n: 0, bytes: 0, disk: 0, s304: 0, canceled: 0, failed: 0,
+                                    cacheHit: 0, cacheMiss: 0, chunkHit: 0, chunkMiss: 0,
                                     phases: {} });
         k.n += 1;
         k.bytes += r.bytes || 0;
@@ -306,6 +344,11 @@ export function netSummary(records) {
         if (r.status === 304) k.s304 += 1;
         if (r.canceled) k.canceled += 1;
         else if (r.failed) k.failed += 1;
+        const desc = r.timing?.desc || {};
+        if (desc.cache === "hit") k.cacheHit += 1;
+        else if (desc.cache === "miss") k.cacheMiss += 1;
+        if (desc.chunk === "hit") k.chunkHit += 1;
+        else if (desc.chunk === "miss") k.chunkMiss += 1;
         for (const [name, value] of Object.entries(r.timing || {})) {
             if (typeof value === "number") (k.phases[name] ||= []).push(value);
         }
@@ -317,7 +360,13 @@ async function main() {
     const opts = parseArgs(process.argv.slice(2));
     const scenario = SCENARIOS[opts.scenario];
     if (!scenario) throw new Error(`no scenario ${opts.scenario}; have ${Object.keys(SCENARIOS)}`);
-    const browser = await new Browser({ headed: opts.headed }).launch();
+    const browser = new Browser({ headed: opts.headed });
+    try {
+        await browser.launch();
+    } catch (error) {
+        await browser.close();   // a Chrome that started but never answered, its profile
+        throw error;
+    }
     const result = { scenario: opts.scenario, dataset: opts.dataset, reps: opts.reps,
                      headed: opts.headed, started: new Date().toISOString() };
     try {
@@ -333,13 +382,13 @@ async function main() {
         result.log = ctx.log;
     } catch (error) {
         result.error = String(error?.stack || error);
-    } finally {
-        result.console = browser.logs.filter((line) => /error|exception|warn/i.test(line)).slice(-30);
-        browser.close();
     }
+    result.console = browser.logs.filter((line) => /error|exception|warn/i.test(line)).slice(-30);
+    // The result first: what was measured survives a Chrome slow to go.
     const text = JSON.stringify(result, null, 1);
     if (opts.out) writeFileSync(opts.out, text);
     else process.stdout.write(text + "\n");
+    await browser.close();
     process.exit(result.error ? 2 : 0);
 }
 

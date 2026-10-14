@@ -31,6 +31,15 @@ file it under -- so the browser's standby request for the next plane is a
 cache hit. One worker, newest first, a tile the cache already holds skipped,
 and never anything a request waits on.
 
+COARSE TILES are made ahead on every stack, however it is chunked
+(`planes_ahead`): a tile of one of a pyramid's `COARSE_LEVELS` coarsest
+levels is a few small chunks on any format, and it is what the browser shows
+first of a plane the hand has moved to. So an Imaris or z-chunked OME-Zarr
+stack, whose full-resolution tiles are left to the block read-ahead, has its
+next `COARSE_TILE_AHEAD` planes' previews encoded before anybody asks -- but
+not while its coarse levels are stand-ins for levels yet to be derived
+(`levels_pending`), each a read of a far larger area.
+
 A read ahead never reads ahead of itself: a tile read in the background lane
 (`chunk_cache.background`) moves no hand and queues nothing.
 
@@ -66,8 +75,54 @@ WORKERS = 2
 #: Planes whose tiles are made ahead of a tile served from a stack decoded a
 #: plane at a time: the browser's standby planes are the next two.
 TILE_AHEAD = 2
+#: Planes whose coarse tiles are made ahead of any other stack's: a coarse
+#: tile costs a few chunks, so a drag's next planes can all be previews.
+COARSE_TILE_AHEAD = 4
+#: The coarsest levels of a pyramid that count as coarse: what the browser
+#: draws first while the hand moves, before it refines in place.
+COARSE_LEVELS = 2
 #: Tiles made ahead that are remembered, for the hit rate.
 MADE_MAX = 8192
+
+
+def coarse_level(level_count, level, pending: bool = False) -> bool:
+    """Whether `level` is one of the `COARSE_LEVELS` coarsest of a pyramid of
+    `level_count` levels (0 the finest). Never the full resolution: a pyramid
+    of one level has no coarse level, one of two only its second. `pending`:
+    the coarse levels are stand-ins for levels yet to be derived (an OME-Zarr
+    stack's, `levels_pending`), each a read of a far larger area -- none is
+    coarse then."""
+    try:
+        count, level = int(level_count), int(level)
+    except (TypeError, ValueError):
+        return False
+    if pending or count < 2 or not 0 <= level < count:
+        return False
+    return level >= max(1, count - COARSE_LEVELS)
+
+
+def planes_ahead(z_decode: int, level_count, level, pending: bool = False):
+    """How many planes' tiles to make ahead of a tile served at `level` of a
+    stack whose reads decode `z_decode` planes at once (bricks.z_decode), or
+    None for none: `TILE_AHEAD` where planes decode one at a time, whatever
+    the level; `COARSE_TILE_AHEAD` at a coarse level of any other stack
+    (`coarse_level`); otherwise none -- its full-resolution tiles are the
+    block read-ahead's (`after_tile`)."""
+    if int(z_decode) <= 1:
+        return TILE_AHEAD
+    if coarse_level(level_count, level, pending):
+        return COARSE_TILE_AHEAD
+    return None
+
+
+def levels_pending(source) -> bool:
+    """Whether `source` serves coarse levels it has yet to derive: an OME-Zarr
+    stack missing its coarse levels serves them as subsamples of its coarsest
+    stored level (sources/ngff.py `plan_extension`) -- while a derivation is
+    pending (`pending_extension`), or for good when none could be written
+    (`_interim` set, nothing pending)."""
+    return bool(getattr(source, "pending_extension", None)
+                or getattr(source, "_interim", None))
 
 
 class PlanePrefetcher:
@@ -135,7 +190,8 @@ class PlanePrefetcher:
     def after_plane_tile(self, region, z: int, depth: int, encode, held=None, hit=None,
                          ahead: int = TILE_AHEAD) -> list[int]:
         """A tile of `region` was served at plane `z` of a stack decoded a plane
-        at a time: queue the same tile, encoded, at the next `ahead` planes in
+        at a time, or at a coarse level of any stack (`planes_ahead` says how
+        far): queue the same tile, encoded, at the next `ahead` planes in
         the direction of travel (the planes either side until one is known).
 
         `encode(z)` reads and encodes the tile at plane `z` into the cache the

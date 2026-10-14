@@ -310,7 +310,8 @@ def register(data: Path, entries: dict, tree: Path | None = None) -> dict:
     root = Path(tree).expanduser().resolve() if tree else ROOT
     env = server_env(data, root=root)
     result = subprocess.run([sys.executable, "-c", script, json.dumps({k: str(v) for k, v in entries.items()}),
-                             str(data)], cwd=str(root), env=env, capture_output=True, text=True)
+                             str(data)], cwd=str(root), env={**env, "PYTHONIOENCODING": "utf-8"},
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode:
         raise RuntimeError(result.stderr[-4000:])
     return json.loads(result.stdout.strip().splitlines()[-1])
@@ -325,7 +326,7 @@ def prescan(data: Path, names, tree: Path | None = None) -> None:
     """Window scans and 3-D copies, done once before anything is measured."""
     server = start(data, root=tree)
     try:
-        config = json.loads((data / "config.json").read_text())
+        config = json.loads((data / "config.json").read_text(encoding="utf-8"))
         for name in names:
             entry = config.get(name) or {}
             t0 = time.time()

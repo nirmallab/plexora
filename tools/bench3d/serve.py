@@ -48,6 +48,16 @@ def server_env(data: Path, extra: dict | None = None, root: Path | None = None) 
         "DO_NOT_TRACK": "1",
         "PYTHONUNBUFFERED": "1",
     })
+    if os.name == "nt":
+        # Windows ignores HOME: platformdirs (the settings file, and with it
+        # the viewer prefs a run writes) resolves the known folders from the
+        # profile -- %USERPROFILE%\AppData\Local\plexora -- so the profile and
+        # its two AppData folders move into the scratch home too.
+        env.update({
+            "USERPROFILE": str(home),
+            "LOCALAPPDATA": str(home / "AppData" / "Local"),
+            "APPDATA": str(home / "AppData" / "Roaming"),
+        })
     env.update(extra or {})
     return env
 
@@ -72,31 +82,39 @@ def start(data: Path, port: int = 0, extra: dict | None = None, python: str | No
     data.mkdir(parents=True, exist_ok=True)
     port = port or free_port()
     log = data.parent / f"server-{port}.log"
-    handle = open(log, "w")
-    process = subprocess.Popen(
-        [python or sys.executable, str(root / "run.py"), str(port)],
-        cwd=str(root), env=server_env(data, extra, root), stdout=handle, stderr=subprocess.STDOUT,
-        start_new_session=True)
+    # A process group of its own, so stop() ends the server's children too:
+    # a new session on POSIX, a new process group on Windows (taskkill /T).
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+             else {"start_new_session": True})
+    with open(log, "w", encoding="utf-8") as handle:
+        process = subprocess.Popen(
+            [python or sys.executable, str(root / "run.py"), str(port)],
+            cwd=str(root), env=server_env(data, extra, root), stdout=handle,
+            stderr=subprocess.STDOUT, **group)
     if not wait_up(port):
-        process.kill()
+        stop(process.pid)
         raise RuntimeError(f"the server did not start; see {log}")
     return {"port": port, "pid": process.pid, "data": str(data), "log": str(log)}
 
 
 def stop(pid: int) -> None:
+    if os.name == "nt":
+        # The whole tree, at once: Windows has no SIGTERM to a group.
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+        return
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
     for _ in range(50):
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
         time.sleep(0.1)
     try:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
 
 

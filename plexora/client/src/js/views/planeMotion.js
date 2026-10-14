@@ -31,9 +31,10 @@
  * invisibly and last in line (ViewerManager.prepareStandby) -- so a step to
  * one is a flip of opacity. How far ahead follows the hand's pace, measured
  * over consecutive steps (a jump sets none): two planes for a step now and
- * then, up to six for a held key (k = the planes it covers in
- * STANDBY_LOOKAHEAD_MS), and while it moves they are asked for as soon as
- * each plane covers the view rather than once it is sharp and the hand still.
+ * then, up to six for a held key or a dragged rail (k = the planes it covers
+ * in STANDBY_LOOKAHEAD_MS), and while it moves they are asked for as soon as
+ * each plane covers the view rather than once it is sharp and the hand still
+ * -- and only at their coarsest levels (tileFetch.setScrubbing).
  * Without it, the tiles on screen are asked for at the next plane and the one
  * before at low priority, so the next step is served from the browser's cache.
  *
@@ -73,10 +74,17 @@
     const STANDBY_AHEAD = [2, 6];
     //: Requests further apart than this are not one movement.
     const RATE_GAP_MS = 1000;
-    //: A request more planes than this from the last is a jump (viewState's
-    //: NEAR_PLANES), not travel: it sets no pace, and neither does the step
-    //: after it.
+    //: A request more planes than this from the last, made after the hand was
+    //: still for SCRUB_GAP_MS, is a jump (viewState's NEAR_PLANES), not
+    //: travel: it sets no pace, and neither does the step after it.
     const JUMP_PLANES = 2;
+    //: A drag on a deep stack moves more than JUMP_PLANES per pointer event:
+    //: only a far request after the hand was still this long is a jump
+    //: (viewState's SCRUB_GAP_MS).
+    const SCRUB_GAP_MS = global.PlexoraViewState?.SCRUB_GAP_MS ?? 80;
+    //: After a scrub request the tile scheduler keeps what only sharpens
+    //: waiting this long (viewState's SCRUB_HOLD_MS).
+    const SCRUB_HOLD_MS = global.PlexoraViewState?.SCRUB_HOLD_MS ?? 100;
     const PREFETCH_LIMIT = 48;
     const PREFETCH_PARALLEL = 4;
 
@@ -421,6 +429,9 @@
             //: it last asked for a plane.
             this.rate = 0;
             this.lastAt = null;
+            //: When the last request came, whatever it moved: how long the
+            //: hand was still before the next (a jump, or a drag).
+            this.lastRequestAt = null;
             //: The plane the pointer rests on along the Z strip, or null.
             this.hoverZ = null;
             this.timer = 0;
@@ -434,7 +445,14 @@
             // A channel or the tile quality changed under prefetched planes.
             global.addEventListener?.("plexora:standby-dropped", () => this.onSettled());
             global.addEventListener?.("plexora:plane-hover", (event) => this.hover(event?.detail?.z));
+            // The hand let go (viewState.endScrub): what the scheduler held
+            // while it moved goes now, not SCRUB_HOLD_MS after its last request.
+            global.addEventListener?.("plexora:scrub-ended", () => this.onScrubEnded());
             return this;
+        }
+
+        onScrubEnded() {
+            this.viewerManager?.imageViewer?.tileFetch?.endScrubbing?.();
         }
 
         /** The pointer rests on plane `z` of the Z strip (null: it left). */
@@ -446,26 +464,40 @@
         }
 
         onRequested(event) {
+            const at = now();
+            const still = this.lastRequestAt === null ? Infinity : at - this.lastRequestAt;
+            this.lastRequestAt = at;
             const z = event?.detail?.state?.z;
             if (Number.isFinite(z)) {
                 if (this.lastZ !== null && z !== this.lastZ) {
                     this.direction = Math.sign(z - this.lastZ);
-                    const at = now();
                     const gap = this.lastAt === null ? Infinity : at - this.lastAt;
-                    const jump = Math.abs(z - this.lastZ) > JUMP_PLANES;
+                    // Far AND after the hand was still: a dragged rail moves
+                    // five planes or more an event, which is travel. Timed
+                    // from the last request, not the last paced one, so a
+                    // drag that starts with a far click is travel from its
+                    // next event on.
+                    const jump = Math.abs(z - this.lastZ) > JUMP_PLANES && still >= SCRUB_GAP_MS;
                     if (!jump && gap < RATE_GAP_MS && gap > 0) {
                         const pace = (Math.abs(z - this.lastZ) * 1000) / gap;
                         this.rate = this.rate ? this.rate * 0.6 + pace * 0.4 : pace;
                     } else {
                         this.rate = 0;
                     }
-                    // A jump measures nothing about the hand: 50 planes in
-                    // 100 ms read as a held key and sent six planes ahead of
-                    // the destination before it had sharpened.
+                    // A jump measures nothing about the hand: a click 50
+                    // planes away 100 ms after a step read as a held key and
+                    // sent six planes ahead of the destination before it had
+                    // sharpened.
                     this.lastAt = jump ? null : at;
                 }
                 this.lastZ = z;
             }
+            // While the hand moves the scheduler keeps standby planes to their
+            // coarsest levels (tileFetch.js), so six planes ahead cost a tile
+            // a channel each. viewState says (`scrub`); otherwise, the gap.
+            const scrub = typeof event?.detail?.scrub === "boolean" ? event.detail.scrub
+                : still < SCRUB_GAP_MS;
+            if (scrub) this.viewerManager?.imageViewer?.tileFetch?.setScrubbing?.(at + SCRUB_HOLD_MS);
             this.abort();
         }
 
@@ -577,14 +609,17 @@
          *  is enough: the hand will be gone before it sharpens, and its
          *  sharpening outranks a prefetch anyway (tileFetch.js). After a step
          *  or a jump it is fully loaded first, so a prefetch never shares the
-         *  wire or the server with the plane being looked at. */
+         *  wire or the server with the plane being looked at -- nor with its
+         *  retries (channelFade.settledLoaded). */
         planeLoaded() {
             const world = this.viewer?.world;
             const covers = this.pace() >= STANDBY_FAST_RATE ? global.PlexoraChannelFade?.covers : null;
+            const settled = global.PlexoraChannelFade?.settledLoaded;
             for (let i = 0; world && i < world.getItemCount(); i += 1) {
                 const item = world.getItemAt(i);
                 if (item?.source?.plexoraStandby || !(item?.getOpacity?.() > 0)) continue;
-                if (typeof item.getFullyLoaded !== "function" || item.getFullyLoaded()) continue;
+                if (typeof item.getFullyLoaded !== "function") continue;
+                if (typeof settled === "function" ? settled(item) : item.getFullyLoaded()) continue;
                 if (typeof covers === "function" && covers(item)) continue;
                 return false;
             }

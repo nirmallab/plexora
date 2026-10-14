@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261013_dock_visibility">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261013_pane_status">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -568,9 +568,9 @@
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
-<script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261012_fluid_planes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261013_znav" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261013_compact_popover" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261013_compact_popover" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261013_pane_status" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261013_compact_popover" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261013_compact_popover" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
@@ -593,9 +593,10 @@
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
 <script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261013_cut_show" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261013_cut_panel" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261013_cut_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261013_znav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261012_plane_gating" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261012_pace_fix" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261013_znav" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means

@@ -689,6 +689,25 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // A small pill on the plane and on each section while it loads,
+            // from `plexora:surface-status` (views/paneStatus.js). Mounts
+            // resolve on the first status, so the panes may come later.
+            try {
+                const PaneStatus = window.PlexoraPaneStatus?.PaneStatus;
+                if (PaneStatus) {
+                    const paneRoot = (axis) => () => __plexora.sectionPanes?.panes?.[axis]?.root || null;
+                    __plexora.paneStatus = new PaneStatus({
+                        mounts: { main: () => __plexora.depthStrip?.root || null,
+                                  xz: paneRoot("xz"), yz: paneRoot("yz") },
+                        busyHosts: { main: () => document.getElementById("openseadragon"),
+                                     xz: paneRoot("xz"), yz: paneRoot("yz") },
+                        strip: () => __plexora.depthStrip || null,
+                    });
+                    __plexora.paneStatus.mount();
+                }
+            } catch (error) {
+                console.error("main: the loading pills could not be set up", error);
+            }
             // The 3-D view's cut panel, beside the strip's Cut and Crop, and
             // the handles that cut in the view (views/volumeDock.js,
             // volumeHandles.js).

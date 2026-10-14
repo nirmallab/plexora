@@ -46,21 +46,41 @@ def test_the_tile_shaders_are_compiled_once_per_page():
 def test_every_surface_draws_one_navigation_revision():
     """The plane, the panes, the outlines and the 3-D view commit in one task;
     late surfaces never overwrite a newer revision; superseded revisions commit
-    nothing (tests/js/nav_revision_probe.mjs)."""
-    _passed(_run("nav_revision_probe.mjs"), 25)
+    nothing; while the hand moves an uncovered revision gives way sooner and a
+    ready one always lands; a far jump supersedes in the request's own task;
+    the hand let go stops counting as moving at once, while a request made
+    before it let go keeps its scrub revision (tests/js/nav_revision_probe.mjs)."""
+    _passed(_run("nav_revision_probe.mjs"), 35)
 
 
 def test_the_section_panes_show_the_newest_section_in_step():
-    """Superseded section handovers never land; the z-line follows the picture;
-    a sub-pixel cut keeps its section (tests/js/section_panes_probe.mjs)."""
-    _passed(_run("section_panes_probe.mjs"), 15)
+    """Superseded section handovers never land; a section that never covers
+    keeps the old one and says slow, landing when it covers; XZ and YZ of one
+    pan each reveal when they cover, the faster first, each label at its own
+    commit, and an older pan's late result never lands; a pan during a new
+    frame waits for it; a scrolled pane loads rows past its edges; each pane
+    says how its loading goes; the z-line follows the picture; a sub-pixel cut
+    keeps its section (tests/js/section_panes_probe.mjs)."""
+    _passed(_run("section_panes_probe.mjs"), 50)
+
+
+def test_each_pane_says_when_it_is_loading():
+    """views/paneStatus.js: a pill on the plane and on each section from
+    `plexora:surface-status` -- never under 220 ms, a dot then a ring that
+    never goes back within a revision, held 300 ms then faded, an error at
+    once with a retry, the three independent and mounted lazily, the strip's
+    thumb on the same status (tests/js/pane_status_probe.mjs)."""
+    _passed(_run("pane_status_probe.mjs"), 14)
 
 
 def test_one_scheduler_fetches_and_decodes_each_tile_once():
     """Dedup, order of need, decode once with a transferred buffer, cancellation
-    with the item that wanted the tile; batched only on a slow link
+    with the item that wanted the tile; while the hand moves what only sharpens
+    waits in line, and goes when it stops -- at once when it lets go; a failed
+    tile says whether OSD will ask again, and one whose retries are spent can
+    be asked for again; batched only on a slow link
     (tests/js/tile_fetch_probe.mjs)."""
-    _passed(_run("tile_fetch_probe.mjs"), 28)
+    _passed(_run("tile_fetch_probe.mjs"), 47)
 
 
 def test_the_3d_view_keeps_its_textures():

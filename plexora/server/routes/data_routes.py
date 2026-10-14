@@ -1130,18 +1130,19 @@ def tile_cache_stats() -> dict:
 
 def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, window, hit):
     """Make this tile at the planes ahead of the hand (prefetch.py
-    `TILE_PREFETCHER`) when it is a plane of a stack decoded a plane at a time
-    (`data_model.tiles_ahead_of`): encoded in the background and filed under
-    the key this route would file it under, so the browser's standby request
-    for the next plane is answered from memory. Never waited on."""
+    `TILE_PREFETCHER`) when it is a plane of a stack decoded a plane at a time,
+    or a coarse level's tile of any stack (`data_model.tiles_ahead_of`):
+    encoded in the background and filed under the key this route would file
+    it under, so the browser's standby request for the next plane is answered
+    from memory. Never waited on."""
     from dataclasses import replace
 
     from plexora.server.volume.prefetch import TILE_PREFETCHER
 
-    plan = data_model.tiles_ahead_of(datasource, channel, view)
+    plan = data_model.tiles_ahead_of(datasource, channel, view, level)
     if plan is None:
         return
-    spec, depth = plan
+    spec, depth, ahead = plan
 
     def view_at(z):
         return replace(spec, z=int(z)).token()
@@ -1169,7 +1170,8 @@ def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, wi
 
     region = (generation, datasource, channel, level, tile, quality, window, spec.t)
     try:
-        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit)
+        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit,
+                                         ahead=ahead)
     except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
         _log.debug("tile read-ahead not queued", exc_info=True)
 

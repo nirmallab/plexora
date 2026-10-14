@@ -41,15 +41,16 @@ def test_the_plane_swap_probe_passes():
     switched off mid-swap does not hold the others (tests/js/plane_swap_probe.mjs)."""
     out = _run("plane_swap_probe.mjs")
     assert "all checks passed" in out
-    assert out.count("ok - ") >= 10
+    assert out.count("ok - ") >= 40
 
 
 def test_the_viewer_motion_probe_passes():
-    """Plane fades, the 3-D view's coast, and section sizes
-    (tests/js/viewer_motion_probe.mjs)."""
+    """Plane fades, the 3-D view's coast, section sizes, and a dragged rail
+    read as travel that holds the scheduler to coarse standby planes, and its
+    release ending the hold (tests/js/viewer_motion_probe.mjs)."""
     out = _run("viewer_motion_probe.mjs")
     assert "checks passed" in out
-    assert out.count("ok - ") >= 40
+    assert out.count("ok - ") >= 111
 
 
 def test_the_view_controls_probe_passes():
@@ -62,10 +63,12 @@ def test_the_view_controls_probe_passes():
 
 def test_the_depth_strip_probe_passes():
     """The strip follows the mode -- in 3-D the rail is the cut along Z and
-    Play turns the stack -- and its cog popover follows it open
+    Play turns the stack -- and its cog popover follows it open; a drag
+    released, a step key up or Play stopped ends the scrub
     (tests/js/depth_strip_probe.mjs)."""
     out = _run("depth_strip_probe.mjs")
     assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 36
 
 
 def test_the_inspect_geometry_probe_passes():

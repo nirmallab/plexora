@@ -10,12 +10,29 @@
  *   item held at nothing never is, so a hidden item's readiness is read off
  *   `coverage` (the tiles each level needs on screen) and `tilesMatrix`
  *   (whether each has loaded). A tile past the image's edge needs nothing; a
- *   level with no tiles at all proves nothing.
+ *   level with no tiles at all proves nothing. A tile that failed and is
+ *   being asked for again is awaited; one whose retries are spent
+ *   (tileFetch.js tags it "final") is a hole, not a wait. `progress` counts
+ *   the display level's tiles for a loading indicator.
  *
  *   **Full resolution if it is quick, the view covered if it is not.** With a
  *   grace, an item that covers the view only at a coarse level is held for
  *   the grace and then let go; one that loads in full inside the grace goes
- *   at once, sharp. Without a grace (an HD swap), coverage never counts.
+ *   at once, sharp. Without a grace (an HD swap), coverage never counts. With
+ *   grace 0 (a preview while the hand moves) coverage counts at once.
+ *
+ *   **Fully loaded is not believed while a tile is retrying.** OpenSeadragon
+ *   6 stops counting a failed tile as loading between its retries, so an
+ *   item whose tiles all failed says fully loaded with nothing drawn (a jump
+ *   to a plane whose tiles answered 500 swapped in black). At any grace it
+ *   is ready once the retry lands, or -- with a hole -- once it is spent,
+ *   neither of which need move OSD's flag again.
+ *
+ *   **But never all holes.** An item with nothing loaded is never ready, not
+ *   even with every tile failed for good (`failedOut`: `covers` and OSD both
+ *   say yes); `onFailed` hears it once, and after `retryFailed` the wait
+ *   goes on -- through the moment OSD's flag still says loaded -- and lands
+ *   when a tile does.
  *
  *   **A channel's fade starts from coverage**, after the grace rather than
  *   at the 800 ms ceiling.
@@ -114,6 +131,15 @@ function makeItem() {
             handlers.get(name).add(fn);
         },
         removeHandler(name, fn) { handlers.get(name)?.delete(fn); },
+        /** OSD's update moving its fully-loaded flag (and saying so). */
+        setLoaded(value) {
+            item.loaded = value;
+            for (const fn of [...(handlers.get("fully-loaded-change") || [])]) fn({});
+        },
+        tiles() {
+            return Object.values(item.tilesMatrix)
+                .flatMap((level) => Object.values(level).flatMap((column) => Object.values(column)));
+        },
         loadCoarse() { item.tilesMatrix[0][0][0].loaded = true; },
         loadAll() {
             for (const level of Object.values(item.tilesMatrix)) {
@@ -146,6 +172,45 @@ function makeItem() {
     empty.coverage = { 3: {} };
     empty.tilesMatrix[3] = {};
     check("a level with no tiles proves nothing", !Fade.covers(empty));
+}
+
+{
+    // OSD marks a tile that failed `exists` false, as it does one past the
+    // edge; the tile scheduler says which (tileFetch.js `fail`).
+    const item = makeItem();
+    for (const [x, y] of [[0, 0], [0, 1], [1, 0]]) item.tilesMatrix[2][x][y].loaded = true;
+    const failed = item.tilesMatrix[2][1][1];
+    failed.exists = false;
+    failed._plexoraFailed = "retrying";
+    const retrying = Fade.covers(item);
+    failed._plexoraFailed = "aborted";
+    check("a tile that failed and is retrying is not coverage (nor an aborted one)",
+          !retrying && !Fade.covers(item) && Fade.coveringLevel(item) === null);
+    failed._plexoraFailed = "final";
+    check("one whose retries are spent is a hole, not a wait",
+          Fade.covers(item) && Fade.coveringLevel(item) === 2);
+}
+
+{
+    const nothing = Fade.progress({});
+    check("an item OSD has not updated has no progress",
+          nothing.level === null && nothing.needed === 0 && nothing.loaded === 0
+          && nothing.failed === 0 && nothing.covering === null, JSON.stringify(nothing));
+    const item = makeItem();
+    item.loadCoarse();
+    item.tilesMatrix[2][0][0].loaded = true;
+    item.tilesMatrix[2][1][1].exists = false;
+    item.tilesMatrix[2][1][1]._plexoraFailed = "final";
+    const p = Fade.progress(item);
+    check("progress counts the display level's tiles: loaded, failed for good, and the level that covers",
+          p.level === 2 && p.needed === 4 && p.loaded === 1 && p.failed === 1 && p.covering === 0,
+          JSON.stringify(p));
+    // OSD visited only level 0 on its last update (zoomed out): level 2's
+    // coverage is left over from before.
+    item._tilesToDraw = [[]];
+    const q = Fade.progress(item);
+    check("at the level OSD last visited, not one a zoom out left behind",
+          q.level === 0 && q.needed === 1 && q.loaded === 1 && q.failed === 0, JSON.stringify(q));
 }
 
 // -- whenCanDraw's grace -----------------------------------------------------
@@ -196,10 +261,174 @@ function makeItem() {
     const item = makeItem();
     item.loadCoarse();
     let ready = false;
+    Fade.whenCanDraw(item, () => { ready = true; }, { grace: 0 });
+    check("grace 0 answers on the first check when the view is covered", ready);
+}
+
+{
+    const item = makeItem();
+    let ready = false;
+    Fade.whenCanDraw(item, () => { ready = true; }, { grace: 0 });
+    advance(100);
+    const early = ready;
+    item.loadCoarse();
+    advance(Fade.COVER_POLL_MS);
+    check("grace 0 on a view not yet covered answers within a poll of it covering", !early && ready,
+          `early ${early}, ready ${ready}`);
+}
+
+{
+    const item = makeItem();
+    item.loadCoarse();
+    let ready = false;
     const stop = Fade.whenCanDraw(item, () => { ready = true; }, { grace: 140 });
     stop();
     advance(400);
     check("a wait stopped early never answers", !ready);
+}
+
+// -- fully loaded is not believed while a tile is retrying ---------------------
+
+/** An item OSD calls fully loaded whose coarse tile and one fine tile failed
+ *  and are being asked for again (tileFetch.js `fail`): nothing covers. */
+function makeRetrying() {
+    const item = makeItem();
+    for (const [x, y] of [[0, 0], [0, 1], [1, 0]]) item.tilesMatrix[2][x][y].loaded = true;
+    const failed = [item.tilesMatrix[0][0][0], item.tilesMatrix[2][1][1]];
+    for (const tile of failed) Object.assign(tile, { exists: false, _plexoraFailed: "retrying" });
+    item.loaded = true;
+    return { item, failed };
+}
+const pendingTimers = () => timers.filter((timer) => timer.fn).length;
+
+{
+    const { item, failed } = makeRetrying();
+    const retrying = Fade.settledLoaded(item);
+    failed[1]._plexoraFailed = "final";
+    const oneLeft = Fade.settledLoaded(item);
+    failed[0]._plexoraFailed = "final";
+    check("settledLoaded: not while any tile is retrying; once each is spent, loaded with holes",
+          !retrying && !oneLeft && Fade.settledLoaded(item) && !Fade.settledLoaded(makeItem()));
+}
+
+for (const grace of [null, 0, Fade.GRACE_MS]) {
+    const name = grace === null ? "no grace" : `grace ${grace}`;
+    {
+        const { item, failed } = makeRetrying();
+        let ready = false;
+        Fade.whenCanDraw(item, () => { ready = true; }, { grace });
+        advance(500);
+        const early = ready;
+        // The retry lands (tileFetch.deliver). OSD's flag was already true:
+        // no `fully-loaded-change`.
+        for (const tile of failed) {
+            Object.assign(tile, { exists: true, loaded: true });
+            delete tile._plexoraFailed;
+        }
+        advance(2 * Fade.COVER_POLL_MS);
+        check(`${name}: an item that says fully loaded while a tile is retrying is not ready; `
+              + "it is once the tile loads", !early && ready, `early ${early}, ready ${ready}`);
+    }
+    {
+        const { item, failed } = makeRetrying();
+        let ready = false;
+        Fade.whenCanDraw(item, () => { ready = true; }, { grace });
+        advance(500);
+        const early = ready;
+        for (const tile of failed) tile._plexoraFailed = "final";
+        advance(2 * Fade.COVER_POLL_MS);
+        check(`${name}: ...and ready, with a hole, once the tile's retries are spent`,
+              !early && ready, `early ${early}, ready ${ready}`);
+    }
+}
+
+{
+    // An HD swap's wait polls only while a retry is out; otherwise OSD's
+    // `fully-loaded-change` says, and stopping it leaves nothing behind.
+    const before = pendingTimers();
+    const loading = makeItem();
+    const stopLoading = Fade.whenCanDraw(loading, () => {});
+    const idle = pendingTimers() - before;
+    const { item } = makeRetrying();
+    const stopRetrying = Fade.whenCanDraw(item, () => {});
+    advance(100);
+    const polling = pendingTimers() - before;
+    stopLoading();
+    stopRetrying();
+    check("no grace: a wait polls only while a retry is out, and leaves no poll once stopped",
+          idle === 0 && polling === 1 && pendingTimers() === before,
+          `idle ${idle}, polling ${polling}, after ${pendingTimers() - before}`);
+}
+
+// -- never all holes: an item with nothing to draw is never ready ---------------
+
+/** An item every tile of which failed for good: OSD calls it fully loaded,
+ *  and `covers` would (every tile a hole). */
+function makeFailedOut() {
+    const item = makeItem();
+    for (const tile of item.tiles()) Object.assign(tile, { exists: false, _plexoraFailed: "final" });
+    item.loaded = true;
+    return item;
+}
+/** As tileFetch.retryFailed: each spent tile an unloaded tile again. */
+function retryFailed(item) {
+    for (const tile of item.tiles()) {
+        if (tile._plexoraFailed !== "final") continue;
+        delete tile._plexoraFailed;
+        Object.assign(tile, { exists: true, loaded: false });
+    }
+}
+
+{
+    const item = makeFailedOut();
+    const partial = makeRetrying().item;
+    partial.tiles().forEach((tile) => { if (tile._plexoraFailed) tile._plexoraFailed = "final"; });
+    check("failedOut: nothing loaded, nothing retrying, a tile failed for good -- not a partial failure",
+          Fade.failedOut(item) && Fade.blank(item) && Fade.covers(item)
+          && !Fade.failedOut(partial) && !Fade.blank(partial) && !Fade.failedOut(makeItem()));
+}
+
+for (const grace of [null, 0, Fade.GRACE_MS]) {
+    const name = grace === null ? "no grace" : `grace ${grace}`;
+    const item = makeFailedOut();
+    let ready = false;
+    const told = [];
+    Fade.whenCanDraw(item, () => { ready = true; }, { grace, onFailed: (one) => told.push(one) });
+    advance(500);
+    check(`${name}: an item whose every tile is final is not ready, and onFailed hears it once`,
+          !ready && told.length === 1 && told[0] === item, `ready ${ready}, told ${told.length}`);
+    retryFailed(item);
+    // Before OSD's next update its flag still says loaded: nothing to draw.
+    advance(100);
+    const gap = ready;
+    item.setLoaded(false);
+    advance(100);
+    const asking = ready;
+    if (grace === null) {
+        item.loadAll();
+    } else {
+        item.loadCoarse();
+        advance(grace + 2 * Fade.COVER_POLL_MS);
+    }
+    check(`${name}: after retryFailed it waits again, and lands when a tile loads`,
+          !gap && !asking && ready && told.length === 1,
+          `gap ${gap}, asking ${asking}, ready ${ready}, told ${told.length}`);
+}
+
+{
+    // Failed out, retried, failed out again: said again.
+    const item = makeFailedOut();
+    const told = [];
+    const stop = Fade.whenCanDraw(item, () => {}, { grace: Fade.GRACE_MS, onFailed: () => told.push(clock) });
+    advance(200);
+    retryFailed(item);
+    advance(100);
+    const between = told.length;
+    for (const tile of item.tiles()) Object.assign(tile, { exists: false, _plexoraFailed: "final" });
+    advance(100);
+    stop();
+    check("onFailed hears each failure: again after a retry that fails too",
+          between === 1 && told.length === 2, `${between} then ${told.length}`);
 }
 
 // -- the channel fade starts from coverage -------------------------------------

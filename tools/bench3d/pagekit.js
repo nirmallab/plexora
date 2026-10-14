@@ -28,6 +28,17 @@
         const list = items(world);
         return list.length > 0 && list.every((item) => item.getFullyLoaded());
     }
+    /** A prefetched plane (planeMotion's standby, a 3-D mask's label
+     *  standby): on the world at opacity 0, loading, never drawn. */
+    function standby(item) {
+        return Boolean(item?.source?.plexoraStandby || item?.source?.plexoraLabelStandby);
+    }
+    /** loaded(), over what the plane draws or hands over to: the planes
+     *  prefetched ahead of the hand are not the plane on screen. */
+    function shownLoaded(world) {
+        const list = items(world).filter((item) => !standby(item));
+        return list.length > 0 && list.every((item) => item.getFullyLoaded());
+    }
     /** The views every visible channel item shows, e.g. ["z12"]; [] if none. */
     function views(sig) {
         if (!sig) return [];
@@ -138,7 +149,9 @@
         const commit = await B.until((sig) => shows(sig.main, token), ms);
         if (commit === null) return { commit: null, full: null };
         const end = now() + ms;
-        while (now() < end && !loaded(viewer().world)) await sleep(4);
+        // Not the standby planes (shownLoaded): they are not this plane, and
+        // waitFull, which a settle is timed by, starts only once this returns.
+        while (now() < end && !shownLoaded(viewer().world)) await sleep(4);
         const firstTrans = B.firstTrans("main", t0, (value) => shows(value, token));
         return { commit: (firstTrans?.at ?? commit) - t0, full: now() - t0 };
     }
@@ -255,7 +268,9 @@
     /** The cells the picture over [t0, t1] lights up: at least a quarter of
      *  its brightest cell (per-cell median); every cell if fewer than four. */
     function litCells(t0, t1) {
-        const grids = B.lum.filter(([t]) => t >= t0 && t <= t1).map(([, grid]) => grid);
+        return litCellsOf(B.lum.filter(([t]) => t >= t0 && t <= t1).map(([, grid]) => grid));
+    }
+    function litCellsOf(grids) {
         if (!grids.length) return null;
         const ref = grids[0].map((_, i) => {
             const values = grids.map((grid) => grid[i]).sort((a, b) => a - b);
@@ -345,6 +360,148 @@
                  series: series.slice(0, 200).map((m) => Math.round(m * 10) / 10) };
     }
 
+    // -- what moved first, what was stale, what the panes showed -------------------
+
+    /**
+     * ms from t0 to the first luminance frame (at or after t0) in which any
+     * cell differs from `before` by `eps` levels or more: a crossfade between
+     * two similar planes changes little per frame, so any cell, not an
+     * average. Null when nothing moved -- or, given `after`, when the settled
+     * picture does not differ from `before` either (nothing to see move).
+     */
+    function firstChange(frames, t0, before, eps = 2, after = null) {
+        if (!before) return null;
+        if (after && !after.some((v, j) => Math.abs(v - before[j]) >= eps)) return null;
+        for (const [t, grid] of frames) {
+            if (t < t0) continue;
+            if (grid.some((v, j) => Math.abs(v - before[j]) >= eps)) return t - t0;
+        }
+        return null;
+    }
+    function lumFirstChange(t0, before, eps = 2, after = null) {
+        return firstChange(B.lum, t0, before, eps, after);
+    }
+    /** The pane's last grid before t0 (what it showed at rest), or null. */
+    function paneBefore(axis, t0) {
+        let grid = null;
+        for (const [t, g] of B.lumPanes?.[axis] || []) {
+            if (t >= t0) break;
+            grid = g;
+        }
+        return grid;
+    }
+    /** lumFirstChange over a section pane's grids (probes.js `lumPanes`);
+     *  `before` defaults to the pane's last grid before t0. */
+    function paneFirstChange(axis, t0, before = null, eps = 2, after = null) {
+        return firstChange(B.lumPanes?.[axis] || [], t0, before ?? paneBefore(axis, t0), eps, after);
+    }
+    /** The mean of the brightest quarter of a grid's cells: what a frame
+     *  shows wherever it shows it -- near 0 only when (nearly) all of it is
+     *  ground, and unmoved by a picture that slides or changes plane. */
+    function brightMean(grid) {
+        const sorted = grid.slice().sort((a, b) => b - a);
+        const n = Math.max(1, Math.floor(sorted.length / 4));
+        let sum = 0;
+        for (let i = 0; i < n; i += 1) sum += sorted[i];
+        return sum / n;
+    }
+    /**
+     * Black frames in a list of [t, grid]: each frame's brightMean over
+     * [from, to], `ref` their median over the settled [refFrom, to], `black`
+     * the frames under a tenth of it (null when `ref` is too dark to tell),
+     * `jump` the largest frame-to-frame step. Not a mean over the settled
+     * picture's lit cells: a pane mid-pan or a plane mid-drag shows other
+     * content at those cells without being black.
+     */
+    function blackTrace(frames, from, to, refFrom) {
+        const series = frames.filter(([t]) => t >= from && t <= to).map(([, grid]) => brightMean(grid));
+        const tail = frames.filter(([t]) => t >= refFrom && t <= to).map(([, grid]) => brightMean(grid))
+            .sort((a, b) => a - b);
+        const ref = tail.length ? tail[Math.floor(tail.length / 2)] : null;
+        return { frames: series.length, ref, jump: maxStep(series),
+                 black: ref === null ? null : darkFrames(series, ref),
+                 series: series.slice(0, 200).map((m) => Math.round(m * 10) / 10) };
+    }
+    /** blackTrace over the plane's luminance (probes.js `lum`). */
+    function lumBlack(from, to, refFrom) {
+        return blackTrace(B.lum, from, to, refFrom);
+    }
+    /** blackTrace over a section pane's luminance (probes.js `lumPanes`). */
+    function paneTrace(axis, from, to, refFrom) {
+        return blackTrace(B.lumPanes?.[axis] || [], from, to, refFrom);
+    }
+    /** [[at, plane], ...] of the app's `view:<name>` marks (time order). */
+    function planeMarks(name) {
+        return perfMarks("view", name).map((m) => [m.at, planeOf(m.extra)])
+            .filter(([, z]) => z !== null);
+    }
+    /** The plane of the newest entry of `list` ([[t, plane], ...], time
+     *  order) at or before `t`, or null. */
+    function planeAt(list, t) {
+        let plane = null;
+        for (const [at, z] of list) {
+            if (at > t) break;
+            plane = z;
+        }
+        return plane;
+    }
+    /**
+     * Frames in [t0, t1] (the frame loop's timestamps) at which the revision
+     * the app had started (`view:requested` mark) was `minLag` planes or more
+     * from the one it had last committed (`view:committed`): the plane on
+     * screen trailing what the pipeline was already fetching. {stale, frames,
+     * maxLag, share}; null on a build without the marks.
+     */
+    function staleFrames(t0, t1, minLag = 2) {
+        const requested = planeMarks("requested");
+        const committed = planeMarks("committed");
+        if (!requested.length || !committed.length) return null;
+        let stale = 0;
+        let frames = 0;
+        let maxLag = 0;
+        for (const t of B.frames) {
+            if (t < t0 || t > t1) continue;
+            const r = planeAt(requested, t);
+            const c = planeAt(committed, t);
+            if (r === null || c === null) continue;
+            frames += 1;
+            const lag = Math.abs(r - c);
+            maxLag = Math.max(maxLag, lag);
+            if (lag >= minLag) stale += 1;
+        }
+        return { stale, frames, maxLag, share: frames ? stale / frames : null };
+    }
+    /**
+     * The most planes between the hand (every `plexora:view-requested`,
+     * probes.js `hand`) and the plane committed (`view:committed` mark; the
+     * plane's transitions on a build without marks) at any frame in [t0, t1].
+     */
+    function handLagMax(t0, t1) {
+        const hand = (B.hand || []).map(([t, spec]) => [t, planeOf(spec)]).filter(([, z]) => z !== null);
+        let committed = planeMarks("committed");
+        if (!committed.length) {
+            committed = B.trans.filter(([, surface]) => surface === "main")
+                .map(([t, , value]) => [t, zOfSig(value)]).filter(([, z]) => z !== null);
+        }
+        if (!hand.length || !committed.length) return null;
+        let most = null;
+        for (const t of B.frames) {
+            if (t < t0 || t > t1) continue;
+            const h = planeAt(hand, t);
+            const c = planeAt(committed, t);
+            if (h === null || c === null) continue;
+            most = Math.max(most ?? 0, Math.abs(h - c));
+        }
+        return most;
+    }
+    /** How many times the surface's loading indicator has shown
+     *  (views/paneStatus.js), or null on a build without one. */
+    function statusShows(surface) {
+        const status = P().paneStatus || window.PlexoraPaneStatus;
+        const value = status?.state?.(surface)?.shows;
+        return Number.isFinite(value) ? value : null;
+    }
+
     /** The 3-D view at rest: nothing moving, nothing loading (the renderer's
      *  own settled() where the build has one), held for `hold` ms. */
     async function volumeRest(hold = 200, ms = 30000) {
@@ -397,13 +554,18 @@
      * waitPlane's `full` alone can end at the swap: items handed over while
      * they cover the view at a coarser level report fully loaded before their
      * sharpening has asked for a tile.
+     *
+     * Standby planes (shownLoaded) are not waited for: after a fast drag they
+     * are built while the plane is still sharpening, and six of them loading
+     * every level read as a settle of ~0.7-1 s whenever they made it onto the
+     * world before the plane's last tile -- a race, not the plane's time.
      */
     async function waitFull(token, t0, level = null, ms = 60000) {
         const end = now() + ms;
         let since = null;
         let polls = 0;
         while (now() < end) {
-            const done = shows(B.sig.main, token) && loaded(viewer().world)
+            const done = shows(B.sig.main, token) && shownLoaded(viewer().world)
                 && (level === null || (finestDrawn() ?? -1) >= level);
             if (done) {
                 since ??= now();
@@ -418,10 +580,11 @@
         return null;
     }
 
-    B.k = { items, channelItems, loaded, views, shows, coverage, meaningful, booted, settled,
+    B.k = { items, channelItems, loaded, standby, shownLoaded, views, shows, coverage, meaningful, booted, settled,
             quiet, dismissToasts, slots, setChannels, enabled, reset, waitPlane, counters,
             delta, frameStats, flashFrames, meanLum, panesLoaded, volumeReady, sleep, now,
             viewer, vs, P, planeOf, zOfSig, perfMarks, perfCount, zoomToLevel0, finestDrawn,
             lumMeans, maxStep, spikeFrames, darkFrames, lumTrace, lumBand, volumeRest, jumpTo,
-            waitFull };
+            waitFull, lumFirstChange, paneFirstChange, paneBefore, litCellsOf, brightMean,
+            blackTrace, lumBlack, paneTrace, planeMarks, staleFrames, handLagMax, statusShows };
 })();

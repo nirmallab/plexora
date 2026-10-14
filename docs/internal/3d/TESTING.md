@@ -43,6 +43,28 @@ sharpening. In a projection that follows the plane, a step no longer waits for t
 contrast statistics: it shows at once, and the contrast eases to the new range a moment after
 you stop.
 
+**Scrubbing (2026-10-13).** Drag the rail fast, or hold `]`: while the hand moves every plane
+shows as soon as its coarsest tiles cover the view, and nothing sharpens until the hand stops
+-- the wire is kept for the next plane -- so the picture follows the hand a few planes behind
+and never trails it by a second. A plane that has not covered the view a quarter of a second
+after it was asked for gives way to the newest request. Let go (or release the key) and the
+plane under the hand sharpens in place at once. Nothing ever goes black: the plane on screen
+stays until the next one can draw, however slow the server. The same holds for the section
+panes: a pan re-cuts each at whatever level covers it first, each pane as soon as it can (the
+faster one does not wait for the slower), and the old section slides along until then; a cut
+you have moved on from never lands over the newer one.
+
+**Loading and failure.** Each of the three views says when it is waiting, on its own: a small
+pill with a breathing dot above the rail for the plane, and in the top-right of the XZ pane and
+the bottom-left of the YZ pane. It appears only after about a fifth of a second, so a quick step
+shows nothing; once a plane has shown coarse the dot becomes a thin ring that fills as the finer
+tiles land; it fades out when the view is sharp. With Motion off (or the system's reduced-motion
+setting) the dot is still. A plane that is slow keeps the old one on screen with the dot
+breathing. If a plane's tiles fail (a server that answers errors, a node that went away), the
+old plane stays, the pill turns amber with a retry glyph, and clicking it asks for the failed
+tiles again; a plane of which only some tiles failed is shown with those holes and the same
+retry. The rail's thumb breathes for as long as the plane it points at is not on screen.
+
 **Speed and staying in step (the performance pass, `PERF.md`).** Try these on the Imaris stack
 and the light-sheet stack, with the section panes on:
 

@@ -1579,21 +1579,24 @@ def _tiles_ahead(resource, generation, view, base, index, level, tile, width, he
     """Make this tile at the planes ahead of the hand (prefetch.py
     `TILE_PREFETCHER`), into this node's tile cache under the key `image_tile`
     would file it under, when it is a plane of a stack decoded a plane at a
-    time -- the primary's `data_routes._tiles_ahead`, for a node: the
-    browser's standby request for the next plane, direct or forwarded, is
-    then answered from memory. `base` is the key without its view."""
+    time, or a coarse level's tile of any stack (`prefetch.planes_ahead`) --
+    the primary's `data_routes._tiles_ahead`, for a node: the browser's
+    standby request for the next plane, direct or forwarded, is then answered
+    from memory. `base` is the key without its view."""
     from dataclasses import replace
 
     from plexora.server.models import data_model
     from plexora.server.volume.bricks import z_decode
     from plexora.server.volume.plane_view import plane_pyramid
-    from plexora.server.volume.prefetch import TILE_PREFETCHER
+    from plexora.server.volume.prefetch import TILE_PREFETCHER, levels_pending, planes_ahead
 
     spec = view.spec
     if spec.kind != "plane" or spec.default:
         return
     try:
-        if z_decode(view.base) > 1:
+        ahead = planes_ahead(z_decode(view.base), len(view.base.volume.levels), level,
+                             levels_pending(view.base))
+        if ahead is None:
             return
         depth = int(view.base.volume.depth)
     except Exception:  # noqa: BLE001 -- a source that cannot say makes nothing ahead
@@ -1622,7 +1625,8 @@ def _tiles_ahead(resource, generation, view, base, index, level, tile, width, he
     region = (resource.id, generation, view.reading, spec.t, index, str(level), str(tile),
               quality, width, height, qmin, qmax)
     try:
-        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit)
+        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit,
+                                         ahead=ahead)
     except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
         pass
 

@@ -43,9 +43,14 @@
  * collapse into the newest, which is applied when it lands. A scrub through
  * forty planes is therefore a few revisions, and the picture is never a plane
  * the user has already left behind for long. A revision that cannot help any
- * more -- the user went back to the plane on screen, or it has been loading
- * for SUPERSEDE_AFTER_MS while a newer one waits -- is SUPERSEDED: its signal
- * aborts, its surfaces drop what they built and commit nothing.
+ * more -- the user went back to the plane on screen, jumped far from it, or
+ * its plane is still loading while a newer one waits: for SUPERSEDE_AFTER_MS
+ * at rest, SCRUB_SUPERSEDE_MS while the hand moves (`scrubbing()`; a drag's
+ * first revision too) -- is SUPERSEDED: its signal aborts, its surfaces drop
+ * what they built and commit nothing. One whose plane is ready is never
+ * superseded by a newer request: it commits -- a preview on the way, the
+ * others given SCRUB_SYNC_WAIT_MS while the hand moves -- and the newest
+ * follows at once.
  *
  * With no surface registered, `applier` (the ViewerManager's `setView`) is
  * the one thing applied, as before surfaces existed.
@@ -72,9 +77,26 @@
     //: SCRUB_GAP_MS -- supersedes the revision in flight at once when that is
     //: far from it too: a revision on its way somewhere else has nothing to
     //: give the new one. A held key or a dragged rail asks planes in small,
-    //: quick steps and keeps the 1 s rule, so it still lands planes on the way.
+    //: quick steps and keeps the scrub rule (SCRUB_SUPERSEDE_MS), so it still
+    //: lands planes on the way.
     const NEAR_PLANES = 2;
     const SCRUB_GAP_MS = 80;
+    //: After the last request made within SCRUB_GAP_MS of the one before, the
+    //: hand still counts as moving (`scrubbing()`) for this long: just past
+    //: the widest gap that still makes a scrub, so a moving hand never lets
+    //: go between two requests -- and no longer, since what the tile
+    //: scheduler holds while the hand moves (tileFetch.js) waits this long
+    //: after the hand stops. Neither a drag nor a held key says when it ends.
+    const SCRUB_HOLD_MS = 100;
+    //: While the hand moves, a revision in flight that has not reached
+    //: coverage gives way to the newest after this: about two coarse round
+    //: trips on a remote link, far under the 1000 ms that makes a drag feel
+    //: stuck.
+    const SCRUB_SUPERSEDE_MS = 250;
+    //: SYNC_WAIT_MS for a revision made while the hand moves: the other
+    //: surfaces get less time to join a preview commit; late commits cover
+    //: the rest.
+    const SCRUB_SYNC_WAIT_MS = 40;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -102,6 +124,12 @@
             this.signal = this.controller ? this.controller.signal : null;
             this.superseded = false;
             this.started = now();
+            //: Made while the hand moves: a preview is enough (no grace past
+            //: coverage), and it gives way sooner (SCRUB_SUPERSEDE_MS).
+            this.scrub = typeof view.scrubbing === "function" ? view.scrubbing() : false;
+            //: Set once the main surface has prepared: from then on no newer
+            //: request supersedes it -- it commits, and the newest follows.
+            this.mainReady = false;
             this._listeners = [];
         }
 
@@ -503,8 +531,13 @@
             const wasVolume = before.mode === "volume";
             this.state = this._clean(merged);
             const at = now();
-            this._jump = this._far(before, this.state)
-                && at - (this._lastSetAt ?? -Infinity) >= SCRUB_GAP_MS;
+            const close = at - (this._lastSetAt ?? -Infinity) < SCRUB_GAP_MS;
+            this._jump = this._far(before, this.state) && !close;
+            if (close) this._scrubUntil = at + SCRUB_HOLD_MS;
+            //: Whether the newest request was made while the hand moved: the
+            //: revision that serves it is a scrub one even when it starts
+            //: after the hand let go (endScrub leaves this be).
+            this._requestScrub = close;
             this._lastSetAt = at;
             if (this.state.mode === "volume" && !wasVolume) this._frozen = before;
             else if (this.state.mode !== "volume") this._frozen = null;
@@ -516,9 +549,45 @@
                 this._windowClass = toClass;
                 this._event("plexora:view-class-changed", { from: fromClass, to: toClass });
             }
+            this._supersedeJumped();
             this._schedule();
             if (save) this._scheduleSave();
             return this.get();
+        }
+
+        /**
+         * A jump far from the revision in flight supersedes it NOW, not at
+         * the next frame's pump: until then each tile of it that finished
+         * freed a slot for the next one it had queued -- tiles of a plane
+         * nobody will see. Superseded, it hands over to the newest at once
+         * (its run's settling pumps), and that frame's pump finds it started.
+         */
+        _supersedeJumped() {
+            const rev = this._applying?.rev;
+            if (!this._jump || !rev || rev.superseded || !this._surfaces.size
+                    || !this._far(rev.state, this.state)) return;
+            global.PlexoraViewPerf?.mark?.("view", "jumped", rev.id);
+            rev.supersede();
+        }
+
+        /** Whether the hand is moving: a request came within SCRUB_GAP_MS of
+         *  the one before it, less than SCRUB_HOLD_MS ago (a dragged rail, a
+         *  held key). */
+        scrubbing() {
+            return now() < (this._scrubUntil || 0);
+        }
+
+        /**
+         * The hand let go -- a rail drag released, a step key up, Play
+         * stopped (views/depthStrip.js): it stops counting as moving now,
+         * not SCRUB_HOLD_MS after its last request, and
+         * `plexora:scrub-ended` says so, so what waits for it to stop (the
+         * tile scheduler's held tiles, via planeMotion.js) goes at once. A
+         * revision already made while it moved keeps its scrub rules.
+         */
+        endScrub() {
+            this._scrubUntil = 0;
+            this._event("plexora:scrub-ended", { state: this.get(), spec: this.spec() });
         }
 
         /** Whether `a` and `b` are far apart: another mode or frame, or the
@@ -608,7 +677,8 @@
         _announce(name, rev = null) {
             this._event(name, { state: this.get(), spec: this.spec(), label: this.label(),
                                 derived: this.isDerived(), windowClass: this.windowClass(),
-                                rev: rev ? rev.id : (this._committed ? this._committed.id : null) });
+                                rev: rev ? rev.id : (this._committed ? this._committed.id : null),
+                                scrub: this.scrubbing() });
         }
 
         // -- revisions ------------------------------------------------------
@@ -697,20 +767,20 @@
                 if (flight.rev.key !== key) {
                     this._pendingKey = key;
                     // Back to what is on screen, a jump to somewhere far from
-                    // it, or stuck behind something slow: the revision in
-                    // flight has nothing left to give.
-                    const jumped = this._jump && this._far(flight.rev.state, this.state);
+                    // it, or stuck behind something slow -- sooner while the
+                    // hand moves, when the newest is what it wants to see: the
+                    // revision in flight has nothing left to give. One whose
+                    // plane is ready is never stuck: it commits within a sync
+                    // wait (a preview on the way) and the newest follows.
+                    const rev = flight.rev;
+                    const deadline = rev.started + this._supersedeLimit(rev);
+                    const jumped = this._jump && this._far(rev.state, this.state);
                     if (key === this._appliedKey || jumped
-                            || now() - flight.rev.started >= SUPERSEDE_AFTER_MS) {
-                        if (jumped) global.PlexoraViewPerf?.mark?.("view", "jumped", flight.rev.id);
-                        flight.rev.supersede();
-                    } else if (!flight.timer) {
-                        flight.timer = setTimeout(() => {
-                            if (this._applying === flight && this._pendingKey
-                                    && this._pendingKey !== flight.rev.key) {
-                                flight.rev.supersede();
-                            }
-                        }, Math.max(0, SUPERSEDE_AFTER_MS - (now() - flight.rev.started)));
+                            || (!rev.mainReady && now() >= deadline)) {
+                        if (jumped) global.PlexoraViewPerf?.mark?.("view", "jumped", rev.id);
+                        rev.supersede();
+                    } else if (!rev.mainReady && (!flight.timer || deadline < flight.deadline)) {
+                        this._armSupersede(flight);
                     }
                 }
                 return;
@@ -722,8 +792,14 @@
             }
             this._revCount += 1;
             const rev = new NavigationRevision(this._revCount, this, key);
+            // A scrub revision if the request it serves was made while the
+            // hand moved -- not only if it still moves at this frame: a drag's
+            // last plane, pumped after the pointer let go (endScrub), still
+            // previews at coverage rather than waiting out the grace.
+            rev.scrub = Boolean(this._requestScrub) || rev.scrub;
+            this._requestScrub = false;
             global.PlexoraViewPerf?.mark?.("view", "requested", rev.id, rev.spec);
-            const flightRecord = { rev, timer: 0 };
+            const flightRecord = { rev, timer: 0, deadline: Infinity };
             this._applying = flightRecord;
             flightRecord.run = this._applyRevision(rev)
                 .catch((error) => {
@@ -744,6 +820,32 @@
                         this._pump();
                     }
                 });
+        }
+
+        /** How long `rev` may load while a newer request waits: less while
+         *  the hand moves -- a revision made then, or any revision once a
+         *  drag is under way, its first included. */
+        _supersedeLimit(rev) {
+            return rev.scrub || this.scrubbing() ? SCRUB_SUPERSEDE_MS : SUPERSEDE_AFTER_MS;
+        }
+
+        /**
+         * Supersede the revision in flight at its deadline, if its plane is
+         * still not ready and a newer request still waits. The limit is read
+         * again when the timer fires: a hand that stopped before then gives
+         * the revision the rest of SUPERSEDE_AFTER_MS.
+         */
+        _armSupersede(flight) {
+            const rev = flight.rev;
+            clearTimeout(flight.timer);
+            flight.deadline = rev.started + this._supersedeLimit(rev);
+            flight.timer = setTimeout(() => {
+                flight.timer = 0;
+                if (this._applying !== flight || rev.mainReady || rev.superseded
+                        || !this._pendingKey || this._pendingKey === rev.key) return;
+                if (now() < rev.started + this._supersedeLimit(rev)) this._armSupersede(flight);
+                else rev.supersede();
+            }, Math.max(0, flight.deadline - now()));
         }
 
         /**
@@ -776,6 +878,7 @@
             const main = entries.find((entry) => entry.name === "main");
             if (main) await Promise.race([main.promise, superseded]);
             if (rev.superseded) return false;
+            rev.mainReady = true;
             const held = entries.filter((entry) => entry.hold > 0 && !entry.ready);
             if (held.length) {
                 const longest = Math.max(...held.map((entry) => entry.hold));
@@ -785,7 +888,7 @@
             }
             const all = Promise.all(entries.map((entry) => entry.promise));
             if (entries.some((entry) => !entry.ready)) {
-                await Promise.race([all, delay(SYNC_WAIT_MS), superseded]);
+                await Promise.race([all, delay(rev.scrub ? SCRUB_SYNC_WAIT_MS : SYNC_WAIT_MS), superseded]);
             }
             if (rev.superseded) return false;
             this._commitEntries(rev, entries.filter((entry) => entry.ready), false);
@@ -894,6 +997,9 @@
     ViewState.SUPERSEDE_AFTER_MS = SUPERSEDE_AFTER_MS;
     ViewState.NEAR_PLANES = NEAR_PLANES;
     ViewState.SCRUB_GAP_MS = SCRUB_GAP_MS;
+    ViewState.SCRUB_HOLD_MS = SCRUB_HOLD_MS;
+    ViewState.SCRUB_SUPERSEDE_MS = SCRUB_SUPERSEDE_MS;
+    ViewState.SCRUB_SYNC_WAIT_MS = SCRUB_SYNC_WAIT_MS;
     global.PlexoraViewState = ViewState;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = ViewState;
