@@ -6,7 +6,7 @@ symbol: "plexora.api.TableHandle"
 signature: "TableHandle(project: Project, provider=None)"
 badge: "class"
 source:
-  end: 1123
+  end: 1143
   path: "plexora/api/dataset.py"
   start: 691
 ---
@@ -447,6 +447,36 @@ Column names to read.
 `{name: numpy array}`. Cached one set of names at a time,
 so repeated range queries over the same columns reuse the same
 arrays.
+
+</Returns>
+
+### rows
+
+```python
+rows(ids) -> list
+```
+
+Whole rows for a few cell ids, every marker and metadata column.
+
+The cheap way to look at a sample of a table wherever it is: for a
+table on a data node, one request for these rows rather than whole
+columns. Values are as `frame()` reads them (log1p applied when the
+project applies it).
+
+<ParamTable>
+
+<Param name={"ids"} type={"Iterable"} required>
+
+Cell ids, as `geometry()["id"]` holds them. Ids
+not in the table are left out.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"list[dict]"}>
+
+One `{column: value}` per id found, in the order asked.
 
 </Returns>
 
