@@ -471,6 +471,35 @@ partner's errors. So the run keeps an evidence graph
   `open_tool {ask: true}` -- the tab shows its own requirements prompt (the
   quiet panel open cannot succeed while `features` is unconfirmed); a quiet
   open that fails names the missing keys, not the form's fields.
+- **Set-up is the user's** (`SessionOptions.setup`, 2026-10-15). A run went
+  on while the viewer's set-up form was still open: the harness's model
+  answered `expression_setup` ("X, log1p off"), then the user's answer
+  switched the matrix under the running session. Now:
+  - `ask` (an MCP agent, the default): a required column not found
+    (`Requires.missing_from`) refuses the start with `detail.setup`; the
+    matrix is still an `expression_setup` packet the agent puts to the user.
+  - `wait`: anything the form would ask -- missing or never-confirmed
+    columns, an unsettled matrix -- holds the session in `needs_setup` with
+    `setup_wait`, no packet, nothing planned or quoted; `_settle_setup`
+    plans it from the tables as they are once the form is finished.
+  - `fail`: a missing column or an unsettled matrix refuses the start,
+    saying how to supply it (`--matrix`, `--log1p`).
+  - The harness collects the set-up before any model call
+    (`DecisionRun._collect_setup`, through `capabilities_session.prepare`,
+    the start's own function): no session, quote or note interpretation
+    until it is done. From the viewer it waits for the form, which the
+    launching tab opens (`ai_setup`, by run id; closing it unfinished stops
+    the run, `ai.run_control` cancelling the job); on a command line it
+    fails saying what. The session-level `wait` is the backstop for a
+    set-up that changes between the two.
+  - Matrix: an unconfirmed `X` in the log range is settled by its shape
+    (`agent/expression.shape`, scale-free skew); only an unclear shape, when
+    it is all that is left, goes to a model (`ai/harness/expression.py`),
+    whose reading `prepare` checks again and the session records as
+    `inferred`. A node-held table is sampled through its loaded rows.
+  - A matrix or log1p changed while a session runs stops it
+    (`_matrix_moved`, `matrix_changed`), naming the gates written on the old
+    values.
 
 ## 5b. Determinism
 

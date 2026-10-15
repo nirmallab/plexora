@@ -1607,6 +1607,13 @@ def _build_ai_parser():
                           "only those are gated and the rest skipped. Without it a partial "
                           "match refuses to start, and a run where no marker matches never "
                           "starts: every gate is judged on the image's pixels.")
+    run.add_argument("--matrix", default=None, metavar="X|layer:NAME",
+                     help="gating: the expression matrix to gate on, when nobody confirmed one "
+                          "and its values do not say (the run fails and says so). With "
+                          "--log1p; applied even over an earlier confirmed choice.")
+    run.add_argument("--log1p", choices=("on", "off"), default=None,
+                     help="gating: log1p the values as they are read: on for raw "
+                          "intensities, off for values already logged. Alone, it is about X.")
     run.add_argument("--mode", choices=("apply", "propose"), default="apply")
     run.add_argument("--capability", default="vision_judgement",
                      choices=("vision_judgement", "vision_routine"),

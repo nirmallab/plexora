@@ -28,6 +28,8 @@
  */
 window.PlexoraRequirements = (function () {
     let openDialog = null;
+    //: The `collect` whose form is up: {datasource, dialog, promise, close}.
+    let openAsk = null;
 
     // The image-id select's "only one image" choice. Written as an escape so
     // this file stays plain ASCII: a literal NUL byte makes grep and diff
@@ -501,7 +503,16 @@ window.PlexoraRequirements = (function () {
      * @returns Promise<boolean> — false if the user cancelled
      */
     function collect(datasource, needs) {
-        if (openDialog) openDialog.remove();
+        // Two askers, one form. Opening Thresholding and an agent session
+        // waiting on the same set-up (agentPanel's `needs_setup`) can both
+        // ask at once: the second shares the form that is up, and both hear
+        // how it ended. Replacing it left the first asker's promise unsettled
+        // -- the tool never opened -- and showed the user the form twice.
+        if (openAsk && openAsk.datasource === datasource && openDialog === openAsk.dialog) {
+            return openAsk.promise;
+        }
+        if (openAsk) openAsk.close(false);
+        else if (openDialog) openDialog.remove();
         const dialog = openDialog = buildDialog();
         const error = dialog.querySelector(".requirements-error");
         const save = dialog.querySelector('[data-action="save"]');
@@ -509,13 +520,16 @@ window.PlexoraRequirements = (function () {
         let controls = render(dialog, needs, state, datasource);
         dialog.showModal();
 
-        return new Promise((resolve) => {
+        const asker = { datasource, dialog, promise: null, close: null };
+        asker.promise = new Promise((resolve) => {
             function close(result) {
                 dialog.close();
                 dialog.remove();
                 if (openDialog === dialog) openDialog = null;
+                if (openAsk === asker) openAsk = null;
                 resolve(result);
             }
+            asker.close = close;
 
             const cancel = dialog.querySelector('[data-action="cancel"]');
             cancel.addEventListener("click", () => {
@@ -656,6 +670,8 @@ window.PlexoraRequirements = (function () {
                 }
             }
         });
+        openAsk = asker;
+        return asker.promise;
     }
 
     /**

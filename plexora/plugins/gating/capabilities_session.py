@@ -3,6 +3,9 @@
     gating_session_start  -> {session_id, job_id}         (the bulk pass runs as a job)
                              or `needs_setup` + an `expression_setup` packet, when which
                              matrix to gate cannot be settled from the values
+                             (`setup: ask`); or `needs_setup` + `setup`, waiting on the
+                             viewer's set-up form (`setup: wait`); or refused, saying what
+                             is missing (a column not found; `setup: fail`, the matrix too)
     gating_next           -> one decision packet (+ <= 2 images), or a status
     gating_answer         -> the outcome, and the next packet inline
     gating_session_status -> every unit's state, the budget, the questions
@@ -93,6 +96,20 @@ class Biology(AgentModel):
                                         "corrected terms, ambiguities, scope).")
 
 
+class ExpressionChoice(AgentModel):
+    """Which matrix to gate on, settled before the start (`SessionOptions.expression`)."""
+    features_layer: str = Field(description="`X` or `layer:<name>`, as "
+                                            "inspect_expression_sources lists them.")
+    features_log: bool = Field(description="Apply log1p as the values are read. Never for a "
+                                           "matrix that is already log-transformed.")
+    basis: Literal["user", "inferred"] = Field(
+        "user", description="user: the user named it (`plexora ai run --matrix/--log1p`); "
+                            "it is applied even over an earlier confirmed choice. inferred: "
+                            "a model read it from the values (`plexora.ai.harness.expression`); "
+                            "applied only where nothing is confirmed.")
+    why: str | None = Field(None, max_length=400, description="Why, in a sentence.")
+
+
 class SessionOptions(AgentModel):
     scope: Literal["project", "dataset"] = Field(
         "project", description="project: one image; dataset: every image of a dataset, the "
@@ -117,6 +134,21 @@ class SessionOptions(AgentModel):
                         "channel: only those are gated, and the rest are skipped "
                         "(skipped_no_channel) without a gate. Without it a partial match "
                         "refuses to start; when no marker matches, nothing starts either way.")
+    setup: Literal["ask", "wait", "fail"] = Field(
+        "ask", description="What the start does when the project's gating set-up is not "
+                           "finished: a required column (cell id, coordinates, image id) not "
+                           "found or never confirmed, or an expression matrix its values "
+                           "cannot settle. ask: a column not found refuses the start, and the "
+                           "matrix comes to you as an expression_setup packet (put it to the "
+                           "user; never guess); fail: nothing starts, and the error says what "
+                           "is missing and how to supply it (a run with nobody to ask: "
+                           "`plexora ai run`); wait: the session waits in needs_setup, nothing "
+                           "profiled, until the user finishes the viewer's set-up form -- every "
+                           "column and the matrix (Plexora AI started from the viewer).")
+    expression: ExpressionChoice | None = Field(
+        None, description="The matrix to gate on, when the user named it or a model read it "
+                          "from the values before the start; checked against the matrices the "
+                          "project has, and never log1p on values already logged.")
     audit_sheet: bool = Field(True, description="Show automatically accepted markers on a "
                                                 "batched audit sheet (~70 tokens a marker).")
     reference_image: str | None = Field(None, description="Dataset scope: the image gated "
@@ -319,6 +351,294 @@ def _require_channels(match, force):
                     "channels": match["channels"], "hint": "force"})
 
 
+# -- the set-up a session needs before it plans anything ----------------------
+
+
+def setup_needs(session, images, *, confirmations=True) -> dict | None:
+    """What the viewer's set-up form would still ask before gating can run on
+    `images`, required inputs only: those not found in the project
+    (`Requires.missing_from`) and, with `confirmations`, those found but never
+    confirmed (`unconfirmed_from`: the columns the predictor picked, and the
+    expression matrix). None when there is nothing.
+
+    {"tool", "project", "projects", "keys", "labels", "missing",
+     "unconfirmed", "requirements"}: the shape the agent panel's `needs_setup`
+    handler opens the form with."""
+    requires = PLUGIN.requires
+    missing, unconfirmed, projects, rows = [], [], [], {}
+    for name in images:
+        record = session.project(name)
+        gone = [r for r in requires.missing_from(record) if not r.optional]
+        unsure = ([r for r in requires.unconfirmed_from(record) if not r.optional]
+                  if confirmations else [])
+        if not gone and not unsure:
+            continue
+        projects.append(name)
+        for row, into in [(r, missing) for r in gone] + [(r, unconfirmed) for r in unsure]:
+            if row.key not in into:
+                into.append(row.key)
+            rows.setdefault(row.key, row)
+    if not projects:
+        return None
+    keys = list(dict.fromkeys(missing + unconfirmed))
+    return {"tool": OWNER, "project": projects[0], "projects": projects, "keys": keys,
+            "labels": [rows[k].label for k in keys], "missing": missing,
+            "unconfirmed": unconfirmed, "requirements": [rows[k].describe() for k in keys]}
+
+
+def _words(labels) -> str:
+    labels = [str(label) for label in labels]
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
+def _setup_message(needs) -> str:
+    """The set-up a session waits on, in the user's words."""
+    where = needs["project"] if len(needs["projects"]) == 1 else f"{len(needs['projects'])} images"
+    missing = [needs["labels"][needs["keys"].index(k)] for k in needs["missing"]]
+    unsure = [needs["labels"][needs["keys"].index(k)] for k in needs["keys"]
+              if k not in needs["missing"]]
+    parts = []
+    if missing:
+        parts.append(f"{_words(missing)} {'is' if len(missing) == 1 else 'are'} not set")
+    if unsure:
+        parts.append(f"{_words(unsure)} {'has' if len(unsure) == 1 else 'have'} not been "
+                     "confirmed")
+    return (f"Automatic gating is waiting for the set-up of {where}: {' and '.join(parts)}. "
+            "Finish the set-up form in the viewer (Thresholding opens it).")
+
+
+def _setup_refusal(gaps, setup):
+    """A start refused for a column the project does not have: what is
+    missing, and where it is set."""
+    where = gaps["project"] if len(gaps["projects"]) == 1 else f"{len(gaps['projects'])} images"
+    missing = [gaps["labels"][gaps["keys"].index(k)] for k in gaps["missing"]]
+    how = ("open the project in the viewer and answer the set-up form (Thresholding opens it), "
+           "or set the column in Edit project, then start again")
+    if setup == "ask":
+        how = "ask the user to " + how
+    return AgentError(
+        "precondition_missing",
+        f"automatic gating cannot start on {where}: {_words(missing)} "
+        f"{'is' if len(missing) == 1 else 'are'} not set, and only the user can say which "
+        f"column holds {'it' if len(missing) == 1 else 'them'}. To go on, {how}.",
+        detail={"setup": gaps, "hint": "set-up form"})
+
+
+def _matrix_refusal(expression):
+    """A start refused because nobody confirmed which values to gate and
+    they could not settle it: why, the matrices there are, and how to name one."""
+    projects = expression.get("projects") or []
+    options = expression.get("options") or []
+    recommendation = expression.get("recommendation") or {}
+    listed = ", ".join(f"{o['value']} ({str(o.get('kind') or 'unknown').replace('_', ' ')})"
+                       for o in options) or "X"
+    return AgentError(
+        "precondition_missing",
+        f"which expression values to gate on {', '.join(projects) or 'this image'} is not "
+        f"confirmed, and could not be worked out: {recommendation.get('why') or 'unclear'}. "
+        f"The matrices: {listed}. Name one: `plexora ai run gating <project> --matrix "
+        "<X|layer:NAME> --log1p <on|off>` (log1p on for raw intensities, off for values "
+        "already logged), or confirm it in the viewer's set-up form.",
+        detail={"expression": expression, "hint": "--matrix / --log1p"})
+
+
+def _unconfirmed_note(session, images, setup) -> dict:
+    """A session that could not wait went on with columns nobody confirmed:
+    said in the start output, so the caller can tell the user which."""
+    if setup == "wait":
+        return {}
+    needs = setup_needs(session, images)
+    keys = [k for k in (needs or {}).get("unconfirmed", ()) if k != "features"]
+    if not keys:
+        return {}
+    labels = [needs["labels"][needs["keys"].index(k)] for k in keys]
+    return {"unconfirmed_setup": {
+        "keys": keys, "labels": labels,
+        "note": (f"{_words(labels)} {'was' if len(labels) == 1 else 'were'} found by the "
+                 "column predictor and never confirmed; this session uses "
+                 f"{'it' if len(labels) == 1 else 'them'} as found. Tell the user, and to "
+                 "check the set-up form (Thresholding opens it) if gates land on the wrong "
+                 "cells.")}}
+
+
+def _given_expression(call, images, choice):
+    """Apply the matrix the caller settled (`SessionOptions.expression`) to
+    each image: a user's choice everywhere, a model's only where nothing is
+    confirmed. Checked like an answer to an expression_setup packet: a matrix
+    the image has, and never log1p on values already logged (or below zero).
+
+    Returns ([{project, choice, why, basis}], receipt ids)."""
+    from plexora.agent import registry
+
+    if choice is None:
+        return [], []
+    applied, receipts = [], []
+    for index, project in enumerate(images):
+        found = registry.invoke(call.session, "inspect_expression_sources",
+                                {"project": project}, policy=call.policy,
+                                audit=call.audit, link=call.link)
+        if not found["ok"]:
+            raise AgentError("precondition_missing", f"{project}: "
+                             f"{found['error']['message']}")
+        result = found["result"]
+        inferred = choice.basis == "inferred"
+        if inferred and result["current"]["confirmed"]:
+            now = result["current"]
+            if (now["features_layer"], bool(now["features_log"])) == (choice.features_layer,
+                                                                      choice.features_log):
+                # Applied before the start (a driver's set-up, `prepare`):
+                # kept on the record, not done again.
+                applied.append({"project": project, "basis": "inferred",
+                                "choice": {"features_layer": choice.features_layer,
+                                           "features_log": choice.features_log},
+                                "why": choice.why or "read from the values by a model"})
+            continue
+        kinds = {o["value"]: o.get("kind") for o in result["options"]}
+        kind = kinds.get(choice.features_layer)
+        refusal = None
+        if choice.features_layer not in kinds:
+            refusal = AgentError("invalid_input", f"{choice.features_layer!r} is not a matrix "
+                                 f"of {project!r}", detail={"allowed": list(kinds)})
+        elif choice.features_log and kind in ("log_like", "scaled"):
+            refusal = AgentError("invalid_input", f"{project}: {choice.features_layer} "
+                                 + ("already looks log-transformed; log1p on it would "
+                                    "transform it twice" if kind == "log_like" else
+                                    "has values below zero (scaled or centred); log1p is not "
+                                    "defined there"),
+                                 detail={"hint": "log1p off"})
+        if refusal is not None:
+            if inferred:
+                continue          # a model's reading the values contradict: not taken
+            raise refusal
+        done = registry.invoke(call.session, "set_expression_source",
+                               {"project": project, "features_layer": choice.features_layer,
+                                "features_log": choice.features_log, "confirm": True},
+                               policy=call.policy, audit=call.audit, link=call.link,
+                               notify=call.notify,
+                               operation_id=f"{call.operation_id}.given{index + 1}")
+        if not done["ok"]:
+            raise AgentError(done["error"]["code"], f"{project}: {done['error']['message']}")
+        receipt = (done["result"] or {}).get("receipt") or {}
+        if receipt.get("changed") and receipt.get("operation_id"):
+            receipts.append(receipt["operation_id"])
+        applied.append({"project": project, "basis": choice.basis,
+                        "choice": {"features_layer": choice.features_layer,
+                                   "features_log": choice.features_log},
+                        "why": choice.why or ("named by the user" if choice.basis == "user"
+                                              else "read from the values by a model")})
+    return applied, receipts
+
+
+def _plan(call, inp, images) -> dict:
+    """The markers a session gates and the image channels they match; refused
+    when the pixels cannot carry them (`_require_channels`)."""
+    order, skipped, panel = _markers_for(call, images, inp.markers)
+    if not order:
+        raise AgentError("invalid_input", "no markers to gate")
+    match = channel_match(call, images, order)
+    _require_channels(match, inp.force)
+    return {"order": order, "skipped": skipped, "panel": panel, "match": match}
+
+
+def _plan_fields(call, inp, images, plan) -> dict:
+    """The planned part of a session record (`_plan`, then the pixel size,
+    QC, biology and one unit per image and marker), plus `unresolved`."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    order, panel, match = plan["order"], plan["panel"], plan["match"]
+    pixel = _pixel_check(call, images, inp)
+    qc_blocks = _qc_check(call, images)
+    biology_record = _biology_for(call, images, inp, panel)
+    if biology_record and biology_record.get("contexts"):
+        from plexora.plugins.gating.server.autogate import biology as biomod
+
+        overlaid = biomod.overlay(panel, biology_record)["order"]
+        order = [m for m in overlaid if m in order] + [m for m in order if m not in overlaid]
+    units = {}
+    for project in images:
+        markers = call.session.data(project).table.markers
+        seen = set(match["matched"].get(project) or ())
+        for marker in order:
+            unit = {"project": project, "marker": marker,
+                    "state": "pending" if marker in seen
+                    else "skipped_no_marker" if marker not in markers else "skipped_no_channel"}
+            if unit["state"] == "skipped_no_channel":
+                unit["reason"] = ("no image channel matches this marker: automatic gating "
+                                  "judges every gate on the pixels")
+            units[engines.unit_key(project, marker)] = unit
+    unresolved = [m for m in panel["unresolved"] if m in order]
+    return {"order": order, "skipped_markers": plan["skipped"], "units": units,
+            "panel_hash": panel["panel_hash"], "biology": biology_record,
+            "panel_pending": bool(unresolved), "unresolved": unresolved,
+            "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
+                                                    "unmatched")},
+            "pixel": pixel, "qc_exclusion": qc_blocks, "qc_missing": _qc_missing(qc_blocks)}
+
+
+def _unplanned_fields() -> dict:
+    """A session waiting on a column it cannot plan without: planned at
+    `_settle_setup`."""
+    return {"order": [], "skipped_markers": [], "units": {}, "panel_hash": None,
+            "biology": None, "panel_pending": False, "unresolved": [], "channel_match": None,
+            "pixel": {}, "qc_exclusion": {}, "qc_missing": []}
+
+
+def _channels_brief(match) -> dict:
+    if not match:
+        return {"state": "unplanned"}
+    return ({k: match[k] for k in ("state", "n_markers", "n_matched")}
+            | {"unmatched": sorted({m for v in match["unmatched"].values() for m in v})})
+
+
+def _fingerprints(session, images) -> dict:
+    """{image: "<matrix>|<log1p 0/1>"}: which values each image is read from
+    (`Table.expression_fingerprint`), as the session started on them."""
+    out = {}
+    for name in images:
+        record = session.project(name)
+        out[name] = f"{record.feature_source}|{int(bool(record.log_transformed))}"
+    return out
+
+
+def prepare(call, project, choice=None, *, setup="wait") -> dict:
+    """The deterministic half of a start, with no session: what a driver
+    collects before it calls any model (`plexora.ai.harness.decision`).
+
+    Settles the matrix where the values settle it (`_expression_check`,
+    applied and confirmed) or where the caller's `choice` does
+    (`_given_expression`), receipted under `call.operation_id`; then says
+    what is still open. {"needs", "missing", "expression", "applied",
+    "receipts"}: `needs` is what a session started with `setup` would wait
+    on or refuse for -- wait: everything the set-up form would ask; fail and
+    ask: a column not found, and the matrix when it is unsettled -- or None.
+    `missing`: the columns not found. Nothing else is written."""
+    images = [project]
+    call.session.project(project)
+    if isinstance(choice, dict):
+        choice = ExpressionChoice(**choice)
+    gaps = setup_needs(call.session, images, confirmations=False)
+    given, given_receipts = _given_expression(call, images, choice)
+    expression, receipts = _expression_check(call, images)
+    pending = expression.get("status") == "pending"
+    if setup == "wait":
+        needs = setup_needs(call.session, images)
+    else:
+        needs = gaps
+        if pending:
+            matrix = setup_needs(call.session, images) or {}
+            if "features" in (matrix.get("keys") or ()):
+                needs = needs or {**matrix, "keys": [], "labels": [], "missing": [],
+                                  "unconfirmed": [], "requirements": []}
+                at = matrix["keys"].index("features")
+                needs = {**needs, "keys": needs["keys"] + ["features"],
+                         "labels": needs["labels"] + [matrix["labels"][at]],
+                         "unconfirmed": needs["unconfirmed"] + ["features"],
+                         "requirements": needs["requirements"] + [matrix["requirements"][at]]}
+    return {"needs": needs, "missing": gaps, "expression": expression,
+            "applied": given + list(expression.get("applied") or []),
+            "receipts": list(given_receipts) + list(receipts)}
+
+
 def start(call, inp):
     from plexora.agent.sessions.store import new_session_id
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -362,55 +682,49 @@ def start(call, inp):
         # The reference image stays held while the bulk pass walks the rest;
         # an evicted table would refit every marker for every packet.
         call.session.table_limit = max(call.session.table_limit, 4)
-    order, skipped, panel = _markers_for(call, images, inp.markers)
-    if not order:
-        raise AgentError("invalid_input", "no markers to gate")
+    # A column the set-up form would have to ask for (no cell id, no
+    # coordinates): nothing can be planned without it, and only the user can
+    # name it -- so only a session that waits for the form starts without it.
+    gaps = setup_needs(call.session, images, confirmations=False)
+    if gaps and inp.setup != "wait":
+        raise _setup_refusal(gaps, inp.setup)
     # Before anything is written (the expression check can set a matrix): a
     # marker with no image channel has no pixels to judge its gate on.
-    match = channel_match(call, images, order)
-    _require_channels(match, inp.force)
+    plan = None if gaps else _plan(call, inp, images)
+    given, given_receipts = _given_expression(call, images, inp.expression)
     expression, expression_receipts = _expression_check(call, images)
-    pixel = _pixel_check(call, images, inp)
-    qc_blocks = _qc_check(call, images)
-    biology_record = _biology_for(call, images, inp, panel)
-    if biology_record and biology_record.get("contexts"):
-        from plexora.plugins.gating.server.autogate import biology as biomod
-
-        overlaid = biomod.overlay(panel, biology_record)["order"]
-        order = [m for m in overlaid if m in order] + [m for m in order if m not in overlaid]
+    if given:
+        expression = {**expression, "applied": given + list(expression.get("applied") or [])}
+        if expression["status"] == "confirmed":
+            expression["status"] = "applied"
+    if inp.setup == "fail" and expression.get("status") == "pending":
+        raise _matrix_refusal(expression)
+    # Everything the form would still ask -- columns found but never
+    # confirmed, and a matrix the values did not settle -- for a session that
+    # waits on it. One that cannot wait goes on with what was found.
+    needs = setup_needs(call.session, images) if inp.setup == "wait" else None
+    fields = _plan_fields(call, inp, images, plan) if plan else _unplanned_fields()
+    unresolved = fields.pop("unresolved")
     session_id = new_session_id()
-    units = {}
-    for project in images:
-        markers = call.session.data(project).table.markers
-        seen = set(match["matched"].get(project) or ())
-        for marker in order:
-            unit = {"project": project, "marker": marker,
-                    "state": "pending" if marker in seen
-                    else "skipped_no_marker" if marker not in markers else "skipped_no_channel"}
-            if unit["state"] == "skipped_no_channel":
-                unit["reason"] = ("no image channel matches this marker: automatic gating "
-                                  "judges every gate on the pixels")
-            units[engines.unit_key(project, marker)] = unit
-    unresolved = [m for m in panel["unresolved"] if m in order]
     record = {
         "session_id": session_id, "kind": "gating", "created_at": _now(),
         "principal": getattr(call.policy, "principal", None) or "agent",
         "options": inp.model_dump(mode="json"), "scope": inp.scope,
         "dataset": dataset_name, "state": "created", "operation_id": call.operation_id,
-        "images": images, "reference_image": reference, "order": order,
-        "skipped_markers": skipped, "units": units, "panel_hash": panel["panel_hash"],
-        "biology": biology_record,
-        "panel_pending": bool(unresolved),
-        "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
-                                                "unmatched")},
+        "images": images, "reference_image": reference, **fields,
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
-        "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
-        "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
-        "pixel": pixel, "qc_exclusion": qc_blocks,
-        "qc_missing": _qc_missing(qc_blocks),
+        "receipts": list(given_receipts) + list(expression_receipts), "questions": [],
+        "packet_seq": 0, "write_seq": 0, "mirror": _mirror_at_start(call, inp),
+        "expression": expression,
     }
-    if expression.get("status") == "pending":
+    if needs:
         record["state"] = "needs_setup"
+        record["setup_wait"] = needs
+    elif expression.get("status") == "pending":
+        record["state"] = "needs_setup"
+    else:
+        record["expression_fingerprints"] = _fingerprints(call.session, images)
+    order = record["order"]
     st = engines.store()
     st.create(record)
     st.sweep()
@@ -421,7 +735,24 @@ def start(call, inp):
                            extra={"gating_session": session_id, "note": "the session's "
                                   "writes are receipted as <operation_id>.<nnn>"})
     packet = images_ = None
-    if record["state"] == "needs_setup":
+    if record["state"] == "needs_setup" and needs:
+        # Nothing is planned or profiled until the user has finished the
+        # viewer's set-up form: every number would be of the wrong columns or
+        # values, and an answer given while the run went on would switch them
+        # under it. The panel opens the form (`needs_setup`); no packet is
+        # issued, so no model answers it in the user's place.
+        job = {"job_id": None}
+        with engines.engine_for(call, session_id) as engine:
+            phase = engines.phase_for(engine.record)
+            progress = engine.progress()
+        _announce(call, record, session_id, "started", phase=phase, progress=progress,
+                  order=order, images=images, mode=inp.mode,
+                  view_id=record["mirror"].get("view_id"),
+                  viewer_attached=_mirroring(record["mirror"]))
+        _announce(call, record, session_id, "needs_setup", phase="planning",
+                  view_id=record["mirror"].get("view_id"), needs=needs,
+                  message=_setup_message(needs))
+    elif record["state"] == "needs_setup":
         # Nothing is profiled until the matrix is settled: every number the
         # bulk pass computes would be of the wrong values.
         job = {"job_id": None}
@@ -448,23 +779,28 @@ def start(call, inp):
                   viewer_attached=_mirroring(record["mirror"]))
     out = {"session_id": session_id, "job_id": job["job_id"], "scope": inp.scope,
             "images": images, "reference_image": reference, "order": order,
-            "n_units": len(units), "skipped_markers": skipped,
+            "n_units": len(record["units"]), "skipped_markers": record["skipped_markers"],
             "unresolved_markers": unresolved, "mode": inp.mode,
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
                                                             "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
-            "biology": _biology_brief(biology_record),
+            "biology": _biology_brief(record["biology"]),
             "resource": session_uri(session_id), "expression": expression,
-            "pixel": _pixel_brief(pixel), "state": record["state"],
-            "channels": {k: match[k] for k in ("state", "n_markers", "n_matched")}
-            | {"unmatched": sorted({m for v in match["unmatched"].values() for m in v})},
-            "qc_exclusion": qc_blocks,
-            **_qc_warning(qc_blocks),
+            "pixel": _pixel_brief(record["pixel"]), "state": record["state"],
+            "channels": _channels_brief(record["channel_match"]),
+            "qc_exclusion": record["qc_exclusion"],
+            **_qc_warning(record["qc_exclusion"]),
+            **_unconfirmed_note(call.session, images, inp.setup),
             **_guide(inp.reading, inp.known_guide),
             **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
                     f"{tool_name_of('gating.answer')}"}
+    if needs:
+        out["setup"] = needs
+        out["next"] = (f"{_setup_message(needs)} {tool_name_of('gating.next')}(session_id) "
+                       "answers needs_setup until they have; the markers are planned once "
+                       "they have.")
     if packet is None and inp.delegate and "reading_guide" in out and \
             isinstance(out["reading_guide"], dict):
         # A coordinator that hands the packets to workers never reads the
@@ -694,9 +1030,130 @@ def _settle_expression(call, session_id, st):
         engine.release_all(schemas.USER_SETUP_KINDS)
         record["state"] = "created"
         record["bulk_job_id"] = None
+        record["expression_fingerprints"] = _fingerprints(call.session, record["images"])
         progress = engine.progress()
     _announce(call, record, session_id, "phase", phase="analyzing", progress=progress)
     return True
+
+
+def _settle_setup(call, session_id, st):
+    """A session waiting on the viewer's set-up form (`setup: wait`) is
+    planned once the user has finished it -- from the tables as they are
+    then, since the answers may have changed which column is what -- and the
+    bulk pass goes on. A plan the pixels cannot carry (no marker matches a
+    channel) stops it, saying why. A session waiting on the matrix alone
+    (`setup: ask`) settles as before (`_settle_expression`)."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    with engines.engine_for(call, session_id, st=st) as engine:
+        record = engine.record
+        if record["state"] != "needs_setup":
+            return False
+        if not record.get("setup_wait"):
+            waiting = None
+        else:
+            waiting = list(record["images"])
+            options = dict(engine.options)
+    if waiting is None:
+        return _settle_expression(call, session_id, st)
+    if setup_needs(call.session, waiting):
+        return False
+    for name in waiting:
+        call.session.invalidate(name)
+    inp = SessionOptions(**options)
+    failure = None
+    try:
+        plan = _plan(call, inp, waiting)
+        expression, receipts = _expression_check(call, waiting)
+        fields = _plan_fields(call, inp, waiting, plan)
+    except AgentError as exc:
+        failure = exc
+    with engines.engine_for(call, session_id, st=st) as engine:
+        record = engine.record
+        if record["state"] != "needs_setup":
+            return False
+        if failure is None:
+            fields.pop("unresolved")
+            record.update(fields)
+            record["receipts"] = list(receipts) + list(record.get("receipts") or [])
+            records = [call.session.project(p) for p in waiting]
+            before = record.get("expression") or {}
+            asked = before.get("status") == "pending"
+            record["expression"] = {
+                **before, **expression,
+                **({"status": "applied_by_user"} if asked else {}),
+                "choice": {"features_layer": records[0].feature_source,
+                           "features_log": bool(records[0].log_transformed)},
+                "why": ("confirmed by the user in the viewer's set-up form" if asked
+                        else before.get("why") or expression.get("why")
+                        or "settled before the set-up form was finished")}
+            record["setup_done"] = {"at": _now(), "keys": record["setup_wait"]["keys"]}
+            record.pop("setup_wait", None)
+            record["state"] = "created"
+            record["bulk_job_id"] = None
+            record["expression_fingerprints"] = _fingerprints(call.session, waiting)
+            progress = engine.progress()
+    if failure is not None:
+        _stop(call, st, session_id, "setup_failed",
+              f"The set-up is finished, but the run cannot go on: {failure.message}")
+        return False
+    _announce(call, record, session_id, "phase", phase="analyzing", progress=progress,
+              order=record["order"])
+    return True
+
+
+def _stop(call, st, session_id, by, reason):
+    """Stop a session for a reason of its own (not the user's Stop): its
+    bulk pass at its next unit, its driver at its next call -- which is told
+    `reason` -- and the tabs now."""
+    from plexora.agent import jobs
+    from plexora.agent.audit import now_iso
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    st.set_control(session_id, stopped=True, stopped_by=by, stopped_at=now_iso(),
+                   paused=False, stop_reason=reason)
+    record = st.load(session_id)
+    if record.get("state") == "bulk_running" and record.get("bulk_job_id"):
+        jobs.store().cancel(record["bulk_job_id"])
+    _announce(call, record, session_id, "finished", reason=by, message=reason,
+              state=record.get("state"), summary=engines.summary_of(record),
+              phase="summarizing")
+
+
+def _matrix_moved(call, st, session_id):
+    """Stop a session whose images are no longer read from the values it
+    started on: the matrix or log1p switched (the set-up form, Edit project,
+    another agent) while it ran. Every profile and gate so far is in the old
+    values' units, and going on would mix the two. Returns what `gating_next`
+    answers, or None when nothing moved."""
+    try:
+        record = st.load(session_id)
+    except Exception:              # noqa: BLE001 -- an unknown session is next_packet's to report
+        return None
+    then = record.get("expression_fingerprints")
+    if not then or record.get("state") in schemas.FINISHED_STATES:
+        return None
+    now = _fingerprints(call.session, list(then))
+    moved = {p: (then[p], now[p]) for p in then if now.get(p) != then[p]}
+    if not moved:
+        return None
+
+    def read(value):
+        layer, log = value.rsplit("|", 1)
+        return f"{layer} with log1p {'on' if log == '1' else 'off'}"
+
+    # Counted as the panel's summary counts them (`engine.summary_of`).
+    written = sum(1 for u in (record.get("units") or {}).values() if u.get("receipts"))
+    project, (before, after) = next(iter(moved.items()))
+    reason = (f"The expression values of {project} changed while automatic gating ran "
+              f"(from {read(before)} to {read(after)}), so it stopped: what it measured so far "
+              "is in the old values' units."
+              + (f" The {written} gate{'s' if written != 1 else ''} it wrote are on the old "
+                 "values: clear them (the eraser beside each marker, or Clear all gates) "
+                 "before gating again." if written else "")
+              + " Start it again to gate on the new values.")
+    _stop(call, st, session_id, "matrix_changed", reason)
+    return _halted(call, st, session_id)
 
 
 def session_uri(session_id):
@@ -828,8 +1285,12 @@ def _halted(call, st, session_id):
         if record.get("state") == "bulk_running" and record.get("bulk_job_id"):
             jobs.store().cancel(record["bulk_job_id"])
         finish = tool_name_of("gating.session_finish")
+        # The session's own stop (a matrix switched under it, a set-up the
+        # pixels cannot carry) says why; the user's says it was theirs.
+        reason = control.get("stop_reason")
         return {"state": "stopped", "by": control.get("stopped_by"),
-                "note": "the user stopped this session in the viewer",
+                "note": reason or "the user stopped this session in the viewer",
+                **({"reason": reason} if reason else {}),
                 "next": f"{finish}(session_id, action='close') keeps the gates written so "
                         f"far; {finish}(session_id, action='rollback') undoes them. Then stop."}
     if control.get("paused"):
@@ -875,7 +1336,13 @@ def next_packet(call, inp):
     if halted:
         return halted
     st.claim(inp.session_id)
-    _settle_expression(call, inp.session_id, st)
+    _settle_setup(call, inp.session_id, st)
+    halted = _halted(call, st, inp.session_id) or _matrix_moved(call, st, inp.session_id)
+    if halted:
+        return halted
+    waiting = _waiting_on_setup(st, inp.session_id)
+    if waiting:
+        return waiting
     _resume_bulk(call, inp.session_id, st)
     deadline = time.monotonic() + float(inp.wait_s)
     needs = None
@@ -982,6 +1449,27 @@ def next_packet(call, inp):
         # A reader waiting on another's answer looks again soon: answers come
         # in seconds, the bulk pass in tens of them.
         time.sleep(0.1 if status == "busy" else 0.5)
+
+
+#: How soon a driver asks again while the user fills in the set-up form.
+SETUP_RETRY_S = 3
+
+
+def _waiting_on_setup(st, session_id):
+    """What `gating_next` answers while a session waits on the viewer's
+    set-up form (`setup: wait`): no packet -- the form is the user's to
+    answer, never a model's -- and what it waits on. None otherwise."""
+    try:
+        record = st.load(session_id)
+    except Exception:              # noqa: BLE001
+        return None
+    needs = record.get("setup_wait")
+    if record.get("state") != "needs_setup" or not needs:
+        return None
+    return {"state": "needs_setup", "setup": needs, "retry_after_s": SETUP_RETRY_S,
+            "note": _setup_message(needs),
+            "next": f"call {tool_name_of('gating.next')} again after retry_after_s; the "
+                    "session is planned and goes on once the user has finished the form"}
 
 
 def _limit_brief(request):
@@ -1265,6 +1753,7 @@ def status(call, inp):
                "scope": record.get("scope"), "mode": record["options"]["mode"],
                "images": record["images"], "reference_image": record.get("reference_image"),
                "progress": engine.progress(), "bulk": _bulk_status(record),
+               "n_units": len(units), "channels": _channels_brief(record.get("channel_match")),
                "units": units[:MAX_LIST],
                "truncated": len(units) > MAX_LIST, "used": record.get("used"),
                "estimated_vision_tokens": budgets.vision_tokens(
@@ -1274,6 +1763,7 @@ def status(call, inp):
                               "written_states": list(schemas.WRITTEN_STATES),
                               "confidence": list(schemas.CONFIDENCE)},
                "expression": record.get("expression"),
+               **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
                "pixel": _pixel_brief(record.get("pixel")),
                "summary": engines.summary_of(record),
                **_guide(record["options"]["reading"], inp.known_guide),

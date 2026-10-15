@@ -1092,6 +1092,26 @@ class TableHandle:
         data_model._ensure_loaded(self._project.name)
         return data_model.get_filter_columns(self._project.name, list(names))
 
+    def rows(self, ids) -> list:
+        """Whole rows for a few cell ids, every marker and metadata column.
+
+        The cheap way to look at a sample of a table wherever it is: for a
+        table on a data node, one request for these rows rather than whole
+        columns. Values are as `frame()` reads them (log1p applied when the
+        project applies it).
+
+        Args:
+            ids (Iterable): Cell ids, as `geometry()["id"]` holds them. Ids
+                not in the table are left out.
+
+        Returns:
+            list[dict]: One `{column: value}` per id found, in the order asked.
+        """
+        if self._provider is not None:
+            return self._provider.rows(list(ids))
+        data_model._ensure_loaded(self._project.name)
+        return data_model._rows_by_id(data_model.get_datasource_df(), list(ids))
+
     def range_mask(self, gates: Mapping[str, tuple], mode: str = "and"):
         """A boolean mask over table rows for a set of column ranges.
 

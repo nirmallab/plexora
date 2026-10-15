@@ -246,6 +246,18 @@ def _check_stopped(session_id):
         raise JobCancelled("stopped from the viewer")
 
 
+def _check_matrix(call, session_id):
+    """End the pass, and stop the session saying why, when its images are no
+    longer read from the values it started on (`_matrix_moved`): a profile
+    of the new values beside gates of the old would mix two units."""
+    from plexora.agent.jobs import JobCancelled
+    from plexora.plugins.gating import capabilities_session
+    from plexora.plugins.gating.server.autogate.engine import store
+
+    if capabilities_session._matrix_moved(call, store(), session_id):
+        raise JobCancelled("the expression values changed under the session")
+
+
 def run(call, inp):
     """The bulk job's handler."""
     from plexora.plugins.gating.server.autogate import biology, context
@@ -273,6 +285,7 @@ def run(call, inp):
         for marker in order:
             call.check_cancelled()
             _check_stopped(session_id)
+            _check_matrix(call, session_id)
             key = unit_key(project, marker)
             with engine_for(call, session_id) as engine:
                 unit = engine.record["units"].get(key)

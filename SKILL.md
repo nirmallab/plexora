@@ -3056,6 +3056,77 @@ deliberately left out and what should be built next.
   (`agentBridge.js`/`toolLoader.js`); `mirror_script.setup_script` sends it
   for an `expression_setup` packet (`schemas.USER_SETUP_KINDS`) so the
   mirrored tab puts the same question a packet would.
+  `SessionOptions.setup` (`ask` default | `wait` | `fail`) says what a start
+  does with an unfinished set-up, and `setup_needs(session, images,
+  confirmations=True)` says what that is: required keys `Requires.missing_from`
+  finds absent and, with confirmations, `unconfirmed_from` finds never
+  confirmed (`{tool, project, projects, keys, labels, missing, unconfirmed,
+  requirements}`, the shape the agent panel's `needs_setup` handler opens the
+  form with). A column not found refuses the start (`precondition_missing`,
+  `detail.setup`) unless `setup: wait`; `setup: fail` also refuses a matrix
+  nobody confirmed and the values cannot settle (`_matrix_refusal`, naming
+  `--matrix`/`--log1p`); `setup: wait` holds the session in `needs_setup`
+  with `setup_wait` -- no packet, nothing planned or quoted (`_unplanned_fields`)
+  -- until `_settle_setup` (from `next_packet`) finds the form finished and
+  plans from the tables as they are then, because the answers may have changed
+  which column is what. `start` is split into `_plan`/`_plan_fields` for that
+  reason. `SessionOptions.expression` (`ExpressionChoice`: `features_layer`,
+  `features_log`, `basis` `user`|`inferred`, `why`) carries a matrix settled
+  before the start; `_given_expression` checks it like an `expression_setup`
+  answer (never log1p on a `log_like` or `scaled` matrix -- `transitions`
+  now refuses log1p on `scaled` too) and applies a `user` choice even over a
+  confirmed one, an `inferred` one only where nothing is confirmed (one
+  already applied before the start, by `prepare`, is recorded, not redone). A session
+  records `expression_fingerprints` (`<matrix>|<log1p>` per image) as it
+  leaves set-up, and `_matrix_moved` (in `next_packet`, and per marker in the
+  bulk pass, `bulk._check_matrix`) stops it through `_stop` (control
+  `stop_reason`, `stopped_by` `matrix_changed`; a plan the pixels cannot carry
+  after set-up is `setup_failed`) when the matrix or log1p switched under it,
+  because its profiles and gates are in the old values' units; `_halted`
+  reports the `stop_reason`. Status gained `n_units`, `channels` and `setup`;
+  the start output `setup` and `unconfirmed_setup` (columns a session that
+  could not wait used as the predictor found them). On the client,
+  `agentPanel.js` names what the form waits on and, when it is dismissed, how
+  to go on, and its `ENDINGS` show `matrix_changed`/`setup_failed` with the
+  stop message; `requirementsModal.js`'s `collect` shares an open form with a
+  second asker on the same project (Thresholding and a waiting session) rather
+  than replacing it, because the replaced asker's promise never settled
+  (both files at `?v=20261015_setup_wait`; the ten boundary goldens carry it).
+  The harness (`ai/harness/decision.py`) never sends `needs_setup` to its
+  model, and collects the set-up before any model is called:
+  `DecisionRun._collect_setup` runs first in `_start` (workflows with
+  `collects_setup`, i.e. gating) -- before the note is interpreted
+  (`_context_arguments`), the session started or the run quoted -- because on
+  2026-10-15 a run went on while the form was open. It acts through
+  `capabilities_session.prepare(call, project, choice, setup=)`, the
+  deterministic half of a start with no session (settles the matrix where the
+  values settle it or applies a given choice; returns `{needs, missing,
+  expression, applied, receipts}`, `needs` per setup mode), so the run and the
+  session decide the same way. If the matrix is the only open need and
+  `worth_asking` (an unconfirmed `X` that `agent/expression.recommend` marks
+  `ambiguous`), one model call reads it (`_read_expression`,
+  `ai/harness/expression.py`: `worth_asking`/`prompt`/`settle`/`read`,
+  `text_routine`, task kind `expression_setup` under `gating.planning`); the
+  reading is applied through `prepare`, which checks it against the values
+  again, and goes to START as `expression` (`basis: inferred`). Whatever is
+  still open: `DecisionOptions.on_setup` `fail` (`plexora ai run gating`,
+  which takes `--matrix X|layer:NAME --log1p on|off`) raises `StartRefused`
+  in `_setup_refusal`/`_matrix_refusal` wording, failing the run with the
+  message rather than a traceback; `wait` (a run from the viewer) waits in
+  `_wait_for_form`, emitting `waiting_for_setup` (again every
+  `SETUP_REMIND_S`, as the launching card may not be up yet) and polling
+  `setup_needs` every `SETUP_POLL_S`, then `setup_done`. A stop or cancel
+  meanwhile raises `SetupAbandoned`: the run ends `stopped`, "the set-up was
+  not finished, so nothing was started". With no session yet, `_Relay._tell_run`
+  (`ai/harness/capabilities.py`) sends these as `ai_setup`/`ai_setup_done` by
+  run id, and `ai.run_control` `stop` on such a run cancels its job (other
+  actions still conflict). In `agentPanel.js`, `onEvent` routes session-less
+  run events to `RUN_HANDLERS`: `ai_setup` opens the form in the tab whose
+  pending card launched the run, and closing it unfinished calls
+  `stopPendingRun` (`ai/v1/runs/<id>/control` stop); `watchStart` keeps the
+  pending card while `setupWaiting`. The session's own `setup: wait` and
+  `_await_setup` (and `_setup_reason` for a run that cannot wait) remain as
+  the backstop, should the set-up change between the two.
   New gating routes
   `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
   Every estimate here is made on QC-passed cells (`agent/cell_exclusions.py`):
@@ -7770,7 +7841,8 @@ in **5.6 s**.
   bounded result. `TableHandle.frame()` therefore REFUSES for a node-backed
   table -- a frame missing every marker but answering `frame["id"]` perfectly
   well is the shape of bug that passes every test. Use `geometry()` when ids
-  and positions are what you meant.
+  and positions are what you meant, and `rows(ids)` for whole rows of a few
+  cells (one request on a node, not whole columns).
 - **Work that reads the file and the loaded frame together runs where the file
   is.** Every scientific write-back checks the file's row count against the
   loaded table before touching anything, and that check means nothing across a
@@ -8525,6 +8597,18 @@ in **5.6 s**.
   `force`) before anything is written, and a marker with no channel closes
   `skipped_no_channel` without a gate rather than taking a scored proposal
   nobody looked at.
+- **The set-up is the user's, never a model's.** Which column is the cell id
+  and which matrix to gate (and whether to log1p it) are answered in the
+  viewer's set-up form: a harness run collects them before any model call or
+  session start, and waits for the form (`on_setup="wait"`) or
+  fails saying what is missing (`"fail"`, the CLI), and never puts
+  `needs_setup` to its model, because on 2026-10-15 a model answered "X,
+  log1p off" while the form was open and the user's answer then switched the
+  matrix under the running session. A model may only read the numbers of an
+  `ambiguous` `X`, and `prepare` re-checks what it says.
+- **A session gates in one matrix's units.** Once it leaves set-up, a matrix
+  or log1p switch stops it (`matrix_changed`) rather than letting new
+  profiles sit beside gates of the old values.
 - **No marker names in `autogate/hierarchy.py` or `autogate/biology.py`.**
   Both build their tree and their tissue/disease relations only from the
   panel's own entries — the shipped vocabulary (`ai/knowledge/markers.yaml`,
@@ -11594,7 +11678,12 @@ context sheet (`plugins/gating/server/autogate/sheet.py`: three fields at
 slide and mesoscale, plus a FACS-style partner plot). Which expression matrix
 a project reads is now its own module, `plexora/agent/expression.py` (pure
 classification -- `classify`/`recommend`/`fallback_choice`, never picking `X`
-from its values alone) and `plexora/api/features.py` (the one place the two
+from its range alone; since 2026-10-15 a scale-free skew test, `shape`
+(`SHAPE`: `raw` at or above 1.5, `logged` at or below 0.8, per-marker
+`detail`; `shape_says`), settles an unconfirmed `X` in the log range, because
+skewness does not depend on scale, and marks one it cannot settle `ambiguous`;
+`project.inspect_expression` samples a node's table through the loaded table,
+`TableHandle.rows(ids)`, reported as `stats.read_through`) and `plexora/api/features.py` (the one place the two
 writes -- matrix, log1p -- and the reload happen; `project_routes.
 apply_feature_choice` now delegates to it, as do the new `project.
 inspect_expression`/`project.set_expression` capabilities, tools

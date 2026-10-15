@@ -135,6 +135,10 @@ window.PlexoraAgentPanel = (function () {
         cancelled: { label: "Cancelled", note: "Cancelled" },
         rolled_back: { label: "Rolled back", note: "Gates rolled back" },
         stopped: { label: "Stopped", note: "Stopped by you" },
+        // The session's own stops (capabilities_session._stop): the event's
+        // `message` says why and what to do, under the summary.
+        matrix_changed: { label: "Stopped", note: "Stopped: the expression values changed" },
+        setup_failed: { label: "Stopped", note: "Stopped: the set-up cannot carry the run" },
     };
 
     //: Why a Plexora AI run stopped (`ai_paused.reason`), in the user's words.
@@ -1073,7 +1077,11 @@ window.PlexoraAgentPanel = (function () {
                 toast("Plexora AI stopped", AI_REASONS[run.reason] || run.reason || run.status);
                 return;
             }
-            if (tries > 1 && run.status !== "done") watchStart(runId, tries - 1);
+            // The user filling in the set-up form takes as long as it takes:
+            // the card stays while the run waits for it.
+            const waiting = current && current.pending === runId && current.setupWaiting;
+            if (waiting && run.status !== "done") watchStart(runId, tries);
+            else if (tries > 1 && run.status !== "done") watchStart(runId, tries - 1);
             else dropPending(runId);
         }, 2000);
     }
@@ -1654,11 +1662,23 @@ window.PlexoraAgentPanel = (function () {
         },
         needs_setup(session, payload) {
             session.phase = "planning";
-            session.lastLine = "Waiting for you: which values to gate on";
+            // A session that waits on the whole set-up form (`setup: wait`)
+            // names what it waits on; one asking only for the matrix does not.
+            const labels = Array.isArray(payload.needs?.labels) ? payload.needs.labels.map(String) : [];
+            session.lastLine = labels.length
+                ? `Waiting for you: finish the set-up (${labels.join(", ")})`
+                : "Waiting for you: which values to gate on";
+            if (payload.message) session.els.progress.title = String(payload.message);
             if (!thisTab(payload.view_id)) return;
             if (session.setupOpen) return;
             session.setupOpen = true;
-            Promise.resolve().then(() => openSetup(payload.needs || {})).catch((error) => {
+            Promise.resolve().then(() => openSetup(payload.needs || {})).then((finished) => {
+                // Dismissed: the run keeps waiting, and says how to go on.
+                if (finished === false && !session.done) {
+                    session.lastLine = "Set-up not finished: open Thresholding to finish it, or Stop";
+                    render(session);
+                }
+            }).catch((error) => {
                 toast("The setup question could not be opened", error);
             }).finally(() => { session.setupOpen = false; });
         },
@@ -1688,6 +1708,13 @@ window.PlexoraAgentPanel = (function () {
             els.hint.textContent = finishTool
                 ? `The agent can undo them: ${finishTool}(action="rollback")` : ROLLBACK_HINT;
             els.hint.hidden = !(written > 0 && reason !== "rolled_back");
+            // A stop the session made itself says why, and what to do next
+            // (gates on the old values to clear, a set-up to fix).
+            if (payload.message && reason !== "stopped" && ENDINGS[reason]) {
+                els.hint.textContent = String(payload.message);
+                els.hint.hidden = false;
+                els.live.textContent = `${ending.label}. ${String(payload.message)}`;
+            }
             els.pause.hidden = true;
             els.stop.hidden = true;
             els.viewer.hidden = true;
@@ -1788,10 +1815,66 @@ window.PlexoraAgentPanel = (function () {
         }
     }
 
+    //: A run's own events before its session exists: the harness collecting
+    //: the set-up (plexora/ai/harness/decision.py `_collect_setup`). Only the
+    //: tab whose pending card launched the run takes them, by run id.
+    const RUN_HANDLERS = {
+        ai_setup(session, payload) {
+            const needs = payload.setup && typeof payload.setup === "object" ? payload.setup : {};
+            const labels = Array.isArray(needs.labels) ? needs.labels.map(String) : [];
+            session.setupWaiting = true;
+            session.lastLine = labels.length
+                ? `Waiting for you: finish the set-up (${labels.join(", ")})`
+                : "Waiting for you: finish the set-up";
+            if (payload.message) session.els.progress.title = String(payload.message);
+            // The run says it again every few seconds (in case this card was
+            // not up yet): once the form is up, or answered, that is noise.
+            if (session.setupOpen || session.setupAnswered) return;
+            session.setupOpen = true;
+            const runId = session.pending;
+            Promise.resolve().then(() => openSetup(needs)).then((finished) => {
+                if (finished) session.setupAnswered = true;
+                // Closed unfinished: nothing was started, quoted or asked of a
+                // model, so the run is stopped rather than left waiting.
+                if (finished === false && current === session && session.pending === runId) {
+                    stopPendingRun(runId);
+                }
+            }).catch((error) => {
+                toast("The setup question could not be opened", error);
+            }).finally(() => { session.setupOpen = false; });
+        },
+        ai_setup_done(session) {
+            session.setupWaiting = false;
+            session.lastLine = "Getting ready";
+        },
+    };
+
+    async function stopPendingRun(runId) {
+        try {
+            await aiFetch(`ai/v1/runs/${encodeURIComponent(runId)}/control`, {
+                method: "POST", body: JSON.stringify({ action: "stop" }) });
+        } catch (error) {
+            toast("Plexora AI could not be stopped", error);
+            return;
+        }
+        // `watchStart` says why once the run has ended ("the set-up was not
+        // finished, so nothing was started").
+        dropPending(runId);
+    }
+
     function onEvent(event) {
         const detail = (event && event.detail) || {};
         if (!String(detail.kind || "").endsWith(".session")) return;
         const payload = detail.payload || {};
+        if (!payload.session_id && RUN_HANDLERS[payload.event]) {
+            const session = current;
+            if (session && !session.done && session.pending
+                && session.pending === String(payload.run_id || "")) {
+                RUN_HANDLERS[payload.event](session, payload);
+                render(session);
+            }
+            return;
+        }
         if (!payload.session_id || !payload.event) return;
         try {
             handle(payload);

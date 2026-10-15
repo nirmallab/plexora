@@ -118,6 +118,20 @@ class _Relay:
         except Exception:                 # telling the tabs never breaks a run
             pass
 
+    def _tell_run(self, event, **fields):
+        """An event of a run that has no session yet (collecting its set-up):
+        on the session channel, by run id, for the tab whose card launched it."""
+        notify = self.call.notify
+        if notify is None:
+            return
+        try:
+            channel = self.wf.events()
+            notify(self.inp.project, channel.owner, channel.kind,
+                   {"session_id": None, "event": event, "workflow": self.wf.name,
+                    "job_id": self.job_id, **fields})
+        except Exception:                 # telling the tabs never breaks a run
+            pass
+
     def __call__(self, event):
         name = event.get("event")
         session_id = event.get("session_id")
@@ -140,6 +154,17 @@ class _Relay:
             # The user's pause, in the viewer: the plugin's control route has
             # told the tabs already; the run waits on its thread.
             self.call.progress(None, None, "paused in the viewer")
+        elif name == "waiting_for_setup":
+            self.call.progress(None, None, "waiting for the set-up form in the viewer")
+            # Before its session exists the run speaks for itself: the
+            # launching tab's card opens the form. A session waiting on it
+            # told the tabs already (`needs_setup`).
+            if not session_id:
+                self._tell_run("ai_setup", setup=event.get("setup"), message=event.get("message"), **run)
+        elif name == "setup_done":
+            self.call.progress(None, None, "set-up finished")
+            if not session_id:
+                self._tell_run("ai_setup_done", **run)
         elif name == "paused":
             self._tell("ai_paused", session_id, reason=event.get("reason"), message=event.get("message"),
                        credit=bool(event.get("credit")), top_up_url=event.get("top_up_url"), usage=usage,
@@ -320,7 +345,20 @@ def run_control(call, inp):
     if row is None or row["kind"] not in ("gating", "qc"):
         raise AgentError("invalid_input", f"no Plexora AI run {inp.run_id!r}")
     if not row.get("session_id"):
-        raise AgentError("conflict", "this run has no session yet", retryable=True)
+        if inp.action != "stop":
+            raise AgentError("conflict", "this run has no session yet", retryable=True)
+        # Still collecting its set-up (the user's form) or reading the note:
+        # nothing started, quoted or asked of a model, so stopping is
+        # cancelling its job; the run ends `stopped` at its next check.
+        from plexora.agent import jobs
+
+        jobs.store().cancel(job_id_for(run_id))
+        receipt = make_receipt(call, changed=True, before=None,
+                               after={"session_id": None, "action": "stop"},
+                               persistent_state=STATE, reversible=False, extra={"run_id": run_id})
+        return {"run_id": run_id, "session_id": None, "action": "stop",
+                "control": {"stopped": True, "stopped_by": "viewer"},
+                "receipt": receipt.model_dump(mode="json")}
     engine, events, schemas, record_limit_answers = _session_parts(row["kind"])
     store = engine.store()
     session_id = row["session_id"]

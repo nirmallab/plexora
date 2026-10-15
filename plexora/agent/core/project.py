@@ -202,9 +202,45 @@ def _expression_revision(record):
     return f"{_spec_hash(record.dataset)}|{int(record.log_transformed)}"
 
 
+#: Cells read through the loaded table when the file cannot be sampled here
+#: (`_sample_loaded`): one row request, kept short.
+LOADED_SAMPLE_CELLS = 400
+
+
+def _sample_loaded(call, record, n, seed) -> dict:
+    """{marker: values} of the matrix the project reads NOW, as stored, read
+    through its loaded table: the one way to see a table a data node holds,
+    whose file `features.sample` cannot open here. The project's log1p, when
+    on, is undone (expm1), so the values are what the file holds. {} when
+    that fails too."""
+    import numpy as np
+
+    try:
+        table = call.session.data(record.name).table
+        geometry = table.geometry()
+        markers = list(table.markers)
+        if geometry is None or not geometry.height or not markers or "id" not in geometry.columns:
+            return {}
+        take = min(int(n), LOADED_SAMPLE_CELLS, int(geometry.height))
+        picked = np.sort(np.random.default_rng(seed).choice(int(geometry.height), size=take,
+                                                            replace=False))
+        rows = table.rows(geometry["id"].gather(picked).to_list())
+    except Exception:              # noqa: BLE001 -- a sample is evidence, never a failure
+        return {}
+    out = {}
+    for marker in markers:
+        values = np.asarray([row.get(marker) for row in rows], dtype=np.float64)
+        values = values[np.isfinite(values)]
+        if values.size:
+            out[marker] = np.expm1(values) if record.log_transformed else values
+    return out
+
+
 def inspect_expression_sources(call, inp):
     """Every matrix the project can read, what a sample of each looks like (as
-    stored, never transformed) and what `expression.recommend` makes of them."""
+    stored, never transformed) and what `expression.recommend` makes of them.
+    A matrix whose file cannot be read here (a data node's) is sampled through
+    the loaded table when it is the one read now (`read_through: table`)."""
     from plexora.agent import expression
     from plexora.api import features
 
@@ -215,7 +251,13 @@ def inspect_expression_sources(call, inp):
     options = []
     for option in features.options(record):
         values = features.sample(record, option["value"], inp.sample_cells, inp.seed)
+        through = None
+        if not values and option["value"] == now["features_layer"]:
+            values = _sample_loaded(call, record, inp.sample_cells, inp.seed)
+            through = "table" if values else None
         stats = expression.classify_markers(values)
+        if through:
+            stats["read_through"] = through
         options.append({"value": option["value"], "label": option["label"],
                         "kind": stats.pop("kind"), "stats": stats})
     recommendation = expression.recommend(options, now, now["confirmed"])

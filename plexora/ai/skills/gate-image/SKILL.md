@@ -107,8 +107,16 @@ the marker tree, then the numbers and the looks.
 2. `gating_session_start` with `scope: "project"`, the project, `mode:
    "apply"` (each gate written as decided, undoable) unless the user asked to
    review first (`"propose"`), `biology`, and `agent` (your model's name).
-   `mirror: true` when the user watches in a viewer. Set-up packets come
-   first and are yours to answer:
+   `mirror: true` when the user watches in a viewer. Plexora AI (`ai.run_session`)
+   collects the same set-up itself before any model call. A start refused with
+   `detail.setup` names a column the project does not have (a cell id, the
+   coordinates, an image id): tell the user which, and that the viewer's
+   set-up form (opening Thresholding) or Edit project sets it; start again
+   once they have, or start with `setup: "wait"` when they are about to
+   answer the form in the viewer (the session then waits in `needs_setup`
+   with no packet until they have). `unconfirmed_setup` in the start output
+   lists columns the predictor picked and nobody confirmed: tell the user.
+   Set-up packets come first and are yours to answer:
    - `expression_setup` (`needs_setup`): which matrix to gate. When
      `ask_user_required` is true, put the options to the user in plain words
      and answer with their choice (`inspect_expression_sources`,

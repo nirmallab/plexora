@@ -1063,6 +1063,84 @@ def test_expression_recommendation_rules():
     assert expression.fallback_choice([opt("X", "raw_counts")])["features_log"] is True
 
 
+def _panel(rng, scale=1.0):
+    """Six markers of background and positive cells, as measured."""
+    return {f"m{i}": np.concatenate([rng.lognormal(5, 0.5, 1500),
+                                     rng.lognormal(5 + 1 + i % 3, 0.5, 500)]) * scale
+            for i in range(6)}
+
+
+def test_the_shape_test_tells_logged_values_from_raw_ones_at_any_scale():
+    """A range alone cannot: log1p values and a raw export divided by 65535
+    both stay under LOG_CEILING. Skewness does not depend on scale."""
+    from plexora.agent import expression
+
+    rng = np.random.default_rng(0)
+    raw = _panel(rng)
+    assert expression.shape(raw)["says"] == "raw"
+    assert expression.shape({k: v / 65535 for k, v in raw.items()})["says"] == "raw"
+    assert expression.shape({k: np.log1p(v) for k, v in raw.items()})["says"] == "logged"
+    assert expression.shape({k: np.log2(v + 1) for k, v in raw.items()})["says"] == "logged"
+    # Too few markers with values to judge: no verdict.
+    assert expression.shape({"m0": raw["m0"], "m1": np.zeros(10)})["says"] is None
+    assert len(expression.shape(raw)["detail"]) == 6
+
+
+def test_an_unconfirmed_x_in_the_log_range_is_settled_by_its_shape():
+    """The default matrix X, nobody confirmed it: logged values are read as
+    they are, small raw ones get log1p, and only an unclear shape is asked --
+    marked `ambiguous` (a model may read it) unless nothing could be read."""
+    from plexora.agent import expression
+
+    rng = np.random.default_rng(1)
+    raw = _panel(rng)
+
+    def x(samples):
+        stats = expression.classify_markers(samples)
+        return {"value": "X", "kind": stats.pop("kind"), "stats": stats}
+
+    current = {"features_layer": "X", "features_log": False}
+    logged = expression.recommend([x({k: np.log1p(v) for k, v in raw.items()})], current, False)
+    assert logged["confidence"] == "certain"
+    assert logged["choice"] == {"features_layer": "X", "features_log": False}
+    small = expression.recommend([x({k: v / 65535 for k, v in raw.items()})], current, False)
+    assert small["choice"] == {"features_layer": "X", "features_log": True}
+    unclear = {"value": "X", "kind": "log_like", "stats": {"shape": {"says": "unclear"}}}
+    asked = expression.recommend([unclear], current, False)
+    assert asked["confidence"] == "ask" and asked["ambiguous"]
+    unread = expression.recommend([{"value": "X", "kind": "unknown", "stats": {"n": 0}}],
+                                  current, False)
+    assert unread["confidence"] == "ask" and not unread.get("ambiguous")
+    assert "could not be read" in unread["why"]
+    # A log-range layer whose shape says raw is a low-scale export, not a log.
+    low = {"value": "layer:scaled", "kind": "log_like", "stats": {"shape": {"says": "raw"}}}
+    picked = expression.recommend([{"value": "X", "kind": "raw_intensity"}, low], current, False)
+    assert picked["choice"] == {"features_layer": "X", "features_log": True}
+
+
+def test_a_model_reading_of_the_matrix_is_only_a_choice_when_it_says_one():
+    from plexora.ai.harness import expression as reader
+
+    assert reader.settle({"verdict": "raw", "why": "long tails"}).choice == {
+        "features_layer": "X", "features_log": True, "basis": "inferred",
+        "why": "read by a model: long tails"}
+    assert reader.settle({"verdict": "logged", "why": "narrow"}).choice["features_log"] is False
+    unsure = reader.settle({"verdict": "unsure", "why": "between"})
+    assert unsure.choice is None and unsure.verdict == "unsure"
+    assert reader.settle({"verdict": "maybe"}).problem
+    inspected = {"current": {"confirmed": False}, "source_kind": "anndata",
+                 "recommendation": {"confidence": "ask", "ambiguous": True},
+                 "options": [{"value": "X", "kind": "log_like",
+                              "stats": {"n": 12000, "p99_9": 14.2, "shape": {
+                                  "says": "unclear", "skew_linear": 1.4, "skew_log": -0.2,
+                                  "detail": [{"marker": "CD3", "p50": 6.1}]}}}]}
+    assert reader.worth_asking(inspected)
+    text = reader.prompt(inspected)
+    assert "CD3" in text and "14.2" in text and "anndata" in text
+    assert not reader.worth_asking({**inspected, "recommendation": {"confidence": "ask"}})
+    assert not reader.worth_asking({**inspected, "current": {"confirmed": True}})
+
+
 def test_anchor_cells_are_seeded_and_banded():
     from plexora.agent.evidence import cell_window
 

@@ -956,6 +956,133 @@ def test_an_unclear_matrix_is_asked_before_the_bulk_pass(tmp_path):
     assert status["bulk"]["job_id"]
 
 
+def _unconfirm(keys, name="gsynth"):
+    from plexora.server.models.project import Project
+
+    Project.mutate(name, lambda p: p.patch(confirmed=tuple(k for k in p.confirmed
+                                                           if k not in keys)))
+
+
+def _pending_matrix(call, images):
+    """What `_expression_check` yields for a matrix its values leave open."""
+    return {"status": "pending", "projects": images, "applied": [], "source_kind": "csv",
+            "current": {"features_layer": "X", "features_log": False, "confirmed": False},
+            "options": [{"value": "X", "label": "the table's values", "kind": "log_like",
+                         "stats": {}}],
+            "recommendation": {"choice": None, "confidence": "ask", "why": "test"},
+            "rule": "r"}, []
+
+
+ROLES = ("role:cell_id", "role:x", "role:y", "role:image_id")
+
+
+def test_a_run_from_the_viewer_waits_for_the_set_up_form(tmp_path):
+    """setup=wait (Plexora AI started in the viewer): columns nobody
+    confirmed hold the session in needs_setup -- no packet a model could
+    answer in the user's place -- until the user's form confirms them; it is
+    then planned and the bulk pass runs (2026-10-15: a run went on while the
+    form was still open, and the user's answer switched the matrix under it)."""
+    from plexora.server.models.project import Project
+
+    make_gating_project(tmp_path)
+    _unconfirm(ROLES)
+    session = AgentSession()
+    started = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
+    assert started["state"] == "needs_setup" and started["job_id"] is None
+    assert "packet" not in started
+    assert set(started["setup"]["unconfirmed"]) == set(ROLES)
+    sid = started["session_id"]
+    waiting = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert waiting["state"] == "needs_setup" and "packet" not in waiting
+    assert "Cell ID column" in waiting["note"]
+    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    assert status["setup"]["keys"] == started["setup"]["keys"]
+    # What the form's Continue does (tool_routes.satisfy_requirements).
+    Project.mutate("gsynth", lambda p: p.with_confirmed(ROLES))
+    going = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert going["state"] != "needs_setup"
+    jobs.drain(120)
+    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    assert status["n_units"] == 1 and "setup" not in status
+    assert status["state"] in ("bulk_running", "deciding", "created")
+
+
+def test_a_column_not_set_is_refused_unless_the_run_can_wait(tmp_path):
+    import dataclasses
+
+    from plexora.server.models.project import Project
+
+    make_gating_project(tmp_path)
+    # A multi-image table with no image-id column named: only the user knows it.
+    Project.mutate("gsynth", lambda p: p.patch(
+        dataset=dataclasses.replace(p.dataset, single_image=False)))
+    session = AgentSession()
+    for setup in ("ask", "fail"):
+        refused = invoke(session, "gating_session_start", {
+            "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": setup})
+        assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
+        assert "Image ID column is not set" in refused["error"]["message"]
+        assert refused["error"]["detail"]["setup"]["missing"] == ["role:image_id"]
+    waited = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
+    # Nothing planned without it: the plan is made once the form has it.
+    assert waited["state"] == "needs_setup" and waited["n_units"] == 0
+    assert waited["setup"]["missing"] == ["role:image_id"]
+
+
+def test_a_command_line_run_says_how_to_name_a_matrix_it_cannot_settle(tmp_path, monkeypatch):
+    from plexora.plugins.gating import capabilities_session as cs
+
+    make_gating_project(tmp_path)
+    _unconfirm(("features",))
+    monkeypatch.setattr(cs, "_expression_check", _pending_matrix)
+    session = AgentSession()
+    refused = invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "fail"})
+    assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
+    assert "--matrix" in refused["error"]["message"] and "--log1p" in refused["error"]["message"]
+    # Waiting, the matrix is one more thing the form asks.
+    waited = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
+    assert waited["state"] == "needs_setup" and "features" in waited["setup"]["keys"]
+    assert "packet" not in waited
+
+
+def test_a_named_matrix_is_applied_and_a_model_reading_never_overrides_a_confirmed_one(tmp_path):
+    make_gating_project(tmp_path)          # raw intensities, confirmed with log1p off
+    session = AgentSession()
+    started = start(session, markers=["CD3"], expression={
+        "features_layer": "X", "features_log": True, "basis": "user"})
+    assert started["expression"]["status"] == "applied"
+    assert started["expression"]["applied"][0]["basis"] == "user"
+    assert session.project("gsynth").log_transformed
+    inferred = start(session, markers=["CD3"], expression={
+        "features_layer": "X", "features_log": False, "basis": "inferred"})
+    assert not inferred["expression"].get("applied")
+    assert session.project("gsynth").log_transformed
+    refused = invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD3"],
+        "expression": {"features_layer": "layer:nope", "features_log": False}})
+    assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
+
+
+def test_a_matrix_switched_under_a_run_stops_it_saying_why(tmp_path):
+    from plexora.api import features
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8"])
+    sid = started["session_id"]
+    # What the set-up form or Edit project does while the run goes on.
+    features.apply("gsynth", features_log=True)
+    halted = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert halted["state"] == "stopped" and halted["by"] == "matrix_changed"
+    assert "from X with log1p off to X with log1p on" in halted["reason"]
+    again = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert again["state"] == "stopped" and again["reason"] == halted["reason"]
+
+
 def test_a_rollback_undoes_every_write_newest_first(tmp_path):
     from plexora.plugins.gating.server import model
 

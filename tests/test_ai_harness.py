@@ -687,6 +687,161 @@ def test_a_viewer_pause_parks_the_run_and_the_answer_is_applied_once(gating, tmp
     assert len({e["run_id"] for e in events}) == 1
 
 
+def _note_or_oracle(info):
+    """The Oracle, and a plain reading of a note for the note's interpreter."""
+    oracle = Oracle(info)
+
+    def brain(packet, body):
+        if body["context"].get("agent") == "context_interpreter":
+            return {"normalized_text": "A tonsil sample.", "context": {"tissue": "tonsil"},
+                    "markers_mentioned": [], "gating_scope": {"mode": "all_markers",
+                                                              "requested_markers": []},
+                    "corrected_terms": {}, "ambiguities": [], "confidence": "high"}
+        return oracle.answer(packet)
+    return brain
+
+
+@pytest.mark.paid
+def test_a_viewer_run_collects_the_set_up_before_any_model_is_called(gating, tmp_path, monkeypatch):
+    """2026-10-15: the run went on while the set-up form was still open, its
+    model answered "X, log1p off" for the user, and the user's own answer
+    then switched the matrix under the run. Now the run collects the set-up
+    first: it waits for the form -- no session, no quote, not even the note
+    sent to a model -- and only then interprets the note, starts and gates."""
+    from plexora.ai.harness import decision
+    from plexora.server.models.project import Project
+
+    roles = ("role:cell_id", "role:x", "role:y", "role:image_id")
+    Project.mutate("gsynth", lambda p: p.patch(confirmed=tuple(k for k in p.confirmed
+                                                               if k not in roles)))
+    monkeypatch.setattr(decision, "SETUP_POLL_S", 0.05)
+    seen = {}
+    events = []
+    with FakeGateway(_note_or_oracle(gating)) as gateway:
+        def finish_the_form():
+            # What the model was asked while the form was up: nothing.
+            seen["calls"] = len(gateway.calls)
+            seen["sessions"] = [e.get("session_id") for e in events]
+            Project.mutate("gsynth", lambda p: p.with_confirmed(roles))
+        threading.Timer(0.5, finish_the_form).start()
+        summary = GatingRun(GatingOptions(project="gsynth", context="tonsil sample"),
+                            gateway=client(gateway), trace=TraceStore(tmp_path / "t.sqlite"),
+                            on_event=events.append).run()
+    assert summary["status"] == "done", summary
+    assert seen["calls"] == 0 and not any(seen["sessions"])
+    names = [e["event"] for e in events]
+    assert names.index("waiting_for_setup") < names.index("setup_done") < names.index("started")
+    waiting = next(e for e in events if e["event"] == "waiting_for_setup")
+    assert set(waiting["setup"]["unconfirmed"]) == set(roles)
+    assert waiting["session_id"] is None
+    # The note was read once the form was finished, as the first call.
+    assert gateway.calls[0]["body"]["context"]["agent"] == "context_interpreter"
+    kinds = {json.loads(c["body"]["request"]["messages"][-1]["content"][-1]["text"])["kind"]
+             for c in gateway.calls[1:]}
+    assert "expression_setup" not in kinds
+    assert gateway.runs["run_1"]["units"] == len(MARKERS)
+
+
+@pytest.mark.paid
+def test_an_unclear_matrix_alone_is_read_by_a_model_before_the_session(gating, tmp_path, monkeypatch):
+    """Everything else settled, the values readable but their shape unclear:
+    one cheap call reads the numbers, the reading is checked and applied,
+    and the session records it as the model's -- the first call of the run."""
+    from plexora.plugins.gating import capabilities_session as cs
+    from plexora.server.models.project import Project
+
+    Project.mutate("gsynth", lambda p: p.patch(confirmed=tuple(
+        k for k in p.confirmed if k != "features")))
+
+    def unclear(call, images):
+        if "features" in call.session.project(images[0]).confirmed:
+            return {"status": "confirmed"}, []
+        return {"status": "pending", "projects": images, "applied": [], "source_kind": "csv",
+                "current": {"features_layer": "X", "features_log": False, "confirmed": False},
+                "options": [{"value": "X", "label": "X", "kind": "log_like",
+                             "stats": {"n": 8000, "p99_9": 16.0, "shape": {"says": "unclear"}}}],
+                "recommendation": {"choice": None, "confidence": "ask", "ambiguous": True,
+                                   "why": "unclear shape"}, "rule": "r"}, []
+
+    monkeypatch.setattr(cs, "_expression_check", unclear)
+    oracle = Oracle(gating)
+
+    def brain(packet, body):
+        if body["context"].get("agent") == "expression_reader":
+            return {"verdict": "raw", "why": "long upper tails"}
+        return oracle.answer(packet)
+
+    with FakeGateway(brain) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+    assert summary["status"] == "done", summary
+    assert gateway.calls[0]["body"]["context"]["agent"] == "expression_reader"
+    assert gateway.calls[0]["body"]["task"] == "plexora.gating.planning"
+    record = invoke(AgentSession(), "gating_session_status", {"session_id": summary["session_id"]})
+    applied = record["result"]["expression"]["applied"]
+    assert applied[0]["basis"] == "inferred" and applied[0]["choice"]["features_log"] is True
+    assert "long upper tails" in applied[0]["why"]
+
+
+@pytest.mark.paid
+def test_a_stop_while_the_form_is_up_ends_the_run_before_anything_started(gating, tmp_path,
+                                                                          monkeypatch):
+    from plexora.ai.harness import decision
+    from plexora.ai.harness.decision import Stopped
+    from plexora.server.models.project import Project
+
+    Project.mutate("gsynth", lambda p: p.patch(confirmed=tuple(
+        k for k in p.confirmed if k != "role:image_id")))
+    monkeypatch.setattr(decision, "SETUP_POLL_S", 0.05)
+    polls = {"n": 0}
+
+    def check():
+        polls["n"] += 1
+        if polls["n"] > 3:                # the form closed unfinished: the panel stops the run
+            raise Stopped("cancelled")
+
+    with FakeGateway(oracle_brain(gating)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite"), check=check).run()
+    assert summary["status"] == "stopped"
+    assert summary["reason"] == "the set-up was not finished, so nothing was started"
+    assert summary["session_id"] is None and not gateway.calls and not gateway.runs
+
+
+@pytest.mark.paid
+def test_a_command_line_run_fails_on_an_unfinished_set_up_saying_what(gating, tmp_path):
+    import dataclasses
+
+    from plexora.server.models.project import Project
+
+    Project.mutate("gsynth", lambda p: p.patch(
+        dataset=dataclasses.replace(p.dataset, single_image=False)))
+    with FakeGateway(oracle_brain(gating)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth", on_setup="fail"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+    assert summary["status"] == "failed"
+    assert "Image ID column is not set" in summary["reason"], summary["reason"]
+    assert not summary["reason"].startswith("RuntimeError")
+    assert not gateway.calls and summary["session_id"] is None
+
+
+def test_the_command_line_names_a_matrix_with_log1p():
+    from types import SimpleNamespace
+
+    from plexora.ai.harness.cli import _expression
+
+    def args(**kw):
+        return SimpleNamespace(**{"matrix": None, "log1p": None, **kw})
+
+    assert _expression(args()) is None
+    assert _expression(args(log1p="on")) == {"features_layer": "X", "features_log": True,
+                                             "basis": "user", "why": "named on the command line"}
+    assert _expression(args(matrix="mean_raw", log1p="on"))["features_layer"] == "layer:mean_raw"
+    assert _expression(args(matrix="layer:log", log1p="off"))["features_log"] is False
+    with pytest.raises(ValueError, match="--log1p"):
+        _expression(args(matrix="X"))
+
+
 @pytest.mark.paid
 def test_take_over_parks_the_run_detached_and_resume_goes_on_in_the_background(gating, tmp_path,
                                                                                 monkeypatch):

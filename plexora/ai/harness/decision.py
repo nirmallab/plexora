@@ -31,6 +31,20 @@ and quote. An answer refused because the pause landed while its model call
 was out is submitted again once the pause lifts, so it is never paid twice.
 A stop while parked ends the run as a stop does.
 
+The set-up comes before any model (`_collect_setup`). Which column holds the
+cell id, which matrix to gate and whether to log1p it are the user's or the
+values' to say, so the run settles them deterministically first -- with the
+function the session's start uses (`capabilities_session.prepare`) -- and only
+then interprets the note, starts the session and quotes. What the values
+cannot settle: a run from the viewer (`on_setup` `wait`) waits for the user's
+set-up form, which the launching tab opens (`ai_setup`); one on a command line
+(`fail`) fails saying what is missing and how to supply it (`StartRefused`).
+The one model call allowed before that reads a matrix whose values are
+readable but unclear, from its numbers, when it is all that is left
+(`plexora.ai.harness.expression`); `prepare` checks the reading again. The
+session still checks for itself (`setup: wait|fail`): should the set-up change
+between the two, it waits in `needs_setup` and the run with it (`_await_setup`).
+
 Parallel markers (gating, `parallel_markers` > 1): that many lanes answer the
 one session at once, each a reader of its own (`gating_next(reader=...,
 parallel=N)`) with its own rolling workers. The engine decides what may be
@@ -67,6 +81,11 @@ log = logging.getLogger("plexora.ai.harness")
 HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
 #: Seconds between two looks at a session the user paused (`DecisionRun._park`).
 PARK_POLL_S = 1.0
+#: Seconds between two looks at a session waiting on the user's set-up form
+#: (`DecisionRun._await_setup`): a form takes a person tens of seconds.
+SETUP_POLL_S = 2.0
+#: Seconds between two reminders that a run waits on the form (`_wait_for_form`).
+SETUP_REMIND_S = 10.0
 #: Refusals that pause the session for the user instead of failing it: the
 #: platform's (`biocognia.codes.PAUSE_CODES` -- credits, the organisation's,
 #: member's and product's monthly caps, the run's envelope, AI switched off or
@@ -126,6 +145,9 @@ class Workflow:
     unit_noun = "unit"
     #: Whether the session engine takes several readers at once (`parallel_markers`).
     parallel = False
+    #: Whether the run collects the project's set-up before any model call
+    #: (`DecisionRun._collect_setup`: gating's columns and matrix).
+    collects_setup = False
 
     def prefix(self) -> list:
         raise NotImplementedError
@@ -179,6 +201,7 @@ class GatingWorkflow(Workflow):
     STATUS, FINISH = "gating_session_status", "gating_session_finish"
     feature, agent, workflow, unit_noun = "gating", "gating_worker", "auto_gating", "marker"
     parallel = True
+    collects_setup = True
 
     def prefix(self):
         return prefix.gating_prefix()
@@ -192,8 +215,11 @@ class GatingWorkflow(Workflow):
     def start_arguments(self, options):
         # evidence "full": rolling workers are fresh conversations, so a packet
         # may never point (`as_in`) at one a predecessor was sent.
+        # `setup`: the set-up form is the user's to answer, never this
+        # harness's model -- waited for in the viewer, refused on a command line.
         arguments = {"scope": "project", "project": options.project, "mode": options.mode, "reading": "once",
-                     "evidence": "full", "agent": _agent(options), "known_guide": self.guide_version()}
+                     "evidence": "full", "agent": _agent(options), "known_guide": self.guide_version(),
+                     "setup": options.on_setup}
         if self.selected(options):
             arguments["markers"] = list(self.selected(options))
         return arguments
@@ -322,6 +348,11 @@ class DecisionOptions:
     #: interpreted by the cheap text model before the session starts.
     context: str | None = None
     parallel_markers: int = 1                # lanes answering the one session at once (gating)
+    #: A set-up the project has not finished (a column never confirmed, a
+    #: matrix its values leave open): `wait` for the user's answer in the
+    #: viewer (a run started there), `fail` saying what is missing (a command
+    #: line, with nobody to ask). Never answered by the model.
+    on_setup: str = "wait"
 
 
 @dataclass
@@ -399,6 +430,22 @@ def _ok(result: dict) -> dict:
 
 class Stopped(Exception):
     """Raised by a run's `check` hook: the job running it was cancelled."""
+
+
+class SetupAbandoned(Exception):
+    """The run was stopped while it waited for the user's set-up form: it
+    ends `stopped`, nothing started, quoted or asked of a model."""
+
+
+class StartRefused(Exception):
+    """The session would not start -- a column not set, a matrix nobody
+    confirmed, no marker with an image channel -- and says why in words meant
+    for the user: the run fails with that sentence, not a traceback."""
+
+    def __init__(self, error: dict):
+        self.code = error.get("code") or "error"
+        self.detail = error.get("detail") if isinstance(error.get("detail"), dict) else {}
+        super().__init__(error.get("message") or error.get("title") or self.code)
 
 
 class DecisionRun:
@@ -526,8 +573,10 @@ class DecisionRun:
         except GatewayError as exc:
             status, reason = ("paused", exc.code) if exc.code in PAUSE_CODES else ("failed", exc.code)
             self._pause(reason, error=exc)
-        except ContextRefused as exc:
+        except (ContextRefused, StartRefused) as exc:
             status, reason = "failed", str(exc)
+        except SetupAbandoned as exc:
+            status, reason = "stopped", str(exc)
         except Stopped as exc:
             status, reason = "paused", str(exc) or "cancelled"
             self._pause(reason)
@@ -551,15 +600,34 @@ class DecisionRun:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"))
             return self._next(self.lanes[0])
+        # What is the user's or the values' to say comes first, before any
+        # model is called -- the note's interpreter, the matrix reader and the
+        # packets all wait for it (`_collect_setup`).
+        chosen = self._collect_setup()
         # The caller's extras (checks, strictness) first: what the harness
         # itself sets -- the project, the mode, `reading`/`known_guide` the
         # cached prefix is built on, the agent label the memo is keyed by --
         # is never overridden by them.
         arguments = {**self.o.start_options, **self.wf.start_arguments(self.o),
                      **self._context_arguments()}
-        started = _ok(self._invoke(self.wf.START, arguments))
+        if chosen and not arguments.get("expression"):
+            arguments["expression"] = chosen     # recorded on the session as the model's reading
+        answer = self._invoke(self.wf.START, arguments)
+        if not answer.get("ok"):
+            raise StartRefused(answer.get("error") or {})
+        started = answer["result"]
         self.session_id = started["session_id"]
         self.trace.update_run(self.run_id, session_id=self.session_id)
+        if started.get("state") == "needs_setup" and started.get("setup"):
+            # Nothing is planned until the user has finished the set-up form,
+            # so there is nothing to quote yet: the quote is the plan's.
+            first = self._await_setup(self.lanes[0], started)
+            if first.get("state") in ("stopped", "paused", "cancelled", "failed"):
+                return first
+            planned = _ok(self._invoke(self.wf.STATUS, {"session_id": self.session_id}))
+            started = {**started, "n_units": planned.get("n_units"), "channels": planned.get("channels")}
+        else:
+            first = None
         self.units = self.wf.units_started(started, self.o)
         self._emit("started", units=self.units, unit_noun=self.wf.unit_noun)
         if self.context_reading:
@@ -569,10 +637,145 @@ class DecisionRun:
             self.trace.update_run(self.run_id, gateway_run_id=self.gateway_run.get("run_id"))
             self._emit("quoted", quote_credits=self.gateway_run.get("quote_credits"),
                        run=self.gateway_run.get("run_id"))
+        if first is not None:
+            return first
         if started.get("packet") is not None:
             return {"state": started.get("state", "decision"), "packet": started["packet"],
                     "_images": started.get("_images") or []}
         return self._next()
+
+    def _await_setup(self, lane: _Lane | None, result: dict) -> dict:
+        """Wait for the user to finish the viewer's set-up form (a session
+        started with `setup: wait`); returns the session's next result once
+        it has (or it was stopped). The form is the user's: no model is asked
+        in their place -- on 2026-10-15 one answered "X, log1p off" while the
+        form was still open, and the user's answer then switched the matrix
+        under the running session. A cancelled job ends the wait (`check`)."""
+        setup = result.get("setup") or {}
+        self._emit("waiting_for_setup", setup=setup, message=result.get("note")
+                   or ", ".join(setup.get("labels") or ()))
+        while result.get("state") == "needs_setup":
+            self.check()
+            if self._halt is not None:
+                raise self._halt
+            time.sleep(SETUP_POLL_S)
+            result = self._next(lane, wait_s=0)
+        self._emit("setup_done")
+        return result
+
+    def _collect_setup(self) -> dict | None:
+        """Collect what a session needs that is the user's or the values' to
+        say -- which column is what, which matrix, whether to log1p it --
+        before any model is called. On 2026-10-15 a run went on while the
+        viewer's set-up form was still open: a model answered the matrix for
+        the user, and the user's own answer then switched it under the run.
+
+        Deterministic first (`capabilities_session.prepare`, the function the
+        session's start uses): the matrix settled where its values settle it,
+        then what the set-up form would still ask. A matrix whose values are
+        readable but unclear, when it is all that is left, is read by a model
+        (`_read_expression`) -- the one call this makes. Anything still open:
+        a run from the viewer waits, the launching tab opening the form
+        (`ai_setup`); one on a command line fails saying what is missing and
+        how to supply it. No session is started, nothing quoted, until then.
+        Returns the model's reading when one settled the matrix, else None."""
+        if not self.wf.collects_setup:
+            return None
+        from plexora.ai.harness import expression as reader
+        from plexora.plugins.gating import capabilities_session as setup
+
+        call = self._setup_call()
+        choice = self.o.start_options.get("expression")
+        read = False
+        while True:
+            self._still_wanted()
+            try:
+                state = setup.prepare(call, self.o.project, choice, setup=self.o.on_setup)
+            except Exception as exc:      # noqa: BLE001 -- a refusal the user reads
+                error = getattr(exc, "code", None)
+                if not error:
+                    raise
+                raise StartRefused({"code": error, "message": getattr(exc, "message", str(exc)),
+                                    "detail": getattr(exc, "detail", None)}) from None
+            needs = state["needs"]
+            if not needs:
+                return choice if read else None
+            if needs["keys"] == ["features"] and not read and reader.worth_asking(state["expression"]):
+                read = True
+                reading = self._read_expression(state["expression"])
+                if reading.choice:
+                    choice = reading.choice
+                    continue
+            if self.o.on_setup != "wait":
+                refusal = (setup._setup_refusal(needs, "fail") if needs.get("missing")
+                           else setup._matrix_refusal(state["expression"]))
+                raise StartRefused({"code": refusal.code, "message": refusal.message,
+                                    "detail": refusal.detail})
+            self._wait_for_form(setup, needs)
+
+    def _wait_for_form(self, setup, needs: dict) -> None:
+        """Wait for the user to finish the viewer's set-up form: the
+        launching tab opens it (`ai_setup`), and nothing else happens until
+        the project has every answer. A stop (the form closed, the job
+        cancelled) ends the run before anything started."""
+        told = 0.0
+        while setup.setup_needs(self.session, [self.o.project]):
+            # Said again now and then: the launching tab may not have put its
+            # card up yet when the run first says it (the job starts at once).
+            if time.monotonic() - told >= SETUP_REMIND_S:
+                self._emit("waiting_for_setup", setup=needs, message=setup._setup_message(needs))
+                told = time.monotonic()
+            self._still_wanted()
+            time.sleep(SETUP_POLL_S)
+        self._emit("setup_done")
+
+    def _still_wanted(self) -> None:
+        """`check`, with a stop while the set-up is collected said as what it is."""
+        try:
+            self.check()
+        except Exception as exc:
+            if isinstance(exc, Stopped) or type(exc).__name__ == "JobCancelled":
+                raise SetupAbandoned("the set-up was not finished, so nothing was started") from None
+            raise
+
+    def _setup_call(self):
+        """What `capabilities_session.prepare` acts through: this run's
+        session, policy, audit, viewer link and notifier, its writes
+        receipted under the run (`<run_id>.setup`)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(session=self.session, policy=self.policy, audit=self.audit, link=self.link,
+                               notify=self.notify, operation_id=f"{self.run_id}.setup")
+
+    def _read_expression(self, inspected: dict):
+        """A matrix the values leave unclear, read by a model from its
+        numbers (`plexora.ai.harness.expression`); the reading is applied
+        only through `prepare`, which checks it against the values again."""
+        from plexora.ai.harness import expression as reader
+
+        self._still_wanted()
+        reading, response = reader.read(inspected, gateway=self.gateway, feature=self.wf.feature,
+                                        idempotency_key=f"{self.run_id}.expression")
+        usage = response.usage if response is not None else Usage()
+        with self._lock:
+            if response is not None:
+                self.charged += response.charged_micro
+            self.seq += 1
+            seq = self.seq
+        self.trace.call(self.run_id, worker=-1, seq=seq, packet_id="expression", kind="expression_setup",
+                        capability=reader.CAPABILITY, verdict="n/a",
+                        task=tasks.task_for(self.wf.feature, "expression_setup"),
+                        model=getattr(response, "model", None), provider=getattr(response, "provider", None),
+                        input_uncached=usage.input_uncached, cache_read=usage.cache_read,
+                        cache_write=usage.cache_write, output_tokens=usage.output_tokens,
+                        price_micro=getattr(response, "price_micro", 0),
+                        charged_micro=getattr(response, "charged_micro", 0),
+                        cost_micro=getattr(response, "cost_micro", None),
+                        gateway_request_id=getattr(response, "gateway_request_id", None),
+                        latency_ms=getattr(response, "latency_ms", 0), valid=reading.choice is not None,
+                        attempts=getattr(response, "attempts", None), problem=reading.problem)
+        self._emit("expression", verdict=reading.verdict, why=reading.why, problem=reading.problem)
+        return reading
 
     def _context_arguments(self) -> dict:
         """The user's note, interpreted by the gateway's cheap text class and
@@ -645,7 +848,15 @@ class DecisionRun:
             if self._halt is not None:
                 raise self._halt
             state = result.get("state")
-            if state in ("decision", "needs_setup"):
+            if state == "needs_setup":
+                # Which values to gate, which column is what: the user's to
+                # say, in the viewer's set-up form -- never this run's model
+                # (`_await_setup`). With nobody to ask, the run ends saying what.
+                if self.o.on_setup != "wait":
+                    return "failed", self._setup_reason(result)
+                result = self._await_setup(lane, result)
+                continue
+            if state == "decision":
                 if self.packets >= self.o.max_packets:
                     return "failed", "max_packets"
                 result = self._decide(result, lane)
@@ -672,6 +883,19 @@ class DecisionRun:
             if state in ("paused", "stopped"):
                 return state, result.get("reason") or result.get("note") or state
             return "failed", f"unexpected state {state!r}"
+
+    @staticmethod
+    def _setup_reason(result: dict) -> str:
+        """Why a run that cannot wait for the set-up form ended, and what to do."""
+        if result.get("note"):
+            return str(result["note"])
+        packet = result.get("packet") or {}
+        if packet.get("kind") == "expression_setup":
+            evidence = packet.get("evidence") or {}
+            why = (evidence.get("recommendation") or {}).get("why") or "the values do not settle it"
+            return (f"which expression values to gate is not confirmed ({why}); name them with "
+                    "--matrix <X|layer:NAME> --log1p <on|off>, or confirm them in the viewer")
+        return "the session is waiting for a set-up only the user can answer, in the viewer"
 
     def _run_lanes(self, first: dict) -> tuple[str, str | None]:
         """`parallel_markers` lanes on the one session, through the

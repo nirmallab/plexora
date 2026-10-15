@@ -612,6 +612,10 @@ def apply_expression(engine, packet, answer):
         raise AgentError("invalid_input", f"{answer.features_layer} already looks "
                          "log-transformed; log1p on it would transform it twice",
                          detail={"hint": "answer with features_log: false"})
+    if answer.features_log and kinds.get(answer.features_layer) == "scaled":
+        raise AgentError("invalid_input", f"{answer.features_layer} has values below zero "
+                         "(scaled or centred); log1p is not defined there",
+                         detail={"hint": "answer with features_log: false"})
     record = engine.record
     pending = (record.get("expression") or {}).get("projects") or record["images"]
     receipts, applied = [], []

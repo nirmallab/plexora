@@ -48,10 +48,35 @@ def _progress(event: dict) -> None:
         print(f"  paused: {event.get('reason')}", file=sys.stderr)
     elif kind == "waiting_for_user":
         print("  the session is waiting for a person's answer in the viewer", file=sys.stderr)
+    elif kind == "expression":
+        if event.get("verdict") in ("logged", "raw"):
+            print(f"  expression values read as {event['verdict']} by a model: {event.get('why') or ''}",
+                  file=sys.stderr)
+        else:
+            print(f"  expression values unclear to a model too: {event.get('why') or event.get('problem') or ''}",
+                  file=sys.stderr)
 
 
 def _names(value):
     return [m.strip() for m in value.split(",") if m.strip()] if value else None
+
+
+def _expression(args) -> dict | None:
+    """`--matrix` / `--log1p` as the session's `expression` (the user's own
+    choice, applied even over a confirmed one), or None when neither is
+    given. `--log1p` alone reads X; `--matrix` alone is refused: whether its
+    values are logged is the half that matters."""
+    matrix = (getattr(args, "matrix", None) or "").strip() or None
+    log1p = getattr(args, "log1p", None)
+    if matrix is None and log1p is None:
+        return None
+    if log1p is None:
+        raise ValueError("--matrix needs --log1p on|off: on for raw intensities, off for values "
+                         "already logged.")
+    if matrix is not None and matrix != "X" and not matrix.startswith("layer:"):
+        matrix = f"layer:{matrix}"
+    return {"features_layer": matrix or "X", "features_log": log1p == "on", "basis": "user",
+            "why": "named on the command line"}
 
 
 def _apply_qc_limits(args) -> None:
@@ -83,7 +108,16 @@ def run_command(args) -> int:
         # --force: a partial marker/channel match is gated on the markers that
         # match (`gating_session_start`'s `force`); none matching still fails.
         start = {"force": True} if getattr(args, "force", False) else {}
-        options = GatingOptions(markers=_names(args.markers), **common, start_options=start,
+        try:
+            expression = _expression(args)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if expression:
+            start["expression"] = expression
+        # Nobody can answer a set-up form here: a column not set, or a matrix
+        # neither the values nor --matrix/--log1p settle, fails the run saying so.
+        options = GatingOptions(markers=_names(args.markers), **common, start_options=start, on_setup="fail",
                                 parallel_markers=max(1, int(getattr(args, "parallel_markers", 1) or 1)))
     try:
         gateway = _client(args)
