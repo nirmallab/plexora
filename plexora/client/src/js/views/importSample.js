@@ -5,9 +5,11 @@
  * points at files or a folder, sees what Plexora found, and presses Import.
  * There are no format tabs, no role-labelled fields and no second page.
  *
- *   pick       The home page's card: File | Folder, one path field with the
- *              machine chip at its front, and Browse (Add once a path is
- *              typed). Format chips under it, and the way to the rest.
+ *   pick       One path field with the machine chip at its front, and Browse
+ *              (Add once a path is typed). Browse takes a file or a folder in
+ *              one go -- see browsePicker.js -- so nothing asks which first.
+ *              Format chips under it, and the way to the rest. Scoped, it is
+ *              a card's compact add row and nothing else.
  *   proposal   One card per sample, one row per detected layer, each saying
  *              what it becomes. A question appears UNDER the row it concerns,
  *              with its default already chosen, and never blocks Import.
@@ -38,6 +40,11 @@
  * and no dataset, everything proposed as a layer of a sample that already
  * exists, and the viewer adopts the result without a reload unless a MASK was
  * added -- which shifts channel indices and is the one case a reload is for.
+ * `open({sample, intent})` is the sidebar's "Add Seg Mask / Add Data": the same
+ * scoped dialog, saying what it was opened for. Detection still decides what
+ * the file IS -- the intent only settles a file the pixels leave open -- and
+ * every row's role badge is a menu wherever the file has another reading, so
+ * an image detected as a mask is corrected in place rather than removed.
  *
  * Served as a classic script from base.html, after datasetPicker.js: the
  * dataset row is that picker, and the library page and the viewer both open
@@ -364,13 +371,22 @@ window.PlexoraImportSample = (function () {
             //: The machine chip, its menu and the location service's status
             //: line -- built once and moved into whichever field is on screen.
             machine: null,
-            //: File or Folder: what Browse opens a dialog for.
-            kind: "file",
+            //: What a scoped dialog was opened to add -- "mask", "table" or
+            //: null -- for the sidebar's "Add Seg Mask / Add Data". Says what
+            //: the pick is FOR; detection still says what it is.
+            intent: options.sample && ["mask", "table", "cells"].includes(options.intent)
+                ? options.intent : null,
+            //: Called with `/import/layers`' answer once layers were added in
+            //: place (no reload), so the control that opened this can repaint.
+            onAdded: options.onAdded || null,
             onClose: options.onClose || null,
         };
         dialog = build();
-        part("title").textContent = scoped()
-            ? `Add a layer to ${state.sample}` : "Import sample";
+        part("title").textContent = !scoped() ? "Import sample"
+            : state.intent === "mask" ? `Add a segmentation mask to ${state.sample}`
+            : state.intent === "table" ? `Add data to ${state.sample}`
+            : state.intent === "cells" ? `Add a mask or cell data to ${state.sample}`
+            : `Add a layer to ${state.sample}`;
         part("go").textContent = scoped() ? "Add layers" : "Import sample";
         // "Add more samples" is a promise the scoped dialog cannot keep: it
         // adds layers to one sample that already exists.
@@ -736,6 +752,10 @@ window.PlexoraImportSample = (function () {
     function renderPick() {
         const body = part("body");
         body.innerHTML = "";
+        if (scoped()) {
+            renderScopedPick(body);
+            return;
+        }
         // Whatever a card was being added to, this is not it: the pick state's
         // field adds loose files.
         state.adding = null;
@@ -778,6 +798,42 @@ window.PlexoraImportSample = (function () {
         setReason(state.picks.length ? "" : "Choose a file or folder to continue");
     }
 
+    /**
+     * Scoped, the pick state is the card's add row and nothing else:
+     *
+     *     [Local ▾ | Paste a file or folder path…      ✕] [ Browse ]
+     *
+     * The sample already exists, so there is one thing to ask for -- a path --
+     * and it is asked the way that sample's own card would ask it: browsed is
+     * read at once, typed waits for Load, a path that cannot be read stays in
+     * the box with the reason under it. What it was opened for (`intent`) is
+     * the slot: "+ Add segmentation mask" settles a file whose pixels could be
+     * either, and nothing else.
+     */
+    function renderScopedPick(body) {
+        if (!state.adding) {
+            // "cells" -- a mask or a table, either -- says nothing about the
+            // file, so it is added as anything else is and read for what it is.
+            state.adding = {key: state.sample,
+                            role: ["mask", "table"].includes(state.intent)
+                                ? state.intent : "layer",
+                            fresh: true, draft: ""};
+        }
+        body.appendChild(renderInlinePick(null));
+        if (state.picks.length && state.proposal) {
+            const back = el("button", "plx-import-back", "← Back to what was found");
+            back.type = "button";
+            back.addEventListener("click", () => {
+                state.adding = null;
+                render("proposal");
+            });
+            body.appendChild(back);
+        }
+        part("add").hidden = true;
+        part("go").disabled = state.picks.length === 0;
+        setReason(state.picks.length ? "" : "Choose a file or folder to continue");
+    }
+
     //: Two examples a side under the pick state's field, the way the home card
     //: shows two under its own -- formats a SAMPLE arrives in rather than one
     //: image, so a slide and a table on the file side and the two vendor runs
@@ -801,11 +857,13 @@ window.PlexoraImportSample = (function () {
     }
 
     /**
-     * The home page's card, as this dialog's pick control: File | Folder, one
-     * field with the machine chip at its front, and one button that is Browse
-     * while the box is empty and Add once a path is typed -- so the typed way
-     * in and the browsed way in never look like two routes. Under them, the
-     * formats as chips with the chosen side lit, and the way to the rest.
+     * The home page's card, as this dialog's pick control: one field with the
+     * machine chip at its front, and one button that is Browse while the box
+     * is empty and Add once a path is typed -- so the typed way in and the
+     * browsed way in never look like two routes. No File | Folder pair: Browse
+     * takes either (browsePicker.js), because which one a format is -- an
+     * OME-Zarr store is a folder -- is not something to ask first. Under them,
+     * the formats as chips, and the way to the rest.
      *
      * Used by the pick state and by a card's inline "Add ..." row, which is
      * why it takes its examples and placeholder rather than knowing them. The
@@ -814,35 +872,8 @@ window.PlexoraImportSample = (function () {
      */
     function buildPickControl({examples, placeholder, onTyped}) {
         const pick = el("div", "plx-import-pick");
-        pick.dataset.kind = state.kind;
+        pick.dataset.kind = "any";
         pick.dataset.face = "browse";
-
-        const kinds = el("div", "plx-import-kind");
-        kinds.setAttribute("role", "radiogroup");
-        kinds.setAttribute("aria-label", "Browse for a file or a folder");
-        const thumb = el("span", "plx-import-kind-thumb");
-        thumb.setAttribute("aria-hidden", "true");
-        kinds.appendChild(thumb);
-        const options = [["file", "fa-file", "File"], ["directory", "fa-folder", "Folder"]]
-            .map(([kind, icon, word]) => {
-                const option = el("button", "plx-import-kind-option");
-                option.type = "button";
-                option.setAttribute("role", "radio");
-                option.dataset.kind = kind;
-                option.innerHTML = `<span class="fas ${icon}" aria-hidden="true"></span><span>${word}</span>`;
-                option.addEventListener("click", () => setKind(pick, kind));
-                kinds.appendChild(option);
-                return option;
-            });
-        // A radio group is one tab stop, and the arrows move within it.
-        kinds.addEventListener("keydown", (event) => {
-            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-            event.preventDefault();
-            const next = state.kind === "file" ? "directory" : "file";
-            setKind(pick, next);
-            options.find((option) => option.dataset.kind === next)?.focus();
-        });
-        pick.appendChild(kinds);
 
         const row = el("div", "plx-import-pick-row");
         const field = el("div", "plx-import-field");
@@ -890,7 +921,7 @@ window.PlexoraImportSample = (function () {
             if (event.key === "Enter") take();
         });
         go.addEventListener("click", () => {
-            if (!take()) pickWith(state.kind);
+            if (!take()) pickWith("any");
         });
 
         // The service's own line -- "Sharing…", "Not connected to hpc yet" --
@@ -933,23 +964,12 @@ window.PlexoraImportSample = (function () {
         });
         pick.addEventListener("drop", onDrop);
 
-        //: Held so they can be disabled while something is in flight -- a
+        //: Held so it can be disabled while something is in flight -- a
         //: second press while a file dialog is opening opens a second one.
-        state.pickControls = [...options, go];
+        state.pickControls = [go];
         state.pickFocus = go;
         state.pickInput = input;
-        setKind(pick, state.kind);
         return pick;
-    }
-
-    function setKind(pick, kind) {
-        state.kind = kind;
-        pick.dataset.kind = kind;
-        pick.querySelectorAll(".plx-import-kind-option").forEach((option) => {
-            const on = option.dataset.kind === kind;
-            option.setAttribute("aria-checked", on ? "true" : "false");
-            option.tabIndex = on ? 0 : -1;
-        });
     }
 
     /**
@@ -1042,7 +1062,7 @@ window.PlexoraImportSample = (function () {
                 if (intent && state && sameIntent(state.adding, intent)) {
                     setStatus(null);
                     state.addError = {typed: "", reason: why};
-                    render("proposal");
+                    render(pickPhase());
                 } else {
                     setStatus(why, true);
                 }
@@ -1326,8 +1346,18 @@ window.PlexoraImportSample = (function () {
         state.addError = {typed: flight.path,
                           reason: message || "Plexora could not read that path."};
         setStatus(null);
-        render("proposal");
+        render(pickPhase());
         return true;
+    }
+
+    /**
+     * Where an open add row is drawn: on its card, or -- scoped, with nothing
+     * read yet -- as the whole pick state, there being no card to hold it.
+     * "proposal" with no proposal is the reading skeleton, which with nothing
+     * in flight would wait for ever.
+     */
+    function pickPhase() {
+        return scoped() && !state.proposal?.samples?.length ? "pick" : "proposal";
     }
 
     /**
@@ -1354,6 +1384,14 @@ window.PlexoraImportSample = (function () {
         if (pending.proposal) {
             state.proposal = pending.proposal;
             state.picked = pending.picked;
+        } else if (scoped() && !state.picks.length) {
+            // The first pick of a scoped dialog: nothing else on screen to
+            // keep, so the row it came from is the whole of the answer.
+            state.proposal = null;
+            state.picked = [];
+            setStatus(null);
+            render("pick");
+            return true;
         } else {
             state.proposal = proposal;
             state.picked = sent;
@@ -1706,7 +1744,7 @@ window.PlexoraImportSample = (function () {
     /**
      * A card's "Add …", as ONE row opened under the slot that asked for it:
      *
-     *     [Local ▾ | Paste a file or folder path…      ✕] [Browse | ▾]
+     *     [Local ▾ | Paste a file or folder path…      ✕] [ Browse ]
      *
      * The card is the context -- which sample the file joins, and the slot
      * already said as what -- so the row repeats none of it: no File | Folder
@@ -1717,8 +1755,8 @@ window.PlexoraImportSample = (function () {
      * The right-hand action is one slot with four faces (`data-face`), the
      * same width in each so the path box never jumps:
      *
-     *   browse  the box is empty. Browse opens a file; the arrow offers
-     *           Choose file / Choose folder. Whatever comes back is read AT
+     *   browse  the box is empty. Browse opens a panel that takes a file or
+     *           a folder (browsePicker.js). Whatever comes back is read AT
      *           ONCE -- picking it was the confirmation.
      *   load    a path was typed or pasted. Load, or Enter, reads it.
      *   busy    it is being read: the path stays, read-only, beside a spinner.
@@ -1769,16 +1807,9 @@ window.PlexoraImportSample = (function () {
         const split = el("div", "plx-import-compact-split");
         const browse = el("button", "plx-import-compact-browse");
         browse.type = "button";
-        browse.title = "Choose a file";
+        browse.title = "Choose a file or a folder";
         browse.innerHTML = '<span class="fas fa-folder-open" aria-hidden="true"></span><span>Browse</span>';
-        const more = el("button", "plx-import-compact-more");
-        more.type = "button";
-        more.title = "Choose a file or a folder";
-        more.setAttribute("aria-label", "Choose a file or a folder");
-        more.setAttribute("aria-haspopup", "menu");
-        more.setAttribute("aria-expanded", "false");
-        more.innerHTML = '<span class="fas fa-chevron-down" aria-hidden="true"></span>';
-        split.append(browse, more);
+        split.append(browse);
         // Load and Retry are one button: both read the path in the box.
         const load = el("button", "plx-import-compact-load");
         load.type = "button";
@@ -1866,7 +1897,11 @@ window.PlexoraImportSample = (function () {
                 event.preventDefault();
                 if (!input.readOnly) take();
             } else if (event.key === "Escape" && !input.readOnly) {
-                // The dialog's own Escape would close the whole dialog.
+                // Scoped with nothing read yet, the row IS the dialog: there
+                // is no card to go back to, and the dialog's own Escape
+                // closing it is what an empty box asks for.
+                if (!input.value && pickPhase() === "pick") return;
+                // Otherwise the dialog's own Escape would close the whole dialog.
                 event.preventDefault();
                 event.stopPropagation();
                 if (input.value) {
@@ -1881,17 +1916,7 @@ window.PlexoraImportSample = (function () {
         });
         clear.addEventListener("click", clearBox);
         load.addEventListener("click", take);
-        browse.addEventListener("click", () => pickWith("file"));
-        more.addEventListener("click", () => {
-            if (browseMenuOpen()) closeBrowseMenu(true);
-            else openBrowseMenu(more, split);
-        });
-        more.addEventListener("keydown", (event) => {
-            if (event.key === "ArrowDown" && !browseMenuOpen()) {
-                event.preventDefault();
-                openBrowseMenu(more, split);
-            }
-        });
+        browse.addEventListener("click", () => pickWith("any"));
 
         // The service's own line -- "Sharing…", "Not connected to hpc yet" --
         // under the row it is about. Empty, it takes no room.
@@ -1909,35 +1934,32 @@ window.PlexoraImportSample = (function () {
 
         //: Held so a second press while the system's file browser is opening
         //: cannot open a second one.
-        state.pickControls = [browse, more];
+        state.pickControls = [browse];
         state.pickFocus = browse;
         state.pickInput = input;
         return wrap;
     }
 
-    // -- a card's Browse menu ----------------------------------------------
+    // -- a row's menu ---------------------------------------------------------
 
     function browseMenuOpen() {
         return Boolean(state && state.browseMenu && !state.browseMenu.menu.hidden);
     }
 
     /**
-     * Choose file / Choose folder, under a card's Browse. Fixed-positioned in
-     * the dialog rather than inside the card, which the scrolling body would
-     * clip; right-aligned to the split it opened from, flipped above it when
-     * there is no room below.
+     * A small menu under one control of a row -- a role badge's readings.
+     * Fixed-positioned in the dialog rather than inside the card, which the
+     * scrolling body would clip; right-aligned to what it opened from, flipped
+     * above it when there is no room below.
      */
-    function openBrowseMenu(trigger, alignTo) {
+    function openRowMenu(trigger, alignTo, items, label) {
         if (!state || browseMenuOpen() || trigger.disabled) return;
         closeMenu(false);
         if (!state.browseMenu) state.browseMenu = buildBrowseMenu();
         const browse = state.browseMenu;
         browse.anchor = trigger;
-        browse.menu.replaceChildren(
-            menuItem({icon: "file", name: "Choose file",
-                      onPick: () => { closeBrowseMenu(false); pickWith("file"); }}),
-            menuItem({icon: "folder", name: "Choose folder",
-                      onPick: () => { closeBrowseMenu(false); pickWith("directory"); }}));
+        browse.menu.setAttribute("aria-label", label || "Options");
+        browse.menu.replaceChildren(...items);
         browse.menu.hidden = false;
         const rect = (alignTo || trigger).getBoundingClientRect();
         const spread = browse.menu.getBoundingClientRect();
@@ -1966,7 +1988,6 @@ window.PlexoraImportSample = (function () {
     function buildBrowseMenu() {
         const menu = el("div", "plx-import-menu plx-import-browse-menu");
         menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", "Browse for");
         menu.hidden = true;
         menu.addEventListener("keydown", (event) => {
             const items = Array.from(menu.querySelectorAll(".plx-import-menu-item"));
@@ -2168,15 +2189,78 @@ window.PlexoraImportSample = (function () {
         // The reference is the image everything else is registered against, so
         // it says so rather than saying "image": which of three is the frame
         // is the one thing on this screen worth correcting before importing.
-        row.appendChild(el("span", "plx-import-role",
-            layer.reference ? "Reference image"
-                            : ROLE_BADGE[layer.role] || "Layer"));
+        row.appendChild(roleBadge(layer));
         const pick = pickOf(layer);
         if (pick) row.appendChild(removeButton(pick));
         // Just added from this card's row, which has closed: a brief tint so
         // the eye lands on where the file went rather than on the gap it left.
         if (pick && pick === state.arrived) row.classList.add("is-arrived");
         return row;
+    }
+
+    //: What each reading on a row's role menu says under its name: what the
+    //: file will be drawn as, which is the difference that matters.
+    const SWITCH_HINT = {
+        image: "Intensities, drawn as a channel",
+        mask: "Cell ids, drawn as outlines",
+        none: "Leave this file out",
+    };
+
+    /**
+     * The row's role, ranged right. A plain label where the file has one
+     * reading; a menu where it has another (`layer.switch`), so a detection
+     * that got it wrong is one click to correct -- for a confident answer as
+     * much as an uncertain one. A confident mask used to have no way back
+     * short of removing the file, and re-adding it read it as a mask again.
+     */
+    function roleBadge(layer) {
+        const text = layer.reference ? "Reference image"
+                                     : ROLE_BADGE[layer.role] || "Layer";
+        const choice = layer.switch;
+        if (!choice || (choice.options || []).length < 2) {
+            return el("span", "plx-import-role", text);
+        }
+        const button = el("button", "plx-import-role is-switch");
+        button.type = "button";
+        button.title = "Change what this file is";
+        button.disabled = Boolean(state.addFlight);
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        button.setAttribute("aria-label",
+            `${text}. Change what ${layer.label || "this file"} is`);
+        button.appendChild(el("span", null, text));
+        const chevron = el("span", "fas fa-chevron-down plx-import-role-chevron");
+        chevron.setAttribute("aria-hidden", "true");
+        button.appendChild(chevron);
+        const show = () => openRowMenu(button, button, choice.options.map((option) => {
+            const reading = option.value === "none" ? "none"
+                : option.value === "image" ? "image" : "mask";
+            return menuItem({
+                icon: {none: "ban", image: "layer-group", mask: "shapes"}[reading],
+                name: option.label,
+                sub: SWITCH_HINT[reading],
+                role: "menuitemradio",
+                checked: option.value === choice.value,
+                onPick: () => {
+                    closeBrowseMenu(false);
+                    // Re-inspected, not patched: a mask that becomes an image
+                    // can become the reference, and only the server knows.
+                    if (option.value !== choice.value) answer(choice.question, option.value);
+                    else button.focus();
+                },
+            });
+        }), `What ${layer.label || "this file"} is`);
+        button.addEventListener("click", () => {
+            if (browseMenuOpen() && state.browseMenu.anchor === button) closeBrowseMenu(true);
+            else show();
+        });
+        button.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" && !browseMenuOpen()) {
+                event.preventDefault();
+                show();
+            }
+        });
+        return button;
     }
 
     //: Schemes a bucket sits under -- the ones that can need an endpoint, an
@@ -2956,7 +3040,24 @@ window.PlexoraImportSample = (function () {
         } catch (error) {
             console.error("importSample: could not adopt the new layers.", error);
         }
+        if (result.table) {
+            // A cell table taken on in place: the page re-reads the read spec
+            // and the columns, which is what offers Centroids and the cell
+            // tools -- now, or when a large one has been read behind the
+            // viewer, with the navbar chip saying how far it has got.
+            try {
+                await window.PlexoraLoadProgress?.track?.(state.sample);
+            } catch (error) {
+                console.error("importSample: could not take on the table.", error);
+            }
+        }
+        const after = state && state.onAdded;
         close();
+        try {
+            after?.(result);
+        } catch (error) {
+            console.error("importSample: the caller could not repaint.", error);
+        }
     }
 
     /**
@@ -3203,10 +3304,13 @@ window.PlexoraImportSample = (function () {
                 ? `Pick the ${kind} data for ${state.sample}.`
                 : kind
                     ? `Pick the ${kind} data.`
-                    : scoped()
-                        ? `Pick the files to add as layers of ${state.sample}.`
-                        : "Point Plexora at a file or a folder. It works out "
-                          + "what each one is.";
+                    : scoped() && state.intent
+                        ? "A file or a folder — an OME-Zarr store, a run's "
+                          + "output. Plexora reads what it is."
+                        : scoped()
+                            ? `Pick the files to add as layers of ${state.sample}.`
+                            : "Point Plexora at a file or a folder. It works out "
+                              + "what each one is.";
         } else if (state.phase === "proposal") {
             line.textContent = summarize(state.proposal);
         } else {

@@ -593,7 +593,29 @@ def test_a_relayed_listing_tells_the_failures_apart(client, monkeypatch,
 def test_a_machine_nobody_has_browsed_yet_remembers_nothing(client):
     answer = client.get("/picker_prefs").get_json()
 
+    # `drives` is a fact about the machine (its drive letters, on Windows),
+    # not something remembered.
+    answer.pop("drives", None)
     assert answer == {"last_dir": "", "recent": [], "pinned": []}
+
+
+def test_the_drives_are_this_machines_and_only_this_machines(client, monkeypatch):
+    """The listing is a Windows machine's Browse for "a file or a folder", and
+    the home folder sits on one drive of several. Named, never opened: a
+    mapped drive that is not answering costs nothing until somebody clicks it.
+    A node's record carries none -- its drives are not this machine's."""
+    import os
+    import sys
+
+    from plexora.server.routes import browse_routes
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "listdrives", lambda: ["D:\\", "C:\\"], raising=False)
+    assert browse_routes._drives() == ["C:\\", "D:\\"]
+    assert client.get("/picker_prefs").get_json()["drives"] == ["C:\\", "D:\\"]
+    assert client.get("/picker_prefs?node=hpc").get_json()["drives"] == []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert browse_routes._drives() == []
 
 
 def test_choosing_a_file_records_the_folder_it_was_in(client):
@@ -671,8 +693,9 @@ def test_a_damaged_settings_file_costs_the_recent_list_and_nothing_else(client):
     paths.write_settings({"path_picker": {"places": {"": {
         "last_dir": 7, "recent": "not a list", "pinned": ["/ok", 3, None]}}}})
 
-    assert client.get("/picker_prefs").get_json() == {
-        "last_dir": "", "recent": [], "pinned": ["/ok"]}
+    answer = client.get("/picker_prefs").get_json()
+    answer.pop("drives", None)
+    assert answer == {"last_dir": "", "recent": [], "pinned": ["/ok"]}
 
 
 def test_remembering_a_place_leaves_the_rest_of_the_settings_alone(client):

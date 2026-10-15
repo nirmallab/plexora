@@ -5878,9 +5878,10 @@ dialog .file-source .data-location-place {
 }
 
 /* The pick state: the home page's card, as a control (`buildPickControl`
-   in importSample.js). File | Folder, one field with the machine chip at its
-   front, one button that is Browse until a path is typed and Add from then
-   on, and the formats as chips under a hairline. The field also takes a drop
+   in importSample.js). One field with the machine chip at its front, one
+   button that is Browse until a path is typed and Add from then on -- Browse
+   takes a file or a folder, so nothing asks which first -- and the formats as
+   chips under a hairline. The field also takes a drop
    -- small tables -- and lights up as one while something is held over it. */
 .plx-import-pick {
     display: flex;
@@ -5888,93 +5889,10 @@ dialog .file-source .data-location-place {
     position: relative;
 }
 
-/* -- File | Folder: a recessed track and a raised thumb that springs to the
-   side chosen. */
-.plx-import-kind {
-    align-self: flex-start;
-    background: rgba(0, 0, 0, 0.30);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 9px;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
-    display: inline-grid;
-    grid-template-columns: 1fr 1fr;
-    padding: 3px;
-    position: relative;
-}
-
-.plx-import-kind-thumb {
-    background: linear-gradient(180deg, #1c2431 0%, #141b25 100%);
-    border-radius: var(--radius-sm);
-    bottom: 3px;
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.08),
-        inset 0 0 0 1px rgba(56, 189, 248, 0.30),
-        0 1px 2px rgba(0, 0, 0, 0.5),
-        0 4px 12px -4px rgba(0, 0, 0, 0.6);
-    left: 3px;
-    position: absolute;
-    top: 3px;
-    transition: transform 340ms var(--plx-import-spring);
-    width: calc(50% - 3px);
-}
-
-.plx-import-pick[data-kind="directory"] .plx-import-kind-thumb {
-    transform: translateX(100%);
-}
-
-.plx-import-kind-option {
-    align-items: center;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    gap: 7px;
-    height: 32px;
-    justify-content: center;
-    min-width: 96px;
-    padding: 0 14px;
-    position: relative;
-    transition: color var(--plx-import-calm) var(--plx-import-ease-out);
-    z-index: 1;
-}
-
-.plx-import-kind-option:hover:not(:disabled) {
-    color: var(--text-secondary);
-}
-
-.plx-import-kind-option[aria-checked="true"] {
-    color: var(--text-primary);
-}
-
-.plx-import-kind-option svg {
-    font-size: 13px;
-    transition: color var(--plx-import-calm) var(--plx-import-ease-out);
-}
-
-.plx-import-kind-option[aria-checked="true"] svg {
-    color: var(--accent-channel);
-}
-
-.plx-import-kind-option:focus-visible {
-    outline: 2px solid var(--accent-channel);
-    outline-offset: 1px;
-}
-
-.plx-import-kind-option:disabled {
-    cursor: default;
-    opacity: 0.55;
-}
-
 /* -- The field and its one button. */
 .plx-import-pick-row {
     display: flex;
     gap: var(--space-2);
-    margin-top: 14px;
 }
 
 .plx-import-field {
@@ -6297,8 +6215,8 @@ dialog .file-source .data-location-place {
         border-color var(--plx-import-calm) var(--plx-import-ease-out);
 }
 
-.plx-import-pick[data-kind="file"] .plx-import-chip[data-kind="file"],
-.plx-import-pick[data-kind="directory"] .plx-import-chip[data-kind="directory"] {
+/* Every chip is lit: Browse takes either side, so neither is "the other". */
+.plx-import-pick[data-kind="any"] .plx-import-chip {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.12);
     color: var(--text-secondary);
@@ -6879,9 +6797,8 @@ dialog .file-source .data-location-place {
     display: flex;
 }
 
-/* Browse | ▾ -- one glass control split by a hairline: the face opens a file
-   (the common case, so a mask is Browse and a double-click), the arrow
-   offers a folder as well. */
+/* Browse -- one glass control. It opens a panel that takes a file or a folder
+   (browsePicker.js), so there is no arrow offering the other kind. */
 .plx-import-compact-split {
     background: linear-gradient(180deg, rgba(31, 40, 53, 0.92) 0%, rgba(18, 24, 32, 0.92) 100%);
     border: 1px solid rgba(255, 255, 255, 0.14);
@@ -6898,8 +6815,7 @@ dialog .file-source .data-location-place {
     border-color: rgba(255, 255, 255, 0.24);
 }
 
-.plx-import-compact-browse,
-.plx-import-compact-more {
+.plx-import-compact-browse {
     align-items: center;
     background: none;
     border: 0;
@@ -6917,43 +6833,24 @@ dialog .file-source .data-location-place {
     font-weight: 600;
     gap: 7px;
     min-width: 0;
-    padding: 0 6px 0 10px;
+    padding: 0 10px;
 }
 
 .plx-import-compact-browse svg {
     color: var(--accent-channel);
 }
 
-.plx-import-compact-more {
-    border-left: 1px solid rgba(255, 255, 255, 0.10);
-    color: var(--text-muted);
-    flex: 0 0 28px;
-    font-size: 10px;
-}
-
-.plx-import-compact-more svg {
-    transition: transform var(--duration-base) var(--ease-standard);
-}
-
-.plx-import-compact-more[aria-expanded="true"] svg {
-    transform: rotate(180deg);
-}
-
-.plx-import-compact-browse:hover:not(:disabled),
-.plx-import-compact-more:hover:not(:disabled),
-.plx-import-compact-more[aria-expanded="true"] {
+.plx-import-compact-browse:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
 
-.plx-import-compact-browse:focus-visible,
-.plx-import-compact-more:focus-visible {
+.plx-import-compact-browse:focus-visible {
     outline: 2px solid var(--accent-channel);
     outline-offset: -2px;
 }
 
-.plx-import-compact-browse:disabled,
-.plx-import-compact-more:disabled {
+.plx-import-compact-browse:disabled {
     cursor: default;
     opacity: 0.55;
 }
@@ -7058,9 +6955,10 @@ dialog .file-source .data-location-place {
     padding-top: 6px;
 }
 
-/* A card's Browse menu: the machine menu's look, at its two items' width. */
+/* A row's menu -- a role badge's readings: the machine menu's look, wide
+   enough for each reading's one-line hint. */
 .plx-import-browse-menu {
-    min-width: 168px;
+    min-width: 236px;
     transform-origin: 100% 0;
 }
 
@@ -7235,6 +7133,45 @@ dialog .file-source .data-location-place {
     padding: 1px var(--space-2);
     text-transform: uppercase;
     white-space: nowrap;
+}
+
+/* Where the file could be something else, the badge is a menu: the same
+   quiet label with a chevron, raised just enough on hover to read as a
+   control. Never coloured, for the reason above. */
+.plx-import-role.is-switch {
+    align-items: center;
+    background: none;
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    gap: 5px;
+    line-height: inherit;
+    transition:
+        color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-import-role.is-switch svg {
+    font-size: 8px;
+    opacity: 0.75;
+}
+
+.plx-import-role.is-switch:hover:not(:disabled),
+.plx-import-role.is-switch[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: var(--text-secondary);
+}
+
+.plx-import-role.is-switch:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-import-role.is-switch:disabled {
+    cursor: default;
+    opacity: 0.55;
 }
 
 .plx-import-install {

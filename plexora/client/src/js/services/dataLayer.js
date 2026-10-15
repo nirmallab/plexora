@@ -198,6 +198,12 @@ class DataLayer {
             let response = await fetch(plexoraUrl('get_database_description') + '?' + new URLSearchParams({
                 datasource: datasource
             }))
+            // The cells are still being read behind the viewer, so this came
+            // back without them: views/loadProgress.js takes them on when
+            // they land, however soon that is.
+            if (response.headers.get('X-Plexora-Cells-Pending') === '1' && window.__plexora) {
+                window.__plexora.cellsPending = true;
+            }
             let description = await response.json();
             return description;
         } catch (e) {

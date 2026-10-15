@@ -41,8 +41,12 @@ def _image(path):
 
 def _mask(path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tifffile.imwrite(path, (np.arange(128 * 128).reshape(128, 128) % 50)
-                     .astype(np.uint32))
+    # Cells of one id each over a background, as a segmenter writes them:
+    # detection reads the pixels, and a repeating gradient is an image.
+    labels = np.zeros((128, 128), dtype=np.uint32)
+    for index in range(1, 6):
+        labels[index * 18:index * 18 + 12, index * 18:index * 18 + 12] = index
+    tifffile.imwrite(path, labels)
     return path
 
 

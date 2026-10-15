@@ -52,7 +52,6 @@ CARD_CLASSES = (
     "plx-import-compact-action",
     "plx-import-compact-split",
     "plx-import-compact-browse",
-    "plx-import-compact-more",
     "plx-import-compact-load",
     "plx-import-compact-word",
     "plx-import-compact-busy",
@@ -217,18 +216,26 @@ def test_the_question_gate_is_still_the_one_line_it_was(dialog):
 
 def test_the_first_pick_is_the_home_style_control(dialog):
     """The pick state -- the dialog's first question, before anything is on
-    screen -- is the home page's card: File | Folder, one field with the
-    machine chip, Browse/Add, format chips. Only there: a card's own "Add …"
-    row is the compact one below, because by then the card has already said
-    which sample and as what."""
+    screen -- is the home page's card: one field with the machine chip,
+    Browse/Add, format chips. No File | Folder pair: Browse takes either
+    (browsePicker.js), because which one a format is -- an OME-Zarr store is a
+    folder -- is a fact about the format, not a question for the user. A
+    scoped dialog's pick, and a card's own "Add …", are the compact row below,
+    because by then the sample is already on screen."""
     opened = re.findall(r"buildPickControl\(\{\s*examples: ([^,]+),", dialog)
     assert opened == ['"sample"'], opened
     assert "buildSplitControl(" not in dialog
+    assert "plx-import-kind" not in dialog
+    assert 'if (!take()) pickWith("any");' in dialog
     css = _read(MAIN_CSS)
-    for rule in (".plx-import-kind-thumb {", ".plx-import-field {",
-                 ".plx-import-machine {", ".plx-import-browse {",
-                 ".plx-import-chip {", ".plx-import-menu {"):
+    assert ".plx-import-kind" not in css, "the File | Folder pair outlived its markup"
+    for rule in (".plx-import-field {", ".plx-import-machine {",
+                 ".plx-import-browse {", ".plx-import-chip {",
+                 ".plx-import-menu {"):
         assert rule in css, rule
+    # Scoped -- "+ Add Layer", and the sidebar's Add Seg Mask / Add Data --
+    # the pick is the compact row and nothing else.
+    assert "if (scoped()) {\n            renderScopedPick(body);" in dialog
 
 
 def _inline_pick(dialog):
@@ -268,11 +275,12 @@ def test_a_browsed_file_is_read_at_once_and_a_typed_one_waits_for_load(dialog):
     row = _inline_pick(dialog)
     assert 'setFace(input.value.trim() ? "load" : "browse");' in row
     assert 'if (typed) submitSlot(typed, "typed", adding);' in row
-    assert 'browse.addEventListener("click", () => pickWith("file"));' in row
-    # And the menu behind the arrow is the other kind, never "any" -- which
-    # would raise the "file or folder?" popup a second time.
-    assert 'pickWith("directory")' in dialog
-    assert 'pickWith("any")' not in dialog
+    # One Browse, taking a file or a folder -- no arrow offering the other
+    # kind, and no "file or folder?" popup: the panel takes both.
+    assert 'browse.addEventListener("click", () => pickWith("any"));' in row
+    assert "compact-more" not in row
+    assert 'pickWith("directory")' not in dialog
+    assert 'pickWith("file")' not in dialog
 
 
 def test_one_card_pick_is_read_at_a_time(dialog):

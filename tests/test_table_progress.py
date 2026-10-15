@@ -49,7 +49,7 @@ def test_the_record_carries_the_stage_the_bar_needs():
 
     assert status["status"] == "pending"
     assert status["stage"] == "preparing"
-    assert status["stage_label"] == "Loading marker values"
+    assert status["stage_label"] == "Reading marker values"
     assert status["progress"] == data_model.TABLE_STAGES["preparing"][0]
 
 

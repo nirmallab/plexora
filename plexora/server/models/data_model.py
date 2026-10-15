@@ -518,7 +518,12 @@ def _record_mask_scale(entry, derived):
 
 
 def init(datasource_name):
-    load_ball_tree(datasource_name)
+    # The viewer's boot waits on this. A table still loading behind it builds
+    # its own index before it lands; one read in place is indexed here, as it
+    # always was, so the first picks do not each start a build.
+    ensure_loaded(datasource_name)
+    if not table_preparing(datasource_name):
+        load_ball_tree(datasource_name)
 
 
 # Read-only accessors onto this module's currently-loaded-datasource state.
@@ -533,7 +538,30 @@ def get_current_datasource_name():
 
 
 def get_datasource_df():
+    """The loaded cell table. Waits for one still loading behind the viewer:
+    a caller asking for the table wants the cells, not their absence."""
+    if _loaded_source is not None:
+        _await_table(_loaded_source if isinstance(_loaded_source, str)
+                     else _loaded_source[1])
     return datasource
+
+
+def loaded_frame_for(datasource_name, spec):
+    """The loaded table, if it is `datasource_name`'s and was read with `spec`.
+
+    For a reader that would otherwise load the same file again through the
+    adapter (centroid_tiles). Never loads anything itself: None means "not
+    loaded, or loaded from something else", and the caller reads as before.
+    """
+    # Read through globals(): the name is only bound once a project loads.
+    frame = globals().get("datasource")
+    if frame is None or not is_loaded(datasource_name):
+        return None
+    try:
+        current = _project(datasource_name).dataset
+    except Exception:  # noqa: BLE001 -- unknown here means read it yourself
+        return None
+    return frame if current == spec else None
 
 
 def get_current_config():
@@ -611,6 +639,18 @@ def _remote_table():
     return table if table is not None and not table.is_local else None
 
 
+def _has_cells(datasource_name) -> bool:
+    """Whether the loaded project has cells to read: a table recorded, and
+    either in memory or on the node that serves it. False for one that did
+    not load -- a file moved since, a read that failed behind the viewer --
+    which every reader answers as it would a project with no table, rather
+    than dereferencing the table that is not there."""
+    # Through globals(): `datasource` is only bound once a project loads.
+    return (_project(datasource_name).has_table
+            and (globals().get("datasource") is not None
+                 or _remote_table() is not None))
+
+
 def _remote_image():
     """The node-backed image provider for the loaded project, or None."""
     if not _remote:
@@ -676,7 +716,190 @@ def is_loaded(datasource_name) -> bool:
     return _loaded_source is not None and _loaded_source == loaded_scope(datasource_name)
 
 
-def load_datasource(datasource_name, reload=False):
+#: A local cell table at least this large loads BEHIND the viewer: the image
+#: and the mask open, the request that asked returns, and the table finishes
+#: on a thread of its own (`_load_table_behind`). A 3M-cell table held the
+#: canvas blank for its whole read -- the image tiles wait on `load_lock`, and
+#: the table used to be read inside it, first. What needs the cells waits for
+#: them (`_ensure_loaded`); what draws the picture does not.
+#:
+#: A size rather than "always": a small table is read in well under a second,
+#: and opening it in place keeps every caller that reads `datasource` straight
+#: after a load -- a script, a test -- exactly as it was. Reloads go behind
+#: too (a mask that finished converting, a pixel size, a renamed channel: none
+#: of them is a reason to freeze the canvas), except one that VALIDATES -- a
+#: route restoring the previous project when the table will not read asks
+#: with `wait_for_table=True` (tool_routes._reload_or_restore).
+BACKGROUND_TABLE_BYTES = 256 * 1024 * 1024
+
+#: `loaded_scope -> Event` for a table still loading behind the viewer, set
+#: once it and its cell index are in place, or it failed, or a later load
+#: superseded it. Read by `table_pending` and waited on by `_await_table`.
+_table_pending = {}
+#: `loaded_scope -> message` for a table that failed behind the viewer, so
+#: the page that was waiting for its cells can say so (`_with_table_behind`).
+#: Cleared by the next load.
+_table_failed = {}
+#: Bumped by every load that completes. A table that lands after a different
+#: project (or a reload of this one) was loaded is dropped rather than
+#: adopted, and stops reading at its next progress report (`_Superseded`).
+_table_epoch = 0
+
+
+class _Superseded(Exception):
+    """A table read behind the viewer that a later load has replaced."""
+
+
+def _table_bytes(project) -> int:
+    """How big a project's table file is on this disk, or 0 when that cannot
+    be said cheaply (a directory store, a web address, a node's file)."""
+    spec = project.dataset
+    if spec is None or project.resource("table") is not None:
+        return 0
+    src = str(spec.src or "")
+    if not src or providers.is_remote_locator(src):
+        return 0
+    try:
+        return os.path.getsize(src) if os.path.isfile(src) else 0
+    except OSError:
+        return 0
+
+
+def _loads_behind(project, wait_for_table) -> bool:
+    return (not wait_for_table and project.has_table
+            and _table_bytes(project) >= BACKGROUND_TABLE_BYTES)
+
+
+def table_pending(datasource_name) -> bool:
+    """Whether this project's cells are still being read behind the viewer."""
+    event = _table_pending.get(loaded_scope(datasource_name))
+    return event is not None and not event.is_set()
+
+
+def table_preparing(datasource_name) -> bool:
+    """Whether anything of this project's table is still being prepared behind
+    the viewer -- its cells, or the index over them that comes right after."""
+    return loaded_scope(datasource_name) in _table_pending
+
+
+def _await_table(datasource_name):
+    """Wait for a table still loading behind the viewer, if there is one.
+
+    Never waits holding `load_lock`: the load being waited for takes it to
+    hand its table over, so that wait could only end in a deadlock. Whoever
+    holds the lock is a load in its own right, which has already superseded
+    any table still loading behind an earlier one.
+    """
+    owned = getattr(load_lock, "_is_owned", None)
+    if owned is not None and owned():
+        return
+    scope = loaded_scope(datasource_name)
+    while True:
+        event = _table_pending.get(scope)
+        if event is None:
+            return
+        event.wait()
+        # Still registered once set is a read that never handed over, and
+        # nothing more will come of it. Anything else registered by now is
+        # a later load's own read -- a reload behind this one -- and the
+        # cells are that one's.
+        if _table_pending.get(scope) is event:
+            return
+
+
+def _load_table_behind(datasource_name, resolved, project, reload, epoch, event):
+    """Read a project's table and build its cell index off the request path,
+    then hand both over at once.
+
+    The read holds nothing: tiles, channel lists and contrast all go on while
+    it runs. Only the hand-over takes `load_lock`, and only if this is still
+    the load in force -- a project switched to meanwhile, or reloaded, has its
+    own, and this read stops at its next progress report rather than finishing
+    a copy nobody will adopt. What reads the cells waits on `event`
+    (`_await_table`), which is set once the index is in place too: anything
+    that picked a cell before then would build an index of its own. The
+    browser follows `table_progress` and takes the cells on when they land
+    (views/loadProgress.js).
+    """
+    global datasource
+    global ball_tree
+    scope = loaded_scope(datasource_name)
+    progress_stage, progress_report = table_progress(datasource_name)
+
+    def current():
+        return _table_epoch == epoch
+
+    def checked(step):
+        def call(*args, **kwargs):
+            if not current():
+                raise _Superseded(datasource_name)
+            return step(*args, **kwargs)
+        return call
+
+    stage, report = checked(progress_stage), checked(progress_report)
+    frame, index, error = None, None, None
+    try:
+        stage("opening")
+        loaded = resolved.table.load(reload=reload, stage=stage, report=report)
+        frame = loaded.table if loaded is not None else None
+        if frame is not None and project.roles.x and project.roles.y:
+            # The cell index, off the request path too: picking a cell is the
+            # next thing anybody does with one.
+            stage("loading")
+            try:
+                index = _index_over(datasource_name, project, frame, reload=reload)
+            except _Superseded:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- the cells still open
+                _log.warning("%s: no spatial index -- %s", datasource_name, exc)
+        stage("finalizing")
+    except Exception as exc:  # noqa: BLE001 -- reported, never raised on a thread
+        error = exc
+        if current():
+            _log.warning("%s: the table could not be loaded -- %s",
+                         datasource_name, exc)
+    try:
+        with load_lock:
+            if current() and _loaded_source == scope:
+                if error is None:
+                    datasource = frame
+                    ball_tree = index
+                    _clear_table_caches()
+                else:
+                    _resource_errors["table"] = str(error)
+                    _table_failed[scope] = str(error)
+            if _table_pending.get(scope) is event:
+                # The job record too, and only while it is this thread's: a
+                # later load of the same project writes its own.
+                del _table_pending[scope]
+                finish_table_job(datasource_name, error)
+            elif (scope not in _table_pending
+                  and (_table_jobs.get(datasource_name) or {}).get("status") == "pending"):
+                # Superseded, with nothing of this project's loading now: the
+                # half-way record is this thread's (a load that read the table
+                # in place finished its own before letting go of the lock).
+                _table_jobs.pop(datasource_name, None)
+    finally:
+        event.set()
+
+
+def _clear_table_caches():
+    """Everything this module derives from the loaded table, dropped."""
+    _description_cache.clear()
+    _consistency_cache.clear()
+    _gate_filter_cache.clear()
+    _feature_column_cache.clear()
+    _metadata_column_cache.clear()
+
+
+def load_datasource(datasource_name, reload=False, wait_for_table=False):
+    """Make `datasource_name` the loaded project: its table, mask and image.
+
+    A table at least `BACKGROUND_TABLE_BYTES` large is read behind the viewer
+    (`_load_table_behind`) unless `wait_for_table` -- a caller that has to know
+    the table reads before it answers, such as a route that restores the
+    previous project when it does not.
+    """
     global datasource
     global ball_tree
     global source
@@ -690,6 +913,8 @@ def load_datasource(datasource_name, reload=False):
     global _providers
     global _remote
     global volume_source
+    global _table_epoch
+    behind = None
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
@@ -708,7 +933,8 @@ def load_datasource(datasource_name, reload=False):
             # it, while a probe times out. Unreachability surfaces on the first
             # real call instead, where the caller can degrade.
             resolved = providers.resolve_providers(project)
-            progress.begin(project)
+            behind = _loads_behind(project, wait_for_table)
+            progress.begin(project, table=not behind)
             # A node that cannot be reached must not stop the project opening. It
             # is the ordinary state of a laptop that closed its lid, and the work
             # the user came for -- their ROIs, their figures, their gates -- is all
@@ -750,7 +976,7 @@ def load_datasource(datasource_name, reload=False):
                     _log.warning("%s: %s is unavailable -- %s", datasource_name, kind, exc)
                     return fallback
 
-            if project.has_table:
+            if project.has_table and not behind:
                 progress.stage("table")
                 _log.debug("%s: loading the table", datasource_name)
                 # Somewhere for the load to say where it has got to, polled by the
@@ -863,11 +1089,36 @@ def load_datasource(datasource_name, reload=False):
             # Set last, after every global above is in place, so a concurrent
             # reader never sees _loaded_source set against a half-built state.
             _loaded_source = loaded_scope(datasource_name)
+            # A table still loading behind an earlier load -- of this project
+            # or another -- is superseded here, and only here: a load that
+            # raised above leaves the project it would have replaced loaded,
+            # and that project's table still has to land. What was waiting on
+            # one goes on now, reading what this load put in place; the
+            # thread stops at its next progress report (`_Superseded`).
+            _table_epoch += 1
+            stale = list(_table_pending.values())
+            _table_pending.clear()
+            _table_failed.clear()
+            if behind:
+                # Registered before the lock is let go, so nothing that reads
+                # the table can slip in between and find it simply absent.
+                behind = (resolved, project, reload, _table_epoch, threading.Event())
+                _table_pending[_loaded_source] = behind[-1]
+                table_progress(datasource_name)[0]("opening")
+            # Woken last, so a reader waiting on the old read finds this
+            # load's own already registered and waits on that instead.
+            for event in stale:
+                event.set()
             _log.debug("%s: loaded", datasource_name)
         except BaseException as exc:
             progress.finish(exc)
             raise
         progress.finish()
+
+    if behind:
+        threading.Thread(
+            target=_load_table_behind, args=(datasource_name, *behind),
+            name=f"table-{datasource_name}", daemon=True).start()
 
     # Warm the description/GMM caches in the background so the first real
     # request after this load doesn't pay for them synchronously.
@@ -1325,8 +1576,9 @@ SPATIAL_INDEX_DIR = "spatial_index_v1"
 _LEGACY_BALL_TREE = "ball_tree.pickle"
 
 
-def _spatial_index_manifest(project, signature):
-    """What a cached index must have been built from to be read back."""
+def _spatial_index_manifest(project, signature, frame):
+    """What a cached index over `frame` must have been built from to be read
+    back."""
     import scipy
 
     from plexora.server.utils import spatial_index
@@ -1340,10 +1592,10 @@ def _spatial_index_manifest(project, signature):
         "y_column": roles.y,
         "z_column": roles.get("z"),
         "t_column": roles.get("t"),
-        "columns": sorted(c for c in datasource.columns
+        "columns": sorted(c for c in frame.columns
                           if c in spatial_index.EXTENT_COLUMNS + spatial_index.SIZE_COLUMNS
                           or c == spatial_index.DEPTH_COLUMN),
-        "rows": int(datasource.height),
+        "rows": int(frame.height),
         "library": "scipy.cKDTree",
         "scipy": scipy.__version__,
     }
@@ -1409,14 +1661,16 @@ def load_ball_tree(datasource_name_name, reload=False):
     global config
     if loaded_scope(datasource_name_name) != _loaded_source:
         load_datasource(datasource_name_name)
+    _await_table(datasource_name_name)
 
     project = _project(datasource_name_name)
+    frame = datasource
     # `datasource is None` is a third way to have nothing to index, alongside
     # the two below: the project HAS a table and its coordinate columns are
     # named, but the node holding it was unreachable when this loaded. Same
     # answer -- no index -- because the alternative is indexing a table that is
     # not there.
-    if datasource is None or not project.has_table or not (project.roles.x and project.roles.y):
+    if frame is None or not project.has_table or not (project.roles.x and project.roles.y):
         # Nothing to index: either there is no feature table at all
         # (image-only project), or one was imported whose coordinate columns
         # nobody has identified yet -- a spatial index over columns we cannot
@@ -1426,41 +1680,55 @@ def load_ball_tree(datasource_name_name, reload=False):
         ball_tree = None
         return
 
+    index = _index_over(datasource_name_name, project, frame, reload=reload)
+    # Only over the table it was built from: a project loaded meanwhile has
+    # its own, and an index of these cells would answer its picks.
+    if datasource is frame:
+        ball_tree = index
+
+
+def _index_over(datasource_name, project, frame, reload=False):
+    """The cell index over `frame`: read back from the project's cache when
+    that is current, else built and cached. None when no cell has a position.
+
+    Assigns nothing, so the thread that reads a table behind the viewer can
+    build one without making it the loaded project's (`_load_table_behind`).
+    """
     from plexora.server.utils.spatial_index import SpatialIndex
 
-    derived = paths.derived_root(datasource_name_name)
+    derived = paths.derived_root(datasource_name)
     try:
         (derived / _LEGACY_BALL_TREE).unlink()
     except OSError:
         pass
     directory = derived / SPATIAL_INDEX_DIR
-    expected = _spatial_index_manifest(project, _ball_tree_signature(project))
+    expected = _spatial_index_manifest(project, _ball_tree_signature(project), frame)
     if not reload:
         cached = _read_cached_index(directory, expected)
         if cached is not None:
-            ball_tree = cached
             _log.info("Spatial index for %s: read from cache (%d cells)",
-                      datasource_name_name, len(cached))
-            return
+                      datasource_name, len(cached))
+            return cached
 
     started = time.perf_counter()
     roles = project.roles
-    columns = set(datasource.columns)
+    columns = set(frame.columns)
     # Reuse the feature table load_datasource already parsed instead of
     # re-reading the (potentially multi-million-row) CSV from disk again.
-    ball_tree = SpatialIndex.build(
-        datasource, x=roles.x, y=roles.y,
+    index = SpatialIndex.build(
+        frame, x=roles.x, y=roles.y,
         z=roles.get("z") if roles.get("z") in columns else None,
         t=roles.get("t") if roles.get("t") in columns else None)
-    if ball_tree is None:
+    if index is None:
         _log.warning("%s: no cell has a finite position in %s/%s; nothing to pick",
-                     datasource_name_name, roles.x, roles.y)
-        return
+                     datasource_name, roles.x, roles.y)
+        return None
     _log.info("Spatial index for %s: built over %d cells%s in %.2f s",
-              datasource_name_name, len(ball_tree),
-              f" (planes from {ball_tree.extent_from})" if ball_tree.extent_from else "",
+              datasource_name, len(index),
+              f" (planes from {index.extent_from})" if index.extent_from else "",
               time.perf_counter() - started)
-    _write_cached_index(directory, expected, ball_tree)
+    _write_cached_index(directory, expected, index)
+    return index
 
 
 def _spatial_index(datasource_name):
@@ -1478,8 +1746,19 @@ def spatial_index(datasource_name):
 
 
 def _ensure_loaded(datasource_name):
-    """Ensure the table and cell index of datasource_name are the loaded ones."""
+    """Ensure the table and cell index of datasource_name are the loaded ones.
+
+    Waits for a table still loading behind the viewer (`_load_table_behind`):
+    everything that calls this reads cells. What only draws the image calls
+    `ensure_loaded`, which does not wait.
+    """
     if loaded_scope(datasource_name) != _loaded_source:
+        load_ball_tree(datasource_name)
+        return
+    _await_table(datasource_name)
+    if loaded_scope(datasource_name) != _loaded_source:
+        # Another project was loaded while this waited, which is what let
+        # the wait end: its table is not the one asked for.
         load_ball_tree(datasource_name)
 
 
@@ -1713,7 +1992,7 @@ def _rows_by_id(frame, ids):
 def get_channel_names(datasource_name, shortnames=True):
     global datasource
     global source
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     key = 'name' if shortnames else 'fullname'
     return [channel[key] for channel in real_channels(datasource_name)]
 
@@ -1944,7 +2223,7 @@ def get_channel_cells(datasource_name, channels):
     global datasource
 
     _ensure_loaded(datasource_name)
-    if not _project(datasource_name).has_table:
+    if not _has_cells(datasource_name):
         return []
 
     if not channels:
@@ -2000,7 +2279,7 @@ def get_all_cells(datasource_name, start_keys, data_type=float, t=None):
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
-    if not _project(datasource_name).has_table:
+    if not _has_cells(datasource_name):
         return np.array([], dtype=np.uint32 if np.issubdtype(data_type, int) else np.float32)
 
     remote = _remote_table()
@@ -2035,7 +2314,7 @@ def save_channel_list(datasource_name, map_channels, active_channels, list_color
     global ball_tree
 
     # Load if not loaded
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     rows = []
     for channel in map_channels:
         channel_name = map_channels[channel]
@@ -2179,19 +2458,51 @@ def _describe_frame(frame):
 
     One column at a time, and never the whole frame at once: `frame` is
     memory-mapped, so pulling a column touches only that column's pages and
-    they are droppable again the moment this loop moves on.
+    they are droppable again the moment a worker moves on.
+
+    A few columns at a time, on threads: the percentile partition and the
+    histogram release the GIL, and this is on the path the viewer waits on
+    before its channel list and every tool can start -- 4.8 s serially for
+    70 columns of 3M cells, 1.4 s on a handful of threads, with the same
+    answers. Peak memory is one filtered column per worker, so the workers
+    are few (`_DESCRIBE_WORKERS`).
     """
     # Read off the schema rather than `frame.select(cs.numeric())`: the names
     # are all this needs, and asking the schema cannot touch a single page.
     numeric = [name for name, dtype in frame.schema.items() if dtype.is_numeric()]
-    return {column: _describe_column(frame[column].to_numpy()) for column in numeric}
+    if len(numeric) < 4 or frame.height < 50_000:
+        return {column: _describe_column(frame[column].to_numpy()) for column in numeric}
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(_DESCRIBE_WORKERS, thread_name_prefix="describe") as pool:
+        described = pool.map(lambda column: _describe_column(frame[column].to_numpy()),
+                             numeric)
+        return dict(zip(numeric, described))
 
 
-def get_datasource_description(datasource_name):
+#: How many columns `_describe_frame` describes at once. Bounded, not the core
+#: count: each worker holds one filtered copy of its column.
+_DESCRIBE_WORKERS = max(1, min(8, (os.cpu_count() or 2) // 2))
+
+
+def get_datasource_description(datasource_name, wait=True):
+    """The `dd` payload: per-column stats and histograms of the cell table.
+
+    `wait=False` is the viewer's boot: while the table is still loading behind
+    the viewer it answers None -- the route sends an image-only project's
+    nothing, and says why -- rather than holding the channel list and every
+    tool until the cells are read. The page asks again when the table lands
+    (views/loadProgress.js -> refreshDataset).
+    """
     global datasource
     global source
     global ball_tree
     global config
+
+    if not wait:
+        ensure_loaded(datasource_name)
+        if table_pending(datasource_name):
+            return None
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
@@ -2201,6 +2512,10 @@ def get_datasource_description(datasource_name):
 
     if not _project(datasource_name).has_table:
         _description_cache[datasource_name] = {}
+        return {}
+    if not _has_cells(datasource_name):
+        # A table that did not load -- a file that moved, a read that failed
+        # behind the viewer. Not cached: the next load may well read it.
         return {}
 
     remote = _remote_table()
@@ -2360,7 +2675,7 @@ def get_channel_gmm(channel_name, datasource_name, view=""):
     Every other request -- a planar image, a plane, a section, no view -- is
     the unchanged path with the unchanged cache key.
     """
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     slab = _slab_view(datasource_name, view)
     cache_key = ((datasource_name, channel_name) if slab is None
                  else (datasource_name, channel_name, slab.stats_key()))
@@ -2640,7 +2955,7 @@ def get_channel_quantization_window(channel_name, datasource_name, window_class=
     full-res pixels legitimately exceeded that artificially low ceiling. The
     true max requires reading full-resolution data at least once.
     """
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     window_class = _window_class(window_class)
     if window_class == "std":
         from plexora.server.volume.windows import std_window
@@ -2747,7 +3062,7 @@ def volume_window_state(channel_name, datasource_name):
     one of which says which window its answer was made with. Everything else
     keeps `get_channel_quantization_window`, which waits for the exact one.
     """
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     cache_key = ('qwindow', datasource_name, channel_name, 'volume')
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
@@ -3020,7 +3335,7 @@ def get_image_channel_stats(channel_name, datasource_name, view=""):
     global zarray
     global config
 
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
     slab = _slab_view(datasource_name, view)
     if slab is not None:
         return _slab_channel_stats(channel_name, datasource_name, slab)
@@ -3581,7 +3896,7 @@ def generate_channel_overview(datasource_name, channel_name, view=None):
     channels, because mean-pooling dilutes the real peaks. Pooled pixels
     against a full-res ceiling is correct; a pooled ceiling is not.
     """
-    _ensure_loaded(datasource_name)
+    ensure_loaded(datasource_name)
 
     remote = _remote_image()
     if remote is not None:
@@ -4880,12 +5195,18 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
         # mask still went to a root this user can write (see
         # paths.derived_root); what cannot be recorded is the pointer to it,
         # so the conversion is redone next time rather than silently half-done.
-        return
+        return False
     with config_transaction():
         cfg = read_config(config_file)
         if datasource_name not in cfg:
-            return  # datasource was deleted while the job was running
+            return False  # datasource was deleted while the job was running
         entry = cfg[datasource_name]
+        if (segmentation_source is not None
+                and str(entry.get('segmentationSource') or '') != str(segmentation_source)):
+            # The mask was removed, replaced or read as an image while this
+            # job was converting it. Writing it back would put a mask on a
+            # sample whose user just took it off.
+            return False
         entry['segmentation'] = segmentation_path
         entry['segmentation_status'] = status
         _record_mask_scale(entry, segmentation_path)
@@ -4898,6 +5219,20 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
                 segmentation_source
             )
         write_config(config_file, cfg)
+    return True
+
+
+def _attached_mask(datasource_name, config_file):
+    """`(source, status, mode)` of the mask a project's registry names now,
+    or None when it names none (or the project has gone)."""
+    try:
+        entry = read_config(config_file).get(datasource_name)
+    except Exception:  # noqa: BLE001 -- an unreadable registry names nothing
+        return None
+    if not entry or not entry.get('segmentationSource'):
+        return None
+    return (str(entry['segmentationSource']), entry.get('segmentation_status'),
+            entry.get('segmentationMode') or segmentation_pyramid.DEFAULT_MODE)
 
 
 
@@ -4995,11 +5330,14 @@ def _staged_reporter(stages, on_change):
 #: which is what made "Still reading the data file" the only feedback a user
 #: ever got out of this path.
 TABLE_STAGES = {
-    "opening": (0, 5, "Opening the data file"),
-    "metadata": (5, 25, "Reading cell metadata"),
-    "preparing": (25, 80, "Loading marker values"),
-    "loading": (80, 95, "Indexing cells"),
-    "finalizing": (95, 99, "Finishing up"),
+    "opening": (0, 3, "Opening the data file"),
+    "metadata": (3, 8, "Reading metadata"),
+    "subset": (8, 15, "Mapping cells to images"),
+    "coordinates": (15, 22, "Detecting coordinates"),
+    "identifiers": (22, 30, "Reading cell identifiers"),
+    "preparing": (30, 85, "Reading marker values"),
+    "loading": (85, 97, "Building the spatial index"),
+    "finalizing": (97, 99, "Finalizing workspace"),
 }
 
 _table_jobs = {}
@@ -5040,12 +5378,13 @@ class LoadProgress:
         self.project = None
         self.timer = None
 
-    def begin(self, project):
+    def begin(self, project, table=True):
         from plexora.telemetry.dataset import LoadTimer
 
         self.project = project
         self.timer = LoadTimer()
-        self.steps = (["table"] if project.has_table else []) + ["segmentation", "image"]
+        self.steps = (["table"] if project.has_table and table else []) + [
+            "segmentation", "image"]
         sources = (getattr(project.image, "src", None),
                    getattr(project.dataset, "src", None) if project.has_table else None)
         self.remote = any(providers.is_remote_locator(src) for src in sources if src)
@@ -5124,8 +5463,9 @@ def get_load_status(datasource_name):
     """
     record = _load_jobs.get(datasource_name)
     if record is None:
-        return {"status": "ready", "progress": 100, "stage": "ready",
-                "stage_label": "Ready", "error": None}
+        answer = {"status": "ready", "progress": 100, "stage": "ready",
+                  "stage_label": "Ready", "error": None}
+        return _with_table_behind(datasource_name, answer)
     if record.get("status") != "pending":
         answer = {k: v for k, v in record.items() if k != "baseline"}
         if record.get("remote"):
@@ -5133,7 +5473,7 @@ def get_load_status(datasource_name):
 
             answer["downloaded_bytes"] = max(
                 0, remote_store.bytes_fetched() - record.get("baseline", 0))
-        return answer
+        return _with_table_behind(datasource_name, answer)
     low, high = record.get("band", (0, 0))
     progress = record.get("progress", 0)
     message = record.get("stage_label", "")
@@ -5158,6 +5498,24 @@ def get_load_status(datasource_name):
 
         answer["downloaded_bytes"] = max(
             0, remote_store.bytes_fetched() - record.get("baseline", 0))
+    # A reload of an open project is pending too, and a page following its
+    # cells must not read their absence as their arrival.
+    return _with_table_behind(datasource_name, answer)
+
+
+def _with_table_behind(datasource_name, answer):
+    """`answer` plus `table` -- the table's own reading -- while it is still
+    loading behind an open viewer (the project is open, its cells are not),
+    or why it never landed."""
+    scope = loaded_scope(datasource_name)
+    if scope in _table_pending:
+        answer = dict(answer)
+        answer["table"] = dict(get_table_job_status(datasource_name),
+                               status="pending")
+    elif scope in _table_failed and _loaded_source == scope:
+        answer = dict(answer)
+        answer["table"] = {"status": "error", "progress": 100, "stage": "failed",
+                           "stage_label": "Failed", "error": _table_failed[scope]}
     return answer
 
 
@@ -5279,6 +5637,22 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
         "message": work,
     }
 
+    #: The mask that replaced this one while it converted, still waiting for
+    #: a conversion of its own -- the replacement's job was refused by the
+    #: lock above ("already running"), so this one starts it on the way out.
+    follow_up = []
+
+    def _stale():
+        """Whether the project no longer names this file as its mask -- it
+        was removed, replaced, or read as an image while this converted. The
+        derived file stays (a cache); the record is not this job's to write."""
+        attached = _attached_mask(datasource_name, config_file)
+        if attached is not None and attached[0] == str(label_file):
+            return False
+        if attached is not None and attached[1] == "pending":
+            follow_up.append(attached)
+        return True
+
     def _run():
         def on_change(percent, key, message):
             record = _segmentation_jobs.get(datasource_name)
@@ -5303,6 +5677,21 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 label_geometry=label_geometry,
                 image_levels=image_levels,
             )
+            # The record first, then the job's own "ready": a mask removed or
+            # replaced between the check and the write keeps the patch from
+            # landing (it compares the record's source), and a "ready" written
+            # before it would go on serving the mask that was taken off.
+            # A patch that did not land is asked about again: a shared
+            # registry this user cannot write refuses it too, and that mask
+            # is still this project's to serve.
+            stale = _stale()
+            if not stale and not _patch_config_segmentation(
+                    datasource_name, result["segmentation"], "ready",
+                    segmentation_source=label_file, config_file=config_file):
+                stale = _stale()
+            if stale:
+                _segmentation_jobs.pop(datasource_name, None)
+                return
             _segmentation_jobs[datasource_name] = {
                 "status": "ready",
                 "error": None,
@@ -5317,10 +5706,6 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 "stage_label": "Ready",
                 "message": "Segmentation mask ready",
             }
-            _patch_config_segmentation(
-                datasource_name, result["segmentation"], "ready",
-                segmentation_source=label_file, config_file=config_file,
-            )
             # Reloaded only if this is still the project being viewed AND the
             # registry it was started against is still the one in force. This
             # job outlives a great deal -- a delete, a switch to another
@@ -5340,6 +5725,9 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                         and Project.find(datasource_name) is not None):
                     load_datasource(datasource_name, reload=True)
         except Exception as exc:
+            if _stale():
+                _segmentation_jobs.pop(datasource_name, None)
+                return
             _segmentation_jobs[datasource_name] = {
                 "status": "error",
                 "error": str(exc),
@@ -5354,6 +5742,12 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
             )
         finally:
             lock.release()
+            # Not `source`: that is the module's loaded-project global, which
+            # the completion handler above compares against, and a loop
+            # variable of the same name would make it a local of `_run`.
+            for replacement, _status, wanted_mode in follow_up:
+                start_segmentation_job(datasource_name, replacement,
+                                       data_directory, wanted_mode)
 
     # Named so a test teardown (conftest `_finish_layer_builds`) can find and
     # join it while PLEXORA_DATA_PATH still points at that test's root.

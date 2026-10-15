@@ -29,6 +29,11 @@
  * had just supplied a mask for -- and the mask only appeared minutes later, if
  * they thought to toggle it.
  */
+
+//: A mask file that is cell outlines as polygons -- a boundary table or
+//: GeoJSON (server/utils/boundary_mask.py) -- rather than a raster of ids.
+const POLYGON_MASK = /\.(parquet|geojson|json)$/i;
+
 class ViewerControls {
 
     //: Every representation the control offers, in the order it shows them.
@@ -131,6 +136,8 @@ class ViewerControls {
 
         this.control = control;
         this.cta = document.querySelector('#cell_data_cta');
+        this.maskMenu = document.querySelector('#cell_mask_menu');
+        this.bindMaskMenu();
         control.querySelectorAll('[data-cell-mode]').forEach((button) => {
             this.buttons.set(button.dataset.cellMode, button);
         });
@@ -369,52 +376,52 @@ class ViewerControls {
     }
 
     /**
-     * @function bindCta - "Add Seg Mask" asks here rather than elsewhere.
+     * @function bindCta - "Add Seg Mask" / "Add Data" opens the Import Sample
+     * dialog, scoped to this sample.
      *
      * The link's href goes to the edit page and stays as the no-JS fallback,
-     * but following it rebuilds the entire viewer -- OpenSeadragon, the tile
-     * pyramid, every channel -- to answer one question about one file, and
-     * drops the user on a form about the whole project. The requirements modal
-     * is the thing that asks for exactly one input and nothing else, and it
-     * already knows how; it was simply unreachable from here because no plugin
-     * was in the question.
+     * but following it rebuilds the entire viewer to answer one question about
+     * one file.
      *
-     * Core names the keys it wants and `PlexoraRequirements.ask` puts the same
-     * form a tool would have, with the same fields.
+     * It used to open the requirements modal with `segmentation` and `table`
+     * as two REQUIRED fields, so somebody adding only a table was told "Still
+     * needed: Segmentation mask." with Cancel as the only way out -- and its
+     * path fields took whatever was typed into them as what it was typed AS,
+     * so an image put in the mask box became a mask. The import dialog is the
+     * one place a file is read for what it is: one compact row (machine, path,
+     * Browse -- a file or a folder), detection, a role menu on every row that
+     * could be read another way, and nothing required. The intent only says
+     * which slot was pressed; it settles a file whose pixels could be either.
      */
     bindCta() {
         if (!this.cta) return;
-        this.cta.addEventListener("click", async (event) => {
-            const ask = window.PlexoraRequirements?.ask;
+        this.cta.addEventListener("click", (event) => {
+            const importer = window.PlexoraImportSample;
             // The one global that names this project on every viewer page, and
             // what main.js itself reads. The control is handed a config entry,
             // which is keyed BY the name and does not carry it.
             const datasource = window.flaskVariables?.datasource;
-            // No modal available, or nothing to address it to: let the link be
-            // a link. The edit page answers the same questions, slower.
-            if (!ask || !datasource) return;
+            // No dialog available, or nothing to address it to: let the link
+            // be a link. The edit page takes the same files, slower.
+            if (!importer?.open || !datasource) return;
             event.preventDefault();
-            const keys = [];
-            if (!this.hasMask()) keys.push("segmentation");
-            if (!this.hasTable()) keys.push("table");
-            if (!keys.length) return;
-            if (!await ask(datasource, keys)) return;
-            // The answers landed on the project; the page is still holding the
-            // record it was rendered from. Re-read it before repainting, or the
-            // control decides what to offer from the state it just changed.
-            const fresh = await window.__plexora?.refreshDataset?.();
-            // A mask is the one answer that cannot be taken on in place:
-            // attaching one inserts the "Area" placeholder at imageData[0] and
-            // the label layer is loaded from that position, so every channel
-            // index this page holds has just moved. Reloaded rather than
-            // patched -- the user asked for a mask one second ago, so a reload
-            // is the expected consequence rather than a surprise, and drawing a
-            // marker channel as the segmentation is not a trade worth making.
-            if (fresh?.maskAttached) return window.location.reload();
-            this.refreshAvailability();
-            // The conversion runs in the background, so the thing to start is
-            // the wait for it -- that is what draws the outlines when it lands.
-            window.__plexora?.watchSegmentation?.();
+            const wantsMask = !this.hasMask();
+            const wantsTable = !this.hasTable();
+            if (!wantsMask && !wantsTable) return;
+            importer.open({
+                sample: datasource,
+                // Both missing: no intent. What the file is decides, and the
+                // card then offers whichever of the two is still missing.
+                intent: wantsMask && !wantsTable ? "mask"
+                    : wantsTable && !wantsMask ? "table" : "cells",
+                // Called only when the layers were taken on in place. A mask
+                // reloads the page instead (it shifts every channel index);
+                // the dialog says so and does it.
+                onAdded: () => {
+                    this.refreshAvailability();
+                    window.__plexora?.watchSegmentation?.();
+                },
+            });
         });
     }
 
@@ -825,7 +832,17 @@ class ViewerControls {
     }
 
     canDrawCentroids() {
-        return PlexoraDataset.hasCentroids(this.config);
+        return PlexoraDataset.hasCentroids(this.config) && !this.cellsPending();
+    }
+
+    /**
+     * Whether the project's cells are still being read behind the viewer
+     * (views/loadProgress.js sets it while the status carries `table`). The
+     * table IS there -- it is a resource the project has, about to work -- so
+     * Centroids stays on the row, disabled, saying so.
+     */
+    cellsPending() {
+        return Boolean(window.__plexora?.cellsPending);
     }
 
     availability() {
@@ -888,6 +905,9 @@ class ViewerControls {
      */
     unusableReason(mode) {
         if (mode === "centroids") {
+            if (this.hasTable() && this.cellsPending()) {
+                return "The cell table is still being prepared";
+            }
             return this.hasTable() && !this.canDrawCentroids()
                 ? "This project's table has no cell coordinates yet" : null;
         }
@@ -1006,6 +1026,76 @@ class ViewerControls {
         this.control.hidden = !anything;
         this.paintCta(!anything);
         this.paintOverlayHint();
+        if (this.maskMenu) this.maskMenu.hidden = !this.hasMask();
+    }
+
+    /**
+     * @function bindMaskMenu - the mask's `⋮`: replace it, or read the file as
+     * an image layer instead.
+     *
+     * The second is the after-import half of the import dialog's role menu.
+     * Detection reads pixels and can still be wrong, and the only way back
+     * used to be removing the mask from the edit page and adding the file
+     * again -- which re-ran the same detection. `/import/reclassify` detaches
+     * it and adds it back as an image layer in one step, then the page reloads
+     * (the mask's "Area" placeholder leaves the channel list).
+     */
+    bindMaskMenu() {
+        const button = this.maskMenu;
+        if (!button) return;
+        const datasource = () => window.flaskVariables?.datasource;
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const menu = window.PlexoraMenu;
+            if (!menu || !datasource()) return;
+            // Cell outlines stated as polygons have no pixels to draw: the
+            // server refuses them too (import_sample.reclassify).
+            const outlines = POLYGON_MASK.test(String(this.config?.segmentationSource || ""));
+            menu.open(button, [
+                {
+                    label: "Replace segmentation mask…",
+                    title: "Choose another mask file or folder for this sample",
+                    onSelect: () => window.PlexoraImportSample?.open({
+                        sample: datasource(), intent: "mask",
+                        onAdded: () => this.refreshAvailability(),
+                    }),
+                },
+                {
+                    label: "Use as an image layer",
+                    title: outlines
+                        ? "These are cell outlines (polygons), not an image"
+                        : "The file was detected as a mask but is an image",
+                    disabled: outlines || this.maskPending(),
+                    onSelect: () => this.reclassifyMask(datasource()),
+                },
+            ]);
+        });
+    }
+
+    async reclassifyMask(datasource) {
+        const sure = await window.PlexoraConfirm?.ask?.({
+            title: "Use the mask as an image layer?",
+            body: "The file stops being this sample's segmentation and is drawn "
+                + "as an image layer instead. Outlines and anything drawn from "
+                + "the mask go with it. Nothing is deleted, and the file can be "
+                + "made the mask again from its layer's menu.",
+            confirm: "Use as image layer",
+        });
+        if (sure === false) return;
+        const task = window.PlexoraStatus?.begin?.("Changing the mask");
+        try {
+            const response = await fetch(plexoraUrl("import/reclassify"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({sample: datasource, layer: "__mask__", as: "image"}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Could not change it.");
+            task?.done?.();
+            window.location.reload();
+        } catch (error) {
+            task?.fail?.(error.message || "Could not change it.");
+        }
     }
 
     /**

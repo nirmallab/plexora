@@ -238,8 +238,10 @@ def test_a_pick_with_more_than_an_image_in_it_is_no_longer_refused(empty,
     rng = np.random.default_rng(0)
     tifffile.imwrite(run / "slide.ome.tif",
                      rng.integers(0, 3000, (2, 128, 128)).astype(np.uint16))
-    tifffile.imwrite(run / "slide_mask.tif",
-                     (np.arange(128 * 128).reshape(128, 128) % 90).astype(np.uint32))
+    labels = np.zeros((128, 128), dtype=np.uint32)
+    for index in range(1, 6):
+        labels[index * 18:index * 18 + 12, index * 18:index * 18 + 12] = index
+    tifffile.imwrite(run / "slide_mask.tif", labels)
     (run / "slide.csv").write_text(
         "CellID,X_centroid,Y_centroid,DNA\n1,10,10,5\n2,20,20,7\n",
         encoding="utf-8")

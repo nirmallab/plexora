@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261013_pane_status">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261014_import_progressive">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -391,6 +391,17 @@
                        href="{{ data.base_url }}/edit_config/{{ data.datasource|urlencode }}"
                        title="Opens this project's edit page, where a mask or a data file is attached"
                        hidden></a>
+                    {# The mask, once there is one: replace it, or read the
+                       file as an image layer instead -- detection can be
+                       wrong, and this is where it is put right after import
+                       without removing anything (import_sample.reclassify).
+                       Shown by viewerControls while the project has a mask. #}
+                    <button type="button" id="cell_mask_menu" class="cell-mask-menu" hidden
+                            aria-haspopup="menu"
+                            title="Segmentation mask: replace it, or use it as an image layer"
+                            aria-label="Segmentation mask options">
+                        <span class="fas fa-ellipsis-vertical" aria-hidden="true"></span>
+                    </button>
                     {# HD reads as one more button in the row rather than a
                        stray checkbox beside a segmented control. The input is
                        still a real checkbox -- everything that reads
@@ -520,7 +531,7 @@
    the mask pyramid here, the 3-D mask's cell surfaces below. #}
 <script src="{{ data.base_url }}/client/src/js/views/jobWait.js?v=20261013_mask_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20261013_mask_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/loadProgress.js?v=20260924_load_progress" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/loadProgress.js?v=20261014_import_progressive" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
    unconditionally: it does nothing at all when its sliders are absent, and
    gating the tag on image_kind would put a second thing in this page that has

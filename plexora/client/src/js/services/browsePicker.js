@@ -8,19 +8,28 @@
  * appear on, so every caller needs an `onUnavailable` fallback (e.g. a manual
  * text input) for the headless/remote-server case.
  *
- * Three answers come back from that route, and the difference between the last
- * two is the whole reason this file is more than a fetch:
+ * Three answers come back from that route:
  *
  *   a path      the dialog opened and somebody chose something (or cancelled,
  *               which is a null path and not a failure)
  *   "kinds"     there IS a desktop here, but no single dialog takes a file AND
- *               a folder -- every OS but macOS. `chooseKind` asks which, and
- *               the answer opens that machine's own native dialog.
+ *               a folder -- every OS but macOS.
  *   "list"      there is no desktop at all -- a compute node, a container,
- *               notebook mode -- and pathPicker.js's in-app listing stands in.
+ *               notebook mode.
  *
- * Collapsing "kinds" into "list" is what quietly replaced the Windows and
- * Linux system file browsers with a substitute for one.
+ * **One Browse takes either kind, on every machine.** A field asking for
+ * "your image" or "your mask" does not ask whether it is a file or a folder:
+ * that is a fact about the format (an OME-Zarr store is a folder, an OME-TIFF
+ * a file), and a File | Folder pair in front of every Browse made the user
+ * answer it. So mode "any" opens the one panel that takes both -- macOS's own
+ * (`native_dialog._JXA_HYBRID_SCRIPT`), and everywhere else pathPicker.js's
+ * listing, which selects a file, a `.zarr` store in one click, or the folder
+ * that is open ("Use this folder"). "kinds" and "list" therefore both end in
+ * the listing for mode "any"; a field asking for exactly one kind still gets
+ * that machine's own single-kind dialog.
+ *
+ * `chooseKind` survives only for a page that loads this file without the
+ * listing -- no page in the app does -- so a Browse there is never a dead end.
  */
 
 /**
@@ -46,12 +55,8 @@
  * the same answer as cancelling the dialog it would have opened, so callers
  * treat the two identically.
  *
- * Increasingly the road not taken: `applyCapability` puts these same halves ON
- * the page wherever there is a control to replace, so the question is answered
- * before the click rather than after it. What still arrives here is the case
- * that could not be asked in advance -- the capability probe failed, or the
- * caller passed no control to swap -- and a popup nobody expected is the worst
- * of the three, which is why it is the fallback and not the design.
+ * The road not taken: one Browse takes either kind (see the file header),
+ * so this is reached only on a page that has no pathPicker.js.
  *
  * Nothing is cached between clicks. The capability is a fact about the machine
  * on the other end of `node`, which the Local/Remote switch can change under a
@@ -370,7 +375,12 @@ async function browseForPath({mode = "file", filter = "any", node = null,
             // both questions in one panel, so this asks which and then opens
             // the genuine article. Falls through to the listing when there is
             // no button to hang the menu under.
-            if (result.fallback === "kinds" && anchorEl) {
+            //
+            // Mode "any" goes to the listing instead, which takes either kind
+            // with no question first -- see the file header. The menu is left
+            // for a page with no listing to offer.
+            if (result.fallback === "kinds" && anchorEl
+                    && !(mode === "any" && window.PlexoraPathPicker)) {
                 const kind = await chooseKind(anchorEl, examples || filter);
                 // Dismissed. The same answer as cancelling the dialog this
                 // would have opened, and it gets the same silence -- an
@@ -401,10 +411,14 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                     // correcting a mistyped filename does not start over at
                     // home -- which on a cluster is nowhere near the data.
                     start,
-                    title: {
-                        directory: `Choose a folder on ${node || "the server"}`,
-                        any: `Choose a file or folder on ${node || "the server"}`,
-                    }[mode] || `Choose a file on ${node || "the server"}`,
+                    // "On the server" only where that is somewhere else: a
+                    // desktop answering "kinds" IS the machine in front of
+                    // the user, and the listing stands in for its dialog.
+                    title: ({
+                        directory: "Choose a folder",
+                        any: "Choose a file or folder",
+                    }[mode] || "Choose a file") + ((node || result.fallback !== "kinds")
+                        ? ` on ${node || "the server"}` : ""),
                 });
                 if (picked && onPicked) onPicked(picked);
                 return;
@@ -424,14 +438,37 @@ async function browseForPath({mode = "file", filter = "any", node = null,
 
 /**
  * The desktop app's native dialog, parented to its window. Same contract as
- * the server's: one path to `onPicked`, silence for a cancel. "any" asks
- * which kind first, exactly as a Windows or Linux browser tab does.
+ * the server's: one path to `onPicked`, silence for a cancel.
+ *
+ * The shell's dialogs take one kind at a time on every platform, so mode
+ * "any" -- a file OR a folder, no question first -- goes where the browser
+ * tab's Browse goes: on a Mac, the server's own file-or-folder panel (the
+ * server runs on this same machine); everywhere else, the listing.
  */
 async function browseInShell({mode, filter, start, anchorEl, examples,
                               onPicked, onUnavailable}) {
     try {
         let kind = mode;
         if (kind === "any") {
+            if (await serverDialogs() === "hybrid") {
+                const response = await fetch(plexoraUrl("browse_path"), {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({mode: "any", filter}),
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    if (result.path && onPicked) onPicked(result.path);
+                    return;
+                }
+            }
+            if (window.PlexoraPathPicker) {
+                const picked = await window.PlexoraPathPicker.pick({
+                    mode: "any", filter, start,
+                    title: "Choose a file or folder"});
+                if (picked && onPicked) onPicked(picked);
+                return;
+            }
             kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
             if (!kind) return;
         }
@@ -445,12 +482,31 @@ async function browseInShell({mode, filter, start, anchorEl, examples,
 }
 
 /**
+ * What the server's own machine can put on screen, asked without the desktop
+ * shortcut `browseCapability` takes: the desktop app needs to know whether the
+ * machine under it is a Mac, whose panel takes a file or a folder in one go.
+ */
+function serverDialogs() {
+    if (!capabilityCache.has("@server")) {
+        capabilityCache.set("@server", fetch(plexoraUrl("browse_capability"), {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({}),
+        }).then((response) => response.json())
+          .then((result) => result.dialogs || "none")
+          .catch(() => { capabilityCache.delete("@server"); return "none"; }));
+    }
+    return capabilityCache.get("@server");
+}
+
+/**
  * @function attachBrowseButton - wires a "Browse..." button to fill a text
  * input with the picked path, dispatching an `input` event afterward so any
  * existing onkeyup/oninput live-validation on that field runs unchanged.
  *
- * On a machine whose native dialogs are single-kind, the button is REPLACED by
- * the File/Folder control rather than opening it -- see `applyCapability`.
+ * One button whatever the machine: mode "any" opens a panel that takes a file
+ * or a folder (see the file header), so there is no File | Folder pair to
+ * swap in for it.
  */
 function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
                                                 node = null,
@@ -499,64 +555,4 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
     }
 
     buttonEl.addEventListener("click", () => go(mode));
-
-    // Only mode "any" has two answers to offer. A field that wants a file, or
-    // a folder, has nothing to split -- one button already says which.
-    if (mode === "any") {
-        applyCapability(buttonEl, inputEl, examples || filter, nodeNow, go);
-    }
-}
-
-/**
- * @function applyCapability - decides which control this field gets, and swaps
- * it in place when the answer changes.
- *
- * A machine with one dialog that takes either kind (macOS) keeps the single
- * Browse button: two halves there would invent a decision its OS does not
- * need. A machine with two single-kind dialogs -- Windows, Linux -- gets the
- * File/Folder control INSTEAD of the button, because on those the question is
- * unavoidable and asking it up front is one click rather than two.
- *
- * A machine with no desktop keeps the single button too: both halves would
- * open the same in-app listing, which already takes either kind.
- *
- * Re-run on `change`, which is what the Local/Remote switch fires. That switch
- * can point a mounted field at a different computer, and the control has to
- * follow it -- a laptop's File/Folder pair left over on a field now aimed at a
- * cluster would offer two routes to the same listing.
- */
-function applyCapability(buttonEl, inputEl, examples, nodeNow, go) {
-    let split = null;
-    let showing = null;
-
-    function render(kind) {
-        if (kind === showing) return;
-        showing = kind;
-        if (kind === "kinds") {
-            if (!split) {
-                split = buildSplitControl(examples, go);
-                split.addEventListener("keydown", (event) => {
-                    stepBetweenHalves(split, event);
-                });
-            }
-            if (!split.isConnected) buttonEl.after(split);
-            buttonEl.hidden = true;
-        } else {
-            if (split && split.isConnected) split.remove();
-            buttonEl.hidden = false;
-        }
-    }
-
-    function ask() {
-        const at = nodeNow();
-        // The button stands until an answer arrives. It is the control that
-        // works everywhere -- a field that swapped to halves and back on a slow
-        // answer would move under the pointer.
-        browseCapability(at).then((kind) => {
-            if (nodeNow() === at) render(kind);
-        }).catch(() => render(null));
-    }
-
-    ask();
-    inputEl.addEventListener("change", ask);
 }

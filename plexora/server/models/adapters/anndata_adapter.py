@@ -397,9 +397,13 @@ class _LazyObs:
         one, encoded as a group), where `read_elem` is the only reader that
         understands the encoding.
         """
-        taken = _node_take(self._node[self._index_key], row_indices)
+        node = self._node[self._index_key]
+        taken = _node_take(node, row_indices)
         if taken is None:
-            taken = _take(_read_elem(self._node[self._index_key]), row_indices)
+            taken = _take(_read_elem(node), row_indices)
+        elif _encoding_of(node) == "nullable-string-array":
+            # Already text, decoded by `_node_take`.
+            return np.asarray(taken, dtype=object)
         return _as_text(np.asarray(taken))
 
     @property
@@ -457,7 +461,7 @@ def _node_take(node, row_indices):
     import pandas as pd
 
     def rows(child):
-        return child[row_indices] if row_indices is not None else child[:]
+        return _rows(child, row_indices)
 
     if getattr(node, "shape", None) is not None:
         return pd.Series(rows(node))
@@ -486,9 +490,55 @@ def _node_take(node, row_indices):
             if missing.any():
                 taken = taken.copy()
                 taken[missing] = None
-        return pd.Series([None if value is None else _text(value) for value in taken]
-                         if encoding == "nullable-string-array" else taken)
+        if encoding == "nullable-string-array":
+            # Decoded here, once: `index_take` used to decode the same three
+            # million names a second time (`_as_text`), each through a
+            # function call. And kept as objects: a bare `pd.Series` of str
+            # converts them all to Arrow strings, which the caller converts
+            # straight back -- half a second at 3M names, for nothing.
+            return pd.Series(_decoded(taken), dtype=object)
+        return pd.Series(taken)
     return None
+
+
+#: How far apart the first and last of the wanted rows may be, as a multiple
+#: of how many there are, for one slab read and a take in memory to beat
+#: HDF5's point selection -- which reads 250k contiguous coordinates in
+#: 76 ms where a slab takes under one.
+_SLAB_SPREAD = 4
+
+
+def _rows(child, row_indices):
+    """`child[row_indices]` for an on-disk array, read the cheap way.
+
+    h5py's point selection is slow per element, and the rows a subset keeps
+    are almost always one contiguous block (anndata writes a cohort image by
+    image) or close to it. So a contiguous run is one slab, and a sparse one
+    that does not spread too far is a slab plus a take in memory. Only a
+    genuinely scattered selection pays for point selection.
+    """
+    if row_indices is None:
+        return child[:]
+    wanted = np.asarray(row_indices)
+    if wanted.size == 0:
+        return child[0:0]
+    first, last = int(wanted[0]), int(wanted[-1]) + 1
+    span = last - first
+    if span == wanted.size and (wanted.size < 2 or bool(np.all(np.diff(wanted) == 1))):
+        return child[first:last]
+    if span <= _SLAB_SPREAD * wanted.size and bool(np.all(np.diff(wanted) > 0)):
+        return np.asarray(child[first:last])[wanted - first]
+    return child[wanted]
+
+
+def _decoded(values) -> np.ndarray:
+    """An object array of `str`, decoding HDF5's bytes in one pass.
+
+    `None` stays None. Already-decoded text (zarr hands back `str`) is passed
+    through untouched -- `_as_text` relies on that to make a second call free.
+    """
+    return np.asarray([value.decode() if type(value) is bytes else value
+                       for value in values], dtype=object)
 
 
 def _text(value):
@@ -502,7 +552,8 @@ def _as_text(values) -> np.ndarray:
     h5py hands back `bytes` for a variable-length string dataset where zarr
     hands back `str`; `str(b"c0")` is "b'c0'", so the decode is not optional.
     """
-    return np.asarray([_text(value) for value in values], dtype=object)
+    return np.asarray([value if type(value) is str else _text(value)
+                       for value in values], dtype=object)
 
 
 def _string_equals(column, value) -> np.ndarray:
@@ -685,20 +736,27 @@ class AnnDataAdapter:
 
     # -- planning: everything that needs no matrix read ---------------------
 
-    def plan(self) -> TablePlan:
+    def plan(self, stage=None) -> TablePlan:
         """See TablePlan. Reads obs and var; never opens the matrix.
 
         This is where every read-spec error is raised, which is what lets a
         route validate a user's answer -- and restore the previous project when
         it is wrong -- in milliseconds rather than behind a full file read.
+
+        `stage` (data_model.TABLE_STAGES) is told which part it is in, so the
+        viewer can say "Mapping cells to images" rather than one word for all
+        of it.
         """
+        say = stage or (lambda key: None)
         with self._open_group() as group:
             obs = _LazyObs(group)
+            say("subset")
             row_indices = self._plan_rows(obs)
             n_rows = int(len(row_indices) if row_indices is not None else obs.n_rows)
             if n_rows == 0:
                 raise ValueError("Resolved AnnData subset has zero observations")
 
+            say("coordinates")
             x_values, y_values = self._resolve_coordinates(group, obs, row_indices)
             # A cell with a NaN position is kept and simply not drawn -- the
             # same as a CSV row with an empty x (data_model.load_ball_tree).
@@ -710,6 +768,7 @@ class AnnDataAdapter:
                                  "values -- no cell has a position")
 
             names, source, obs_values = self._plan_features(group, obs, row_indices)
+            say("identifiers")
             id_field_name, id_values = self._resolve_identifier(obs, row_indices)
 
             names = _deduplicate_names(names)
@@ -998,7 +1057,7 @@ class AnnDataAdapter:
         """
         if stage is not None:
             stage("metadata")
-        plan = self.plan()
+        plan = self.plan(stage=stage)
         if self._is_wide(plan):
             return self._narrow_table(plan)
         if stage is not None:

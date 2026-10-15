@@ -225,6 +225,26 @@ def import_layers_route():
         return jsonify(error=str(exc)), 400
 
 
+@app.route('/import/reclassify', methods=['POST'])
+@_json_errors
+def import_reclassify_route():
+    """Read one of a sample's files as the other thing, in place: the mask as
+    an image layer, or an image layer as the mask. See
+    `import_sample.reclassify`."""
+    from plexora.server.models import import_sample as importer
+
+    payload = request.get_json(silent=True) or {}
+    sample = (payload.get('sample') or '').strip()
+    layer = (payload.get('layer') or '').strip()
+    target = (payload.get('as') or '').strip()
+    if not sample or not layer:
+        return jsonify(error="sample and layer are required"), 400
+    try:
+        return jsonify(importer.reclassify(sample, layer, target))
+    except (importer.ImportError_, ValueError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
 # --------------------------------------------------------------------------
 # What a sample is still preparing
 # --------------------------------------------------------------------------
@@ -349,18 +369,41 @@ def inspect_data():
     # by side, and picking X for the user silently decides what every marker
     # histogram in the app is a histogram of.
     result["layers"] = list(inspection.get("layers") or [])
-    result["ambiguous"] = _ambiguous_view(inspection, proposal)
+    result["ambiguous"] = _ambiguous_view(inspection, proposal,
+                                          payload.get('datasource'))
     return jsonify(result)
 
 
-def _ambiguous_view(inspection, proposal):
+def _ambiguous_view(inspection, proposal, datasource=None):
+    """The subset picker's columns and values -- and, for a project whose
+    image is known, the value that names it (`suggested`), which the picker
+    preselects: twenty identifiers and "Choose an image…" was a lookup the
+    user had to do by hand every time, for an answer the file name gave."""
     columns = inspection.get("obs_columns") or []
-    return [
-        {"column": column,
-         "values": next((c.get("values") or [] for c in columns
-                         if c.get("name") == column), [])}
-        for column in proposal.get("ambiguous") or []
-    ]
+    names = _project_image_names(datasource)
+    view = []
+    for column in proposal.get("ambiguous") or []:
+        values = next((c.get("values") or [] for c in columns
+                       if c.get("name") == column), [])
+        entry = {"column": column, "values": values}
+        if names and values:
+            from plexora.server.models.import_proposal import subset_match
+
+            entry["suggested"] = subset_match(values, names)
+        view.append(entry)
+    return view
+
+
+def _project_image_names(datasource):
+    """What a project's image is called, every way it says so, or []."""
+    if not datasource:
+        return []
+    from plexora.server.models.import_proposal import _image_names
+
+    project = Project.find(str(datasource))
+    if project is None:
+        return []
+    return _image_names(project.image.src, project.name)
 
 
 def _inspect_on_node(located, chosen_table):
@@ -584,6 +627,13 @@ def attach_segmentation(name, mask_path, mode=None, transform=None):
         )
 
     updated = Project.mutate(name, _apply)
+    if not mask_path:
+        # A finished job's record is what `/get_segmentation_status` answers
+        # from first; left behind, it would hand the viewer the mask that was
+        # just taken off. A running one finds itself stale and stops writing.
+        record = data_model._segmentation_jobs.get(name)
+        if record is not None and record.get("status") != "pending":
+            data_model._segmentation_jobs.pop(name, None)
     if updated is not None and pending:
         data_model.start_segmentation_job(
             name, pending, dataset_dir, fields["segmentationMode"]

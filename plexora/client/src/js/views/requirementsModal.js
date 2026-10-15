@@ -148,6 +148,7 @@ window.PlexoraRequirements = (function () {
         // appears, rather than only after the path is edited.
         const known = (needs && needs.data) || null;
         controls.data = window.PlexoraDataSourceField.mount(mount, {
+            datasource: window.flaskVariables?.datasource || null,
             value: known && known.src,
             table: known && known.table,
             inspect: Boolean(known && (known.unresolved || []).length),
@@ -576,14 +577,31 @@ window.PlexoraRequirements = (function () {
                     // Naming a data file makes this save read that file, which
                     // on a multi-image table is the longest thing this dialog
                     // ever does. Show the stages over the form rather than a
-                    // disabled button and nothing else.
+                    // disabled button and nothing else -- and offer to stop
+                    // watching: the save runs on, the navbar chip follows it,
+                    // and the page takes the cells on when they land.
                     const body = dialog.querySelector(".requirements-body");
-                    const response = payload.data && window.PlexoraTableProgress
+                    let backgrounded = false;
+                    const work = payload.data ? send() : null;
+                    const response = work && window.PlexoraTableProgress
                         ? await window.PlexoraTableProgress.watch({
-                            datasource, work: send(), mount: body,
+                            datasource, work, mount: body,
                             title: "Preparing this project’s cells",
+                            onBackground: () => {
+                                backgrounded = true;
+                                task?.done();
+                                window.PlexoraLoadProgress?.follow?.(datasource, work.then(
+                                    async (reply) => {
+                                        const said = await reply.clone().json().catch(() => ({}));
+                                        return Boolean(reply.ok && said.success);
+                                    }, () => false));
+                                // "Not now" to whatever asked: the tool opens
+                                // when somebody opens it again, with its cells.
+                                close(false);
+                            },
                         })
-                        : await send();
+                        : await (work || send());
+                    if (backgrounded) return;
                     const result = await response.json();
                     if (!response.ok || !result.success) {
                         throw new Error(result.error || "Could not save");

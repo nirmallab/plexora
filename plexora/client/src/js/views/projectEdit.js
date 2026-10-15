@@ -366,6 +366,7 @@
         const dataMount = document.getElementById("edit_data_field");
         const dataField = dataMount && window.PlexoraDataSourceField.mount(dataMount, {
             id: "edit_data",
+            datasource: project.name || null,
             value: project.data?.src || "",
             // The table already chosen inside a store, and -- when nothing has
             // been chosen -- an inspection on mount so the picker is on screen

@@ -1033,7 +1033,7 @@ def _cells_on_plane(project, z, t):
     index = volume_planes.index_for(table)
     if index is not None and z < index.depth and t < index.frames:
         return index.cells_on(t, z)[0], "index"
-    data_model.ensure_loaded(project.name)
+    data_model._ensure_loaded(project.name)
     frame = data_model.get_datasource_df()
     roles = project.roles
     if frame is None or roles.cell_id not in frame.columns \
@@ -1104,7 +1104,7 @@ def plane_cells(datasource):
                              "(Depth card, Cells in 3-D)", reason="not_measured"), 400
     column = str(request.args.get("column") or "")
     values = np.full(labels.size, np.nan)
-    data_model.ensure_loaded(project.name)
+    data_model._ensure_loaded(project.name)
     frame = data_model.get_datasource_df()
     roles = project.roles
     if column and frame is not None and column in frame.columns \

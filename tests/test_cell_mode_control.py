@@ -380,27 +380,40 @@ def test_the_old_checkboxes_are_gone_from_every_template():
         assert "nav_toggle_centroids" not in markup, template.name
 
 
-def test_the_cta_asks_for_what_is_missing_instead_of_navigating(probe):
-    """"Add Seg Mask" used to be a link to the edit page.
+def test_the_cta_opens_the_import_dialog_on_this_sample(probe):
+    """"Add Seg Mask" / "Add Data" opens the Import Sample dialog, scoped to
+    this sample.
 
-    Following it tore down OpenSeadragon, the tile pyramid and every channel to
-    answer one question about one file, and landed the user on a form about the
-    whole project. The requirements modal asks for exactly one input and was
-    already in the page; it was simply unreachable from here because no plugin
-    was in the question. The href stays as the no-JS fallback.
+    It was a link to the edit page (which tore the viewer down to answer one
+    question), and then the requirements modal -- which asked for the mask AND
+    the table as two required fields, so adding only a table ended on "Still
+    needed: Segmentation mask." with Cancel as the only way out, and took a
+    path typed into the mask box as a mask whatever its pixels said. The
+    dialog reads each file for what it is, takes a file or a folder, and
+    requires nothing. The href stays as the no-JS fallback.
     """
-    assert "clicking Add Seg Mask / Data asks for exactly what is missing" in probe, probe
-    assert "only the missing half is asked for" in probe, probe
-    assert "backing out of the form changes nothing" in probe, probe
+    assert "clicking Add Seg Mask / Data opens the dialog on this sample" in probe, probe
+    assert "only the missing half is what the dialog is for" in probe, probe
+    assert "a sample with a table is asked for its mask" in probe, probe
+    assert "closing the dialog changes nothing" in probe, probe
 
 
-def test_an_answer_is_taken_on_without_losing_the_session(probe):
-    """Everything except a mask, which cannot be: attaching one inserts the
-    "Area" placeholder at imageData[0] and the label layer is loaded from that
-    exact position, so every channel index the page holds has just moved."""
-    assert "a project that answered is re-read before the control repaints" in probe, probe
-    assert "the wait for a converting mask is started" in probe, probe
-    assert "a mask attached mid-session reloads rather than being patched in" in probe, probe
+def test_what_was_added_is_taken_on_without_losing_the_session(probe):
+    """A table is taken on in place; a mask reloads -- attaching one inserts
+    the "Area" placeholder at imageData[0], so every channel index the page
+    holds has just moved -- and the dialog says so and does it."""
+    assert "what was added is repainted from, in place" in probe, probe
+    source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "importSample.js").read_text(encoding="utf-8")
+    assert "if (result.reload) {" in source
+    # Through the load chip, which follows a table read behind the viewer
+    # and takes it on -- at once when it was read in place.
+    assert "await window.PlexoraLoadProgress?.track?.(state.sample);" in source
+    progress = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+                / "loadProgress.js").read_text(encoding="utf-8")
+    track = progress[progress.index("async function track("):]
+    assert "await adoptTable(datasource);" in track
+    assert "await page?.refreshDataset?.();" in progress
 
 
 def test_the_size_slider_offers_exactly_what_the_renderer_accepts():

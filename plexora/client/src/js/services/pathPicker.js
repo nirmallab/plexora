@@ -533,6 +533,16 @@ window.PlexoraPathPicker = (function () {
                         places.appendChild(placeButton(shortName(path), path));
                     });
                 });
+            // A Windows machine's drives, by letter: the listing is that
+            // machine's Browse, and the home folder is on one drive of several.
+            const drives = state.places.drives || [];
+            if (drives.length) {
+                places.appendChild(el("div", "path-picker-places-head", "Drives"));
+                drives.forEach((drive) => {
+                    places.appendChild(placeButton(
+                        String(drive).replace(/[\\/]+$/, ""), drive, `Open ${drive}`));
+                });
+            }
         }
 
         // -- navigation ------------------------------------------------------
@@ -800,6 +810,7 @@ window.PlexoraPathPicker = (function () {
                         last_dir: typeof record.last_dir === "string" ? record.last_dir : "",
                         recent: Array.isArray(record.recent) ? record.recent : [],
                         pinned: Array.isArray(record.pinned) ? record.pinned : [],
+                        drives: Array.isArray(record.drives) ? record.drives : [],
                     };
                 }
             } catch (e) {
@@ -824,6 +835,9 @@ window.PlexoraPathPicker = (function () {
                         last_dir: typeof record.last_dir === "string" ? record.last_dir : "",
                         recent: Array.isArray(record.recent) ? record.recent : [],
                         pinned: record.pinned,
+                        // A save answers with the record alone; the drives
+                        // were read when the picker opened and have not moved.
+                        drives: state.places.drives || [],
                     };
                     renderPlaces();
                     renderPin();

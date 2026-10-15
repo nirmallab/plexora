@@ -266,8 +266,7 @@ def test_an_image_and_its_mask_group_into_one_sample(tmp_path):
     """`slide.ome.tif` and `slide_mask.tif`: the mask's name is a statement
     about the slide, not a different slide."""
     _image(tmp_path / "slide.ome.tif")
-    tifffile.imwrite(tmp_path / "slide_mask.tif",
-                     (np.arange(256 * 256).reshape(256, 256) % 300).astype(np.uint32))
+    _mask_file(tmp_path / "slide_mask.tif")
     sample = _only(inspect_paths([str(tmp_path / "slide.ome.tif"),
                                   str(tmp_path / "slide_mask.tif")]))
     assert sample.name == "slide"
@@ -469,9 +468,13 @@ def _mask_file(path, size=256):
 
 
 def _ambiguous(path, size=256):
-    """One 8-bit plane: a small mask and a grey photograph read the same."""
-    tifffile.imwrite(path, np.random.default_rng(3).integers(
-        0, 6, (size, size), dtype=np.uint8))
+    """One 8-bit plane holding one value over a background: a mask of one
+    cell and a thresholded picture read the same, and the pixels cannot say
+    which. (Noise of small integers is not ambiguous: neighbouring pixels
+    differ, and ids do not.)"""
+    plane = np.zeros((size, size), dtype=np.uint8)
+    plane[size // 4:size // 2, size // 4:3 * size // 4] = 1
+    tifffile.imwrite(path, plane)
     return path
 
 

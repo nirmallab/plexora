@@ -40,8 +40,10 @@ def workspace(tmp_path, monkeypatch):
     rng = np.random.default_rng(0)
     tifffile.imwrite(source / "slide.ome.tif",
                      rng.integers(0, 3000, (2, 128, 128)).astype(np.uint16))
-    tifffile.imwrite(source / "slide_mask.tif",
-                     (np.arange(128 * 128).reshape(128, 128) % 90).astype(np.uint32))
+    mask = np.zeros((128, 128), dtype=np.uint32)
+    for index in range(1, 6):
+        mask[index * 18:index * 18 + 12, index * 18:index * 18 + 12] = index
+    tifffile.imwrite(source / "slide_mask.tif", mask)
     (source / "cells.csv").write_text(
         "CellID,X_centroid,Y_centroid,DNA\n1,10,10,5\n2,20,20,7\n",
         encoding="utf-8")
@@ -193,7 +195,9 @@ def test_inspect_and_inspect_data_agree_about_a_csv(workspace):
     assert old["ok"] is True and old["data_type"] == "csv"
     layer = new["samples"][0]["layers"][0]
     assert layer["role"] == "table"
-    assert layer["render"]["detail"] == "csv"
+    # The row also states its size ("2 rows · 4 columns · csv"); the format
+    # is what the two surfaces must agree on.
+    assert layer["render"]["detail"].endswith(old["data_type"])
 
 
 def test_registering_the_same_image_twice_offers_the_existing_sample(workspace):

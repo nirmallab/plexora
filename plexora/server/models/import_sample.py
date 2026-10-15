@@ -39,7 +39,7 @@ from pathlib import Path
 
 from plexora.server.models import import_proposal, layer_jobs
 from plexora.server.models.project import LayerSpec, Project
-from plexora.server.utils import boundary_mask
+from plexora.server.utils import boundary_mask, segmentation_pyramid
 
 #: What a flat picture is converted to when it has to be the reference of a
 #: multi-layer sample. See `_tiled_picture`.
@@ -589,9 +589,7 @@ def _register(final, created, proposal, answers, layers, reference, mask,
         if table is not None:
             step(table.id, "Reading the table")
             replace_project_data(final, table.src, {
-                "table": table.table,
-                "subset_column": answers.get("subset_column"),
-                "subset_value": answers.get("subset_value"),
+                "table": table.table, **_subset_of(table, answers),
             }, spatial=_spatial_context(table, reference))
             step(table.id, status="ready")
 
@@ -708,6 +706,39 @@ def _outstanding(layer, answers):
                  and not answers.get(plain_question_id(key)))
 
 
+def _subset_of(table, answers):
+    """Which image of a multi-image table this sample reads, as
+    `replace_project_data` takes it: what detection chose for the row
+    (`import_proposal._choose_subsets` -- answered, or matched by name), else
+    what a script passed as `subset_column`/`subset_value`. Nothing chosen is
+    nothing passed, and the table is recorded unresolved as before."""
+    chosen = table.subset or {}
+    if chosen.get("column") and chosen.get("value") is not None:
+        return {"subset_column": chosen["column"],
+                "subset_value": str(chosen["value"])}
+    return {"subset_column": answers.get("subset_column"),
+            "subset_value": answers.get("subset_value")}
+
+
+def _reload_if_open(project_name, previous):
+    """Re-read the sample a viewer has open, now that its table changed.
+
+    The record alone is not enough: the loaded project keeps serving the table
+    -- or the absence of one -- it was opened with, so the cells the page asks
+    for next would be the old ones, or none. A large table is read behind the
+    viewer and the page follows it in (views/loadProgress.js `track`); one
+    that will not read puts `previous` back, as the requirements form does.
+    """
+    from plexora.server.models import data_model
+    from plexora.server.routes.tool_routes import _reload_or_restore
+
+    if previous is None or not data_model.is_loaded(project_name):
+        return
+    error = _reload_or_restore(project_name, previous, wait_for_table=False)
+    if error:
+        raise ImportError_(error)
+
+
 def register_layers(project_name, proposal, *, answers=None):
     """Add a proposal's layers to a sample that already exists.
 
@@ -718,7 +749,9 @@ def register_layers(project_name, proposal, *, answers=None):
     panel" and "add a mask from the Cells control" one code path rather than
     two that drift.
 
-    @returns `{"layers", "reload"}`. `reload` is true only when a MASK was
+    @returns `{"layers", "reload", "table", "pending"}`. `table` says a cell
+        table was attached, which the page takes on in place. `reload` is true
+        only when a MASK was
         attached: that inserts the "Area" placeholder into `imageData`, and
         every channel index on the open page is wired into the GL pass, so the
         page has to be rebuilt. Everything else is adopted in place.
@@ -734,11 +767,11 @@ def register_layers(project_name, proposal, *, answers=None):
     if mask is not None:
         attach_segmentation(project_name, mask.src)
     if table is not None:
+        previous = Project.find(project_name)
         replace_project_data(project_name, table.src, {
-            "table": table.table,
-            "subset_column": answers.get("subset_column"),
-            "subset_value": answers.get("subset_value"),
+            "table": table.table, **_subset_of(table, answers),
         })
+        _reload_if_open(project_name, previous)
 
     def _apply(project):
         for bundle in proposal.bundles:
@@ -761,6 +794,9 @@ def register_layers(project_name, proposal, *, answers=None):
         started.append({"id": layer.id, "status": layer.status})
 
     return {"layers": started, "reload": mask is not None,
+            # A table is taken on in place: the page re-reads the record's
+            # read spec rather than reloading (importSample.finishScoped).
+            "table": table is not None,
             "pending": any(entry["status"] == "pending" for entry in started)}
 
 
@@ -806,6 +842,112 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
                 "existing": True}
     return register_sample(sample, name=name, dataset=dataset,
                            answers=answers, replace=replace, token=token)
+
+
+def reclassify(project_name, layer_id, target):
+    """Read one of a sample's files as the other thing: its segmentation mask
+    as an image layer, or an image layer as its mask. In place -- the sample,
+    its other layers, its table and everything done on them stay.
+
+    Detection can be wrong in either direction, and before this the only way
+    to correct it after import was to delete the file's registration and add
+    it again, which re-ran the same detection and usually reached the same
+    conclusion. This is the import dialog's role menu, after the fact: the
+    file is detached from where it is and added again through `add_layers`
+    with its `mask-or-image` question already answered, so the record it
+    ends up as is exactly the one a fresh import with that answer writes.
+
+    Undone if the second half fails, so a refused file never leaves the
+    sample short of something it had.
+
+    @param layer_id - the mask's reserved id (`__mask__`) to make it an image,
+        or a registered image layer's id to make it the mask.
+    @param target - "image" or "mask".
+    @returns `add_layers`' answer, with `reload` true -- either direction
+        changes the mask, which shifts every channel index on the page.
+    """
+    from plexora.server.models import import_proposal
+    from plexora.server.models.project import MASK_LAYER_ID
+    from plexora.server.routes.import_routes import (_node_locator,
+                                                     attach_segmentation)
+
+    project = Project.find(project_name)
+    if project is None:
+        raise ImportError_(f"Unknown sample: {project_name!r}")
+    if target not in ("image", "mask"):
+        raise ImportError_("A file can be read as an image or as a mask.")
+
+    if target == "image":
+        if layer_id != MASK_LAYER_ID:
+            raise ImportError_("Only the segmentation mask can be read as an "
+                               "image layer from here.")
+        source = project.segmentation.source
+        if not source:
+            raise ImportError_(f"{project_name} has no segmentation mask.")
+        if project.resource("segmentation") is not None or _node_locator(source):
+            raise ImportError_(
+                "This mask is served by a data node. Remove it, then add the "
+                "file again from the import dialog as an image.")
+        if (boundary_mask.is_boundary_source(source)
+                or segmentation_pyramid.is_polygon_source(source)):
+            # Detection never doubted these: they are outlines, and as an
+            # image layer they would draw nothing at all.
+            raise ImportError_(
+                "This mask is cell outlines (polygons), not pixels, so there is "
+                "no image to draw from it.")
+        answers = {f"mask-or-image:{source}": "image"}
+        attach_segmentation(project_name, None)
+        try:
+            result = add_layers(project_name, [source], answers=answers)
+        except Exception:
+            _restore_mask(project_name, project.segmentation)
+            raise
+        return {**result, "reload": True, "now": "image"}
+
+    layer = project.layer(layer_id)
+    if layer is None or layer.kind != "image" or not layer.src:
+        raise ImportError_("Only an image layer read from a file can become "
+                           "the segmentation mask.")
+    if _node_locator(layer.src):
+        raise ImportError_(
+            "This layer is served by a data node. Remove it, then add the "
+            "file again from the import dialog as a segmentation mask.")
+    geometry = import_proposal._geometry_of(layer.src) or {}
+    if not import_proposal._single_plane(geometry):
+        raise ImportError_(
+            f"{layer.label or layer.id} has {geometry.get('numChannels')} "
+            "channels. A segmentation mask is one plane of cell ids.")
+    stack = project.spatial_layers
+    Project.mutate(project_name, lambda current: current.without_layer(layer_id))
+    try:
+        result = add_layers(project_name, [layer.src],
+                            answers={f"mask-or-image:{layer.src}": "mask"})
+        if not result.get("reload"):
+            raise ImportError_(f"{layer.label or layer.id} could not be read "
+                               "as a segmentation mask.")
+    except Exception:
+        # The layer back where it was in the stack, and the mask it would have
+        # replaced back too if it got that far.
+        Project.mutate(project_name,
+                       lambda current: current.patch(spatial_layers=stack))
+        _restore_mask(project_name, project.segmentation)
+        raise
+    return {**result, "now": "mask"}
+
+
+def _restore_mask(project_name, segmentation):
+    """Put a sample's mask back as `segmentation` recorded it -- its file, how
+    it is drawn and where its polygons land -- if it is no longer that."""
+    from plexora.server.routes.import_routes import attach_segmentation
+
+    current = Project.find(project_name)
+    if current is None or str(current.segmentation.source or "") == str(
+            segmentation.source or ""):
+        return
+    attach_segmentation(project_name, segmentation.source or None,
+                        mode=segmentation.mode,
+                        transform=(list(segmentation.transform)
+                                   if segmentation.transform else None))
 
 
 def add_layers(project_name, paths, *, answers=None, node=None):

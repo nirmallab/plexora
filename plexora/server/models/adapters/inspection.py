@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import copy
+import os
+import threading
+from collections import OrderedDict
+
 import numpy as np
 
 from . import classify
@@ -39,6 +44,15 @@ def _is_numeric(series) -> bool:
         return False
 
 
+#: Rows looked at before a column is counted in full. A column whose first
+#: rows already hold more distinct values than a dropdown can is a centroid,
+#: a morphology measure or a per-cell id, and can never be a subset choice --
+#: and counting all of it was most of an inspection: `value_counts` over nine
+#: float columns of a 5M-cell table took 15 of the 16 seconds, four times per
+#: import, for a number nothing read past "more than 500".
+_HEAD_ROWS = 20_000
+
+
 def _distinct_values(series):
     """(count, sorted values) for one obs column, in a single pass.
 
@@ -53,7 +67,28 @@ def _distinct_values(series):
     The values are only materialized when there are few enough to be a usable
     dropdown; past that they are dropped rather than counted differently, which
     is what keeps the count honest for the ambiguity warning.
+
+    Two shortcuts, neither of which changes an answer that is read. A
+    categorical states its values -- counting its codes is a bincount over
+    small integers. And a column whose first `_HEAD_ROWS` rows already exceed
+    the dropdown is reported as just past it (`_MAX_CANDIDATE_VALUES + 1`)
+    without the full count, because "more than a dropdown holds" is all any
+    reader of the count asks.
     """
+    import pandas as pd
+
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        codes = np.asarray(series.cat.codes)
+        categories = series.cat.categories
+        used = np.bincount(codes[codes >= 0], minlength=len(categories)) > 0
+        n_unique = int(used.sum())
+        if n_unique > _MAX_CANDIDATE_VALUES:
+            return n_unique, []
+        return n_unique, sorted(str(value) for value in categories[used])
+    if len(series) > _HEAD_ROWS:
+        head = series.iloc[:_HEAD_ROWS].nunique(dropna=True)
+        if head > _MAX_CANDIDATE_VALUES:
+            return _MAX_CANDIDATE_VALUES + 1, []
     counts = series.value_counts(dropna=True)
     n_unique = int(len(counts))
     if n_unique > _MAX_CANDIDATE_VALUES:
@@ -223,19 +258,59 @@ def spec_from_inspection(document: dict) -> dict:
     return fields
 
 
+#: The last few files inspected, keyed by what they are on disk. One import of
+#: one .h5ad asked the same question four times -- the import itself, the
+#: requirements modal's field as it opened, and twice more when the image was
+#: chosen -- and each asked it of every obs column of the whole file.
+_INSPECTED: "OrderedDict[tuple, dict]" = OrderedDict()
+_INSPECTED_LOCK = threading.Lock()
+_INSPECTED_LIMIT = 8
+
+
+def _file_key(path):
+    """(path, size, mtime) of a local file, or None for anything else -- a
+    zarr store is a directory whose own mtime says nothing about its
+    contents, and a web address has no stat."""
+    try:
+        resolved = os.path.realpath(os.fspath(path))
+        stat = os.stat(resolved)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not os.path.isfile(resolved):
+        return None
+    return (resolved, stat.st_size, stat.st_mtime_ns)
+
+
 def inspect_anndata(path) -> dict:
     """Structural inspection of an .h5ad file: obsm keys, layers, obs
     columns (flagging which look like image/sample subset candidates and,
     for those, their available values), var names, and observation count.
+
+    Remembered per file version (`_file_key`): a rewritten file is a new key,
+    so nothing stale is ever answered. A copy is handed out, because callers
+    are free to edit what they are given.
     """
     from .anndata_adapter import _is_zarr_source, open_anndata_zarr
 
     if _is_zarr_source(path):
         return {"data_type": "anndata", **_inspect_group(open_anndata_zarr(path))}
+    key = _file_key(path)
+    if key is not None:
+        with _INSPECTED_LOCK:
+            known = _INSPECTED.get(key)
+            if known is not None:
+                _INSPECTED.move_to_end(key)
+                return copy.deepcopy(known)
     import h5py
 
     with h5py.File(path, "r") as handle:
-        return {"data_type": "anndata", **_inspect_group(handle)}
+        document = {"data_type": "anndata", **_inspect_group(handle)}
+    if key is not None:
+        with _INSPECTED_LOCK:
+            _INSPECTED[key] = copy.deepcopy(document)
+            while len(_INSPECTED) > _INSPECTED_LIMIT:
+                _INSPECTED.popitem(last=False)
+    return document
 
 
 def source_layers(spec) -> list[str]:

@@ -113,6 +113,16 @@ window.PlexoraJobProgress = (function () {
                 actions.appendChild(button);
             },
             setTitle: function (text) { title.textContent = text; },
+            /** A button under the bar -- "Continue in background". */
+            addAction: function (action) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = action.className || 'btn btn-secondary';
+                button.textContent = action.label;
+                button.addEventListener('click', action.onClick);
+                actions.appendChild(button);
+                return button;
+            },
             remove: function () { root.remove(); },
         };
     }

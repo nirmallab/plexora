@@ -326,8 +326,30 @@ def _asked(payload, field):
 
 @app.route('/picker_prefs', methods=['GET'])
 def picker_prefs():
-    """Where the listing picker should open, for one machine."""
-    return jsonify(**_picker_record((request.args.get('node') or '').strip()))
+    """Where the listing picker should open, for one machine -- and, for this
+    machine when it is a Windows one, its drives.
+
+    The listing is the Browse of every "file or folder" field on Windows (the
+    system dialogs there take one kind at a time; see browsePicker.js), and a
+    listing that starts in the home folder has no way to a `D:\\` or a mapped
+    share except typing it. `os.listdrives()` only NAMES them -- a mapped
+    drive that is not answering is not touched until somebody opens it.
+    """
+    node = (request.args.get('node') or '').strip()
+    return jsonify(**_picker_record(node), drives=[] if node else _drives())
+
+
+def _drives():
+    """This machine's drive roots (`C:\\`, `D:\\`), or [] off Windows."""
+    import os
+    import sys
+
+    if not sys.platform.startswith("win") or not hasattr(os, "listdrives"):
+        return []
+    try:
+        return sorted(str(drive) for drive in os.listdrives())
+    except OSError:
+        return []
 
 
 @app.route('/picker_prefs', methods=['POST'])

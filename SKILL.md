@@ -1394,7 +1394,11 @@ Entry points:
   -- the picker's last directory, recents (`RECENT_LIMIT=8`) and pins
   (`PINNED_LIMIT=30`), one record per machine under `path_picker.places.
   <node-or-"">` in settings.json, keyed by node name because "" is this
-  server's own filesystem and `/n/scratch/aj` means nothing on the laptop),
+  server's own filesystem and `/n/scratch/aj` means nothing on the laptop;
+  the GET also answers `drives` -- `os.listdrives()` on a Windows server,
+  `[]` off Windows and always `[]` for a `node`, since the listing is that
+  machine's Browse and a home folder on `C:\` has no other way to `D:\`. It
+  only NAMES the drives, so a dead mapped drive is not touched until opened),
   `tool_routes` (opening a tool and collecting what it needs),
   `data_routes` also owns `GET /resource_status` (what could not be read and
   why, plus `profiles` -- which saved connection THIS server could open, which
@@ -1513,16 +1517,24 @@ Entry points:
   dialog on any platform, since AppleScript's `choose file`/`choose folder`
   and Tk's dialogs are single-kind by construction. The hybrid panel sets NO
   file-type filter, deliberately — the path is sniffed downstream instead
-  (`/inspect_data`, `check_path_existence`). Off macOS, or against a node too
-  old to know mode `"any"`, `/browse_path` answers with the ordinary
-  `fallback: "list"` refusal and the client opens `pathPicker.js` instead.
+  (`/inspect_data`, `check_path_existence`). Off macOS `/browse_path` refuses
+  mode `"any"` with `fallback: "kinds"` where there is a desktop whose
+  dialogs take one kind at a time (Windows, Linux), and with the ordinary
+  `fallback: "list"` where there is no desktop or the node is too old to know
+  mode `"any"`; for mode `"any"` the client opens `pathPicker.js` on EITHER
+  answer, because a File | Folder question in front of every Browse made the
+  user answer a fact about the format. A field asking for exactly one kind
+  still gets the machine's own single-kind dialog.
   Runs `sys.executable -c ...` as a subprocess (`popen_kwargs()` from
   `plexora/_subprocess.py`, so a console-less Windows process does not flash
   one for it) -- fine under the desktop app too, which ships a real
   interpreter rather than a frozen one; there the Browse buttons reach
   `desktopBridge.js`'s own native dialog first (`browsePicker.js`'s
   `browseCapability`), and this route only answers for an "Open in Browser"
-  tab of the same server.
+  tab of the same server -- except mode `"any"`: the shell's dialogs are
+  single-kind on every platform, so `browseInShell` asks `serverDialogs()`
+  (the server's own `/browse_capability`, skipping the desktop shortcut) and
+  on a Mac posts here for the hybrid panel, else opens the listing.
 - `models/data_migration.py` — moving one data root's contents into another,
   as a background job. Nothing is ever merged (any name collision refuses the
   whole migration), a failure stops rather than carrying on, and progress is
@@ -4148,7 +4160,12 @@ deliberately left out and what should be built next.
   image imported as a layer has the identical opacity control and "Upload
   channel names" button on one line as the reference card. Only a card with
   no such line (an rgb layer, a build without the panel module) still gets
-  the plain `buildOpacityRow` label+slider row; alignment note, build
+  the plain `buildOpacityRow` label+slider row. A removable, file-backed,
+  non-node image layer of ONE channel gets a `•••` of its own
+  (`hasRoleMenu`/`roleMenuFor`) with "Use as segmentation mask", which posts
+  `/import/reclassify` and reloads (a mask shifts every channel index) --
+  the after-import way to correct a detection that read a mask as an image;
+  alignment note, build
   state, all rebuilt in place on every render since
   core owns everything in the card; a channel select, colour swatch and
   contrast window too, but only when `hasChannelPanel(layer)` is false —
@@ -5047,14 +5064,18 @@ deliberately left out and what should be built next.
   where the data lives when you add it" — nothing is configured in advance.
 - `services/pathPicker.js` — `window.PlexoraPathPicker`, a directory-listing
   modal (`POST /list_dir`, optionally `{node}`) that stands in for a native
-  dialog on a machine with no desktop (a compute node). Not a file manager —
+  dialog on a machine with no desktop (a compute node), and is the Browse of
+  every mode `"any"` field wherever the native dialog takes one kind at a
+  time (Windows, Linux, the desktop app's shell) -- see `browsePicker.js`'s
+  header. Not a file manager —
   no rename, delete or upload — and not a replacement for typing a path.
   `pick({mode, filter, start, title, node, multiple})`; `multiple: true`
   answers `string[]` but no caller wires it yet. DOM is built node-by-node, no
   `innerHTML`, so `tests/js/path_picker_probe.mjs` can run it. Back/Up/Refresh,
   an address bar, an in-folder name filter, a hidden-files toggle, a Type
   column, keyboard nav with listbox ARIA, and a places sidebar
-  (Home/Pinned/Recent) backed by `/picker_prefs`. The address bar
+  (Home/Pinned/Recent, plus Drives when `/picker_prefs` lists a Windows
+  machine's `drives`) backed by `/picker_prefs`. The address bar
   (`.path-picker-address`) is one wide strip holding the crumbs: clicking a
   crumb navigates (its handler `stopPropagation`s), and clicking anywhere else
   in the strip turns the whole thing into a path box with its contents
@@ -5878,15 +5899,20 @@ services/{telemetry,performanceTelemetry,errors}.js` is the browser side;
 The rule: **import the minimum, then ask for more only when a feature needs it.**
 
 **One dialog, not a form.** `views/importSample.js` (`window.PlexoraImportSample`)
-is the whole of importing: one `<dialog>` with three states — `pick` (Local/
-Remote, "Choose a file" / "Choose a folder", or a pasted path), `proposal` (one
-CARD per sample, a role badge per row, a question as an attached callout,
-never blocking), and `importing` (the rows become the shared progress rail;
+is the whole of importing: one `<dialog>` with three states — `pick` (the
+machine chip, one Browse that takes a file or a folder, or a pasted path),
+`proposal` (one CARD per sample, a role badge per row — a menu wherever the
+file has another reading — a question as an attached callout, never
+blocking), and `importing` (the rows become the shared progress rail;
 the sample opens as soon as its record exists). There is no tab per format and
 no page of its own — the same dialog opens from the File menu, the Open
 Project library, the home page's footer and a sample's Layers panel
 (`layer_add_button`), scoped to "+ Add Layer" when it opens from inside a
-sample. Every one of those is bound by id in `importSample.js` itself
+sample — and the Cells control's "Add Seg Mask / Add Data" CTA and its mask
+menu's "Replace segmentation mask…", which open the same scoped dialog with
+`open({sample, intent, onAdded})` (`intent` "mask" | "table" | "cells" says
+what it is for in the title; "mask"/"table" become the `added-as` hint, so
+they settle only a file the pixels leave open). Every one of those is bound by id in `importSample.js` itself
 (`sample-import`, `sample-import-empty`, `sample-import-home`,
 `sample-import-menu`), so a new surface is a button with one of those ids and
 no controller. The header carries a one-line subtitle rewritten per phase
@@ -5957,7 +5983,10 @@ function every entry point reaches, including the Python API and the CLI.
 `GET /import/status` polls `layer_jobs` for a sample whose layers are still
 building. The only controls that appear at all are the ones the *file* forces:
 a table picker for a multi-table `.zarr`, an image picker for a store with
-several, a mask-or-image choice for an ambiguous single-plane TIFF. None can be
+several, a mask-or-image choice for a single-plane raster whose pixels do not
+decide it, a `labels` choice for an OME-Zarr image carrying several label
+images, and a `subset:<sample>` select for a table spanning several images
+(defaulted when a value names the image outright). None can be
 guessed — picking for the user silently loads the wrong cells, or thresholds
 raw counts as if they were log values.
 
@@ -6073,34 +6102,30 @@ not for what it resolved to: dropping `sample.zarr` gives a project called
 `sample`, never `morphology`. Mode `"any"` is on `dataSourceField.js`, and —
 newly able to pick a `.zarr` mask at all, since they were file-only before —
 `projectEdit.js`'s mask field and `requirementsModal.js`'s segmentation field.
-**Not** the Import Sample dialog's `pick` state, which asks the question in the
-control instead — see "The dialog's `pick` state is one vertical run" below.
+The Import Sample dialog's `pick` state and a card's compact add row are mode
+`"any"` too (`pickWith("any")`) — see "The dialog's `pick` state is one
+vertical run" below.
 
-**The dialog's `pick` state is one vertical run**, and the only surface built
-this way — every other field still gets a mode `"any"` browse control inside
-its own row, except a proposal card's compact add row, whose Browse is a
-file/folder split (see "A card's add row is one line" below). `views/importSample.js`'s `renderPick()` is, top to bottom: the
-where-row — a direct child of the `<dialog>`, not of the body, because
-`renderProposal`/`renderImporting` clear the body with `innerHTML` and would
-tear the mounted switch out from under itself — carrying a "Data location"
-kicker, the Local/Remote switch mounted once via `dataLocation.attach()` and a
-"this computer" caption painted by `paintCaption()`, the arrangement the home page
-had until it drew its own machine chip over a `bare` attach (the switch decides whose filesystem the two halves
-below browse, so it sits above them rather than inside a row it would qualify,
-and is hidden outside `pick` by CSS rather than rebuilt); a `buildSplitControl(
-"sample", pickWith, {file: "Choose a file", directory: "Choose a folder"})`
-panel, its first half `autofocus` so `showModal()` does not focus the ×; a
-path input for pasting (Enter adds it), and — unlike `quickViewLanding.js`,
-which asks the same first question on the home page and never took a drop —
-an actual dropzone: `dragover`/`drop` on the same container upload small files
-(under 64 MB) through `/upload_data_file` and refuse anything bigger with a
-`PlexoraConfirm.tell` explaining that a browser can hand Plexora a dropped
+**The dialog's `pick` state is one vertical run**: `views/importSample.js`'s
+`renderPick()` is `buildPickControl` — the home page's card as a dialog
+control — and nothing else of substance. One field with the dialog's machine
+chip at its front (the location service's own status line under the row), a
+path input for pasting, and ONE button that is Browse while the box is empty
+(`pickWith("any")`) and Add once a path is typed, so the typed way in and the
+browsed way in never look like two routes; that button is `autofocus` so
+`showModal()` does not focus the ×. There is **no File | Folder radio**:
+whether a format is a file or a folder (an OME-Zarr store is a folder, an
+OME-TIFF a file) is a fact about the format, and `browsePicker.js` opens a
+panel that takes either. Under the row, format chips and "What's supported"
+(`importHelp.js` on its Formats tab). Unlike `quickViewLanding.js`, which never
+took a drop, the control is an actual dropzone: `dragover`/`drop` upload small
+files (under 64 MB) through `/upload_data_file` and refuse anything bigger with
+a `PlexoraConfirm.tell` explaining that a browser can hand Plexora a dropped
 file's bytes but never its path, which is fine for a table and wrong for a
-slide. Below the panel, not inside it, one formats sentence ends in an "All
-formats" link that opens `importHelp.js` on its Formats tab. Both halves are
-drawn on every platform — `buildSplitControl` is called directly with each
-half's own kind, so the "file or folder?" popup a bare mode
-`"any"` control raises can never come back here.
+slide. **Scoped, the pick state is a card's compact add row and nothing else**
+(`renderScopedPick`): the sample already exists, so the one thing to ask for is
+a path, asked the way that sample's card would ask it; a read that fails with
+no card to hold the row goes back to being the whole pick state.
 
 **A project starts as an image, however many layers came with it.**
 `import_sample.register_sample` writes the reference frame first — the image,
@@ -6179,9 +6204,13 @@ withheld until `table` itself is answered, since there is nothing to choose a
 role FROM yet), and `POST /<ds>/requirements` with no `tool` now reports the
 real `stillMissing` computed from `payload["keys"]` — it used to silently
 answer `[]`, which is why `PlexoraRequirements.ask(datasource, keys)` exists
-on the client: the Cells control's "Add Seg Mask / Add Data" CTA opens the
-modal through it now instead of navigating to the edit page (the `<a href>`
-stays as the no-JS fallback). `_needs` is split into `_needs_payload` (the
+on the client. The Cells control's "Add Seg Mask / Add Data" CTA used to open
+the modal through it with `["segmentation", "table"]` — both REQUIRED, so
+somebody adding only a table ended on "Still needed: Segmentation mask." with
+Cancel the only exit, and a path field took a file as whatever box it was
+typed in. It now opens the scoped Import Sample dialog instead
+(`viewerControls.bindCta`, see "The Cells control shows what the project HAS"
+below); the `<a href>` to the edit page stays as the no-JS fallback. `_needs` is split into `_needs_payload` (the
 generic three-list shape) and `_core_needs` (what core itself asks about,
 independent of any plugin's `Requires`); the requirements payload gained
 `keys` (what was actually asked for) and `data` (`{src, table, type,
@@ -6399,11 +6428,20 @@ toggle the menu's Sidebar checkbox. A mode the active *plugin* does not use is
 hidden. A mode whose resource is
 **missing outright** is hidden too, and `#cell_data_cta` — a plain `<a>` to
 `/edit_config/<project>`, so `appRouter` swaps the page in — appears reading
-"Add Seg Mask", "Add Data" or "Add Seg Mask / Data". A mode whose resource is
+"Add Seg Mask", "Add Data" or "Add Seg Mask / Data"; with JavaScript, `bindCta`
+opens the Import Sample dialog scoped to this sample instead (intent "mask",
+"table", or "cells" when both are missing, and nothing required), because that
+dialog is the one place a file is read for what it is. While the project has a
+mask, `#cell_mask_menu` (a `⋮`, `.cell-mask-menu` in `viewer.css`) offers
+"Replace segmentation mask…" (the same scoped dialog, intent "mask") and "Use
+as an image layer" (`POST /import/reclassify`, then a reload, because the
+mask's "Area" placeholder leaves the channel list). A mode whose resource is
 **present but cannot do this** stays visible and disabled with the reason on it
 (`unusableReason()`): a mask stored as boundaries has nothing to fill, a table
-whose x/y roles are unanswered has no positions, and a mask still converting is
-about to work. That distinction is the whole design — telling either of the
+whose x/y roles are unanswered has no positions, a mask still converting is
+about to work, and a table still being read behind the viewer
+(`cellsPending()`, "The cell table is still being prepared") is about to work
+too. That distinction is the whole design — telling either of the
 latter to go and add a file it already has is the wrong instruction. With
 nothing left but None the buttons go entirely and the link takes the row. The
 options ship `hidden` and `disabled` from `index.html` and are shown by
@@ -7160,11 +7198,21 @@ loop calls back once per written tile.
   `start_segmentation_job → convertOmeTiff → resolve_outline_segmentation →
   pyramidize_segmentation_mask`, kept **separate** from `progress_callback`
   because that one's `(done, total)` contract is pinned by tests.
-- **`TABLE_STAGES`** — `opening → metadata → preparing → loading → finalizing`,
-  served by `GET /get_table_status`. The load stays **synchronous inside the
-  save request** on purpose: that request also validates the user's answer and
-  restores the previous project when it is unreadable. The browser polls
-  alongside the outstanding POST — waitress is multi-threaded.
+- **`TABLE_STAGES`** — `opening → metadata → subset → coordinates →
+  identifiers → preparing → loading → finalizing` ("Mapping cells to images",
+  "Detecting coordinates", "Reading cell identifiers", "Reading marker
+  values", "Building the spatial index", "Finalizing workspace"; the AnnData
+  adapter names its own parts through `plan(stage=)`), served by `GET
+  /get_table_status`. The load stays **synchronous inside the save request**
+  on purpose: that request also validates the user's answer and restores the
+  previous project when it is unreadable. The browser polls alongside the
+  outstanding POST — waitress is multi-threaded — and after 1.5 s
+  `tableProgress.js` offers "Continue in background" (`jobProgress`'s
+  `addAction`): the request runs on, the form closes, and
+  `loadProgress.follow(datasource, work)` keeps the navbar chip and takes the
+  cells on when it lands. Opening a project is different: a LOCAL table of
+  `BACKGROUND_TABLE_BYTES` (256 MB) or more is loaded behind the viewer, after
+  the image and mask (see `data_model.load_datasource` under Sharp Edges).
 
 Client: `views/jobProgress.js` is the one panel (bar + `.connect-steps` stage
 rail); `views/tableProgress.js` is the poller over it now that the deleted
@@ -11627,6 +11675,38 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   `np.inf` as `high`, never `None`.
 - `data_model` module globals are mutated under `load_lock`, but
   `generate_zarr_png` reads them without it. A datasource switch mid-pan can race.
+- **A loaded project may not have its cells yet.** `data_model.load_datasource`
+  reads a LOCAL table file of `BACKGROUND_TABLE_BYTES` (256 MB) or more on a
+  thread of its own (`_load_table_behind`), after the image and mask --
+  reloads too (a finished mask conversion, a pixel size, a channel rename),
+  except a caller that validates and restores the previous project, which
+  passes `wait_for_table=True` (`tool_routes._reload_or_restore`; the import
+  dialog's "Add data" passes False). The thread builds the spatial index
+  (`_index_over`, which assigns nothing) BEFORE one hand-over under
+  `load_lock`, and only then sets the event: anything that read the cells
+  in between used to build an index of its own, and an index finishing after
+  a project switch used to land on the next project. A 3M-cell table held the
+  canvas blank for its whole read, because image tiles wait on `load_lock`.
+  So "loaded" now has two meanings: `_ensure_loaded` waits for the table
+  (`_await_table`, which waits again on a later load's read and re-checks the
+  project afterwards), and anything that only needs the PICTURE — channel
+  names, the channel list save, GMM, quantization and volume windows, image
+  stats, the channel overview — must call `ensure_loaded` instead, or it puts
+  the wait straight back (`init` too, which still indexes a table read in
+  place). `get_datasource_df()` waits as well. Superseding happens at a
+  load's COMMIT, never its start: `_table_epoch` is bumped there, the new
+  read is registered, and only then are stale events set -- a load that
+  raised leaves the previous project's read to land, and a reader woken by a
+  reload finds the reload's own read to wait on. A stale read stops at its
+  next progress report (`_Superseded`, raised by the wrapped `stage`/
+  `report`). A failed read is `_table_failed` and `get_load_status`'s
+  `table: {status: "error"}`; `_has_cells` makes every cell reader answer as
+  for no table rather than dereference None. `/get_database_description`
+  answers `{}` with `X-Plexora-Cells-Pending: 1` while pending (the data
+  layer sets `__plexora.cellsPending`, so the boot adopts cells that landed
+  before its last status read), and `get_load_status` carries `table` while
+  preparing -- in its pending branch too -- which is what the client's
+  `watchTable` follows (a failed poll or a pending reload is not arrival).
 - `getTileKey` omits the HD flag while `getTileUrl` appends `?q=hd` — same key,
   different URL. That is why `setHdMode` removes and re-adds every channel
   instead of invalidating. The GL texture cache works around it by including the
@@ -12157,10 +12237,12 @@ into a 40px field, a path input, a clear ×, and one fixed-width (118px) action
 slot whose `data-face` is browse | load | busy | retry, because the card has
 already said which sample and as what, and a slot that never changes width
 keeps the path box still. `buildPickControl` is now the `pick` state's alone.
-Browse is a split: the face calls `pickWith("file")`, the chevron opens a
-fixed-position `plx-import-browse-menu` (`openBrowseMenu`/`closeBrowseMenu`/
-`buildBrowseMenu`; fixed because the scrolling body would clip it) with Choose
-file / Choose folder -- never mode `"any"`. A browsed path is read at once
+Browse was a split here (the face `pickWith("file")`, a chevron menu of
+Choose file / Choose folder); since 2026-10-14 it is one button calling
+`pickWith("any")`, and the fixed-position `plx-import-browse-menu`
+(`openRowMenu`/`closeBrowseMenu`/`buildBrowseMenu`; fixed because the
+scrolling body would clip it) now carries a row's role-badge readings
+instead. A browsed path is read at once
 (`pickWith`'s `onPicked` calls `submitSlot(path, "browse", intent)`), because
 choosing it in the system's browser was the confirmation; a typed or pasted
 path shows Load, and Load or Enter calls `submitSlot(typed, "typed", …)`.
@@ -12224,9 +12306,10 @@ belonged to, and find no mask. In `import_proposal.py` now:
 - A table row says `202k rows × 50 columns · csv` (`_table_size`: header and line
   breaks, cached by path/size/mtime; estimated with "~" past
   `TABLE_COUNT_LIMIT` = 1 GiB; an `.h5ad`'s X shape).
-- `looks_like_label_image` reads its 512² corner through `aszarr`
-  (`_tiff_corner`), not `pages[0].asarray()` -- 3 s and gigabytes per
-  slide-sized mask, now ~17 ms.
+- `looks_like_label_image` reads 512² windows through `aszarr`
+  (`_tiff_reader`, which replaced `_tiff_corner` on 2026-10-14 when the one
+  top-left corner became up to five windows), not `pages[0].asarray()` --
+  3 s and gigabytes per slide-sized mask, now ~17 ms.
 In the dialog: a row's path is the name's hover title (no path line);
 `questionsUnder` puts a question under the row whose `needs` hold it when two
 rows share an id; a ✓ (`settleButton`) beside any question with a default
@@ -12467,6 +12550,144 @@ computes coordinates; `visual_scan` is never replayed; an agent's region
 outside a session is cut to the tissue and never a duplicate) and the
 Validation note dated 2026-10-06 for the skill lint, the task-registry
 check, the targeted tests and the `PLEXORA_VISUAL_DUMP` pictures.
+
+### One Browse for a file or a folder, detection by pixels, and a big table loads behind the viewer (2026-10-14)
+
+Branch `import-progressive`. Four complaints shared one cause -- the app asked
+the user things it could read for itself, or made them wait for things the
+picture did not need.
+
+**One Browse takes either kind, with no toggle.** A File | Folder pair made the
+user answer a fact about the format (an OME-Zarr store is a folder). On a
+machine whose native dialog is single-kind (`"kinds"`: Windows, Linux, the
+desktop app's shell dialogs), mode `"any"` now opens `pathPicker.js`'s
+listing, which selects a file, a `.zarr` store in one click, or "Use this
+folder"; macOS keeps its native hybrid panel, and the desktop app on a Mac
+reaches the server's panel through `serverDialogs()`. `applyCapability`
+(which swapped Browse for File|Folder halves on kinds machines) is deleted;
+`chooseKind` survives only for a page with no pathPicker, which no page in the
+app is. A field asking for exactly one kind still gets the native dialog. The
+listing's Places gained Drives (`/picker_prefs` `drives`, `os.listdrives()`,
+local Windows only). The home page (`quickViewLanding.js`) keeps its
+File/Folder tabs -- it asks up front on purpose, and the dialog does not ask
+at all.
+
+**The Import Sample dialog lost its last kind questions and gained a way to
+correct detection.** The pick state has no File|Folder radio; a card's compact
+row has one Browse (no ▾ menu); a scoped dialog's pick state IS the compact
+row (`renderScopedPick`). `open({sample, intent, onAdded})` -- intent
+"mask" | "table" | "cells" -- says in its title what it is for. A row's role
+badge is a menu (`roleBadge`, `openRowMenu`) wherever `LayerProposal.switch`
+offers another reading; choosing answers `switch.question` and re-inspects,
+because a mask that becomes an image can become the reference and only the
+server knows. `finishScoped` refreshes the dataset when `/import/layers`
+reports `table: true`, then calls `onAdded`. `popoverPortal.relocate` now skips
+an element that is (or contains) the new host: the import dialog is portaled,
+and a path picker closing over it threw `HierarchyRequestError`.
+
+**The sidebar's Cells CTA opens that scoped dialog** instead of
+`PlexoraRequirements.ask(datasource, ["segmentation", "table"])`, which made
+both required and ended in "Still needed: Segmentation mask." with Cancel the
+only exit. `#cell_mask_menu` offers "Replace segmentation mask…" and "Use as
+an image layer"; a one-channel image layer card's `•••` offers "Use as
+segmentation mask". Both post `POST /import/reclassify {sample, layer, as}` →
+`import_sample.reclassify`, which detaches the file and re-adds it through
+`add_layers` with its `mask-or-image:` answer preset, undoing itself on
+failure (the layer back at its place in the stack, the mask back with its
+mode and polygon transform, `_restore_mask`), and refuses node-backed files,
+multi-channel stacks and polygon masks (`boundary_mask.is_boundary_source`;
+`#cell_mask_menu` greys the item out by `POLYGON_MASK`); the page reloads
+after, as for every mask change. `route_count` +1 in every boundary golden.
+A table added to the OPEN sample (`register_layers`) reloads it
+(`import_sample._reload_if_open`, restoring the record if a table read in
+place will not read) -- the record alone left the viewer serving no cells
+until a restart -- and the dialog's `finishScoped` hands it to
+`PlexoraLoadProgress.track`, which follows a table read behind the viewer.
+
+**Mask detection decides by pixels; names only break ties.** The old rule let
+a 16-bit file with a mask-ish name, or any plane with under 2048 values and a
+zero, become a mask with no question -- the reported "image detected as a
+mask". `_window_verdict` now asks two things of a window: are neighbouring
+nonzero pixels equal in BOTH directions (min of across/down ≥
+`LABEL_SAME_FLOOR` 0.75 for a mask, < `IMAGE_SAME_CEILING` 0.5 for an image),
+and is each id compact (median fill of its bounding box ≥ `LABEL_FILL_FLOOR`
+0.2, < `IMAGE_FILL_CEILING` 0.08 → image)? One value or almost all background
+says nothing (None). Windows (`LABEL_WINDOW` 512, up to `LABEL_WINDOWS` 5,
+`_window_origins`) come from the plane's centre and quadrant centres rather
+than the top-left corner, which on a slide is almost always background --
+and an empty corner reads as "sparse, with zeros", which is what a mask looks
+like.
+`_volume_looks_like_labels` and a node's `detect_kind` use the same test. For
+OME-Zarr, `_zarr_label_verdict` reads `image-label` attrs, a `labels/` parent,
+single-channel integer pixels, or `omero` (an image); `_local_label_masks`
+proposes an image store's own `labels/` as its mask (question `labels`, with
+"None"). `LayerProposal.switch` (`{question, value, options}`) rides every
+single-plane raster row, masks found by `_masks_below` ("Not a mask" answers
+`mask-for:` none) and node rows. `spatial_scene.is_spatialdata_store` no
+longer claims an NGFF image whose only group is `labels/` -- it used to drop
+the image and propose only the labels.
+
+**One AnnData table, many images.** `_detect_table` records
+`LayerProposal.subset = {column, values}` from the cached inspection, and
+`_choose_subsets` picks each sample's value: the answer under
+`subset:<sample key>`, else `subset_match(values, names)` against the image's
+file stem, folder, OME `<Image Name>` and the sample name -- token runs, digits
+compared as numbers so `LSP1` never matches `LSP10003`, and only an outright
+winner -- applied as the default with a select to change it. Because it is
+applied without asking, chance matches are refused: a folder's name counts
+only exactly (`_ExactName`; `2024_run3/` is not image 3), a bare number only
+when it is the other name's ONLY number (`slide_3` yes, `scan_2024_10_14`
+no), and a writer's generic name is no name (`_GENERIC_IMAGE_NAME`: tifffile
+calls every image "Image0").
+`_cohort_targets` gives one cohort table to every sample in the folder whose
+image it matches; `import_sample._subset_of` passes the choice to
+`replace_project_data`. `/inspect_data` takes `datasource` and
+`_ambiguous_view` adds `suggested`, which `dataSourceField.js` preselects (the
+requirements modal and the edit page). `_sample_name` strips `.ome`
+(`LSP1.ome.tif` → `LSP1`). `importHelp.js`'s `QUESTIONS` gained `subset` and
+`labels`, and `EXAMPLES` "One table, many images".
+
+**AnnData got cheaper where it was paid for repeatedly.** Measured on a
+3.2 GB / 5M-cell / 20-image h5ad and a 1.9 GB / 3M-cell single-image one:
+`inspection.inspect_anndata` 16.5 s → 0.9 s cold and ~0.5 ms cached
+(categoricals counted from codes; a column whose first 20,000 rows exceed 500
+distinct values is not counted in full; `_INSPECTED` caches by path, size and
+mtime) -- it ran four times per import, about 67 s of waiting. `deferred_spec`
+skips inspection when `subset_by` is given. `anndata_adapter._rows` reads
+contiguous and near-contiguous row sets as slabs rather than h5py point
+selection, with names decoded once (`_decoded`, object arrays): a 3M-cell load
+3.5 s → 2.6 s. `_describe_frame` describes columns on up to 8 threads (4.8 →
+1.4 s, same output). `centroid_tiles._load_table` reuses the loaded frame
+(`data_model.loaded_frame_for`) instead of re-reading the file (4.3 → 0.7 s).
+`/get_all_cells` compresses at gzip level 3 (`_CELLS_GZIP`). A segmentation
+job race is closed: a conversion finishing after its mask was removed,
+replaced or reclassified no longer writes it back
+(`_patch_config_segmentation` checks `segmentationSource`), the replacement's
+job, refused by the per-project lock, is started on the way out
+(`follow_up`), and `attach_segmentation(name, None)` drops a finished job
+record.
+
+**A big local table loads behind the viewer** (see Sharp Edges, "A loaded
+project may not have its cells yet", and `TABLE_STAGES` under Staged
+Progress). On the 3M-cell project the image drew 0.5 s after navigation; it
+used to wait ~4.5 s or more for the table and the index. Client side,
+`loadProgress.js`'s `watchTable` keeps the navbar chip ("Preparing cells ·
+<stage>") past the boot and, on landing, calls `refreshDataset`,
+`viewerControls.refreshAvailability` and dispatches `plexora:table-ready`;
+`follow(datasource, work)` does the same for a save the user stopped watching
+through `tableProgress.js`'s "Continue in background".
+
+Asset tag `?v=20261014_import_progressive` on every touched client file; all
+ten `tests/golden/boundary_*.json` regenerated. Tests: new
+`tests/test_import_roles.py` (detection by pixels, the role switch, OME-Zarr
+labels, `/import/reclassify`); in `tests/test_path_picker.py` the split-control
+cases became `test_browse_is_one_button_on_every_machine`,
+`test_either_kind_opens_the_listing_where_the_dialog_takes_one_kind` and
+`test_the_home_page_asks_up_front_and_the_dialog_does_not_ask_at_all`; in
+`tests/test_cell_mode_control.py`,
+`test_the_cta_opens_the_import_dialog_on_this_sample` and
+`test_what_was_added_is_taken_on_without_losing_the_session`. No full-suite
+count was reported with this change, so the Validation baseline is unchanged.
 
 ## Agent Operating Notes
 

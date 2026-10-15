@@ -79,6 +79,12 @@ CORE_QUESTIONS = frozenset({
     # Whether a large flat multiplex image gets a pyramidized copy. Put as a
     # modal at Import rather than under the row, but asked all the same.
     "pyramidize",
+    # Carries the sample's key after a colon. Which image of a table that
+    # spans several this sample reads -- defaulting to the one its image's
+    # name matches.
+    "subset",
+    # Which of an OME-Zarr image's own `labels/` is its segmentation.
+    "labels",
 })
 
 

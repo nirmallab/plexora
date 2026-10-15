@@ -35,11 +35,19 @@ def client(tmp_path, monkeypatch):
     rng = np.random.default_rng(0)
     tifffile.imwrite(source / "slide.ome.tif",
                      rng.integers(0, 4000, (2, 128, 128)).astype(np.uint16))
-    tifffile.imwrite(source / "slide_mask.tif",
-                     (np.arange(128 * 128).reshape(128, 128) % 50).astype(np.uint32))
+    tifffile.imwrite(source / "slide_mask.tif", _cells(128))
     layer_jobs.forget()
     yield plexora.app.test_client()
     layer_jobs.forget()
+
+
+def _cells(size):
+    """A label plane: square cells of one id each over a background of zero."""
+    labels = np.zeros((size, size), dtype=np.uint32)
+    for index in range(1, 6):
+        top = index * (size // 7)
+        labels[top:top + size // 10, top:top + size // 10] = index
+    return labels
 
 
 def _source(client):
@@ -378,8 +386,7 @@ def test_a_mask_added_to_a_sample_is_registered_as_that_samples_mask(client):
     """
     paths = _two_slides(client)
     source = _source(client)
-    labels = (np.arange(128 * 128).reshape(128, 128) % 50).astype(np.uint32)
-    tifffile.imwrite(source / "segmentation.tif", labels)
+    tifffile.imwrite(source / "segmentation.tif", _cells(128))
     paths.append(str(source / "segmentation.tif"))
     answers = {"sample-for:segmentation.tif": "stem:mel0293",
                "added-as:segmentation.tif": "mask"}

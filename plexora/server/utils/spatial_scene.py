@@ -137,8 +137,19 @@ def is_spatialdata_store(path) -> bool:
     root = Path(path)
     if not root.is_dir():
         return False
-    groups = (*SPATIALDATA_KINDS, SPATIALDATA_TABLES)
-    return any((root / group).is_dir() for group in groups)
+    groups = [group for group in (*SPATIALDATA_KINDS, SPATIALDATA_TABLES)
+              if (root / group).is_dir()]
+    if groups == ["labels"]:
+        # An OME-Zarr IMAGE files its own segmentations under `labels/`
+        # (`image.zarr/labels/cells`), and read as a SpatialData store it
+        # lost the image and proposed only the labels. A root that is itself
+        # a multiscale image is that image; one metadata read, and only for
+        # the one layout the two share.
+        from plexora.server.utils import ome_zarr
+
+        if ome_zarr._is_multiscale(root):
+            return False
+    return bool(groups)
 
 
 def _xenium_path(root, name):

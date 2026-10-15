@@ -150,13 +150,26 @@ def test_a_png_mask_is_recognised_as_one(tmp_path):
     assert import_proposal.looks_like_label_image(source) is True
 
 
-def test_an_8_bit_grey_png_is_asked_about_unless_its_name_says(tmp_path):
-    """The same ambiguity an 8-bit TIFF plane has: a small mask, or a
-    greyscale picture."""
-    plane = _labels(dtype=np.uint8)
-    plain, named = tmp_path / "field.png", tmp_path / "field_mask.png"
-    Image.fromarray(plane).save(plain)
-    Image.fromarray(plane).save(named)
+def test_an_8_bit_grey_png_is_read_by_its_pixels_and_named_only_on_a_tie(tmp_path):
+    """An 8-bit plane is a small mask or a greyscale picture, and the pixels
+    say which: cells are flat, compact blobs of one id each, a picture is a
+    continuum. Only a plane that cannot say -- one value over a background,
+    which a one-cell mask and a thresholded picture both are -- falls back on
+    its name."""
+    cells = tmp_path / "field.png"
+    Image.fromarray(_labels(dtype=np.uint8)).save(cells)
+    assert import_proposal.looks_like_label_image(cells) is True
+
+    picture = tmp_path / "photo_mask.png"
+    Image.fromarray(np.random.default_rng(5).integers(
+        0, 255, (96, 128), dtype=np.uint8)).save(picture)
+    assert import_proposal.looks_like_label_image(picture) is False
+
+    flat = np.zeros((96, 128), dtype=np.uint8)
+    flat[20:60, 30:90] = 1
+    plain, named = tmp_path / "blob.png", tmp_path / "blob_mask.png"
+    Image.fromarray(flat).save(plain)
+    Image.fromarray(flat).save(named)
     assert import_proposal.looks_like_label_image(plain) is None
     assert import_proposal.looks_like_label_image(named) is True
 

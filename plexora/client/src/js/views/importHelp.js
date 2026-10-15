@@ -232,6 +232,10 @@ window.PlexoraImportHelp = (function () {
         "bin-size": "which Visium HD bin size (or the segmented cells) is the table",
         pyramidize: "whether to build a pyramidized copy of a large image "
             + "that has none",
+        subset: "which image of a cell table that spans several this sample "
+            + "reads (chosen by matching the image's name)",
+        labels: "which of an OME-Zarr image's own label images is its "
+            + "segmentation, or none",
     };
 
     const EXAMPLES = [
@@ -259,8 +263,17 @@ window.PlexoraImportHelp = (function () {
             title: "Two slides at once",
             tree: "a.ome.tif\n"
                 + "b.ome.tif",
-            caption: "Different stems, so Plexora asks once: two samples, or "
-                   + "one sample with two layers?",
+            caption: "Different stems: two samples. A file added through a "
+                   + "card's own + Add layer joins that sample instead.",
+        },
+        {
+            title: "One table, many images",
+            tree: "LSP10003.ome.tif\n"
+                + "LSP10004.ome.tif\n"
+                + "cohort.h5ad           → imageid: LSP10003, LSP10004, …",
+            caption: "The table is shared: each sample reads the cells of the "
+                   + "image whose name matches its own. The match is shown, "
+                   + "and can be changed on the card.",
         },
     ];
 

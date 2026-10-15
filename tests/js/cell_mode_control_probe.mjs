@@ -288,10 +288,13 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
         },
         flaskVariables: { datasource: "demo" },
         location: { reload() { asked.push("reload"); } },
-        PlexoraRequirements: {
-            ask(datasource, keys) {
-                asked.push({ datasource, keys });
-                return Promise.resolve(answerRequirements);
+        PlexoraImportSample: {
+            open(options) {
+                asked.push({ datasource: options.sample, intent: options.intent });
+                // The dialog calls `onAdded` only when the layers were taken
+                // on in place; a mask reloads the page itself instead.
+                if (answerRequirements && !maskAttached) options.onAdded?.({});
+                return {};
             },
         },
         __plexora: {
@@ -1173,20 +1176,21 @@ const activeModes = (buttons) =>
         controls.mode === "filled", "it was enabled for the first click only");
 }
 
-// -- the CTA asks rather than navigating ---------------------------------
+// -- the CTA opens the import dialog on this sample -----------------------
+//
+// Not the requirements modal, which asked for the mask AND the table as two
+// required fields: adding only one was "Still needed: Segmentation mask." with
+// Cancel as the only way out. Nothing here is required.
 
 {
     const { cta, asked } = build({ segmentation: null, hasTable: false });
     const event = await cta.click();
-    check("clicking Add Seg Mask / Data asks for exactly what is missing",
+    check("clicking Add Seg Mask / Data opens the dialog on this sample",
         event.defaultPrevented === true
         && asked[0]?.datasource === "demo"
-        && String(asked[0]?.keys) === "segmentation,table",
+        && asked[0]?.intent === "cells",
         `asked: ${JSON.stringify(asked[0])}`);
-    check("a project that answered is re-read before the control repaints",
-        asked.includes("refresh"),
-        "the control would otherwise decide from the state it just changed");
-    check("the wait for a converting mask is started",
+    check("what was added is repainted from, in place",
         asked.includes("watch"),
         "a mask attached mid-session finishes into a page that never notices");
 }
@@ -1194,26 +1198,23 @@ const activeModes = (buttons) =>
 {
     const { cta, asked } = build({ segmentation: "/mask.zarr", hasTable: false });
     await cta.click();
-    check("only the missing half is asked for",
-        String(asked[0]?.keys) === "table", `asked: ${JSON.stringify(asked[0])}`);
+    check("only the missing half is what the dialog is for",
+        asked[0]?.intent === "table", `asked: ${JSON.stringify(asked[0])}`);
+}
+
+{
+    const { cta, asked } = build({ segmentation: null, hasTable: true });
+    await cta.click();
+    check("a sample with a table is asked for its mask",
+        asked[0]?.intent === "mask", `asked: ${JSON.stringify(asked[0])}`);
 }
 
 {
     const { cta, asked } = build({ segmentation: null, hasTable: false,
                                    answerRequirements: false });
     await cta.click();
-    check("backing out of the form changes nothing",
+    check("closing the dialog changes nothing",
         asked.length === 1, `asked: ${JSON.stringify(asked)}`);
-}
-
-{
-    const { cta, asked } = build({ segmentation: null, hasTable: false,
-                                   maskAttached: true });
-    await cta.click();
-    check("a mask attached mid-session reloads rather than being patched in",
-        asked.includes("reload") && !asked.includes("watch"),
-        "attaching one inserts the Area channel at imageData[0], so every "
-        + "channel index this page holds has just moved");
 }
 
 // -- the 3-D view: Outlines and Filled are cell surfaces there ------------

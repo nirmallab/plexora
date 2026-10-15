@@ -281,6 +281,10 @@ def _finish_layer_builds(plexora_data_root):
     to happen while the environment still points at this test's tmp_path, which
     is the whole point.
 
+    A table loading behind the viewer (`table-<name>`,
+    data_model._load_table_behind) is joined for the same reason: it writes
+    the spatial index under the root when it lands.
+
     The segmentation conversion thread (`segmentation-<name>`) is joined too:
     `_forget_the_loaded_datasource` stops its completion handler reloading
     into the next test, but its own mask writes resolve the root when they
@@ -289,7 +293,7 @@ def _finish_layer_builds(plexora_data_root):
     yield
     deadline = time.monotonic() + 30
     for thread in threading.enumerate():
-        if (not thread.name.startswith(("layer-", "segmentation-"))
+        if (not thread.name.startswith(("layer-", "segmentation-", "table-"))
                 or not thread.is_alive()):
             continue
         thread.join(timeout=max(0.0, deadline - time.monotonic()))

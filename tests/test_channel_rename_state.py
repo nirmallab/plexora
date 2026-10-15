@@ -139,7 +139,10 @@ def test_an_unknown_channel_says_which_one_and_where(monkeypatch):
 
 
 def test_the_stats_call_raises_that_rather_than_stopping_iteration(monkeypatch):
+    # Both loaders: the image's stats load the image only (`ensure_loaded`),
+    # so a cell table still loading behind the viewer never holds them up.
     monkeypatch.setattr(data_model, "_ensure_loaded", lambda name: None)
+    monkeypatch.setattr(data_model, "ensure_loaded", lambda name: 0)
     monkeypatch.setattr(data_model, "config", {
         "tonsil": {"imageData": [{"name": "DAPI", "fullname": "DAPI"}]},
     })

@@ -88,6 +88,14 @@ def get_channel_names():
     return serialize_and_submit_json(resp)
 
 
+#: How hard the per-cell arrays are compressed. Level 9 -- gzip's default --
+#: spent half a second on 250k cells' ids and positions (and about ten on a
+#: 5M-cell table) to save a few percent over level 3: float columns barely
+#: compress at all, and the bytes travel to a browser on the same machine or
+#: one tunnel away.
+_CELLS_GZIP = 3
+
+
 @app.route('/get_all_cells/<dtype>/', methods=['GET'])
 def get_all_cells(dtype):
     datasource = request.args.get('datasource')
@@ -96,7 +104,7 @@ def get_all_cells(dtype):
     t = request.args.get('t')
     resp = data_model.get_all_cells(datasource, start_keys, data_type,
                                     t=int(t) if t not in (None, "") else None)
-    content = gzip.compress(resp.tobytes('C'))
+    content = gzip.compress(resp.tobytes('C'), compresslevel=_CELLS_GZIP)
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
     response.headers['Content-length'] = len(content)
@@ -124,7 +132,7 @@ def get_not_called():
     out = np.zeros(n, dtype=np.uint8)
     if mask is not None and mask.shape[0] == n:
         out[mask] = 1
-    content = gzip.compress(out.tobytes('C'))
+    content = gzip.compress(out.tobytes('C'), compresslevel=_CELLS_GZIP)
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
     response.headers['Content-length'] = len(content)
@@ -149,7 +157,7 @@ def get_centroid_tiles():
     filter = post_data.get('filter', {})
     max_points = post_data.get('max_points')
     resp = data_model.get_centroid_tiles(datasource, level, tiles, filter, max_points)
-    content = gzip.compress(resp.tobytes('C'))
+    content = gzip.compress(resp.tobytes('C'), compresslevel=_CELLS_GZIP)
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
     response.headers['Content-length'] = len(content)
@@ -169,7 +177,15 @@ def get_channel_cell_ids():
 @app.route('/get_database_description', methods=['GET'])
 def get_database_description():
     datasource = request.args.get('datasource')
-    resp = data_model.get_datasource_description(datasource)
+    # Not waited for: the boot asks this beside the image, and a table still
+    # loading behind the viewer answers image-only until it lands -- with a
+    # header saying so, so the page takes the cells on however soon they
+    # land (views/loadProgress.js).
+    resp = data_model.get_datasource_description(datasource, wait=False)
+    if resp is None:
+        response = serialize_and_submit_json({})
+        response.headers['X-Plexora-Cells-Pending'] = '1'
+        return response
     return serialize_and_submit_json(resp)
 
 

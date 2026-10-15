@@ -21,12 +21,18 @@ window.PlexoraTableProgress = (function () {
     const STAGES = [
         { key: 'opening', label: 'Opening file' },
         { key: 'metadata', label: 'Reading metadata' },
-        { key: 'preparing', label: 'Loading cells' },
-        { key: 'loading', label: 'Indexing' },
-        { key: 'finalizing', label: 'Finishing' },
+        { key: 'subset', label: 'Mapping cells to images' },
+        { key: 'coordinates', label: 'Detecting coordinates' },
+        { key: 'identifiers', label: 'Reading cell identifiers' },
+        { key: 'preparing', label: 'Reading marker values' },
+        { key: 'loading', label: 'Building the spatial index' },
+        { key: 'finalizing', label: 'Finalizing workspace' },
     ];
 
     const POLL_MS = 500;
+    //: How long a save runs before "Continue in background" is offered. A
+    //: quick one should not flash a button nobody could reach in time.
+    const OFFER_BACKGROUND_MS = 1500;
 
     /**
      * Show the panel until `work` settles, then take it down.
@@ -36,6 +42,10 @@ window.PlexoraTableProgress = (function () {
      * @param {Promise} options.work       The save already in flight.
      * @param {Element} [options.mount]    Where to draw. Defaults to an overlay.
      * @param {string} [options.title]
+     * @param {Function} [options.onBackground]  When given, a save that is
+     *   still running after OFFER_BACKGROUND_MS offers "Continue in
+     *   background", which calls this -- the caller closes its form and lets
+     *   the save run on; the panel stops watching.
      * @returns {Promise} whatever `work` resolves to; rejections pass through.
      */
     async function watch(options) {
@@ -47,6 +57,19 @@ window.PlexoraTableProgress = (function () {
         });
 
         let stopped = false;
+        let offer = null;
+        if (options.onBackground && panel.addAction) {
+            offer = window.setTimeout(() => {
+                if (stopped) return;
+                panel.addAction({
+                    label: 'Continue in background',
+                    onClick: () => {
+                        stopped = true;
+                        options.onBackground();
+                    },
+                });
+            }, OFFER_BACKGROUND_MS);
+        }
         const poll = async () => {
             if (stopped) return;
             try {
@@ -75,6 +98,7 @@ window.PlexoraTableProgress = (function () {
             return await options.work;
         } finally {
             stopped = true;
+            if (offer) window.clearTimeout(offer);
             panel.remove();
         }
     }

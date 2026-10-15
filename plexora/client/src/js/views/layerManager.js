@@ -1308,6 +1308,67 @@ window.PlexoraLayerManager = (function () {
         return button;
     }
 
+    // ------------------------------------------------ what the file is
+
+    /**
+     * Whether this card gets a `•••` offering "Use as segmentation mask": an
+     * image layer of one channel, read from a file. The other half of the
+     * Cells control's "Use as an image layer" -- detection that read a mask
+     * as an image is put right here, in place (import_sample.reclassify).
+     */
+    function hasRoleMenu(layer) {
+        if (!layer || layer.id === baseId() || !isRemovable(layer)) return false;
+        if (kindOf(layer) !== "image" || !layer.src) return false;
+        if (String(layer.src).startsWith("node://")) return false;
+        return (layer.channels || []).length <= 1;
+    }
+
+    function roleMenuFor(layer) {
+        const held = menus.get(layer.id);
+        if (held) return held;
+        const button = PlexoraCardList.iconButton(
+            "layer-card-menu", "What this file is", "fas fa-ellipsis",
+            (event) => {
+                event?.stopPropagation?.();
+                window.PlexoraMenu?.open(button, [{
+                    label: "Use as segmentation mask",
+                    title: "The file was detected as an image but is a mask",
+                    onSelect: () => useAsMask(layer),
+                }]);
+            });
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        menus.set(layer.id, button);
+        return button;
+    }
+
+    async function useAsMask(layer) {
+        const sample = window.flaskVariables?.datasource;
+        if (!sample) return;
+        const sure = await window.PlexoraConfirm?.ask?.({
+            title: `Use ${labelFor(layer)} as the segmentation mask?`,
+            body: "Its pixels are read as cell ids and drawn as outlines; it "
+                + "leaves the layer stack. A mask the sample already has is "
+                + "replaced. Nothing is deleted.",
+            confirm: "Use as mask",
+        });
+        if (sure === false) return;
+        try {
+            const response = await fetch(plexoraUrl("import/reclassify"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({sample, layer: layer.id, as: "mask"}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Could not change it.");
+            // A mask shifts every channel index on the page: reloaded, as
+            // every mask attached mid-session is.
+            window.location.reload();
+        } catch (error) {
+            notify("Could not use it as the mask", error?.message);
+        }
+    }
+
     // ------------------------------------------------ copy and paste
 
     function sidebar() { return window.__plexora?.viewerSidebar || null; }
@@ -1484,6 +1545,7 @@ window.PlexoraLayerManager = (function () {
         if (hasGroundDot(layer)) extras.unshift(groundDotFor(layer));
         // Last, so the header reads: ground dot, `•••`, eye, lock.
         if (hasRenderMenu(layer)) extras.push(renderMenuFor(layer));
+        else if (hasRoleMenu(layer)) extras.push(roleMenuFor(layer));
         return PlexoraCardList.buildCard({
             prefix: "layer-card",
             attr: CARD_ATTR,

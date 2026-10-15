@@ -252,7 +252,11 @@ window.PlexoraDataSourceField = (function () {
                 const response = await fetch(plexoraUrl("inspect_data"), {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ path, table: table || null }),
+                    // The project this field belongs to, when there is
+                    // one: its image's name is what preselects the image
+                    // inside a table that spans several.
+                    body: JSON.stringify({ path, table: table || null,
+                                           datasource: options.datasource || null }),
                 });
                 payload = await response.json();
             } catch (e) {
@@ -320,9 +324,16 @@ window.PlexoraDataSourceField = (function () {
         }
 
         function showSubset(ambiguous) {
-            subsetHint.textContent =
-                `This table covers several images (column "${ambiguous.column}"). `
-                + "Choose the one this project's image shows.";
+            // The server's match for this project's image, by name. Chosen,
+            // and said to be chosen: a name is evidence, not proof.
+            const suggested = (ambiguous.values || []).includes(ambiguous.suggested)
+                ? ambiguous.suggested : null;
+            subsetHint.textContent = suggested
+                ? `This table covers several images (column "${ambiguous.column}"). `
+                  + `${suggested} matches this project's image by name — change it `
+                  + "if that is wrong."
+                : `This table covers several images (column "${ambiguous.column}"). `
+                  + "Choose the one this project's image shows.";
             subsetSelect.replaceChildren();
             subsetSelect.append(new Option("Choose an image…", ""));
             (ambiguous.values || []).forEach(
@@ -335,8 +346,10 @@ window.PlexoraDataSourceField = (function () {
             };
             subsetField.hidden = false;
             state.subsetColumn = ambiguous.column;
-            state.subsetValue = null;
-            state.blocking = "Choose which image in the table this project shows.";
+            subsetSelect.value = suggested || "";
+            state.subsetValue = suggested;
+            state.blocking = suggested
+                ? null : "Choose which image in the table this project shows.";
         }
 
         input.addEventListener("input", schedule);

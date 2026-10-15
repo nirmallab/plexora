@@ -2118,6 +2118,41 @@
     text-overflow: ellipsis;
 }
 
+/* The mask's own menu, beside the modes: as quiet as the CTA it sits next to,
+   a glyph rather than words, because it is the rare action on this row. */
+.cell-mask-menu {
+    align-items: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 28px;
+    justify-content: center;
+    padding: 0;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+    width: 22px;
+}
+
+.cell-mask-menu[hidden] {
+    display: none;
+}
+
+.cell-mask-menu:hover,
+.cell-mask-menu[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.cell-mask-menu:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
 .cell-mode-options {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);

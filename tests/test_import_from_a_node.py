@@ -55,9 +55,10 @@ def _mask_file(directory, name="cell.ome.tif"):
 
 
 def _ambiguous_file(directory, name="LSP11641_extra.tif"):
-    """One 8-bit plane: a small mask and a grey photograph read the same."""
-    rng = np.random.default_rng(3)
-    plane = rng.integers(0, 6, (SIZE, SIZE), dtype=np.uint8)
+    """One 8-bit plane holding one value over a background: a one-cell mask
+    and a thresholded picture read the same, and the pixels cannot say."""
+    plane = np.zeros((SIZE, SIZE), dtype=np.uint8)
+    plane[SIZE // 4:SIZE // 2, SIZE // 4:3 * SIZE // 4] = 1
     path = directory / name
     tifffile.imwrite(path, plane)
     return path

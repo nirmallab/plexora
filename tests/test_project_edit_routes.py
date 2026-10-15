@@ -204,7 +204,13 @@ def test_a_csv_project_survives_an_unchanged_save(isolate, tmp_path):
 
 def _mask(tmp_path, name="mask.tif"):
     path = tmp_path / name
-    tifffile.imwrite(path, np.arange(256 * 256, dtype=np.uint32).reshape(256, 256))
+    # Cells of one id each over a background, as a segmenter writes them --
+    # detection reads the pixels, and a plane where every pixel is its own id
+    # is a gradient, not a mask.
+    labels = np.zeros((256, 256), dtype=np.uint32)
+    for index in range(1, 9):
+        labels[index * 25:index * 25 + 14, index * 25:index * 25 + 14] = index
+    tifffile.imwrite(path, labels)
     return path
 
 

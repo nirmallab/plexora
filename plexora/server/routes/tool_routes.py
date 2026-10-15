@@ -436,7 +436,7 @@ def satisfy_requirements(datasource):
     )
 
 
-def _reload_or_restore(datasource, previous):
+def _reload_or_restore(datasource, previous, wait_for_table=True):
     """Reload the datasource, putting `previous` back if it will not load.
 
     An answer is only really accepted once the file can be read with it. A role
@@ -452,9 +452,17 @@ def _reload_or_restore(datasource, previous):
     would turn it into a silent no-op save.
 
     Returns an error message, or None when the reload was fine.
+
+    `wait_for_table` is what makes this a check: a large table read behind the
+    viewer (data_model.BACKGROUND_TABLE_BYTES) would answer before anything
+    said whether it reads. False for a caller that would rather not freeze
+    the canvas for the read -- the import dialog's "Add data" -- and learns
+    about a table that will not read from the load status instead
+    (data_model._with_table_behind).
     """
     try:
-        data_model.load_datasource(datasource, reload=True)
+        data_model.load_datasource(datasource, reload=True,
+                                   wait_for_table=wait_for_table)
         return None
     except ValueError as exc:
         previous.save()

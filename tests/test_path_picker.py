@@ -252,43 +252,41 @@ def test_a_browse_filled_box_tells_the_switch_it_changed():
     assert 'addEventListener("change"' in location
 
 
-# -- the split button --------------------------------------------------------
+# -- one Browse, either kind ---------------------------------------------------
 #
-# A desktop that cannot answer "a file OR a folder" in one panel is not a
-# desktop with no picker. These are the four ways that distinction gets lost.
+# A field asking for "your image" or "your mask" does not ask whether it is a
+# file or a folder -- that is a fact about the format -- so mode "any" opens the
+# one panel that takes both, on every machine: macOS's own, and everywhere else
+# the in-app listing. A field asking for exactly one kind still gets that
+# machine's own single-kind dialog.
 
 
-def test_the_control_replaces_the_browse_button_rather_than_opening_from_it():
-    """It IS the button. On Windows and Linux the file-or-folder question
-    cannot be avoided, so asking it up front is one click where a menu hanging
-    off Browse was two."""
+def test_browse_is_one_button_on_every_machine():
+    """No File | Folder pair swapped in for the button on Windows and Linux:
+    the pair made the user say which kind of thing their format is before
+    they could point at it, and the sidebar's Add Seg Mask could not take a
+    folder at all where the swap had not happened."""
     browse = source("src", "js", "services", "browsePicker.js")
-    assert "function applyCapability(" in browse
-    assert 'if (mode === "any") {' in browse
-    assert "applyCapability(buttonEl, inputEl, examples || filter" in browse
-    # Swapped in place, with the button kept rather than destroyed -- the
-    # answer can change back when the Local/Remote switch moves the field.
-    assert "buttonEl.after(split)" in browse
-    assert "buttonEl.hidden = true" in browse
-    assert "buttonEl.hidden = false" in browse
+    assert "function applyCapability(" not in browse
+    assert "applyCapability(" not in browse
+    assert 'buttonEl.addEventListener("click", () => go(mode));' in browse
 
 
-def test_only_a_field_that_takes_either_kind_is_split():
-    """A field asking for a file, or for a folder, has nothing to split: one
-    button already says which. Splitting those would invent a choice."""
+def test_either_kind_opens_the_listing_where_the_dialog_takes_one_kind():
+    """"kinds" -- a desktop whose dialogs take one kind at a time -- is
+    answered with the listing for mode "any", which selects a file, a .zarr
+    store in one click, or the folder that is open. The popup that asked
+    "file or folder?" is left for a page with no listing."""
     browse = source("src", "js", "services", "browsePicker.js")
-    assert 'if (mode === "any") {' in browse
-
-
-def test_the_control_follows_the_local_remote_switch():
-    """That switch points a mounted field at a different computer. A laptop's
-    File/Folder pair left over on a field now aimed at a cluster would offer
-    two routes to the same in-app listing."""
-    browse = source("src", "js", "services", "browsePicker.js")
-    assert 'inputEl.addEventListener("change", ask)' in browse
-    # And a late answer for the machine the field has since moved off is
-    # dropped rather than applied.
-    assert "if (nodeNow() === at) render(kind)" in browse
+    assert ('if (result.fallback === "kinds" && anchorEl\n'
+            '                    && !(mode === "any" && window.PlexoraPathPicker)) {') in browse
+    assert ('(result.fallback === "list" || result.fallback === "kinds")'
+            in browse)
+    # The desktop app's own dialogs are single-kind on every platform: "any"
+    # goes to the Mac's file-or-folder panel through the server, else the
+    # listing.
+    assert 'if (await serverDialogs() === "hybrid") {' in browse
+    assert 'mode: "any", filter, start,' in browse
 
 
 def test_a_capability_failure_is_not_remembered():
@@ -299,9 +297,11 @@ def test_a_capability_failure_is_not_remembered():
 
 
 def test_a_single_kind_desktop_reaches_a_native_dialog_rather_than_the_listing():
-    """The regression this exists for: mode "any" arrived, every non-Mac
-    desktop refused it, the refusal said "list", and Windows quietly lost its
-    system file browser to an in-app listing it never needed."""
+    """For a field that asks for ONE kind, a Windows or Linux desktop still
+    opens its own system dialog -- the listing answers "kinds" only for mode
+    "any", where no system dialog can take both. And the chooser that asks
+    which kind, kept for a page with no listing, re-posts its answer as an
+    ordinary single-kind request."""
     browse = source("src", "js", "services", "browsePicker.js")
     assert 'result.fallback === "kinds" && anchorEl' in browse
     # ...and what the menu picks is re-posted as an ordinary single-kind
@@ -360,22 +360,13 @@ def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     assert "const box = anchorBox(anchorEl);" in browse
 
 
-def test_both_surfaces_ask_file_or_folder_up_front_on_every_platform():
-    """The two surfaces that ask "which file?" with the whole width to do it in
-    -- the home page's card and the import dialog's `pick` state -- ask "file or
-    folder?" before the dialog opens, not as a single target that a capability
-    probe swaps for the halves after load.
-
-    The probe existed to decide whether the question could be avoided, and only
-    macOS could avoid it. Asking it up front costs macOS one decision and buys
-    every platform the same page, no round trip on load, and no popup that can
-    open away from the click.
-
-    Both ask with File | Folder tabs above one path box -- the dialog's pick
-    control is the home page's card -- and the format chips are read from the
-    same table the split control's example lines are, so two screens that ask
-    the same question cannot say different things about formats.
-    """
+def test_the_home_page_asks_up_front_and_the_dialog_does_not_ask_at_all():
+    """The home page keeps its File | Folder tabs above one path box -- its
+    one control is the whole page, and the chips under it are read from the
+    same table the chooser's example lines are. The import dialog asks
+    nothing: its Browse takes either kind, so a scoped "+ Add Layer" -- the
+    sidebar's Add Seg Mask included -- can be pointed at an OME-Zarr folder
+    or a TIFF alike."""
     landing = source("src", "js", "views", "quickViewLanding.js")
     index = source("templates", "index.html")
     assert 'data-kind="file"' in index and 'data-kind="directory"' in index
@@ -384,13 +375,11 @@ def test_both_surfaces_ask_file_or_folder_up_front_on_every_platform():
 
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    # The home page's tabs, in the dialog's own pick control.
-    assert '[["file", "fa-file", "File"], ["directory", "fa-folder", "Folder"]]' in dialog
-    assert "pickWith(state.kind)" in dialog
+    assert "plx-import-kind" not in dialog
+    assert 'pickWith("any")' in dialog
     assert "KIND_EXAMPLES[examples]" in dialog
-    # And no longer swapped in by the probe.
     assert "applyCapability" not in dialog
-    assert ".plx-import-kind-option[aria-checked=\"true\"] {" in css
+    assert ".plx-import-pick[data-kind=\"any\"] .plx-import-chip {" in css
 
 
 def test_the_halves_are_a_control_and_the_drop_target_is_separate():
@@ -451,12 +440,11 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     # The home page's File / Folder tabs, which choose what Browse opens.
     assert "option.disabled = busy();" in landing
     assert ".quick-view-kind-option:disabled {" in source("src", "css", "quickView.css")
-    # The dialog's tabs and its Browse button, held for exactly this.
-    assert "state.pickControls = [...options, go];" in dialog
+    # The dialog's Browse button, held for exactly this.
+    assert "state.pickControls = [go];" in dialog
     assert "control.disabled = busy;" in dialog
-    # And they have to look disabled: a control that still lights up under
-    # the pointer is inviting exactly the click it will not accept.
-    assert ".plx-import-kind-option:disabled {" in css
+    # And it has to look disabled: a control that still lights up under the
+    # pointer is inviting exactly the click it will not accept.
     assert ".plx-import-browse:disabled {" in css
     assert ".browse-kind-half:disabled {" in css
 

@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import threading
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -274,6 +274,20 @@ class LayerProposal:
     #: picked beside it (`markers.csv`). Empty means the image keeps its own.
     #: Internal: the row's detail says where the names came from.
     channel_names: tuple = ()
+    #: What this row could be instead, and how to say so: `{question,
+    #: options: [{value, label}], value}`. The role badge on the import
+    #: screen is a menu over these, and choosing one answers `question` --
+    #: the same answer key a `mask-or-image` question uses -- so a confident
+    #: detection is as correctable as an uncertain one, without a question in
+    #: front of every row. None where there is no other reading (a
+    #: multi-channel stack is never a mask; a JPEG cannot hold ids).
+    switch: Mapping[str, Any] | None = None
+    #: A cell table spanning several images: `{column, values, value}` -- the
+    #: obs column that says which image each cell is in, its values, and the
+    #: one this sample reads (`_choose_subsets`), or None when nothing names
+    #: it. Registration reads only that image's cells, so the table opens
+    #: with the sample instead of waiting for somebody to say which.
+    subset: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -292,6 +306,10 @@ class LayerProposal:
             "bundle": dict(self.bundle) if self.bundle else None,
             "binding": dict(self.binding) if self.binding else None,
             "render": dict(self.render),
+            "switch": dict(self.switch) if self.switch else None,
+            "subset": ({"column": self.subset.get("column"),
+                        "value": self.subset.get("value")}
+                       if self.subset else None),
         }
 
 
@@ -516,19 +534,43 @@ def _geometry_of(path, rgb=False):
     }
 
 
+#: The two readings a single plane of integers has, as the role menu on the
+#: import screen offers them (`LayerProposal.switch`).
+ROLE_OPTIONS = ({"value": "image", "label": "Image"},
+                {"value": "mask", "label": "Segmentation mask"})
+
+
+def _role_switch(question_id, current):
+    """A row's `switch` between image and mask, answered under `question_id`."""
+    return {"question": question_id, "value": current,
+            "options": [dict(option) for option in ROLE_OPTIONS]}
+
+
+def _single_plane(geometry) -> bool:
+    """Whether a raster has one channel: the only kind that can be a mask."""
+    try:
+        return int((geometry or {}).get("numChannels") or 1) == 1
+    except (TypeError, ValueError):
+        return False
+
+
 def looks_like_label_image(path):
     """Whether this image file is a segmentation mask. `True`, `False` or None.
 
     None is the answer that matters: it means the file is consistent with BOTH
-    readings and the user has to say. That is a single-plane 8-bit image with
-    nothing in its name to go on -- which is both a small mask and a grayscale
-    photograph, and guessing wrong either way is bad in a way the user cannot
-    see (a mask drawn as a channel is a grey square; an image read as a mask is
-    a cell-id lookup over a photograph).
+    readings and the user has to say. Every raster row can still be switched
+    between the two on the import screen (`LayerProposal.switch`), so a wrong
+    confident answer costs a click rather than a deleted sample -- but a
+    question in front of every ambiguous file is still how the likely wrong
+    guesses are caught before anybody has to notice them.
 
-    The one place in this module that reads pixels, and it reads one bounded
-    window rather than the file: a mask's values are sparse integer ids and an
-    image's are a continuum, which shows up in a 512x512 corner.
+    Decided by the PIXELS, and by the name only when the pixels cannot say
+    (`_name_says_mask`). It used to be the other way round for any 16-bit
+    plane: a filename containing "nuclei" or "seg" made a DAPI channel a mask
+    before a pixel was read, and a plane whose top-left corner held a zero and
+    fewer than 2048 distinct values -- a dark corner of almost any slide --
+    was called a mask with no question asked. See `_window_verdict` for what
+    the pixels are asked now.
     """
     import numpy as np
 
@@ -554,14 +596,14 @@ def looks_like_label_image(path):
             return False
         dtype = np.dtype(np.uint16 if header.bit_depth == 16 else np.uint8)
         try:
-            return _plane_verdict(
-                path, dtype,
-                lambda: segmentation_pyramid.read_png_labels(path)[:512, :512])
+            plane = segmentation_pyramid.read_png_labels(path)
+            return _plane_verdict(path, dtype, plane.shape[-2:],
+                                  lambda rows, cols: plane[rows, cols])
         except Exception:
             return None
     try:
         if ome_zarr.is_zarr_image_path(path):
-            return None
+            return _zarr_label_verdict(path)
         import tifffile as tf
 
         with tf.TiffFile(str(path), is_ome=False) as handle:
@@ -577,99 +619,266 @@ def looks_like_label_image(path):
             if planes > 1:
                 # A stack of integer planes can be a 3-D label volume -- one id
                 # per cell across every plane it spans (plexora/server/volume/
-                # labels.py). Said so by its name, or by the middle plane
-                # looking like ids (sparse values, a background of zeros); a
-                # stack of intensities is anything else.
+                # labels.py). Said so by the middle plane looking like ids
+                # (or, when that plane cannot say, by its name); a stack of
+                # intensities is anything else.
                 # A (T, Z, Y, X) stack is one label volume per frame.
                 if len(shape) in (3, 4) and dtype.kind in "ui" and _volume_looks_like_labels(
                         handle, path, dtype):
                     return True
                 return False
-            return _plane_verdict(path, dtype, lambda: _tiff_corner(handle))
+            reader = _tiff_reader(handle)
+            return _plane_verdict(path, dtype, shape[-2:], reader)
     except Exception:
         return None
 
 
-def _tiff_corner(handle):
-    """The top-left 512x512 of a TIFF's first plane, reading only the tiles
-    that cover it.
+#: The side of one window the label test reads, and how many windows it may
+#: read before giving up on a plane that is mostly background.
+LABEL_WINDOW = 512
+LABEL_WINDOWS = 5
+
+
+def _window_origins(height, width, size=LABEL_WINDOW):
+    """Top-left corners of up to `LABEL_WINDOWS` windows over a plane.
+
+    The centre first, then the centres of the four quadrants -- where the
+    tissue is. It used to be the top-left corner alone, which on a slide is
+    the one place almost guaranteed to be background: an image's empty corner
+    read as "sparse, with zeros", which is what a mask looks like.
+    """
+    def clamp(value, extent):
+        return max(0, min(int(value), max(0, int(extent) - size)))
+
+    centres = [(height / 2, width / 2), (height / 4, width / 4),
+               (height / 4, 3 * width / 4), (3 * height / 4, width / 4),
+               (3 * height / 4, 3 * width / 4)]
+    origins = []
+    for row, col in centres:
+        origin = (clamp(row - size / 2, height), clamp(col - size / 2, width))
+        if origin not in origins:
+            origins.append(origin)
+    return origins[:LABEL_WINDOWS]
+
+
+def _tiff_reader(handle, lead=None):
+    """`read(rows, cols)` over a TIFF's full-resolution plane, decoding only
+    the tiles a window covers.
 
     `pages[0].asarray()` decodes the WHOLE plane before the slice: three
     seconds and gigabytes for a slide-sized mask, paid on every inspection --
-    which a folder scan now does for each mask it finds. Through the same
-    lazy zarr view the tile route reads, it is one tile. The old read is the
-    fallback for a file that view cannot open.
+    which a folder scan does for each mask it finds. Through the same lazy
+    zarr view the tile route reads, a window is a tile or two. The whole-page
+    read is the fallback for a file that view cannot open.
     """
     import numpy as np
     import zarr
 
     try:
         store = handle.series[0].aszarr(level=0)
-        try:
-            array = zarr.open(store, mode="r")
-            lead = (0,) * max(array.ndim - 2, 0)
-            return np.asarray(array[lead + (slice(0, 512), slice(0, 512))])
-        finally:
-            store.close()
+        array = zarr.open(store, mode="r")
     except Exception:
-        return handle.pages[0].asarray()[:512, :512]
+        pages = handle.series[0].pages
+        plane = pages[0 if lead is None else len(pages) // 2].asarray()
+        return lambda rows, cols: plane[rows, cols]
+    index = tuple(lead) if lead is not None else (0,) * max(array.ndim - 2, 0)
+
+    def read(rows, cols):
+        return np.asarray(array[index + (rows, cols)])
+
+    read.close = store.close
+    return read
 
 
-def _plane_verdict(path, dtype, window_of):
-    """`looks_like_label_image` for one plane of `dtype`, True/False/None.
+def _plane_verdict(path, dtype, shape, read):
+    """`looks_like_label_image` for one plane of `dtype`: True/False/None.
 
-    `window_of()` reads its top-left 512x512 corner, and is only called when
-    the dtype and the name have not already decided.
+    `read(rows, cols)` returns a window of the plane; `shape` is its (height,
+    width). The pixels decide; the name breaks a tie the pixels leave.
+    """
+    if dtype.kind not in "ui":
+        return False
+    try:
+        verdict = _windows_verdict(shape, read)
+    finally:
+        closer = getattr(read, "close", None)
+        if closer is not None:
+            try:
+                closer()
+            except Exception:
+                pass
+    if verdict is not None:
+        return verdict
+    return True if _name_says_mask(path) else None
+
+
+def _windows_verdict(shape, read):
+    """The first decisive verdict among the plane's windows, or None.
+
+    A window that is all background says nothing, so the next is read; one
+    that holds enough of the plane to judge decides.
+    """
+    height, width = (int(shape[0]), int(shape[1]))
+    for top, left in _window_origins(height, width):
+        window = read(slice(top, top + LABEL_WINDOW),
+                      slice(left, left + LABEL_WINDOW))
+        verdict = _window_verdict(window)
+        if verdict is not None:
+            return verdict
+    return None
+
+
+#: Of the neighbouring pixel pairs inside cells, how many must be equal for
+#: a plane to read as ids. A cell is one value from edge to edge, so in a
+#: mask only the pairs that straddle two touching cells differ -- a few in a
+#: hundred at full resolution. Intensities are a continuum: neighbours in a
+#: fluorescence channel are almost never exactly equal.
+LABEL_SAME_FLOOR = 0.75
+#: Below this the plane is an image, whatever else it looks like.
+IMAGE_SAME_CEILING = 0.5
+#: How much of its bounding box a typical id fills. A cell is a blob, so its
+#: pixels fill most of the box around them; one INTENSITY value is scattered
+#: over the whole window, or drawn as a thin contour, and fills almost none.
+LABEL_FILL_FLOOR = 0.2
+IMAGE_FILL_CEILING = 0.08
+
+
+def _window_verdict(window):
+    """Whether one window of an integer plane is label ids. True/False/None.
+
+    Two tests, both needed:
+
+    - **Piecewise constant, both ways.** Among horizontally and vertically
+      neighbouring pixels that are both non-zero, the share that are equal --
+      the smaller of the two directions, so a gradient that is constant down
+      its columns does not pass on them.
+    - **Compact.** Each distinct value's pixels fill their own bounding box,
+      the way a cell does. A flat region of an image passes the first test;
+      it does not pass this one unless it really is shaped like cells.
+
+    None when the window cannot say: almost all background, or a single
+    non-zero value (a binary mask and a flat field read the same).
     """
     import numpy as np
 
+    plane = np.asarray(window)
+    while plane.ndim > 2:
+        plane = plane[0]
+    if plane.size < 64:
+        return None
+    present = plane != 0
+    across = present[:, 1:] & present[:, :-1]
+    down = present[1:, :] & present[:-1, :]
+    pairs_across, pairs_down = int(across.sum()), int(down.sum())
+    if min(pairs_across, pairs_down) < 32:
+        return None
+    same = min(
+        int((across & (plane[:, 1:] == plane[:, :-1])).sum()) / pairs_across,
+        int((down & (plane[1:, :] == plane[:-1, :])).sum()) / pairs_down)
+    if same < IMAGE_SAME_CEILING:
+        return False
+
+    rows, cols = np.nonzero(present)
+    values = plane[rows, cols]
+    order = np.argsort(values, kind="stable")
+    values, rows, cols = values[order], rows[order], cols[order]
+    starts = np.flatnonzero(np.r_[True, values[1:] != values[:-1]])
+    if starts.size < 2:
+        return None
+    counts = np.diff(np.r_[starts, values.size])
+    tall = np.maximum.reduceat(rows, starts) - np.minimum.reduceat(rows, starts) + 1
+    wide = np.maximum.reduceat(cols, starts) - np.minimum.reduceat(cols, starts) + 1
+    fill = counts / (tall.astype(np.float64) * wide)
+    sized = counts >= 4
+    if not sized.any():
+        return None
+    typical = float(np.median(fill[sized]))
+    if typical < IMAGE_FILL_CEILING:
+        return False
+    if same >= LABEL_SAME_FLOOR and typical >= LABEL_FILL_FLOOR:
+        return True
+    return None
+
+
+def _zarr_label_verdict(path):
+    """`looks_like_label_image` for a zarr store. True/False/None.
+
+    A store usually SAYS: NGFF writes `image-label` into a label image's
+    attributes and files it under `labels/`, and an image carries `omero`
+    channels. Only a store that says neither has its pixels read -- one
+    channel of integers, through the same windows a TIFF plane is.
+    """
+    import numpy as np
+
+    from plexora.server.utils import ome_zarr, segmentation_pyramid
+
+    try:
+        group = ome_zarr._open_group(path)
+    except Exception:
+        return None
+    try:
+        attrs = ome_zarr._ome_attrs(group)
+    except Exception:
+        attrs = {}
+    if "image-label" in attrs:
+        return True
+    if not ome_zarr._is_remote(path) and Path(path).parent.name == "labels":
+        return True
+    multiscale = ome_zarr._multiscale_of(group) if not hasattr(group, "dtype") else None
+    try:
+        if hasattr(group, "dtype"):
+            array = group
+        elif multiscale:
+            array = group[ome_zarr._dataset_paths(multiscale)[0]]
+        else:
+            array = group["0"]
+        dtype = np.dtype(array.dtype)
+        axes = ome_zarr._axes_of(multiscale or {}, array.ndim)
+    except Exception:
+        return None
     if dtype.kind not in "ui":
         return False
-    if dtype.itemsize >= 2:
-        # 16- or 32-bit, one plane, integer. A single-channel 16-bit
-        # IMAGE exists, but it is almost always one plane of a stack; a
-        # lone one is a mask often enough to be worth looking at.
-        if _name_says_mask(path):
-            return True
-        window = np.asarray(window_of())
-        unique = int(np.unique(window).size)
-        # Two things together, because either alone is wrong.
-        #
-        # Ids are SPARSE where intensities are a continuum: a 512x512
-        # window of a mask holds a few hundred distinct values and one
-        # of an image holds thousands. But a flat region of an image --
-        # background, a blank corner, a synthetic fixture -- is sparse
-        # too, and reading that as a mask turns somebody's channel into
-        # a cell-id lookup.
-        #
-        # So a mask must also have BACKGROUND. Zero is what a label
-        # image calls "no cell here", and a 512x512 window with no zero
-        # in it is either a solidly packed mask (rare) or not a mask at
-        # all (common). Neither is certain, so that case is asked
-        # about rather than decided.
-        if unique >= 2048:
-            return False
-        if unique <= 1 or not bool((window == 0).any()):
-            return None
-        return True
+    if "c" in axes and int(array.shape[axes.index("c")]) > 1:
+        return False
+    try:
+        plane = segmentation_pyramid._zarr_level_zero(group)
+        shape = tuple(int(n) for n in array.shape[-2:])
+        verdict = _windows_verdict(
+            shape, lambda rows, cols: np.asarray(plane[rows, cols]))
+    except Exception:
+        verdict = None
+    if verdict is not None:
+        return verdict
+    if attrs.get("omero"):
+        # Channels with colours and windows are how an IMAGE describes itself.
+        return False
     return True if _name_says_mask(path) else None
 
 
 def _volume_looks_like_labels(handle, path, dtype) -> bool:
-    """Whether a (Z, Y, X) integer stack is label ids rather than intensities."""
-    import numpy as np
+    """Whether a (Z, Y, X) integer stack is label ids rather than intensities.
 
-    if _name_says_mask(path):
-        return True
-    if dtype.itemsize < 2:
-        return False
+    The middle plane is asked what a single plane is asked; its name only
+    breaks a tie the pixels leave.
+    """
+    shape = tuple(int(d) for d in handle.series[0].shape)
+    lead = tuple(int(depth) // 2 for depth in shape[:-2])
+    read = None
     try:
-        pages = handle.series[0].pages
-        window = pages[len(pages) // 2].asarray()[:512, :512]
+        read = _tiff_reader(handle, lead)
+        verdict = _windows_verdict(shape[-2:], read)
     except Exception:
-        return False
-    unique = int(np.unique(window).size)
-    return 1 < unique < 2048 and bool((window == 0).any())
+        verdict = None
+    finally:
+        closer = getattr(read, "close", None)
+        if closer is not None:
+            try:
+                closer()
+            except Exception:
+                pass
+    if verdict is not None:
+        return verdict
+    return dtype.itemsize >= 2 and _name_says_mask(path)
 
 
 def _name_says_mask(path) -> bool:
@@ -1490,6 +1699,13 @@ def _masks_below(root, found, answers):
                 modality="mask", label="Segmentation mask",
                 src=str(chosen["path"]), geometry=chosen["geometry"])
             layer.found_for = str(image.src)
+            # A file found rather than picked can be turned down from its own
+            # badge -- the folder's ✕ would take the slide with it.
+            layer.switch = {
+                "question": question_id, "value": str(chosen["path"]),
+                "options": [{"value": str(chosen["path"]),
+                             "label": "Segmentation mask"},
+                            {"value": "none", "label": "Not a mask"}]}
             layer.detail = describe(layer)
             masks.append(layer)
         if len(pool) > 1 or chosen is None:
@@ -1920,28 +2136,99 @@ def _zarr_images(path, answers, declared=None, candidates=None):
             options=tuple({"value": name, "label": name}
                           for name, _ in candidates),
             default=picked[0]))
-    if declared == "mask":
-        # A label image written as a zarr store reads as an ordinary image
-        # here: the plane is integers either way, and the store says nothing
-        # about which. The user did, on the card, which is the whole point of
-        # the action they used.
+    remote = is_remote_locator(picked[1])
+    question_id = f"mask-or-image:{str(picked[1]).strip()}"
+    answer = _said(answers, "mask-or-image:", picked[1])
+    warnings = []
+    if answer:
+        verdict = answer == "mask"
+    else:
+        # A store usually says which it is -- `image-label` in a label
+        # image's attributes, `omero` channels in an image's -- and one that
+        # does not is read like a TIFF plane. A web store is taken as an
+        # image unless the action it arrived through said otherwise: reading
+        # pixels over the network to answer this is not worth the wait.
+        verdict = None if remote else _zarr_label_verdict(picked[1])
+        if declared == "mask":
+            if verdict is False:
+                warnings.append(
+                    f"{picked[0]} was added as a segmentation mask, but its "
+                    "pixels are an image -- proposed as an image instead.")
+            else:
+                # The reading the store was consistent with anyway, settled by
+                # the person who has the data in front of them.
+                verdict = True
+    geometry = _geometry_of(picked[1])
+    if verdict:
         layer = LayerProposal(
             id=picked[0], kind="labels", role="mask", modality="mask",
             label="Segmentation mask", src=str(picked[1]),
-            geometry=_geometry_of(picked[1]))
+            geometry=geometry)
+        layer.switch = _role_switch(question_id, "mask")
         layer.detail = describe(layer)
-        return [layer], questions, None, []
+        return [layer], questions, None, warnings
     layer = LayerProposal(
         id=picked[0], kind="image", role="image", reference=True,
         modality="multiplex", label=picked[0], src=str(picked[1]))
-    layer.geometry = _geometry_of(picked[1])
+    layer.geometry = geometry
     layer.channels = _channel_stubs(picked[1], layer.geometry)
     layer.pixel_size = _pixel_size_of(picked[1])
+    if _single_plane(geometry):
+        layer.switch = _role_switch(question_id, "image")
     layer.detail = describe(layer)
     layers = [layer]
-    if is_remote_locator(picked[1]):
+    if remote:
         layers += _remote_label_masks(picked[1], answers, questions)
-    return layers, questions, None, []
+    else:
+        layers += _local_label_masks(Path(picked[1]), answers, questions)
+    return layers, questions, None, warnings
+
+
+def _local_label_masks(image, answers, questions):
+    """The image's own `labels/` elements, as its segmentation -- the local
+    twin of `_remote_label_masks`.
+
+    An NGFF writer files a label image INSIDE the image it segments
+    (`image.zarr/labels/cells`), so the folder somebody picked already holds
+    the cells. Read off the store's `labels` attribute, or a listing when it
+    has none; one becomes the mask, asked when there are several, with "None"
+    to leave them out.
+    """
+    from plexora.server.utils import ome_zarr
+
+    holder = image / "labels"
+    try:
+        if not holder.is_dir():
+            return []
+        listed = ome_zarr._ome_attrs(ome_zarr._open_group(holder)).get("labels")
+    except Exception:  # noqa: BLE001 -- no masks is an answer, not a failure
+        return []
+    if isinstance(listed, (list, tuple)):
+        names = [str(name).strip("/") for name in listed if str(name).strip("/")]
+    else:
+        names = ome_zarr._zarr_children(holder)
+    names = [name for name in names if (holder / name).is_dir()]
+    if not names:
+        return []
+    chosen = answers.get("labels")
+    picked = None if chosen == "none" else (chosen if chosen in names else names[0])
+    if len(names) > 1 or chosen == "none":
+        questions.append(Question(
+            id="labels", label="Which segmentation?", kind="select",
+            options=tuple({"value": n, "label": n} for n in names)
+            + ({"value": "none", "label": "None"},),
+            default=picked or "none"))
+    if picked is None:
+        return []
+    mask = LayerProposal(
+        id=_clean_name(f"labels_{picked}") or "labels", kind="labels",
+        role="mask", modality="mask", label=f"Segmentation · {picked}",
+        src=str(holder / picked), geometry=_geometry_of(holder / picked))
+    mask.switch = {"question": "labels", "value": picked,
+                   "options": [{"value": picked, "label": "Segmentation mask"},
+                               {"value": "none", "label": "Not a mask"}]}
+    mask.detail = describe(mask)
+    return [mask]
 
 
 def _remote_label_masks(url, answers, questions):
@@ -2139,12 +2426,14 @@ def _detect_image(path, answers, declared=None):
             default="image"))
         verdict = False
 
+    question_id = f"mask-or-image:{str(path).strip()}"
     if verdict:
         layer = LayerProposal(
             id=_layer_id(path), kind="labels", role="mask", modality="mask",
             label="Segmentation mask", src=str(path),
             geometry=_geometry_of(path))
         layer.needs = tuple(q.id for q in questions)
+        layer.switch = _role_switch(question_id, "mask")
         layer.detail = describe(layer)
         return [layer], questions, None, warnings
 
@@ -2177,6 +2466,13 @@ def _detect_image(path, answers, declared=None):
     layer.geometry = _geometry_of(path, rgb=rgb)
     layer.channels = _channel_stubs(path, layer.geometry)
     layer.pixel_size = _pixel_size_of(path)
+    if not rgb and _single_plane(layer.geometry):
+        # One plane of a format that can hold ids: it could be a mask, and
+        # the role menu says so whatever detection concluded.
+        from plexora.server.utils import segmentation_pyramid
+
+        if segmentation_pyramid.mask_format_refusal(path) is None:
+            layer.switch = _role_switch(question_id, "image")
     if rgb:
         layer.render = {"rgb": True}
     else:
@@ -2347,8 +2643,205 @@ def _detect_table(path):
         id="table", kind="table", role="table", modality="cells",
         label="Cells", src=str(path), table=None,
         render={"detail": detail})
+    if data_type == "anndata":
+        layer.subset = _image_column(path)
     layer.detail = describe(layer)
     return [layer], [], None, []
+
+
+def _image_column(path):
+    """`{column, values}` when this AnnData spans several images, else None.
+
+    The same reading the requirements modal's subset picker is built from
+    (`propose_read_spec`'s `ambiguous`), and the same cached inspection --
+    once per file version, about a second on a 5M-cell table.
+    """
+    from plexora.server.models.adapters import inspection
+
+    try:
+        document = inspection.inspect_anndata(path)
+        ambiguous = inspection.propose_read_spec(document).get("ambiguous") or []
+    except Exception:  # noqa: BLE001 -- an unreadable table asks later, as before
+        return None
+    for column in ambiguous:
+        values = next((list(entry.get("values") or []) for entry in
+                       document.get("obs_columns") or []
+                       if entry.get("name") == column), [])
+        if len(values) > 1:
+            return {"column": column, "values": values}
+    return None
+
+
+def _id_tokens(text):
+    """A name as the words and numbers it is made of: `LSP10003_tumor` ->
+    ("lsp", 10003, "tumor"). Numbers compare as numbers, so `LSP0003` is
+    `LSP3` -- and never as text, so `LSP1` is not a prefix of `LSP10003`."""
+    return tuple(int(part) if part.isdigit() else part
+                 for part in re.findall(r"[a-z]+|[0-9]+", str(text).lower()))
+
+
+def _contains(longer, shorter) -> bool:
+    size = len(shorter)
+    return any(longer[at:at + size] == shorter
+               for at in range(len(longer) - size + 1))
+
+
+#: How sure a name has to be before it is used as the answer: a whole run of
+#: one name's words found in the other's, not merely a word in common.
+SUBSET_MATCH_FLOOR = 0.5
+
+
+class _ExactName(str):
+    """A name that says which image this is only when a value IS it: a
+    folder's, which names whatever else is in it too (`2024_run3/` holds
+    image 1 as much as image 3)."""
+
+
+def _run_score(shorter, longer) -> float:
+    """How well `shorter` names `longer` by being a run of its words; 0 when
+    it is not one, or says too little to be told from chance.
+
+    A bare number is the image's only when it is the only number in the other
+    name: `slide_3` is image 3, but `run3_2024` and `scan_2024_10_14` are
+    dates and run numbers that happen to contain one.
+    """
+    if not _contains(longer, shorter):
+        return 0.0
+    if all(isinstance(token, int) for token in shorter) and [
+            token for token in longer if isinstance(token, int)] != list(shorter):
+        return 0.0
+    return 0.5 + 0.4 * len(shorter) / len(longer)
+
+
+def subset_match(values, names):
+    """Which of an image-id column's `values` names this image, or None.
+
+    `names` are what the image is called -- its file name, the name its own
+    metadata gives it, the sample's. A value matches a name exactly, or as a
+    contiguous run of its words (`LSP10003` in `LSP10003_tumor_region.ome.tif`,
+    or the other way round), scored by how much of the longer one it covers;
+    a folder's name (`_ExactName`) only exactly. Only a value that wins
+    outright is returned: two equally good candidates is a question for the
+    user, not a coin toss. The answer is APPLIED (`_choose_subsets`), so a
+    match that could be chance is no match.
+    """
+    scored = []
+    wanted = [(tokens, isinstance(name, _ExactName))
+              for tokens, name in ((_id_tokens(name), name) for name in names)
+              if tokens]
+    for value in values:
+        tokens = _id_tokens(value)
+        if not tokens:
+            continue
+        best = 0.0
+        for name, exact in wanted:
+            if tokens == name:
+                score = 1.0
+            elif exact:
+                score = 0.0
+            else:
+                score = _run_score(*sorted((tokens, name), key=len))
+            best = max(best, score)
+        if best:
+            scored.append((best, str(value)))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    top = scored[0]
+    if top[0] < SUBSET_MATCH_FLOOR:
+        return None
+    if len(scored) > 1 and scored[1][0] >= top[0] - 1e-9:
+        return None
+    return top[1]
+
+
+def _ome_image_name(path):
+    """The name an OME-TIFF gives its image in its own metadata, or None.
+    A header read, never pixels; anything unreadable says nothing."""
+    try:
+        import tifffile
+
+        with tifffile.TiffFile(str(path)) as handle:
+            xml = handle.ome_metadata or ""
+    except Exception:  # noqa: BLE001
+        return None
+    found = re.search(r'<Image\b[^>]*\bName="([^"]+)"', xml)
+    if not found or _GENERIC_IMAGE_NAME.match(found.group(1)):
+        return None
+    return found.group(1)
+
+
+#: What the software that wrote an image calls it, rather than anybody about
+#: it -- "Image0", "Series 1", "Pos:2". The number in one is the image's place
+#: in its file, so it names nothing a table would.
+_GENERIC_IMAGE_NAME = re.compile(r"^\s*(image|series|scene|pos(ition)?)\W*\d*\s*$",
+                                 re.IGNORECASE)
+
+
+def _image_names(image_src, *extra):
+    """What an image is called, every way it says so: its file's stem, its
+    folder (a run's `LSP11385/` names it there -- only ever exactly), the
+    name in its own metadata, and whatever the caller adds (the sample's)."""
+    names = [name for name in extra if name]
+    if image_src and not is_remote_locator(image_src):
+        names.append(_file_stem(image_src))
+        names.append(_ExactName(Path(str(image_src)).parent.name))
+        if str(image_src).lower().endswith((".tif", ".tiff")):
+            names.append(_ome_image_name(image_src))
+    elif image_src:
+        names.append(_file_stem(_name_of(image_src)))
+    return [name for name in names if name]
+
+
+def _file_stem(path) -> str:
+    """A file's name without its extension -- both of `.ome.tif`'s parts."""
+    name = Path(str(path)).name
+    lowered = name.lower()
+    for suffix in (".ome.tiff", ".ome.tif", ".ome.zarr", ".ome.btf"):
+        if lowered.endswith(suffix):
+            return name[: -len(suffix)]
+    return Path(name).stem
+
+
+def _choose_subsets(samples, answers, scoped_image=None):
+    """For each sample's multi-image table, the image it reads -- answered,
+    else matched by name -- and a question to change it.
+
+    The default is APPLIED: the table is registered reading that image's cells,
+    so the sample opens with its cells rather than as an image waiting for
+    somebody to pick from twenty identifiers. The question stays on the card
+    with the match chosen (and a ✓ to settle it), because a name is evidence
+    rather than proof. With no match and no answer it defaults to nothing and
+    the table is recorded unresolved, exactly as before.
+    """
+    for sample in samples:
+        reference = next((layer for layer in sample.layers if layer.reference), None)
+        names = (_image_names(scoped_image, sample.name) if scoped_image is not None
+                 else _image_names(reference.src if reference else None, sample.name))
+        for layer in sample.layers:
+            if layer.role != "table" or not layer.subset:
+                continue
+            values = list(layer.subset.get("values") or [])
+            question = Question(
+                id=f"subset:{sample.key or sample.name}",
+                label=f"Which image in {Path(_named_by(layer)).name} is this sample?",
+                kind="select",
+                options=tuple({"value": str(v), "label": str(v)} for v in values),
+                scope=f"layer:{layer.id}")
+            question_id = question.id
+            said = answers.get(question_id)
+            chosen = (said if said in values else
+                      layer.subset.get("value") or subset_match(values, names))
+            layer.subset = {**layer.subset, "value": chosen}
+            question.default = chosen
+            sample.questions.append(question)
+            if chosen is None:
+                layer.needs = tuple(layer.needs) + (question_id,)
+            else:
+                layer.needs = tuple(n for n in layer.needs if n != question_id)
+                base = (layer.render or {}).get("detail") or layer.detail
+                which = f"{chosen} (1 of {len(values)} images)"
+                layer.detail = f"{which} · {base}" if base else which
 
 
 #: Over this, a delimited table's rows are ESTIMATED from its first megabyte
@@ -2497,7 +2990,7 @@ def _sample_name(paths, bundles) -> str:
     stems = {_group_stem(p) for p in paths}
     if len(stems) == 1 and stems != {""}:
         return _clean_name(next(iter(stems)))
-    return _clean_name(Path(paths[0]).stem if paths else "sample")
+    return _clean_name(_file_stem(paths[0]) if paths else "sample")
 
 
 def _name_inside_a_store(path):
@@ -2822,6 +3315,10 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
             layer.attach = attach
             layer.said = str(raw).strip()
             layer.needs = tuple(_per_pick(need, raw) for need in layer.needs)
+            if layer.switch:
+                # Answered under the same per-pick id its question would be.
+                layer.switch = {**layer.switch, "question": _per_pick(
+                    layer.switch["question"], raw)}
         found.extend(layers)
         questions.extend(path_questions)
         warnings.extend(path_warnings)
@@ -2846,13 +3343,26 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         return proposal
 
     if sample:
-        proposal.samples.append(_scoped_sample(sample, found, questions, bundles))
+        scoped = _scoped_sample(sample, found, questions, bundles)
+        proposal.samples.append(scoped)
+        _choose_subsets([scoped], answers, scoped_image=_project_image(sample))
         return proposal
 
     for group in _split_samples(found, bundles, questions, answers, proposal):
         proposal.samples.append(group)
     _name_channels(proposal.samples, panels, proposal.warnings)
+    _choose_subsets(proposal.samples, answers)
     return proposal
+
+
+def _project_image(name):
+    """The `src` of an existing sample's image, for naming what it is of."""
+    from plexora.server.models.project import Project
+
+    try:
+        return Project.load(name).image.src or ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _name_channels(samples, panels, warnings):
@@ -3119,6 +3629,17 @@ def _place(samples, held, orphans, proposal, answers=None):
         touched.add(id(target))
 
     for layer in list(orphans) + loose:
+        shared = _cohort_targets(layer, samples) if len(samples) > 1 else None
+        if shared:
+            # A table that spans several images, picked with them: each sample
+            # it covers reads its own image's cells out of it. Asking which ONE
+            # sample it belongs to was asking the wrong question.
+            for target, value in shared:
+                copy_ = replace(layer, subset={**layer.subset, "value": value},
+                                needs=tuple(layer.needs))
+                target.layers.append(copy_)
+                touched.add(id(target))
+            continue
         target = _best_sample(layer, samples)
         if target is None:
             name = Path(_named_by(layer)).name
@@ -3152,6 +3673,24 @@ def _place(samples, held, orphans, proposal, answers=None):
             proposal.warnings.append(
                 f"{sample.name} can hold one cell table, so "
                 f"{Path(_named_by(extra)).name} is left out.")
+
+
+def _cohort_targets(layer, samples):
+    """`[(sample, value)]` for a multi-image table whose image column names
+    more than one of these samples' images, else None."""
+    if layer.role != "table" or not layer.subset:
+        return None
+    values = list(layer.subset.get("values") or [])
+    found, taken = [], set()
+    for sample in samples:
+        image = next((l for l in sample.layers
+                      if l.kind == "image" and l.role == "image"), None)
+        value = subset_match(values, _image_names(image.src if image else None,
+                                                  sample.name))
+        if value is not None and value not in taken:
+            taken.add(value)
+            found.append((sample, value))
+    return found if len(found) > 1 else None
 
 
 def _shared_prefix(left, right) -> int:
@@ -3626,6 +4165,9 @@ def _detect_node(raw, fallback_node, answers, declared=None):
 
     described = served.get(str(resource_id))
     kind_questions, picked, kind_warnings = [], None, []
+    #: The path as the user browsed to it -- what `_serve_on_node` files the
+    #: mask-or-image answer under, before the node turns it into an id.
+    browsed = str(resource_id)
     if described is None and _looks_like_a_path(resource_id):
         try:
             (resource_id, described, kind_questions, picked,
@@ -3666,6 +4208,9 @@ def _detect_node(raw, fallback_node, answers, declared=None):
                       else "multiplex"),
             needs=tuple(q.id for q in kind_questions),
             render={"detail": "on " + node})
+        if picked and layer.modality != "he":
+            layer.switch = _role_switch(
+                f"mask-or-image:node://{node}/{browsed}", "image")
         questions = list(kind_questions)
         pyramid = described.get("pyramid")
         if pyramid:
@@ -3701,6 +4246,9 @@ def _detect_node(raw, fallback_node, answers, declared=None):
             render={"detail": ("converting on " + node if state == "preparing"
                                else "could not be prepared on " + node
                                if state == "error" else "on " + node)})
+        if picked:
+            layer.switch = _role_switch(
+                f"mask-or-image:node://{node}/{browsed}", "mask")
         layer.detail = describe(layer)
         return [layer], kind_questions, None, kind_warnings
 
@@ -3723,6 +4271,17 @@ def _detect_node(raw, fallback_node, answers, declared=None):
             id="table", kind="table", role="table", modality="cells",
             label=label, src=address, filename=picked, table=table_name,
             render={"detail": document.get("data_type") or ("on " + node)})
+        # The node inspected it the way this side inspects a local file, so a
+        # table spanning several images is matched to its image the same way
+        # (`_choose_subsets`); `attach_table` takes the answer on to the node.
+        ambiguous = (document.get("proposed") or {}).get("ambiguous") or []
+        for column in ambiguous:
+            values = next((list(entry.get("values") or []) for entry in
+                           document.get("obs_columns") or []
+                           if entry.get("name") == column), [])
+            if len(values) > 1:
+                layer.subset = {"column": column, "values": values}
+                break
         if len(tables) > 1:
             questions.append(Question(
                 id="table", scope="layer:table",

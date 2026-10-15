@@ -98,6 +98,11 @@ const PopoverPortal = (() => {
     function relocate() {
         const target = root();
         portaled.forEach((el) => {
+            // A portaled element can itself be the modal on top -- the import
+            // dialog is portaled, and a path picker or a confirm closing over
+            // it makes it `root()` again. It stays where it is: moving it into
+            // itself throws, and it is already above everything.
+            if (el === target || el.contains(target)) return;
             if (el.parentNode !== target) {
                 target.appendChild(el);
             }

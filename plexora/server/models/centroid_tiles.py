@@ -80,6 +80,14 @@ def _load_table(config, datasource_name):
         # of the one payload the compact cache exists to avoid repeating.
         data_model._ensure_loaded(datasource_name)
         return data_model.get_datasource_df()
+    loaded = data_model.loaded_frame_for(datasource_name, project.dataset)
+    if loaded is not None:
+        # The same for a table on this disk, when it is the one loaded: the
+        # frame in memory IS what the adapter would read, corrections applied.
+        # Reading the file again cost as long as opening the project did --
+        # 3.5 s at 3M cells, every time the centroid cache was (re)built and
+        # every time a gate's columns changed.
+        return loaded
     from plexora.server.models import table_correction
 
     spec = project.dataset

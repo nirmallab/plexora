@@ -26,7 +26,12 @@ def image(path: Path) -> Path:
 def mask(path: Path) -> Path:
     import tifffile
 
-    tifffile.imwrite(path, (np.arange(256 * 256).reshape(256, 256) % 90).astype(np.uint32))
+    # Cells of one id each over a background: import detection reads the
+    # pixels, and a repeating gradient reads as an image.
+    labels = np.zeros((256, 256), dtype=np.uint32)
+    for index in range(1, 9):
+        labels[index * 25:index * 25 + 14, index * 25:index * 25 + 14] = index
+    tifffile.imwrite(path, labels)
     return path
 
 

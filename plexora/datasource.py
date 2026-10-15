@@ -1180,6 +1180,12 @@ def deferred_spec(src, data_type, *, table=None, subset_by=None) -> "DataSpec | 
             return _spec("table")
         table = tables[0]["name"]
 
+    if subset_by:
+        # The one question inspection could raise is already answered, so
+        # there is nothing to defer -- and the scan it would cost (every obs
+        # column of the whole file) was paid only to be thrown away.
+        return None
+
     try:
         proposal = data_inspection.propose_read_spec(
             data_inspection.inspect_spatialdata_table(src, table)

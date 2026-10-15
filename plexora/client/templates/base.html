@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261013_mask_surfaces">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261014_import_progressive">
     {% block style %}{% endblock %}
 
 
@@ -66,7 +66,7 @@
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260929_ai_qc"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20261012_table_fix"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20261014_import_progressive"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20261007_qc_gating_overlay"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260831_brightfield"></script>
     <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260925_desktop_app"></script>
@@ -87,7 +87,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261012_main_merge2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
-    <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20261014_import_progressive"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog"></script>
@@ -96,14 +96,14 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261014_late_mask"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261014_import_progressive"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261013_stack_contrast"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261013_mask_surfaces"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261014_import_progressive"></script>
     {# Before the plugin assets at the bottom of this block: a layer section's
        own script may ask PlexoraLayerSections whether it is one. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerSections.js?v=20260919_layer_cards"></script>
@@ -118,8 +118,8 @@
        server has no desktop for a native dialog to appear on -- the ordinary
        state of a compute node. Both are deferred, so both are parsed before
        either runs; the order is for readers. #}
-    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20261011_import_home" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261012_license_tiers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20261014_import_progressive" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261014_import_progressive" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -158,7 +158,7 @@
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261010_home_redesign" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260920_layer_sections" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
        dataLocation, all of which it calls into, and after browsePicker, whose
@@ -177,9 +177,9 @@
     <script src="{{ data.base_url }}/client/src/js/views/gradientRange.js?v=20260927_ui_updates" defer></script>
     <!-- jobProgress is the shared panel; tableProgress and the requirements
          modal both draw through it, so it is listed before either. -->
-    <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20260901_job_progress" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20260901_job_progress" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261011_flat_cells" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20261014_import_progressive" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20261014_import_progressive" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261014_import_progressive" defer></script>
     {# Core's own short-question dialog (ask / tell / choose / prompt). In
        base.html and not on the one page that uses it today, because a modal
        that only existed on one page would be one more thing every other page
@@ -214,7 +214,7 @@
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20260926_help_menu" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260927_docs" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261013_folder_scan" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261014_import_progressive" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -228,7 +228,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261013_reading_skeleton" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261014_import_progressive" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
