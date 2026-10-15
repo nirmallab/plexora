@@ -36,6 +36,9 @@ class CsvAdapter:
         self.y_column = spec.roles.y
         self.id_field = spec.roles.cell_id
         self.celltype_column = spec.roles.celltype
+        # Every role, not only the four above: `_normalize` has to know whether
+        # anything names a column of the file that the row number replaces.
+        self.roles = spec.roles.to_dict()
         # The marker/metadata split the user confirmed at import. A CSV header
         # does not draw that line itself, which is the whole reason the
         # classification screen exists -- so this is the only thing that knows
@@ -101,6 +104,7 @@ class CsvAdapter:
         # implicit RangeIndex usage in the code this replaced -- must happen
         # immediately after the read, before any other transform, since
         # downstream code treats 'id' as a stable per-row identity.
+        df = self._without_own_id(df)
         df = df.with_row_index("id").with_columns(pl.col("id").cast(pl.Int64))
         numeric_cols = [c for c, dt in df.schema.items() if dt in (pl.Float32, pl.Float64)]
         df = df.with_columns([
@@ -126,6 +130,32 @@ class CsvAdapter:
             feature_columns=feature_columns,
             celltype_column=self.celltype_column,
         )
+
+    def _without_own_id(self, df: pl.DataFrame) -> pl.DataFrame:
+        """The frame without a column of its own called 'id'.
+
+        Real tables carry one -- an exported index, most often -- and polars
+        refuses to add the row number under a name the frame already has, so
+        the whole table failed to load over a column nobody had asked for.
+        Dropped here, the row number takes its place: the same thing the
+        AnnData adapter does with an obs column of that name, which is simply
+        not part of the table it builds. The file itself is untouched.
+
+        The one case that cannot be decided for the user is a role naming the
+        column while its values are not the row number: the role would then
+        read the row number instead, silently. That is refused, with what to do.
+        """
+        if "id" not in df.columns:
+            return df
+        named = [role for role, column in self.roles.items() if column == "id"]
+        if named and not df["id"].cast(pl.Int64, strict=False).equals(
+                pl.Series("id", range(df.height), dtype=pl.Int64)):
+            raise ValueError(
+                f"{self.path.name} has its own column called 'id', and Plexora "
+                f"numbers the rows under that name, so it cannot be the "
+                f"{' or '.join(role.replace('_', ' ') for role in named)} "
+                f"column. Choose another column, or rename it in the file.")
+        return df.drop("id")
 
     def _feature_columns(self, df) -> list[str]:
         """Which columns hold marker intensities.

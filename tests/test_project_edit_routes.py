@@ -908,6 +908,75 @@ def test_swapping_a_csv_for_an_h5ad_rebuilds_the_spatial_index_from_the_new_tabl
     assert len(tree) == 6
 
 
+def _upload(client, frame, name="cells.csv"):
+    """What the data field does with a file from the user's own computer."""
+    import io
+
+    buffer = io.BytesIO()
+    frame.write_csv(buffer)
+    buffer.seek(0)
+    response = client.post("/upload_data_file", data={"file": (buffer, name)},
+                           content_type="multipart/form-data")
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()["path"]
+
+
+def test_an_anndata_project_takes_an_uploaded_csv_with_its_own_id_column(
+        isolate, tmp_path):
+    """The report: an AnnData project, a CSV added on the edit page, and Save
+    answered `Unexpected token '<', "<!doctype "... is not valid JSON`. The
+    CSV carried a column called `id`, the reader raised on it, and nothing on
+    the save path caught anything but ValueError. The confirm keys are the
+    ones the AnnData edit page renders, which is what the browser sends."""
+    _import(isolate, tmp_path, "proj", data=_h5ad(tmp_path))
+    data_model.load_datasource("proj", reload=True)
+    staged = _upload(isolate, pl.DataFrame({
+        "id": np.arange(4) + 50, "CellID": np.arange(1, 5),
+        "X_centroid": np.linspace(1, 200, 4), "Y_centroid": np.linspace(1, 200, 4),
+        "CD3": np.linspace(0, 3, 4)}))
+
+    response = isolate.post("/project/proj", json={
+        "data": staged,
+        "confirm": ["features", "role:cell_id", "role:x", "role:y",
+                    "role:image_id", "coordinates"]})
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    project = Project.load("proj")
+    assert project.dataset.type == "csv"
+    # Not the AnnData's synthesized `id`, carried over onto the CSV's own
+    # column of that name: the CSV's real cell id, predicted afresh.
+    assert project.roles.cell_id == "CellID"
+    assert data_model.get_datasource_df()["id"].to_list() == [0, 1, 2, 3]
+
+
+def test_a_save_that_fails_unexpectedly_answers_json_and_keeps_the_project(
+        isolate, tmp_path, monkeypatch):
+    """Anything but a ValueError used to reach Flask's own HTML 500 page,
+    which the edit page could only report as a JSON parse error -- and it
+    left the project switched to a file it could not read, with the old read
+    spec gone."""
+    before = _import(isolate, tmp_path, "proj", data=_h5ad(tmp_path))
+    staged = _upload(isolate, pl.DataFrame({
+        "CellID": np.arange(1, 5), "X_centroid": np.linspace(1, 200, 4),
+        "Y_centroid": np.linspace(1, 200, 4), "CD3": np.linspace(0, 3, 4)}))
+    real = data_model.load_datasource
+
+    def choke(name, *args, **kwargs):
+        if Project.load(name).dataset.type == "csv":
+            raise RuntimeError("the reader choked")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(data_model, "load_datasource", choke)
+    response = isolate.post("/project/proj", json={"data": staged})
+
+    assert response.status_code == 500
+    assert response.is_json
+    assert response.get_json()["error"] == "the reader choked"
+    after = Project.load("proj")
+    assert after.dataset.type == "anndata"
+    assert after.dataset.src == before.dataset.src
+
+
 # --------------------------------------------------------------------------
 # A source that is recorded but cannot be read yet
 # --------------------------------------------------------------------------

@@ -663,7 +663,19 @@
                         title: "Preparing this project’s cells",
                     })
                     : await send();
-                const result = await response.json();
+                // Read as text first, as importSample.js's readJson does: a
+                // page that is not JSON -- a proxy's, or a server error page --
+                // otherwise reaches the user as the parser's complaint about
+                // it, `Unexpected token '<', "<!doctype "...`.
+                const text = await response.text();
+                let result;
+                try {
+                    result = JSON.parse(text);
+                } catch (parseError) {
+                    result = {error: `Plexora's server failed (HTTP ${response.status}) `
+                        + "and did not say why. The terminal Plexora is running in "
+                        + "has the details."};
+                }
                 if (!response.ok || !result.success) {
                     throw new Error(result.error || "Could not save the project");
                 }

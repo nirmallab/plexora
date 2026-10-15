@@ -1,5 +1,6 @@
 import numpy as np
 import polars as pl
+import pytest
 
 from plexora.server.models.adapters import CsvAdapter, get_adapter
 from plexora.server.models.adapters.base import NormalizedDatasource
@@ -86,6 +87,48 @@ def test_positional_id_is_synthesized_without_an_id_field(tmp_path):
     normalized = CsvAdapter(_spec(csv_path, cell_id=None)).load_table()
 
     assert normalized.id_column == "id"
+    assert normalized.table["id"].to_list() == [0, 1, 2, 3]
+
+
+def _write_csv_with_own_id(path, ids):
+    pl.DataFrame({
+        "id": ids,
+        "CellID": np.arange(len(ids), dtype=np.uint32) + 1,
+        "X_centroid": np.linspace(1, 4, len(ids)),
+        "Y_centroid": np.linspace(1, 4, len(ids)),
+        "MarkerA": np.linspace(0, 3, len(ids)),
+    }).write_csv(path)
+
+
+def test_a_table_with_its_own_id_column_loads(tmp_path):
+    """Polars refused to add the row number under a name the file already
+    had, so a table carrying an `id` column -- an exported index -- did not
+    load at all, and the edit page reported it as a JSON parse error."""
+    csv_path = tmp_path / "cells.csv"
+    _write_csv_with_own_id(csv_path, [7, 3, 9, 1])
+
+    normalized = CsvAdapter(_spec(csv_path)).load_table()
+
+    assert normalized.table["id"].to_list() == [0, 1, 2, 3]
+    assert normalized.table["CellID"].to_list() == [1, 2, 3, 4]
+    assert normalized.table.columns.count("id") == 1
+
+
+def test_a_role_on_a_table_id_that_is_not_the_row_number_is_refused(tmp_path):
+    """The role would otherwise read the row number in its place, silently."""
+    csv_path = tmp_path / "cells.csv"
+    _write_csv_with_own_id(csv_path, [7, 3, 9, 1])
+
+    with pytest.raises(ValueError, match="its own column called 'id'"):
+        CsvAdapter(_spec(csv_path, cell_id="id")).load_table()
+
+
+def test_a_role_on_a_table_id_that_is_the_row_number_loads(tmp_path):
+    csv_path = tmp_path / "cells.csv"
+    _write_csv_with_own_id(csv_path, [0, 1, 2, 3])
+
+    normalized = CsvAdapter(_spec(csv_path, cell_id="id")).load_table()
+
     assert normalized.table["id"].to_list() == [0, 1, 2, 3]
 
 

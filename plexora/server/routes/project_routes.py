@@ -8,6 +8,7 @@ from plexora.server.models.adapters import is_flat_table
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 from plexora.server.routes import tool_routes
+from plexora.server.routes.import_routes import _json_errors
 from plexora.server.routes.page_routes import template_data
 
 from flask import render_template, jsonify, redirect, request, send_file, abort
@@ -801,6 +802,7 @@ def _needs_for_tool(project, tool_name):
 
 
 @app.route('/project/<string:name>', methods=['POST'])
+@_json_errors
 def save_project(name):
     """Apply an edit. Everything except the image can change.
 

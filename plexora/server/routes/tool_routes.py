@@ -22,6 +22,8 @@ FALLBACK -- unknown datasource, uninstalled tool, or permanently incompatible.
             Stale and bookmarked links land here, so it must not error.
 """
 
+import logging
+
 from flask import jsonify, redirect, render_template, request
 
 from plexora import app
@@ -29,6 +31,7 @@ from plexora.api import plugin as plugin_api
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model, manifest
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
+from plexora.server.routes.import_routes import _json_errors
 from plexora.server.routes.page_routes import template_data
 
 OPEN, COLLECT, OFFER, FALLBACK = "open", "collect", "offer", "fallback"
@@ -324,6 +327,7 @@ def project_requirements(datasource):
 
 
 @app.route('/<string:datasource>/requirements', methods=['POST'])
+@_json_errors
 def satisfy_requirements(datasource):
     """Record answers to whatever was missing.
 
@@ -446,10 +450,14 @@ def _reload_or_restore(datasource, previous, wait_for_table=True):
     the user a project that no longer opens at all, which is a far worse outcome
     than the question they were trying to answer.
 
-    Scoped to ValueError, which is how an adapter says "I cannot read the file
-    this way" and is already what these routes treat as the user's to fix.
-    Anything else is a bug rather than a rejected answer, and swallowing it here
-    would turn it into a silent no-op save.
+    A ValueError is how an adapter says "I cannot read the file this way", and
+    is what these routes treat as the user's to fix: its message comes back.
+    Anything else is a bug rather than a rejected answer, so it is re-raised
+    rather than swallowed into a silent no-op save -- but `previous` goes back
+    first all the same. Leaving the edit stored was how a data file the reader
+    choked on left the project switched to it, unopenable, with the old
+    answers gone. A node that cannot be reached is the one exception that
+    keeps the edit: that is the road to the file, not a verdict on the answer.
 
     Returns an error message, or None when the reload was fine.
 
@@ -460,19 +468,31 @@ def _reload_or_restore(datasource, previous, wait_for_table=True):
     about a table that will not read from the load status instead
     (data_model._with_table_behind).
     """
+    from plexora.server.providers.base import ResourceUnavailable
+
     try:
         data_model.load_datasource(datasource, reload=True,
                                    wait_for_table=wait_for_table)
         return None
+    except ResourceUnavailable:
+        raise
     except ValueError as exc:
-        previous.save()
-        try:
-            data_model.load_datasource(datasource, reload=True)
-        except ValueError:
-            # The project was already unloadable before this request. Nothing
-            # to restore it to, and the message below is still the useful half.
-            pass
+        _restore(datasource, previous)
         return str(exc)
+    except Exception:
+        _restore(datasource, previous)
+        raise
+
+
+def _restore(datasource, previous):
+    previous.save()
+    try:
+        data_model.load_datasource(datasource, reload=True)
+    except Exception:  # noqa: BLE001 -- the failure being reported is the caller's
+        # The project was already unloadable before this request. Nothing to
+        # restore it to, and the caller's error is still the useful half.
+        logging.getLogger(__name__).warning(
+            "%s: could not reload the restored project", datasource, exc_info=True)
 
 
 def _apply(project, payload):

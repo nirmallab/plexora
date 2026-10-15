@@ -130,11 +130,19 @@ def _json_errors(route):
     token '<', "<!doctype "... is not valid JSON` -- in place of the one
     sentence that said what actually went wrong. Logged in full here; the
     sentence is what goes back.
+
+    A node that cannot be reached is left to the app's own handler
+    (`plexora/__init__.py`), which already answers it as JSON -- with a 503,
+    since it is temporary, and logged once rather than per request.
     """
+    from plexora.server.providers.base import ResourceUnavailable
+
     @functools.wraps(route)
     def wrapped(*args, **kwargs):
         try:
             return route(*args, **kwargs)
+        except ResourceUnavailable:
+            raise
         except Exception as exc:  # noqa: BLE001 -- the point is to catch all
             logging.getLogger(__name__).exception("%s failed", request.path)
             return jsonify(error=(str(exc) or type(exc).__name__)), 500
@@ -800,8 +808,14 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         known |= {"id", "X", "Y"}
 
     def _apply(current):
+        # An AnnData's `id`, `X` and `Y` are the adapter's own synthesized
+        # columns, not answers about the file -- carried into a flat table
+        # they would name whatever of its columns happens to share the name,
+        # which is how a CSV's own `id` became its cell id.
+        synthesized = ({"id", "X", "Y"} if flat and current.columns_are_structural
+                       else set())
         kept = {role: column for role, column in current.roles.to_dict().items()
-                if column in known}
+                if column in known and column not in synthesized}
         roles = ColumnRoles(**{**proposal["roles"], **kept})
         if not flat:
             roles = replace(roles, x="X", y="Y",
