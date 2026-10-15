@@ -108,10 +108,15 @@ class SessionOptions(AgentModel):
                              "gating_session_finish(action=commit).")
     overwrite_manual: bool = Field(False, description="Also re-gate markers the user set by "
                                    "hand (never locked or approved ones).")
-    max_tier: int = Field(schemas.ENGINE["max_tier_default"], ge=1, le=len(schemas.TIERS),
-                          description="1: numbers only; 2: + one look per marker; 3: + "
-                                      "reference channels; 4: + candidate refinement; 5: + "
-                                      "questions for the user.")
+    max_tier: int = Field(schemas.ENGINE["max_tier_default"], ge=2, le=len(schemas.TIERS),
+                          description="2: one look per marker; 3: + reference channels; 4: + "
+                                      "candidate refinement; 5: + questions for the user. "
+                                      "There is no numbers-only tier: every gate is judged "
+                                      "on the image's pixels.")
+    force: bool = Field(False, description="Start even when only some markers match an image "
+                        "channel: only those are gated, and the rest are skipped "
+                        "(skipped_no_channel) without a gate. Without it a partial match "
+                        "refuses to start; when no marker matches, nothing starts either way.")
     audit_sheet: bool = Field(True, description="Show automatically accepted markers on a "
                                                 "batched audit sheet (~70 tokens a marker).")
     reference_image: str | None = Field(None, description="Dataset scope: the image gated "
@@ -261,6 +266,59 @@ def _markers_for(call, images, wanted):
     return order, skipped, panel
 
 
+def channel_match(call, images, markers) -> dict:
+    """Which markers each image has a channel for (`views.image_channel`, the
+    matcher the bulk pass and every look use). Automatic gating judges every
+    gate on the pixels, so a marker with no channel cannot be gated at all.
+
+    {"matched": {image: [marker]}, "unmatched": {image: [marker]},
+     "n_markers", "n_matched" (markers matched in at least one image),
+     "state": "full" | "partial" | "none", "channels": {image: [first names]}}"""
+    from plexora.plugins.gating.server.autogate import views
+
+    matched, unmatched, channels = {}, {}, {}
+    for project in images:
+        ds = call.session.data(project)
+        present = set(ds.table.markers)
+        names = [] if ds.project.image.is_blank else views.channel_names(ds)
+        channels[project] = names[:MAX_LIST]
+        hit = [m for m in markers if m in present and names
+               and views.image_channel(ds, m) is not None]
+        matched[project] = hit
+        unmatched[project] = [m for m in markers if m in present and m not in hit]
+    pairs = sum(len(v) for v in matched.values())
+    missing = sum(len(v) for v in unmatched.values())
+    n_matched = len({m for v in matched.values() for m in v})
+    state = "none" if not pairs else ("partial" if missing else "full")
+    return {"matched": matched, "unmatched": unmatched, "n_markers": len(markers),
+            "n_matched": n_matched, "state": state, "channels": channels}
+
+
+def _require_channels(match, force):
+    """Refuse a start the pixels cannot carry: no marker with a channel ever;
+    some without one unless `force`."""
+    unmatched = sorted({m for v in match["unmatched"].values() for m in v})
+    if match["state"] == "none":
+        raise AgentError(
+            "precondition_missing",
+            f"none of the {match['n_markers']} markers matches a channel of the image, so "
+            "none can be gated: automatic gating judges every gate on the pixels. Name the "
+            "image's channels after the markers (Edit project, channel names), then start "
+            "again.",
+            detail={"unmatched": unmatched[:MAX_LIST], "channels": match["channels"],
+                    "hint": "rename the image's channels to the table's marker names"})
+    if match["state"] == "partial" and not force:
+        raise AgentError(
+            "precondition_missing",
+            f"only {match['n_matched']} of the {match['n_markers']} markers match a channel "
+            f"of the image; {len(unmatched)} do not ({', '.join(unmatched[:12])}"
+            f"{', ...' if len(unmatched) > 12 else ''}). Start again with force=true "
+            "(`plexora ai run gating --force`) to gate only the markers that match, or name "
+            "the image's channels after the markers first.",
+            detail={"matched": match["matched"], "unmatched": unmatched[:MAX_LIST],
+                    "channels": match["channels"], "hint": "force"})
+
+
 def start(call, inp):
     from plexora.agent.sessions.store import new_session_id
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -300,9 +358,6 @@ def start(call, inp):
             sizes = {name: call.session.data(name).table.geometry().height for name in images}
             reference = max(images, key=lambda n: (sizes[n], -images.index(n)))
         images = [reference] + [n for n in images if n != reference]
-    expression, expression_receipts = _expression_check(call, images)
-    pixel = _pixel_check(call, images, inp)
-    qc_blocks = _qc_check(call, images)
     if len(images) > 1:
         # The reference image stays held while the bulk pass walks the rest;
         # an evicted table would refit every marker for every packet.
@@ -310,6 +365,13 @@ def start(call, inp):
     order, skipped, panel = _markers_for(call, images, inp.markers)
     if not order:
         raise AgentError("invalid_input", "no markers to gate")
+    # Before anything is written (the expression check can set a matrix): a
+    # marker with no image channel has no pixels to judge its gate on.
+    match = channel_match(call, images, order)
+    _require_channels(match, inp.force)
+    expression, expression_receipts = _expression_check(call, images)
+    pixel = _pixel_check(call, images, inp)
+    qc_blocks = _qc_check(call, images)
     biology_record = _biology_for(call, images, inp, panel)
     if biology_record and biology_record.get("contexts"):
         from plexora.plugins.gating.server.autogate import biology as biomod
@@ -320,10 +382,15 @@ def start(call, inp):
     units = {}
     for project in images:
         markers = call.session.data(project).table.markers
+        seen = set(match["matched"].get(project) or ())
         for marker in order:
-            units[engines.unit_key(project, marker)] = {
-                "project": project, "marker": marker,
-                "state": "pending" if marker in markers else "skipped_no_marker"}
+            unit = {"project": project, "marker": marker,
+                    "state": "pending" if marker in seen
+                    else "skipped_no_marker" if marker not in markers else "skipped_no_channel"}
+            if unit["state"] == "skipped_no_channel":
+                unit["reason"] = ("no image channel matches this marker: automatic gating "
+                                  "judges every gate on the pixels")
+            units[engines.unit_key(project, marker)] = unit
     unresolved = [m for m in panel["unresolved"] if m in order]
     record = {
         "session_id": session_id, "kind": "gating", "created_at": _now(),
@@ -333,7 +400,9 @@ def start(call, inp):
         "images": images, "reference_image": reference, "order": order,
         "skipped_markers": skipped, "units": units, "panel_hash": panel["panel_hash"],
         "biology": biology_record,
-        "panel_pending": bool(unresolved) and inp.max_tier >= 2,
+        "panel_pending": bool(unresolved),
+        "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
+                                                "unmatched")},
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
         "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
@@ -387,6 +456,8 @@ def start(call, inp):
             "biology": _biology_brief(biology_record),
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(pixel), "state": record["state"],
+            "channels": {k: match[k] for k in ("state", "n_markers", "n_matched")}
+            | {"unmatched": sorted({m for v in match["unmatched"].values() for m in v})},
             "qc_exclusion": qc_blocks,
             **_qc_warning(qc_blocks),
             **_guide(inp.reading, inp.known_guide),
@@ -582,14 +653,12 @@ def _pixel_brief(pixel):
 def _pixel_check(call, images, inp):
     """Which images state no pixel size. Their pictures need one -- fields in
     microns, crops, scale bars -- so a `pixel_setup` packet estimates it first
-    (`pixel_estimate`); a numbers-only run draws nothing and asks nothing."""
+    (`pixel_estimate`)."""
     from plexora.server.utils import pixel_scale
 
     missing = [p for p in images if not pixel_scale.pixel_size(call.session.project(p))]
     if not missing:
         return {"status": "calibrated"}
-    if int(inp.max_tier) < 2:
-        return {"status": "not_needed", "uncalibrated": missing}
     return {"status": "pending", "projects": {p: {"status": "pending"} for p in missing}}
 
 

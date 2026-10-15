@@ -106,6 +106,28 @@ def save_gating_list():
     return resp
 
 
+@gating_bp.route('/clear_gates', methods=['POST'])
+def clear_gates():
+    """The panel's Clear and Clear all: the named markers (every marker when
+    `markers` is absent) back to never gated, provenance and all
+    (`model.clear_gates`). Other tabs on the project are told, so one holding
+    the old gates reloads instead of saving them back over the clear."""
+    post_data = json.loads(request.data or b"{}")
+    datasource = post_data.get('datasource')
+    markers = post_data.get('markers')
+    if not datasource or (markers is not None and not isinstance(markers, list)):
+        abort(400)
+    ds = api.project_data(datasource)
+    try:
+        cleared, kept = gating_model.clear_gates(ds, markers)
+    except KeyError as exc:
+        return api.json_response({"error": str(exc).strip("'\"")}), 400
+    if cleared:
+        api.notify_viewers(datasource, PLUGIN_NAME, "gating.cleared",
+                           {"markers": cleared, "origin": post_data.get('origin')})
+    return api.json_response({"cleared": cleared, "kept": kept})
+
+
 def _restore_locked(datasource):
     import pickle
 

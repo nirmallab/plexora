@@ -27,6 +27,15 @@
             <span class="fas fa-file-arrow-down"></span>
             <span class="layer-card-action-text">Download Gates</span>
         </button>
+        {# Whole-tool actions used rarely enough to fold away: Clear all gates.
+           Behind one glyph, at the end of the line the other whole-tool
+           actions sit on, rather than a third labelled button that would
+           make a destructive action as easy to hit as Download. #}
+        <button id="gating_more_button" class="layer-card-action is-icon"
+                title="More gate actions" aria-label="More gate actions"
+                aria-haspopup="menu" type="button">
+            <span class="fas fa-ellipsis"></span>
+        </button>
     </div>
     <form id="arrow-upload-form">
         <input id="gating-upload-from-arrow" class="hidden" type="file">
@@ -48,6 +57,12 @@
         <label class="control-label gate-row-caption" for="gate_marker_select">Marker</label>
         <div id="gate_marker_select" class="marker-combobox-mount"></div>
         <button id="gate_auto_button" class="slider-auto-button gate-marker-auto" type="button"></button>
+        {# Clear: this marker back to never gated -- its full range, and its
+           provenance gone -- the undo of every way a gate gets set, Auto's
+           included (gatingSidebarController.onClearClick). #}
+        <button id="gate_clear_button" class="slider-auto-button gate-marker-auto gate-marker-clear"
+                title="Clear this marker's gate" aria-label="Clear this marker's gate"
+                type="button"><span class="fas fa-eraser"></span></button>
     </div>
     {# A Z-STACK ONLY: what the image shows while gating -- the plane, or a slab
        of planes around it combined (mean, max or median; 5 um by default),

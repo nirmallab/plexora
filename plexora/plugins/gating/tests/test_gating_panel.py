@@ -197,6 +197,25 @@ def test_auto_is_an_icon_with_an_undo_on_it():
     assert "#gate_auto_button" not in _code(STYLES)
 
 
+def test_clear_is_beside_auto_and_clear_all_behind_the_overflow():
+    """Clear puts the marker on screen back to never gated (full range, its
+    provenance gone) and sits beside the wand it undoes; Clear all is on the
+    whole-tool line, folded behind one glyph and asked first, so a
+    destructive action is never as easy to hit as Download."""
+    panel, controller = _code(PANEL), _code(CONTROLLER)
+    assert 'id="gate_clear_button"' in panel and "fa-eraser" in panel
+    assert panel.index('id="gate_auto_button"') < panel.index('id="gate_clear_button"')
+    assert 'id="gating_more_button" class="layer-card-action is-icon"' in panel
+    assert 'aria-haspopup="menu"' in panel and "fa-ellipsis" in panel
+    assert "onClearClick" in controller and "onClearAllClick" in controller
+    assert "PlexoraMenu" in controller and "Clear all gates" in controller
+    assert "PlexoraConfirm" in controller, "Clear all is asked first"
+    # A save still on its debounce goes before the clear, not after it.
+    clear = controller[controller.index("async clearGates("):]
+    assert clear.index("persistGatingList") < clear.index("api.clearGates")
+    assert "clear_gates" in (PLUGIN_ROOT / "static" / "gatingApi.js").read_text(encoding="utf-8")
+
+
 def test_the_csv_pair_is_a_labelled_line_in_the_panel():
     """`data-tool-extras` is what lifts markup into the card's header
     (views/toolLoader.js). Dropping it is half the move; the other half is the

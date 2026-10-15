@@ -918,6 +918,9 @@ def test_every_vocabulary_has_one_source():
     assert defaults["max_tier"] == schemas.ENGINE["max_tier_default"]
     assert capabilities_session.SessionOptions.model_fields["max_tier"].metadata[-1].le \
         == len(schemas.TIERS)
+    # No numbers-only tier: every session looks at the pixels (T2 and up).
+    assert any(getattr(m, "ge", None) == 2
+               for m in capabilities_session.SessionOptions.model_fields["max_tier"].metadata)
     assert packets._allowed(answers.T2Answer, "pattern") == list(schemas.PATTERNS)
     assert set(answers.T4Answer.model_fields) - set(answers.T2Answer.model_fields) \
         == {"intervals"}

@@ -27,7 +27,8 @@ States of a unit:
     terminal: accepted | accepted_low_confidence | manual_review_recommended |
               technically_failed | no_positive_population | not_binary |
               insufficient_information |
-              skipped_locked | skipped_excluded | skipped_manual | skipped_no_marker
+              skipped_locked | skipped_excluded | skipped_manual | skipped_no_marker |
+              skipped_no_channel (no image channel: never profiled, never written)
 
 Writes happen only in `apply` mode, each one a child receipt of the session's
 own operation (`<op>.<nnn>`) with an undo hint, plus a provenance row. A unit
@@ -261,8 +262,7 @@ def confidence_for(unit) -> str:
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
         cap = "low"
-    if unit.get("no_image_channel") or (unit.get("context") or {}).get("source") == "ai" \
-            or unit.get("condition"):
+    if (unit.get("context") or {}).get("source") == "ai" or unit.get("condition"):
         # A conditional gate ("positive only within CD45+") is written as the
         # plain gate at its threshold: it stands on the partner's gate too.
         cap = "moderate" if cap == "high" else cap
@@ -732,7 +732,8 @@ class Engine(BaseEngine):
             try:
                 ds = _data(self.call, unit["project"])
                 if unit["marker"] in ds.table.markers and state not in (
-                        "skipped_locked", "skipped_excluded", "skipped_no_marker"):
+                        "skipped_locked", "skipped_excluded", "skipped_no_marker",
+                        "skipped_no_channel"):
                     existing = provenance.read(ds.name).get(unit["marker"]) or {}
                     if existing.get("status") not in ("locked", "approved", "excluded"):
                         # A kept manual gate is recorded as the user's, so the
@@ -996,10 +997,7 @@ class Engine(BaseEngine):
             if "lineage" in result["failed"]:
                 self.close_contaminated(unit)
                 return
-            if result["ok"] or unit.get("regression_confirmed") \
-                    or unit.get("no_image_channel"):
-                # Nothing to look at for a column without a channel: the
-                # failed checks cap its confidence instead (confidence_for).
+            if result["ok"] or unit.get("regression_confirmed"):
                 self.finalize(unit, method=unit.get("method") or "ai_accepted")
             elif self.purity_capped(unit, result):
                 self.finalize(unit, method=unit.get("method") or "ai_accepted")
@@ -1578,8 +1576,11 @@ class Engine(BaseEngine):
                 "not_profiled": by_state.get("pending", 0),
                 "waiting_for_user": [u["marker"] for u in self.waiting_for_user()],
                 "images": len(self.record["images"]),
+                # The bulk pass's last marker (`bulk._progress_announcer`):
+                # what core's agent panel shows while the pass runs.
                 "bulk": {"job_id": self.record.get("bulk_job_id"),
-                         "state": self.record.get("state")}}
+                         "state": self.record.get("state"),
+                         **(self.record.get("bulk_progress") or {})}}
 
     # -- questions for the user --
 

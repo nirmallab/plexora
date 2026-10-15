@@ -1,12 +1,13 @@
-"""The deterministic pass: every marker profiled, and settled where numbers can.
+"""The deterministic pass: every marker profiled, and the first decision made.
 
 Runs as a job (`gating_session_bulk`), ahead of the agent: display
 calibration per image, then per marker in gating order the profile (five
 estimators, separation, stability, cell and overview QC), and the first
 decision -- skip it (locked, excluded, a user's own gate, not a marker of this
-image), close it (technically failed with no image to check), accept it at T1
-(clean bimodal: the GMM gate is written now and the marker queued for the
-audit sheet), or leave it waiting for a look. A continuously expressed marker
+image, no image channel to judge it on), accept it at T1 (clean bimodal: the
+GMM gate is written now and the marker queued for the audit sheet), or leave
+it waiting for a look. No gate is accepted here that the pixels will not be
+shown: there is no numbers-only path. A continuously expressed marker
 waits for a look like any other: it is gated where expression rises out of
 background, never skipped as "not binary". Its starting gate, like every
 looked-at marker's, is chosen just before the first look (`Engine.propose`),
@@ -19,6 +20,8 @@ through the next images.
 """
 
 from __future__ import annotations
+
+import time
 
 from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server import model
@@ -83,11 +86,16 @@ def prepare_unit(call, session_id, project, marker, panel, options):
         return {**kept,
                 "close": ("skipped_manual", "a gate the user set is kept (overwrite_manual "
                                              "is off); the GMM proposal is recorded")}
+    if views.image_channel(ds, marker) is None:
+        # Checked at the start (`capabilities_session.channel_match`); a
+        # channel renamed since is caught here. No pixels, no gate: nothing is
+        # profiled or written for it.
+        return {**kept, "close": ("skipped_no_channel", "no image channel matches this "
+                                  "marker: automatic gating judges every gate on the pixels")}
     profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]),
                                  compartment=_context_of(panel, marker)["compartment"])
     return {**kept, "profile": profile, "gate": gate,
             "context": _context_of(panel, marker),
-            "no_image_channel": views.image_channel(ds, marker) is None,
             "image_qc": profile.get("image_qc")}
 
 
@@ -126,7 +134,7 @@ def fill_unit(unit, prepared):
         "qc_exclusion": profile.get("qc_exclusion"),
         # QC's word on the channel (`cell_exclusions.VERDICTS`), when QC ran.
         "qc_verdict": (profile.get("qc_exclusion") or {}).get("channel_verdict"),
-        "context": prepared["context"], "no_image_channel": prepared["no_image_channel"],
+        "context": prepared["context"],
         "image_qc": {k: (prepared.get("image_qc") or {}).get(k)
                      for k in ("saturation_fraction", "tissue_ratio",
                                "dynamic_range_decades", "flags")}
@@ -135,12 +143,13 @@ def fill_unit(unit, prepared):
 
 
 def decide_first(engine, unit):
-    """The first decision for a unit whose numbers are recorded."""
+    """The first decision for a unit whose numbers are recorded. Nothing here
+    accepts a gate the pixels have not been shown: a clean split is written
+    for the audit sheet to confirm, and everything else waits for a look."""
     options = engine.options
     if unit.get("gmm") is not None and unit.get("candidate") is None:
         unit["candidate"] = unit["gmm"]
     t1 = unit.get("t1") or {}
-    max_tier = int(options["max_tier"])
     tier = t1.get("recommended_tier")
     if unit.get("qc_verdict") == "usable":
         # QC looked at this channel and found a working stain: a flag read off
@@ -153,14 +162,9 @@ def decide_first(engine, unit):
     # unknown marker's None is not a statement.
     continuous = (unit["context"] or {}).get("binary") is False
     if unit.get("gmm") is None:
-        if unit["no_image_channel"] or max_tier < 2:
-            engine.close(unit, "technically_failed",
-                         "no mixture to fit (a flat, sparse or constant column)",
-                         confidence="failed_qc")
-        else:
-            unit["candidate"] = (unit.get("seen") or [None])[0]
-            unit["qc_reason"] = ["no mixture to fit"]
-            unit["state"] = "qc_confirm"
+        unit["candidate"] = (unit.get("seen") or [None])[0]
+        unit["qc_reason"] = ["no mixture to fit"]
+        unit["state"] = "qc_confirm"
         return
     if continuous:
         # Continuous expression (HLA-ABC, B2M, PD-L1): no valley, but a
@@ -168,18 +172,13 @@ def decide_first(engine, unit):
         # looks that judge where real expression starts. Never skipped.
         unit["continuous"] = True
     if tier == "QC" or hard:
-        if unit["no_image_channel"] or max_tier < 2:
-            engine.close(unit, "technically_failed" if hard else "manual_review_recommended",
-                         f"technical flags ({', '.join(hard) or unit['class']}) and no image "
-                         "to check them against", confidence="failed_qc" if hard else None)
-        else:
-            unit["qc_reason"] = hard or [unit["class"]]
-            unit["state"] = "qc_confirm"
+        unit["qc_reason"] = hard or [unit["class"]]
+        unit["state"] = "qc_confirm"
         return
     if t1.get("accept"):
         unit["path"] = "t1"
         unit["method"] = "gmm"
-        if options["audit_sheet"] and not unit["no_image_channel"] and max_tier >= 2:
+        if options["audit_sheet"]:
             # Written now so later markers can use it as a reference; the audit
             # sheet confirms it (high) or sends it to a proper look.
             engine.write(unit, unit["candidate"], method="gmm", confidence="high",
@@ -190,16 +189,51 @@ def decide_first(engine, unit):
             unit["audited"] = False
             engine.finalize(unit, method="gmm")
         return
-    if max_tier < 2 or unit["no_image_channel"]:
-        unit["path"] = "t2"
-        unit["ai_confidence"] = 0.0
-        # No look will follow: the scored proposal (on the partners gated so
-        # far) is the gate.
-        engine.propose(unit)
-        unit["state"] = "awaiting_regression"
-        engine.settle(unit)
-        return
     unit["state"] = "awaiting_t2"
+
+
+#: How a marker's first decision reads on the agent panel's progress line
+#: ("CD3E: waiting for a look"); any other state reads as its own words.
+BULK_WORDS = {
+    "accepted_t1": "clean split, written for the audit sheet",
+    "awaiting_t2": "waiting for a look",
+    "qc_confirm": "the stain gets a look first",
+    "transfer_pending": "waiting for the reference image",
+    "transfer_check": "reference gate carried, waiting for a look",
+    "skipped_no_channel": "no image channel, skipped",
+    "skipped_manual": "your gate kept",
+    "skipped_locked": "locked, kept",
+    "skipped_excluded": "excluded, skipped",
+    "skipped_no_marker": "not in this image",
+    "manual_review_recommended": "could not be profiled, needs review",
+}
+
+#: Announcements closer together than this are dropped (the last one always
+#: goes): a run of skipped markers settles faster than a panel can read.
+PROGRESS_THROTTLE_S = 1.0
+
+
+def _progress_announcer(call, session_id):
+    """`announce(images, progress, last=False)`: tell the session's tabs the
+    pass moved, in a `phase` event carrying the engine's `progress` -- whose
+    `bulk` now holds the marker just settled (`bulk_progress`) -- as QC's
+    bulk pass does, so core's agent panel shows each marker as it is decided
+    instead of six silent minutes."""
+    from plexora.plugins.gating.capabilities_session import _phase
+
+    sent = {"at": 0.0}
+
+    def announce(images, progress, *, last=False):
+        now = time.monotonic()
+        if not last and now - sent["at"] < PROGRESS_THROTTLE_S:
+            return
+        sent["at"] = now
+        try:
+            _phase(call, {"images": images}, session_id, "analyzing", progress=progress)
+        except Exception:  # a progress line is never a reason to stop the pass
+            pass
+
+    return announce
 
 
 def _check_stopped(session_id):
@@ -230,12 +264,12 @@ def run(call, inp):
     with engine_for(call, session_id, save=False) as engine:
         # A resumed pass keeps the calibration it already made.
         calibrations = dict(engine.record.get("calibration") or {})
+    announce = _progress_announcer(call, session_id)
     for project in images:
         call.check_cancelled()
         if project not in calibrations:
             calibrations[project] = calibrate_image(call, project, session_id)
         ds = call.session.data(project)
-        panel = biology.overlay(context.for_project(ds), sample_biology)
         for marker in order:
             call.check_cancelled()
             _check_stopped(session_id)
@@ -243,7 +277,14 @@ def run(call, inp):
             with engine_for(call, session_id) as engine:
                 unit = engine.record["units"].get(key)
                 pending = unit is not None and unit["state"] == "pending"
+            settled = None
             if pending:
+                # Read for every marker, not once for the pass: the panel's
+                # context packet is answered while this pass runs, and a
+                # snapshot taken before it would overwrite the answer on every
+                # marker settled after it (one file read; `context.for_project`
+                # caches nothing).
+                panel = biology.overlay(context.for_project(ds), sample_biology)
                 try:
                     prepared = prepare_unit(call, session_id, project, marker, panel, options)
                 except AgentError as exc:
@@ -253,8 +294,17 @@ def run(call, inp):
                     unit = engine.record["units"][key]
                     if unit["state"] == "pending":
                         settle_unit(engine, unit, prepared)
+                    settled = unit["state"]
+                    words = BULK_WORDS.get(settled, settled.replace("_", " "))
+                    engine.record["bulk_progress"] = {
+                        "stage": "profiling", "message": f"{marker}: {words}",
+                        "done": done + 1, "total": total}
+                    progress = engine.progress()
+                    images_now = list(engine.record["images"])
             done += 1
             call.progress(done=done, total=total, message=f"{project}: {marker}")
+            if settled is not None:
+                announce(images_now, progress, last=done == total)
         with engine_for(call, session_id) as engine:
             engine.record.setdefault("calibration", {})[project] = calibrations[project]
             profiled = engine.record.setdefault("images_profiled", [])
@@ -266,5 +316,6 @@ def run(call, inp):
 
             transfer.after_bulk(engine)
         engine.record["state"] = "deciding"
+        engine.record.pop("bulk_progress", None)
         progress = engine.progress()
     return {"session_id": session_id, "progress": progress, "calibration": calibrations}

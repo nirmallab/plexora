@@ -96,7 +96,7 @@ def pending(record) -> bool:
 
 
 def enabled(engine) -> bool:
-    return bool(engine.options["replan"]) and int(engine.options["max_tier"]) >= 2
+    return bool(engine.options["replan"])
 
 
 def _key(unit):

@@ -143,6 +143,19 @@ class GatingSidebarController {
         const gateAuto = document.getElementById("gate_auto_button");
         gateAuto.addEventListener("click", () => this.onAutoClick());
         this.syncAutoButton();
+        // Beside it, Clear: this marker back to never gated (onClearClick).
+        document.getElementById("gate_clear_button")
+            ?.addEventListener("click", () => this.onClearClick());
+        // The whole-tool line's overflow: Clear all gates (onClearAllClick).
+        const more = document.getElementById("gating_more_button");
+        more?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            window.PlexoraMenu?.open(more, [{
+                label: "Clear all gates…",
+                title: "Every marker back to never gated: its full range, and no record of who set it",
+                onSelect: () => this.onClearAllClick(),
+            }]);
+        });
 
         // The contrast of the marker being gated, over the viewer, under the
         // "Toggle selected cells" caption. Built lazily on first show; it
@@ -787,6 +800,84 @@ class GatingSidebarController {
         this.setGateRange(before, CSVGatingList.events.SELECTION_CHANGED);
         this.updateGateReadout(before);
         this.syncAutoButton();
+    }
+
+    /**
+     * Clear: the marker on screen back to the state it had before anyone
+     * gated it -- its full range, and its provenance row gone
+     * from the project's store (`/clear_gates`). Not asked first: it is one
+     * marker, and Auto puts a gate back in a click.
+     */
+    async onClearClick() {
+        if (!this.gateMarker) return;
+        await this.clearGates([this.gateMarker]);
+    }
+
+    /** Clear all gates (the action line's overflow), asked first. */
+    async onClearAllClick() {
+        const gated = this.getGateMarkerNames().filter((name) => this.hasCustomGate(name)
+            || (this.provenance && this.provenance[name]));
+        const body = "Every marker goes back to never gated: its full range, with the "
+            + "record of who set it removed. "
+            + (gated.length
+                ? `${gated.length} ${gated.length === 1 ? "marker has" : "markers have"} a gate now. `
+                : "")
+            + "A locked gate is kept.";
+        const dialog = window.PlexoraConfirm;
+        const ok = dialog && typeof dialog.ask === "function"
+            ? await dialog.ask({ title: "Clear all gates?", body, confirm: "Clear all",
+                                 cancel: "Cancel", danger: true })
+            : window.confirm?.(`Clear all gates?\n\n${body}`);
+        if (!ok) return;
+        await this.clearGates(null);
+    }
+
+    /**
+     * Clear `markers` (every marker when null) on the server, then take the
+     * stored list back. A save still waiting on its debounce goes first: the
+     * list is saved whole, and one landing after the clear would write the
+     * old gates straight back over it.
+     */
+    async clearGates(markers) {
+        if (this.clearing) return;
+        this.clearing = true;
+        const button = document.getElementById("gate_clear_button");
+        if (button) button.disabled = true;
+        try {
+            window.clearTimeout(this._saveGatingTimer);
+            await (this._gatingSaveChain || Promise.resolve());
+            await this.persistGatingList();
+            const answer = await this.api.clearGates(markers);
+            (answer.cleared || []).forEach((name) => {
+                this.preAutoGates.delete(this.dataLayer.getFullChannelName(name));
+            });
+            await this.reloadFromServer();
+            this.syncAutoButton();
+            const kept = Object.keys(answer.kept || {});
+            if (markers === null) {
+                const n = (answer.cleared || []).length;
+                window.PlexoraToast?.show?.({
+                    title: `Cleared ${n} ${n === 1 ? "gate" : "gates"}`,
+                    note: kept.length
+                        ? `${kept.join(", ")} ${kept.length === 1 ? "is" : "are"} locked and kept.`
+                        : "Every marker is back to never gated.",
+                    lines: [],
+                });
+            } else if (kept.length) {
+                window.PlexoraToast?.show?.({
+                    title: `${kept.join(", ")} ${kept.length === 1 ? "is" : "are"} locked`,
+                    note: "The locked gate was kept. Unlock it under the gate to clear it.",
+                    lines: [],
+                });
+            }
+        } catch (error) {
+            console.error("gating: could not clear the gates", error);
+            window.PlexoraToast?.show?.({ title: "Could not clear the gates",
+                                          note: String(error?.message || error), lines: [] });
+        } finally {
+            this.clearing = false;
+            if (button) button.disabled = false;
+        }
     }
 
     /**

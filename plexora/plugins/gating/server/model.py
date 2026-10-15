@@ -213,7 +213,8 @@ def _sorted_quantile(sorted_values, q):
     return sorted_values[below] * (1 - weight) + sorted_values[above] * weight
 
 
-FLOOR_MIN_FRACTION = 0.001   # [cal] of the finite cells
+FLOOR_MIN_FRACTION = 0.001   # [cal] of the finite cells ...
+FLOOR_MIN_CELLS = 50         # [cal] ... or this many, whichever is fewer
 FLOOR_MAX_FRACTION = 0.2
 FLOOR_GAP_IQR = 2.0          # [cal] gap to the body, in the body's IQRs
 
@@ -229,13 +230,20 @@ def floor_spike(fit) -> int:
     0.001 that no refinement step can climb out of. They are negatives; the
     fits are made on the body above them. A spike too large to be a nuisance
     (FLOOR_MAX_FRACTION) is left to the fit as a real background.
+
+    The smallest spike counted is FLOOR_MIN_FRACTION of the cells or
+    FLOOR_MIN_CELLS, whichever is fewer: on a large image a fraction alone is
+    hundreds of cells, and 83 to 155 unmeasured cells of 820,618 were still a
+    component of their own (lsp35766_p193: GZMB, Rb, KLF2, CD66b gated at
+    ~0.03, calling 99.98% of cells positive).
     """
     n = fit.shape[0]
     if n < 50:
         return 0
     low = fit[0]
     k = int(np.searchsorted(fit, low + 1e-6 * max(1.0, abs(low)), side="right"))
-    if k < max(10, FLOOR_MIN_FRACTION * n) or k > FLOOR_MAX_FRACTION * n or k >= n - 50:
+    least = max(10, min(FLOOR_MIN_FRACTION * n, FLOOR_MIN_CELLS))
+    if k < least or k > FLOOR_MAX_FRACTION * n or k >= n - 50:
         return 0
     body = fit[k:]
     # To the body's 1st percentile, not its first value: a few stragglers
@@ -610,6 +618,44 @@ def reset_gates(ds, markers=None, *, expected_revision=None, include_approved=Fa
                 row["gate_end"] = defaults[row["channel"]]["gate_end"]
         _store(ds.name).put_state(pickle.dumps(rows, protocol=4))
         return reset, skipped, revision(ds)
+
+
+def clear_gates(ds, markers=None):
+    """The panel's Clear: markers back to never gated -- their full range and
+    no provenance row, so nothing says a person or an agent ever set them.
+    `gate_active` is left as it is: it is not part of a gate but which marker
+    the panel had on screen (`save_gating_list`), and a reload goes back to it.
+    An approved gate is cleared too (the user is the one clearing it); a
+    locked one is kept, as `/save_gating_list` keeps it: the lock is the
+    user's word against every write, their own included, until they unlock
+    it. Returns (cleared, kept): the markers cleared, and {marker: status} of
+    those left alone."""
+    from plexora.plugins.gating.server import provenance
+
+    wanted = list(ds.table.markers) if markers is None else list(markers)
+    unknown = [m for m in wanted if m not in ds.table.markers]
+    if unknown:
+        raise KeyError(f"not markers of {ds.name!r}: {unknown}")
+    with _lock_for(ds.name), provenance._lock(ds.name):
+        protected = provenance.protected(ds.name)
+        kept = {m: protected[m] for m in wanted if protected.get(m) == "locked"}
+        cleared = [m for m in wanted if m not in kept]
+        defaults = {row["channel"]: row for row in default_rows(ds)}
+        rows = gate_rows(ds)
+        present = {row.get("channel") for row in rows}
+        # Every marker keeps a row: an empty list is read as "never saved",
+        # and the panel then seeds it from the source file's gates again.
+        rows.extend(dict(row) for row in default_rows(ds) if row["channel"] not in present)
+        for row in rows:
+            if row.get("channel") in cleared and row["channel"] in defaults:
+                row["gate_start"] = defaults[row["channel"]]["gate_start"]
+                row["gate_end"] = defaults[row["channel"]]["gate_end"]
+        _store(ds.name).put_state(pickle.dumps(rows, protocol=4))
+        prov = provenance.read(ds.name)
+        left = {m: r for m, r in prov.items() if m not in cleared}
+        if len(left) != len(prov):
+            provenance._write(ds.name, left)
+    return cleared, kept
 
 
 def put_rows(ds, rows, *, expected_revision=None):

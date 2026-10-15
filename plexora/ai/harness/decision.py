@@ -198,6 +198,13 @@ class GatingWorkflow(Workflow):
             arguments["markers"] = list(self.selected(options))
         return arguments
 
+    def units_started(self, started, options):
+        # A marker no image channel matches (a start with `force`) is skipped,
+        # never gated: it is not quoted either. One image here (project scope),
+        # so an unmatched marker is one unit.
+        unmatched = len((started.get("channels") or {}).get("unmatched") or ())
+        return max(1, super().units_started(started, options) - unmatched)
+
     def units_of(self, packet):
         return {str(u.get("marker")) for u in packet.get("units") or () if isinstance(u, dict)}
 

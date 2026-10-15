@@ -155,13 +155,14 @@ def test_gating_build_installs_its_routes(gating):
     gating_routes = {r.split(" ", 1)[1] for r in gating["routes"] if "gat" in r.lower()}
     assert "/plugins/gating/get_saved_gating_list" in gating_routes
     assert "/plugins/gating/save_gating_list" in gating_routes
-    # Twelve API routes plus the blueprint's own static route: a plugin serves
+    # Thirteen API routes plus the blueprint's own static route: a plugin serves
     # its client assets out of its own directory rather than core's. Three
     # are automatic gating's: provenance, a gate's status, and the viewer's
-    # control over a mirrored session.
-    assert len(gating_routes) == 13
+    # control over a mirrored session; one is the panel's Clear.
+    assert len(gating_routes) == 14
     assert {"/plugins/gating/get_gate_provenance", "/plugins/gating/set_gate_status",
-            "/plugins/gating/agent_session/<session_id>/control"} <= gating_routes
+            "/plugins/gating/agent_session/<session_id>/control",
+            "/plugins/gating/clear_gates"} <= gating_routes
     assert "/plugins/gating/static/<path:filename>" in gating_routes
 
 

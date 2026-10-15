@@ -80,7 +80,10 @@ def run_command(args) -> int:
         _apply_qc_limits(args)
         options = QCOptions(channels=_names(getattr(args, "channels", None)), **common)
     else:
-        options = GatingOptions(markers=_names(args.markers), **common,
+        # --force: a partial marker/channel match is gated on the markers that
+        # match (`gating_session_start`'s `force`); none matching still fails.
+        start = {"force": True} if getattr(args, "force", False) else {}
+        options = GatingOptions(markers=_names(args.markers), **common, start_options=start,
                                 parallel_markers=max(1, int(getattr(args, "parallel_markers", 1) or 1)))
     try:
         gateway = _client(args)

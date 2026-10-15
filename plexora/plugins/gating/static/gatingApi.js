@@ -79,6 +79,21 @@ class GatingApi {
         return response.json();
     }
 
+    /**
+     * Put markers back to never gated -- full range, no provenance --
+     * every marker when `markers` is null. Answers `{cleared, kept}`, `kept`
+     * being `{marker: "locked"}` for the gates a lock kept.
+     */
+    async clearGates(markers = null) {
+        const response = await fetch(this.url('plugins/gating/clear_gates'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasource: this.datasource, markers }),
+        });
+        if (!response.ok) throw new Error(`could not clear the gates (HTTP ${response.status})`);
+        return response.json();
+    }
+
     /** pause | resume | take_over an agent's gating session. */
     async controlAgentSession(sessionId, action, marker) {
         const response = await fetch(this.url(`plugins/gating/agent_session/${encodeURIComponent(sessionId)}/control`), {

@@ -114,11 +114,13 @@ window.PlexoraAgentPanel = (function () {
         skipped_excluded: "skipped, excluded",
         skipped_manual: "skipped, gated by hand",
         skipped_no_marker: "skipped, no such marker",
+        skipped_no_channel: "skipped, no image channel",
     };
 
-    //: How the bulk pass's own stage reads while it runs (QC bulk.py's
-    //: stage names; gating never sends one -- `progress.bulk` is QC-only).
+    //: How the bulk pass's own stage reads while it runs (QC bulk.py's stage
+    //: names, and gating's one: `profiling`, each marker as it is decided).
     const BULK_STAGES = {
+        profiling: "Profiling markers",
         calibrating: "Calibrating",
         scanning: "Scanning channels",
         detectors: "Looking for artifacts",
@@ -846,9 +848,14 @@ window.PlexoraAgentPanel = (function () {
         if (answer.error) return { disabled: true, detail: String(answer.error) };
         const estimate = (answer.estimates || {})[kind.kind] || {};
         const units = Number(estimate.units) || 0;
+        // The tool applies but cannot run on this data as it stands (gating
+        // with no marker matching an image channel): said, not hidden.
+        if (estimate.blocked) return { disabled: true, detail: String(estimate.blocked) };
         if (estimate.unavailable || units <= 0) return { omit: true };
         const cost = `~${creditCount(estimate.credits)} credits`;
-        const detail = ` · ${plural(units, estimate.unit || kind.noun)}`;
+        const skipped = (estimate.channels?.unmatched || []).length;
+        const detail = ` · ${plural(units, estimate.unit || kind.noun)}`
+            + (estimate.confirm && skipped ? ` · ${skipped} without an image channel` : "");
         if (estimate.affordable === false) {
             return { disabled: true, credits: cost,
                      detail: `${detail} · you have ${creditCount(answer.available_credits)}` };
@@ -894,6 +901,21 @@ window.PlexoraAgentPanel = (function () {
             return;
         }
         launcher.starting = true;
+        // A run the data only partly supports is the user's call (gating:
+        // some markers have no image channel, and only the rest would be
+        // gated). Their yes carries the estimate's own `start_options`.
+        const mine = launcher;
+        const confirm = ((mine.answer || {}).estimates || {})[kind.kind]?.confirm;
+        let extra = {};
+        if (confirm) {
+            const ok = await askToProceed(confirm);
+            if (mine !== launcher) return;
+            if (!ok) {
+                launcher.starting = false;
+                return;
+            }
+            extra = confirm.start_options || {};
+        }
         const row = launcher.rows[kind.kind];
         row.cost.hidden = true;
         row.detail.textContent = "Starting";
@@ -907,7 +929,8 @@ window.PlexoraAgentPanel = (function () {
             const text = String(note || "").trim();
             const run = await startRun({
                 kind: kind.kind, project: datasource(),
-                start_options: viewId ? { mirror: true, view_id: viewId } : { mirror: true },
+                start_options: { ...(viewId ? { mirror: true, view_id: viewId } : { mirror: true }),
+                                 ...extra },
                 ...(text ? { context: text } : {}),
             });
             closeLauncher();
@@ -918,6 +941,20 @@ window.PlexoraAgentPanel = (function () {
             paintLauncher();
             toast(`${kind.label} did not start`, error);
         }
+    }
+
+    /** The estimate's `confirm` ({title, body, confirm}) as a yes/no: core's
+     *  confirm dialog, or the browser's own where that is not loaded. */
+    async function askToProceed(confirm) {
+        const dialog = window.PlexoraConfirm;
+        if (dialog && typeof dialog.ask === "function") {
+            return Boolean(await dialog.ask({
+                title: confirm.title, body: confirm.body,
+                confirm: confirm.confirm || "Continue", cancel: "Cancel",
+            }));
+        }
+        return typeof window.confirm === "function"
+            ? window.confirm(`${confirm.title}\n\n${confirm.body}`) : false;
     }
 
     //: The longest note the server takes (ai.run_session `context`).

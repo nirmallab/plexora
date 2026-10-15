@@ -2944,7 +2944,17 @@ deliberately left out and what should be built next.
   rerender — starts a fresh one, so a pointer only ever names a packet that
   reader holds; `resolve_as_in` is a scripted reader's own resolution, for the
   bench and the tests), `bulk.py` (the
-  deterministic bulk pass, a job), `mirror_script.py` (what a mirrored viewer
+  deterministic bulk pass, a job; `decide_first` accepts nothing the pixels
+  will not be shown — a clean T1 split is written for the audit sheet, all
+  else waits for a look — because there is no numbers-only path any more;
+  `prepare_unit` closes a marker whose channel vanished since the start
+  `skipped_no_channel`, unprofiled and unwritten; the panel context is
+  re-read per marker, because a snapshot taken before the loop overwrote the
+  `panel_context` answer on every later unit; `_progress_announcer` sends a
+  `phase` event per settled marker, throttled to 1 s with the last always
+  sent, its `record["bulk_progress"]` — `{stage: "profiling", message, done,
+  total}`, words from `BULK_WORDS` — folded into `engine.progress()["bulk"]`
+  and popped when the pass ends), `mirror_script.py` (what a mirrored viewer
   tab is told), `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
   (the column work as a table operation, so it runs local-or-node),
   `sheet.py` (the context sheet: three fields at slide and mesoscale beside
@@ -3009,7 +3019,27 @@ deliberately left out and what should be built next.
   and `capabilities_session.py` (the session verbs; `_structural` drops a
   nuclear counterstain or autofluorescence/blank channel even when the
   caller names it in `markers`, because neither is a phenotype;
-  `SessionOptions.biology` takes the user's tissue/disease words and
+  `channel_match(call, images, markers)` runs after `_markers_for` and before
+  `_expression_check`, so nothing is written before a refusal: per image,
+  `views.image_channel` decides which markers have a channel (state
+  `full`/`partial`/`none`), and `_require_channels` raises
+  `precondition_missing` when none match, or on a partial match unless
+  `SessionOptions.force` (`plexora ai run gating --force`), because every
+  gate is judged on the pixels; an unmatched marker becomes the terminal
+  `skipped_no_channel` (no provenance row, no report section, label "no image
+  channel", and an `OUTCOMES` entry in `agentPanel.js`), the record keeps
+  `channel_match` and the start output has `channels`
+  (`tests/test_gating_channel_match.py`). `SessionOptions.max_tier` starts at 2 (`ge=2`): there is no
+  "numbers only" tier, after a run on placeholder channel names wrote 37 gates
+  nobody looked at. A unit no longer carries `no_image_channel` (`views.py`
+  still flags the profile for the manual tools). `ai.balance`'s gating
+  estimate (`ai/harness/capabilities._gating_estimate`) carries `channels`
+  and either `blocked` (the agent panel's launcher disables Start and says
+  why) or `confirm` (`{title, body, confirm, start_options: {force: true}}`;
+  `agentPanel.js` asks through `askToProceed`/`PlexoraConfirm` and merges
+  `start_options` on a yes) — the panel reads both keys without naming
+  gating — and `GatingWorkflow.units_started` takes unmatched markers off the
+  quote. `SessionOptions.biology` takes the user's tissue/disease words and
   `SessionOptions.defer_parents` (default on) lets a weak parent wait for its
   children before its first look). A
   `binary: false` marker is gated as continuous rather than closed
@@ -3834,6 +3864,15 @@ deliberately left out and what should be built next.
   minimum; `auto_gate` and `fit_for` (the sidebar's Auto button included) both
   fit above it, not on the raw column, and `fit_for`'s `floor_excluded` counts
   what was left out — the values otherwise keep their own order for the fit.
+  The smallest spike counted is `max(10, min(FLOOR_MIN_FRACTION*n,
+  FLOOR_MIN_CELLS=50))`, because the fraction alone is hundreds of cells on a
+  large image, and 83-155 unmeasured cells of 820k still fitted as a
+  component of their own. `clear_gates(ds, markers)` (route `POST
+  /plugins/gating/clear_gates`, `{datasource, markers|null}`, notifying
+  viewers `gating.cleared`) puts markers back to never gated: full range,
+  provenance row dropped, approved gates cleared, locked ones kept, returning
+  `(cleared, kept)`; it leaves `gate_active`, because that marks the marker
+  on screen, not part of a gate.
   `active_gates` now drops a row for a channel that isn't one of the table's
   markers (a mask's "Area" pseudo-channel, a marker since removed).
   `apply_gate_to_dataset` runs as a job (`execution="job"`) and writes one
@@ -8479,6 +8518,13 @@ in **5.6 s**.
   `manual_review`, because a marker left at its full range reads as a
   decision nobody made. Only a gate the user changed mid-session is not
   overwritten; theirs stands.
+- **No gate without pixels.** Automatic gating judges every gate on the
+  image: `SessionOptions.max_tier` has no numbers-only tier (`ge=2`, pinned
+  by `tests/test_autogate_units.py`), `capabilities_session.start` refuses a
+  run where no marker matches an image channel (and a partial match without
+  `force`) before anything is written, and a marker with no channel closes
+  `skipped_no_channel` without a gate rather than taking a scored proposal
+  nobody looked at.
 - **No marker names in `autogate/hierarchy.py` or `autogate/biology.py`.**
   Both build their tree and their tissue/disease relations only from the
   panel's own entries — the shipped vocabulary (`ai/knowledge/markers.yaml`,
@@ -12038,6 +12084,18 @@ plugin was open.
   `.layer-card-action` buttons on a `.layer-card-actions` line at the top of
   the body, where the image card puts Opacity and "Upload channel names". Ids
   unchanged -- `csvGatingList.js` binds both by id.
+
+  > **Clear and Clear all (2026-10-15).** `#gate_clear_button` (fa-eraser)
+  > sits beside the wand on the Marker row (`onClearClick`, not asked: one
+  > marker, and Auto puts a gate back in a click); `#gating_more_button`
+  > (`.layer-card-action.is-icon`, fa-ellipsis) ends the Load/Download line
+  > and opens a `PlexoraMenu` with "Clear all gates…" (`onClearAllClick`,
+  > a danger `PlexoraConfirm`), folded away so a destructive action is never
+  > as easy to hit as Download. `clearGates` flushes a pending debounced save
+  > first, because the list is saved whole and a late save would write the
+  > old gates back, then `reloadFromServer`. Gating `VERSION`
+  > `20261015_autogate`; pinned by `test_gating_panel.py::
+  > test_clear_is_beside_auto_and_clear_all_behind_the_overflow`.
 - **Three class names became shared** rather than channel-slot-specific:
   `.slot-range-row` -> `.slider-auto-row`, `.slot-auto-button` ->
   `.slider-auto-button`, and `.channel-range-slider`'s plain-number rules ->

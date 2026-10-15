@@ -1602,6 +1602,11 @@ def _build_ai_parser():
                      help="gating: comma-separated markers (default all).")
     run.add_argument("--channels", default=None,
                      help="qc: comma-separated channels (default all).")
+    run.add_argument("--force", action="store_true",
+                     help="gating: start even when only some markers match an image channel; "
+                          "only those are gated and the rest skipped. Without it a partial "
+                          "match refuses to start, and a run where no marker matches never "
+                          "starts: every gate is judged on the image's pixels.")
     run.add_argument("--mode", choices=("apply", "propose"), default="apply")
     run.add_argument("--capability", default="vision_judgement",
                      choices=("vision_judgement", "vision_routine"),

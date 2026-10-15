@@ -44,7 +44,8 @@ ARTIFACTS = ("image_quality", "segmentation", "saturation", "bleedthrough",
 TERMINAL_STATES = ("accepted", "accepted_low_confidence", "manual_review_recommended",
                    "technically_failed", "no_positive_population", "not_binary",
                    "insufficient_information",
-                   "skipped_locked", "skipped_excluded", "skipped_manual", "skipped_no_marker")
+                   "skipped_locked", "skipped_excluded", "skipped_manual", "skipped_no_marker",
+                   "skipped_no_channel")
 
 #: The states `gating_qc` lists for a person to look at.
 REVIEW_STATES = ("manual_review_recommended", "accepted_low_confidence", "technically_failed",

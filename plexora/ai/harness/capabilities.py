@@ -361,29 +361,58 @@ class BalanceInput(AgentModel):
     dev: bool = False
 
 
-def _units(call, kind, project, picked) -> tuple[int, str | None]:
-    """How many units a run of `kind` on `project` would declare, or (0, why not)."""
+def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
+    """How many units a run of `kind` on `project` would declare, or (0, why
+    not), and what the launcher must say before it starts one: `blocked` (it
+    cannot start, and why) or `confirm` (ask first; `start_options` go with a
+    yes)."""
     if picked:
-        return len(picked), None
+        return len(picked), None, {}
     try:
         if kind == "gating":
             record = call.session.project(project)
             if not record.has_table:
-                return 0, "this project has no cell table to gate"
+                return 0, "this project has no cell table to gate", {}
             # The markers a session would gate: context markers (a nuclear
-            # stain, say) are left out, exactly as gating_session_start does.
-            from plexora.plugins.gating.capabilities_session import _markers_for
+            # stain, say) are left out, exactly as gating_session_start does,
+            # and so is a marker no image channel matches (`channel_match`).
+            from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
 
             order, _skipped, _panel = _markers_for(call, [project], None)
-            return len(order), None
+            return _gating_estimate(order, channel_match(call, [project], order))
         record = call.session.project(project)
         if record.image.is_blank:
-            return 0, "this sample has no image to check"
-        return len(list(record.image.real_channels)), None
+            return 0, "this sample has no image to check", {}
+        return len(list(record.image.real_channels)), None, {}
     except AgentError as exc:
-        return 0, exc.message
+        return 0, exc.message, {}
     except Exception as exc:  # an estimate never fails the balance
-        return 0, str(exc)
+        return 0, str(exc), {}
+
+
+def _gating_estimate(order, match) -> tuple[int, str | None, dict]:
+    """Gating's units and launcher words from `channel_match`: automatic
+    gating judges every gate on the pixels, so only markers with an image
+    channel are gated -- none, and the run cannot start; some, and the user
+    is asked first."""
+    unmatched = sorted({m for names in match["unmatched"].values() for m in names})
+    channels = {"state": match["state"], "n_markers": match["n_markers"],
+                "n_matched": match["n_matched"], "unmatched": unmatched}
+    if match["state"] == "none":
+        return 0, None, {"channels": channels, "blocked": (
+            f"None of the {match['n_markers']} markers matches an image channel. Name the "
+            "image's channels after the markers (Edit project), then gate.")}
+    if match["state"] == "partial":
+        shown = ", ".join(unmatched[:8]) + (f" and {len(unmatched) - 8} more"
+                                           if len(unmatched) > 8 else "")
+        return match["n_matched"], None, {"channels": channels, "confirm": {
+            "title": f"Gate {match['n_matched']} of {match['n_markers']} markers?",
+            "body": (f"{len(unmatched)} {'marker has' if len(unmatched) == 1 else 'markers have'}"
+                     f" no image channel ({shown}). Auto Gating judges every gate on the "
+                     "pixels, so those are skipped and left ungated."),
+            "confirm": f"Gate {match['n_matched']}",
+            "start_options": {"force": True}}}
+    return len(order), None, {"channels": channels}
 
 
 def cap_block(raw, credit: int = CREDIT_MICRO) -> dict | None:
@@ -430,11 +459,11 @@ def balance(call, inp):
         for kind in (("gating", "qc") if inp.kind == "both" else (inp.kind,)):
             price = (prices.get("features") or {}).get(kind) or {}
             picked = inp.markers if kind == "gating" else inp.channels
-            units, why = _units(call, kind, inp.project, picked)
+            units, why, words = _units(call, kind, inp.project, picked)
             credits = int(price.get("credits") or 0) * units
             estimates[kind] = {"units": units, "unit": price.get("unit"), "credits": credits,
                                "affordable": credits * credit <= out["available_micro"],
-                               **({"unavailable": why} if why else {})}
+                               **({"unavailable": why} if why else {}), **words}
         out["estimates"] = estimates
         out["project"] = inp.project
     return out

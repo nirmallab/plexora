@@ -84,7 +84,7 @@ def decide_image(engine, project):
             unit["method"] = METHOD
             unit["transfer_confidence"] = ("high" if ref_unit.get("confidence") == "high"
                                            else "moderate")
-            if engine.options["audit_sheet"] and not unit.get("no_image_channel"):
+            if engine.options["audit_sheet"]:
                 engine.write(unit, unit["candidate"], method=METHOD,
                              confidence=unit["transfer_confidence"], state="accepted_t1",
                              tier="T1")
@@ -94,8 +94,7 @@ def decide_image(engine, project):
                 unit["transfer_confidence"] = "moderate"
                 engine.finalize(unit, method=METHOD)
             continue
-        if klass in ("image_specific_shift", "smooth_drift", "batch_effect") and inside \
-                and not unit.get("no_image_channel"):
+        if klass in ("image_specific_shift", "smooth_drift", "batch_effect") and inside:
             unit["candidate"] = float(predicted)
             unit["method"] = METHOD
             unit["state"] = "transfer_check"

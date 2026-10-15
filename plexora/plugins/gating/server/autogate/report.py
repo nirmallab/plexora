@@ -36,6 +36,7 @@ STATE_LABELS = {
     "not_binary": "not binary", "insufficient_information": "needs information",
     "skipped_locked": "locked / approved", "skipped_excluded": "excluded",
     "skipped_manual": "user's gate kept", "skipped_no_marker": "not in this image",
+    "skipped_no_channel": "no image channel",
 }
 CONFIDENCE_COLOURS = {"high": "#2f9e44", "moderate": "#e0a800", "low": "#e8590c",
                       "manual_review": "#c92a2a", "failed_qc": "#868e96"}
@@ -264,7 +265,7 @@ def to_html(call, report) -> str:
             "</li>" for q in report["questions"]) + "</ul>")
     embedded = 0
     for unit in report["units"]:
-        if unit["state"] in ("skipped_no_marker",):
+        if unit["state"] in ("skipped_no_marker", "skipped_no_channel"):
             continue
         parts.append(f"<section id='{esc(unit_key(unit['project'], unit['marker']))}'>"
                      f"<h3>{esc(unit['marker'])} <span class='muted'>· "
@@ -373,7 +374,7 @@ def to_pdf(call, report, path, *, compress=True):
 
     drawn = 0
     for unit in report["units"]:
-        if unit["state"] in ("skipped_no_marker",) or drawn >= 60:
+        if unit["state"] in ("skipped_no_marker", "skipped_no_channel") or drawn >= 60:
             continue
         story.append(Paragraph(esc(f"{unit['marker']}  ·  {unit['project']}"), heading))
         story.append(Paragraph(esc(
