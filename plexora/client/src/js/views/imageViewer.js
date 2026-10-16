@@ -813,6 +813,7 @@ class ImageViewer {
             renderer,
             floatRange: this.numericData.floatRange,
             itemRange: (channel, source) => this.itemRange(channel, source),
+            itemCofactor: (channel, source) => this.itemCofactor(channel, source),
             findCurrentChannel: this.findCurrentChannel.bind(this),
             selectCenterProps: this.selectCenterProps.bind(this),
             // `overlayMuted` is a DRAW-TIME gate and nothing else: the mask item
@@ -2512,6 +2513,56 @@ class ImageViewer {
             { hd: domain.hd, window: domain.hd ? null : (domainWindow || windowOf(domain.cls)) },
             { hd, window: hd ? null : (itemWindow || windowOf(cls)) },
             Number(this.numericData?.intRange?.[1]) || 65535) || range;
+    }
+
+    /**
+     * A channel's display curve (services/displayCurve.js): null linear, or
+     * {kind: "asinh", cofactor} in RAW units. Kept on the channel record;
+     * each item converts the cofactor into its own pixels' units when it
+     * draws (itemCofactor), so HD and the byte tiles read the same curve.
+     */
+    updateChannelCurve(name, curve) {
+        const channelIdx = imageChannels[name];
+        const record = this.currentChannels[channelIdx];
+        if (record) {
+            const next = globalThis.PlexoraDisplayCurve?.normalise?.(curve) || null;
+            if (globalThis.PlexoraDisplayCurve?.same?.(record.curve, next)) return;
+            record.curve = next;
+        }
+        this.miniMap?.invalidate();
+        this.scheduleRepaint();
+    }
+
+    /**
+     * A channel's asinh cofactor in the units of one item's pixels (the
+     * shader's u_tile_cofactor), 0 for a linear channel. HD pixels are raw /
+     * the bit range; byte pixels are (raw - qmin) / (qmax - qmin) over the
+     * window the item was quantized with -- the same units `itemRange` puts
+     * the range in, so the curve keeps its shape whichever tiles are up.
+     * An item whose units are unknown draws linear rather than wrong.
+     */
+    itemCofactor(channel, source) {
+        const curve = channel?.curve;
+        if (!curve || !(Number(curve.cofactor) > 0)) return 0;
+        const domain = channel.rangeDomain || {};
+        const hd = source?.hd === undefined
+            ? Boolean(domain.hd ?? this.viewerManagerVMain?.isHdMode?.())
+            : Boolean(source.hd);
+        const curves = globalThis.PlexoraDisplayCurve;
+        if (!curves) return 0;
+        if (hd) return curves.normalize(curve, Number(this.numericData?.intRange?.[1]) || 65535);
+        const cls = source?.windowClass || domain.cls || "volume";
+        const pinned = source?.windowRange;
+        let span = null;
+        if (pinned) {
+            span = cls === "std" ? Math.max(1, Math.ceil(pinned[1] / 2)) : pinned[1] - pinned[0];
+        } else if (domain.window) {
+            span = domain.window[1] - domain.window[0];
+        } else {
+            const packet = globalThis.__plexora?.viewerSidebar?.quantWindow?.(domain.name, cls);
+            if (packet) span = Number(packet.qmax) - Number(packet.qmin);
+        }
+        return span > 0 ? curves.normalize(curve, Math.max(1, span)) : 0;
     }
 
     /**

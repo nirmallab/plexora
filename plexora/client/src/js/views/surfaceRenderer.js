@@ -364,7 +364,7 @@ void main() {`],
                 if (alpha > 0.97) break;
             }`],
             [`    if (u_mode == 0) {
-        for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c]);
+        for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c], u_cofactor[c]);
         outColor = vec4(max(min(colour, vec3(1.0)), u_ground), 1.0);
     } else {
         outColor = vec4(min(colour + (1.0 - alpha) * u_ground, vec3(1.0)), 1.0);
@@ -375,8 +375,8 @@ void main() {`],
         float keepBack = 1.0;
         float keepFront = 1.0;
         for (int c = 0; c < NCH; c++) {
-            float lb = level(peak[c], u_window[c]);
-            float lf = level(peakF[c], u_window[c]);
+            float lb = level(peak[c], u_window[c], u_cofactor[c]);
+            float lf = level(peakF[c], u_window[c], u_cofactor[c]);
             back += u_color[c] * lb;
             front += u_color[c] * lf;
             keepBack *= 1.0 - lb * u_opacity[c];

@@ -25,7 +25,7 @@ from plexora.agent import gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import (DEFAULT_OUTPUT_SIDE, MAX_OUTPUT_PIXELS, MAX_OUTPUT_SIDE,
                                   MAX_LAYER_POINTS, MAX_SOURCE_PIXELS_AGENT)
-from plexora.agent.render_spec import IdHighlight, MarkerHighlight
+from plexora.agent.render_spec import DEFAULT_ASINH_SPAN, IdHighlight, MarkerHighlight
 from plexora.agent.schemas import SCHEMA_VERSION
 
 MANIFEST_KIND = "plexora.render_region"
@@ -664,15 +664,21 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         # mirrors an agent's work (plexora/agent/evidence/calibration.py).
         calibration = None
         if not source.is_brightfield and any(c.window == "auto" for c in spec.channels or []):
-            calibration = display.load(record.name)
+            # Only a record anchored on the table and QC as they are now: a
+            # stale one draws with the other rule's windows.
+            calibration = display.load_current(session, record.name)
         if not source.is_brightfield:
             for channel in spec.channels or []:
                 index, found = resolve_channel(channel.name, channel_records)
                 key = source_image.channel_key(found)
                 calibrated = (None, None)
+                curve = None
                 if channel.window == "auto" and calibration is not None:
                     calibrated = display.window_for(
                         calibration, found.get("fullname") or found.get("name"))
+                    curve = display.entry_curve(
+                        (calibration.get("channels") or {}).get(
+                            found.get("fullname") or found.get("name")))
                 if calibrated[0] is not None:
                     window, window_source = calibrated
                 elif channel.window in ("auto", "percentiles"):
@@ -683,13 +689,20 @@ def render_region(session, spec, *, store=True, pixel_size=None):
                     window_source = f"auto:p01-p999@level{stats['level']}"
                 else:
                     window, window_source = list(channel.window), "explicit"
+                if channel.curve is not None:
+                    curve = None if channel.curve.kind == "linear" else {
+                        "kind": "asinh",
+                        "cofactor": channel.curve.cofactor or
+                        (float(window[1]) - float(window[0])) / DEFAULT_ASINH_SPAN}
                 resolved_channels.append({
                     "name": found.get("fullname") or found.get("name"), "key": key,
                     "index": index, "color": channel.color,
                     "window": [float(window[0]), float(window[1])],
-                    "window_source": window_source})
+                    "window_source": window_source,
+                    **({"curve": curve} if curve else {})})
         scene_channels = [{"key": c["key"], "window": c["window"], "visible": True,
-                           "color": dict(zip("rgb", _rgb(c["color"])))}
+                           "color": dict(zip("rgb", _rgb(c["color"]))),
+                           **({"curve": c["curve"]} if c.get("curve") else {})}
                           for c in resolved_channels]
         pixels, rendered, _background = source_image.composite(source, scene_channels,
                                                                level, lbox)

@@ -815,6 +815,17 @@ class MiniMap {
         return [range[0] / 255, range[1] / 255];
     }
 
+    /** A slot's asinh cofactor over its byte domain (0 linear or unknown). */
+    _cofactor(slot) {
+        const curve = slot && slot.curve;
+        if (!curve || !(Number(curve.cofactor) > 0)) return 0;
+        const sidebar = globalThis.__plexora && globalThis.__plexora.viewerSidebar;
+        const packet = sidebar && sidebar.quantWindow ? sidebar.quantWindow(slot.name) : null;
+        if (!packet || !globalThis.PlexoraDisplayCurve) return 0;
+        return globalThis.PlexoraDisplayCurve.normalize(
+            curve, Math.max(1, Number(packet.qmax) - Number(packet.qmin)));
+    }
+
     /**
      * Three 256-entry tables, one per colour component, folding the contrast
      * window and the channel colour into a single lookup.
@@ -831,8 +842,14 @@ class MiniMap {
         const color = d3.color(slot.colorHex) || d3.color("white");
         const floatColor = toFloatColor(color);
         const tables = [new Float32Array(256), new Float32Array(256), new Float32Array(256)];
+        // The slot's curve in these bytes' units (raw over the quantization
+        // window): the shader's range_clamp, asinh branch included.
+        const cofactor = this._cofactor(slot);
+        const curves = globalThis.PlexoraDisplayCurve;
         for (let value = 0; value < 256; value += 1) {
-            const clamped = Math.min(Math.max((value / 255 - low) / span, 0), 1);
+            const clamped = cofactor > 0 && curves
+                ? curves.transfer(value / 255, low, low + span, cofactor)
+                : Math.min(Math.max((value / 255 - low) / span, 0), 1);
             const scaled = clamped * MiniMap.TILE_ALPHA * 255;
             tables[0][value] = scaled * floatColor[0];
             tables[1][value] = scaled * floatColor[1];

@@ -60,6 +60,22 @@ class RoiBounds(AgentModel):
                            "box's larger side.")
 
 
+class ChannelCurve(AgentModel):
+    kind: Literal["linear", "asinh"] = Field(
+        "asinh", description="'linear', or 'asinh': log-like above the cofactor, so dim "
+                             "cells show above background while bright ones keep their "
+                             "structure.")
+    cofactor: float | None = Field(
+        None, gt=0, description="asinh only: raw units above black where the curve turns "
+                                "from linear to logarithmic. Default the window's span / "
+                                "20.")
+
+
+#: An asinh curve without a cofactor gets the window's span divided by this
+#: (the viewer's Log toggle seeds the same).
+DEFAULT_ASINH_SPAN = 20.0
+
+
 class ChannelSpec(AgentModel):
     name: str = Field(description="Channel name (or key), as `list_channels` gives it.")
     color: str = Field("#ffffff", description="#rrggbb.")
@@ -68,6 +84,9 @@ class ChannelSpec(AgentModel):
                             "project's display calibration when one is stored, else "
                             "the channel's 1st-99.9th percentile); or 'percentiles' "
                             "(always the 1st-99.9th percentile).")
+    curve: ChannelCurve | None = Field(
+        None, description="How brightness follows intensity. Default: the calibration's "
+                          "curve for an 'auto' window, else linear.")
 
     @field_validator("color")
     @classmethod

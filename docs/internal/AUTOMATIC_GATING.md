@@ -40,7 +40,7 @@ proposed, or flags an artifact.
 | T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
-| Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`) | ~0 / ~400 / ~0 |
+| Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`), and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
 
 Every look's context sheet draws its tissue fields at `SessionOptions.field_um`
 (400 µm by default, 300-500; `presets.PRESETS["gating_context"]`) converted
@@ -176,14 +176,50 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   turns the words into a direction, `lattice.place` (with `verdicts.MOVES`)
   into a lattice point. Two agents that see the cells alike move the gate
   alike.
-- **The picture carries shape, the number intensity.** A marker's display
-  window is anchored on its negative cells only (`cell_window`): black at
-  their median pixel, white `CELL_WINDOW["spans"]` background spreads above
-  it, read in a disc of `crops.CELL_DIAMETER_UM` around each centroid, never
-  inside a mask, never on a QC-left-out cell. The morphology panel windows
-  each cell on its own disc, floored at `crops.MORPHOLOGY_FLOOR` of that span
-  so a negative stays dark. Outlines are thin and grey; the ticks mark the
-  centroid, which every project has.
+- **The picture carries shape, the number intensity.** A marker is drawn
+  from its own cells (`cell_window.measure`, read in a disc of
+  `crops.CELL_DIAMETER_UM` around each centroid in level-0 crops, never
+  inside a mask, never on a QC-left-out cell) on an asinh curve
+  (`server/utils/display_curve.py`; linear when that already suffices) fixed
+  by two display levels (`calibration.rule_from`): black at the negatives'
+  low percentile, under the background, so the background shows as a faint
+  floor; the background's noise p99 at `NOISE_LEVEL`; the titre -- the
+  brightest cells' disc p99, their ring, nucleus or granules -- at
+  `TITRE_LEVEL`, with room above it so the structure is not flattened. A
+  marker without bright cells is drawn as if its titre were
+  `TITRE_FLOOR_GAPS` background gaps above black (its noise is never
+  stretched to white); a negatives band that is itself stained (a marker on
+  most cells) is re-anchored on the low band. The morphology panel windows
+  each cell on its own disc, floored where the context window draws
+  `crops.MORPHOLOGY_FLOOR`, so a negative stays dark. Outlines are thin and
+  grey; the ticks mark the centroid, which every project has.
+- **A model checks the brightness, code sets it.** `display_setup` (per
+  image, after the panel context, before that image's first look;
+  `SessionOptions.display_check`, `vision` by default) shows up to
+  `ENGINE["display_batch"]` markers in rows and the calibration's brightness
+  ladder in columns (`calibration.columns_for`: every display level times
+  `GAINS`, c1 darker to c5 brighter, c3 the rule), each a 2 x 2 block of a
+  background, a dim and two bright cells, clipped pixels in a fixed red
+  (`agent/evidence/display_grid.py`). The answer is two lists of columns per
+  row -- where the background is a faint floor, where the row's compartment
+  pattern (`schemas.STRUCTURE_WORDS`) shows with detail -- and
+  `calibration.pick_column` picks: the grid's numeric vetoes first, then the
+  column in both lists nearest the rule's. The choice is stored on the
+  project's calibration (`record_choices`, a gain over the rule, kept across
+  recomputation) and asked once per image: a later session finds it. Two
+  unusable answers keep the rule (`Engine.struck_out`). The task is
+  `gating.display` (`vision_routine`: a narrow perceptual question a smaller
+  model can serve).
+- **The viewer shows the same brightness.** The canvas draws the curve
+  (`frag.glsl` `range_clamp`, `services/displayCurve.js`, the mini-map and
+  the 3-D view; Linear / Log per channel). A mirrored session eases each
+  settled marker in turn (`animate_contrast`, captioned "Adjusting contrast
+  for X", acknowledged at once so the next packet goes to the model while it
+  plays). On open, the viewer asks for the calibration of the channels on
+  screen (`/display_contrast`) and applies it to channels nobody set; a
+  saved channel row records who set its window (`source`: user, auto,
+  gating, default; a row saved before that is the user's) and a window the
+  user set is only offered ("Use gating contrast").
 - **A gate is never accepted against the direction on record.**
   `unit["direction"]` holds the way the last look's rows pointed until a
   candidate, `keep` or an about-right look replaces it; a unit closed meanwhile
@@ -284,11 +320,14 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   T3 beside that partner when one is gated (by the run, or a user gate the run
   kept), ahead of a soft artifact flag; a technical check that finds real
   signal after a look gives the marker another look.
-- **Display windows are capped from the cells**
-  (`calibration.CELL_CAP_FACTOR` times the table's `CELL_CAP_PERCENTILE`, in
-  image units), so noisy negatives cannot wash out every cell; a window still
-  wider than `THRESHOLDS["wide_ratio"]` is flagged. The record carries
-  `calibration.VERSION`; an older one is recomputed.
+- **An overview window is capped from the cells** (a marker without a cell
+  table or enough cells: `calibration.CELL_CAP_FACTOR` times the table's
+  `CELL_CAP_PERCENTILE`, in image units), so noisy negatives cannot wash out
+  every cell; a window still wider than `THRESHOLDS["wide_ratio"]` is
+  flagged. A whole-tissue panel draws coarse pixels and takes the window for
+  its scale (`calibration.display_spec`, the cofactor scaled with it). The
+  record carries `calibration.VERSION`, the table and the QC fingerprints; an
+  older or stale one is recomputed (`load_current`).
 - **Mirroring reports itself.** Each packet's `mirror` says what the open tab
   was sent and whether it acknowledged; a `get_state` first wakes a background
   tab and skips set-up already in effect, and the HD swap has its own timeout
@@ -646,8 +685,10 @@ backticks a name the code no longer uses or puts a digit in its prose.
   undoable, and derivable exactly from the gates and the documented rule).
 - MCP sampling / elicitation: the packets and answers are designed so a
   sampling-driven loop can reuse them unchanged.
-- Batching `transfer_check` across images of one marker; a calibration-check
-  packet for a flagged display window (flags are passed into T2 instead).
+- Batching `transfer_check` across images of one marker.
+- A node-side table operation for the contrast check's cell picks (a table on
+  a data node reads its marker columns through `columns()` today), and a
+  table-to-pixel map so a partner's gate draws on a scaled (z-scored) table.
 - Modality plug-ins beyond intensity markers (transcript counts, morphology);
   the seams are the table operations, the distribution class rules and the
   renderer.

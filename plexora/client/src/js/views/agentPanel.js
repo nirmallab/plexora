@@ -1621,6 +1621,17 @@ window.PlexoraAgentPanel = (function () {
             adoptProgress(session, payload);
             if (payload.narration) session.narration = String(payload.narration);
         },
+        // A contrast check settled how bright some markers are drawn: one
+        // line, and the viewer's own channels follow (gatingAgentBridge.js).
+        display(session, payload) {
+            const chosen = payload.chosen && typeof payload.chosen === "object"
+                ? Object.keys(payload.chosen) : [];
+            if (chosen.length) {
+                session.lastLine = chosen.length === 1
+                    ? `Contrast set for ${chosen[0]}`
+                    : `Contrast set for ${chosen.length} markers`;
+            }
+        },
         unit_closed(session, payload) {
             const own = session.labels && session.labels.outcomes;
             const words = (typeof payload.outcome_text === "string" && payload.outcome_text)

@@ -149,7 +149,8 @@ def _seed_composite_channels(name):
     from plexora.server.models import database_model
 
     rows = [{"channel": channel, "start": 0, "end": 255,
-             "r": r, "g": g, "b": b, "opacity": 1, "channel_active": True}
+             "r": r, "g": g, "b": b, "opacity": 1, "channel_active": True,
+             "source": "default"}
             for channel, (r, g, b) in zip(COMPOSITE_CHANNELS, COMPOSITE_COLOURS)]
     database_model.save_list(database_model.ChannelList, datasource=name,
                              cells=pickle.dumps(rows, protocol=4))

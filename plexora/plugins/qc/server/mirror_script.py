@@ -108,8 +108,8 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
     if channels:
         script.append({"type": "set_channels", "arguments": {
             "mode": "replace", "persist": False,
-            "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
-                         for c in channels]}})
+            "channels": [{k: c[k] for k in ("name", "color", "window", "curve", "enabled")
+                          if k in c} for c in channels]}})
     script.append({"type": "set_cell_render_mode", "arguments": {"mode": "none"}})
     shapes = []
     batch = [u for u in (units or []) if u and u.get("type") == "candidate" and u.get("bbox")]

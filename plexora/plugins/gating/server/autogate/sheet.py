@@ -116,13 +116,16 @@ def _field_panel(session, record, bounds, layers, marker, low, high, pixel=None,
     import io
 
     from plexora.agent import render
-    from plexora.agent.render_spec import (Bounds, CellsSpec, ChannelSpec, IdHighlight,
-                                           MarkerHighlight, OutputSpec, RenderInput)
+    from plexora.agent.render_spec import (Bounds, CellsSpec, ChannelCurve, ChannelSpec,
+                                           IdHighlight, MarkerHighlight, OutputSpec,
+                                           RenderInput)
 
     spec = RenderInput(
         project=record.name, bounds=Bounds(**bounds),
-        channels=[ChannelSpec(name=name, color=color, window=list(window))
-                  for name, color, window in layers],
+        channels=[ChannelSpec(name=name, color=color, window=list(window),
+                              curve=ChannelCurve(**curve) if curve else
+                              ChannelCurve(kind="linear"))
+                  for name, color, window, curve in layers],
         segmentation="none",
         cells=CellsSpec(highlight=(IdHighlight(cell_ids=ids) if ids is not None
                                    else MarkerHighlight(marker=marker, low=low, high=high)),
@@ -221,12 +224,21 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     # -- mesoscale: three fields, or one per candidate ------------------------
     side = field["side_px"]
     image_size = (record.image.width or 1, record.image.height or 1)
+    # A field is drawn at side/SHEET_PX full-resolution pixels per output
+    # pixel: the window (and the curve's cofactor) for that scale.
+    calibrated = calibration.current(session, record.name, names)
+
+    def layer(name, colour):
+        at = calibration.display_spec(calibrated, name, side / SHEET_PX) or {
+            "window": windows[name]["window"], "curve": windows[name].get("curve")}
+        return (name, colour, at["window"], at["curve"])
+
     layers = []
     if nuclear and nuclear != channel:
-        layers.append((nuclear, calibration.NUCLEAR_MUTED_BLUE, windows[nuclear]["window"]))
-    layers.append((channel, calibration.MARKER_COLOR, windows[channel]["window"]))
+        layers.append(layer(nuclear, calibration.NUCLEAR_MUTED_BLUE))
+    layers.append(layer(channel, calibration.MARKER_COLOR))
     for ref, colour in zip(refs, calibration.REFERENCE_COLORS):
-        layers.append((ref, colour, windows[ref]["window"]))
+        layers.append(layer(ref, colour))
     slots = []          # (label when empty, field or None, gate low, caption)
     sampled = {"classes_without_field": [], "band": None, "field_px": side}
     if "fields" not in rows:
@@ -312,10 +324,12 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
         "field": {k: field[k] for k in ("field_um", "um_per_px", "source", "label")},
         "field_mode": "candidates" if candidate_fields else "classes", "seed": int(seed),
         "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
-                      "window_source": windows[n]["source"]} for n in names],
+                      "window_source": windows[n]["source"],
+                      **({"curve": windows[n]["curve"]} if windows[n].get("curve") else {})}
+                     for n in names],
         "overview": overview, "plot": plot_manifest, "size": [width, height],
         "estimated_vision_tokens": collage.estimated_tokens(width, height),
-        "renderer": "plexora.gating.sheet/2", "egress": "rendered_pixels",
+        "renderer": "plexora.gating.sheet/3", "egress": "rendered_pixels",
     }
     artifact = artifacts.put(record.name, png, manifest, kind="gating_context_sheet") \
         if store else None

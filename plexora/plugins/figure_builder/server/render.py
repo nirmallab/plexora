@@ -57,6 +57,7 @@ from plexora.server.utils.source_image import (  # noqa: F401
     choose_view_level,
     composite,
 )
+from plexora.server.utils import display_curve
 
 #: Ceiling on one rendered panel, in pixels per side. A 300 mm page at 1200 DPI
 #: is ~14,000 px; past this a single panel is gigabytes of float32 and the
@@ -136,8 +137,9 @@ def render_panel(source, scene, target_width, target_height):
         if span <= 0:
             continue
         # The shader's range_clamp, in raw units -- identical arithmetic to
-        # dividing both sides by 65535 first, and without the rounding.
-        scaled = np.clip((plane.astype(np.float32) - low) / span, 0.0, 1.0)
+        # dividing both sides by 65535 first, and without the rounding; the
+        # channel's curve when it was drawn with one.
+        scaled = display_curve.transfer(plane, (low, high), channel.get("curve"))
         colour = channel["color"]
         weight = CHANNEL_ALPHA / 255.0
         for offset, key in enumerate(("r", "g", "b")):

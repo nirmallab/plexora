@@ -305,6 +305,7 @@ uniform vec3 u_hole_hi;
 uniform int u_cut;             // 0 nothing more, 1 the cut faces drawn solid
 uniform vec3 u_color[NCH];
 uniform vec2 u_window[NCH];    // [lo, hi] in 0..1 texture units
+uniform float u_cofactor[NCH]; // the asinh cofactor in the same units, 0 linear
 uniform float u_opacity[NCH];
 uniform int u_mode;            // 0 MIP, 1 additive
 uniform int u_steps;
@@ -328,8 +329,13 @@ vec2 hitBox(vec3 origin, vec3 dir, vec3 lo, vec3 hi) {
     return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 
-float level(float value, vec2 window) {
-    return clamp((value - window.x) / max(window.y - window.x, 1e-4), 0.0, 1.0);
+float level(float value, vec2 window, float c) {
+    float span = max(window.y - window.x, 1e-4);
+    if (c > 0.0) {
+        // The display curve (services/displayCurve.js): asinh above c.
+        return clamp(asinh((value - window.x) / c) / asinh(span / c), 0.0, 1.0);
+    }
+    return clamp((value - window.x) / span, 0.0, 1.0);
 }
 ${cut}
 
@@ -410,7 +416,7 @@ ${sample.join("\n")}`}
             vec3 emit = vec3(0.0);
             float a = 0.0;
             for (int c = 0; c < NCH; c++) {
-                float s = level(v[c], u_window[c]);
+                float s = level(v[c], u_window[c], u_cofactor[c]);
                 emit += u_color[c] * s;
                 a = max(a, s * u_opacity[c]);
             }
@@ -425,7 +431,7 @@ ${sample.join("\n")}`}
     vec4 cut = vec4(0.0);
     if (u_cut == 1) cut = cutFace(origin, dir, lo, hi, t0, hit.y, cutT);
     if (u_mode == 0) {
-        for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c]);
+        for (int c = 0; c < NCH; c++) colour += u_color[c] * level(peak[c], u_window[c], u_cofactor[c]);
         outColor = vec4(max(min(colour, vec3(1.0)), u_ground), 1.0);
     } else {
         outColor = vec4(min(colour + (1.0 - alpha) * u_ground, vec3(1.0)), 1.0);
@@ -484,7 +490,7 @@ bool inHole(vec3 p) {
 
 vec3 cutColour(float v[NCH]) {
     vec3 c = vec3(0.0);
-    for (int i = 0; i < NCH; i++) c += u_color[i] * level(v[i], u_window[i]);
+    for (int i = 0; i < NCH; i++) c += u_color[i] * level(v[i], u_window[i], u_cofactor[i]);
     return c;
 }
 
@@ -1171,6 +1177,8 @@ ${sample}`;
                     window,
                     stamp,
                     raw: raw && raw.every(Number.isFinite) ? raw : null,
+                    // The slot's display curve, raw units (cofactorFor).
+                    curve: slot.curve || null,
                     levelWindow,
                     opacity: this.opacityOf(fullName),
                 };
@@ -1233,6 +1241,15 @@ ${sample}`;
          * while HD's arrives), reads the same raw range in its own window, so
          * the picture keeps its contrast across the handover.
          */
+        /** A channel's asinh cofactor in the units of the texture it is
+         *  drawn from (raw over the window it was made with); 0 linear. */
+        cofactorFor(channel) {
+            const made = channel.entry?.levelWindow || channel.levelWindow;
+            const curves = global.PlexoraDisplayCurve;
+            if (!channel.curve || !made || !curves) return 0;
+            return curves.normalize(channel.curve, Math.max(1e-6, made[1] - made[0]));
+        }
+
         windowFor(channel) {
             const entry = channel.entry;
             const made = entry?.levelWindow;
@@ -2045,6 +2062,7 @@ ${sample}`;
                 (channel, index) => channel.colour.map((value) => value * presence[index])));
             // Each channel in the window of the texture it is drawn from.
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => this.windowFor(channel)));
+            gl.uniform1fv(uniform("u_cofactor"), channels.map((channel) => this.cofactorFor(channel)));
             gl.uniform1fv(uniform("u_opacity"), channels.map(
                 (channel, index) => channel.opacity * presence[index]));
             gl.uniformMatrix4fv(uniform("u_inverse"), false, this.matrices());

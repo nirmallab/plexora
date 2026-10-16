@@ -174,7 +174,7 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
     with FakeTab(project="gsynth") as tab:
         started = invoke(session, "gating_session_start", {
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
-            "mirror_delay_ms": 0}, link=served)
+            "mirror_delay_ms": 0, "display_check": "rule"}, link=served)
         assert started["ok"], started
         jobs.drain(60)
         answer = invoke(session, "gating_next", {"session_id": started["result"]["session_id"]},
@@ -220,7 +220,7 @@ def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(serv
     with FakeTab(project="gsynth") as tab:
         started = invoke(session, "gating_session_start", {
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
-            "mirror_delay_ms": 0}, link=served)["result"]
+            "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         sid = started["session_id"]
         jobs.drain(60)
         engine.store().set_control(sid, viewer_detached=True)
@@ -263,7 +263,7 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
     with FakeTab(project="gsynth", state=shown) as tab:
         started = invoke(session, "gating_session_start", {
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
-            "mirror_delay_ms": 0}, link=served)["result"]
+            "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         jobs.drain(60)
         packet = invoke(session, "gating_next", {"session_id": started["session_id"]},
                         link=served)["result"]["packet"]
@@ -274,8 +274,10 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
 
 
 def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
-    """The HD swap rebuilds every tile: it gets its own timeout, while an
-    ordinary command that slow still marks the mirror degraded."""
+    """The HD swap rebuilds every tile: it gets its own timeout (as does a
+    channel change, which may wait for a contrast check's animation to
+    finish), while an ordinary command that slow still marks the mirror
+    degraded."""
     from plexora.agent import jobs
     from plexora.plugins.gating.server.autogate import mirror_script
     from tests.autogate_fixtures import make_gating_project
@@ -283,11 +285,12 @@ def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
     monkeypatch.setattr(mirror_script, "DEFAULT_TIMEOUT_S", 0.5)
     make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
     session = AgentSession()
-    for slow, expected in (("set_hd_mode", "ok"), ("set_channels", "degraded")):
+    for slow, expected in (("set_hd_mode", "ok"), ("set_channels", "ok"),
+                           ("set_active_marker", "degraded")):
         with FakeTab(project="gsynth", delays={slow: 1.0}):
             started = invoke(session, "gating_session_start", {
                 "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
-                "mirror_delay_ms": 0}, link=served)["result"]
+                "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
             jobs.drain(60)
             packet = invoke(session, "gating_next", {"session_id": started["session_id"]},
                             link=served)["result"]["packet"]
@@ -328,6 +331,44 @@ def test_a_viewer_that_predates_agent_control_says_restart(tmp_path):
         assert started["mirror"]["last_error"]["code"] == "capability_unavailable"
     finally:
         server.shutdown()
+
+
+def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
+    """The contrast check's answer is eased into the tab channel by channel
+    (`animate_contrast`, one command), before the next packet's own channels
+    -- so the next question goes to the model while the tab plays it."""
+    from plexora.agent import jobs
+    from tests.autogate_fixtures import make_gating_project
+
+    make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
+    session = AgentSession()
+    with FakeTab(project="gsynth", state={"hd_mode": True}) as tab:
+        started = invoke(session, "gating_session_start", {
+            "scope": "project", "project": "gsynth", "markers": ["CD3", "CD4"], "mirror": True,
+            "mirror_delay_ms": 0}, link=served)["result"]
+        sid = started["session_id"]
+        jobs.drain(60)
+        packet = invoke(session, "gating_next", {"session_id": sid}, link=served)["result"]["packet"]
+        while packet["kind"] != "display_setup":
+            assert packet["kind"] == "panel_context", packet["kind"]
+            packet = invoke(session, "gating_answer", {
+                "session_id": sid, "packet_id": packet["packet_id"],
+                "answer": {"kind": "panel_context", "entries": []}},
+                link=served)["result"]["next"]["packet"]
+        rows = [r["marker"] for r in packet["evidence"]["rows"]]
+        before = len(tab.seen)
+        following = invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"],
+            "answer": {"kind": "display_setup", "background_ok": {m: ["c3"] for m in rows},
+                       "structure_ok": {m: ["c3"] for m in rows}}}, link=served)
+        assert following["ok"], following
+        types = [c["type"] for c in tab.seen[before:]]
+        assert "animate_contrast" in types, types
+        animate = next(c for c in tab.seen[before:] if c["type"] == "animate_contrast")
+        assert {c["name"] for c in animate["arguments"]["channels"]} == set(rows)
+        assert all(c["curve"]["kind"] in ("asinh", "linear") for c in animate["arguments"]["channels"])
+        if "set_channels" in types:
+            assert types.index("animate_contrast") < types.index("set_channels")
 
 
 def test_a_mirror_with_no_viewer_turns_itself_off_and_the_session_goes_on(served, tmp_path):

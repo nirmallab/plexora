@@ -25,6 +25,9 @@ uniform float u_tile_scale;
 uniform float u_pie_radius;
 uniform vec2 u_tile_origin;
 uniform vec2 u_tile_range;
+// The channel's display curve: 0 linear, else the asinh cofactor in the same
+// units as u_tile_range (services/displayCurve.js, server display_curve.py).
+uniform float u_tile_cofactor;
 uniform vec3 u_tile_color;
 uniform bvec2 u_draw_mode;
 uniform vec2 u_x_bounds;
@@ -471,10 +474,16 @@ vec4 u32_rgba_map(bvec2 mode) {
   return empty_pixel;
 }
 
-// Clamp signal between given min/max
+// Clamp signal between given min/max, through the channel's curve: linear,
+// or asinh with cofactor c -- linear near black, logarithmic above it.
 float range_clamp(float value) {
   float min_ = u_tile_range[0];
   float max_ = u_tile_range[1];
+  if (u_tile_cofactor > 0.0) {
+    float top = asinh((max_ - min_) / u_tile_cofactor);
+    if (!(top > 0.0)) return 0.0;
+    return clamp(asinh((value - min_) / u_tile_cofactor) / top, 0.0, 1.0);
+  }
   return clamp((value - min_) / (max_ - min_), 0.0, 1.0);
 }
 

@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from plexora.agent import AgentSession, invoke, jobs, registry
+from plexora.plugins.gating.server.autogate import schemas
 from tests.autogate_fixtures import make_gating_project
 
 #: These exercise Paid (AI) capabilities, so they run with a test licence
@@ -127,6 +128,12 @@ class Oracle:
                                                 else direction}}
         if kind == "panel_context":
             return {"kind": kind, "entries": []}
+        if kind == "display_setup":
+            # The darker half of the ladder for both questions: the rule's own
+            # column wherever the numbers allow it.
+            rows = [r["marker"] for r in ev["rows"]]
+            return {"kind": kind, "background_ok": {m: ["c1", "c2", "c3"] for m in rows},
+                    "structure_ok": {m: ["c2", "c3"] for m in rows}}
         raise AssertionError(kind)
 
 
@@ -292,7 +299,7 @@ def test_packets_are_idempotent_and_stale_answers_are_refused(tmp_path):
 def test_two_unreadable_answers_send_the_marker_to_review(tmp_path):
     make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
-    sid = start(session, markers=["CD4"])["session_id"]
+    sid = start(session, markers=["CD4"], display_check="rule")["session_id"]
     packet = ok(invoke(session, "gating_next", {"session_id": sid}))["packet"]
     for _ in range(2):
         bad = invoke(session, "gating_answer", {"session_id": sid,
@@ -515,7 +522,7 @@ def test_confirmations_are_free(tmp_path):
     """A technical check does not spend the looks a marker is allowed."""
     make_gating_project(tmp_path, grid=24, size=1024, variant="saturated")
     session = AgentSession()
-    sid = start(session, markers=["CD3"], budget={"packets": 1})["session_id"]
+    sid = start(session, markers=["CD3"], budget={"packets": 1}, display_check="rule")["session_id"]
     packet, _ = next_packet(session, sid)
     assert packet["kind"] == "qc_confirm", packet["kind"]
     answer(session, sid, packet, {"kind": "qc_confirm", "verdict": "real_signal"})
@@ -528,7 +535,7 @@ def test_a_pending_regression_confirm_is_always_issued(tmp_path, monkeypatch):
 
     make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
-    sid = start(session, markers=["CD4"], budget={"packets": 1})["session_id"]
+    sid = start(session, markers=["CD4"], budget={"packets": 1}, display_check="rule")["session_id"]
     packet, _ = next_packet(session, sid)
     real = regression.numeric_checks
 
@@ -553,7 +560,7 @@ def test_a_spatial_only_regression_never_moves_the_gate(tmp_path, monkeypatch):
 
     make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
-    sid = start(session, markers=["CD4"], budget={"packets": 1})["session_id"]
+    sid = start(session, markers=["CD4"], budget={"packets": 1}, display_check="rule")["session_id"]
     packet, _ = next_packet(session, sid)
     real = regression.numeric_checks
 
@@ -748,7 +755,7 @@ def test_an_outstanding_packet_can_be_drawn_again(tmp_path):
 
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
-    sid = start(session, markers=["CD4"])["session_id"]
+    sid = start(session, markers=["CD4"], display_check="rule")["session_id"]
     first, _ = next_packet(session, sid)
     folder = engine.store().folder(sid) / "packets" / first["packet_id"]
     shutil.rmtree(folder)
@@ -1224,6 +1231,143 @@ def test_a_calibrated_image_needs_no_pixel_setup(tmp_path):
     assert packet is None or packet["kind"] != "pixel_setup"
 
 
+def _to_display(session, sid, agent):
+    """Answer the set-up before the contrast check; returns its packet."""
+    for _ in range(6):
+        packet, result = next_packet(session, sid)
+        assert packet is not None, result
+        if packet["kind"] == "display_setup":
+            return packet
+        assert packet["kind"] in schemas.SETUP_KINDS, packet["kind"]
+        answer(session, sid, packet, agent.answer(packet))
+    raise AssertionError("no contrast check")
+
+
+def test_the_contrast_check_comes_before_the_first_look(tmp_path):
+    from plexora.agent.evidence import calibration, collage
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD8", "CD20"])["session_id"]
+    packet = _to_display(session, sid, Oracle(info))
+    rows = packet["evidence"]["rows"]
+    assert {r["marker"] for r in rows} == {"CD3", "CD8", "CD20"}
+    assert len(rows) <= schemas.ENGINE["display_batch"] and all(r["pattern"] for r in rows)
+    assert packet["images"][0]["role"] == "display_grid"
+    assert packet["allowed"]["columns"] == list(calibration.COLUMN_IDS)
+    assert packet["task"] == "gating.display"
+    answer(session, sid, packet, {
+        "kind": "display_setup",
+        "background_ok": {"CD3": ["c2", "c3"], "CD8": ["c3", "c4"], "CD20": ["c3"]},
+        "structure_ok": {"CD3": ["c1", "c2"], "CD8": ["c3", "c4"], "CD20": []}})
+    record = calibration.load("gsynth")
+    choices = record["choices"]
+    assert (choices["CD3"]["column"], choices["CD3"]["chosen_by"]) == ("c2", "vision")
+    assert (choices["CD8"]["column"], choices["CD8"]["chosen_by"]) == ("c3", "vision")
+    assert choices["CD20"]["chosen_by"] == "rule:pattern_not_seen"
+    assert choices["CD3"]["answers"]["structure_ok"] == ["c1", "c2"]
+    cd3 = record["channels"]["CD3"]
+    assert cd3["window"][1] == pytest.approx(cd3["columns"][1]["white"])
+    assert cd3["chosen_by"] == "vision"
+    # Every later picture draws with the choice.
+    drawn = collage.resolve_windows(session, session.project("gsynth"), {"CD3": None})
+    assert drawn["CD3"]["window"] == pytest.approx(cd3["window"])
+    following, _ = next_packet(session, sid)
+    assert following is None or following["kind"] != "display_setup"
+    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    assert status["display"]["status"] == "applied"
+    assert status["display"]["projects"]["gsynth"]["chosen"]["CD3"] == "vision"
+
+
+def test_a_contrast_check_drawn_again_is_the_same_grid(tmp_path):
+    import shutil
+
+    from plexora.plugins.gating.server.autogate import engine
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD8"])["session_id"]
+    first = _to_display(session, sid, Oracle(info))
+    shutil.rmtree(engine.store().folder(sid) / "packets" / first["packet_id"])
+    again = ok(invoke(session, "gating_next", {"session_id": sid, "rerender": True}))["packet"]
+    assert again["packet_id"] == first["packet_id"] and again["kind"] == "display_setup"
+    assert again["evidence"]["rows"] == first["evidence"]["rows"]
+
+
+def test_a_contrast_choice_outlives_the_session(tmp_path):
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD8"])["session_id"]
+    seen = drive(session, sid, Oracle(info))
+    assert [p["kind"] for p in seen].count("display_setup") == 1
+    ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+    again = start(session, markers=["CD3", "CD8"])["session_id"]
+    seen = drive(session, again, Oracle(info))
+    assert "display_setup" not in [p["kind"] for p in seen]
+
+
+def test_a_rule_session_asks_no_contrast_question(tmp_path):
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8"], display_check="rule")
+    seen = drive(session, started["session_id"], Oracle(info))
+    assert "display_setup" not in [p["kind"] for p in seen]
+    status = ok(invoke(session, "gating_session_status",
+                       {"session_id": started["session_id"]}))
+    assert status["display"]["status"] == "rule"
+
+
+def test_two_unusable_contrast_answers_keep_the_rule(tmp_path):
+    from plexora.agent.evidence import calibration
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD8"])["session_id"]
+    packet = _to_display(session, sid, Oracle(info))
+    for _ in range(2):
+        refused = invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"], "include_next": False,
+            "answer": {"kind": "display_setup", "background_ok": {"CD99": ["c3"]},
+                       "structure_ok": {}}})
+        assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
+    following, _ = next_packet(session, sid)
+    assert following is None or following["kind"] != "display_setup"
+    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    assert set(status["display"]["projects"]["gsynth"]["chosen"].values()) == {"rule:no_answer"}
+    assert not (calibration.load("gsynth") or {}).get("choices")
+
+
+def test_the_viewer_is_shown_each_marker_settle(tmp_path):
+    """The mirror: the contrast check's image opened in HD, and what it
+    settles eased in channel by channel (`animate_contrast`, one command
+    the tab plays while the session goes on)."""
+    from plexora.agent.evidence import calibration
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    record, _changed = calibration.calibrate(session, "gsynth")
+    script = mirror_script.script_for({"kind": "display_setup", "units": [],
+                                       "evidence": {"project": "gsynth"}}, None, record,
+                                      current_project="elsewhere")
+    assert [c["type"] for c in script] == ["open_project", "set_hd_mode"]
+    animate = mirror_script.display_script(record, ["CD3", "CD8", "DNA", "nope"])
+    assert [c["type"] for c in animate] == ["animate_contrast"]
+    channels = animate[0]["arguments"]["channels"]
+    assert [c["name"] for c in channels] == ["CD3", "CD8"]
+    assert channels[0]["window"] == pytest.approx(record["channels"]["CD3"]["window"])
+    assert channels[0]["curve"] == calibration.viewer_curve(
+        calibration.entry_curve(record["channels"]["CD3"]))
+    assert "{name}" in animate[0]["arguments"]["caption"]
+    assert "ease_ms" not in animate[0]["arguments"]           # a few: the tab's own pace
+    many = {"channels": {f"M{i}": {"role": "marker", "window": [0.0, 10.0]}
+                         for i in range(mirror_script.DISPLAY_PACED + 1)}}
+    quick = mirror_script.display_script(many, list(many["channels"]))[0]["arguments"]
+    assert quick["ease_ms"] == mirror_script.DISPLAY_QUICK["ease_ms"]
+    # A contrast check names its one image; the mirror opens that one.
+    assert mirror_script._packet_project({"evidence": {"project": "gsynth"}}) == "gsynth"
+
+
 def test_a_marker_real_only_within_its_partner_gets_a_conditional_gate(tmp_path):
     from plexora.plugins.gating.server import model
 
@@ -1358,11 +1502,11 @@ def test_the_lattice_is_the_same_whatever_the_path(tmp_path):
 def test_a_rerun_replays_the_same_answers_to_the_same_gates(tmp_path):
     info = make_gating_project(tmp_path, grid=24, size=1024)
     session = AgentSession()
-    first = start(session, mode="propose")["session_id"]
+    first = start(session, mode="propose", display_check="rule")["session_id"]
     asked = drive(session, first, Oracle(info))
     assert asked
     gates = {m: u.get("proposed", u.get("final")) for m, u in units(session, first).items()}
-    second = start(session, mode="propose")["session_id"]
+    second = start(session, mode="propose", display_check="rule")["session_id"]
     again = drive(session, second, Oracle(info))
     assert again == []                              # nothing was asked a second time
     status = ok(invoke(session, "gating_session_status", {"session_id": second}))

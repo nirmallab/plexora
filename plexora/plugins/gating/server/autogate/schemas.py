@@ -94,7 +94,11 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: `pixel_setup` (what one pixel is worth, for an image that does not say) is
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
-SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context")
+#: `display_setup` (how bright each marker is drawn, chosen on a contrast
+#: grid -- `agent/evidence/display_grid.py`) comes after the panel context,
+#: per image, before that image's first look: every later picture is drawn
+#: with what it settles.
+SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "display_setup")
 #: Re-planning after failures (`replan`): the planning task's, out alone,
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
@@ -107,7 +111,8 @@ PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "wait
 
 #: The `gating.session` events a viewer is told about (`_announce`).
 SESSION_EVENTS = ("started", "control", "issued", "phase", "answered", "unit_closed",
-                  "needs_setup", "limit_reached", "limit_answered", "finished", "report")
+                  "needs_setup", "limit_reached", "limit_answered", "finished", "report",
+                  "display")
 
 #: What the viewer's agent panel says the agent is doing, one line per packet
 #: (`packets.narrate`): for the user watching, in the first person, never
@@ -140,6 +145,8 @@ NARRATION = {
     "replan": "Re-planning the rest of the panel around the markers that failed.",
     "expression_setup": "Working out which expression values to gate on.",
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
+    "display_setup": "Choosing how bright to draw {n} markers, so the background shows as a "
+                     "faint floor and each marker's structure stays visible.",
 }
 
 #: The caption under the evidence thumbnail in the panel, by image role.
@@ -149,6 +156,7 @@ EVIDENCE_LABELS = {
     "flips_collage": "Cells between candidate {marker} thresholds",
     "context_sheet": "{marker} across the tissue",
     "strip": "Markers at their thresholds",
+    "display_grid": "Markers at five brightnesses",
 }
 
 #: What a session does when a marker reaches its allowance (looks, images,
@@ -222,6 +230,31 @@ PIXEL_BASES = ("estimate_confirmed", "adjusted", "user_stated")
 #: A session's pixel-size set-up, per image and overall.
 PIXEL_STATES = ("pending", "applied", "asked", "unavailable")
 
+#: A session's contrast check, per image and overall: `pending` (a grid is
+#: still to go out), `applied` (every marker's brightness is settled),
+#: `rule` (the session was asked not to check: the calibration's rule
+#: stands), `unavailable` (no calibration or no grid could be drawn).
+DISPLAY_STATES = ("pending", "applied", "rule", "unavailable")
+#: How a check runs (`SessionOptions.display_check`): `vision` puts a grid
+#: to the model; `rule` keeps the calibration's own window.
+DISPLAY_CHECKS = ("vision", "rule")
+
+#: What a marker's bright cells should show, by compartment: the words a
+#: contrast check's row carries (`display_setup`), so the model judges the
+#: structure that marker has -- not one rule for a ring and a nucleus.
+STRUCTURE_WORDS = {
+    "nuclear": "stain filling the nucleus, its texture (speckles, nucleoli) visible",
+    "nuclear_cytoplasmic": "stain in and around the nucleus, both parts visible",
+    "cytoplasmic": "a cytoplasmic halo around the blue nucleus, its edge and granules visible",
+    "membrane": "a ring at the cell's outline, continuous or dotted, not a filled disc",
+    "extracellular": "fibres or diffuse stain between cells, their shape visible",
+}
+STRUCTURE_DEFAULT = "the cell's own stained structure (a ring, a fill or granules) visible"
+#: The few words drawn under a row's label on the grid.
+STRUCTURE_SHORT = {"nuclear": "nuclear", "nuclear_cytoplasmic": "nuc+cyto",
+                   "cytoplasmic": "cytoplasm", "membrane": "membrane",
+                   "extracellular": "between cells"}
+
 #: What an agent says about its own judgment: three words, each a fixed
 #: number the confidence rule reads (`ENGINE`'s cut-points sit between them),
 #: so the same judgment always lands in the same state -- never a float an
@@ -247,6 +280,8 @@ PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
 
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
 ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
+          # markers per contrast-check grid (`display_setup`): rows of one sheet
+          "display_batch": 8,
           "strip_cells": 6, "invalid_answers": 2,
           "high_ai": 0.75, "moderate_ai": 0.5, "delta_high": 0.5, "delta_moderate": 1.5,
           # a session's default ceiling: numbers, a look, a reference, candidates

@@ -51,6 +51,8 @@ channels for the looks.
      snapshots are of the first such image, and the answer sizes the pictures
      of every image still waiting (`evidence.applies_to`) -- one scanner is
      the usual case. Say so if the user mentions images from another scanner.
+   - `display_setup`, once per image: how bright each marker is drawn there
+     (staining differs between images), answered as in gate-packets.
    - `transfer_check`: the reference image's cells either side of its gate
      (top) and this image's cells either side of the carried gate (bottom).
      `holds` if this image splits as cleanly; `too_low` / `too_high` if its

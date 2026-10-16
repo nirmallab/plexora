@@ -269,8 +269,9 @@ def _mask_statistics(crops, side):
 def blend(crop, layers, size):
     """An RGB uint8 (size, size) panel from a crop's planes.
 
-    `layers` is a list of `{name, window, color}` (`color` #rrggbb); blended
-    with the viewer's arithmetic, then resampled (LANCZOS) to `size`.
+    `layers` is a list of `{name, window, color, curve?}` (`color` #rrggbb,
+    `curve` as `display_curve`); blended with the viewer's arithmetic, then
+    resampled (LANCZOS) to `size`.
     """
     from PIL import Image
 
@@ -284,7 +285,8 @@ def blend(crop, layers, size):
             continue
         colour = layer["color"].lstrip("#")
         rgb = {"r": int(colour[0:2], 16), "g": int(colour[2:4], 16), "b": int(colour[4:6], 16)}
-        source_image.blend_plane(accumulator, plane, layer["window"], rgb)
+        source_image.blend_plane(accumulator, plane, layer["window"], rgb,
+                                 curve=layer.get("curve"))
     pixels = source_image.finish(accumulator)
     image = Image.fromarray(pixels, "RGB")
     if image.size != (size, size):
@@ -325,12 +327,13 @@ MORPHOLOGY_FLOOR = 0.5
 
 
 def self_window_panel(crop, nuclear, marker, *, nuclear_window, window, radius_px, size,
-                      nuclear_color, marker_color):
+                      nuclear_color, marker_color, curve=None, nuclear_curve=None):
     """(panel, info): the marker windowed on the judged cell's OWN pixels.
 
-    Black is the context window's black (`window[0]`, the negatives' median);
-    white the p99 of the cell's pixels in its disc (`disc_mask`) -- but never
-    below `MORPHOLOGY_FLOOR` of the context span, so a negative stays flat.
+    Black is the context window's black (`window[0]`); white the p99 of the
+    cell's pixels in its disc (`disc_mask`) -- but never below the value the
+    context window (and its `curve`) draws at `MORPHOLOGY_FLOOR`, so a
+    negative stays flat. The context curve's cofactor is kept.
     The whole crop is drawn with it: a dim ring around this nucleus becomes
     visible, and a brighter neighbour saturates -- visibly somewhere else.
     No mask outline (a mask may be a nucleus, a Voronoi cell or absent);
@@ -338,24 +341,24 @@ def self_window_panel(crop, nuclear, marker, *, nuclear_window, window, radius_p
     floored} for the manifest."""
     from PIL import Image
 
-    from plexora.server.utils import source_image
+    from plexora.server.utils import display_curve, source_image
 
     low, high = float(window[0]), float(window[1])
-    floor = low + MORPHOLOGY_FLOOR * (high - low)
+    floor = display_curve.inverse(MORPHOLOGY_FLOOR, (low, high), curve)
     own = in_disc(crop, marker, radius_px)
     own_p99 = float(np.percentile(own, 99)) if own is not None and own.size else floor
     white = max(own_p99, floor)
     side = next(iter(crop.planes.values())).shape[0]
     accumulator = np.zeros((side, side, 3), dtype=np.float32)
-    for name, win, colour in ((nuclear, nuclear_window, nuclear_color),
-                              (marker, [low, white], marker_color)):
+    for name, win, colour, shape in ((nuclear, nuclear_window, nuclear_color, nuclear_curve),
+                                     (marker, [low, white], marker_color, curve)):
         plane = crop.planes.get(name) if name else None
         if plane is None or (name == nuclear and nuclear == marker):
             continue
         hexed = colour.lstrip("#")
         source_image.blend_plane(accumulator, plane, win,
                                  {"r": int(hexed[0:2], 16), "g": int(hexed[2:4], 16),
-                                  "b": int(hexed[4:6], 16)})
+                                  "b": int(hexed[4:6], 16)}, curve=shape)
     image = Image.fromarray(source_image.finish(accumulator), "RGB")
     if image.size != (size, size):
         image = image.resize((size, size), Image.LANCZOS)

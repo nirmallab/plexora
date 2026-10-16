@@ -214,6 +214,13 @@ class SessionOptions(AgentModel):
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
+    display_check: Literal[schemas.DISPLAY_CHECKS] = Field(
+        "vision", description="How bright each marker is drawn in every look: `vision` puts a "
+                              "contrast grid to the model after the panel context (markers in "
+                              "rows, five brightnesses in columns; code picks the column), "
+                              "once per image -- a choice outlives the session; `rule` keeps "
+                              "the calibration's own window (black under the background, the "
+                              "bright cells' structure near the top).")
     tiles: bool = Field(False, description="Draw every look's cells as a 2 x 2 block: "
                         "morphology, the context with the judged cell outlined, and one "
                         "expected and one not-expected partner channel from the panel "
@@ -547,6 +554,7 @@ def _plan_fields(call, inp, images, plan) -> dict:
 
     order, panel, match = plan["order"], plan["panel"], plan["match"]
     pixel = _pixel_check(call, images, inp)
+    display = _display_plan(images, inp)
     qc_blocks = _qc_check(call, images)
     biology_record = _biology_for(call, images, inp, panel)
     if biology_record and biology_record.get("contexts"):
@@ -572,7 +580,8 @@ def _plan_fields(call, inp, images, plan) -> dict:
             "panel_pending": bool(unresolved), "unresolved": unresolved,
             "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
                                                     "unmatched")},
-            "pixel": pixel, "qc_exclusion": qc_blocks, "qc_missing": _qc_missing(qc_blocks)}
+            "pixel": pixel, "display": display, "qc_exclusion": qc_blocks,
+            "qc_missing": _qc_missing(qc_blocks)}
 
 
 def _unplanned_fields() -> dict:
@@ -580,7 +589,7 @@ def _unplanned_fields() -> dict:
     `_settle_setup`."""
     return {"order": [], "skipped_markers": [], "units": {}, "panel_hash": None,
             "biology": None, "panel_pending": False, "unresolved": [], "channel_match": None,
-            "pixel": {}, "qc_exclusion": {}, "qc_missing": []}
+            "pixel": {}, "display": {}, "qc_exclusion": {}, "qc_missing": []}
 
 
 def _channels_brief(match) -> dict:
@@ -983,6 +992,28 @@ def _pixel_brief(pixel):
     if pixel.get("projects"):
         out["projects"] = {p: {k: e.get(k) for k in ("status", "value", "basis") if e.get(k)}
                            for p, e in pixel["projects"].items()}
+    return out
+
+
+def _display_plan(images, inp):
+    """The session's contrast check (`display_setup`): pending per image when
+    the model is to look (`display_check: vision`), else `rule` -- the
+    calibration's windows stand, and the viewer is shown them all once."""
+    check = getattr(inp, "display_check", "vision")
+    if check == "rule":
+        return {"status": "rule",
+                "projects": {p: {"status": "rule", "show_all": True} for p in images}}
+    return {"status": "pending", "projects": {p: {"status": "pending"} for p in images}}
+
+
+def _display_brief(display):
+    display = display or {}
+    out = {"status": display.get("status")}
+    if display.get("projects"):
+        out["projects"] = {
+            p: {k: v for k, v in (("status", e.get("status")), ("reason", e.get("reason")),
+                                  ("chosen", e.get("chosen"))) if v}
+            for p, e in display["projects"].items()}
     return out
 
 
@@ -1503,6 +1534,8 @@ def _subject(packet):
         return "re-planning"
     if kind == "pixel_setup":
         return "pixel size"
+    if kind == "display_setup":
+        return "contrast"
     if len(refs) == 1:
         return refs[0]["marker"]
     return f"{len(refs)} markers" if refs else None
@@ -1629,6 +1662,14 @@ def answer(call, inp):
                            "low": unit.get("final") if unit.get("final") is not None
                            else unit.get("proposed"), "reason": unit.get("reason")}
                           for unit in closed])
+        if kind == "display_setup" and outcome.get("project"):
+            # The viewer's channels nobody set take the chosen brightness
+            # (viewerSidebar.syncGatingContrast); a mirrored tab is shown it
+            # with its next packet (`_mirror`).
+            _announce(call, snapshot, inp.session_id, "display", project=outcome["project"],
+                      revision=outcome.get("revision"),
+                      chosen={m: c["chosen_by"] for m, c in
+                              (outcome.get("chosen") or {}).items()})
     if delta:
         progress = _slim_progress(progress)
     # A refused answer (`reissue`: a partner gate changed while the packet was
@@ -1765,6 +1806,7 @@ def status(call, inp):
                "expression": record.get("expression"),
                **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
                "pixel": _pixel_brief(record.get("pixel")),
+               "display": _display_brief(record.get("display")),
                "summary": engines.summary_of(record),
                **_guide(record["options"]["reading"], inp.known_guide),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),

@@ -768,6 +768,9 @@ class BaseEngine:
                 if unit and unit["state"] not in self.TERMINAL:
                     self.close(unit, "manual_review_recommended",
                                "two answers to its packet could not be used")
+            # A packet about no unit (a set-up step) has nothing to close:
+            # the subclass settles it, or the same packet is served again.
+            self.struck_out(packet)
             self.release(packet_id)
             self.save()
             raise AgentError("invalid_input", f"{message} -- twice now, so the "
@@ -775,6 +778,11 @@ class BaseEngine:
                              detail={**detail, "released": True})
         self.save()
         raise AgentError("invalid_input", message, detail=detail)
+
+    def struck_out(self, packet):
+        """A packet's answers were refused `INVALID_ANSWERS` times. Units are
+        closed above; a subclass settles what a unit-less packet was about,
+        so it is not issued again without end. Nothing by default."""
 
     def _stale(self, packet_id, entry):
         """None while the ledger the packet was built on stands. Otherwise the

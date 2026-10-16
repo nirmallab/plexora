@@ -135,6 +135,14 @@ READING_GUIDE = {
                     "estimate is too small (microns per pixel should go up), clearly larger "
                     "that it is too large. The answer sizes this session's pictures only, "
                     "unless the user stated the value"),
+    "display_setup": ("each row is one marker, each column (c1 to c5, darker to brighter) one "
+                      "way of drawing it: nuclei blue, the marker yellow, pixels at full white "
+                      "pure red. A block is four cells: a background cell top left, a dim cell "
+                      "top right, two of the brightest below. A good background is a faint "
+                      "dark-grey floor you can tell from black; a good bright cell shows the "
+                      "row's pattern with detail inside it (a ring, a speckled nucleus, "
+                      "granules), not a flat or red blob. The row's `pattern` says which "
+                      "structure that marker has. Judge each row on its own"),
     **{f"plot:{relation}": text for relation, text in BIVARIATE_READING.items()},
 }
 
@@ -1126,6 +1134,115 @@ def pixel_setup(engine, units):
                                      "nuclei and outlines, bar and ring at the estimate"),))
 
 
+def _structure(engine, ds, unit):
+    """(words, short) for what a marker's bright cells should show
+    (`schemas.STRUCTURE_WORDS`), by its compartment: the unit's context, else
+    the panel's."""
+    compartment = (unit.get("context") or {}).get("compartment")
+    if compartment is None:
+        try:
+            from plexora.plugins.gating.server.autogate import context
+
+            entry = (context.for_project(ds, create=False).get("entries") or {}).get(
+                unit["marker"]) or {}
+            compartment = entry.get("compartment")
+        except Exception:
+            compartment = None
+    return (schemas.STRUCTURE_WORDS.get(compartment, schemas.STRUCTURE_DEFAULT),
+            schemas.STRUCTURE_SHORT.get(compartment, ""))
+
+
+def display_setup(engine, units):
+    """The contrast check for the next image whose calibration is ready: a
+    grid of at most `display_batch` of its markers (`display_grid`), each at
+    the calibration's brightness ladder. Markers the calibration settles on
+    its own (no bright cells, a floored titre, an overview window, or a
+    choice an earlier session made) are not asked. None, with the image's
+    state moved on, when nothing is left to ask or no grid can be drawn."""
+    from plexora.agent.evidence import calibration, display_grid
+
+    display = engine.record.setdefault("display", {})
+    projects = display.setdefault("projects", {})
+    due, _waiting = engine.display_due()
+    if not due:
+        engine.settle_display()
+        return None
+    project = due[0]
+    entry = projects.setdefault(project, {"status": "pending"})
+    session = engine.call.session
+    try:
+        record, _changed = calibration.calibrate(session, project)
+    except AgentError as exc:
+        entry.update(status="unavailable", reason=exc.message)
+        engine.settle_display()
+        engine.log(event="display_setup_unavailable", project=project, reason=exc.message)
+        return None
+    ds = session.data(project)
+    asked = set(entry.get("asked") or ())
+    ruled = list(entry.get("rule") or ())
+    # A batch issued and not answered yet (`out`) is drawn again as it was:
+    # the same rows, when the packet is re-rendered or served again.
+    out = list(entry.get("out") or ())
+    rows = []
+    for unit in engine.units_of(project):
+        if str(unit["state"]).startswith("skipped"):
+            continue
+        channel = views.image_channel(ds, unit["marker"])
+        if channel is None or channel in ruled:
+            continue
+        if out and channel not in out:
+            continue
+        if not out and channel in asked:
+            continue
+        if not out and not calibration.needs_choice(record, channel):
+            # Settled without a look: shown on the viewer with the rest.
+            ruled.append(channel)
+            continue
+        words, short = _structure(engine, ds, unit)
+        rows.append({"marker": unit["marker"], "channel": channel, "pattern": words,
+                     "short_pattern": short})
+        if len(rows) >= ENGINE["display_batch"]:
+            break
+    entry["rule"] = ruled
+    if not rows:
+        entry["status"] = "applied"
+        entry.setdefault("unshown", [])
+        entry["unshown"] = list(dict.fromkeys([*entry["unshown"], *ruled]))
+        engine.settle_display()
+        return None
+    try:
+        rendered = display_grid.render_display_grid(session, ds, record, rows, fmt=_fmt(engine))
+    except Exception as exc:  # a check that cannot be drawn leaves the rule standing
+        entry.update(status="unavailable", reason=f"no grid: {exc}")
+        entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []), *ruled,
+                                               *[r["channel"] for r in rows]]))
+        engine.settle_display()
+        engine.log(event="display_setup_unavailable", project=project, reason=str(exc))
+        return None
+    entry["out"] = [r["channel"] for r in rows]
+    levels = entry.setdefault("levels", {})
+    for row in rendered["manifest"]["rows"]:
+        levels[row["channel"]] = row["levels"]
+    markers = [r["marker"] for r in rows]
+    packet = {
+        "question": (f"How bright should {len(rows)} markers of {project} be drawn? For EVERY "
+                     "row give `background_ok` (columns where the background tile is a faint "
+                     "dark-grey floor: not black, not stained-looking) and `structure_ok` "
+                     "(columns where the bright cells show the row's `pattern` with detail: "
+                     "not a flat or red blob, not too dim). Empty lists are fine; code picks "
+                     "the column."),
+        "evidence": {"project": project,
+                     "rows": [{"marker": r["marker"], "pattern": r["pattern"]} for r in rows],
+                     **_reading(engine, ["display_setup"])},
+        "allowed": {"rows": markers, "columns": list(calibration.COLUMN_IDS)},
+        "_image_meta": [],
+    }
+    # Which channel each row draws, for the answer (kept off what is sent).
+    entry.setdefault("rows", {}).update({r["marker"]: r["channel"] for r in rows})
+    return packet, _images(packet, ((rendered, "display_grid",
+                                     "markers in rows, five brightnesses in columns"),))
+
+
 def t1_strip(engine, units):
     """One sheet for the T1-accepted markers of one image (`strip_batch` of
     them at most), `strip_cells` cells a row."""
@@ -1265,7 +1382,8 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "replan": replan_packet,
             "transfer_check": transfer_check,
-            "expression_setup": expression_setup, "pixel_setup": pixel_setup}
+            "expression_setup": expression_setup, "pixel_setup": pixel_setup,
+            "display_setup": display_setup}
 
 
 def narrate(packet) -> str:
@@ -1294,7 +1412,8 @@ def narrate(packet) -> str:
     template = schemas.NARRATION.get(key) or schemas.NARRATION.get(kind) or ""
     partner = (evidence.get("condition") or {}).get("within") or plot.get("partner") or ""
     return template.format(marker=marker, partner=partner,
-                           references=" and ".join(references) or partner, n=len(units))
+                           references=" and ".join(references) or partner,
+                           n=len(units) or len(evidence.get("rows") or ()))
 
 
 def evidence_label(packet) -> str:

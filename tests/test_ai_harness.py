@@ -956,7 +956,8 @@ def test_several_projects_are_gated_in_parallel_with_one_prefix_write(tmp_path):
              for i, name in enumerate(("gsa", "gsb", "gsc"))}
 
     def brain(packet, body):
-        project = packet["units"][0]["project"]
+        project = packet["units"][0]["project"] if packet["units"] \
+            else packet["evidence"]["project"]
         return Oracle(infos[project]).answer(packet)
 
     with FakeGateway(brain) as gateway:

@@ -1298,6 +1298,8 @@
                 findCurrentChannel: (sub) => imageViewer.findCurrentChannel(sub),
                 itemRange: imageViewer.itemRange
                     ? (channel, source) => imageViewer.itemRange(channel, source) : null,
+                itemCofactor: imageViewer.itemCofactor
+                    ? (channel, source) => imageViewer.itemCofactor(channel, source) : null,
                 selectCenterProps: centerProps(imageViewer),
                 labelOutlinesEnabled: () => false,
                 modeFlags: () => ({ edge: 0, or: 0 }),

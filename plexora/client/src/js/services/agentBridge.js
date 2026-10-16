@@ -123,9 +123,18 @@ window.PlexoraAgentBridge = (function () {
         "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells", "show_shapes",
         "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to", "set_color_by",
         "set_view", "set_z", "set_slab", "set_volume_mode", "set_camera", "set_surface",
-        "set_inspect",
+        "set_inspect", "animate_contrast",
     ]);
-    const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
+    const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast",
+                                      "animate_contrast"]);
+    //: animate_contrast: how long one channel's ease takes, and the pause
+    //: before the next, so each change can be seen on its own.
+    const CONTRAST_EASE_MS = 900;
+    const CONTRAST_DWELL_MS = 350;
+    //: The channels animate_contrast has yet to show, oldest first, and
+    //: whether a run is working through them.
+    const contrastQueue = [];
+    let contrastRunning = false;
 
     // -- small things -------------------------------------------------------
 
@@ -786,6 +795,12 @@ window.PlexoraAgentBridge = (function () {
                     name: slot.name,
                     color: slot.colorHex,
                     window: range ? [round(Number(range[0]), 3), round(Number(range[1]), 3)] : null,
+                    curve: slot.curve ? { kind: "asinh", cofactor: round(Number(slot.curve.cofactor), 4) }
+                        : { kind: "linear" },
+                    // Who set the window: the user, the viewer's auto-levelling,
+                    // a gating calibration, a seeded default; "legacy" is a row
+                    // saved before rows said, and counts as the user's.
+                    source: slot.rangeSource || null,
                     enabled: Boolean(slot.enabled),
                 };
             });
@@ -928,6 +943,20 @@ window.PlexoraAgentBridge = (function () {
         throw new Error(`${JSON.stringify(value)} is not a colour -- use "#rrggbb" or {r, g, b}`);
     }
 
+    /**
+     * A display curve from a command: undefined when not given (the slot keeps
+     * its own), null for linear, {kind: "asinh", cofactor} in raw units.
+     */
+    function curveOf(value) {
+        if (value === undefined) return undefined;
+        if (value === null || value === "linear") return null;
+        if (typeof value === "object" && (value.kind === "linear")) return null;
+        const curve = window.PlexoraDisplayCurve?.normalise?.(value);
+        if (curve) return curve;
+        throw new Error(`${JSON.stringify(value)} is not a display curve -- use "linear", or `
+            + `{kind: "asinh", cofactor} with the cofactor in raw units`);
+    }
+
     function windowOf(value) {
         if (value === undefined || value === null) return null;
         if (value === "auto") return "auto";
@@ -988,15 +1017,20 @@ window.PlexoraAgentBridge = (function () {
         if (entry.enabled !== undefined && entry.enabled !== Boolean(slot.enabled)) {
             panel.setSlotEnabled(slot.index, entry.enabled);
         }
+        if (entry.curve !== undefined && panel.setSlotCurve) {
+            panel.setSlotCurve(slot.index, entry.curve, { save: false, source: null });
+        }
         if (Array.isArray(entry.window)) {
             await panel.channelList.ensureChannelStats(entry.name).catch(() => {});
             let range = entry.window;
             if (!panel.isHdMode()) {
                 const packet = panel.quantWindow(entry.name);
                 if (!packet) throw new Error(`no intensity statistics for ${entry.name} yet`);
-                range = panel.rawToByteRange(range, packet);
+                range = panel.rawToByteRangeFine ? panel.rawToByteRangeFine(range, packet)
+                    : panel.rawToByteRange(range, packet);
             }
             panel.setSlotRange(slot.index, range, true);
+            if (entry.source) slot.rangeSource = entry.source;
             panel.updateSlotReadout(slot);
         } else if (entry.window === "auto" && slot.enabled) {
             await panel.autoChannel(slot.index, { force: true });
@@ -1036,6 +1070,10 @@ window.PlexoraAgentBridge = (function () {
                 name,
                 color: colorHex(raw.color),
                 window: windowOf(raw.window !== undefined ? raw.window : raw.range),
+                curve: curveOf(raw.curve),
+                // Only a calibration's own window says so; anything else an
+                // agent persists is the user's (setSlotRange).
+                source: raw.source === "gating" ? "gating" : undefined,
                 enabled: raw.enabled === undefined ? undefined : Boolean(raw.enabled),
             });
         }
@@ -1054,6 +1092,8 @@ window.PlexoraAgentBridge = (function () {
                     const row = { name: entry.name };
                     if (entry.color) row.color = entry.color;
                     if (Array.isArray(entry.window)) row.range = entry.window;
+                    if (entry.curve !== undefined) row.curve = entry.curve;
+                    if (entry.source) row.source = entry.source;
                     if (entry.enabled === false) row.enabled = false;
                     return row;
                 }), { silent: true });
@@ -1570,6 +1610,9 @@ window.PlexoraAgentBridge = (function () {
                 await panel.applyLaunchChannels(held.slots.map((slot) => {
                     const row = { name: slot.name, color: slot.colorHex, enabled: Boolean(slot.enabled) };
                     if (Array.isArray(slot.range)) row.range = [slot.range[0], slot.range[1]];
+                    // The look and who set it come back with the window.
+                    row.curve = slot.curve || null;
+                    if (slot.source) row.source = slot.source;
                     return row;
                 }), { silent: true });
                 await settleAutoLevels(panel.channelSlots.filter((slot) => slot && slot.visible && slot.name));
@@ -1619,8 +1662,83 @@ window.PlexoraAgentBridge = (function () {
             scene().fitRegion(viewer(), held.view);
             return true;
         });
+        // The user's arrangement is back; a calibration the session made
+        // replaces the windows nobody set (viewerSidebar.syncGatingContrast),
+        // now that saving is the user's again.
+        contrastQueue.length = 0;
+        window.dispatchEvent(new CustomEvent("plexora:display-contrast-changed",
+                                             { detail: { reason: "restore" } }));
         touch();
         return { had_lease: true, reason, restored, errors };
+    }
+
+    // -- animate_contrast ------------------------------------------------------
+
+    /**
+     * Until the queued contrast changes have played (bounded): a channel
+     * command arriving meanwhile -- the first look of a session whose check
+     * was just answered -- waits its turn instead of cutting them off.
+     */
+    async function contrastIdle(limitMs = 15000) {
+        const deadline = Date.now() + limitMs;
+        while ((contrastRunning || contrastQueue.length) && Date.now() < deadline) {
+            await pause(50);
+        }
+        // Waited long enough: what is left is not played over the channels
+        // this command is about to set.
+        contrastQueue.length = 0;
+    }
+
+    /**
+     * Work through the queued channels one at a time: put the channel on
+     * screen, say which one, ease its slider (and so the picture) to the
+     * window and curve the session settled on, pause, next. Runs on its own;
+     * the command that queued it has long been acknowledged, so the session
+     * goes on (a gating run asks its next model question meanwhile).
+     */
+    async function runContrastQueue() {
+        if (contrastRunning) return;
+        contrastRunning = true;
+        const hint = window.PlexoraCanvasHint;
+        try {
+            while (contrastQueue.length) {
+                const item = contrastQueue.shift();
+                let panel;
+                try {
+                    panel = sidebar();
+                } catch (error) {
+                    contrastQueue.length = 0;
+                    break;
+                }
+                try {
+                    panel.suspendPersistence();
+                    let slot;
+                    try {
+                        slot = await mergeChannel(panel, { name: item.name, color: item.color,
+                                                           enabled: true, window: null });
+                        if (slot) {
+                            // Before the auto-level setSlotMarker scheduled can
+                            // run: this channel's window is on its way.
+                            slot.autoLeveled = true;
+                            slot.rangeSource = item.source;
+                        }
+                    } finally {
+                        panel.resumePersistence();
+                    }
+                    if (!slot) continue;
+                    hint?.show?.("agent-contrast", { key: "", text: item.caption, tone: "narration" });
+                    await panel.animateChannelTo(slot.index, item.window, item.curve,
+                                                 { ms: item.ms, source: item.source });
+                    await pause(item.dwell);
+                } catch (error) {
+                    console.warn("agentBridge: animate_contrast", item.name, error);
+                }
+            }
+        } finally {
+            contrastRunning = false;
+            hint?.hide?.("agent-contrast");
+            touch();
+        }
     }
 
     // -- the command table ----------------------------------------------------
@@ -1662,13 +1780,56 @@ window.PlexoraAgentBridge = (function () {
         },
 
         async set_channels(args, call) {
+            await contrastIdle();
             return applyChannels(args.channels,
                 { mode: args.mode || "merge", persist: args.persist }, call);
         },
 
         async set_channel_color(args, call) {
+            await contrastIdle();
             return applyChannels([{ name: channelName(args), color: args.color }],
                 { mode: "merge", persist: args.persist }, call);
+        },
+
+        /**
+         * Show a session settling channels' contrast, one channel at a time:
+         * `channels` [{name, window: [low, high] raw, curve?, color?}],
+         * `caption` (default "Adjusting contrast for {name}"), `ease_ms`,
+         * `dwell_ms`. Acknowledged at once with what was queued; the queue
+         * plays on, behind whatever the session does next. Never saved: an
+         * agent holds the view (the lease), and gives it back.
+         */
+        async animate_contrast(args, call) {
+            const panel = sidebar();
+            const entries = Array.isArray(args.channels) ? args.channels : [];
+            if (!entries.length) throw new Error("needs a non-empty `channels` list");
+            const known = new Set(panel.columns || []);
+            const queued = [];
+            const missing = [];
+            for (const raw of entries) {
+                const name = raw && raw.name;
+                if (!known.has(name)) {
+                    missing.push(String(name));
+                    continue;
+                }
+                const range = windowOf(raw.window);
+                if (!Array.isArray(range)) throw new Error(`${name}: needs a window [low, high] in raw units`);
+                const caption = String(args.caption || "Adjusting contrast for {name}")
+                    .replace("{name}", name).slice(0, 120);
+                queued.push({
+                    name, window: range, curve: curveOf(raw.curve) ?? null, color: colorHex(raw.color),
+                    caption, source: raw.source === "user" ? "user" : "gating",
+                    ms: Number(args.ease_ms) > 0 ? Math.min(Number(args.ease_ms), 5000) : CONTRAST_EASE_MS,
+                    dwell: Number(args.dwell_ms) >= 0 ? Math.min(Number(args.dwell_ms), 5000)
+                        : CONTRAST_DWELL_MS,
+                });
+            }
+            if (missing.length) call.warn(`not in this image, skipped: ${missing.join(", ")}`);
+            contrastQueue.push(...queued);
+            runContrastQueue();
+            touch();
+            return { queued: queued.map((item) => item.name), missing,
+                     pending: contrastQueue.length + (contrastRunning ? 1 : 0) };
         },
 
         async set_contrast(args, call) {
@@ -1676,6 +1837,7 @@ window.PlexoraAgentBridge = (function () {
             if (display === undefined || display === null) {
                 throw new Error('needs a `window` ([low, high] in raw units, or "auto")');
             }
+            await contrastIdle();
             return applyChannels([{ name: channelName(args), window: display }],
                 { mode: "merge", persist: args.persist }, call);
         },

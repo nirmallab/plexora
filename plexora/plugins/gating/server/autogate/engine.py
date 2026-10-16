@@ -1373,10 +1373,12 @@ class Engine(BaseEngine):
         busy = {key for entry in held.values() for key in entry.get("units") or ()}
         if any(entry.get("kind") in self.EXCLUSIVE_KINDS for entry in held.values()):
             return [], "busy"
+        display_due, display_waiting = self.display_due()
         for kind, pending in (
                 ("expression_setup", (record.get("expression") or {}).get("status") == "pending"),
                 ("pixel_setup", (record.get("pixel") or {}).get("status") == "pending"),
                 ("panel_context", bool(record.get("panel_pending"))),
+                ("display_setup", bool(display_due)),
                 ("replan", self._replan_due())):
             if pending:
                 return ([], "busy") if held else ([(kind, [])], None)
@@ -1389,6 +1391,9 @@ class Engine(BaseEngine):
             return [], "busy" if held else why
 
         for project in record["images"]:
+            if project in display_waiting:
+                # Its looks are drawn with the brightness its check settles.
+                return blocked("wait")
             units = self.units_of(project)
             if project != record.get("reference_image") and any(
                     u["state"] == "transfer_pending" for u in units):
@@ -1437,6 +1442,49 @@ class Engine(BaseEngine):
         if self.waiting_for_user():
             return [], "wait_user"
         return [], None
+
+    # -- the contrast check (`display_setup`) --
+
+    def display_due(self):
+        """(due, waiting): images whose contrast check may go out now (their
+        calibration is stored, or the bulk pass is not running to store it),
+        and images whose check waits on the bulk pass's calibration. Both
+        empty when the session does not check (`display.status` not pending)."""
+        display = self.record.get("display") or {}
+        if display.get("status") != "pending":
+            return [], []
+        projects = display.get("projects") or {}
+        calibrated = self.record.get("calibration") or {}
+        bulk_running = self.record.get("state") == "bulk_running"
+        due, waiting = [], []
+        for project in self.record["images"]:
+            if (projects.get(project) or {}).get("status") != "pending":
+                continue
+            if project in calibrated or not bulk_running:
+                due.append(project)
+            else:
+                waiting.append(project)
+        return due, waiting
+
+    def settle_display(self):
+        """The check's overall status from its images': applied once none is
+        pending (`unavailable` when every image was)."""
+        display = self.record.get("display") or {}
+        if display.get("status") != "pending":
+            return
+        states = [e.get("status") for e in (display.get("projects") or {}).values()]
+        if "pending" in states:
+            return
+        display["status"] = "unavailable" if states and all(
+            s == "unavailable" for s in states) else "applied"
+
+    def struck_out(self, packet):
+        """A contrast check answered wrongly twice keeps the rule's windows
+        and moves on (`transitions.strike_display`)."""
+        if packet.get("kind") == "display_setup":
+            from plexora.plugins.gating.server.autogate import transitions
+
+            transitions.strike_display(self, packet)
 
     def _replan_due(self) -> bool:
         """Whether a `replan` packet waits to go out (`replan.pending`): not
@@ -1513,6 +1561,9 @@ class Engine(BaseEngine):
             return "pixel_setup", []
         if record.get("panel_pending"):
             return "panel_context", []
+        display_due, display_waiting = self.display_due()
+        if display_due:
+            return "display_setup", []
         if self._replan_due():
             return "replan", []
         # Stay on the marker being refined: its next look follows its last,
@@ -1525,6 +1576,8 @@ class Engine(BaseEngine):
                 return kind, [last]
         bulk_running = record.get("state") == "bulk_running"
         for project in record["images"]:
+            if project in display_waiting:
+                return "wait", []
             units = self.units_of(project)
             if project != record.get("reference_image") and any(
                     u["state"] == "transfer_pending" for u in units):

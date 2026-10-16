@@ -281,6 +281,16 @@ def run(call, inp):
         call.check_cancelled()
         if project not in calibrations:
             calibrations[project] = calibrate_image(call, project, session_id)
+            with engine_for(call, session_id) as engine:
+                # Stored now, not after the image's markers: the contrast
+                # check (`display_setup`) goes out as soon as it is there.
+                engine.record.setdefault("calibration", {})[project] = calibrations[project]
+                display = (engine.record.get("display") or {}).get("projects") or {}
+                if calibrations[project].get("error") and project in display \
+                        and display[project].get("status") == "pending":
+                    display[project].update(status="unavailable",
+                                            reason=calibrations[project]["error"])
+                    engine.settle_display()
         ds = call.session.data(project)
         for marker in order:
             call.check_cancelled()

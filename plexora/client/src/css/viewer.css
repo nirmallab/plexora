@@ -2007,6 +2007,43 @@
     outline: none;
 }
 
+/* The gating calibration's window, offered beside Auto (viewerSidebar's
+   syncSlotGatingButton): shown only when the project has one for the channel
+   and the slot does not draw it already. `hidden` must win over the button's
+   own inline-flex. */
+.slider-auto-button.channel-slot-gating[hidden] {
+    display: none;
+}
+
+/* Linear / Log under the contrast window: the cell-mode segmented look,
+   sized to its two words, with the 8-bit note after it. */
+.channel-slot-curve {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    padding: 0 0 4px;
+}
+
+.channel-slot-curve .channel-slot-curve-options {
+    flex: 0 0 auto;
+    width: auto;
+}
+
+.channel-slot-curve .cell-mode-option {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+}
+
+.channel-slot-curve-note {
+    color: var(--text-muted);
+    font-size: 10px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Collapsible per-channel threshold panel - hidden until the expand chevron is clicked */
 .channel-slot-detail {
     max-height: 0;
@@ -2017,7 +2054,7 @@
 
 .channel-slot-detail.is-expanded {
     margin-top: 4px;
-    max-height: 150px;
+    max-height: 180px;
     opacity: 1;
 }
 
@@ -2686,6 +2723,20 @@
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
     transform: translateX(-50%);
     z-index: 220;
+}
+
+/* A narration rather than a key hint ("Adjusting contrast for CD3", while an
+   agent's contrast check plays): read while it happens, so it stands up from
+   the image -- the panel's own ground, primary text, a step larger. */
+.plx-canvas-hint.is-narration {
+    background: rgba(11, 17, 24, 0.78);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    bottom: calc(var(--plx-inset-bottom, 0px) + 12px);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 4px 12px;
+    text-shadow: none;
 }
 
 .plx-canvas-hint .viewer-overlay-hint-key {

@@ -49,12 +49,16 @@ function clearOrBlack(rendered, alphaMode, w, h) {
  * @param itemRange            - (channel, source) => the channel's range in the
  *                               units of THIS item's pixels (ImageViewer.itemRange);
  *                               the channel's own range when absent
+ * @param itemCofactor         - (channel, source) => the channel's asinh cofactor
+ *                               in the same units (ImageViewer.itemCofactor); 0,
+ *                               or absent, draws linear
  */
 function createTileDrawing({
     renderer,
     floatRange,
     findCurrentChannel,
     itemRange = null,
+    itemCofactor = null,
     selectCenterProps,
     labelOutlinesEnabled,
     modeFlags,
@@ -151,6 +155,8 @@ function createTileDrawing({
             // on screen while its replacement loads at another quality or
             // window keeps drawing correctly with the range already moved.
             const range = (itemRange && itemRange(channel, source)) || _.get(channel, "range", floatRange);
+            // The channel's display curve in the same units (0: linear).
+            const cofactor = (itemCofactor && itemCofactor(channel, source)) || 0;
             const color = _.get(channel, "color", d3.color("white"));
             const floatColor = toFloatColor(color);
             // The fast/default tile path quantizes 16-bit -> 8-bit
@@ -193,7 +199,7 @@ function createTileDrawing({
             // The signature covers everything the draw below depends on:
             // tile identity (cacheKey also changes when HD swaps the pixel
             // data), the pixel format, and the channel's colour/range/mode.
-            const sig = `${e.tile.cacheKey}|${tileFmt}|${alphaMode}|${floatColor}|${range}|${modes.edge},${modes.or}`;
+            const sig = `${e.tile.cacheKey}|${tileFmt}|${alphaMode}|${floatColor}|${range}|${cofactor}|${modes.edge},${modes.or}`;
             if (e.rendered._plexoraSig === sig) {
                 return;
             }
@@ -256,6 +262,7 @@ function createTileDrawing({
                 picked_end_1i: 0,
                 color_3fv: new Float32Array(floatColor),
                 range_2fv: new Float32Array(range),
+                cofactor_1f: cofactor,
                 fmt_1i: tileFmt,
                 alpha_mode_1i: alphaMode,
             };

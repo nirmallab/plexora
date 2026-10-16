@@ -552,7 +552,8 @@ def composite(source, channels, level, box):
     the box runs off the image. Returns (pixels, channels_rendered, background).
 
     `channels` is a list of `{key, color: {r, g, b}, window: [lo, hi],
-    visible}` -- the shape a figure scene records. Padded rather than clipped:
+    visible, curve?}` -- the shape a figure scene records (`curve` as
+    `display_curve`; none is linear). Padded rather than clipped:
     the caller asked for THIS box, and a raster that shrank to the part of it
     that exists would move the middle of the picture. The background is what
     the viewer draws there: black under fluorescence, white under brightfield.
@@ -591,25 +592,29 @@ def composite(source, channels, level, box):
         plane = plane[:max(0, height - top), :max(0, width - left)]
         if plane.size == 0 or top < 0 or left < 0:
             continue
-        blend_plane(accumulator, plane, (low, high), channel["color"], top=top, left=left)
+        blend_plane(accumulator, plane, (low, high), channel["color"], top=top, left=left,
+                    curve=channel.get("curve"))
         rendered += 1
     return finish(accumulator), rendered, 0
 
 
-def blend_plane(accumulator, plane, window, colour, *, top=0, left=0):
+def blend_plane(accumulator, plane, window, colour, *, top=0, left=0, curve=None):
     """Add one channel's plane into a float32 (H, W, 3) accumulator, in place.
 
-    frag.glsl's arithmetic, once: `t = clip((raw - lo) / (hi - lo), 0, 1)`,
-    times the channel colour and CHANNEL_ALPHA, accumulated as the canvas's
-    `lighter` blend does. `colour` is `{r, g, b}` in 0-255. Split out of
-    `composite` so a caller that already holds the planes (a batch of cell
+    frag.glsl's arithmetic, once: the display curve (`display_curve.transfer`:
+    linear `t = clip((raw - lo) / (hi - lo), 0, 1)` unless `curve` says
+    asinh), times the channel colour and CHANNEL_ALPHA, accumulated as the
+    canvas's `lighter` blend does. `colour` is `{r, g, b}` in 0-255. Split out
+    of `composite` so a caller that already holds the planes (a batch of cell
     crops read one tile at a time) blends them exactly as a render would.
     """
+    from plexora.server.utils import display_curve
+
     low, high = float(window[0]), float(window[1])
     span = high - low
     if span <= 0:
         return accumulator
-    scaled = np.clip((np.asarray(plane).astype(np.float32) - low) / span, 0.0, 1.0)
+    scaled = display_curve.transfer(plane, (low, high), curve)
     weight = CHANNEL_ALPHA / 255.0
     target = accumulator[top:top + scaled.shape[0], left:left + scaled.shape[1]]
     scaled = scaled[:target.shape[0], :target.shape[1]]

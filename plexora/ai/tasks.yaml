@@ -43,6 +43,16 @@ modules:
         max_tokens: 16000
         effort: low
         kinds: [panel_context, pixel_setup, expression_setup, replan]
+      display:
+        label: Contrast check
+        blurb: Looks at each marker at five brightnesses and says where background and structure both show.
+        requires: {vision: true, reasoning: false}
+        # A narrow perceptual question with code picking the answer: the
+        # routine class, so the gateway may route it to a smaller model.
+        capability: vision_routine
+        max_tokens: 4000
+        effort: low
+        kinds: [display_setup]
       biological_context:
         label: Biological context
         blurb: Turns the user's note on tissue, disease and markers into what the run may assume.

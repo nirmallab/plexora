@@ -14,6 +14,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import Field
 
+from plexora.agent.evidence import calibration
 from plexora.agent.schemas import AgentModel, clipped
 from plexora.ai import vocabulary
 from plexora.plugins.gating.server.autogate import context, pixel_estimate, replan, schemas
@@ -134,6 +135,18 @@ class PixelSetupAnswer(_Base):
         description="Needed for adjusted and user_stated; omit to keep the estimate.")
 
 
+class DisplaySetupAnswer(_Base):
+    kind: Literal["display_setup"] = "display_setup"
+    background_ok: dict[str, list[Literal[calibration.COLUMN_IDS]]] = Field(
+        description="EVERY row (marker key): the columns where its background tile (top left "
+                    "of each block) reads as a faint floor -- dark grey, not pure black, and "
+                    "not looking stained. [] when none does.")
+    structure_ok: dict[str, list[Literal[calibration.COLUMN_IDS]]] = Field(
+        description="EVERY row: the columns where the bright cells (bottom of each block) show "
+                    "the row's `pattern` with its detail -- not washed out to a flat or red "
+                    "blob, not too dim to see. [] when none does.")
+
+
 class PanelEntry(AgentModel):
     marker: str
     role: Literal[vocabulary.ROLES]
@@ -166,7 +179,7 @@ class ReplanAnswer(_Base):
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          ReplanAnswer)
+          ReplanAnswer, DisplaySetupAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

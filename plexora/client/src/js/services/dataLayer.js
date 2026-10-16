@@ -55,7 +55,8 @@ class DataLayer {
         }
     }
 
-    async saveChannelList(map_channels, active_channels, list_colors, list_ranges, list_channels) {
+    async saveChannelList(map_channels, active_channels, list_colors, list_ranges, list_channels,
+                          list_meta = null) {
         const self = this;
         try {
             let response = await fetch(plexoraUrl('save_channel_list'), {
@@ -71,7 +72,10 @@ class DataLayer {
                         active_channels: active_channels,
                         list_colors: list_colors,
                         list_ranges: list_ranges,
-                        list_channels: list_channels
+                        list_channels: list_channels,
+                        // Per active channel: who set its window and its
+                        // display curve (data_model._row_meta).
+                        ...(list_meta ? { list_meta } : {})
                     }
                 )
             });

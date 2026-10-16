@@ -161,6 +161,8 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
     };
 
     renderer.vShader = plexoraUrl("client/src/shaders/vert.glsl");
+    // Not versioned: glRenderer's getter asks for it with `no-cache`, and it
+    // takes only a URL ending in "glsl" as a file (anything else is source).
     renderer.fShader = plexoraUrl("client/src/shaders/frag.glsl");
 
     renderer["gl-drawing"] = function () {
@@ -177,6 +179,7 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
         this.gl.uniform2fv(this.u_tile_origin, args.origin_2fv);
         this.gl.uniform3fv(this.u_tile_color, args.color_3fv);
         this.gl.uniform2fv(this.u_tile_range, args.range_2fv);
+        this.gl.uniform1f(this.u_tile_cofactor, args.cofactor_1f || 0);
         this.gl.uniform2iv(this.u_draw_mode, args.modes_2i);
         this.gl.uniform2fv(this.u_x_bounds, args.x_bounds_2fv);
         this.gl.uniform2fv(this.u_y_bounds, args.y_bounds_2fv);
@@ -203,6 +206,7 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
         this.u_pie_radius = this.gl.getUniformLocation(program, "u_pie_radius");
         this.u_tile_origin = this.gl.getUniformLocation(program, "u_tile_origin");
         this.u_tile_range = this.gl.getUniformLocation(program, "u_tile_range");
+        this.u_tile_cofactor = this.gl.getUniformLocation(program, "u_tile_cofactor");
         this.u_tile_color = this.gl.getUniformLocation(program, "u_tile_color");
         this.u_draw_mode = this.gl.getUniformLocation(program, "u_draw_mode");
         this.u_x_bounds = this.gl.getUniformLocation(program, "u_x_bounds");

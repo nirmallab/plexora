@@ -16,10 +16,23 @@ from __future__ import annotations
 #: Seconds a command may take to acknowledge. Switching image or HD mode
 #: rebuilds every tile and is acknowledged when that finishes.
 COMMAND_TIMEOUT_S = {"open_project": 20.0, "set_hd_mode": 20.0, "show_evidence": 10.0,
-                     "restore_viewer": 20.0}
+                     "restore_viewer": 20.0,
+                     # A tab still showing a contrast check's channels one at a
+                     # time finishes them before it changes channels again.
+                     "set_channels": 20.0}
+#: The tab's caption while it eases each channel (`animate_contrast`).
+DISPLAY_CAPTION = "Adjusting contrast for {name}"
+#: Up to this many channels ease at the tab's own pace; more (a `rule`
+#: session shows every marker of its image at once) go quickly.
+DISPLAY_PACED = 8
+DISPLAY_QUICK = {"ease_ms": 350, "dwell_ms": 80}
 DEFAULT_TIMEOUT_S = 5.0
 #: The first command of a script: long enough for a background tab to wake.
 WAKE_TIMEOUT_S = 10.0
+#: The width, in screen pixels, a tab is assumed to show the field it is
+#: flown to at: the windows are the calibration's for that scale
+#: (`calibration.window_at`), as QC's mirror does.
+VIEW_PX = 1200
 
 #: Commands that set up the view rather than show this packet: skipped when the
 #: tab reports it is already in that state (and the project is not changing).
@@ -77,6 +90,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     units = packet.get("units") or []
     if kind in schemas.USER_SETUP_KINDS:
         return setup_script(packet, current_project=current_project)
+    if kind == "display_setup":
+        return display_packet_script(packet, current_project=current_project)
     if not units:
         return []
     project = units[0]["project"]
@@ -89,12 +104,16 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
     references = [r["marker"] if isinstance(r, dict) else r
                   for r in evidence.get("references") or []]
-    channels = calibration.as_viewer_channels(calibration_record, marker, references)
+    cells = _cells(manifest)
+    field = _field_around(cells)
+    channels = calibration.as_viewer_channels(
+        calibration_record, marker, references,
+        px_per_px=(field["width"] / VIEW_PX) if field else None)
     if channels:
         script.append({"type": "set_channels", "arguments": {
             "mode": "replace", "persist": False,
-            "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
-                         for c in channels]}})
+            "channels": [{k: c[k] for k in ("name", "color", "window", "curve", "enabled")
+                          if k in c} for c in channels]}})
     script.append({"type": "set_cell_render_mode", "arguments": {"mode": "outlines"}})
     script.append({"type": "open_tool", "arguments": {"tool": "gating"}})
     script.append({"type": "set_active_marker", "arguments": {"marker": marker}})
@@ -104,8 +123,6 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     if candidate is not None:
         script.append({"type": "preview_gate", "arguments": {
             "marker": marker, "low": float(candidate), "high": high, "persist": False}})
-    cells = _cells(manifest)
-    field = _field_around(cells)
     if field:
         script.append({"type": "fit_region", "arguments": field})
     if cells:
@@ -151,10 +168,72 @@ def setup_script(packet, *, current_project=None) -> list:
     return script
 
 
+def display_packet_script(packet, *, current_project=None) -> list:
+    """A contrast check going out: the tab on its image, in HD (an asinh
+    curve stretches the dark end, where 8-bit tiles have the fewest steps).
+    The channels move when the check is answered (`display_script`)."""
+    project = (packet.get("evidence") or {}).get("project")
+    if not project:
+        return []
+    script = []
+    if current_project != project:
+        script.append({"type": "open_project", "arguments": {"project": project,
+                                                             "tool": "gating", "carry": True}})
+    script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
+    return script
+
+
+def display_script(calibration_record, channels) -> list:
+    """`animate_contrast` for `channels` at their calibrated windows and
+    curves: the tab eases each in turn, captioned, while the session goes on
+    (the command is acknowledged at once). [] when none has an entry."""
+    from plexora.agent.evidence import calibration
+
+    entries = (calibration_record or {}).get("channels") or {}
+    items = []
+    for name in dict.fromkeys(channels):
+        entry = entries.get(name)
+        if not entry or entry.get("role") != "marker":
+            continue
+        items.append({"name": name, "window": [float(v) for v in entry["window"]],
+                      "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
+                      "color": calibration.MARKER_COLOR})
+    if not items:
+        return []
+    pace = DISPLAY_QUICK if len(items) > DISPLAY_PACED else {}
+    return [{"type": "animate_contrast", "arguments": {"channels": items,
+                                                       "caption": DISPLAY_CAPTION, **pace}}]
+
+
+def _unshown(engine, project):
+    """The channels of `project` whose settled brightness the tab has not
+    been shown, taken off the record (shown once). A `rule` session shows
+    every marker of the image once."""
+    from plexora.plugins.gating.server.autogate import views
+
+    entry = ((engine.record.get("display") or {}).get("projects") or {}).get(project)
+    if not entry:
+        return []
+    channels = list(entry.get("unshown") or [])
+    if entry.pop("show_all", False):
+        ds = engine.call.session.data(project)
+        for unit in engine.units_of(project):
+            if str(unit["state"]).startswith("skipped"):
+                continue
+            channel = views.image_channel(ds, unit["marker"])
+            if channel:
+                channels.append(channel)
+    entry["unshown"] = []
+    return list(dict.fromkeys(channels))
+
+
 def _packet_project(packet):
     if packet.get("units"):
         return packet["units"][0]["project"]
-    return ((packet.get("evidence") or {}).get("projects") or [None])[0]
+    evidence = packet.get("evidence") or {}
+    # A set-up packet names its image: one (`project`, a contrast check) or
+    # every image waiting on it (`projects`).
+    return evidence.get("project") or (evidence.get("projects") or [None])[0]
 
 
 def run(call, session_id, packet):
@@ -194,9 +273,24 @@ def run(call, session_id, packet):
             return {"status": "off", "sent": 0, "view_id": view["view_id"],
                     "errors": [{"code": exc.code, "message": exc.message}]}
     project = _packet_project(packet)
-    script = script_for(packet, manifest, calibration.load(project) if project else None,
+    stored = calibration.load(project) if project else None
+    script = script_for(packet, manifest, stored,
                         current_project=(state or {}).get("project") or view.get("project"),
                         viewer_state=state)
+    if project:
+        # What a contrast check settled, eased in channel by channel before
+        # this packet's own channels (the tab plays it while the session asks
+        # its next question; a later `set_channels` waits for it).
+        with engines.engine_for(call, session_id) as engine:
+            shown = _unshown(engine, project)
+        animate = display_script(stored, shown)
+        if animate:
+            at = next((i for i, c in enumerate(script)
+                       if c["type"] not in ("open_project", "set_hd_mode")), len(script))
+            if not any(c["type"] == "set_hd_mode" for c in script[:at]) \
+                    and not (state or {}).get("hd_mode"):
+                animate = [{"type": "set_hd_mode", "arguments": {"enabled": True}}, *animate]
+            script = script[:at] + animate + script[at:]
 
     def send(type, arguments):
         return control.send(view["view_id"], type, arguments,

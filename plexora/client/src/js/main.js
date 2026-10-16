@@ -785,7 +785,7 @@ async function init(config, savedViewTransform = null) {
     // (ViewerSidebar.askForHdIfCoarse): once per page, and after that the
     // toggle is the user's.
     let hdAskedFor = false;
-    window.addEventListener("plexora:hd-needed", () => {
+    window.addEventListener("plexora:hd-needed", (event) => {
         if (hdAskedFor || viewerManager.isHdMode()) return;
         hdAskedFor = true;
         try {
@@ -794,8 +794,12 @@ async function init(config, savedViewTransform = null) {
             else viewerManager.presetHdMode(true);
             const hdCheckbox = document.querySelector("#viewer_controls_hd");
             if (hdCheckbox) hdCheckbox.checked = true;
+            // A Log curve (viewerSidebar.ensureHdForCurve) stretches the dark
+            // end, where 8-bit tiles have the fewest steps.
             window.PlexoraToast?.show?.({
-                title: "HD is on: this stack's brightness sits in too narrow a range for "
+                title: event?.detail?.reason === "curve"
+                    ? "HD is on: a Log curve needs 16-bit tiles to draw dim cells without steps."
+                    : "HD is on: this stack's brightness sits in too narrow a range for "
                     + "8-bit tiles to show it.",
             });
         } catch (error) {
@@ -1396,6 +1400,10 @@ async function init(config, savedViewTransform = null) {
     eventHandler.bind(ChannelList.events.BRUSH_MOVE, (d) => {
         const fullName = dataLayer.getFullChannelName(d.name);
         seaDragonViewer.updateChannelRange(fullName, d.dataRange[0], d.dataRange[1]);
+    });
+    eventHandler.bind(ChannelList.events.CURVE_CHANGE, (d) => {
+        const fullName = dataLayer.getFullChannelName(d.name);
+        seaDragonViewer.updateChannelCurve?.(fullName, d.curve || null);
     });
 
     /**

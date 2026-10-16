@@ -217,6 +217,13 @@ class TruthAgent:
             # An uncalibrated image's size check: the scenes paint nuclei at
             # the size the estimate assumes.
             return {"kind": kind, "basis": "estimate_confirmed"}
+        if kind == "display_setup":
+            # A simulated reader cannot see the grid: it accepts the darker
+            # half of the ladder for both questions, so the rule's own column
+            # (c3) is chosen wherever the numbers allow it.
+            rows = [r["marker"] for r in ev.get("rows") or []]
+            return {"kind": kind, "background_ok": {m: ["c1", "c2", "c3"] for m in rows},
+                    "structure_ok": {m: ["c2", "c3"] for m in rows}}
         if kind == "transfer_check":
             project = ev["this"]["project"]
             direction = self.direction(marker, ev["this"]["aligned_gate"])

@@ -25,15 +25,27 @@ image's units). A few bright specks -- debris, a fold, a hot pixel cluster --
 otherwise put the overview's p99.5 an order of magnitude above every cell, and
 every cell draws black. A window still wider than `wide_ratio` is flagged.
 
-A marker with a cell table column is anchored on its negative cells instead
-(`cell_window`): black at their median pixel, white a fixed number of
-background spreads above it, read in a disc around each cell's centroid in
-level-0 crops -- the pixels every panel is drawn from -- and never from a
-cell QC left out (`cell_exclusions`). The overview window is then only the
-fallback (no table, too few cells), and so are the two rules above: the
-coarse-level clip and the cell cap are what re-saturate level-0 pixels. The
-record carries the QC fingerprint it was anchored under, so a QC change
-recomputes it.
+A marker with a cell table column is drawn from its own cells instead
+(`cell_window`, read in a disc around each cell's centroid in level-0 crops --
+the pixels every panel is drawn from -- never from a cell QC left out), on an
+asinh curve (`display_curve`) fixed by two display levels:
+
+- black at the negatives' low percentile, under the background, so the
+  background shows as a faint floor -- the limit is visible, nothing is
+  clipped to black that is tissue;
+- the background's brightest pixels (its noise p99) at NOISE_LEVEL: dim;
+- the bright cells' brightest structure (the titre) at TITRE_LEVEL: bright,
+  with room above it, so a ring, a nucleus or granules keep their shape.
+
+When a linear window already meets both, the curve is linear. A marker with
+no bright cells is drawn as if its titre were TITRE_FLOOR_GAPS background
+gaps above black, so its noise is never stretched to white. The rule's
+window is column c3 of a brightness ladder (`columns_for`, GAINS); a vision
+check may pick another column per marker (`record_choices`), and that choice
+outlives a recomputation. The overview window is then only the fallback (no
+table, too few cells), and so are the two rules above: the coarse-level clip
+and the cell cap are what re-saturate level-0 pixels. The record carries the
+QC fingerprint it was anchored under, so a QC change recomputes it.
 
 It is NOT the channel list the sidebar edits (`channelList`), which the user
 owns and the sidebar rewrites whole; nothing here changes what a user chose.
@@ -43,6 +55,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 
 import numpy as np
 
@@ -50,13 +63,33 @@ from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
 #: stale and recomputed.
-VERSION = "4"
+VERSION = "5"
 NAMESPACE = "display"
+
+#: [cal] the display levels (0 black .. 1 white) a marker's curve is solved
+#: for: the background's noise p99 draws dim, the titre bright with headroom.
+NOISE_LEVEL = 0.12
+TITRE_LEVEL = 0.85
+#: [cal] a marker without bright cells is drawn as if its titre were this
+#: many background gaps (noise p99 - black) above black.
+TITRE_FLOOR_GAPS = 6.0
+#: [cal] the brightness ladder a vision check chooses from: every display
+#: level times the gain (`gain_white`). c3 is the rule's own window.
+GAINS = (0.64, 0.8, 1.0, 1.25, 1.6)
+COLUMN_IDS = ("c1", "c2", "c3", "c4", "c5")
+RULE_COLUMN = "c3"
+#: [cal] a column is never chosen whose negative tile's p90 draws above
+#: `negative_level`, whose bright cells have more than `clipped_share` of
+#: their disc at white, or whose bright cells' p99 draws below `bright_level`.
+VETOES = {"negative_level": 0.35, "clipped_share": 0.05, "bright_level": 0.3}
 
 #: The marker being judged, its reference channels, the nuclear stain.
 MARKER_COLOR = "#ffd60a"
 REFERENCE_COLORS = ("#22e6e6", "#ff3df2")
 NUCLEAR_MUTED_BLUE = "#4f6fae"
+#: Pixels at full white in a contrast check (`display_grid`): saturation
+#: drawn as such, never mistaken for stain.
+CLIP_COLOR = "#ff2a2a"
 
 MARKER_PERCENTILES = (50.0, 99.5)
 NUCLEAR_PERCENTILES = (30.0, 99.0)
@@ -86,18 +119,8 @@ def _stats(plane):
 
 
 def channel_window(stats, role, cap=None):
-    """[low, high] for a channel's stats and role; `cap` (a marker's
-    `cell_cap`) lowers the top, never below the minimum contrast. A marker's
-    `stats["cell_window"]` (`cell_window.window_from_crops`) wins outright."""
-    anchored = stats.get("cell_window") if role != "nuclear" else None
-    if anchored:
-        low = float(anchored["low"])
-        high = max(float(anchored["high"]), MIN_CONTRAST * max(low, 1e-6))
-        # Noisy negatives never push white past what the brightest cells
-        # reach (the cell cap), so a positive still draws as one.
-        if cap is not None and cap > low:
-            high = min(high, max(cap, MIN_CONTRAST * max(low, 1e-6)))
-        return [low, high if high > low else low + 1.0]
+    """[low, high] for a channel's overview stats and role; `cap` (a marker's
+    `cell_cap`) lowers the top, never below the minimum contrast."""
     if role == "nuclear":
         low, high = stats["p30"], stats["p99"]
     else:
@@ -158,13 +181,145 @@ def _log_transformed(session, project):
         return None
 
 
+def _gap(measured):
+    """The background's spread above black (noise p99 - black), never 0."""
+    black = float(measured["black"])
+    gap = float(measured["noise_p99"]) - black
+    if gap > 0:
+        return gap
+    titre = measured.get("titre")
+    if titre is not None and float(titre) > black:
+        return (float(titre) - black) / 50.0
+    return max(abs(float(measured["background"]) - black), 1.0)
+
+
+def rule_from(measured) -> dict:
+    """{window, curve, floored} for a marker's measurements (`cell_window.
+    measure`, or its `low_band`): black at `black`, the noise p99 at
+    NOISE_LEVEL, the titre (floored) at TITRE_LEVEL."""
+    from plexora.server.utils import display_curve
+
+    black = float(measured["black"])
+    gap = _gap(measured)
+    titre = measured.get("titre")
+    titre_gap = float(titre) - black if titre is not None else 0.0
+    floor = TITRE_FLOOR_GAPS * gap
+    floored = titre_gap < floor
+    curve, white_gap = display_curve.solve(gap, max(titre_gap, floor), NOISE_LEVEL,
+                                           TITRE_LEVEL)
+    return {"window": [black, black + float(white_gap)], "curve": curve,
+            "floored": bool(floored)}
+
+
+def gain_white(window, curve, gain):
+    """The white point that draws every level of (`window`, `curve`) `gain`
+    times as bright (black and cofactor kept)."""
+    import math
+
+    from plexora.server.utils import display_curve
+
+    black, white = float(window[0]), float(window[1])
+    curve = display_curve.normalise(curve)
+    if curve is None:
+        return black + (white - black) / float(gain)
+    c = curve["cofactor"]
+    return black + c * math.sinh(math.asinh((white - black) / c) / float(gain))
+
+
+def columns_for(rule) -> list:
+    """The brightness ladder over a rule: [{id, gain, white}], c3 the rule."""
+    return [{"id": cid, "gain": gain, "white": gain_white(rule["window"], rule["curve"], gain)}
+            for cid, gain in zip(COLUMN_IDS, GAINS)]
+
+
+def entry_curve(entry):
+    """A record entry's curve (`display_curve`), None for linear."""
+    from plexora.server.utils import display_curve
+
+    return display_curve.normalise((entry or {}).get("curve"))
+
+
+def apply_choice(entry, choice) -> dict:
+    """The entry with a choice (`record_choices`) applied: the chosen
+    column's gain over the chosen band's rule. A choice for a column the
+    entry has no rule for leaves it as it is."""
+    if not choice or not entry.get("rule"):
+        return entry
+    rule = entry.get("rule_low") if choice.get("band") == "low" and entry.get("rule_low")         else entry["rule"]
+    gain = float(choice.get("gain") or 1.0)
+    window = [float(rule["window"][0]), gain_white(rule["window"], rule["curve"], gain)]
+    return {**entry, "window": window, "curve": rule["curve"],
+            "chosen_by": choice.get("chosen_by", "vision"), "choice": dict(choice)}
+
+
+def needs_choice(record, name) -> bool:
+    """True for a marker whose window a vision check should look at: drawn by
+    the cell rule, with a titre, not empty, and not chosen yet."""
+    entry = ((record or {}).get("channels") or {}).get(name) or {}
+    if entry.get("role") != "marker" or not entry.get("rule"):
+        return False
+    if name in ((record or {}).get("choices") or {}):
+        return False
+    return (entry.get("anchors") or {}).get("titre") is not None \
+        and "empty" not in (entry.get("flags") or []) \
+        and not entry["rule"].get("floored")
+
+
+def pick_column(columns, negatives_clear, pattern_clear, *, levels=None,
+                has_low_band=False) -> dict:
+    """{column, gain, band, chosen_by} from a vision check's two lists of
+    column ids (where the negatives look like background, and where the
+    marker's pattern shows in the bright cells without washing out).
+
+    Columns the numbers veto (`levels` {id: {negative_level, clipped_share,
+    bright_level}} against VETOES) are dropped first. Then, nearest the rule's
+    own column (ties: the darker):
+    - in both lists: `vision`;
+    - the negatives clear nowhere: the background band is stained (a marker
+      on most cells): the low band's rule (`vision:reanchored`), or the
+      darkest column when there is none (`vision:dark`);
+    - the pattern seen nowhere: the rule (`rule:pattern_not_seen`);
+    - otherwise the lists do not meet: nearest in the negatives' list
+      (`vision:conflict`)."""
+    gains = {c["id"]: float(c["gain"]) for c in columns}
+    ids = [c["id"] for c in columns]
+    vetoed = set()
+    for cid, level in (levels or {}).items():
+        if level.get("negative_level", 0.0) > VETOES["negative_level"] \
+                or level.get("clipped_share", 0.0) > VETOES["clipped_share"] \
+                or level.get("bright_level", 1.0) < VETOES["bright_level"]:
+            vetoed.add(cid)
+    allowed = [cid for cid in ids if cid not in vetoed]
+    rule_at = ids.index(RULE_COLUMN) if RULE_COLUMN in ids else len(ids) // 2
+
+    def nearest(candidates):
+        return min(candidates, key=lambda cid: (abs(ids.index(cid) - rule_at), gains[cid]))
+
+    def out(cid, chosen_by, band="negatives"):
+        return {"column": cid, "gain": gains.get(cid, 1.0), "band": band,
+                "chosen_by": chosen_by, "vetoed": sorted(vetoed)}
+
+    if not allowed:
+        return out(RULE_COLUMN, "rule:vetoed")
+    clear = [cid for cid in allowed if cid in set(negatives_clear or ())]
+    seen = [cid for cid in allowed if cid in set(pattern_clear or ())]
+    both = [cid for cid in clear if cid in seen]
+    if both:
+        return out(nearest(both), "vision")
+    if not clear:
+        if has_low_band:
+            return out(RULE_COLUMN, "vision:reanchored", band="low")
+        return out(min(allowed, key=lambda cid: gains[cid]), "vision:dark")
+    if not seen:
+        return out(RULE_COLUMN, "rule:pattern_not_seen")
+    return out(nearest(clear), "vision:conflict")
+
+
 def compute(source, channels, *, nuclear=None, level=None, caps=None,
             cell_windows=None) -> dict:
     """The calibration record for `channels` (names -> keys), JSON-safe.
     `caps` maps a marker channel to its `cell_cap`; `cell_windows` to its
-    cell-anchored window (`cell_window.cell_windows`), which wins."""
-    from plexora.agent.evidence import cell_window as cellwin
-
+    cell measurements (`cell_window.cell_windows`), whose rule wins."""
     from plexora.agent.evidence import image_qc
 
     level = image_qc.overview_level(source) if level is None else level
@@ -183,12 +338,12 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
         if cap is not None:
             stats["cell_cap"] = float(cap)
         anchored = (cell_windows or {}).get(name) if role != "nuclear" else None
-        if anchored:
-            stats["cell_window"] = dict(anchored)
-        window = channel_window(stats, role, cap=cap)
+        rule = rule_from(anchored) if anchored else None
+        window = list(rule["window"]) if rule else channel_window(stats, role, cap=cap)
         capped = not anchored and cap is not None and window != channel_window(stats, role)
         flags = []
-        if role != "nuclear" and window[1] > THRESHOLDS["wide_ratio"] * max(window[0], 1.0):
+        if role != "nuclear" and not anchored \
+                and window[1] > THRESHOLDS["wide_ratio"] * max(window[0], 1.0):
             flags.append("wide_window")
         if stats["saturation_fraction"] > THRESHOLDS["saturated"]:
             flags.append("saturated")
@@ -209,28 +364,52 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
         if stats["p999"] <= stats["p50"] * 1.05:
             flags.append("empty")
         color = NUCLEAR_MUTED_BLUE if role == "nuclear" else MARKER_COLOR
-        out[name] = {"role": role, "key": key, "color": color, "window": window,
-                     **({"anchors": {"low": float(anchored["low"]),
-                                     "noise_p99": float(anchored["noise_p99"]),
-                                     "spans": float(anchored["spans"]),
-                                     "radius_px": float(anchored["radius_px"])}}
-                        if anchored else {}),
-                     "window_source": (f"calib:p{NUCLEAR_PERCENTILES[0]:g}-"
-                                       f"p{NUCLEAR_PERCENTILES[1]:g}@L{level}"
-                                       if role == "nuclear" else
-                                       _anchored_source(cellwin) if anchored else
-                                       f"calib:p{MARKER_PERCENTILES[0]:g}-"
-                                       f"p{MARKER_PERCENTILES[1]:g}@L{level}"
-                                       + ("+cellcap" if capped else "")),
-                     "stats": stats, "flags": flags}
+        entry = {"role": role, "key": key, "color": color, "window": window,
+                 "window_source": (f"calib:p{NUCLEAR_PERCENTILES[0]:g}-"
+                                   f"p{NUCLEAR_PERCENTILES[1]:g}@L{level}"
+                                   if role == "nuclear" else
+                                   _anchored_source(anchored, rule) if anchored else
+                                   f"calib:p{MARKER_PERCENTILES[0]:g}-"
+                                   f"p{MARKER_PERCENTILES[1]:g}@L{level}"
+                                   + ("+cellcap" if capped else "")),
+                 "stats": stats, "flags": flags}
+        if anchored:
+            entry.update({
+                "curve": rule["curve"], "rule": rule, "columns": columns_for(rule),
+                "chosen_by": "rule",
+                "anchors": {k: anchored[k] for k in (
+                    "black", "background", "noise_p99", "titre", "band", "reanchored",
+                    "n_negative", "n_bright", "radius_px") if k in anchored},
+                "cells": anchored.get("cells") or {}})
+            if anchored.get("low_band") and not anchored.get("reanchored"):
+                entry["rule_low"] = rule_from(anchored["low_band"])
+            if anchored.get("reanchored"):
+                flags.append("reanchored_low")
+        out[name] = entry
     return {"version": VERSION, "level": int(level), "channels": out,
             "nuclear": nuclear}
 
 
-def _anchored_source(cellwin):
+def _anchored_source(anchored, rule):
+    from plexora.agent.evidence import cell_window as cellwin
+
     spec = cellwin.CELL_WINDOW
-    return (f"{cellwin.SOURCE}:p{spec['negative_pct'][0]:g}-{spec['negative_pct'][1]:g}neg"
-            f"+{spec['spans']:g}span@L{cellwin.LEVEL}")
+    band = spec["low_pct"] if anchored.get("reanchored") else spec["negative_pct"]
+    kind = "asinh" if rule.get("curve") else "linear"
+    return (f"{cellwin.SOURCE}:p{band[0]:g}-{band[1]:g}neg:{kind}"
+            f":n{NOISE_LEVEL:g}-t{TITRE_LEVEL:g}@L{cellwin.LEVEL}")
+
+
+def apply_choices(record) -> dict:
+    """`record` with its stored `choices` applied to the entries they name."""
+    choices = (record or {}).get("choices") or {}
+    if not choices:
+        return record
+    channels = dict(record.get("channels") or {})
+    for name, choice in choices.items():
+        if name in channels:
+            channels[name] = apply_choice(channels[name], choice)
+    return {**record, "channels": channels}
 
 
 def _anchors(session, project, keys, nuclear):
@@ -263,7 +442,7 @@ def _store(project):
     return api.store(project, NAMESPACE)
 
 
-def load(project) -> dict | None:
+def _load_raw(project) -> dict | None:
     blob = _store(project).get_state()
     if not blob:
         return None
@@ -271,8 +450,25 @@ def load(project) -> dict | None:
         record = json.loads(blob.decode("utf-8"))
     except ValueError:
         return None
+    return record if isinstance(record, dict) else None
+
+
+def load(project) -> dict | None:
+    record = _load_raw(project)
     # Another rule's windows: stale, and recomputed by the next calibrate().
-    return record if isinstance(record, dict) and record.get("version") == VERSION else None
+    return record if record and record.get("version") == VERSION else None
+
+
+def load_current(session, project) -> dict | None:
+    """The stored record when it was anchored on the table and the QC
+    exclusions as they are now; None when there is none or it is stale."""
+    record = load(project)
+    if record is None:
+        return None
+    if record.get("table") != _table_fingerprint(session, project) \
+            or record.get("qc") != _qc_fingerprint(session, project):
+        return None
+    return record
 
 
 def revision(project) -> str:
@@ -286,10 +482,11 @@ def save(project, record) -> str:
     return hashlib.sha1(blob).hexdigest()[:16]
 
 
-def calibrate(session, project, channels=None, *, force=False) -> tuple:
+def calibrate(session, project, channels=None, *, force=False, reset_choices=False) -> tuple:
     """(record, changed): compute and store the calibration for a project's
     channels (default every real channel), reusing a stored one unless
-    `force` or a channel is missing from it."""
+    `force` or a channel is missing from it. A vision check's choices are
+    kept (re-applied over the fresh rule) unless `reset_choices`."""
     from plexora.agent.presets import nuclear_channel
     from plexora.agent.render import resolve_channel
     from plexora.server.utils import source_image
@@ -306,6 +503,9 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
     if stored and not force and all(n in (stored.get("channels") or {}) for n in wanted) \
             and stored.get("table") == table and stored.get("qc") == qc:
         return stored, False
+    # A vision check's choices outlive a recomputation: they are a gain over
+    # whatever the rule now says, not a window.
+    choices = {} if reset_choices else dict((stored or {}).get("choices") or {})
     if stored and (stored.get("table") != table or stored.get("qc") != qc):
         stored = None       # windows anchored on another matrix's values, or other cells
     keys = {}
@@ -327,15 +527,57 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no per-channel windows to calibrate")
         fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
-    merged = dict(stored or {"version": VERSION, "channels": {}})
-    merged["table"] = table
-    merged["qc"] = qc
-    merged.update({k: v for k, v in fresh.items() if k != "channels"})
-    merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
-    merged["project"] = project
-    before = revision(project)
-    after = save(project, merged)
+    with _lock(project):
+        # The computation above ran unlocked (it reads crops for seconds); a
+        # choice recorded meanwhile (`record_choices`) is newer than the one
+        # this started from, and is kept.
+        latest = load(project)
+        if latest and not reset_choices:
+            choices = {**choices, **(latest.get("choices") or {})}
+        merged = dict(stored or {"version": VERSION, "channels": {}})
+        merged["table"] = table
+        merged["qc"] = qc
+        merged.update({k: v for k, v in fresh.items() if k != "channels"})
+        merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
+        merged["project"] = project
+        if choices:
+            merged["choices"] = choices
+        else:
+            merged.pop("choices", None)
+        merged = apply_choices(merged)
+        before = revision(project)
+        after = save(project, merged)
     return merged, before != after
+
+
+_LOCKS_GUARD = threading.Lock()
+_LOCKS: dict = {}
+
+
+def _lock(project):
+    """One writer of a project's record at a time (`calibrate`'s save and
+    `record_choices`): a session's bulk pass and the viewer's first-open
+    calibration may both be at it."""
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(str(project), threading.Lock())
+
+
+def record_choices(project, choices) -> tuple:
+    """(record, revision): store a vision check's choices ({channel: choice},
+    `pick_column` plus who and when) and apply them. Channels the record does
+    not hold are ignored; None when there is no current record."""
+    with _lock(project):
+        return _record_choices(project, choices)
+
+
+def _record_choices(project, choices):
+    record = load(project)
+    if record is None:
+        return None, revision(project)
+    known = {k: v for k, v in (choices or {}).items() if k in (record.get("channels") or {})}
+    record = {**record, "choices": {**(record.get("choices") or {}), **known}}
+    record = apply_choices(record)
+    return record, save(project, record)
 
 
 _CURRENT: dict = {}
@@ -376,6 +618,8 @@ def current(session, project, channels) -> dict:
         fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
     fresh["table"] = table
     fresh["qc"] = qc
+    if (stored or {}).get("choices"):
+        fresh = apply_choices({**fresh, "choices": stored["choices"]})
     if len(_CURRENT) >= _CURRENT_LIMIT:
         _CURRENT.pop(next(iter(_CURRENT)))
     _CURRENT[identity] = fresh
@@ -388,6 +632,33 @@ def window_for(record, name):
     if not entry:
         return None, None
     return list(entry["window"]), entry.get("window_source", "calib")
+
+
+def display_spec(record, name, px_per_px=None) -> dict | None:
+    """{window, curve, source} for a channel drawn at `px_per_px` full-
+    resolution pixels per output pixel (`window_at`); the asinh cofactor
+    scales with the window there, so the curve keeps its shape. None when the
+    record has no entry for it."""
+    from plexora.server.utils import display_curve
+
+    entry = ((record or {}).get("channels") or {}).get(name)
+    if not entry:
+        return None
+    base = [float(v) for v in entry["window"]]
+    window = window_at(record, name, px_per_px) if px_per_px is not None else list(base)
+    curve = entry_curve(entry)
+    if curve is not None and window != base and base[1] > base[0]:
+        curve = display_curve.scaled(curve, (window[1] - window[0]) / (base[1] - base[0]))
+    return {"window": window, "curve": curve,
+            "source": entry.get("window_source", "calib")}
+
+
+def viewer_curve(curve) -> dict:
+    """A curve as the viewer's channel commands take it: kind always named."""
+    from plexora.server.utils import display_curve
+
+    curve = display_curve.normalise(curve)
+    return dict(curve) if curve else {"kind": "linear"}
 
 
 #: [cal] Full-resolution pixels per drawn pixel between which a marker's
@@ -407,8 +678,7 @@ def overview_window(record, name):
     stats = (entry or {}).get("stats")
     if not stats or "p50" not in stats:
         return None
-    plain = {k: v for k, v in stats.items() if k != "cell_window"}
-    return channel_window(plain, entry.get("role", "marker"), cap=stats.get("cell_cap"))
+    return channel_window(stats, entry.get("role", "marker"), cap=stats.get("cell_cap"))
 
 
 def window_at(record, name, px_per_px):
@@ -450,21 +720,19 @@ def as_viewer_channels(record, marker, references=(), nuclear=None, px_per_px=No
     channels = (record or {}).get("channels") or {}
     nuclear = nuclear or (record or {}).get("nuclear")
 
-    def window(name):
-        return window_at(record, name, px_per_px) if px_per_px is not None \
-            else channels[name]["window"]
+    def shown(name, colour):
+        spec = display_spec(record, name, px_per_px)
+        return {"name": name, "color": colour, "window": spec["window"],
+                "curve": viewer_curve(spec["curve"]), "enabled": True}
 
     out = []
     if nuclear and nuclear in channels and nuclear != marker:
-        out.append({"name": nuclear, "color": NUCLEAR_MUTED_BLUE,
-                    "window": window(nuclear), "enabled": True})
+        out.append(shown(nuclear, NUCLEAR_MUTED_BLUE))
     if marker in channels:
-        out.append({"name": marker, "color": MARKER_COLOR,
-                    "window": window(marker), "enabled": True})
+        out.append(shown(marker, MARKER_COLOR))
     for colour, reference in zip(REFERENCE_COLORS, references):
         if reference in channels:
-            out.append({"name": reference, "color": colour,
-                        "window": window(reference), "enabled": True})
+            out.append(shown(reference, colour))
     return out
 
 

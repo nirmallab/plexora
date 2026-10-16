@@ -76,6 +76,19 @@ async function plexoraMapWithLimit(items, limit, fn) {
 //: the channel fade's own length, so a channel switched on comes in and
 //: develops its contrast in one movement.
 const RANGE_EASE_MS = 240;
+//: How long a gating calibration's window takes to arrive on a channel the
+//: user has not set (syncGatingContrast): long enough to be seen happening.
+const GATING_EASE_MS = 600;
+//: How long the first open waits, at most, for the gating calibration it
+//: asked the server for (startGatingContrast), and its first poll.
+const GATING_POLL_LIMIT_MS = 60000;
+const GATING_POLL_FIRST_MS = 1500;
+//: Where a slot's window came from (`slot.rangeSource`, saved as a row's
+//: `source`): the user's hand or an explicit Auto click, the viewer's own
+//: auto-levelling, a gating calibration, a default the project was seeded
+//: with -- or "legacy", a row saved before rows said, which counts as the
+//: user's. Only auto, default and gating are ever replaced by a gating window.
+const REPLACEABLE_SOURCES = new Set(["auto", "default", "gating"]);
 
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {
@@ -112,6 +125,14 @@ class ViewerSidebar {
         // Remembers a manually-set intensity range per marker name (not per slot), so
         // switching a slot's marker away and back doesn't discard what the user tuned.
         this.markerRangeOverrides = new Map();
+        //: The display curve last chosen per marker (null linear), so a slot
+        //: switched away and back keeps it, as it keeps its range.
+        this.markerCurves = new Map();
+        //: The project's gating calibration as the server offers it
+        //: (/display_contrast): {state, rev, channels: {fullName: {window,
+        //: curve, chosen_by}}}. Null until fetched; only the viewer's own
+        //: sidebar fetches it.
+        this.gatingContrast = null;
         this.colorPickers = new Map();
         this.markerSelects = new Map();
         this._saveChannelsTimer = null;
@@ -335,6 +356,7 @@ class ViewerSidebar {
             // in place, where the old slider had to be thrown away and drawn
             // again from scratch.
             this.syncChannelSlider(slot);
+            this.syncSlotCurve?.(slot);
         });
     }
 
@@ -433,6 +455,11 @@ class ViewerSidebar {
         // rewrite every sample in it.
         if (!launchChannels.length && !carriedChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
         this.sidebarModules.forEach((m, i) => m.persistIfNeeded && m.persistIfNeeded(Boolean(moduleSaved[i] && moduleSaved[i].length)));
+
+        // The gating calibration, offered to every channel and applied to the
+        // ones nobody set -- after the first picture is up, never before it.
+        // Not for a launch or a carried set: those are somebody's request.
+        if (!launchChannels.length && !carriedChannels.length) this.startGatingContrast();
     }
 
     /**
@@ -637,6 +664,17 @@ class ViewerSidebar {
         actions.appendChild(auto);
         this.syncSlotAutoButton(slot, auto);
 
+        // The gating calibration's window for this channel, when there is
+        // one: offered, never imposed on a window the user set. Hidden until
+        // the project has one for this channel (syncSlotGatingButton).
+        const gating = document.createElement("button");
+        gating.type = "button";
+        gating.classList.add("slider-auto-button", "channel-slot-auto", "channel-slot-gating");
+        gating.hidden = true;
+        gating.addEventListener("click", () => this.onSlotGatingClick(slot.index));
+        actions.appendChild(gating);
+        this.syncSlotGatingButton(slot, gating);
+
         const remove = document.createElement("button");
         remove.type = "button";
         remove.classList.add("slot-remove-button");
@@ -666,7 +704,35 @@ class ViewerSidebar {
         rangeRow.appendChild(slider);
 
         detail.appendChild(rangeRow);
+
+        // How brightness follows intensity: Linear, or Log (asinh -- dim
+        // cells show above the background, bright ones keep their structure).
+        const curveRow = document.createElement("div");
+        curveRow.classList.add("channel-slot-curve");
+        const options = document.createElement("div");
+        options.classList.add("cell-mode-options", "channel-slot-curve-options");
+        options.setAttribute("role", "radiogroup");
+        options.setAttribute("aria-label", "Brightness curve");
+        [["linear", "Linear", "Brightness proportional to intensity"],
+         ["asinh", "Log", "Log-like (asinh): dim cells visible, bright ones not saturated"]]
+            .forEach(([kind, label, title]) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.classList.add("cell-mode-option");
+                button.dataset.curve = kind;
+                button.textContent = label;
+                button.title = title;
+                button.setAttribute("role", "radio");
+                button.addEventListener("click", () => this.onSlotCurveClick(slot.index, kind));
+                options.appendChild(button);
+            });
+        curveRow.appendChild(options);
+        const note = document.createElement("span");
+        note.classList.add("channel-slot-curve-note");
+        curveRow.appendChild(note);
+        detail.appendChild(curveRow);
         row.appendChild(detail);
+        this.syncSlotCurve(slot, row);
 
         return row;
     }
@@ -703,11 +769,15 @@ class ViewerSidebar {
                 slot.range = [...override];
                 slot.userRangeChanged = true;
                 slot.autoLeveled = true;
+                slot.rangeSource = "user";
             } else {
                 slot.range = this.getImageRange(name);
                 slot.userRangeChanged = false;
                 slot.autoLeveled = false;
+                slot.rangeSource = null;
             }
+            slot.curve = this.markerCurves?.get(name) || null;
+            slot.preGatingRange = null;
             slot.autoLeveling = false;
             // A range belonging to the channel that just left the slot. There
             // is nothing here to restore it to any more.
@@ -728,7 +798,10 @@ class ViewerSidebar {
         if (slot.enabled) {
             this.activateChannel(slot);
             this.autoLevelChannelIfNeeded(slot);
+            this.requestGatingContrast?.([slot.name]);
         }
+        this.syncSlotCurve?.(slot);
+        this.syncSlotGatingButton?.(slot);
         this.updateSelectedCount();
         this.scheduleSaveChannels();
     }
@@ -744,6 +817,7 @@ class ViewerSidebar {
             this.activateChannel(slot);
             if (!wasEnabled) {
                 this.autoLevelChannelIfNeeded(slot);
+                this.requestGatingContrast?.([slot.name]);
             }
         } else {
             this.deactivateChannel(slot);
@@ -801,6 +875,14 @@ class ViewerSidebar {
             name: slot.name,
             dataRange: [...slot.range],
         });
+        // The slot's curve, which the canvas keeps per channel record: a
+        // channel switched back on draws with the curve it was left with.
+        if (ChannelList.events.CURVE_CHANGE) {
+            this.eventHandler.trigger(ChannelList.events.CURVE_CHANGE, {
+                name: slot.name,
+                curve: slot.curve || null,
+            });
+        }
 
         // HD mode's slider domain is the real per-channel image_min/qmax
         // (default mode uses a fixed [0, 255] byte domain and never needs
@@ -988,7 +1070,12 @@ class ViewerSidebar {
         if (!slot) return;
         slot.range = this.normalizeRange(values, true);
         if (userChanged) {
+            // An explicit window ends any ease on its way (easeSlotRange):
+            // what was just set stands.
+            slot.rangeEase = null;
+            slot.rangeEaseTarget = null;
             slot.userRangeChanged = true;
+            slot.rangeSource = "user";
             if (slot.name) {
                 // Kept in raw 16-bit units, like the saved list: a range
                 // remembered in HD mode and put back in default mode (or the
@@ -1046,9 +1133,13 @@ class ViewerSidebar {
             range: [...slot.range],
             userRangeChanged: slot.userRangeChanged,
             autoLeveled: slot.autoLeveled,
+            rangeSource: slot.rangeSource || null,
+            curve: slot.curve || null,
         };
         this.syncSlotAutoButton(slot, null, { busy: true });
         try {
+            // The fit is a linear window: Auto draws it linear.
+            if (slot.curve) this.setSlotCurve?.(slotIndex, null, { save: false, source: null });
             await this.autoChannel(slotIndex, { force: true });
         } finally {
             // A fit that never landed -- no stats for the channel, or the
@@ -1086,8 +1177,14 @@ class ViewerSidebar {
         this.setSlotRange(slotIndex, before.range, false);
         slot.userRangeChanged = before.userRangeChanged;
         slot.autoLeveled = before.autoLeveled;
+        slot.rangeSource = before.rangeSource || null;
+        const curves = globalThis.PlexoraDisplayCurve;
+        if (curves && !curves.same(slot.curve, before.curve)) {
+            this.setSlotCurve?.(slotIndex, before.curve, { save: false, source: null });
+        }
         this.scheduleSaveChannels();
         this.syncSlotAutoButton(slot);
+        this.syncSlotGatingButton?.(slot);
     }
 
     /**
@@ -1115,6 +1212,363 @@ class ViewerSidebar {
         node.innerHTML = state === "revert"
             ? '<span class="fas fa-rotate-left"></span>'
             : '<span class="fas fa-wand-magic-sparkles"></span>';
+    }
+
+    // -- display curve ----------------------------------------------------------
+
+    /**
+     * Set a slot's display curve (services/displayCurve.js): null linear, or
+     * {kind: "asinh", cofactor} in RAW units. The canvas is told
+     * (CURVE_CHANGE), the marker remembers it, and `source` (default "user")
+     * says who set the slot's look; null leaves the slot's source alone.
+     * A Log curve on 8-bit tiles shows steps at the dark end, so it asks for
+     * HD (ensureHdForCurve).
+     */
+    setSlotCurve(slotIndex, curve, { save = true, source = "user" } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot) return;
+        const next = PlexoraDisplayCurve.normalise(curve);
+        const changed = !PlexoraDisplayCurve.same(slot.curve, next);
+        slot.curve = next;
+        if (slot.name) this.markerCurves.set(slot.name, next);
+        if (source) slot.rangeSource = source;
+        if (changed && slot.enabled && slot.name) {
+            this.eventHandler.trigger(ChannelList.events.CURVE_CHANGE, {
+                name: slot.name,
+                curve: next,
+            });
+        }
+        if (next) this.ensureHdForCurve();
+        this.syncSlotCurve(slot);
+        if (save) this.scheduleSaveChannels();
+    }
+
+    /** The Linear / Log buttons: Log seeds a cofactor from the window on
+     *  screen (its raw span / DEFAULT_ASINH_SPAN) unless the slot has one. */
+    onSlotCurveClick(slotIndex, kind) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name) return;
+        if (kind !== "asinh") {
+            this.setSlotCurve(slotIndex, null);
+            return;
+        }
+        if (slot.curve) return;
+        const remembered = this.markerCurves.get(slot.name);
+        this.setSlotCurve(slotIndex, remembered || PlexoraDisplayCurve.seeded(this.toRawRangeForSlot(slot)));
+    }
+
+    /** The curve buttons' state and the 8-bit note. */
+    syncSlotCurve(slot, row = null) {
+        const node = row || this.slotRow(slot.index);
+        if (!node) return;
+        const kind = slot.curve ? "asinh" : "linear";
+        node.querySelectorAll(".channel-slot-curve-options .cell-mode-option").forEach((button) => {
+            const on = button.dataset.curve === kind;
+            button.classList.toggle("is-active", on);
+            button.setAttribute("aria-checked", on ? "true" : "false");
+        });
+        const note = node.querySelector(".channel-slot-curve-note");
+        if (note) {
+            note.textContent = slot.curve && !this.isHdMode() ? "8-bit: steps may show" : "";
+            note.title = slot.curve && !this.isHdMode()
+                ? "Turn HD on for 16-bit tiles: a Log curve stretches the dark end" : "";
+        }
+    }
+
+    /** A Log curve wants 16-bit tiles; asks the viewer once (main.js). */
+    ensureHdForCurve() {
+        if (this.hdModeOverride !== undefined || this.root !== document || this.idPrefix) return;
+        if (this.isHdMode()) return;
+        window.dispatchEvent(new CustomEvent("plexora:hd-needed", { detail: { reason: "curve" } }));
+    }
+
+    // -- the gating calibration ------------------------------------------------
+
+    /** The calibration's entry for a slot's channel, or null. */
+    gatingEntry(slot) {
+        if (!slot || !slot.name) return null;
+        const channels = this.gatingContrast?.channels || {};
+        const fullName = this.dataLayer.getFullChannelName(slot.name);
+        return channels[fullName] || channels[slot.name] || null;
+    }
+
+    /** Whether a slot draws an entry's window and curve already. */
+    showsGating(slot, entry) {
+        if (!entry || !Array.isArray(entry.window)) return false;
+        const raw = this.toRawRangeForSlot(slot);
+        const close = (a, b) => Math.abs(Number(a) - Number(b))
+            <= Math.max(1e-6, 1e-3 * Math.abs(Number(b)), this.isHdMode() ? 0.5 : this.byteStep(slot));
+        return close(raw[0], entry.window[0]) && close(raw[1], entry.window[1])
+            && PlexoraDisplayCurve.same(slot.curve, entry.curve);
+    }
+
+    /** One byte of the slot's quantization window, in raw units. */
+    byteStep(slot) {
+        const packet = this.quantWindow(slot.name);
+        return packet ? Math.max(1, Number(packet.qmax) - Number(packet.qmin)) / 255 : 1;
+    }
+
+    /**
+     * Put the gating calibration's window and curve on a slot. `source`
+     * "gating" unless told otherwise; eased over `ms`. Returns whether it
+     * moved anything. The window is raw; converted into the slider's domain.
+     */
+    applyGatingContrast(slotIndex, { ms = GATING_EASE_MS, save = true, entry = null } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        const found = entry || this.gatingEntry(slot);
+        if (!slot || !slot.name || !found || !Array.isArray(found.window)) return false;
+        let target = [Number(found.window[0]), Number(found.window[1])];
+        if (!(target[1] > target[0])) return false;
+        if (!this.isHdMode()) {
+            const packet = this.quantWindow(slot.name);
+            if (!packet) return false;
+            target = this.rawToByteRangeFine(target, packet);
+        }
+        slot.rangeSource = "gating";
+        slot.displayRev = this.gatingContrast?.rev || null;
+        slot.userRangeChanged = false;
+        slot.autoLeveled = true;
+        this.setSlotCurve(slotIndex, found.curve && found.curve.kind === "asinh" ? found.curve : null,
+                          { save: false, source: "gating" });
+        this.easeSlotRange(slotIndex, slot, target, { ms, force: true });
+        this.syncSlotGatingButton(slot);
+        if (save) this.scheduleSaveChannels();
+        return true;
+    }
+
+    /** rawToByteRange without rounding to whole bytes: a calibrated window
+     *  keeps its precision on the slider (the shader reads floats). */
+    rawToByteRangeFine([rmin, rmax], packet) {
+        const span = Math.max(packet.qmax - packet.qmin, 1);
+        const toByte = (v) => Math.min(255, Math.max(0, ((v - packet.qmin) / span) * 255));
+        return [toByte(rmin), toByte(rmax)];
+    }
+
+    /**
+     * The gating button: shown when the calibration has an entry for the
+     * channel. Pressed, it puts that window and curve on (remembering what
+     * was there); pressed again, it puts back what was there.
+     */
+    onSlotGatingClick(slotIndex) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name) return;
+        if (slot.preGatingRange) {
+            const before = slot.preGatingRange;
+            slot.preGatingRange = null;
+            this.setSlotRange(slotIndex, before.range, false);
+            slot.userRangeChanged = before.userRangeChanged;
+            slot.autoLeveled = before.autoLeveled;
+            slot.rangeSource = before.rangeSource || null;
+            this.setSlotCurve(slotIndex, before.curve, { save: false, source: null });
+            this.updateSlotReadout(slot);
+            this.syncSlotGatingButton(slot);
+            this.scheduleSaveChannels();
+            return;
+        }
+        const before = {
+            range: [...slot.range],
+            userRangeChanged: slot.userRangeChanged,
+            autoLeveled: slot.autoLeveled,
+            rangeSource: slot.rangeSource || null,
+            curve: slot.curve || null,
+        };
+        if (this.applyGatingContrast(slotIndex)) slot.preGatingRange = before;
+        this.syncSlotGatingButton(slot);
+    }
+
+    syncSlotGatingButton(slot, button = null) {
+        const node = button || this.slotRow(slot.index)?.querySelector(".channel-slot-gating");
+        if (!node) return;
+        const entry = this.gatingEntry(slot);
+        const reverting = Boolean(slot.preGatingRange);
+        node.hidden = !entry || (!reverting && this.showsGating(slot, entry));
+        const state = reverting ? "revert" : "apply";
+        if (node.dataset.state === state) return;
+        node.dataset.state = state;
+        node.classList.toggle("is-revert", reverting);
+        const label = reverting ? "Restore the contrast from before"
+            : "Use gating contrast (calibrated on this image's cells)";
+        node.title = label;
+        node.setAttribute("aria-label", label);
+        node.innerHTML = reverting
+            ? '<span class="fas fa-rotate-left"></span>'
+            : '<span class="fas fa-microscope"></span>';
+    }
+
+    /**
+     * Apply the calibration to every slot it may change: a channel whose
+     * window was set by the viewer's own levelling, a seeded default or an
+     * earlier calibration, and is not on it already. Never a window the user
+     * set (by hand, an explicit Auto, or a row saved before rows said).
+     * `only` limits it to those slot indices.
+     */
+    syncGatingContrast({ only = null, ms = GATING_EASE_MS } = {}) {
+        if (!this.gatingContrast?.channels) return 0;
+        let moved = 0;
+        this.channelSlots.forEach((slot) => {
+            if (!slot || !slot.name || !slot.enabled) return;
+            if (only && !only.includes(slot.index)) return;
+            this.syncSlotGatingButton(slot);
+            const source = slot.rangeSource || (slot.userRangeChanged ? "user" : "auto");
+            if (!REPLACEABLE_SOURCES.has(source)) return;
+            const entry = this.gatingEntry(slot);
+            if (!entry || this.showsGating(slot, entry)) return;
+            // A fit still on its way would land over this: it is told not to
+            // (autoChannel's stillCurrent reads the gating source).
+            if (this.applyGatingContrast(slot.index, { ms, entry })) moved += 1;
+        });
+        return moved;
+    }
+
+    /** Whether this instance is the viewer's own (the only one that asks). */
+    ownsProject() {
+        return this.persist && this.root === document && !this.idPrefix
+            && typeof plexoraUrl === "function";
+    }
+
+    /** GET /display_contrast: the calibration as the server holds it now. */
+    async fetchGatingContrast() {
+        if (!this.ownsProject()) return null;
+        const source = window.flaskVariables?.datasource || (typeof datasource !== "undefined" ? datasource : null);
+        if (!source) return null;
+        try {
+            const response = await fetch(plexoraUrl(
+                `display_contrast?datasource=${encodeURIComponent(source)}`));
+            if (!response.ok) return null;
+            const body = await response.json();
+            if (body && typeof body === "object") {
+                this.gatingContrast = body;
+                this.channelSlots.forEach((slot) => slot && this.syncSlotGatingButton(slot));
+            }
+            return body;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /** POST /display_contrast/compute for `channels` (full names). */
+    async computeGatingContrast(channels) {
+        const source = window.flaskVariables?.datasource || (typeof datasource !== "undefined" ? datasource : null);
+        if (!source || !this.ownsProject()) return null;
+        try {
+            const response = await fetch(plexoraUrl("display_contrast/compute"), {
+                method: "POST",
+                headers: { "Accept": "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify({ datasource: source, channels }),
+            });
+            return response.ok ? await response.json() : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * The first open: fetch the calibration; when the server has none for the
+     * channels on screen, ask for one (those channels only -- the rest are
+     * asked for as they are switched on) and poll with backoff until it is
+     * ready or GATING_POLL_LIMIT_MS passes; then apply it to the slots it may
+     * change. Never blocks the picture: the hint and the fit show at once.
+     */
+    async startGatingContrast() {
+        if (!this.ownsProject() || this._gatingStarted) return;
+        this._gatingStarted = true;
+        if (!this._gatingListener) {
+            this._gatingListener = () => {
+                this.fetchGatingContrast().then(() => this.syncGatingContrast());
+            };
+            window.addEventListener("plexora:display-contrast-changed", this._gatingListener);
+        }
+        await this.pollGatingContrast();
+    }
+
+    /** The channels on screen, by full name: what the calibration is asked for. */
+    enabledChannelNames() {
+        return this.channelSlots.filter((slot) => slot && slot.enabled && slot.name)
+            .map((slot) => this.dataLayer.getFullChannelName(slot.name));
+    }
+
+    /**
+     * Fetch the calibration, ask for the channels on screen it lacks, and
+     * poll with backoff until they arrive (or GATING_POLL_LIMIT_MS). One poll
+     * at a time: a channel switched on meanwhile is picked up by the poll
+     * already running, which reads what is on screen on every pass and asks
+     * for each channel once. A channel the record holds but does not offer
+     * (the nuclear stain) is settled and never asked for again.
+     */
+    async pollGatingContrast() {
+        if (this._gatingPolling) {
+            this._gatingAgain = true;
+            return;
+        }
+        this._gatingPolling = true;
+        try {
+            const asked = new Set();
+            const missing = () => this.enabledChannelNames().filter((name) =>
+                !(name in (this.gatingContrast?.channels || {}))
+                && !(this.gatingContrast?.calibrated || []).includes(name));
+            let body = await this.fetchGatingContrast();
+            const deadline = Date.now() + GATING_POLL_LIMIT_MS;
+            let wait = GATING_POLL_FIRST_MS;
+            while (body && body.state !== "unavailable" && Date.now() < deadline) {
+                this._gatingAgain = false;
+                const fresh = missing().filter((name) => !asked.has(name));
+                if (fresh.length) {
+                    fresh.forEach((name) => asked.add(name));
+                    const reply = await this.computeGatingContrast(fresh);
+                    if (reply && reply.state === "unavailable") break;
+                }
+                this.syncGatingContrast();
+                if (body.state !== "computing" && !fresh.length && !this._gatingAgain) break;
+                await new Promise((resolve) => window.setTimeout(resolve, wait));
+                body = await this.fetchGatingContrast();
+                wait = Math.min(wait * 1.6, 8000);
+            }
+            this.syncGatingContrast();
+        } finally {
+            this._gatingPolling = false;
+        }
+    }
+
+    /** A channel switched on: its calibration, when the project has none yet. */
+    requestGatingContrast(names) {
+        if (!this.ownsProject() || !this._gatingStarted) return;
+        if (this.gatingContrast?.state === "unavailable") return;
+        const full = (names || []).map((name) => this.dataLayer.getFullChannelName(name));
+        if (this.gatingContrast && full.every((name) => name in (this.gatingContrast.channels || {})
+                || (this.gatingContrast.calibrated || []).includes(name))) {
+            this.syncGatingContrast();
+            return;
+        }
+        this.pollGatingContrast();
+    }
+
+    /**
+     * Ease one channel to a window and curve an agent has settled on, the
+     * slider and the canvas moving together (agentBridge's animate_contrast).
+     * Resolves when the ease is done. Not saved here: the lease decides.
+     */
+    async animateChannelTo(slotIndex, rawWindow, curve, { ms = 900, source = "gating" } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name) return false;
+        let target = [Number(rawWindow[0]), Number(rawWindow[1])];
+        if (!(target[1] > target[0])) return false;
+        if (!this.isHdMode()) {
+            await this.channelList.ensureChannelStats(slot.name).catch(() => {});
+            const packet = this.quantWindow(slot.name);
+            if (!packet) return false;
+            target = this.rawToByteRangeFine(target, packet);
+        }
+        slot.expanded = true;
+        this.applySlotExpansion(slot);
+        slot.userRangeChanged = false;
+        slot.autoLeveled = true;
+        slot.rangeSource = source;
+        this.setSlotCurve(slotIndex, curve && curve.kind === "asinh" ? curve : null,
+                          { save: false, source });
+        this.easeSlotRange(slotIndex, slot, target, { ms, force: true });
+        await new Promise((resolve) => window.setTimeout(resolve, ms + 40));
+        this.syncSlotGatingButton(slot);
+        return true;
     }
 
     autoLevelChannelIfNeeded(slot) {
@@ -1175,7 +1629,7 @@ class ViewerSidebar {
      * system's reduced-motion setting), for a channel not on screen, or when
      * there is no range to ease from.
      */
-    easeSlotRange(slotIndex, slot, target) {
+    easeSlotRange(slotIndex, slot, target, { ms = RANGE_EASE_MS, force = false } = {}) {
         const finish = () => {
             slot.rangeEase = null;
             slot.rangeEaseTarget = null;
@@ -1185,7 +1639,7 @@ class ViewerSidebar {
         };
         const from = Array.isArray(slot.range) ? slot.range.map(Number) : null;
         const smooth = globalThis.PlexoraChannelFade?.smooth?.() ?? true;
-        if (!smooth || !slot.enabled || !from || from.length !== 2
+        if (!smooth || !slot.enabled || !from || from.length !== 2 || !(ms > 0)
                 || !from.every(Number.isFinite) || !target.every((v) => Number.isFinite(Number(v)))
                 || (from[0] === Number(target[0]) && from[1] === Number(target[1]))
                 || typeof requestAnimationFrame !== "function") {
@@ -1203,13 +1657,15 @@ class ViewerSidebar {
             if (slot.rangeEase !== token) return;
             // The hand took the slider: what it set stands. And a range in
             // other units (the HD toggle remapped it) or of another marker is
-            // no longer this ease's to move.
-            if (slot.userRangeChanged || slot.name !== marker || this.isHdMode() !== hd) {
+            // no longer this ease's to move. A forced ease (a calibration put
+            // on screen on purpose) is ended by a hand through setSlotRange,
+            // which takes the token away.
+            if ((!force && slot.userRangeChanged) || slot.name !== marker || this.isHdMode() !== hd) {
                 slot.rangeEase = null;
                 slot.rangeEaseTarget = null;
                 return;
             }
-            const f = Math.min(1, (performance.now() - started) / RANGE_EASE_MS);
+            const f = Math.min(1, (performance.now() - started) / ms);
             if (f >= 1) {
                 finish();
                 return;
@@ -1257,8 +1713,11 @@ class ViewerSidebar {
         // The newest levelling of this slot wins: an older one still waiting
         // on a fetch must not land after it.
         const turn = slot.levelTurn = (slot.levelTurn || 0) + 1;
+        // A gating window already on the channel is better than either pass:
+        // a late fit never replaces it (an explicit Auto click still does).
         const stillCurrent = () => slot.name === markerName && slot.levelTurn === turn &&
-            (options.force || !slot.userRangeChanged);
+            (options.force || (!slot.userRangeChanged && slot.rangeSource !== "gating"));
+        const source = options.force ? "user" : "auto";
         slot.autoLeveling = true;
         try {
             // Pass 1 -- provisional, so the channel is visible right away.
@@ -1266,6 +1725,7 @@ class ViewerSidebar {
             if (!stillCurrent()) return;
             const stats = this.quantWindow(markerName);
             if (stats && stats.vmin_hint !== undefined) {
+                slot.rangeSource = source;
                 this.applyAutoRange(slotIndex, slot, [stats.vmin_hint, stats.vmax_hint], stats);
                 this.askForHdIfCoarse(stats);
             }
@@ -1283,9 +1743,13 @@ class ViewerSidebar {
             if (!stillCurrent()) return;
             const packet = this.channelList.hasChannelGMM[markerName];
             if (!packet) return;
+            slot.rangeSource = source;
             this.applyAutoRange(slotIndex, slot, [packet.vmin, packet.vmax],
                 this.quantWindow(markerName) || packet);
             slot.autoLeveled = true;
+            // The gating window, when it arrived while the fit ran, takes
+            // over from the fit on a channel nobody set.
+            if (!options.force) this.syncGatingContrast?.({ only: [slot.index] });
         } finally {
             slot.autoLeveling = false;
         }
@@ -1398,6 +1862,9 @@ class ViewerSidebar {
         slot.autoLeveled = false;
         slot.autoLeveling = false;
         slot.preAutoRange = null;
+        slot.preGatingRange = null;
+        slot.curve = null;
+        slot.rangeSource = null;
         this.channelSlotSliders.get(slotIndex)?.destroy();
         this.channelSlotSliders.delete(slotIndex);
         this.syncSlotDom(slot);
@@ -1586,6 +2053,9 @@ class ViewerSidebar {
                 keepColor: true, enable: entry.enabled !== false, reveal: true, force: true,
             });
             if (entry.color) this.setSlotColor(slot.index, entry.color, true);
+            if (entry.curve !== undefined) {
+                this.setSlotCurve?.(slot.index, entry.curve, { save: false, source: null });
+            }
             if (entry.range) {
                 // setSlotMarker has already scheduled an auto-level for this
                 // slot on a setTimeout(0); these two flags are what it checks
@@ -1601,6 +2071,9 @@ class ViewerSidebar {
                     if (packet) range = this.rawToByteRange(range, packet);
                 }
                 this.setSlotRange(slot.index, range, true);
+                // Who set it travels with it (a lease given back, a paste):
+                // a gating window put back is still the gating calibration's.
+                if (entry.source) slot.rangeSource = entry.source;
             }
             slot.expanded = false;
             this.applySlotExpansion(slot);
@@ -1698,6 +2171,8 @@ class ViewerSidebar {
                     enabled: Boolean(slot.enabled),
                     visible: true,
                     range: range ? [Number(range[0]), Number(range[1])] : null,
+                    curve: slot.curve ? { ...slot.curve } : null,
+                    source: slot.rangeSource || null,
                 };
             });
     }
@@ -1811,6 +2286,14 @@ class ViewerSidebar {
                 }
             }
             this.setSlotRange(slot.index, range, true);
+            // Who set the window, as saved; a row saved before rows said is
+            // the user's ("legacy") and is never replaced by a calibration.
+            slot.rangeSource = ViewerSidebar.ROW_SOURCES?.has(row.source) ? row.source : "legacy";
+            slot.displayRev = typeof row.display_rev === "string" ? row.display_rev : null;
+            if (row.curve === "asinh" && Number(row.cofactor) > 0) {
+                this.setSlotCurve?.(slot.index, { kind: "asinh", cofactor: Number(row.cofactor) },
+                                    { save: false, source: null });
+            }
             slot.expanded = false;
             this.applySlotExpansion(slot);
         }
@@ -1865,6 +2348,7 @@ class ViewerSidebar {
         const activeChannels = {};
         const listColors = {};
         const listRanges = {};
+        const listMeta = {};
         const bitMax = this.dataLayer.imageBitRange[1];
         this.channelSlots.forEach((slot) => {
             if (!slot.name || !slot.enabled) return;
@@ -1883,8 +2367,20 @@ class ViewerSidebar {
             listColors[idx] = { color: { ...slot.color, opacity: 1 } };
             listRanges[idx] = [rawRange[0] / bitMax, rawRange[1] / bitMax];
             listChannels[slot.name] = rawRange;
+            // Who set the window and how it is drawn (data_model._row_meta).
+            // A legacy row stays the user's: saved again, it says so.
+            const source = slot.rangeSource === "legacy" || !slot.rangeSource
+                ? (slot.userRangeChanged ? "user" : "auto") : slot.rangeSource;
+            const curve = globalThis.PlexoraDisplayCurve?.normalise?.(slot.curve) || null;
+            listMeta[slot.name] = {
+                source,
+                curve: curve ? "asinh" : "linear",
+                ...(curve ? { cofactor: curve.cofactor } : {}),
+                ...(source === "gating" && slot.displayRev ? { display_rev: slot.displayRev } : {}),
+            };
         });
-        return this.dataLayer.saveChannelList(imageChannelsIdx, activeChannels, listColors, listRanges, listChannels);
+        return this.dataLayer.saveChannelList(imageChannelsIdx, activeChannels, listColors, listRanges,
+                                              listChannels, listMeta);
     }
 
     /**
@@ -2066,3 +2562,5 @@ class ViewerSidebar {
 //: Byte levels a stack's fast tiles must spend on its default contrast range
 //: before the viewer stops asking for HD (askForHdIfCoarse).
 ViewerSidebar.MIN_DEFAULT_LEVELS = 32;
+//: A saved row's `source` values this build knows (data_model.CHANNEL_ROW_SOURCES).
+ViewerSidebar.ROW_SOURCES = new Set(["user", "auto", "gating", "default"]);

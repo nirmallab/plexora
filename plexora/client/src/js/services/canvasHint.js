@@ -37,13 +37,16 @@
         return { root, key, text, owner: null };
     }
 
-    function show(owner, { key = "Space", text = "Hold to pan" } = {}) {
+    function show(owner, { key = "Space", text = "Hold to pan", tone = null } = {}) {
         const mount = host();
         if (!mount) return false;
         if (!hint) hint = build();
         hint.owner = owner;
         hint.key.textContent = key;
+        // A hint without a key (a narration: "Adjusting contrast for CD3").
+        hint.key.hidden = !key;
         hint.text.textContent = text;
+        hint.root.classList?.toggle?.("is-narration", tone === "narration");
         if (hint.root.parentNode !== mount) mount.appendChild(hint.root);
         hint.root.hidden = false;
         return true;

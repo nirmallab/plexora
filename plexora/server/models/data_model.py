@@ -2308,7 +2308,41 @@ def get_centroid_tiles(datasource_name, level, tiles, gates=None, max_points=Non
     return centroid_tiles.get_tiles(config, datasource_name, level, tiles, gates or {}, max_points)
 
 
-def save_channel_list(datasource_name, map_channels, active_channels, list_colors, list_ranges, list_channels):
+#: Who set a saved channel row's window (`list_meta`'s `source`): the user's
+#: hand or an explicit Auto click, the viewer's own auto-levelling, a gating
+#: calibration, or a default the project was seeded with. A row without one
+#: was saved before rows said, and counts as the user's.
+CHANNEL_ROW_SOURCES = ("user", "auto", "gating", "default")
+
+
+def _row_meta(meta):
+    """The optional per-row fields of a saved channel row, validated: `source`
+    (CHANNEL_ROW_SOURCES), `curve` (linear or asinh), `cofactor` (raw units,
+    asinh only) and `display_rev` (the gating calibration it came from)."""
+    out = {}
+    if not isinstance(meta, dict):
+        return out
+    if meta.get("source") in CHANNEL_ROW_SOURCES:
+        out["source"] = meta["source"]
+    curve = meta.get("curve")
+    try:
+        cofactor = float(meta.get("cofactor"))
+    except (TypeError, ValueError):
+        cofactor = None
+    if curve == "asinh" and cofactor is not None and cofactor > 0 and cofactor == cofactor:
+        out["curve"], out["cofactor"] = "asinh", cofactor
+    elif curve == "linear":
+        out["curve"] = "linear"
+    if isinstance(meta.get("display_rev"), str):
+        out["display_rev"] = meta["display_rev"][:64]
+    return out
+
+
+def save_channel_list(datasource_name, map_channels, active_channels, list_colors, list_ranges,
+                      list_channels, list_meta=None):
+    """Write a project's channel list. `list_meta` {channel name: {source,
+    curve, cofactor, display_rev}} adds those fields to the rows it names
+    (`_row_meta`); rows it does not name have none."""
     global datasource
     global source
     global ball_tree
@@ -2338,6 +2372,8 @@ def save_channel_list(datasource_name, map_channels, active_channels, list_color
         )
 
     temp = csv.to_dicts()
+    for row in temp:
+        row.update(_row_meta((list_meta or {}).get(row['channel'])))
     f = pickle.dumps(temp, protocol=4)
     database_model.save_list(database_model.ChannelList, datasource=datasource_name, cells=f)
 

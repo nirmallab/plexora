@@ -19,7 +19,7 @@ from pydantic import Field
 from plexora.agent.errors import AgentError
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
-from plexora.agent.render_spec import Bounds
+from plexora.agent.render_spec import DEFAULT_ASINH_SPAN, Bounds, ChannelCurve
 from plexora.agent.schemas import AgentModel
 
 TAGS = ("viewer", "view", "show", "display", "screen", "open", "tab", "browser")
@@ -119,7 +119,28 @@ class ViewerChannel(AgentModel):
     name: str
     color: str | None = Field(None, description="#rrggbb")
     window: list[float] | Literal["auto"] | None = None
+    curve: ChannelCurve | None = Field(
+        None, description="How brightness follows intensity: linear, or asinh (log-like) "
+                          "with a cofactor in raw units. Omitted: the channel keeps its own.")
     enabled: bool = True
+
+    def command(self) -> dict:
+        """The channel as the tab's `set_channels` takes it; `curve` only when
+        given (an absent curve leaves the tab's alone, null would reset it)."""
+        out = self.model_dump(exclude={"curve"})
+        if self.curve is None:
+            return out
+        if self.curve.kind == "linear":
+            out["curve"] = {"kind": "linear"}
+            return out
+        cofactor = self.curve.cofactor
+        if cofactor is None:
+            if not isinstance(self.window, list):
+                raise AgentError("invalid_input", f"{self.name}: an asinh curve needs a "
+                                 "cofactor, or a [low, high] window to seed one from")
+            cofactor = (self.window[1] - self.window[0]) / DEFAULT_ASINH_SPAN
+        out["curve"] = {"kind": "asinh", "cofactor": float(cofactor)}
+        return out
 
 
 class SetChannelsInput(ViewInput):
@@ -132,7 +153,7 @@ class SetChannelsInput(ViewInput):
 
 def set_channels(call, inp):
     _c, view, ack = _send(call, inp, "set_channels", {
-        "channels": [c.model_dump() for c in inp.channels], "mode": inp.mode,
+        "channels": [c.command() for c in inp.channels], "mode": inp.mode,
         "persist": inp.persist})
     return _receipted(call, view, ack, persisted=inp.persist)
 

@@ -131,16 +131,19 @@ _OVERVIEW_LIMIT = 1024
 
 def _channel(name, color, calibration):
     from plexora.agent.evidence import calibration as display
-    from plexora.agent.render_spec import ChannelSpec
+    from plexora.agent.render_spec import ChannelCurve, ChannelSpec
 
     window = _window(calibration, name)
+    curve = None
     if isinstance(window, list):
         overview = display.overview_window(calibration, name)
         if overview is not None and overview != window:
             if len(_OVERVIEW) >= _OVERVIEW_LIMIT:
                 _OVERVIEW.pop(next(iter(_OVERVIEW)))
             _OVERVIEW[(name, tuple(window))] = list(overview)
-    return ChannelSpec(name=name, color=color, window=window)
+        shape = display.entry_curve(((calibration or {}).get("channels") or {}).get(name))
+        curve = ChannelCurve(**shape) if shape else ChannelCurve(kind="linear")
+    return ChannelSpec(name=name, color=color, window=window, curve=curve)
 
 
 def _at_scale(channels, bounds, size):
@@ -156,8 +159,15 @@ def _at_scale(channels, bounds, size):
         overview = _OVERVIEW.get((channel.name, tuple(window))) \
             if isinstance(window, (list, tuple)) else None
         if overview is not None:
-            channel = channel.model_copy(update={
-                "window": display.blend_windows(list(window), overview, px_per_px)})
+            moved = display.blend_windows(list(window), overview, px_per_px)
+            update = {"window": moved}
+            curve = channel.curve
+            if curve is not None and curve.kind == "asinh" and curve.cofactor \
+                    and window[1] > window[0]:
+                # The cofactor scales with the window, so the curve keeps its shape.
+                update["curve"] = curve.model_copy(update={
+                    "cofactor": curve.cofactor * (moved[1] - moved[0]) / (window[1] - window[0])})
+            channel = channel.model_copy(update=update)
         out.append(channel)
     return out
 
@@ -176,7 +186,9 @@ def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmenta
     if scan is None or not getattr(scan, "meta", None) or not scan.meta.get("fingerprint"):
         return None
     windows = tuple((c.name, c.color, tuple(c.window) if isinstance(c.window, (list, tuple))
-                     else c.window) for c in channels)
+                     else c.window,
+                     (c.curve.kind, c.curve.cofactor) if c.curve is not None else None)
+                    for c in channels)
     box = tuple(round(float(bounds[k]), 3) for k in ("x", "y", "width", "height"))
     return (project, scan.meta["fingerprint"], box, windows, int(size), bool(scale_bar),
             (pixel or {}).get("value"), segmentation)

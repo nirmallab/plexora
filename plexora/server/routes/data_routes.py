@@ -1024,8 +1024,10 @@ def save_channel_list():
     list_colors = post_data['list_colors']
     list_ranges = post_data['list_ranges']
     list_channels = post_data['list_channels']
+    list_meta = post_data.get('list_meta') if isinstance(post_data.get('list_meta'), dict) else None
 
-    data_model.save_channel_list(datasource, map_channels, active_channels, list_colors, list_ranges, list_channels)
+    data_model.save_channel_list(datasource, map_channels, active_channels, list_colors, list_ranges,
+                                 list_channels, list_meta=list_meta)
 
     resp = jsonify(success=True)
     return resp
@@ -1056,6 +1058,38 @@ def put_view_transform(datasource):
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
     return jsonify(success=True)
+
+
+@app.route('/display_contrast', methods=['GET'])
+def get_display_contrast():
+    """The project's gating display calibration as the viewer offers it
+    (plexora/agent/evidence/display_contrast.py): {state, rev, channels:
+    {name: {window, curve, chosen_by, titre}}}. Read by the channel sidebar on
+    open and whenever a session changes it."""
+    from plexora.agent.evidence import display_contrast
+
+    datasource = request.args.get('datasource')
+    if not datasource or Project.find(datasource) is None:
+        abort(404)
+    return jsonify(display_contrast.describe(datasource))
+
+
+@app.route('/display_contrast/compute', methods=['POST'])
+def compute_display_contrast():
+    """Calibrate `channels` (default every channel) of a project in the
+    background, once per project at a time; answers `describe` as it stands
+    (`computing` while the job runs)."""
+    from plexora.agent.evidence import display_contrast
+
+    payload = request.get_json(silent=True) or {}
+    datasource = payload.get('datasource')
+    if not datasource or Project.find(datasource) is None:
+        abort(404)
+    channels = payload.get('channels')
+    if channels is not None and (not isinstance(channels, list)
+                                 or not all(isinstance(c, str) for c in channels)):
+        return jsonify(success=False, error="channels is a list of channel names"), 400
+    return jsonify(display_contrast.compute(datasource, channels))
 
 
 @app.route('/get_saved_channel_list', methods=['GET'])

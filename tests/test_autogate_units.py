@@ -596,20 +596,21 @@ def test_debris_does_not_black_out_the_marker_window(tmp_path):
     from plexora.agent.evidence import calibration as cal
     from plexora.server.utils import source_image
 
+    from plexora.server.utils import display_curve
+
     info = make_gating_project(tmp_path, variant="specks")
     session = AgentSession()
     record, _changed = cal.calibrate(session, "gsynth")
     entry = record["channels"]["CD8"]
-    table = np.array([c["CD8"] for c in info["cells"]], dtype=np.float64)
-    assert entry["window"][1] <= cal.CELL_CAP_FACTOR * np.percentile(table, 99.5) + 1e-6
-    # Anchored on the cells at level 0, which the specks cannot own.
+    # Anchored on the cells at level 0, which the specks cannot own: the
+    # titre is the brightest cells' structure, far under a speck.
     from plexora.agent.evidence import cell_window
 
     assert entry["window_source"].startswith(cell_window.SOURCE)
-    # A CD8+ cell draws well above black; without the cap it would not.
+    assert entry["anchors"]["titre"] < entry["stats"]["max"] / 4
+    # A CD8+ cell draws well above black, on the curve it is drawn with.
     positive = float(np.median([c["CD8"] for c in info["cells"] if c["kind"] == "cd8_t"]))
-    low, high = entry["window"]
-    assert (positive - low) / (high - low) > 0.25
+    assert display_curve.level(positive, entry["window"], entry.get("curve")) > 0.25
     # Uncapped, the same pixels give the blown-out window, and say so.
     channels = {"CD8": source_image.channel_key(
         next(c for c in session.project("gsynth").image.real_channels
@@ -1164,11 +1165,11 @@ def test_anchor_cells_are_seeded_and_banded():
     assert all(int(cell["cell_id"]) % 2 == 1 for cell in c["negatives"])
 
 
-def test_the_window_is_measured_in_background_spreads_on_a_disc():
-    """Black is the negatives' median pixel, white `spans` background spreads
-    above it -- read in a disc around the centroid, so a mask (or none) does
-    not change it, and a bright neighbour inside the crop but outside the
-    disc does not either."""
+def test_the_background_is_measured_on_a_disc():
+    """Black under the negatives' median pixel, the noise p99 above it --
+    read in a disc around the centroid, so a mask (or none) does not change
+    it, and a bright neighbour inside the crop but outside the disc does not
+    either."""
     from types import SimpleNamespace
 
     from plexora.agent.evidence import cell_window, crops
@@ -1181,15 +1182,16 @@ def test_the_window_is_measured_in_background_spreads_on_a_disc():
         crop = crops.Crop(cell_id, 16.0, 16.0, (0, 0, 32, 32), 0)
         crop.planes["M"] = plane
         made[cell_id] = crop
-        negatives.append({"cell_id": cell_id})
-    window = cell_window.window_from_crops(made, "M", negatives, radius_px=9.0)
-    assert window["low"] == pytest.approx(100.0, abs=3.0)
-    spread = window["noise_p99"] - window["low"]
+        negatives.append({"cell_id": cell_id, "x": 16.0, "y": 16.0, "value": 1.0})
+    measured = cell_window.measure(made, "M", {"negatives": negatives}, radius_px=9.0)
+    assert measured["background"] == pytest.approx(100.0, abs=3.0)
+    spread = measured["noise_p99"] - measured["background"]
     assert spread == pytest.approx(70.0, rel=0.15)        # 2.33 sds of the noise
-    assert window["high"] == pytest.approx(window["low"] + window["spans"] * spread)
+    assert measured["black"] == pytest.approx(100.0 - 1.645 * 30.0, abs=8.0)   # the p5
+    assert measured["titre"] is None
     for crop in made.values():
         crop.labels = np.zeros((32, 32), dtype=np.int32)   # a mask says nothing here
-    assert cell_window.window_from_crops(made, "M", negatives, radius_px=9.0) == window
+    assert cell_window.measure(made, "M", {"negatives": negatives}, radius_px=9.0) == measured
     assert crops.cell_radius_px(SimpleNamespace(image=SimpleNamespace(pixel_size=None)),
                                 pixel={"value": 0.5})[0] == pytest.approx(9.0)
 

@@ -41,7 +41,15 @@
         const detail = event.detail || {};
         if (detail.plugin !== PLUGIN) return;
         if (detail.kind === "gating.session") {
-            showPill(detail.payload || {});
+            const payload = detail.payload || {};
+            // A contrast check settled some markers' brightness: the channels
+            // nobody set take it (viewerSidebar.syncGatingContrast). Not while
+            // an agent holds the view -- the lease's restore does it then.
+            if (payload.event === "display" && !window.PlexoraAgentBridge?.hasLease?.()) {
+                window.dispatchEvent(new CustomEvent("plexora:display-contrast-changed",
+                                                     { detail: { reason: "session" } }));
+            }
+            showPill(payload);
             return;
         }
         const live = controller();

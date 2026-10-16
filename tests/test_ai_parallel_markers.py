@@ -75,6 +75,8 @@ def _call(session, name="gating.answer"):
 
 
 def start(session, project, **options):
+    # Parallel looks are the subject here: the contrast check is not.
+    options.setdefault("display_check", "rule")
     started = ok(invoke(session, "gating_session_start", {"scope": "project",
                                                           "project": project, **options}))
     jobs.drain(120)

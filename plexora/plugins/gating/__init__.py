@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261015_autogate"
+VERSION = "20261015_display_contrast"
 
 
 def _blueprint():

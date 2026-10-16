@@ -700,6 +700,9 @@ window.addEventListener("resize", function () {
 //static vars: events introduced in this class and used across the app
 ChannelList.events = {
     BRUSH_MOVE: "BRUSH_MOVE",
+    //: A channel's display curve changed ({name, curve}: null linear, or
+    //: {kind: "asinh", cofactor} in raw units -- services/displayCurve.js).
+    CURVE_CHANGE: "CURVE_CHANGE",
     COLOR_TRANSFER_CHANGE_MOVE: "COLOR_TRANSFER_CHANGE_MOVE",
     COLOR_TRANSFER_CHANGE: "COLOR_TRANSFER_CHANGE",
     CHANNELS_CHANGE: "CHANNELS_CHANGE",

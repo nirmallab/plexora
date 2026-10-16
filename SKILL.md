@@ -2799,16 +2799,42 @@ deliberately left out and what should be built next.
   `offered` flag, and `LAYOUT_NAMES` is the tuple of layouts the collage tool
   itself draws, in listed order, plus the `overview`; a `report`-only layout
   for the review report's larger tiles is not offered), `density_plot.py` (a
-  two-marker density plot from a bivariate grid), `cell_window.py` (a
-  marker's display window anchored on its NEGATIVE cells only, at level 0 --
-  black at their median pixel, white `CELL_WINDOW["spans"]` background
-  spreads (noise p99 - median) above it -- read in a disc of
+  two-marker density plot from a bivariate grid), `cell_window.py` (what a
+  marker's pixels look like in its own cells, at level 0, read in a disc of
   `crops.CELL_DIAMETER_UM` around each table centroid, never inside a mask,
-  and never from a cell QC left out; anchoring white on the brightest cells
-  let a few bright cells, a fold or an aggregate set the scale, and a cell at
-  a human's gate drew black; `calibration.VERSION` is 4 and a stored window
-  carries the QC fingerprint it was anchored under, so a QC change
-  recomputes it). `crops.self_window_panel` draws a T2 panel windowed on the
+  and never from a cell QC left out: `select_display_cells` picks seeded
+  bands of the marker's distribution -- `negatives`, `low`, `near`, `bright`
+  -- and `measure` returns `black` (each negative's low percentile, so the
+  background draws as a faint floor rather than clipped), `background`,
+  `noise_p99` and the `titre` (the bright cells' p99, their brightest
+  structure), re-anchoring on the `low` band when the negatives band is
+  itself stained; it decides nothing about brightness). `calibration.py`
+  turns those into a curve: `rule_from` puts black under the background,
+  the noise p99 at `NOISE_LEVEL` and the titre at `TITRE_LEVEL` on an asinh
+  curve (`server/utils/display_curve.py`; linear when a linear window meets
+  both), a marker with no bright cells as if its titre were
+  `TITRE_FLOOR_GAPS` background gaps up so its noise is never stretched to
+  white; `columns_for` builds the brightness ladder `c1..c5` over it
+  (`GAINS`, `c3` the rule) and `pick_column` chooses one from a vision
+  check's two lists after the numeric `VETOES`; `record_choices` stores the
+  choice and `apply_choices` re-applies it, so it survives a recompute;
+  `load_current` returns a record only while the table and QC fingerprints
+  still match; `display_spec` gives `{window, curve, source}` at a scale; a
+  per-project lock makes `calibrate`'s save and `record_choices` one writer at
+  a time, because a session's bulk pass and the viewer's first-open
+  calibration may both be at it. Anchoring white on the brightest cells' raw
+  maximum let a few bright cells, a fold or an aggregate set the scale, and a
+  cell at a human's gate drew black; `calibration.VERSION` is 5 and a stored
+  record carries the QC fingerprint it was anchored under, so a QC change
+  recomputes it), `display_grid.py` (the contrast check: markers in rows,
+  the five ladder columns side by side as 2 x 2 level-0 crops, pixels at
+  white in `calibration.CLIP_COLOR`, columns unmarked so the picture does not
+  suggest an answer; `RENDERER` `display_grid/1`), `display_contrast.py` (the
+  same calibration offered to the viewer: `describe` / `compute`, one
+  background job per project with later requests queued on it, behind core's
+  `GET /display_contrast` and `POST /display_contrast/compute` in
+  `server/routes/data_routes.py`; a project with no cell table is
+  `unavailable` and the viewer's own auto-levelling stands). `crops.self_window_panel` draws a T2 panel windowed on the
   judged cell's own disc and `crops.mark_centre` ticks its centroid, with no
   mask outline, because a mask may be a nucleus, a Voronoi fill or absent;
   `collage.rerender` redraws a collage from its stored manifest, so a
@@ -2838,7 +2864,9 @@ deliberately left out and what should be built next.
   refuses with `invalid_input` (a label, option or square the packet does
   not hold) — and at `INVALID_ANSWERS` (2) sends its units to manual review
   and releases the packet, because left uncounted the same packet was served
-  again without end. Gating's own `autogate/memo.py` and `autogate/events.py` are now thin
+  again without end; a packet about no unit (a set-up step) has nothing to
+  close, so `_strike` calls the `struck_out(packet)` hook (a no-op here) for
+  the subclass to settle it. Gating's own `autogate/memo.py` and `autogate/events.py` are now thin
   bindings onto the shared versions rather than separate implementations.
 - `server/utils/jit.py`, `server/utils/label_kernels.py` — the numba shim
   (`numba>=0.61` is now a core dependency) for the handful of analysis loops
@@ -3056,6 +3084,24 @@ deliberately left out and what should be built next.
   (`agentBridge.js`/`toolLoader.js`); `mirror_script.setup_script` sends it
   for an `expression_setup` packet (`schemas.USER_SETUP_KINDS`) so the
   mirrored tab puts the same question a packet would.
+  `display_setup` (in `schemas.SETUP_KINDS`, after `panel_context`) is the
+  contrast check, per image and before that image's first look, because
+  every later picture is drawn with what it settles: `packets.display_setup`
+  sends an `agent/evidence/display_grid` sheet, the answer
+  (`DisplaySetupAnswer`: `background_ok`/`structure_ok`, column ids per
+  marker) goes through `transitions.apply_display` to `calibration.
+  pick_column`/`record_choices` -- code picks the column, the model never
+  types a window -- and a row left out keeps the rule (`rule:no_answer`).
+  `Engine.display_due` holds an image's looks until its check is settled
+  (it waits on the bulk pass's calibration), `settle_display` rolls the
+  per-image states (`schemas.DISPLAY_STATES`) up, and `struck_out` →
+  `transitions.strike_display` keeps the rule after two unusable answers.
+  `SessionOptions.display_check` (`vision` default | `rule`) skips the look
+  and keeps the calibration's own window; session tests that expect a look
+  first pass `display_check="rule"`. The task is `gating.display` in
+  `ai/tasks.yaml` (`vision_routine`). The session event `display` and
+  `mirror_script.display_script` send the viewer `animate_contrast`, which
+  eases each settled channel in, captioned.
   `SessionOptions.setup` (`ask` default | `wait` | `fail`) says what a start
   does with an unfinished set-up, and `setup_needs(session, images,
   confirmations=True)` says what that is: required keys `Requires.missing_from`
@@ -3899,7 +3945,11 @@ deliberately left out and what should be built next.
   `server/utils/label_overlay.py` (`label_region`, `boundary_mask`,
   `paint_labels`, `cell_ids` — `data_model._label_region` is now an alias),
   `server/utils/pixel_scale.py` (`pixel_size` without loading the project;
-  manual beats metadata, missing is `None`, never a default). None of these
+  manual beats metadata, missing is `None`, never a default),
+  `server/utils/display_curve.py` (one display curve for every renderer:
+  linear, or asinh with a cofactor in raw units; `source_image.blend_plane(...,
+  curve=)` and `composite` take a channel's `curve`, and so do Figure
+  Builder's render and schema). None of these
   goes through `data_model`, which is the point: it holds the one datasource
   the viewer is looking at, and evicting it to answer an agent (or a figure
   spanning four images) is exactly wrong.
@@ -4618,6 +4668,35 @@ deliberately left out and what should be built next.
 - `services/pageBoot.js` — `window.PlexoraPage`, the registry every page
   controller mounts through instead of `DOMContentLoaded`.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
+  `frag.glsl`'s `range_clamp` draws through the channel's display curve
+  (`u_tile_cofactor`: 0 linear, else the asinh cofactor in `u_tile_range`'s
+  units).
+- `services/displayCurve.js` — the JavaScript twin of
+  `server/utils/display_curve.py` and of `range_clamp`, loaded in `base.html`
+  ahead of `glInit.js`, because every surface that draws a channel must use one
+  curve: the tiles (`ImageViewer.itemCofactor`/`updateChannelCurve`), the
+  mini-map's LUTs, `volumeRenderer.js`/`surfaceRenderer.js`'s
+  `level(value, window, c)`, and the sidebar. A curve is `null` (linear) or
+  `{kind: "asinh", cofactor}` in raw units; each surface only rescales the
+  cofactor into its own normalised units. `tests/golden/display_curve_vectors.json`
+  pins Python, this file and the shader to the same numbers
+  (`tests/test_display_curve.py`, which also runs
+  `tests/js/display_curve_probe.mjs`).
+- The gating contrast in the viewer. A saved channel row may carry `source`
+  (`user`|`auto`|`gating`|`default`; a row without one is legacy and counts as
+  the user's), `curve`, `cofactor` and `display_rev`
+  (`data_model._row_meta`, sent as `list_meta` to `save_channel_list`).
+  `viewerSidebar.js` adds a Linear/Log toggle per channel
+  (`ChannelList.events.CURVE_CHANGE`) and a "Use gating contrast" button
+  that a second press undoes; `syncGatingContrast` (on first open, from
+  `GET /display_contrast`) replaces only a window the viewer levelled itself,
+  a seeded default or an earlier calibration -- never one the user set.
+  `agentBridge.js`'s `animate_contrast` is queued and acknowledged at once so
+  the session goes on; it eases each channel in with a `PlexoraCanvasHint`
+  caption in tone `narration`, and a later channel command waits for it
+  (`contrastIdle`) rather than cutting it off.
+  `tests/js/gating_contrast_probe.mjs` (run by `tests/test_display_curve.py`)
+  pins the never-a-user's-window rule.
 - `src/shaders/label.frag.glsl` — the GPU cell layer's fragment shader
   (`views/labelGpu.js` compiles it against `vert.glsl`, unchanged). The live
   label shader, unlike `frag.glsl`'s own `u_tile_fmt == 32` branch, which
@@ -11799,8 +11878,11 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   refuses a file with a column named like `human` rather than guess.
 - **A live gating bench on a real project is not read-only.** A session in
   propose mode never writes a gate value, but it rewrites provenance rows and
-  can recalibrate the display state (`calibrate_display` writes `display`),
-  so snapshot both before the runs and restore them after, as the
+  can recalibrate the display state (`calibrate_display` writes `display`,
+  a contrast check's `record_choices` writes its chosen columns there, and
+  merely opening the viewer on a project with a cell table may calibrate it
+  through `POST /display_contrast/compute`), and a choice outlives a
+  recomputation, so snapshot both before the runs and restore them after, as the
   2026-10-08 spatial ablation did
   (`docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md`: the switch was
   later removed, because the decision machinery never engaged on lsp11385_2

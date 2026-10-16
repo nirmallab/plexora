@@ -702,6 +702,81 @@ def apply_pixel(engine, packet, answer):
             "receipts": receipts}
 
 
+def apply_display(engine, packet, answer):
+    """A contrast check's answer: per row, the column code picks from the two
+    lists (`calibration.pick_column`, with the grid's numeric vetoes), stored
+    on the project's calibration as a choice (`record_choices`) that every
+    later picture -- and the viewer, for channels nobody set -- draws with. A
+    row the answer leaves out keeps the rule (`rule:no_answer`); a key that is
+    not a row is refused."""
+    from plexora.agent.errors import AgentError
+    from plexora.agent.evidence import calibration
+
+    evidence = packet.get("evidence") or {}
+    project = evidence.get("project")
+    display = engine.record.setdefault("display", {})
+    entry = (display.setdefault("projects", {})).setdefault(project, {"status": "pending"})
+    channels = entry.get("rows") or {}
+    markers = [r["marker"] for r in evidence.get("rows") or []]
+    unknown = sorted((set(answer.background_ok) | set(answer.structure_ok)) - set(markers))
+    if unknown:
+        raise AgentError("invalid_input", f"not a row of this grid: {', '.join(unknown)}",
+                         detail={"rows": markers})
+    record = calibration.load(project) or {}
+    choices, chosen = {}, {}
+    for marker in markers:
+        channel = channels.get(marker)
+        cal = ((record.get("channels") or {}).get(channel)) or {}
+        if not channel or not cal.get("columns"):
+            continue
+        background = list(answer.background_ok.get(marker) or [])
+        structure = list(answer.structure_ok.get(marker) or [])
+        if marker not in answer.background_ok and marker not in answer.structure_ok:
+            choice = {"column": calibration.RULE_COLUMN, "gain": 1.0, "band": "negatives",
+                      "chosen_by": "rule:no_answer", "vetoed": []}
+        else:
+            choice = calibration.pick_column(
+                cal["columns"], background, structure,
+                levels=(entry.get("levels") or {}).get(channel),
+                has_low_band=bool(cal.get("rule_low")))
+        choice.update(answers={"background_ok": background, "structure_ok": structure},
+                      packet_id=packet.get("packet_id"), agent=engine.options["agent"],
+                      at=_now())
+        choices[channel] = choice
+        chosen[marker] = {"channel": channel, "column": choice["column"],
+                          "chosen_by": choice["chosen_by"]}
+    revision = None
+    if choices:
+        _record, revision = calibration.record_choices(project, choices)
+    entry.setdefault("chosen", {}).update({m: c["chosen_by"] for m, c in chosen.items()})
+    entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ())
+                            | {c["channel"] for c in chosen.values()})
+    entry["out"] = []
+    # What the viewer has not been shown yet (`_mirror_display`): this batch,
+    # and on the first answer the markers the rule settled without a look.
+    entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []),
+                                           *(entry.get("rule") or []),
+                                           *[c["channel"] for c in chosen.values()]]))
+    return {"project": project, "chosen": chosen, "revision": revision}
+
+
+def strike_display(engine, packet):
+    """Two answers to a contrast check could not be used: its rows keep the
+    rule's window (`rule:no_answer`) and the check moves on."""
+    evidence = packet.get("evidence") or {}
+    project = evidence.get("project")
+    entry = ((engine.record.get("display") or {}).get("projects") or {}).get(project)
+    if entry is None:
+        return
+    markers = [r["marker"] for r in evidence.get("rows") or []]
+    entry.setdefault("chosen", {}).update({m: "rule:no_answer" for m in markers})
+    entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ()))
+    entry["out"] = []
+    entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []),
+                                           *[(entry.get("rows") or {}).get(m) for m in markers
+                                             if (entry.get("rows") or {}).get(m)]]))
+
+
 def _now():
     from plexora.agent.audit import now_iso
 
@@ -718,4 +793,4 @@ APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": app
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
-         "pixel_setup": apply_pixel}
+         "pixel_setup": apply_pixel, "display_setup": apply_display}

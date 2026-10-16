@@ -85,7 +85,7 @@ LAYOUTS = {
 
 #: Which drawing rule made a collage: bumped whenever the same manifest would
 #: draw different pixels (part of what makes a remembered answer reusable).
-RENDERER = "plexora.agent.evidence.collage/2"
+RENDERER = "plexora.agent.evidence.collage/3"
 
 #: Where a partner's gate sits on its panel's grey ramp (`co` / `anti`).
 PARTNER_GATE_GREY = 0.4
@@ -194,7 +194,9 @@ def layout_pixels(layout, rows=3, tile_px=TILE_PX):
 
 
 def resolve_windows(session, record, names):
-    """{name: {key, window, source}} from the stored calibration, else computed."""
+    """{name: {key, window, curve, source}} from the calibration as it is now
+    (`calibration.current`: the stored record when it was anchored on the
+    table and QC as they are, else one computed and kept in memory)."""
     from plexora.agent.evidence import calibration
     from plexora.agent.render import resolve_channel
     from plexora.server.utils import source_image
@@ -204,16 +206,19 @@ def resolve_windows(session, record, names):
     for name in names:
         _index, found = resolve_channel(name, channel_records)
         wanted[found.get("fullname") or found.get("name")] = source_image.channel_key(found)
-    stored = calibration.load(record.name)
-    have = (stored or {}).get("channels") or {}
-    missing = {n: k for n, k in wanted.items() if n not in have}
-    if missing:
-        fresh = calibration.current(session, record.name, list(wanted))
-        have = {**have, **fresh.get("channels", {})}
+    have = calibration.current(session, record.name, list(wanted)).get("channels") or {}
     return {n: {"key": k, "window": have[n]["window"],
+                "curve": calibration.entry_curve(have[n]),
                 "source": have[n].get("window_source", "calib"),
-                **({"anchors": have[n]["anchors"]} if have[n].get("anchors") else {})}
+                **({"anchors": have[n]["anchors"]} if have[n].get("anchors") else {}),
+                **({"chosen_by": have[n]["chosen_by"]} if have[n].get("chosen_by") else {})}
             for n, k in wanted.items()}
+
+
+def _layer(windows, name, color):
+    """A `crops.blend` layer drawing `name` at its calibrated window and curve."""
+    return {"name": name, "window": windows[name]["window"],
+            "curve": windows[name].get("curve"), "color": color}
 
 
 def _panel(crop, kind, spec):
@@ -225,16 +230,12 @@ def _panel(crop, kind, spec):
     if kind == "nuclear":
         if not nuclear:
             return np.zeros((size, size, 3), dtype=np.uint8)
-        return cropmod.blend(crop, [{"name": nuclear, "window": windows[nuclear]["window"],
-                                     "color": NUCLEAR_GREY}], size)
+        return cropmod.blend(crop, [_layer(windows, nuclear, NUCLEAR_GREY)], size)
     if kind in ("marker", "a"):
         name = marker if kind == "marker" else spec["a"]
-        return cropmod.blend(crop, [{"name": name, "window": windows[name]["window"],
-                                     "color": WHITE}], size)
+        return cropmod.blend(crop, [_layer(windows, name, WHITE)], size)
     if kind == "b":
-        name = spec["b"]
-        return cropmod.blend(crop, [{"name": name, "window": windows[name]["window"],
-                                     "color": WHITE}], size)
+        return cropmod.blend(crop, [_layer(windows, spec["b"], WHITE)], size)
     if kind == "morphology":
         from plexora.agent.evidence import calibration
 
@@ -243,7 +244,9 @@ def _panel(crop, kind, spec):
             nuclear_window=windows[nuclear]["window"] if nuclear else None,
             window=windows[marker]["window"], radius_px=spec["radius_px"], size=size,
             nuclear_color=calibration.NUCLEAR_MUTED_BLUE,
-            marker_color=calibration.MARKER_COLOR)
+            marker_color=calibration.MARKER_COLOR,
+            curve=windows[marker].get("curve"),
+            nuclear_curve=windows[nuclear].get("curve") if nuclear else None)
         spec.setdefault("_cell_info", {})[crop.cell_id] = info
         return cropmod.mark_centre(panel, crop, spec["radius_px"])
     if kind == "merge":
@@ -253,10 +256,8 @@ def _panel(crop, kind, spec):
         # The nuclear stain is the context layer -- unless it is the marker
         # itself (a segmentation look), which is then drawn once.
         if nuclear and nuclear != marker:
-            layers.append({"name": nuclear, "window": windows[nuclear]["window"],
-                           "color": calibration.NUCLEAR_MUTED_BLUE})
-        layers.append({"name": marker, "window": windows[marker]["window"],
-                       "color": calibration.MARKER_COLOR})
+            layers.append(_layer(windows, nuclear, calibration.NUCLEAR_MUTED_BLUE))
+        layers.append(_layer(windows, marker, calibration.MARKER_COLOR))
         panel = cropmod.blend(crop, layers, size)
         # Outlines are context, not the cell: thin and grey, every one of
         # them; the ticks say which cell is judged.
@@ -267,10 +268,8 @@ def _panel(crop, kind, spec):
 
         layers = []
         if nuclear and nuclear != marker:
-            layers.append({"name": nuclear, "window": windows[nuclear]["window"],
-                           "color": calibration.NUCLEAR_MUTED_BLUE})
-        layers.append({"name": marker, "window": windows[marker]["window"],
-                       "color": calibration.MARKER_COLOR})
+            layers.append(_layer(windows, nuclear, calibration.NUCLEAR_MUTED_BLUE))
+        layers.append(_layer(windows, marker, calibration.MARKER_COLOR))
         panel = cropmod.blend(crop, layers, size)
         cropmod.outline(panel, crop, target=None, alpha=0.6)
         return cropmod.outline(panel, crop, target=WHITE, neighbours=None)
@@ -279,6 +278,7 @@ def _panel(crop, kind, spec):
         if not name or crop.planes.get(name) is None:
             return np.zeros((size, size, 3), dtype=np.uint8)
         panel = cropmod.blend(crop, [{"name": name, "window": spec["partner_windows"][name],
+                                      "curve": spec["windows"][name].get("curve"),
                                       "color": WHITE}], size)
         return cropmod.outline(panel, crop, target=cropmod.OUTLINE_COLOR, neighbours=None)
     if kind == "gate_relative":
@@ -289,8 +289,7 @@ def _panel(crop, kind, spec):
         name = kind.split(":", 1)[1] if ":" in kind else (spec.get("references") or [None])[0]
         if not name:
             return np.zeros((size, size, 3), dtype=np.uint8)
-        return cropmod.blend(crop, [{"name": name, "window": windows[name]["window"],
-                                     "color": WHITE}], size)
+        return cropmod.blend(crop, [_layer(windows, name, WHITE)], size)
     raise ValueError(f"unknown panel {kind!r}")
 
 
@@ -312,7 +311,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     from plexora.agent.evidence import calibration
     from plexora.agent.evidence import crops as cropmod
     from plexora.agent.presets import nuclear_channel
-    from plexora.server.utils import fast_png
+    from plexora.server.utils import display_curve, fast_png
 
     if layout not in LAYOUTS:
         raise AgentError("invalid_input", f"layout is one of {sorted(LAYOUTS)}")
@@ -403,7 +402,8 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         if gate_px is not None and gate_px > black:
             # The partner's gate at PARTNER_GATE_GREY: brighter than that
             # grey is above the partner's own gate, whatever its display.
-            white = black + (float(gate_px) - black) / PARTNER_GATE_GREY
+            white = display_curve.white_for(black, float(gate_px), PARTNER_GATE_GREY,
+                                            windows[name].get("curve"))
         partner_windows[name] = [black, white]
     spec = {"tile_px": tile_px, "windows": windows, "nuclear": nuclear, "marker": marker,
             "gate": pixel_gate(gate), "references": references, "a": a, "b": b,
@@ -472,7 +472,10 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         "crop": {"side_px": side_px, "how": crop_how, "level": info["level"],
                  "side_level_px": info.get("side_level_px")},
         "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
-                      "window_source": windows[n]["source"]} for n in needed],
+                      "window_source": windows[n]["source"],
+                      **({"curve": windows[n]["curve"]} if windows[n].get("curve") else {}),
+                      **({"chosen_by": windows[n]["chosen_by"]}
+                         if windows[n].get("chosen_by") else {})} for n in needed],
         "display": {"nuclear": nuclear, "marker_color": calibration.MARKER_COLOR,
                     "nuclear_color": calibration.NUCLEAR_MUTED_BLUE,
                     "outline_color": cropmod.NEIGHBOUR_OUTLINE_COLOR, "cell_mode": "outlines",
@@ -481,10 +484,12 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                                "radius_from": radius_how,
                                "cell_diameter_um": cropmod.CELL_DIAMETER_UM},
                     "transfer": {
-                        "merge": "linear, the marker's calibrated window",
-                        "morphology": "linear, black at the window's black, white at the "
-                                      "cell's own disc p99, floored at "
-                                      f"{cropmod.MORPHOLOGY_FLOOR:g} of the window",
+                        "merge": "the marker's calibrated window and curve (asinh: "
+                                 "log-like, background a faint floor, bright cells near "
+                                 "white without clipping)",
+                        "morphology": "black at the window's black, white at the cell's "
+                                      "own disc p99, floored where the context window draws "
+                                      f"{cropmod.MORPHOLOGY_FLOOR:g}; the window's curve",
                         "gate_relative": "log scale, gate at mid-grey, gate/4 to gate*4"
                         if to_log else "linear, gate at mid-grey"}},
         "calibration": {"version": calibration.VERSION,
@@ -565,6 +570,14 @@ def render_overview(session, data, *, marker, points, low, high=None, size=512, 
     scale = size / max(width, height)
     out_w, out_h = max(16, int(round(width * scale))), max(16, int(round(height * scale)))
     image_data = session.image_data(record.name)
+    # Coarse pixels average a bright cell with its surroundings: the window
+    # for the scale drawn (`calibration.display_spec`), not level 0's.
+    calibrated = calibration.current(session, record.name, list(windows)) if windows else {}
+    for name in windows:
+        at_scale = calibration.display_spec(calibrated, name, width / max(out_w, 1))
+        if at_scale is not None:
+            windows[name] = {**windows[name], "window": at_scale["window"],
+                             "curve": at_scale["curve"]}
     with source_image.SHELF.reader(image_data) as source:
         level = source_image.choose_level(source, width, out_w)
         div = 2 ** level
@@ -572,9 +585,11 @@ def render_overview(session, data, *, marker, points, low, high=None, size=512, 
         layers = []
         if nuclear in windows:
             layers.append({"key": windows[nuclear]["key"], "window": windows[nuclear]["window"],
+                           "curve": windows[nuclear].get("curve"),
                            "visible": True, "color": _rgb(calibration.NUCLEAR_MUTED_BLUE)})
         if marker in windows:
             layers.append({"key": windows[marker]["key"], "window": windows[marker]["window"],
+                           "curve": windows[marker].get("curve"),
                            "visible": True, "color": _rgb(calibration.MARKER_COLOR)})
         pixels, _rendered, _bg = source_image.composite(source, layers, level, box)
     image = Image.fromarray(np.ascontiguousarray(pixels), "RGB").resize((out_w, out_h),
@@ -596,7 +611,9 @@ def render_overview(session, data, *, marker, points, low, high=None, size=512, 
                 "gate": {"low": float(low), "high": None if high is None else float(high)},
                 "level": int(level), "size": [out_w, out_h + OVERVIEW_TITLE_H],
                 "n_positive": n_marked,
-                "channels": [{"name": n, "window": windows[n]["window"]} for n in windows],
+                "channels": [{"name": n, "window": windows[n]["window"],
+                              **({"curve": windows[n]["curve"]} if windows[n].get("curve")
+                                 else {})} for n in windows],
                 "estimated_vision_tokens": estimated_tokens(out_w, out_h + OVERVIEW_TITLE_H),
                 "egress": "rendered_pixels"}
     artifact = artifacts.put(record.name, png, manifest, kind="gating_overview") if store \

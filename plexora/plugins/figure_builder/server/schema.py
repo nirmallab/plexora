@@ -917,13 +917,20 @@ def normalize_scene_channel(raw):
 
     `window` is raw 16-bit, always, whatever domain the slider was in. It is
     what the project's own saved channel list stores, for the same reason: a
-    byte-domain window means nothing once HD mode is on.
+    byte-domain window means nothing once HD mode is on. `curve` (asinh with a
+    raw-unit cofactor) is kept when the channel was drawn with one; a channel
+    without it is linear.
     """
+    from plexora.server.utils import display_curve
+
     window = raw.get("window")
     if not isinstance(window, (list, tuple)) or len(window) != 2:
         window = [0, 65535]
     rgb = raw.get("color") if isinstance(raw.get("color"), dict) else {}
+    curve = display_curve.normalise(raw.get("curve") if isinstance(raw.get("curve"), dict)
+                                    else None)
     return {
+        **({"curve": curve} if curve else {}),
         "key": clean_text(raw.get("key")),
         "fullname_at_capture": clean_text(raw.get("fullname_at_capture")),
         "color": {
