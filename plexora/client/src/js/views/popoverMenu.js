@@ -28,7 +28,8 @@
  * Every action carries its `title` as tooltip and accessible name. Labels
  * and titles are text, never HTML. `checked` (a boolean) makes an item one
  * of a set, a radio row with a check beside the current one -- the Visium HD
- * heatmap's Mean / Sum / Max / Min.
+ * heatmap's Mean / Sum / Max / Min; with `checkbox: true` it is a switch on
+ * its own (the Image card's Log brightness).
  */
 window.PlexoraMenu = (function () {
     "use strict";
@@ -117,7 +118,7 @@ window.PlexoraMenu = (function () {
                 // labels line up whichever one is ticked.
                 button.classList.add("is-checkable");
                 button.classList.toggle("is-checked", item.checked);
-                button.setAttribute("role", "menuitemradio");
+                button.setAttribute("role", item.checkbox ? "menuitemcheckbox" : "menuitemradio");
                 button.setAttribute("aria-checked", String(item.checked));
             } else {
                 button.setAttribute("role", "menuitem");

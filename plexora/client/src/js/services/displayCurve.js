@@ -23,7 +23,7 @@
 (function (global) {
     "use strict";
 
-    //: The Log toggle's cofactor for a channel that has none of its own: the
+    //: The cofactor for a channel drawn Log without a fit of its own: the
     //: window's span divided by this (the server's render default too).
     const DEFAULT_ASINH_SPAN = 20;
 
@@ -83,7 +83,7 @@
         return shape.cofactor / s;
     }
 
-    /** The Log toggle's curve for a raw window: span / DEFAULT_ASINH_SPAN. */
+    /** A Log curve for a raw window with no fit: span / DEFAULT_ASINH_SPAN. */
     function seeded(window) {
         const span = Number(window[1]) - Number(window[0]);
         return span > 0 ? { kind: "asinh", cofactor: span / DEFAULT_ASINH_SPAN } : null;

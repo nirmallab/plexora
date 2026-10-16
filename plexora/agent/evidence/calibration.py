@@ -232,6 +232,25 @@ def columns_for(rule) -> list:
             for cid, gain in zip(COLUMN_IDS, GAINS)]
 
 
+def linear_window(entry) -> list:
+    """A marker's window for a Linear display (the viewer's Log brightness
+    off): the rule's black, the titre (floored as the rule floors it) at
+    TITRE_LEVEL, and a vision choice's gain over that. An entry without a cell
+    rule (the nuclear stain, an overview window) is already linear."""
+    rule, anchors = entry.get("rule"), entry.get("anchors")
+    if not rule or not anchors or "noise_p99" not in anchors:
+        return [float(v) for v in entry["window"]]
+    choice = entry.get("choice") or {}
+    band = entry.get("rule_low") if choice.get("band") == "low" and entry.get("rule_low") \
+        else rule
+    black = float(band["window"][0])
+    titre = anchors.get("titre")
+    gap = _gap({**anchors, "black": float(rule["window"][0])})
+    titre_gap = float(titre) - black if titre is not None else 0.0
+    white = black + max(titre_gap, TITRE_FLOOR_GAPS * gap) / TITRE_LEVEL
+    return [black, gain_white([black, white], None, float(choice.get("gain") or 1.0))]
+
+
 def entry_curve(entry):
     """A record entry's curve (`display_curve`), None for linear."""
     from plexora.server.utils import display_curve

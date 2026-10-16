@@ -3242,6 +3242,29 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
     return packet_gmm
 
 
+def gmm_log_window(image_data, mean1, std1, top):
+    """The wand's window for the Log (asinh) curve, from its own mixture fit
+    (log intensities): black just under the background component (its mean
+    less two sds), the background's top (mean plus two sds) drawn dim and
+    the signal's top (`top`, the linear wand's white) drawn bright with room
+    above it -- the levels the gating calibration draws a marker at
+    (`calibration.NOISE_LEVEL`, `TITRE_LEVEL`). {window: [black, white],
+    cofactor} in raw units, or None when the fit has no room between them."""
+    from plexora.agent.evidence.calibration import NOISE_LEVEL, TITRE_LEVEL
+    from plexora.server.utils import display_curve
+
+    black = max(float(np.exp(mean1 - 2 * std1)), float(image_data.min()), 0.0)
+    noise = float(np.exp(mean1 + 2 * std1))
+    top = float(top)
+    if not (top > noise > black):
+        return None
+    curve, white_gap = display_curve.solve(noise - black, top - black, NOISE_LEVEL, TITRE_LEVEL)
+    # Already bright enough at the background on a straight line: asinh with
+    # a cofactor the size of the window is that line, gently bent.
+    cofactor = curve["cofactor"] if curve else float(white_gap)
+    return {"window": [black, black + float(white_gap)], "cofactor": float(cofactor)}
+
+
 def channel_gmm_of(image_data, qmin, qmax):
     """The GMM packet for one channel's overview plane.
 
@@ -3275,6 +3298,8 @@ def channel_gmm_of(image_data, qmin, qmax):
     vmax = min(np.exp(lmax), image_data.max())
     packet_gmm['vmin'] = np.rint(vmin)
     packet_gmm['vmax'] = np.rint(vmax)
+    # The same fit for the Log curve (the viewer's "Log brightness").
+    packet_gmm['log_window'] = gmm_log_window(image_data, mean1, std1, vmax)
 
     # Quantization window for the default (non-HD) WebP tile path. Computed by
     # get_channel_quantization_window() so the tile path can reach it without

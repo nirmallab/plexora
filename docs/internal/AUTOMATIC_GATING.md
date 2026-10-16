@@ -212,7 +212,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   model can serve).
 - **The viewer shows the same brightness.** The canvas draws the curve
   (`frag.glsl` `range_clamp`, `services/displayCurve.js`, the mini-map and
-  the 3-D view; Linear / Log per channel). A mirrored session eases each
+  the 3-D view; one "Log brightness" switch for the image, in the Image card's
+  menu, with the Auto wand fitting in that mode). A mirrored session eases each
   settled marker in turn (`animate_contrast`, captioned "Adjusting contrast
   for X", acknowledged at once so the next packet goes to the model while it
   plays). On open, the viewer asks for the calibration of the channels on

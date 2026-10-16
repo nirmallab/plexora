@@ -1128,9 +1128,19 @@ check("a second layer's card arrives folded",
             ["Channel names", "fas fa-copy|Copy channel names|false",
                 "fas fa-paste|Paste channel names|true"],
             ["Rendering", "fas fa-copy|Copy rendering settings|false",
-                "fas fa-paste|Paste rendering settings|true"],
+                "fas fa-paste|Paste rendering settings|true",
+                "fas fa-eraser|Clear rendering settings: default colours, automatic contrast, "
+                    + "Log off, for every channel|true"],
+            ["Log brightness"],
         ]),
         JSON.stringify(shape));
+    // ...and below them the image-wide Log brightness switch: a checkbox
+    // item (viewerSidebar.setCurveMode), off with no sidebar to read.
+    const logItem = rows.find((row) => row.label === "Log brightness");
+    check("...and the Log brightness switch, one for every channel",
+        Boolean(logItem) && logItem.checkbox === true && logItem.checked === false
+        && typeof logItem.onSelect === "function",
+        JSON.stringify(logItem && { checkbox: logItem.checkbox, checked: logItem.checked }));
     delete ctx.PlexoraMenu;
     delete ctx.PlexoraRenderClipboard;
     check("a registered layer gets no menu",

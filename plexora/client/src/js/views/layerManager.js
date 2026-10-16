@@ -1414,7 +1414,29 @@ window.PlexoraLayerManager = (function () {
                         disabled: transferring || !clip.hasRendering() || !sidebar(),
                         onSelect: pasteRendering,
                     },
+                    {
+                        icon: "fas fa-eraser",
+                        title: "Clear rendering settings: default colours, automatic contrast, "
+                            + "Log off, for every channel",
+                        disabled: transferring || !sidebar()?.clearRendering,
+                        onSelect: clearRendering,
+                    },
                 ],
+            },
+            { separator: true },
+            // Every channel at once, never one by one: how brightness follows
+            // intensity is a choice about the image (viewerSidebar.setCurveMode).
+            {
+                label: "Log brightness",
+                checkbox: true,
+                checked: sidebar()?.curveMode === "asinh",
+                disabled: !sidebar(),
+                title: "Draw every channel on a log-like (asinh) curve: dim cells and a faint "
+                    + "background show, bright structure keeps its detail. Auto then fits for it.",
+                onSelect: () => {
+                    const panel = sidebar();
+                    if (panel) panel.setCurveMode(panel.curveMode === "asinh" ? "linear" : "asinh");
+                },
             },
         ]);
     }
@@ -1535,6 +1557,37 @@ window.PlexoraLayerManager = (function () {
         } finally {
             transferring = false;
         }
+    }
+
+    /**
+     * Every channel's rendering back to what the viewer picks itself
+     * (viewerSidebar.clearRendering), with Undo in the notice: the clear is
+     * one press away from somebody's hand-tuned windows.
+     */
+    function clearRendering() {
+        const bar = sidebar();
+        if (transferring || !bar?.clearRendering) return;
+        let before = null;
+        try {
+            before = bar.clearRendering();
+        } catch (error) {
+            console.error("layerManager: clearing rendering settings failed", error);
+            notify("Could not clear rendering settings", error?.message);
+            return;
+        }
+        window.PlexoraToast?.show?.({
+            title: "Rendering settings cleared",
+            note: "Every channel is back to its default colour and automatic contrast.",
+            timeout: 10000,
+            actions: [{
+                label: "Undo", primary: true,
+                onSelect: () => {
+                    bar.restoreRendering?.(before).catch?.((error) => {
+                        console.error("layerManager: undoing the clear failed", error);
+                    });
+                },
+            }],
+        });
     }
 
     function buildCard(layer) {

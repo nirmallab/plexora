@@ -72,7 +72,7 @@ class ChannelCurve(AgentModel):
 
 
 #: An asinh curve without a cofactor gets the window's span divided by this
-#: (the viewer's Log toggle seeds the same).
+#: (the viewer seeds a channel without a fit the same way).
 DEFAULT_ASINH_SPAN = 20.0
 
 

@@ -4686,9 +4686,20 @@ deliberately left out and what should be built next.
   (`user`|`auto`|`gating`|`default`; a row without one is legacy and counts as
   the user's), `curve`, `cofactor` and `display_rev`
   (`data_model._row_meta`, sent as `list_meta` to `save_channel_list`).
-  `viewerSidebar.js` adds a Linear/Log toggle per channel
-  (`ChannelList.events.CURVE_CHANGE`) and a "Use gating contrast" button
-  that a second press undoes; `syncGatingContrast` (on first open, from
+  The curve is the image's, not a channel's: one "Log brightness" tick in the
+  Image card's menu (`layerManager.js` openRenderMenu, `popoverMenu.js`
+  `checkbox`) calls `viewerSidebar.setCurveMode`, read back from the rows'
+  curves on restore; a levelled channel refits in the new mode, a calibrated
+  one takes the calibration's window for it (`linear_window` when Linear), a
+  user's window keeps its numbers and takes the curve
+  (`ChannelList.events.CURVE_CHANGE`). The Auto wand fits in the mode: Linear
+  as before, Log from the same mixture (`data_model.gmm_log_window`: black
+  under the background component, its top at `NOISE_LEVEL`, the signal top
+  at `TITRE_LEVEL`). The Image card's Rendering row also has Clear
+  (`viewerSidebar.clearRendering`: default colours, automatic contrast, Log
+  off, remembered hand-set windows forgotten; the notice's Undo is
+  `restoreRendering`). There is a "Use gating contrast" button that a second
+  press undoes; `syncGatingContrast` (on first open, from
   `GET /display_contrast`) replaces only a window the viewer levelled itself,
   a seeded default or an earlier calibration -- never one the user set.
   `agentBridge.js`'s `animate_contrast` is queued and acknowledged at once so

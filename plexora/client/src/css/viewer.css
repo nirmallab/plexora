@@ -2015,35 +2015,6 @@
     display: none;
 }
 
-/* Linear / Log under the contrast window: the cell-mode segmented look,
-   sized to its two words, with the 8-bit note after it. */
-.channel-slot-curve {
-    align-items: center;
-    display: flex;
-    gap: 8px;
-    min-width: 0;
-    padding: 0 0 4px;
-}
-
-.channel-slot-curve .channel-slot-curve-options {
-    flex: 0 0 auto;
-    width: auto;
-}
-
-.channel-slot-curve .cell-mode-option {
-    flex: 0 0 auto;
-    padding: 3px 10px;
-}
-
-.channel-slot-curve-note {
-    color: var(--text-muted);
-    font-size: 10px;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 /* Collapsible per-channel threshold panel - hidden until the expand chevron is clicked */
 .channel-slot-detail {
     max-height: 0;
@@ -2054,7 +2025,7 @@
 
 .channel-slot-detail.is-expanded {
     margin-top: 4px;
-    max-height: 180px;
+    max-height: 150px;
     opacity: 1;
 }
 

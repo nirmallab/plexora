@@ -65,7 +65,7 @@ function extractMethod(source, name) {
 
 const METHODS = [
     "syncGatingContrast", "applyGatingContrast", "onSlotGatingClick", "syncSlotGatingButton",
-    "gatingEntry", "showsGating", "byteStep", "rawToByteRangeFine", "setSlotCurve",
+    "gatingEntry", "gatingLook", "showsGating", "setCurveMode", "applyCurveMode", "logCurveFor", "byteStep", "rawToByteRangeFine", "setSlotCurve",
     "easeSlotRange", "setSlotRange", "normalizeRange", "toRawRangeForSlot", "updateSlotReadout",
     "persistChannelList",
 ];
@@ -89,7 +89,8 @@ function makeButton() {
     };
 }
 
-const ENTRY = { window: [120, 5200], curve: { kind: "asinh", cofactor: 60 }, chosen_by: "vision" };
+const ENTRY = { window: [120, 5200], curve: { kind: "asinh", cofactor: 60 },
+                linear_window: [120, 3800], chosen_by: "vision" };
 
 function makeSidebar(slotState = {}) {
     const button = makeButton();
@@ -101,7 +102,8 @@ function makeSidebar(slotState = {}) {
     };
     const sidebar = {
         ...methods,
-        slot, button, saves: 0, events: [],
+        slot, button, saves: 0, events: [], fits: [],
+        curveMode: "asinh",
         channelSlots: [slot],
         markerRangeOverrides: new Map(),
         markerCurves: new Map(),
@@ -119,6 +121,7 @@ function makeSidebar(slotState = {}) {
         syncSlotCurve() {},
         ensureHdForCurve() {},
         scheduleSaveChannels() { sidebar.saves += 1; },
+        autoChannel(index, options) { sidebar.fits.push([index, options]); },
     };
     return sidebar;
 }
@@ -199,6 +202,41 @@ function makeSidebar(slotState = {}) {
     mine.persistChannelList();
     assert.deepEqual(saved[5].CD3, { source: "user", curve: "linear" });
     ok("a saved row carries its source and curve; a legacy one saves as the user's");
+}
+
+// 6. Linear (Log brightness off): the calibration's Linear window, no curve.
+{
+    const sidebar = makeSidebar();
+    sidebar.curveMode = "linear";
+    assert.equal(sidebar.syncGatingContrast(), 1);
+    assert.deepEqual(sidebar.slot.range, ENTRY.linear_window);
+    assert.equal(sidebar.slot.curve, null);
+    ok("with Log off the gating contrast is its Linear window");
+}
+
+// 7. One switch for the image: each kind of window follows it its own way.
+{
+    const sidebar = makeSidebar({ rangeSource: "gating", userRangeChanged: false });
+    sidebar.curveMode = "linear";
+    sidebar.channelSlots[0].range = [...ENTRY.linear_window];
+    const auto = { ...sidebar.slot, index: 1, name: "CD8", rangeSource: "auto", range: [10, 900] };
+    const mine = { ...sidebar.slot, index: 2, name: "CD20", rangeSource: "user", userRangeChanged: true,
+                   range: [40, 700] };
+    sidebar.channelSlots.push(auto, mine);
+    sidebar.channelList.hasChannelGMM = { CD20: { log_window: { window: [5, 900], cofactor: 33 } } };
+    sidebar.setCurveMode("asinh");
+    assert.equal(sidebar.curveMode, "asinh");
+    assert.deepEqual(sidebar.slot.range, ENTRY.window, "the calibration's Log window");
+    assert.deepEqual(sidebar.slot.curve, ENTRY.curve);
+    assert.deepEqual(sidebar.fits, [[1, { force: true, source: "auto" }]], "the levelled one is refitted");
+    assert.deepEqual(mine.range, [40, 700], "the user's window keeps its numbers");
+    assert.deepEqual(mine.curve, { kind: "asinh", cofactor: 33 }, "and takes the fit's cofactor");
+    assert.ok(sidebar.saves >= 1);
+    sidebar.setCurveMode("linear");
+    assert.deepEqual(sidebar.slot.range, ENTRY.linear_window);
+    assert.equal(mine.curve, null);
+    assert.deepEqual(mine.range, [40, 700]);
+    ok("Log brightness switches every channel: calibrated, levelled and user windows each their way");
 }
 
 console.log(`${passed} checks passed`);

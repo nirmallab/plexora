@@ -58,7 +58,7 @@ def _unavailable(session, project):
 
 
 def entries(record) -> dict:
-    """{channel: {window, curve, chosen_by, titre}} for the markers a record
+    """{channel: {window, curve, linear_window, chosen_by, titre}} for the markers a record
     anchored on their cells; the nuclear stain and overview-only channels are
     left to the viewer's own levelling."""
     from plexora.agent.evidence import calibration
@@ -69,6 +69,8 @@ def entries(record) -> dict:
             continue
         out[name] = {"window": [float(entry["window"][0]), float(entry["window"][1])],
                      "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
+                     # The same marker for a viewer drawing Linear.
+                     "linear_window": calibration.linear_window(entry),
                      "chosen_by": entry.get("chosen_by", "rule"),
                      "titre": (entry.get("anchors") or {}).get("titre")}
     return out

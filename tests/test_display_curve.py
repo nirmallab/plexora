@@ -345,3 +345,44 @@ def test_the_viewer_applies_the_gating_contrast_only_where_nobody_set_one():
                           capture_output=True, text=True, cwd=REPO_ROOT, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "checks passed" in proc.stdout, proc.stdout
+
+
+def test_the_wand_fits_log_from_its_own_mixture():
+    """The Auto wand in Log: the same three-component fit (on log
+    intensities), black under its background component, the background's top
+    dim and the signal's top bright -- where the linear wand clips the whole
+    background to black."""
+    from plexora.agent.evidence import calibration as cal
+    from plexora.server.models import data_model
+    from plexora.server.utils import display_curve
+
+    rng = np.random.default_rng(0)
+    image = np.concatenate([np.exp(rng.normal(np.log(300), 0.25, 60000)),
+                            np.exp(rng.normal(np.log(60), 0.3, 20000)),
+                            np.exp(rng.normal(np.log(4000), 0.4, 6000))]).astype(np.float32)
+    packet = data_model.channel_gmm_of(image, 0, 65535)
+    fitted = packet["log_window"]
+    curve = {"kind": "asinh", "cofactor": fitted["cofactor"]}
+    background_top = 300 * np.exp(2 * 0.25)
+    assert display_curve.level(background_top, fitted["window"], curve) == \
+        pytest.approx(cal.NOISE_LEVEL, abs=0.03)
+    assert display_curve.level(packet["vmax"], fitted["window"], curve) == \
+        pytest.approx(cal.TITRE_LEVEL, abs=0.01)
+    assert 0 < display_curve.level(300, fitted["window"], curve) < cal.NOISE_LEVEL
+    assert display_curve.level(300, [packet["vmin"], packet["vmax"]]) == 0.0   # linear: black
+
+
+def test_a_calibrated_marker_has_a_linear_window_too():
+    from plexora.agent.evidence import calibration as cal
+    from plexora.server.utils import display_curve
+
+    measured = _measured()
+    rule = cal.rule_from(measured)
+    entry = {"role": "marker", "window": list(rule["window"]), "curve": rule["curve"],
+             "rule": rule, "anchors": dict(measured)}
+    linear = cal.linear_window(entry)
+    assert linear[0] == rule["window"][0]
+    assert display_curve.level(measured["titre"], linear) == pytest.approx(cal.TITRE_LEVEL)
+    darker = cal.linear_window({**entry, "choice": {"gain": 0.8}})
+    assert display_curve.level(measured["titre"], darker) == pytest.approx(cal.TITRE_LEVEL * 0.8)
+    assert cal.linear_window({"window": [1.0, 9.0]}) == [1.0, 9.0]
