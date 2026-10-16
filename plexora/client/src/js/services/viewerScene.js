@@ -309,6 +309,81 @@
         return true;
     }
 
+    /**
+     * Where the view is, as `glideTo` takes it back: OpenSeadragon's centre
+     * and zoom, read as drawn (not where a spring is heading). Null with
+     * nothing open.
+     */
+    function viewOf(imageViewer) {
+        const viewer = osdOf(imageViewer);
+        if (!viewer) return null;
+        const center = viewer.viewport.getCenter(true);
+        return { center: { x: center.x, y: center.y }, zoom: viewer.viewport.getZoom(true) };
+    }
+
+    /**
+     * Move the view gradually -- the way a person zooms with the wheel, not
+     * a cut: to `target` = a `viewOf` result, or `{x, y, scale}` (a point in
+     * full-resolution image pixels to centre, and scaleOf's screen pixels
+     * per image pixel). The zoom is interpolated geometrically and the centre
+     * linearly, eased in and out, over `ms`. Resolves true when it arrived,
+     * false when it could not start or a newer glide took over.
+     */
+    function glideTo(imageViewer, target, options) {
+        const viewer = osdOf(imageViewer);
+        const item = referenceItem(imageViewer);
+        if (!viewer || !item || !target) return Promise.resolve(false);
+        let to;
+        if (target.center) {
+            to = { center: target.center, zoom: Number(target.zoom) };
+        } else {
+            const scale = levelScale(imageViewer, options && options.config);
+            const center = item.imageToViewportCoordinates(
+                Number(target.x) * scale, Number(target.y) * scale, true);
+            const imageZoom = Number(target.scale) / scale;
+            to = { center: { x: center.x, y: center.y },
+                   zoom: item.imageToViewportZoom(imageZoom) };
+        }
+        if (![to.center.x, to.center.y, to.zoom].every(Number.isFinite) || !(to.zoom > 0)) {
+            return Promise.resolve(false);
+        }
+        const from = viewOf(imageViewer);
+        const ms = Math.max(0, Number(options && options.ms) || 0);
+        const apply = (center, zoom) => {
+            viewer.viewport.zoomTo(zoom, null, true);
+            viewer.viewport.panTo(new OpenSeadragon.Point(center.x, center.y), true);
+        };
+        const token = {};
+        viewer.__plexoraGlide = token;
+        if (!ms || typeof requestAnimationFrame !== "function") {
+            apply(to.center, to.zoom);
+            return Promise.resolve(true);
+        }
+        return new Promise((resolve) => {
+            const started = performance.now();
+            const logFrom = Math.log(from.zoom);
+            const logTo = Math.log(to.zoom);
+            const step = () => {
+                if (viewer.__plexoraGlide !== token) {
+                    resolve(false);
+                    return;
+                }
+                const f = Math.min(1, (performance.now() - started) / ms);
+                const e = f < 0.5 ? 4 * f * f * f : 1 - ((-2 * f + 2) ** 3) / 2;
+                apply({ x: from.center.x + (to.center.x - from.center.x) * e,
+                        y: from.center.y + (to.center.y - from.center.y) * e },
+                      Math.exp(logFrom + (logTo - logFrom) * e));
+                if (f >= 1) {
+                    viewer.__plexoraGlide = null;
+                    resolve(true);
+                    return;
+                }
+                requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        });
+    }
+
     const ViewerScene = {
         normalizeDegrees: normalizeDegrees,
         orientationOf: orientationOf,
@@ -324,6 +399,8 @@
         panTo: panTo,
         zoomTo: zoomTo,
         fitRegion: fitRegion,
+        viewOf: viewOf,
+        glideTo: glideTo,
     };
 
     // On `window` for the page, and on the script's global as well: Figure

@@ -215,12 +215,20 @@ class SessionOptions(AgentModel):
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
     display_check: Literal[schemas.DISPLAY_CHECKS] = Field(
-        "vision", description="How bright each marker is drawn in every look: `vision` puts a "
-                              "contrast grid to the model after the panel context (markers in "
-                              "rows, five brightnesses in columns; code picks the column), "
-                              "once per image -- a choice outlives the session; `rule` keeps "
-                              "the calibration's own window (black under the background, the "
-                              "bright cells' structure near the top).")
+        "vision", description="Auto contrast -- how bright each marker is drawn in every look: "
+                              "`vision` (the default) puts a contrast grid to the model after "
+                              "the panel context (markers in rows, five brightnesses in "
+                              "columns; code picks the column) for the markers no earlier check "
+                              "settled -- once per image, a choice outlives the session, so an "
+                              "image an auto-contrast run already did is not asked again; "
+                              "`rule` keeps the calibration's own window (black under the "
+                              "background, the bright cells' structure near the top) and shows "
+                              "it; `off` leaves the step out.")
+    purpose: Literal[schemas.PURPOSES] = Field(
+        "gating", description="gating: decide the markers' gates. contrast: auto contrast on its "
+                              "own (contrast_session_start) -- the set-up, the calibration and "
+                              "the contrast check; no marker is profiled or gated, and each "
+                              "closes `display_set` once its image's brightness is settled.")
     tiles: bool = Field(False, description="Draw every look's cells as a 2 x 2 block: "
                         "morphology, the context with the judged cell outlined, and one "
                         "expected and one not-expected partner channel from the panel "
@@ -832,6 +840,83 @@ def start(call, inp):
     return out
 
 
+class ContrastOptions(AgentModel):
+    """Auto contrast on its own (`contrast_session_start`)."""
+    scope: Literal["project", "dataset"] = Field(
+        "project", description="project: one image; dataset: every image of a dataset.")
+    project: str | None = Field(None, description="With scope=project.")
+    dataset: str | None = Field(None, description="With scope=dataset: name or id.")
+    markers: list[str] | None = Field(None, description="Default: every marker except "
+                                      "structural channels (DNA and the like).")
+    check: Literal["vision", "rule"] = Field(
+        "vision", description="vision: the model judges a contrast grid per batch of markers "
+                              "(code picks the column); rule: the calibration's own window, "
+                              "no model.")
+    redo: bool = Field(False, description="Ask again about markers an earlier run settled "
+                                          "(their choices are taken off first). Off, a marker "
+                                          "already set is skipped -- and an image whose "
+                                          "markers all are asks nothing.")
+    mirror: bool = Field(False, description="Show it in an open viewer: each marker in turn "
+                                            "in the second channel slot, its slider dragged "
+                                            "to the chosen window.")
+    view_id: str | None = None
+    mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
+    setup: Literal["ask", "wait", "fail"] = Field(
+        "ask", description="As gating_session_start's: what happens when the project's set-up "
+                           "(columns, expression matrix) is not finished.")
+    expression: ExpressionChoice | None = None
+    image_format: Literal["webp", "png"] = "webp"
+    reading: Literal["once", "every_packet"] = "once"
+    known_guide: str | None = None
+    agent: str = Field("agent", max_length=80, description="Who answers (the model, say).")
+    reuse_answers: bool = True
+
+
+def contrast_start(call, inp):
+    """Auto contrast as its own module: a session of the gating engine with
+    `purpose: contrast` -- the set-up a contrast check needs (matrix, pixel
+    size, the panel's compartments), the calibration, and the check itself;
+    no marker profiled, nothing gated. Its packets come through gating_next
+    and gating_answer like any session's."""
+    from plexora.agent.evidence import calibration
+
+    if inp.redo:
+        images = [inp.project] if inp.scope == "project" and inp.project else []
+        if inp.scope == "dataset" and inp.dataset:
+            from plexora import datasets
+
+            try:
+                images = list(datasets.dataset(inp.dataset).projects)
+            except KeyError as exc:
+                raise AgentError("invalid_input", str(exc.args[0]),
+                                 detail={"hint": "list_datasets"}) from None
+        for project in images:
+            channels = None
+            if inp.markers:
+                from plexora.plugins.gating.server.autogate import views
+
+                ds = call.session.data(project)
+                channels = [c for c in (views.image_channel(ds, m) for m in inp.markers) if c]
+            calibration.forget_choices(project, channels)
+    options = SessionOptions(
+        scope=inp.scope, project=inp.project, dataset=inp.dataset, markers=inp.markers,
+        purpose="contrast", display_check=inp.check, mode="propose", force=True,
+        audit_sheet=False, replan=False, delegate=False, mirror=inp.mirror,
+        view_id=inp.view_id, mirror_delay_ms=inp.mirror_delay_ms, setup=inp.setup,
+        expression=inp.expression, image_format=inp.image_format, reading=inp.reading,
+        known_guide=inp.known_guide, agent=inp.agent, reuse_answers=inp.reuse_answers)
+    out = start(call, options)
+    out["purpose"] = "contrast"
+    if "packet" not in out and not out.get("setup"):
+        out["next"] = (f"{tool_name_of('gating.next')}(session_id) -- the set-up packets "
+                       "(the panel's compartments, the pixel size) and then one contrast grid "
+                       "per batch of markers; answer each with "
+                       f"{tool_name_of('gating.answer')}. The session is done when every "
+                       "marker reads `display_set`; close it with "
+                       f"{tool_name_of('gating.session_finish')}.")
+    return out
+
+
 def _biology_for(call, images, inp, panel):
     """The session's biology record (`autogate.biology`): the user's words
     when given, else the reference image's metadata, else what the panel's
@@ -1000,6 +1085,8 @@ def _display_plan(images, inp):
     the model is to look (`display_check: vision`), else `rule` -- the
     calibration's windows stand, and the viewer is shown them all once."""
     check = getattr(inp, "display_check", "vision")
+    if check == "off":
+        return {"status": "off", "projects": {p: {"status": "off"} for p in images}}
     if check == "rule":
         return {"status": "rule",
                 "projects": {p: {"status": "rule", "show_all": True} for p in images}}
@@ -1469,6 +1556,11 @@ def next_packet(call, inp):
         if status == "done":
             if state != "bulk_running":
                 _phase(call, snapshot, inp.session_id, "summarizing")
+                if options["purpose"] == "contrast":
+                    # An auto-contrast run decides no gate: nothing to report.
+                    return {"state": "decided", "progress": progress,
+                            "next": f"{tool_name_of('gating.session_finish')}(session_id, "
+                                    "action='close')"}
                 return {"state": "decided", "progress": progress,
                         "next": f"{tool_name_of('gating.session_finish')}(session_id, "
                                 f"action='close'), then {tool_name_of('gating.report')}"}
@@ -1603,6 +1695,29 @@ def _mirror(call, session_id, packet, *, replay=False):
             return _mirror_brief(mirror)
 
 
+def _mirror_display(call, session_id, project):
+    """Show the mirrored tab the brightness a contrast check just settled,
+    right after the answer (`mirror_script.run_display`): the tab plays it
+    while the session moves on -- and a contrast run, which has no next
+    packet to carry it, still plays it. Best effort, like every mirror."""
+    from plexora.agent.sessions import mirror as session_mirror
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    with session_mirror.send_lock(session_id):
+        try:
+            result = mirror_script.run_display(call, session_id, project)
+        except Exception as exc:  # mirroring never breaks a session
+            result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
+        if not result.get("sent") and result.get("status") == "ok":
+            return
+        with engines.engine_for(call, session_id) as engine:
+            mirror = engine.record.setdefault("mirror", {})
+            mirror["status"] = result.get("status")
+            mirror["last_error"] = (result.get("errors") or [None])[0]
+            mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+
+
 class AnswerInput(AgentModel):
     session_id: str
     packet_id: str = Field(description="The packet being answered (pk_nnnn).")
@@ -1665,11 +1780,13 @@ def answer(call, inp):
         if kind == "display_setup" and outcome.get("project"):
             # The viewer's channels nobody set take the chosen brightness
             # (viewerSidebar.syncGatingContrast); a mirrored tab is shown it
-            # with its next packet (`_mirror`).
+            # being set, now (`_mirror_display`).
             _announce(call, snapshot, inp.session_id, "display", project=outcome["project"],
                       revision=outcome.get("revision"),
                       chosen={m: c["chosen_by"] for m, c in
                               (outcome.get("chosen") or {}).items()})
+            if _mirroring(record.get("mirror") or {}):
+                _mirror_display(call, inp.session_id, outcome["project"])
     if delta:
         progress = _slim_progress(progress)
     # A refused answer (`reissue`: a partner gate changed while the packet was
@@ -2079,6 +2196,19 @@ def capabilities():
             permission="reversible_write", input_model=SessionOptions, handler=start,
             writes=("gates",), persistent=True, egress="metadata",
             reads=("table", "gates", "image")),
+        cap(name="gating.contrast_start", entitlement="ai:gating:session",
+            tool_name="contrast_session_start",
+            purpose="Auto contrast on its own: set how bright every marker of an image or "
+                    "dataset is drawn, without gating. The calibration sets each marker's "
+                    "window from its negative and bright cells, then a contrast grid per "
+                    "batch of markers goes to you (gating_next / gating_answer) and code "
+                    "picks the column. A marker an earlier run set is skipped unless "
+                    "`redo`. The choice is what every later picture -- and the viewer, for "
+                    "channels nobody set -- draws with; gating sessions then skip the step.",
+            permission="reversible_write", input_model=ContrastOptions, handler=contrast_start,
+            writes=("display",), persistent=True, egress="metadata",
+            reads=("table", "image"),
+            tags=tuple(TAGS) + ("contrast", "display", "brightness", "window", "auto contrast")),
         cap(name="gating.session_bulk", entitlement="ai:gating:session", tool_name="gating_session_bulk",
             purpose="The deterministic pass of a gating session (started by "
                     "gating_session_start; call it yourself only to resume one).",

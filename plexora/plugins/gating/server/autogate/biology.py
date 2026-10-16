@@ -193,7 +193,7 @@ def overlay(panel, record) -> dict:
         for rel in ctx["relations"]:
             for a in by_canonical.get(rel["a"], []):
                 entry = entries[a]
-                if entry.get("source") not in (None, "vocabulary"):
+                if entry.get("source") not in (None, "vocabulary", "learned"):
                     continue
                 for b in by_canonical.get(rel["b"], []):
                     if b == a:

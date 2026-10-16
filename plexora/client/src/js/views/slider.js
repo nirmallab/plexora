@@ -825,6 +825,13 @@ class PlexoraSlider {
         this.nodes.inputs[which].classList.remove("is-dragging");
     }
 
+    /** A drag no hand is making (an agent showing the adjustment it settled
+     *  on): the thumb drawn as it is while held, or not. */
+    showDrag(which, on) {
+        const input = this.nodes.inputs[which];
+        if (input) input.classList.toggle("is-dragging", Boolean(on));
+    }
+
     /** Not on pointerup: the thumb still has focus after a click, and putting
      *  the keyboard ring back the instant the button came up would redraw the
      *  very rectangle this control exists to be rid of. */

@@ -45,7 +45,10 @@ TERMINAL_STATES = ("accepted", "accepted_low_confidence", "manual_review_recomme
                    "technically_failed", "no_positive_population", "not_binary",
                    "insufficient_information",
                    "skipped_locked", "skipped_excluded", "skipped_manual", "skipped_no_marker",
-                   "skipped_no_channel")
+                   "skipped_no_channel",
+                   # An auto-contrast run's marker (`purpose: contrast`): its
+                   # brightness settled, no gate decided or written.
+                   "display_set")
 
 #: The states `gating_qc` lists for a person to look at.
 REVIEW_STATES = ("manual_review_recommended", "accepted_low_confidence", "technically_failed",
@@ -233,11 +236,19 @@ PIXEL_STATES = ("pending", "applied", "asked", "unavailable")
 #: A session's contrast check, per image and overall: `pending` (a grid is
 #: still to go out), `applied` (every marker's brightness is settled),
 #: `rule` (the session was asked not to check: the calibration's rule
-#: stands), `unavailable` (no calibration or no grid could be drawn).
-DISPLAY_STATES = ("pending", "applied", "rule", "unavailable")
+#: stands), `off` (no contrast step at all: nothing asked, nothing shown),
+#: `unavailable` (no calibration or no grid could be drawn).
+DISPLAY_STATES = ("pending", "applied", "rule", "off", "unavailable")
 #: How a check runs (`SessionOptions.display_check`): `vision` puts a grid
-#: to the model; `rule` keeps the calibration's own window.
-DISPLAY_CHECKS = ("vision", "rule")
+#: to the model for the markers no earlier check settled (none, when an
+#: auto-contrast run already did: the step is skipped); `rule` keeps the
+#: calibration's own window and shows the viewer every marker set by it;
+#: `off` leaves the step out (the pictures still draw with the calibration).
+DISPLAY_CHECKS = ("vision", "rule", "off")
+#: What a session is for (`SessionOptions.purpose`): `gating` decides gates;
+#: `contrast` is the auto-contrast module on its own -- set-up, calibration
+#: and the contrast check, no marker profiled or gated.
+PURPOSES = ("gating", "contrast")
 
 #: What a marker's bright cells should show, by compartment: the words a
 #: contrast check's row carries (`display_setup`), so the model judges the

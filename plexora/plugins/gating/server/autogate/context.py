@@ -2,11 +2,15 @@
 
 Built from the shipped vocabulary (`plexora.ai.vocabulary`), then whatever the
 project or dataset metadata and the user say, and only last from an agent --
-and only for markers the vocabulary does not know. Two rules keep an agent's
+and only for markers the vocabulary does not know. What an agent or the user
+says about such a marker is also taught to the vocabulary's learned layer
+(`learn_from`), so the next panel that has it -- any panel, on any project
+using this data root -- knows it without asking. Two rules keep an agent's
 biology from doing harm:
 
-- **Vocabulary wins.** An agent's entry for a marker the vocabulary knows is
-  kept as a suggestion and not used.
+- **Vocabulary wins.** An agent's entry for a marker the vocabulary knows (the
+  shipped layer, or the learned one: the first account stands) is kept as a
+  suggestion and not used.
 - **Context never moves a gate.** It chooses references, orders the markers,
   sets expectations -- and can lower a confidence or route a marker to review.
   Every threshold is still decided from the marker's own data and pixels.
@@ -36,7 +40,9 @@ RELATIONS = vocabulary.RELATIONS
 UNKNOWN_ROLE_RANK = len(ROLES)
 CONFIDENCE_RANK = {c: len(vocabulary.CONFIDENCE) - 1 - i
                    for i, c in enumerate(vocabulary.CONFIDENCE)}
-SOURCES = ("user", "metadata", "vocabulary", "ai")
+#: Precedence, highest first: `learned` is the vocabulary's learned layer --
+#: an earlier session's account of a marker the shipped file does not know.
+SOURCES = ("user", "metadata", "vocabulary", "learned", "ai")
 #: Who may fill a panel entry through the tools: the scientist, or an agent.
 TOOL_SOURCES = ("user", "ai")
 #: Bounds on what one answer or call may say about a panel.
@@ -48,7 +54,10 @@ _LOCK = threading.Lock()
 
 
 def panel_hash(markers) -> str:
-    names = sorted({(vocabulary.canonical(m) or vocabulary.fold(m)) for m in markers})
+    # The shipped layer only: a marker learned later must not move a panel's
+    # stored context to a new file (and leave the user's entries behind).
+    names = sorted({(vocabulary.canonical(m, learned=False) or vocabulary.fold(m))
+                    for m in markers})
     return hashlib.sha1("|".join(names).encode("utf-8")).hexdigest()[:16]
 
 
@@ -76,7 +85,7 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
         "binary": bool(found.get("binary", True)), "partners": partners,
         "caveats": list(found.get("caveats") or []),
         "expected_fraction": found.get("expected_fraction"),
-        "source": "vocabulary",
+        "source": "learned" if found.get("origin") == "learned" else "vocabulary",
     }
 
 
@@ -126,11 +135,42 @@ FIELDS = ("role", "compartment", "lineage", "binary", "partners", "caveats",
           "expected_fraction")
 
 
+def learn_from(context, markers, *, source, about=None) -> list:
+    """Teach the vocabulary's learned layer what was just applied (by
+    `source`, `ai` or `user`) for those of `markers` it did not know, partners
+    named by their canonical names (`vocabulary.learn`). Returns the names
+    learned; never raises -- a panel answer is applied whether or not the
+    file could be written."""
+    teach = []
+    for marker in markers or ():
+        entry = (context.get("entries") or {}).get(marker) or {}
+        if entry.get("canonical") or entry.get("source") != source or not entry.get("role"):
+            continue
+        name = vocabulary.plain_name(marker)
+        partners = [{"marker": vocabulary.canonical(p["marker"])
+                     or vocabulary.plain_name(p["marker"]),
+                     "relation": p["relation"], "confidence": p.get("confidence", "low")}
+                    for p in entry.get("partners") or [] if p.get("marker")]
+        teach.append({"canonical": name, "role": entry["role"],
+                      "compartment": entry.get("compartment"), "lineage": entry.get("lineage"),
+                      "binary": entry.get("binary"), "partners": partners,
+                      "caveats": entry.get("caveats"),
+                      "expected_fraction": entry.get("expected_fraction"),
+                      "synonyms": [marker] if name != marker else None})
+    if not teach:
+        return []
+    try:
+        return vocabulary.learn(teach, source=source, about=about)
+    except (OSError, ValueError):
+        return []
+
+
 def apply_entry(context, marker, fields, *, source) -> dict:
     """Merge one marker's fields from `source`, by precedence.
 
-    user > metadata > vocabulary > ai. An `ai` entry for a marker the
-    vocabulary knows is kept under `ai_suggestions` and not applied.
+    user > metadata > vocabulary > learned > ai. An `ai` entry for a marker
+    the vocabulary knows (either layer) is kept under `ai_suggestions` and not
+    applied.
     Partners must name markers of this panel.
     """
     if source not in SOURCES:

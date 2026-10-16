@@ -1571,6 +1571,15 @@
     display: none;
 }
 
+/* The slot an agent's contrast show is adjusting (agentBridge's
+   animate_contrast): where the eye should go while its slider moves. */
+.channel-slot.is-agent-adjusting {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel-tint, rgba(56, 189, 248, 0.25));
+    transition: border-color var(--duration-base) var(--ease-standard),
+                box-shadow var(--duration-base) var(--ease-standard);
+}
+
 .channel-slot.is-disabled {
     opacity: 0.58;
 }

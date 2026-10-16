@@ -1339,8 +1339,9 @@ def test_two_unusable_contrast_answers_keep_the_rule(tmp_path):
 
 def test_the_viewer_is_shown_each_marker_settle(tmp_path):
     """The mirror: the contrast check's image opened in HD, and what it
-    settles eased in channel by channel (`animate_contrast`, one command
-    the tab plays while the session goes on)."""
+    settles shown channel by channel in the second slot (`animate_contrast`,
+    one command the tab plays while the session goes on), each with one of
+    its bright cells to zoom in on."""
     from plexora.agent.evidence import calibration
     from plexora.plugins.gating.server.autogate import mirror_script
 
@@ -1359,13 +1360,135 @@ def test_the_viewer_is_shown_each_marker_settle(tmp_path):
     assert channels[0]["curve"] == calibration.viewer_curve(
         calibration.entry_curve(record["channels"]["CD3"]))
     assert "{name}" in animate[0]["arguments"]["caption"]
-    assert "ease_ms" not in animate[0]["arguments"]           # a few: the tab's own pace
+    arguments = animate[0]["arguments"]
+    assert arguments["pace"] == "natural" and arguments["slot"] == mirror_script.DISPLAY_SLOT
+    bright = record["channels"]["CD3"]["cells"]["bright"]
+    best = max(bright, key=lambda c: c["value"])
+    assert channels[0]["focus"] == {"x": pytest.approx(best["x"], abs=0.1),
+                                    "y": pytest.approx(best["y"], abs=0.1)}
     many = {"channels": {f"M{i}": {"role": "marker", "window": [0.0, 10.0]}
                          for i in range(mirror_script.DISPLAY_PACED + 1)}}
     quick = mirror_script.display_script(many, list(many["channels"]))[0]["arguments"]
-    assert quick["ease_ms"] == mirror_script.DISPLAY_QUICK["ease_ms"]
+    assert quick["pace"] == "brisk" and "focus" not in quick["channels"][0]
+    # A contrast run opens its image with no tool: the channel panel is the show.
+    bare = mirror_script.script_for({"kind": "display_setup", "units": [],
+                                     "evidence": {"project": "gsynth"}}, None, record,
+                                    current_project="elsewhere", tool=None)
+    assert "tool" not in bare[0]["arguments"]
     # A contrast check names its one image; the mirror opens that one.
     assert mirror_script._packet_project({"evidence": {"project": "gsynth"}}) == "gsynth"
+
+
+def test_the_viewer_is_shown_only_what_the_check_judged(tmp_path):
+    """A marker the rule or an earlier check settled is not played again;
+    the rows this answer judged are."""
+    from plexora.plugins.gating.server.autogate import engine
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD8", "CD20"])["session_id"]
+    packet = _to_display(session, sid, Oracle(info))
+    answer(session, sid, packet, {
+        "kind": "display_setup", "background_ok": {"CD3": ["c3"], "CD8": ["c3"]},
+        "structure_ok": {"CD3": ["c3"], "CD8": ["c3"]}})
+    entry = engine.store().load(sid)["display"]["projects"]["gsynth"]
+    assert set(entry["unshown"]) == {"CD3", "CD8"}           # CD20: left out, kept the rule
+
+
+def _contrast(session, **options):
+    started = ok(invoke(session, "contrast_session_start", {"scope": "project",
+                                                            "project": "gsynth", **options}))
+    jobs.drain(120)
+    return started
+
+
+def test_auto_contrast_runs_on_its_own_and_gates_nothing(tmp_path):
+    from plexora.agent.evidence import calibration
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    started = _contrast(session, markers=["CD3", "CD8", "CD20"])
+    assert started["purpose"] == "contrast"
+    sid = started["session_id"]
+    seen = drive(session, sid, Oracle(info))
+    kinds = [p["kind"] for p in seen]
+    assert kinds.count("display_setup") == 1
+    assert set(kinds) <= set(schemas.SETUP_KINDS), kinds          # no look, no strip
+    assert {u["state"] for u in units(session, sid).values()} == {"display_set"}
+    assert set((calibration.load("gsynth") or {}).get("choices") or {}) == {"CD3", "CD8", "CD20"}
+    ds = session.data("gsynth")
+    assert not [r for r in model.gate_rows(ds) if r.get("channel") in ("CD3", "CD8", "CD20")]
+    following, result = next_packet(session, sid)
+    assert following is None and result["state"] == "decided"
+    assert "gating_report" not in result["next"]
+    ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+    # Gating afterwards skips the step: the image's contrast is already set.
+    gating = start(session, markers=["CD3", "CD8", "CD20"])["session_id"]
+    seen = drive(session, gating, Oracle(info))
+    assert "display_setup" not in [p["kind"] for p in seen]
+    status = ok(invoke(session, "gating_session_status", {"session_id": gating}))
+    assert status["display"]["status"] == "applied"
+
+
+def test_auto_contrast_skips_what_is_set_unless_redone(tmp_path):
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    first = _contrast(session, markers=["CD3", "CD8"])["session_id"]
+    drive(session, first, Oracle(info))
+    ok(invoke(session, "gating_session_finish", {"session_id": first, "action": "close"}))
+    again = _contrast(session, markers=["CD3", "CD8"])["session_id"]
+    assert "display_setup" not in [p["kind"] for p in drive(session, again, Oracle(info))]
+    assert {u["state"] for u in units(session, again).values()} == {"display_set"}
+    ok(invoke(session, "gating_session_finish", {"session_id": again, "action": "close"}))
+    redo = _contrast(session, markers=["CD3"], redo=True)["session_id"]
+    seen = drive(session, redo, Oracle(info))
+    grids = [p for p in seen if p["kind"] == "display_setup"]
+    assert [[r["marker"] for r in g["evidence"]["rows"]] for g in grids] == [["CD3"]]
+
+
+def test_gating_can_leave_auto_contrast_out(tmp_path):
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8"], display_check="off")
+    seen = drive(session, started["session_id"], Oracle(info))
+    assert "display_setup" not in [p["kind"] for p in seen]
+    status = ok(invoke(session, "gating_session_status",
+                       {"session_id": started["session_id"]}))
+    assert status["display"]["status"] == "off"
+
+
+def test_a_panel_answer_is_learned_for_the_next_panel(tmp_path, monkeypatch):
+    """What the model said about a marker the vocabulary does not know is
+    kept: a project with another panel that has it is not asked again."""
+    from tests import autogate_fixtures
+
+    from plexora.ai import vocabulary
+
+    monkeypatch.setitem(autogate_fixtures.MARKER_LEVELS, "Mystery1",
+                        autogate_fixtures.MARKER_LEVELS["CD20"])
+    vocabulary.clear_cache()
+    info = make_gating_project(tmp_path, markers=("CD3", "CD8", "Mystery1"))
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8", "Mystery1"])
+    assert started["unresolved_markers"] == ["Mystery1"]
+    packet, _ = next_packet(session, started["session_id"])
+    assert packet["kind"] == "panel_context"
+    outcome = answer(session, started["session_id"], packet, {
+        "kind": "panel_context", "entries": [{
+            "marker": "Mystery1", "role": "lineage_other", "compartment": "membrane",
+            "lineage": "b_cell", "binary": True,
+            "partners": [{"marker": "CD3", "relation": "exclusive", "confidence": "moderate"}]}]})
+    assert outcome["outcome"]["learned"] == ["Mystery1"]
+    assert vocabulary.origin("Mystery1") == "learned"
+    ok(invoke(session, "gating_session_finish",
+              {"session_id": started["session_id"], "action": "close"}))
+    make_gating_project(tmp_path, name="gother", markers=("CD3", "Mystery1"))
+    other = ok(invoke(session, "gating_session_start", {"scope": "project",
+                                                        "project": "gother"}))
+    jobs.drain(120)
+    assert not other.get("unresolved_markers")
+    del info
 
 
 def test_a_marker_real_only_within_its_partner_gets_a_conditional_gate(tmp_path):

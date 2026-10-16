@@ -171,6 +171,17 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
+- **A marker is asked about once, anywhere.** What a `panel_context` answer
+  (or `set_panel_context`) says about a marker the shipped vocabulary does
+  not know is written to the vocabulary's learned layer
+  (`vocabulary.learn`, through `context.learn_from`): a YAML file under the
+  data root, or wherever `PLEXORA_VOCABULARY_PATH` points (a lab's shared
+  folder). From then on it resolves in every panel (`source: learned`, ranked
+  between the shipped vocabulary and an agent), so no later session lists it
+  as unresolved. The shipped file always wins; the first account stands and
+  only the user's word replaces a model's; `plexora ai vocabulary` lists and
+  forgets. `panel_hash` reads the shipped layer only, so learning a marker
+  never moves a panel's stored context.
 - **A look never says which way.** It answers one closed question per row
   about the cells around the judged nucleus; `verdicts.direction_from_rows`
   turns the words into a direction, `lattice.place` (with `verdicts.MOVES`)
@@ -209,14 +220,37 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   recomputation) and asked once per image: a later session finds it. Two
   unusable answers keep the rule (`Engine.struck_out`). The task is
   `gating.display` (`vision_routine`: a narrow perceptual question a smaller
-  model can serve).
+  model can serve). `display_check: off` leaves the step out; an image whose
+  markers an earlier check (an auto-contrast run) settled asks nothing.
+- **Auto contrast is also its own module.** `contrast_session_start`
+  (`gating.contrast_start`; `plexora ai run contrast`; the AI panel's "AI Auto
+  Contrast") starts a gating-engine session with `purpose: contrast`: the
+  set-up the check needs (matrix, pixel size, the panel's compartments), the
+  calibration -- the bulk pass profiles no marker -- and the contrast grids;
+  each marker closes `display_set` when its image's brightness is settled, and
+  nothing is gated or written but the calibration's choices. `redo` takes an
+  earlier run's choices off first (`calibration.forget_choices`). The harness
+  answers it as gating's `gating.display` task and the gateway prices it as
+  gating, one unit per grid (`decision.contrast_grids`).
 - **The viewer shows the same brightness.** The canvas draws the curve
   (`frag.glsl` `range_clamp`, `services/displayCurve.js`, the mini-map and
   the 3-D view; one "Log brightness" switch for the image, in the Image card's
-  menu, with the Auto wand fitting in that mode). A mirrored session eases each
-  settled marker in turn (`animate_contrast`, captioned "Adjusting contrast
-  for X", acknowledged at once so the next packet goes to the model while it
-  plays). On open, the viewer asks for the calibration of the channels on
+  menu, with the Auto wand fitting in that mode). A mirrored session shows each
+  marker the check just judged being set, right after the answer
+  (`capabilities_session._mirror_display` -> `mirror_script.run_display` ->
+  `animate_contrast`, captioned "Adjusting contrast for X"): the marker
+  replaces the one in the second channel slot (the other slots are off for
+  the show), arrives at a rough window, and each end of its slider is dragged
+  into place, thumb drawn held, the canvas following -- at a pace a person can
+  follow, with a deterministic variety (`contrastGesture`: starts too dim or
+  too bright in turn, the black end moved for two markers in three, a small
+  overshoot and correction for every second or third, a gradual zoom on one
+  of its bright cells, `focus`, for every fourth). The window shown is the one
+  the canvas keeps: the choice's asinh window with Log brightness on, its
+  `linear_window` off. The command is acknowledged at once, so the next packet
+  goes to the model while it plays, and the tab holds the view commands that
+  arrive meanwhile and runs them after it (only the newest look). A marker
+  the rule or an earlier check settled is not played. On open, the viewer asks for the calibration of the channels on
   screen (`/display_contrast`) and applies it to channels nobody set; a
   saved channel row records who set its window (`source`: user, auto,
   gating, default; a row saved before that is the user's) and a window the

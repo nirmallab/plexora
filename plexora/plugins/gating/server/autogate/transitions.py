@@ -585,7 +585,12 @@ def apply_panel(engine, packet, answer):
                                                          "lineage", "binary", "caveats",
                                                          "expected_fraction", "source",
                                                          "partners")}
-    return {"applied": applied, "refused": refused, "order": engine.record["order"]}
+    # Known from now on, in every panel: the vocabulary's learned layer.
+    learned = context.learn_from(panel, applied, source="ai", about={
+        "agent": engine.options["agent"], "session": engine.record.get("session_id"),
+        "packet": packet.get("packet_id"), "project": project})
+    return {"applied": applied, "refused": refused, "learned": learned,
+            "order": engine.record["order"]}
 
 
 def apply_replan(engine, packet, answer):
@@ -752,11 +757,12 @@ def apply_display(engine, packet, answer):
     entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ())
                             | {c["channel"] for c in chosen.values()})
     entry["out"] = []
-    # What the viewer has not been shown yet (`_mirror_display`): this batch,
-    # and on the first answer the markers the rule settled without a look.
-    entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []),
-                                           *(entry.get("rule") or []),
-                                           *[c["channel"] for c in chosen.values()]]))
+    # What the viewer is shown being set (`capabilities_session._mirror_display`):
+    # the rows of this batch the answer judged. Markers the rule or an earlier
+    # check settled, and rows the answer left out, are not played.
+    entry["unshown"] = list(dict.fromkeys([
+        *(entry.get("unshown") or []),
+        *[c["channel"] for c in chosen.values() if c["chosen_by"] != "rule:no_answer"]]))
     return {"project": project, "chosen": chosen, "revision": revision}
 
 
@@ -772,9 +778,6 @@ def strike_display(engine, packet):
     entry.setdefault("chosen", {}).update({m: "rule:no_answer" for m in markers})
     entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ()))
     entry["out"] = []
-    entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []),
-                                           *[(entry.get("rows") or {}).get(m) for m in markers
-                                             if (entry.get("rows") or {}).get(m)]]))
 
 
 def _now():

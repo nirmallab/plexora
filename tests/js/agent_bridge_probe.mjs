@@ -209,6 +209,26 @@ function makeSidebar(log) {
             this.channelSlots.push(s);
             return s;
         },
+        // The contrast show's seams (viewerSidebar.stageContrastSlot and kin).
+        curveMode: "linear",
+        stageContrastSlot(name, { index = 1, color = null } = {}) {
+            log.push(["stageContrastSlot", index, name, color]);
+            const s = this.channelSlots[index];
+            s.name = name;
+            s.enabled = true;
+            s.visible = true;
+            s.autoLeveled = true;
+            return s;
+        },
+        revealContrastSlot(s, on) { log.push(["revealContrastSlot", s.index, Boolean(on)]); },
+        async contrastDomain(s, raw) { return [raw[0] / 4, raw[1] / 4]; },
+        async dragSlotRange(index, to, options) {
+            log.push(["dragSlotRange", index, to, options.handle, options.ease || "inOut"]);
+            this.channelSlots[index].range = to;
+            return true;
+        },
+        syncChannelSlider() {},
+        syncSlotGatingButton() {},
         async applyLaunchChannels(entries, options) {
             log.push(["applyLaunchChannels", JSON.parse(JSON.stringify(entries)), options]);
             this.channelSlots = entries.map((entry, i) => slot(i, "", false));
@@ -1047,6 +1067,52 @@ async function run(cmd) {
     await runOn(command("pan_to", { x: 1, y: 2 }));
     check("a mutating command after a restore takes a fresh lease", mirrored.bridge.hasLease() === true);
     await mirrored.bridge.restore({ reason: "stopped" });
+}
+
+// -- animate_contrast: one marker at a time in the second slot -----------------
+
+{
+    const showServer = makeServer();
+    const show = makePage({ server: showServer, storage: makeStorage() });
+    show.fireDomReady();
+    for (let i = 0; i < 20 && !showServer.polls.length; i++) await tick(5);
+    show.bridge.stop();
+    const runShow = async (cmd) => { await show.bridge._run(cmd); return ackFor(showServer, cmd); };
+    const queued = await runShow(command("animate_contrast", {
+        channels: [{ name: "CD8", window: [100, 900], linear_window: [100, 700], color: "#ffd43b" },
+                   { name: "PanCK", window: [40, 400], color: "#ffd43b", focus: { x: 10, y: 20 } }],
+        slot: 1, pace: "natural" }));
+    check("animate_contrast is acknowledged at once with what it queued",
+        queued && queued.status === "done" && queued.result.queued.join() === "CD8,PanCK", queued);
+    // A look the session sends meanwhile is held, not played over the show.
+    const first = await runShow(command("set_channels", { channels: [{ name: "CD3" }], mode: "replace" }));
+    const second = await runShow(command("set_channels", { channels: [{ name: "DAPI" }, { name: "CD8" }],
+                                                           mode: "replace" }));
+    check("a set_channels during the show is acknowledged as held",
+        first && first.status === "done" && first.result.held === "contrast_show"
+        && second && second.result.held === "contrast_show", { first, second });
+    check("...and nothing of it runs yet", !has(show.log, "applyLaunchChannels"));
+    for (let i = 0; i < 200 && !has(show.log, "applyLaunchChannels"); i++) await tick(50);
+    const staged = show.log.filter((e) => e[0] === "stageContrastSlot");
+    check("each marker replaces the one in the second slot",
+        staged.length === 2 && staged.every((e) => e[1] === 1) && staged[0][2] === "CD8"
+        && staged[1][2] === "PanCK", staged);
+    const drags = show.log.filter((e) => e[0] === "dragSlotRange");
+    check("the first marker starts too dim: the white end, then the black end",
+        drags[0] && drags[0][3] === "high" && drags[1] && drags[1][3] === "low", drags);
+    check("Log brightness off: the linear window is the one settled on (700, not 900)",
+        drags.slice(0, 2).some((e) => e[2][1] === 175) && !drags.slice(0, 2).some((e) => e[2][1] === 225),
+        drags.slice(0, 2));
+    const panck = drags.slice(2);
+    check("the second marker overshoots and is brought back (a correction, eased out)",
+        panck.length === 3 && panck[1][3] === "high" && panck[2][3] === "high" && panck[2][4] === "out"
+        && panck[2][2][1] === 100 && panck[1][2][1] > 100, panck);
+    check("the slot is marked while adjusted, and unmarked after",
+        has(show.log, "revealContrastSlot", (e) => e[2] === true)
+        && show.log.filter((e) => e[0] === "revealContrastSlot").slice(-1)[0][2] === false);
+    const launches = show.log.filter((e) => e[0] === "applyLaunchChannels");
+    check("after the show only the newest held look is applied",
+        launches.length === 1 && launches[0][1].map((e) => e.name).join() === "DAPI,CD8", launches);
 }
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

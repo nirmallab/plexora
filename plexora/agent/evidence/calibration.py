@@ -599,6 +599,33 @@ def _record_choices(project, choices):
     return record, save(project, record)
 
 
+def forget_choices(project, channels=None) -> tuple:
+    """(record, forgotten): an earlier contrast check's choices taken off --
+    every channel's, or `channels'` -- their windows back to the rule's, so
+    the next check asks about them again (an auto-contrast run's `redo`).
+    (None, []) when there is no current record."""
+    with _lock(project):
+        record = load(project)
+        if record is None:
+            return None, []
+        choices = dict(record.get("choices") or {})
+        names = list(choices) if channels is None else [c for c in channels if c in choices]
+        if not names:
+            return record, []
+        entries = dict(record.get("channels") or {})
+        for name in names:
+            choices.pop(name, None)
+            entry = entries.get(name)
+            if entry and entry.get("rule"):
+                rule = entry["rule"]
+                entry = {k: v for k, v in entry.items() if k != "choice"}
+                entries[name] = {**entry, "window": [float(v) for v in rule["window"]],
+                                 "curve": rule["curve"], "chosen_by": "rule"}
+        record = {**record, "channels": entries, "choices": choices}
+        save(project, record)
+        return record, names
+
+
 _CURRENT: dict = {}
 _CURRENT_LIMIT = 16
 

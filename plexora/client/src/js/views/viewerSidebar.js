@@ -872,7 +872,8 @@ class ViewerSidebar {
         // touched this slot's slider.
         if (this.isHdMode() && !slot.userRangeChanged) {
             this.channelList.ensureChannelStats(slot.name).then(() => {
-                if (slot.userRangeChanged) return;
+                // Nor a contrast show's slot: its window is on screen already.
+                if (slot.userRangeChanged || slot.rangeSource === "agent") return;
                 slot.range = this.getRawImageRange(slot.name);
                 this.channelList.sel[fullName] = slot.range;
                 this.syncSlotDom(slot);
@@ -1646,6 +1647,153 @@ class ViewerSidebar {
         return true;
     }
 
+    /**
+     * The slot a contrast show works in (agentBridge's animate_contrast):
+     * the second one, its marker REPLACED for each channel the show adjusts,
+     * so the picture holds the first slot (the nuclear stain, as a rule) and
+     * one marker at a time -- never a growing stack of channels. The other
+     * slots are switched off for the show; the agent's lease puts them back.
+     * A marker already in the first slot is shown where it is. Returns the
+     * slot, or null for a channel this image does not have.
+     */
+    stageContrastSlot(name, { index = 1, color = null, curve = null } = {}) {
+        if (!name || !(this.columns || []).includes(name)) return null;
+        while (this.channelSlots.length <= index) {
+            const used = this.channelSlots.filter((s) => s.name).map((s) => s.name);
+            if (!this.createAdditionalSlot(used)) break;
+        }
+        const first = this.channelSlots[0];
+        const slotIndex = first && first.enabled && first.name === name
+            ? 0 : Math.min(index, this.channelSlots.length - 1);
+        const slot = this.channelSlots[slotIndex];
+        if (!slot) return null;
+        this.suspendPersistence();
+        try {
+            this.channelSlots.forEach((other) => {
+                if (other.index !== 0 && other.index !== slotIndex && other.enabled && other.name) {
+                    this.setSlotEnabled(other.index, false);
+                }
+            });
+            this.setSlotMarker(slotIndex, name,
+                { keepColor: true, enable: true, reveal: true, force: true });
+            // Up before anything yields: the auto-level setSlotMarker
+            // scheduled would otherwise land on the show's window.
+            slot.autoLeveled = true;
+            slot.userRangeChanged = false;
+            if (!slot.enabled) this.setSlotEnabled(slotIndex, true);
+            if (color) this.setSlotColor(slotIndex, color, true);
+            this.setSlotCurve(slotIndex, curve && curve.kind === "asinh" ? curve : null,
+                              { save: false, source: null });
+        } finally {
+            this.resumePersistence();
+        }
+        return slot;
+    }
+
+    /**
+     * A slot's row open with its slider showing, scrolled into the panel's
+     * view, and marked as the one being adjusted (`on`), or unmarked.
+     */
+    revealContrastSlot(slot, on = true) {
+        const row = slot && this.slotRow(slot.index);
+        if (!row) return;
+        row.classList.toggle("is-agent-adjusting", Boolean(on));
+        if (!on) return;
+        slot.expanded = true;
+        this.applySlotExpansion(slot);
+        try {
+            row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        } catch (error) {
+            row.scrollIntoView?.(false);
+        }
+    }
+
+    /**
+     * A raw window in a slot's slider units (bytes off HD, raw in HD); null
+     * without the channel's statistics.
+     */
+    async contrastDomain(slot, rawWindow) {
+        const raw = [Number(rawWindow[0]), Number(rawWindow[1])];
+        if (!raw.every(Number.isFinite)) return null;
+        if (this.isHdMode()) return raw;
+        await this.channelList.ensureChannelStats(slot.name).catch(() => {});
+        const packet = this.quantWindow(slot.name);
+        return packet ? this.rawToByteRangeFine(raw, packet) : null;
+    }
+
+    /**
+     * Move a slot's window to `to` (slider units) the way a hand drags the
+     * slider: through the slider's own logarithmic travel, eased in and out
+     * (`ease: "out"` for a short correction), the thumb drawn held while it
+     * moves (`handle`: "low", "high" or both when omitted). Every frame is the
+     * write a drag makes, so the canvas follows. Resolves false when a hand
+     * took the slider or the slot changed marker on the way.
+     */
+    dragSlotRange(slotIndex, to, { ms = 900, ease = "inOut", handle = null } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name || !Array.isArray(slot.range)) return Promise.resolve(false);
+        const from = slot.range.map(Number);
+        const target = [Number(to[0]), Number(to[1])];
+        if (!target.every(Number.isFinite) || !(target[1] > target[0])) return Promise.resolve(false);
+        const slider = this.channelSlotSliders.get(slot.index);
+        const ends = handle ? [handle] : ["low", "high"];
+        const held = (on) => ends.forEach((which) => slider?.showDrag?.(which, on));
+        const marker = slot.name;
+        const token = {};
+        slot.rangeEase = token;
+        slot.rangeEaseTarget = target;
+        const write = (range) => {
+            this.setSlotRange(slotIndex, range, false);
+            this.syncChannelSlider(slot);
+        };
+        const smooth = globalThis.PlexoraChannelFade?.smooth?.() ?? true;
+        if (!smooth || !(ms > 0) || typeof requestAnimationFrame !== "function") {
+            slot.rangeEase = null;
+            slot.rangeEaseTarget = null;
+            write(target);
+            return Promise.resolve(true);
+        }
+        // The slider's travel is logarithmic: moving through log(1 + v) gives
+        // the thumb an even speed along the track, as a hand would.
+        const lift = (v) => Math.log1p(Math.max(0, v));
+        const drop = (v) => Math.expm1(v);
+        const a = from.map(lift);
+        const b = target.map(lift);
+        const curve = ease === "out"
+            ? (f) => 1 - (1 - f) ** 3
+            : (f) => (f < 0.5 ? 4 * f * f * f : 1 - ((-2 * f + 2) ** 3) / 2);
+        held(true);
+        return new Promise((resolve) => {
+            const started = performance.now();
+            const done = (ok) => {
+                held(false);
+                if (slot.rangeEase === token) {
+                    slot.rangeEase = null;
+                    slot.rangeEaseTarget = null;
+                }
+                resolve(ok);
+            };
+            const step = () => {
+                // A hand on the slider (setSlotRange(..., true) takes the
+                // token) or another marker in the slot: the show stops here.
+                if (slot.rangeEase !== token || slot.name !== marker) {
+                    done(false);
+                    return;
+                }
+                const f = Math.min(1, (performance.now() - started) / ms);
+                const e = curve(f);
+                write([drop(a[0] + (b[0] - a[0]) * e), drop(a[1] + (b[1] - a[1]) * e)]);
+                if (f >= 1) {
+                    write(target);
+                    done(true);
+                    return;
+                }
+                requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        });
+    }
+
     autoLevelChannelIfNeeded(slot) {
         if (!slot || slot.autoLeveled || slot.autoLeveling || slot.userRangeChanged) {
             return;
@@ -1795,8 +1943,10 @@ class ViewerSidebar {
         if (options.force) slot.userRangeChanged = false;
         // A gating window already on the channel is better than either pass:
         // a late fit never replaces it (an explicit Auto click still does).
+        // Nor over a contrast show's slot (`agent`: agentBridge's animate_contrast).
         const stillCurrent = () => slot.name === markerName && slot.levelTurn === turn &&
-            (options.force || (!slot.userRangeChanged && slot.rangeSource !== "gating"));
+            (options.force || (!slot.userRangeChanged && slot.rangeSource !== "gating"
+                               && slot.rangeSource !== "agent"));
         // An explicit Auto is the user's; a mode switch re-levels as the
         // viewer's own (setCurveMode passes `source: "auto"`).
         const source = options.source || (options.force ? "user" : "auto");

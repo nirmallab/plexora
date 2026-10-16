@@ -28,7 +28,8 @@ States of a unit:
               technically_failed | no_positive_population | not_binary |
               insufficient_information |
               skipped_locked | skipped_excluded | skipped_manual | skipped_no_marker |
-              skipped_no_channel (no image channel: never profiled, never written)
+              skipped_no_channel (no image channel: never profiled, never written) |
+              display_set (an auto-contrast run: brightness settled, never gated)
 
 Writes happen only in `apply` mode, each one a child receipt of the session's
 own operation (`<op>.<nnn>`) with an undo hint, plus a provenance row. A unit
@@ -733,7 +734,7 @@ class Engine(BaseEngine):
                 ds = _data(self.call, unit["project"])
                 if unit["marker"] in ds.table.markers and state not in (
                         "skipped_locked", "skipped_excluded", "skipped_no_marker",
-                        "skipped_no_channel"):
+                        "skipped_no_channel", "display_set"):
                     existing = provenance.read(ds.name).get(unit["marker"]) or {}
                     if existing.get("status") not in ("locked", "approved", "excluded"):
                         # A kept manual gate is recorded as the user's, so the
@@ -1474,9 +1475,30 @@ class Engine(BaseEngine):
             return
         states = [e.get("status") for e in (display.get("projects") or {}).values()]
         if "pending" in states:
+            self.close_display_units()
             return
         display["status"] = "unavailable" if states and all(
             s == "unavailable" for s in states) else "applied"
+        self.close_display_units()
+
+    def close_display_units(self):
+        """An auto-contrast run's markers (`purpose: contrast`) close
+        `display_set` once their image's brightness is settled -- by the check,
+        by the rule, or with no check possible: nothing else is decided for
+        them. Nothing in a gating session."""
+        if self.options["purpose"] != "contrast":
+            return
+        projects = (self.record.get("display") or {}).get("projects") or {}
+        for project in self.record["images"]:
+            entry = projects.get(project) or {}
+            status = entry.get("status")
+            if status in (None, "pending"):
+                continue
+            reason = (f"no contrast check: {entry.get('reason') or 'unavailable'}"
+                      if status == "unavailable" else "brightness settled")
+            for unit in self.units_of(project):
+                if unit["state"] not in TERMINAL:
+                    self.close(unit, "display_set", reason)
 
     def struck_out(self, packet):
         """A contrast check answered wrongly twice keeps the rule's windows

@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261016_log_brightness">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261016_display_contrast">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261010_home_redesign">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261011_fold">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -616,11 +616,11 @@
    and controls. Its orb driver is base.html's, which the import dialog draws
    with too. Before agentBridge.js, which routes show_evidence to the panel
    when one is up. #}
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261015_display_contrast" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261016_display_contrast" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261015_display_contrast" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261016_display_contrast" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}

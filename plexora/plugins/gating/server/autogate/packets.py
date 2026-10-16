@@ -1195,7 +1195,9 @@ def display_setup(engine, units):
         if not out and channel in asked:
             continue
         if not out and not calibration.needs_choice(record, channel):
-            # Settled without a look: shown on the viewer with the rest.
+            # Settled without a look -- by the rule, or by an earlier check
+            # (an auto-contrast run): not asked, and not played on the viewer
+            # again; the viewer's channels nobody set take it all the same.
             ruled.append(channel)
             continue
         words, short = _structure(engine, ds, unit)
@@ -1207,15 +1209,12 @@ def display_setup(engine, units):
     if not rows:
         entry["status"] = "applied"
         entry.setdefault("unshown", [])
-        entry["unshown"] = list(dict.fromkeys([*entry["unshown"], *ruled]))
         engine.settle_display()
         return None
     try:
         rendered = display_grid.render_display_grid(session, ds, record, rows, fmt=_fmt(engine))
     except Exception as exc:  # a check that cannot be drawn leaves the rule standing
         entry.update(status="unavailable", reason=f"no grid: {exc}")
-        entry["unshown"] = list(dict.fromkeys([*(entry.get("unshown") or []), *ruled,
-                                               *[r["channel"] for r in rows]]))
         engine.settle_display()
         engine.log(event="display_setup_unavailable", project=project, reason=str(exc))
         return None

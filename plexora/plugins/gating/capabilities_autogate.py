@@ -636,13 +636,16 @@ def set_panel_context(call, inp):
             raise AgentError("invalid_input", str(exc)) from None
         (applied if result.get("source") == inp.source else suggestions).append(marker)
     after = context.save(panel)
+    # What the vocabulary did not know is learned for every later panel.
+    learned = context.learn_from(panel, applied, source=inp.source,
+                                 about={"project": inp.project, "via": "set_panel_context"})
     receipt = make_receipt(call, changed=before != after, before={"revision": before},
-                           after={"revision": after, "applied": applied},
+                           after={"revision": after, "applied": applied, "learned": learned},
                            revision_before=before, revision_after=after,
                            persistent_state="config", reversible=False)
     return {"receipt": receipt.model_dump(mode="json"), "applied": applied,
-            "kept_as_suggestions": suggestions, "unresolved": panel["unresolved"],
-            "order": panel["order"]}
+            "learned": learned, "kept_as_suggestions": suggestions,
+            "unresolved": panel["unresolved"], "order": panel["order"]}
 
 
 # -- statuses -----------------------------------------------------------------

@@ -951,7 +951,8 @@ def test_the_vocabulary_refuses_an_entry_outside_its_schema():
     with pytest.raises(ValueError, match="relation"):
         vocabulary.check({"canonical": "X", "partners": [{"marker": "CD3",
                                                           "relation": "friend"}]})
-    vocabulary.load.cache_clear()
+    vocabulary._shipped.cache_clear()
+    vocabulary.clear_cache()
     assert vocabulary.load()["entries"]      # the shipped file passes
 
 

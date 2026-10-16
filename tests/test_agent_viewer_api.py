@@ -334,9 +334,11 @@ def test_a_viewer_that_predates_agent_control_says_restart(tmp_path):
 
 
 def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
-    """The contrast check's answer is eased into the tab channel by channel
-    (`animate_contrast`, one command), before the next packet's own channels
-    -- so the next question goes to the model while the tab plays it."""
+    """The contrast check's answer is shown in the tab channel by channel
+    (`animate_contrast`, one command), sent right after the answer and so
+    before the next packet's own channels -- the next question goes to the
+    model while the tab plays it, and the tab holds the look's commands until
+    it is done."""
     from plexora.agent import jobs
     from tests.autogate_fixtures import make_gating_project
 
@@ -367,6 +369,7 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
         animate = next(c for c in tab.seen[before:] if c["type"] == "animate_contrast")
         assert {c["name"] for c in animate["arguments"]["channels"]} == set(rows)
         assert all(c["curve"]["kind"] in ("asinh", "linear") for c in animate["arguments"]["channels"])
+        assert animate["arguments"]["slot"] == 1 and animate["arguments"]["pace"] == "natural"
         if "set_channels" in types:
             assert types.index("animate_contrast") < types.index("set_channels")
 

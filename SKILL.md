@@ -2954,7 +2954,14 @@ deliberately left out and what should be built next.
   context — `order` sorts by `hierarchy.stage_rank` before role bucket,
   unlocks, T1 score and name; `references_for` delegates the actual choice to
   `hierarchy.select`, so the vocabulary and the session's biology together
-  outrank a plain partner list),
+  outrank a plain partner list; `SOURCES` is user > metadata > vocabulary >
+  learned > ai; `learn_from(context, markers, source, about)` teaches the
+  vocabulary's learned layer what an agent or the user said about a marker it
+  did not know, called from `transitions.apply_panel` (outcome `learned`) and
+  `set_panel_context` (result `learned`), and never raises, because a panel
+  answer applies whether or not the file could be written; `panel_hash` uses
+  the shipped layer only, because a marker learned later must not move a
+  panel's stored context to a new file and leave the user's entries behind),
   `provenance.py` (the sidecar table: method, status, confidence, locks),
   `engine.py` (the session state machine, writes, confidence — a gate is
   never accepted against the agent's own recorded direction, `unit["direction"]`;
@@ -3096,12 +3103,34 @@ deliberately left out and what should be built next.
   (it waits on the bulk pass's calibration), `settle_display` rolls the
   per-image states (`schemas.DISPLAY_STATES`) up, and `struck_out` →
   `transitions.strike_display` keeps the rule after two unusable answers.
-  `SessionOptions.display_check` (`vision` default | `rule`) skips the look
-  and keeps the calibration's own window; session tests that expect a look
+  `SessionOptions.display_check` (`vision` default | `rule` | `off`,
+  `schemas.DISPLAY_CHECKS`) — `rule` skips the look and keeps the
+  calibration's own window, `off` leaves the step out (`DISPLAY_STATES` has
+  `off`); session tests that expect a look
   first pass `display_check="rule"`. The task is `gating.display` in
-  `ai/tasks.yaml` (`vision_routine`). The session event `display` and
-  `mirror_script.display_script` send the viewer `animate_contrast`, which
-  eases each settled channel in, captioned.
+  `ai/tasks.yaml` (`vision_routine`). Auto contrast is also its own module:
+  `gating.contrast_start` / `contrast_session_start` (`ContrastOptions`:
+  scope/project/dataset/markers, `check` vision|rule, `redo`, `mirror`) starts
+  a gating-engine session with `SessionOptions.purpose="contrast"`
+  (`schemas.PURPOSES`), because the check needs the same set-up, calibration
+  and packet loop: `bulk.run` calibrates and profiles nothing, each unit
+  closes the terminal `display_set` through `Engine.close_display_units`
+  (from `settle_display` and bulk; `BULK_WORDS`, report `STATE_LABELS`,
+  `agentPanel.js` `OUTCOMES`, skipped by provenance), and `next_packet`'s
+  decided reply omits `gating_report`. `redo` first calls
+  `calibration.forget_choices(project, channels)`, because a settled choice
+  otherwise outlives the session and is not asked again. The harness runs it
+  as `decision.ContrastWorkflow` (`plexora ai run contrast`, `RUN_KINDS`,
+  agent panel kind "AI Auto Contrast"), priced as gating per grid:
+  `contrast_grids(n)` = ceil(n / `display_batch`), unit "contrast grid".
+  `capabilities_session._mirror_display` sends `mirror_script.run_display`
+  right after a `display_setup` answer, so a contrast run, which has no next
+  packet to carry it, still plays; `display_packet_script`/`script_for` take
+  `tool` (None for a contrast run: no tool opens). `display_script` items carry
+  `window`, `curve`, `linear_window` and `focus` (the brightest bright cell),
+  with `slot` (`DISPLAY_SLOT` = 1) and `pace` natural|brisk; only markers the
+  answer judged are played (`apply_display`'s unshown excludes
+  `rule:no_answer`).
   `SessionOptions.setup` (`ask` default | `wait` | `fail`) says what a start
   does with an unfinished set-up, and `setup_needs(session, images,
   confirmations=True)` says what that is: required keys `Requires.missing_from`
@@ -3705,6 +3734,21 @@ deliberately left out and what should be built next.
   fields; `load()` calls `check()` on every entry and raises, naming the
   entry, the first time one doesn't — a markers.yaml typo fails at load, not
   as a silent no-op downstream. markers.yaml is `version: "2"`.
+  A learned layer sits beside it: `learned_path()`
+  (`<data_root>/vocabulary/learned_markers.yaml`, or `PLEXORA_VOCABULARY_PATH`
+  -- a file or a folder, so a lab share learns for every install on it),
+  written by `learn(entries, source="ai"|"user", about=)` and read back by
+  `learned()`/`forget()` (`plexora ai vocabulary [list|path|forget MARKER]`),
+  so a marker a model or the user described once is not asked about again.
+  The shipped layer always wins a name both know, the first account stands and
+  only the user's word replaces a model's (`LEARNED_SOURCES`); a malformed
+  learned entry is skipped, not fatal. `load()` re-reads the learned file when
+  its stat changes (looked at once a second, because `load` runs per name),
+  `version()` gains `+learned.<digest>`, `origin(name)` says which layer,
+  `canonical(name, learned=False)` asks the shipped layer only, `plain_name`
+  strips position and fluorophore suffixes to name a learned entry, and
+  `clear_cache()` forgets both. `conftest.py` unsets `PLEXORA_VOCABULARY_PATH`
+  so no test teaches a lab's shared file (`tests/test_vocabulary_learned.py`).
   `structural()` recognises a nuclear counterstain or an autofluorescence/
   blank channel by name pattern (`NUCLEAR_PATTERN`, `NOT_NUCLEAR_PATTERN`,
   `AUTOFLUORESCENCE_PATTERN`, which moved here from `agent/presets.py`;
@@ -3790,7 +3834,9 @@ deliberately left out and what should be built next.
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
   `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
-  capability), `gating`, `qc` and `volume` (z-stacks, including the
+  capability), `gating` (with `contrast_session_start` and
+  `calibrate_display`), `contrast` (auto contrast on its own: the session
+  loop, the panel context and the pictures), `qc` and `volume` (z-stacks, including the
   `surface_*` tools and `viewer_set_volume_mode`/`viewer_set_camera`/
   `viewer_set_surface`/`viewer_set_inspect`), each a shared `_COMMON` set plus one kind of
   work's tools, because every tool's name, description and schema is sent on
@@ -4703,9 +4749,19 @@ deliberately left out and what should be built next.
   `GET /display_contrast`) replaces only a window the viewer levelled itself,
   a seeded default or an earlier calibration -- never one the user set.
   `agentBridge.js`'s `animate_contrast` is queued and acknowledged at once so
-  the session goes on; it eases each channel in with a `PlexoraCanvasHint`
-  caption in tone `narration`, and a later channel command waits for it
-  (`contrastIdle`) rather than cutting it off.
+  the session goes on; `performContrast` puts each marker in turn in the
+  given slot (`viewerSidebar` `stageContrastSlot`/`revealContrastSlot`),
+  zooms to its `focus` (`viewerScene` `viewOf`/`glideTo`) and drags the slider
+  to the window (`contrastGesture`/`contrastPath`, `dragSlotRange`,
+  `slider.js` `showDrag`, `.channel-slot.is-agent-adjusting`; pace from
+  `CONTRAST_TIMING`/`CONTRAST_BRISK`), captioned with a `PlexoraCanvasHint` in
+  tone `narration`. View commands that arrive during a show are acknowledged
+  at once and held (`HELD_DURING_SHOW`, `holdForShow`, run in order by
+  `releaseHeld`) rather than cutting a marker off half-adjusted; a held
+  `set_channels` drops the older held look's `SUPERSEDED` parts, so only the
+  newest look plays. A slot being shown has `rangeSource "agent"`, which
+  `autoChannel` and the HD stats refresh leave alone.
+  `tests/js/agent_bridge_probe.mjs` covers the show.
   `tests/js/gating_contrast_probe.mjs` (run by `tests/test_display_curve.py`)
   pins the never-a-user's-window rule.
 - `src/shaders/label.frag.glsl` — the GPU cell layer's fragment shader
@@ -8702,8 +8758,8 @@ in **5.6 s**.
 - **No marker names in `autogate/hierarchy.py` or `autogate/biology.py`.**
   Both build their tree and their tissue/disease relations only from the
   panel's own entries — the shipped vocabulary (`ai/knowledge/markers.yaml`,
-  `biology.yaml`), then whatever the user, a project's metadata or an agent
-  (`set_panel_context`) added to them. Neither module hardcodes a CD-number or
+  `biology.yaml`) and its learned layer, then whatever the user, a project's
+  metadata or an agent (`set_panel_context`) added to them. Neither module hardcodes a CD-number or
   a disease's marker list; a panel with no vocabulary entries builds a tree of
   `unplaced` nodes and a biology overlay with no relations, not a wrong guess.
 - **Biology is a prior that never moves a gate.** `SessionOptions.biology`

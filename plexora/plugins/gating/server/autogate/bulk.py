@@ -206,6 +206,7 @@ BULK_WORDS = {
     "skipped_excluded": "excluded, skipped",
     "skipped_no_marker": "not in this image",
     "manual_review_recommended": "could not be profiled, needs review",
+    "display_set": "brightness settled",
 }
 
 #: Announcements closer together than this are dropped (the last one always
@@ -291,6 +292,18 @@ def run(call, inp):
                     display[project].update(status="unavailable",
                                             reason=calibrations[project]["error"])
                     engine.settle_display()
+        if options["purpose"] == "contrast":
+            # Auto contrast on its own: the calibration is all this pass
+            # makes; the markers wait for the image's contrast check and
+            # close with it (`close_display_units`), never profiled.
+            with engine_for(call, session_id) as engine:
+                engine.close_display_units()
+                profiled = engine.record.setdefault("images_profiled", [])
+                if project not in profiled:
+                    profiled.append(project)
+            done += len(order)
+            call.progress(done=done, total=total, message=f"{project}: calibrated")
+            continue
         ds = call.session.data(project)
         for marker in order:
             call.check_cancelled()

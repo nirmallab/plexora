@@ -1,20 +1,45 @@
-"""The shipped marker vocabulary, and the one rule for recognising a marker name.
+"""The marker vocabulary, and the one rule for recognising a marker name.
 
 Panels name the same antibody a dozen ways -- CD8, CD8a, CD8A, cd8_AF488,
 CD8-2 -- and nothing downstream should care. `canonical(name)` folds a name to
 the vocabulary's entry (case, punctuation, a fluorophore or cycle suffix, a
 trailing replicate number) or returns None when it is not a known marker; the
-entry (`plexora/ai/knowledge/markers.yaml`) says what the marker is, where it
-stains, whether it is binary and how it relates to other markers.
+entry says what the marker is, where it stains, whether it is binary and how
+it relates to other markers.
+
+Two layers. The shipped one (`plexora/ai/knowledge/markers.yaml`) is curated
+and always wins. The learned one (`learned_path()`: a file under the data
+root, or wherever PLEXORA_VOCABULARY_PATH points -- a lab's shared folder, so
+every install there learns together) holds what a model or the user said
+about a marker the shipped one does not know, written the first time it was
+said (`learn`, from a gating session's panel context). A marker learned once
+is known from then on, in every panel, and is not asked about again.
 """
 
 from __future__ import annotations
 
 import functools
+import hashlib
+import os
 import re
+import threading
+import time
 from pathlib import Path
 
 PATH = Path(__file__).parent / "knowledge" / "markers.yaml"
+
+#: Where the learned layer is kept when PLEXORA_VOCABULARY_PATH is not set:
+#: under the data root.
+LEARNED_FILE = Path("vocabulary") / "learned_markers.yaml"
+ENV_LEARNED = "PLEXORA_VOCABULARY_PATH"
+#: Who may teach the learned layer, in order of trust: the user's word
+#: replaces a model's, a model's never replaces anything.
+LEARNED_SOURCES = ("user", "ai")
+#: How often (s) the learned file is looked at for a change made elsewhere
+#: (another process, another install sharing it).
+_RECHECK_S = 1.0
+_LEARN_LOCK = threading.Lock()
+_signature = {"at": 0.0, "value": None}
 
 #: What an entry may say (markers.yaml's header describes them in words;
 #: `load` refuses an entry that says anything else). Relations and
@@ -102,8 +127,43 @@ def _variants(name):
                 yield variant
 
 
-@functools.lru_cache(maxsize=1)
+def learned_path() -> Path:
+    """The learned layer's file (it may not exist yet). PLEXORA_VOCABULARY_PATH
+    names the file, or a folder to keep `learned_markers.yaml` in."""
+    configured = os.environ.get(ENV_LEARNED, "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        return path / LEARNED_FILE.name if path.is_dir() or not path.suffix else path
+    from plexora import paths
+
+    return paths.data_root() / LEARNED_FILE
+
+
+def _learned_signature():
+    """What the learned file is now (path, mtime, size), looked at no more
+    than once a second: `load` is called for every name it resolves."""
+    now = time.monotonic()
+    path = learned_path()
+    held = _signature["value"]
+    if held is not None and held[0] == str(path) and now - _signature["at"] < _RECHECK_S:
+        return held
+    try:
+        stat = path.stat()
+        value = (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        value = (str(path), None, None)
+    _signature.update(at=now, value=value)
+    return value
+
+
 def load() -> dict:
+    """{version, entries, lookup, shipped_lookup}: both layers, the shipped
+    one winning every name they share."""
+    return _load(_learned_signature())
+
+
+@functools.lru_cache(maxsize=1)
+def _shipped() -> dict:
     import yaml
 
     with open(PATH, encoding="utf-8") as handle:
@@ -116,10 +176,63 @@ def load() -> dict:
         entry.setdefault("partners", [])
         entry.setdefault("caveats", [])
         check(entry)
+        entry["origin"] = "shipped"
         entries[entry["canonical"]] = entry
         for alias in [entry["canonical"], *entry["synonyms"]]:
             lookup.setdefault(fold(alias), entry["canonical"])
     return {"version": str(raw.get("version") or "0"), "entries": entries, "lookup": lookup}
+
+
+def _read_learned(path) -> list:
+    import yaml
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+    except (OSError, ValueError):
+        return []
+    return [dict(e) for e in (raw.get("markers") or []) if isinstance(e, dict)]
+
+
+@functools.lru_cache(maxsize=4)
+def _load(signature) -> dict:
+    shipped = _shipped()
+    entries = dict(shipped["entries"])
+    lookup = dict(shipped["lookup"])
+    learned_entries = []
+    if signature and signature[1] is not None:
+        for entry in _read_learned(signature[0]):
+            name = entry.get("canonical")
+            if not name or fold(name) in shipped["lookup"]:
+                continue          # the shipped layer knows it: never shadowed
+            entry.setdefault("synonyms", [])
+            entry.setdefault("partners", [])
+            entry.setdefault("caveats", [])
+            try:
+                check(entry)
+            except ValueError:
+                continue          # a hand-edited line gone wrong: skipped, not fatal
+            entry["origin"] = "learned"
+            entries[name] = entry
+            learned_entries.append(entry)
+            for alias in [name, *entry["synonyms"]]:
+                lookup.setdefault(fold(alias), name)
+    version = shipped["version"]
+    if learned_entries:
+        digest = hashlib.sha1(repr(sorted(
+            (e["canonical"], e.get("role"), e.get("compartment"), e.get("lineage"),
+             e.get("binary"),
+             tuple((p.get("marker"), p.get("relation")) for p in e["partners"]))
+            for e in learned_entries)).encode("utf-8")).hexdigest()[:10]
+        version = f"{version}+learned.{digest}"
+    return {"version": version, "entries": entries, "lookup": lookup,
+            "shipped_lookup": shipped["lookup"]}
+
+
+def clear_cache():
+    """Forget what was read: the next `load` reads both layers again."""
+    _signature.update(at=0.0, value=None)
+    _load.cache_clear()
 
 
 def check(entry):
@@ -145,18 +258,18 @@ def version() -> str:
     return load()["version"]
 
 
-def canonical(name) -> str | None:
+def canonical(name, *, learned=True) -> str | None:
     """The vocabulary's name for a marker, or None when it is not known.
 
     A channel that is plainly a structural stain or a control -- the nuclear
     counterstain (`DAPI2`, `Hoechst_04`, `Nucleus2`, `DNA_1`) or an
     autofluorescence / blank channel (`AF1`, `Blank_3`) -- resolves to
     `DNA` / `Autofluorescence` even when its exact spelling is not a synonym
-    (`structural`)."""
-    found = synonym(name)
+    (`structural`). `learned=False`: the shipped layer only."""
+    found = synonym(name, learned=learned)
     if found:
         return found
-    lookup = load()["lookup"]
+    lookup = _lookup(learned)
     found = structural(name)
     if found:
         return found
@@ -168,11 +281,16 @@ def canonical(name) -> str | None:
     return None
 
 
-def synonym(name) -> str | None:
+def _lookup(learned=True) -> dict:
+    loaded = load()
+    return loaded["lookup"] if learned else loaded["shipped_lookup"]
+
+
+def synonym(name, *, learned=True) -> str | None:
     """The vocabulary's name for a marker when `name` is one of its listed
     spellings (give or take a fluorophore or cycle suffix), else None -- the
     first, strictest step of `canonical`, without the name patterns."""
-    lookup = load()["lookup"]
+    lookup = _lookup(learned)
     for variant in _variants(name):
         found = lookup.get(fold(variant))
         if found:
@@ -227,3 +345,101 @@ def match_name(name, candidates) -> str | None:
 def resolve_panel(markers) -> dict:
     """{panel marker: canonical or None}, in panel order."""
     return {marker: canonical(marker) for marker in markers}
+
+
+def origin(name) -> str | None:
+    """`shipped` or `learned` for a known marker's entry, else None."""
+    found = canonical(name)
+    return (load()["entries"][found].get("origin") or "shipped") if found else None
+
+
+def plain_name(name) -> str:
+    """A panel column's marker name without its acquisition position or a
+    fluorophore / cycle suffix (`03_CDX2_AF488` -> `CDX2`): what a learned
+    entry is called, so every spelling of it folds onto it."""
+    text = str(name).strip()
+    base = _POSITION.sub("", text)
+    for candidate in (_SUFFIX.sub("", _FLUOR_SUFFIX.sub("", base)), base, text):
+        candidate = candidate.strip(" _-.")
+        if candidate and fold(candidate):
+            return candidate
+    return text
+
+
+def learned() -> list:
+    """The learned layer's entries, as stored (what `learn` wrote)."""
+    signature = _learned_signature()
+    return _read_learned(signature[0]) if signature[1] is not None else []
+
+
+def _write_learned(path, entries, note=None):
+    import yaml
+
+    body = {"version": "1",
+            "note": note or ("Markers Plexora learned: what a model or the user said about "
+                             "markers the shipped vocabulary does not know. The shipped "
+                             "vocabulary always wins; delete an entry to have it asked "
+                             "again."),
+            "markers": sorted(entries, key=lambda e: fold(e["canonical"]))}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(yaml.safe_dump(body, sort_keys=False, allow_unicode=True),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def learn(entries, *, source="ai", about=None) -> list:
+    """Add markers the shipped layer does not know to the learned layer.
+
+    `entries`: [{canonical, role, compartment?, lineage?, binary?, partners?
+    [{marker (a canonical name), relation, confidence}], caveats?,
+    expected_fraction?, synonyms?}]. A name the shipped layer knows is never
+    written; one already learned is replaced only by the user's word over a
+    model's (`LEARNED_SOURCES`). `about` (who, from which session, project)
+    is kept with each entry. Returns the names written."""
+    if source not in LEARNED_SOURCES:
+        raise ValueError(f"source is one of {LEARNED_SOURCES}")
+    shipped = _shipped()["lookup"]
+    fields = ("role", "compartment", "lineage", "binary", "partners", "caveats",
+              "expected_fraction", "synonyms")
+    rank = {s: i for i, s in enumerate(LEARNED_SOURCES)}
+    written = []
+    with _LEARN_LOCK:
+        path = learned_path()
+        current = {e.get("canonical"): e for e in _read_learned(path) if e.get("canonical")}
+        for raw in entries or []:
+            name = str(raw.get("canonical") or "").strip()
+            if not name or not raw.get("role") or fold(name) in shipped:
+                continue
+            entry = {"canonical": name, **{k: raw[k] for k in fields
+                                           if raw.get(k) not in (None, [], "")}}
+            entry.setdefault("binary", True)
+            check(entry)
+            held = current.get(name)
+            held_source = ((held or {}).get("learned") or {}).get("source", "ai")
+            if held is not None and rank.get(source, 9) >= rank.get(held_source, 9):
+                continue          # the first account stands, unless the user's
+            entry["learned"] = {"source": source,
+                                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                **{k: v for k, v in (about or {}).items() if v is not None}}
+            current[name] = entry
+            written.append(name)
+        if written:
+            _write_learned(path, list(current.values()))
+    if written:
+        clear_cache()
+    return written
+
+
+def forget(name) -> bool:
+    """Take a marker off the learned layer (so the next session asks about
+    it again). False when it was not there."""
+    with _LEARN_LOCK:
+        path = learned_path()
+        current = _read_learned(path)
+        kept = [e for e in current if fold(e.get("canonical") or "") != fold(name)]
+        if len(kept) == len(current):
+            return False
+        _write_learned(path, kept)
+    clear_cache()
+    return True

@@ -104,6 +104,19 @@ def run_command(args) -> int:
     if target == "qc":
         _apply_qc_limits(args)
         options = QCOptions(channels=_names(getattr(args, "channels", None)), **common)
+    elif target == "contrast":
+        # Auto contrast: always on the markers that match an image channel
+        # (contrast_session_start), so no --force; a matrix named here is used.
+        start = {}
+        try:
+            expression = _expression(args)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if expression:
+            start["expression"] = expression
+        options = GatingOptions(markers=_names(args.markers), **common, start_options=start,
+                                on_setup="fail")
     else:
         # --force: a partial marker/channel match is gated on the markers that
         # match (`gating_session_start`'s `force`); none matching still fails.

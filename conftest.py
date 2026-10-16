@@ -32,6 +32,9 @@ def plexora_data_root(tmp_path, monkeypatch):
     # it is what every test meant when it set `data_path` to tmp_path by hand.
     monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path))
     monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
+    # The learned marker vocabulary lives under the data root unless this
+    # points at a lab's shared file -- which no test may teach.
+    monkeypatch.delenv("PLEXORA_VOCABULARY_PATH", raising=False)
     # A developer who exported the suggestion variable to reproduce a connect
     # problem would otherwise have every test resolve against it -- quietly,
     # because a suggestion that loses says nothing.

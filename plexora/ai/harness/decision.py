@@ -271,6 +271,40 @@ class GatingWorkflow(Workflow):
         return events.EVENTS
 
 
+class ContrastWorkflow(GatingWorkflow):
+    """Auto contrast on its own (`contrast_session_start`): the set-up and one
+    contrast grid per batch of markers, through the gating session loop. The
+    grids are the task a gating session's contrast check is (`gating.display`),
+    so the gateway prices them as gating: one unit per grid, not per marker."""
+    name = "contrast"
+    START = "contrast_session_start"
+    parallel = False
+
+    def start_arguments(self, options):
+        arguments = {"scope": "project", "project": options.project, "reading": "once",
+                     "agent": _agent(options), "known_guide": self.guide_version(),
+                     "setup": options.on_setup}
+        if self.selected(options):
+            arguments["markers"] = list(self.selected(options))
+        return arguments
+
+    def units_started(self, started, options):
+        return contrast_grids(super().units_started(started, options))
+
+    def context_terms(self, invoke, options):
+        # No note: a contrast run has no biology to narrow.
+        return None
+
+
+def contrast_grids(markers: int) -> int:
+    """How many contrast grids a run over `markers` markers asks at most (one
+    per `display_batch`): the units an auto-contrast run is priced in."""
+    from plexora.plugins.gating.server.autogate.schemas import ENGINE
+
+    batch = int(ENGINE["display_batch"])
+    return max(1, -(-int(markers) // batch))
+
+
 class QCWorkflow(Workflow):
     name = "qc"
     plugins = ("roi", "qc")
@@ -320,8 +354,9 @@ def _agent(options) -> str:
 
 
 GATING = GatingWorkflow()
+CONTRAST = ContrastWorkflow()
 QC = QCWorkflow()
-WORKFLOWS = {"gating": GATING, "qc": QC}
+WORKFLOWS = {"gating": GATING, "contrast": CONTRAST, "qc": QC}
 
 
 # -- options ---------------------------------------------------------------------------
@@ -1260,7 +1295,11 @@ class QCRun(DecisionRun):
     WORKFLOW = QC
 
 
-RUNS = {"gating": GatingRun, "qc": QCRun}
+class ContrastRun(DecisionRun):
+    WORKFLOW = CONTRAST
+
+
+RUNS = {"gating": GatingRun, "contrast": ContrastRun, "qc": QCRun}
 
 
 def run_many(projects: list, options: DecisionOptions, *, gateway: GatewayClient, parallel: int = 4,

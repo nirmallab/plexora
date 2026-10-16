@@ -39,6 +39,7 @@ PROFILES: dict[str, tuple | None] = {
     "gating": _COMMON + (
         "gating_session_start", "gating_next", "gating_answer", "gating_session_status",
         "gating_session_bulk", "gating_session_finish", "gating_report", "gating_qc",
+        "contrast_session_start", "calibrate_display",
         "get_panel_context", "set_panel_context", "get_marker_hierarchy",
         "get_gate", "get_all_gates", "get_gate_distribution", "get_gate_provenance", "get_gated_summary",
         "get_marker_distribution", "profile_marker", "bivariate_evidence", "score_gate_candidates",
@@ -48,6 +49,14 @@ PROFILES: dict[str, tuple | None] = {
         "render_region", "render_gate_validation", "render_gating_collage", "render_cell_gallery",
         "sample_gating_cells", "sample_gate_validation_regions", "explain_cell", "get_qc_exclusions",
         "object_z_profile",
+    ),
+    # Auto contrast on its own: how bright each marker is drawn, set by a
+    # contrast run (contrast_session_start), whose packets go through the
+    # gating session loop; the pictures that show the result.
+    "contrast": _COMMON + (
+        "contrast_session_start", "gating_next", "gating_answer", "gating_session_status",
+        "gating_session_finish", "calibrate_display", "get_panel_context", "set_panel_context",
+        "render_region", "render_cell_gallery",
     ),
     # QC an image: the session loop, the checks, regions and the QC pictures
     # (skills qc-image, qc-packets, qc-checks, review-qc).

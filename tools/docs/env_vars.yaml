@@ -24,6 +24,11 @@ public:
     group: Data
     description: Extra data directories whose projects are listed alongside your own, separated by `:` (macOS, Linux) or `;` (Windows). The same as `plexora config set shared-dirs`.
     example: /lab/shared/plexora
+  - name: PLEXORA_VOCABULARY_PATH
+    group: Data
+    description: Where Plexora keeps the markers it learned -- what a model or you said about markers its own vocabulary does not know, so they are not asked about again. A file, or a folder for `learned_markers.yaml`; point several installs at one shared folder and they learn together. `plexora ai vocabulary` lists and forgets them.
+    default: <data directory>/vocabulary/learned_markers.yaml
+    example: /lab/shared/plexora/vocabulary
   - name: PLEXORA_MASK_OUTPUT
     group: Data
     description: Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.

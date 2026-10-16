@@ -57,6 +57,16 @@ def _gateway(dev: bool = False):
     return GatewayClient(dev=True if dev else None)
 
 
+#: The runs Plexora AI starts (`ai_run_session`'s `kind`).
+RUN_KINDS = ("gating", "contrast", "qc")
+
+
+def contrast_grids(markers):
+    from plexora.ai.harness.decision import contrast_grids as grids
+
+    return grids(markers)
+
+
 def _workflow(kind):
     from plexora.ai.harness.decision import WORKFLOWS
 
@@ -67,11 +77,12 @@ def _workflow(kind):
 
 
 class RunInput(AgentModel):
-    kind: Literal["gating", "qc"] = Field(description="gating: Auto Gating of the project's "
-                                                      "markers; qc: AutoQC of its image.")
+    kind: Literal["gating", "contrast", "qc"] = Field(
+        description="gating: Auto Gating of the project's markers; contrast: auto contrast -- "
+                    "how bright each marker is drawn, no gating; qc: AutoQC of its image.")
     project: str
-    markers: list[str] | None = Field(None, max_length=200, description="gating: the markers "
-                                      "(default: every marker of the table).")
+    markers: list[str] | None = Field(None, max_length=200, description="gating, contrast: the "
+                                      "markers (default: every marker of the table).")
     channels: list[str] | None = Field(None, max_length=200, description="qc: the channels "
                                        "(default: every channel of the image).")
     mode: Literal["apply", "propose"] = Field(
@@ -189,6 +200,8 @@ def run_session(call, inp):
               "context": inp.context if inp.kind == "gating" else None}
     if inp.kind == "gating":
         options = GatingOptions(markers=inp.markers, parallel_markers=inp.parallel_markers or 1, **common)
+    elif inp.kind == "contrast":
+        options = GatingOptions(markers=inp.markers, **common)
     else:
         options = QCOptions(channels=inp.channels, **common)
     if inp.units_per_worker:
@@ -246,7 +259,7 @@ def run_status(call, inp):
 
     trace = TraceStore()
     if not inp.run_id:
-        runs = [_row(r) for r in trace.runs(limit=inp.limit) if r["kind"] in ("gating", "qc")]
+        runs = [_row(r) for r in trace.runs(limit=inp.limit) if r["kind"] in RUN_KINDS]
         return {"runs": runs}
     run_id = run_id_for(inp.run_id) if inp.run_id.startswith("job_") else inp.run_id
     job = jobs.store().get(job_id_for(run_id))
@@ -342,7 +355,7 @@ def run_control(call, inp):
 
     run_id = run_id_for(inp.run_id) if inp.run_id.startswith("job_") else inp.run_id
     row = TraceStore().run(run_id)
-    if row is None or row["kind"] not in ("gating", "qc"):
+    if row is None or row["kind"] not in RUN_KINDS:
         raise AgentError("invalid_input", f"no Plexora AI run {inp.run_id!r}")
     if not row.get("session_id"):
         if inp.action != "stop":
@@ -393,7 +406,8 @@ def run_control(call, inp):
 
 class BalanceInput(AgentModel):
     project: str | None = Field(None, description="Estimate a run of this project too.")
-    kind: Literal["gating", "qc", "both"] = "both"
+    kind: Literal["gating", "contrast", "qc", "both"] = Field(
+        "both", description="The run to estimate; both: every kind.")
     markers: list[str] | None = Field(None, max_length=200)
     channels: list[str] | None = Field(None, max_length=200)
     dev: bool = False
@@ -405,8 +419,21 @@ def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
     cannot start, and why) or `confirm` (ask first; `start_options` go with a
     yes)."""
     if picked:
-        return len(picked), None, {}
+        return (contrast_grids(len(picked)) if kind == "contrast" else len(picked)), None, {}
     try:
+        if kind == "contrast":
+            record = call.session.project(project)
+            if not record.has_table:
+                return 0, "this project has no cell table to set the contrast from", {}
+            from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
+
+            order, _skipped, _panel = _markers_for(call, [project], None)
+            match = channel_match(call, [project], order)
+            if match["state"] == "none":
+                return 0, None, {"blocked": (
+                    f"None of the {match['n_markers']} markers matches an image channel. Name "
+                    "the image's channels after the markers (Edit project).")}
+            return contrast_grids(match["n_matched"]), None, {}
         if kind == "gating":
             record = call.session.project(project)
             if not record.has_table:
@@ -494,12 +521,15 @@ def balance(call, inp):
                         for name, f in (prices.get("features") or {}).items() if name in ("gating", "qc")}}
     if inp.project:
         estimates = {}
-        for kind in (("gating", "qc") if inp.kind == "both" else (inp.kind,)):
-            price = (prices.get("features") or {}).get(kind) or {}
-            picked = inp.markers if kind == "gating" else inp.channels
+        for kind in (RUN_KINDS if inp.kind == "both" else (inp.kind,)):
+            # A contrast grid is priced as one gating unit (ContrastWorkflow).
+            price = (prices.get("features") or {}).get(
+                "gating" if kind == "contrast" else kind) or {}
+            picked = inp.markers if kind in ("gating", "contrast") else inp.channels
             units, why, words = _units(call, kind, inp.project, picked)
             credits = int(price.get("credits") or 0) * units
-            estimates[kind] = {"units": units, "unit": price.get("unit"), "credits": credits,
+            unit = "contrast grid" if kind == "contrast" else price.get("unit")
+            estimates[kind] = {"units": units, "unit": unit, "credits": credits,
                                "affordable": credits * credit <= out["available_micro"],
                                **({"unavailable": why} if why else {}), **words}
         out["estimates"] = estimates

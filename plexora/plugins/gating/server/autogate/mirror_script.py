@@ -17,15 +17,19 @@ from __future__ import annotations
 #: rebuilds every tile and is acknowledged when that finishes.
 COMMAND_TIMEOUT_S = {"open_project": 20.0, "set_hd_mode": 20.0, "show_evidence": 10.0,
                      "restore_viewer": 20.0,
-                     # A tab still showing a contrast check's channels one at a
-                     # time finishes them before it changes channels again.
+                     # A tab showing a contrast check's channels holds the
+                     # session's view commands and acknowledges them at once;
+                     # one with a large list to merge can still take a moment.
                      "set_channels": 20.0}
 #: The tab's caption while it eases each channel (`animate_contrast`).
 DISPLAY_CAPTION = "Adjusting contrast for {name}"
-#: Up to this many channels ease at the tab's own pace; more (a `rule`
-#: session shows every marker of its image at once) go quickly.
+#: Up to this many channels are adjusted at the tab's natural pace (a few
+#: seconds each, as a person would); more (a `rule` session shows every
+#: marker of its image at once) go briskly.
 DISPLAY_PACED = 8
-DISPLAY_QUICK = {"ease_ms": 350, "dwell_ms": 80}
+#: The channel slot each marker replaces in turn while the tab shows it: the
+#: second, beside the nuclear stain in the first.
+DISPLAY_SLOT = 1
 DEFAULT_TIMEOUT_S = 5.0
 #: The first command of a script: long enough for a background tab to wake.
 WAKE_TIMEOUT_S = 10.0
@@ -77,9 +81,10 @@ def _field_around(cells, pad=120.0):
 
 
 def script_for(packet, manifest, calibration_record, *, current_project=None,
-               viewer_state=None):
+               viewer_state=None, tool="gating"):
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
-    `get_state`) drops set-up commands already in effect."""
+    `get_state`) drops set-up commands already in effect; `tool` is the tool
+    an image is opened with (None: a contrast run, which needs none)."""
     from plexora.agent.evidence import calibration
     from plexora.plugins.gating.server.autogate import packets, schemas
 
@@ -91,7 +96,7 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     if kind in schemas.USER_SETUP_KINDS:
         return setup_script(packet, current_project=current_project)
     if kind == "display_setup":
-        return display_packet_script(packet, current_project=current_project)
+        return display_packet_script(packet, current_project=current_project, tool=tool)
     if not units:
         return []
     project = units[0]["project"]
@@ -168,25 +173,31 @@ def setup_script(packet, *, current_project=None) -> list:
     return script
 
 
-def display_packet_script(packet, *, current_project=None) -> list:
+def display_packet_script(packet, *, current_project=None, tool="gating") -> list:
     """A contrast check going out: the tab on its image, in HD (an asinh
     curve stretches the dark end, where 8-bit tiles have the fewest steps).
-    The channels move when the check is answered (`display_script`)."""
+    The channels move when the check is answered (`display_script`). A
+    contrast run (`tool` None) opens no tool: the channel panel is the show."""
     project = (packet.get("evidence") or {}).get("project")
     if not project:
         return []
     script = []
     if current_project != project:
-        script.append({"type": "open_project", "arguments": {"project": project,
-                                                             "tool": "gating", "carry": True}})
+        arguments = {"project": project, "carry": True}
+        if tool:
+            arguments["tool"] = tool
+        script.append({"type": "open_project", "arguments": arguments})
     script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
     return script
 
 
 def display_script(calibration_record, channels) -> list:
     """`animate_contrast` for `channels` at their calibrated windows and
-    curves: the tab eases each in turn, captioned, while the session goes on
-    (the command is acknowledged at once). [] when none has an entry."""
+    curves: the tab puts each in turn in the second channel slot and drags
+    its slider there, captioned, while the session goes on (the command is
+    acknowledged at once, and the tab holds the session's later view commands
+    until it is done). Each carries one of its bright cells (`focus`) for the
+    tab to zoom in on. [] when none has an entry."""
     from plexora.agent.evidence import calibration
 
     entries = (calibration_record or {}).get("channels") or {}
@@ -195,14 +206,34 @@ def display_script(calibration_record, channels) -> list:
         entry = entries.get(name)
         if not entry or entry.get("role") != "marker":
             continue
-        items.append({"name": name, "window": [float(v) for v in entry["window"]],
-                      "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
-                      "color": calibration.MARKER_COLOR})
+        item = {"name": name, "window": [float(v) for v in entry["window"]],
+                "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
+                "color": calibration.MARKER_COLOR}
+        try:
+            # The same choice for a tab whose Log brightness is off.
+            item["linear_window"] = [float(v) for v in calibration.linear_window(entry)]
+        except Exception:
+            pass
+        focus = _focus_cell(entry)
+        if focus is not None:
+            item["focus"] = focus
+        items.append(item)
     if not items:
         return []
-    pace = DISPLAY_QUICK if len(items) > DISPLAY_PACED else {}
-    return [{"type": "animate_contrast", "arguments": {"channels": items,
-                                                       "caption": DISPLAY_CAPTION, **pace}}]
+    pace = "brisk" if len(items) > DISPLAY_PACED else "natural"
+    return [{"type": "animate_contrast", "arguments": {
+        "channels": items, "caption": DISPLAY_CAPTION, "slot": DISPLAY_SLOT, "pace": pace}}]
+
+
+def _focus_cell(entry):
+    """One of the bright cells the calibration read a marker's titre from,
+    {x, y} in image pixels -- the brightest -- or None."""
+    cells = [c for c in ((entry.get("cells") or {}).get("bright") or [])
+             if isinstance(c, dict) and c.get("x") is not None and c.get("y") is not None]
+    if not cells:
+        return None
+    best = max(cells, key=lambda c: float(c.get("value") or 0.0))
+    return {"x": round(float(best["x"]), 1), "y": round(float(best["y"]), 1)}
 
 
 def _unshown(engine, project):
@@ -276,7 +307,7 @@ def run(call, session_id, packet):
     stored = calibration.load(project) if project else None
     script = script_for(packet, manifest, stored,
                         current_project=(state or {}).get("project") or view.get("project"),
-                        viewer_state=state)
+                        viewer_state=state, tool=_tool(options))
     if project:
         # What a contrast check settled, eased in channel by channel before
         # this packet's own channels (the tab plays it while the session asks
@@ -291,6 +322,69 @@ def run(call, session_id, packet):
                     and not (state or {}).get("hd_mode"):
                 animate = [{"type": "set_hd_mode", "arguments": {"enabled": True}}, *animate]
             script = script[:at] + animate + script[at:]
+
+    def send(type, arguments):
+        return control.send(view["view_id"], type, arguments,
+                            timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
+
+    result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"],
+                               keep_going=mirror.attached(engines.store(), session_id))
+    result["view_id"] = view["view_id"]
+    return result
+
+
+def _tool(options):
+    """The tool the tab opens an image with: gating's, or none for a contrast
+    run (`purpose: contrast`), whose show is the channel panel itself."""
+    return None if options["purpose"] == "contrast" else "gating"
+
+
+def run_display(call, session_id, project):
+    """The tab shown what a contrast check just settled for `project`, right
+    after the answer rather than with the next packet: the show starts while
+    the session moves on, and a contrast run, which has no next packet, still
+    plays it. Same result shape as `run`; {status: off} without a viewer."""
+    from plexora.agent import viewer
+    from plexora.agent.errors import AgentError
+    from plexora.agent.evidence import calibration
+    from plexora.agent.sessions import mirror
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    try:
+        control = viewer.require(call.link)
+    except AgentError as exc:
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
+    with engines.engine_for(call, session_id, save=False) as engine:
+        options = dict(engine.options)
+        view_id = (engine.record.get("mirror") or {}).get("view_id") or options["view_id"]
+    try:
+        view = viewer.resolve_view(control, view_id)
+    except AgentError as exc:
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
+    with engines.engine_for(call, session_id) as engine:
+        shown = _unshown(engine, project)
+    animate = display_script(calibration.load(project), shown)
+    if not animate:
+        return {"status": "ok", "sent": 0, "view_id": view["view_id"]}
+    state = None
+    try:
+        state = (control.send(view["view_id"], "get_state", {},
+                              timeout=WAKE_TIMEOUT_S) or {}).get("result")
+    except AgentError as exc:
+        if exc.code == "viewer_not_available":
+            return {"status": "off", "sent": 0, "view_id": view["view_id"],
+                    "errors": [{"code": exc.code, "message": exc.message}]}
+    script = []
+    if (state or {}).get("project", view.get("project")) != project:
+        arguments = {"project": project, "carry": True}
+        if _tool(options):
+            arguments["tool"] = _tool(options)
+        script.append({"type": "open_project", "arguments": arguments})
+    if not (state or {}).get("hd_mode"):
+        script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
+    script.extend(animate)
 
     def send(type, arguments):
         return control.send(view["view_id"], type, arguments,

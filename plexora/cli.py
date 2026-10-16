@@ -1526,6 +1526,15 @@ def _build_ai_parser():
     skills = subs.add_parser("skills", help="List the scientific skills, or check them.")
     skills.add_argument("--check", action="store_true",
                         help="Validate every skill against the live capabilities.")
+    vocab = subs.add_parser("vocabulary", help="The markers Plexora learned: what a model or "
+                                               "you said about markers its own vocabulary "
+                                               "does not know.")
+    vocab.add_argument("action", nargs="?", choices=("list", "path", "forget"), default="list",
+                       help="list (default): every learned marker and who said so; path: "
+                            "where the file is (PLEXORA_VOCABULARY_PATH moves it, e.g. to a "
+                            "lab's shared folder); forget: take MARKER off, so the next "
+                            "session asks about it again.")
+    vocab.add_argument("marker", nargs="?", default=None, help="With forget: the marker.")
     audit = subs.add_parser("audit", help="What agents did: the audit log, or a report.")
     audit.add_argument("--since", default=None, metavar="ISO",
                        help="Only from this timestamp or date (e.g. 2026-09-26).")
@@ -1594,12 +1603,13 @@ def _build_ai_parser():
     # Plexora AI credits through the gateway (plexora/ai/harness).
     run = subs.add_parser("run", help="Run an AI feature inside Plexora (no external agent), "
                                       "billed in Plexora AI credits.")
-    run.add_argument("run_target", choices=("gating", "qc"),
-                     help="gating: Auto Gating of the markers; qc: AutoQC of the image.")
+    run.add_argument("run_target", choices=("gating", "contrast", "qc"),
+                     help="gating: Auto Gating of the markers; contrast: auto contrast -- how "
+                          "bright each marker is drawn, no gating; qc: AutoQC of the image.")
     run.add_argument("projects", nargs="+", metavar="PROJECT",
                      help="Project(s) to gate or QC; several run in parallel (--parallel).")
     run.add_argument("--markers", default=None,
-                     help="gating: comma-separated markers (default all).")
+                     help="gating, contrast: comma-separated markers (default all).")
     run.add_argument("--channels", default=None,
                      help="qc: comma-separated channels (default all).")
     run.add_argument("--force", action="store_true",
@@ -1887,11 +1897,43 @@ def _run_ai(args):
         return ai_setup.init(check=args.check)
     if command == "skills":
         return ai_setup.skills_command(check=args.check)
+    if command == "vocabulary":
+        return _vocabulary_command(args)
     return ai_setup.setup(args.client, scope=args.scope or "project",
                           project_dir=args.project_dir, dry_run=args.dry_run,
                           install_skills=args.install_skills,
                           allow_source_writes=args.allow_source_writes,
                           http_url=args.http, profile=args.profile)
+
+
+def _vocabulary_command(args) -> int:
+    """`plexora ai vocabulary`: the learned layer of the marker vocabulary."""
+    from plexora.ai import vocabulary
+
+    if args.action == "path":
+        print(vocabulary.learned_path())
+        return 0
+    if args.action == "forget":
+        if not args.marker:
+            print("forget needs the marker's name.", file=sys.stderr)
+            return 2
+        if not vocabulary.forget(args.marker):
+            print(f"{args.marker} is not a learned marker.", file=sys.stderr)
+            return 1
+        print(f"forgot {args.marker}: the next session asks about it again.")
+        return 0
+    entries = vocabulary.learned()
+    if not entries:
+        print(f"No learned markers yet ({vocabulary.learned_path()}).")
+        return 0
+    print(f"{len(entries)} learned marker(s), in {vocabulary.learned_path()}:")
+    for entry in entries:
+        said = entry.get("learned") or {}
+        where = ", ".join(str(said[k]) for k in ("agent", "project") if said.get(k))
+        print(f"  {entry['canonical']:<14} {entry.get('role') or '-':<16} "
+              f"{entry.get('compartment') or '-':<20} {said.get('source', 'ai')}"
+              + (f" ({where})" if where else "") + (f" {said['at']}" if said.get("at") else ""))
+    return 0
 
 
 def _build_connect_parser():

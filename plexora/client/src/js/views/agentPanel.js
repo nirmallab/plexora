@@ -115,6 +115,7 @@ window.PlexoraAgentPanel = (function () {
         skipped_manual: "skipped, gated by hand",
         skipped_no_marker: "skipped, no such marker",
         skipped_no_channel: "skipped, no image channel",
+        display_set: "brightness set, no gate",
     };
 
     //: How the bulk pass's own stage reads while it runs (QC bulk.py's stage
@@ -795,6 +796,10 @@ window.PlexoraAgentPanel = (function () {
           about: "Automatically phenotype cells using marker expression and image context.",
           context: { start: "Start gating",
                      help: "Every marker is gated unless you ask for fewer, e.g. \u201conly gate CD3 and CD8\u201d." } },
+        { kind: "contrast", name: "AI Auto Contrast", label: "Set contrast with Plexora AI",
+          noun: "contrast grid",
+          about: "Set how bright each marker is drawn: a faint background floor, bright cells "
+              + "with their structure, nothing clipped. Gating then skips this step." },
         { kind: "qc", name: "AI Quality Control", label: "QC with Plexora AI", noun: "channel",
           about: "Detect focus, registration, segmentation and other image-quality issues." },
     ];
@@ -1093,7 +1098,8 @@ window.PlexoraAgentPanel = (function () {
     //: image's modality, or a layer of it); only one with a tool its data can
     //: run is shown. A new tool is a KINDS entry plus its id here.
     const MODALITIES = [
-        { id: "multiplex", label: "Multiplexed imaging", image: ["multiplex"], layers: [], kinds: ["gating", "qc"] },
+        { id: "multiplex", label: "Multiplexed imaging", image: ["multiplex"], layers: [],
+          kinds: ["gating", "contrast", "qc"] },
         { id: "xenium", label: "Spatial transcriptomics", image: ["xenium_morphology"],
           layers: ["transcripts"], kinds: [] },
         { id: "visium", label: "Visium HD", image: [], layers: ["visium_bins", "visium_spots"], kinds: [] },

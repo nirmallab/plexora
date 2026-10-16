@@ -127,14 +127,38 @@ window.PlexoraAgentBridge = (function () {
     ]);
     const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast",
                                       "animate_contrast"]);
-    //: animate_contrast: how long one channel's ease takes, and the pause
-    //: before the next, so each change can be seen on its own.
-    const CONTRAST_EASE_MS = 900;
-    const CONTRAST_DWELL_MS = 350;
-    //: The channels animate_contrast has yet to show, oldest first, and
-    //: whether a run is working through them.
+    //: animate_contrast's choreography at its natural pace, in ms: the new
+    //: marker on screen at a rough window before a hand moves (`enter`), the
+    //: two ends dragged in turn (`low`, `high`), a drag that went a little
+    //: past the mark held (`overshoot`) and brought back (`correct`), the
+    //: settled picture (`dwell`), and each way of a zoom on one of its cells.
+    //: Slow enough to watch one marker at a time, not a cut from one to the
+    //: next.
+    const CONTRAST_TIMING = { enter: 700, low: 850, high: 1400, overshoot: 260, correct: 700,
+                              dwell: 1500, zoom: 1900 };
+    //: `pace: "brisk"` (a session showing every marker of an image) plays the
+    //: same moves this much faster, with no zoom and no correction.
+    const CONTRAST_BRISK = 0.4;
+    //: The zoom on a cell: this many times closer, never past 100%.
+    const CONTRAST_ZOOM = 3;
+    //: The channels animate_contrast has yet to show, oldest first, whether a
+    //: run is working through them, and how many it has shown on this page
+    //: (which moves the next one makes: `contrastGesture`).
     const contrastQueue = [];
     let contrastRunning = false;
+    let contrastShown = 0;
+    //: Commands that change the view, held while a contrast show plays and run
+    //: in order once it is over, so a look the session sends meanwhile never
+    //: cuts a marker off half-adjusted -- and is acknowledged at once, so the
+    //: session's next question is not kept waiting for the show.
+    const HELD_DURING_SHOW = new Set([...MUTATING, "show_evidence", "restore_viewer"]);
+    HELD_DURING_SHOW.delete("animate_contrast");
+    //: Held commands a later look replaces: only the newest look is shown.
+    const SUPERSEDED = new Set(["set_channels", "set_channel_color", "set_contrast",
+                                "fit_region", "focus_cell", "pan_to", "zoom_to", "preview_gate",
+                                "highlight_cells", "show_shapes", "set_active_marker",
+                                "set_color_by", "set_cell_render_mode", "show_evidence"]);
+    const heldCommands = [];
 
     // -- small things -------------------------------------------------------
 
@@ -684,6 +708,15 @@ window.PlexoraAgentBridge = (function () {
             },
         };
         const handler = HANDLERS[command.type];
+        if (handler && contrastPlaying() && HELD_DURING_SHOW.has(command.type)) {
+            holdForShow(command);
+            await sendAck(command, {
+                status: "done",
+                result: { held: "contrast_show", pending: contrastQueue.length + 1 },
+                warning: warnings.join("; ") || undefined,
+            });
+            return;
+        }
         if (handler && MUTATING.has(command.type)) {
             takeLease();
             if (CHANNEL_COMMANDS.has(command.type)) lease.channelsTouched = true;
@@ -1674,32 +1707,206 @@ window.PlexoraAgentBridge = (function () {
 
     // -- animate_contrast ------------------------------------------------------
 
-    /**
-     * Until the queued contrast changes have played (bounded): a channel
-     * command arriving meanwhile -- the first look of a session whose check
-     * was just answered -- waits its turn instead of cutting them off.
-     */
-    async function contrastIdle(limitMs = 15000) {
-        const deadline = Date.now() + limitMs;
-        while ((contrastRunning || contrastQueue.length) && Date.now() < deadline) {
-            await pause(50);
-        }
-        // Waited long enough: what is left is not played over the channels
-        // this command is about to set.
-        contrastQueue.length = 0;
+    /** Whether a contrast show is playing, or has channels still to play. */
+    function contrastPlaying() {
+        return contrastRunning || contrastQueue.length > 0;
     }
 
     /**
-     * Work through the queued channels one at a time: put the channel on
-     * screen, say which one, ease its slider (and so the picture) to the
-     * window and curve the session settled on, pause, next. Runs on its own;
-     * the command that queued it has long been acknowledged, so the session
-     * goes on (a gating run asks its next model question meanwhile).
+     * Keep a command for after the show. A new `set_channels` is a new look:
+     * the held parts of an older one (its channels, its framing, its gate
+     * preview) are dropped rather than played through on the way.
+     */
+    function holdForShow(command) {
+        if (command.type === "set_channels") {
+            for (let i = heldCommands.length - 1; i >= 0; i -= 1) {
+                if (SUPERSEDED.has(heldCommands[i].type)) heldCommands.splice(i, 1);
+            }
+        }
+        heldCommands.push(command);
+    }
+
+    /** Run what was held, in order, once no show is playing. */
+    async function releaseHeld() {
+        while (heldCommands.length && !contrastPlaying()) {
+            const command = heldCommands.shift();
+            const handler = HANDLERS[command.type];
+            if (!handler) continue;
+            // Acknowledged when it was held; what it returns now has nobody
+            // waiting for it.
+            const call = {
+                command, acked: true,
+                warn(text) { if (text) console.info("agentBridge:", command.type, text); },
+                async ack() {},
+            };
+            if (MUTATING.has(command.type)) {
+                takeLease();
+                if (CHANNEL_COMMANDS.has(command.type)) lease.channelsTouched = true;
+            }
+            try {
+                await handler(command.arguments || {}, call);
+            } catch (error) {
+                console.warn("agentBridge: held", command.type, messageOf(error));
+            }
+        }
+        touch();
+    }
+
+    /**
+     * Which moves the n-th channel of the page's shows makes. Deterministic,
+     * and varied so a run of markers does not look like one gesture repeated:
+     * a start too dim or too bright (alternating); the black end moved too for
+     * two markers in three; a drag that goes a little past the mark and comes
+     * back for every second or third marker; a zoom on one of the marker's
+     * cells for every fourth.
+     */
+    function contrastGesture(n) {
+        return { dim: n % 2 === 0, low: n % 3 !== 2,
+                 overshoot: n % 5 === 1 || n % 5 === 3, zoom: n % 4 === 2 };
+    }
+
+    /**
+     * The raw windows a gesture passes through on its way to `window`: where
+     * it starts, where the white end overshoots to (null without one).
+     */
+    function contrastPath(window, gesture) {
+        const [low, high] = window;
+        const span = high - low;
+        const startLow = !gesture.low ? low
+            : (gesture.dim ? Math.max(0, low - span * 0.12) : low + span * 0.14);
+        const startHigh = Math.max(gesture.dim ? low + span * 2.4 : low + span * 0.42,
+                                   startLow + span * 0.05);
+        const over = !gesture.overshoot ? null
+            : (gesture.dim ? low + span * 0.78 : low + span * 1.32);
+        return { start: [startLow, startHigh], over };
+    }
+
+    /**
+     * One channel, as a person would set it: the marker replaces the one in
+     * the show's slot (the second), arrives at a rough window, then each end
+     * of its slider is dragged into place -- sometimes a little too far and
+     * back -- while the canvas follows; on some, the view closes in on one of
+     * the marker's cells and pulls back out. False when a hand took the
+     * slider (the show ends there).
+     */
+    async function performContrast(panel, item, n) {
+        const smooth = globalThis.PlexoraChannelFade?.smooth?.() ?? true;
+        const brisk = item.pace === "brisk";
+        const scale = brisk ? CONTRAST_BRISK : (smooth ? 1 : 0.5);
+        const t = (key) => Math.round(CONTRAST_TIMING[key] * scale);
+        const gesture = contrastGesture(n);
+        if (brisk || !smooth) {
+            gesture.overshoot = false;
+            gesture.zoom = false;
+        }
+        // The image's Log brightness decides which of the choice's two windows
+        // is shown: the one the canvas keeps once the show is over.
+        const linear = panel.curveMode !== "asinh" && Array.isArray(item.linearWindow);
+        const settled = linear ? item.linearWindow : item.window;
+        const curve = linear ? null : item.curve;
+        let slot;
+        panel.suspendPersistence();
+        try {
+            slot = panel.stageContrastSlot(item.name,
+                { index: item.slot, color: item.color, curve });
+            // The show's own while it plays: neither the calibration's sync nor
+            // a late fit moves it (REPLACEABLE_SOURCES has no `agent`).
+            if (slot) slot.rangeSource = "agent";
+        } finally {
+            panel.resumePersistence();
+        }
+        if (!slot) return true;
+        const target = await panel.contrastDomain(slot, settled);
+        if (!target) return true;
+        const path = contrastPath(settled, gesture);
+        const start = await panel.contrastDomain(slot, path.start);
+        const over = path.over === null ? null
+            : await panel.contrastDomain(slot, [settled[0], path.over]);
+        // An ease already on its way (the slot's previous marker's) ends here.
+        slot.rangeEase = null;
+        slot.rangeEaseTarget = null;
+        window.PlexoraCanvasHint?.show?.("agent-contrast",
+            { key: "", text: item.caption, tone: "narration" });
+        panel.revealContrastSlot(slot, true);
+        if (start) {
+            panel.setSlotRange(slot.index, start, false);
+            panel.syncChannelSlider(slot);
+        }
+        await pause(t("enter"));
+
+        let view = null;
+        if (gesture.zoom) view = await zoomIn(item);
+
+        const index = slot.index;
+        const drag = (range, key, handle, ease) => panel.dragSlotRange(index, range,
+            { ms: t(key), handle, ease });
+        const current = () => slot.range.map(Number);
+        let ok = true;
+        // The white end first when the picture starts too dim (the obvious
+        // fault), the black end first when it starts washed out.
+        const moveLow = async () => {
+            if (!gesture.low) return true;
+            return drag([target[0], current()[1]], "low", "low");
+        };
+        const moveHigh = async () => {
+            if (over) {
+                if (!await drag([current()[0], over[1]], "high", "high")) return false;
+                await pause(t("overshoot"));
+                return drag([current()[0], target[1]], "correct", "high", "out");
+            }
+            return drag([current()[0], target[1]], "high", "high");
+        };
+        ok = gesture.dim ? (await moveHigh() && await moveLow())
+            : (await moveLow() && await moveHigh());
+        if (ok) {
+            // Whatever the drags passed through, the window the session settled on.
+            panel.setSlotRange(index, target, false);
+            panel.syncChannelSlider(slot);
+            slot.rangeSource = item.source;
+            panel.syncSlotGatingButton?.(slot);
+            await pause(t("dwell"));
+        }
+        if (view) await scene().glideTo(viewer(), view, { ms: t("zoom") });
+        return ok;
+    }
+
+    /**
+     * Close in on the marker's cell (`item.focus`, image pixels), or on the
+     * middle of the view without one: CONTRAST_ZOOM times closer, never past
+     * 100%, gradually. Returns the view to come back to, or null when it is
+     * close enough already.
+     */
+    async function zoomIn(item) {
+        try {
+            const imageViewer = viewer();
+            const now = scene().scaleOf(imageViewer);
+            const back = scene().viewOf(imageViewer);
+            if (!(now > 0) || !back) return null;
+            const wanted = Math.min(1, now * CONTRAST_ZOOM);
+            if (wanted < now * 1.3) return null;
+            const focus = item.focus;
+            const target = focus && Number.isFinite(Number(focus.x)) && Number.isFinite(Number(focus.y))
+                ? { x: Number(focus.x), y: Number(focus.y), scale: wanted }
+                : { center: back.center, zoom: back.zoom * (wanted / now) };
+            await scene().glideTo(imageViewer, target,
+                                  { ms: CONTRAST_TIMING.zoom });
+            return back;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * Work through the queued channels one at a time (`performContrast`).
+     * Runs on its own; the command that queued it was acknowledged at once,
+     * so the session goes on -- a gating run asks its next model question
+     * meanwhile -- and what it sends the view is held until the show is over
+     * (`holdForShow`). Never saved: an agent holds the view (the lease).
      */
     async function runContrastQueue() {
         if (contrastRunning) return;
         contrastRunning = true;
-        const hint = window.PlexoraCanvasHint;
+        let staged = null;
         try {
             while (contrastQueue.length) {
                 const item = contrastQueue.shift();
@@ -1711,33 +1918,27 @@ window.PlexoraAgentBridge = (function () {
                     break;
                 }
                 try {
-                    panel.suspendPersistence();
-                    let slot;
-                    try {
-                        slot = await mergeChannel(panel, { name: item.name, color: item.color,
-                                                           enabled: true, window: null });
-                        if (slot) {
-                            // Before the auto-level setSlotMarker scheduled can
-                            // run: this channel's window is on its way.
-                            slot.autoLeveled = true;
-                            slot.rangeSource = item.source;
-                        }
-                    } finally {
-                        panel.resumePersistence();
+                    const ok = await performContrast(panel, item, contrastShown);
+                    contrastShown += 1;
+                    staged = { panel, index: item.slot };
+                    if (!ok) {
+                        // The user took the slider: what they set stands, and
+                        // the rest of the show is not played over it.
+                        contrastQueue.length = 0;
                     }
-                    if (!slot) continue;
-                    hint?.show?.("agent-contrast", { key: "", text: item.caption, tone: "narration" });
-                    await panel.animateChannelTo(slot.index, item.window, item.curve,
-                                                 { ms: item.ms, source: item.source });
-                    await pause(item.dwell);
                 } catch (error) {
                     console.warn("agentBridge: animate_contrast", item.name, error);
                 }
             }
         } finally {
             contrastRunning = false;
-            hint?.hide?.("agent-contrast");
+            window.PlexoraCanvasHint?.hide?.("agent-contrast");
+            if (staged) {
+                const slot = staged.panel.channelSlots?.[staged.index];
+                if (slot) staged.panel.revealContrastSlot(slot, false);
+            }
             touch();
+            releaseHeld();
         }
     }
 
@@ -1780,24 +1981,26 @@ window.PlexoraAgentBridge = (function () {
         },
 
         async set_channels(args, call) {
-            await contrastIdle();
             return applyChannels(args.channels,
                 { mode: args.mode || "merge", persist: args.persist }, call);
         },
 
         async set_channel_color(args, call) {
-            await contrastIdle();
             return applyChannels([{ name: channelName(args), color: args.color }],
                 { mode: "merge", persist: args.persist }, call);
         },
 
         /**
-         * Show a session settling channels' contrast, one channel at a time:
-         * `channels` [{name, window: [low, high] raw, curve?, color?}],
-         * `caption` (default "Adjusting contrast for {name}"), `ease_ms`,
-         * `dwell_ms`. Acknowledged at once with what was queued; the queue
-         * plays on, behind whatever the session does next. Never saved: an
-         * agent holds the view (the lease), and gives it back.
+         * Show a session settling channels' contrast, one channel at a time
+         * and at a pace a person can follow (`performContrast`): `channels`
+         * [{name, window: [low, high] raw, curve?, color?, focus?: {x, y}
+         * (one of the marker's cells, image pixels, for a zoom)}], `caption`
+         * (default "Adjusting contrast for {name}"), `slot` (the slot each
+         * marker replaces in turn, default the second), `pace` ("natural",
+         * or "brisk" for many markers). Acknowledged at once with what was
+         * queued; the queue plays on, and the view commands the session sends
+         * meanwhile wait for it (`holdForShow`). Never saved: an agent holds
+         * the view (the lease), and gives it back.
          */
         async animate_contrast(args, call) {
             const panel = sidebar();
@@ -1816,12 +2019,17 @@ window.PlexoraAgentBridge = (function () {
                 if (!Array.isArray(range)) throw new Error(`${name}: needs a window [low, high] in raw units`);
                 const caption = String(args.caption || "Adjusting contrast for {name}")
                     .replace("{name}", name).slice(0, 120);
+                const focus = raw.focus && Number.isFinite(Number(raw.focus.x))
+                    && Number.isFinite(Number(raw.focus.y))
+                    ? { x: Number(raw.focus.x), y: Number(raw.focus.y) } : null;
+                const linear = windowOf(raw.linear_window);
                 queued.push({
                     name, window: range, curve: curveOf(raw.curve) ?? null, color: colorHex(raw.color),
-                    caption, source: raw.source === "user" ? "user" : "gating",
-                    ms: Number(args.ease_ms) > 0 ? Math.min(Number(args.ease_ms), 5000) : CONTRAST_EASE_MS,
-                    dwell: Number(args.dwell_ms) >= 0 ? Math.min(Number(args.dwell_ms), 5000)
-                        : CONTRAST_DWELL_MS,
+                    linearWindow: Array.isArray(linear) ? linear : null,
+                    caption, source: raw.source === "user" ? "user" : "gating", focus,
+                    slot: Number.isInteger(Number(args.slot)) && Number(args.slot) >= 0
+                        ? Math.min(Number(args.slot), 14) : 1,
+                    pace: args.pace === "brisk" ? "brisk" : "natural",
                 });
             }
             if (missing.length) call.warn(`not in this image, skipped: ${missing.join(", ")}`);
@@ -1837,7 +2045,6 @@ window.PlexoraAgentBridge = (function () {
             if (display === undefined || display === null) {
                 throw new Error('needs a `window` ([low, high] in raw units, or "auto")');
             }
-            await contrastIdle();
             return applyChannels([{ name: channelName(args), window: display }],
                 { mode: "merge", persist: args.persist }, call);
         },

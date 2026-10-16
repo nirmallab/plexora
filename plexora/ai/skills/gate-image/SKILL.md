@@ -129,7 +129,8 @@ the marker tree, then the numbers and the looks.
    - `display_setup`: how bright each marker is drawn, once per image (the
      choice outlives the session): per row, the columns where the background
      is a faint floor (`background_ok`) and where its `pattern` shows with
-     detail (`structure_ok`); code picks. `display_check: "rule"` skips it.
+     detail (`structure_ok`); code picks. `display_check: "rule"` skips it,
+     `"off"` drops it; brightness alone: `contrast_session_start`.
 3. Hand out the packet loop. The start (and `gating_session_status`) carries
    `delegate`: the worker's `tier` and `model` (the user's mapping; else
    `pick` says which of your models), its `tools`, `units_per_worker` and a
