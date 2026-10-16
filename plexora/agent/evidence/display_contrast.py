@@ -3,16 +3,20 @@
 `calibration` decides how bright a marker is drawn for automatic gating: an
 asinh curve anchored on the marker's own cells, black under the background,
 the bright cells' structure near the top (and, after a gating run, the column
-a vision check chose). The viewer offers the same window on its canvas: it is
-applied to the channels nobody set (the viewer's own auto-levelling, a seeded
-default, an earlier calibration) and offered as a button on the rest.
+a vision check chose). The viewer offers that window on its canvas, a touch
+brighter, and the nuclear stain measured on its own nuclei, a little dimmer
+than the markers (`calibration.view_spec`): applied to the channels nobody set
+(the viewer's own auto-levelling, a seeded default, an earlier calibration);
+on the rest, a channel a contrast check settled (`checked`) takes it from
+the Auto wand, which otherwise fits as ever.
 
 Two calls, both cheap to the caller:
 
 - `describe(project)`: what the project's stored record holds now, for the
-  markers it anchored on their cells -- {state, rev, channels: {name:
-  {window, curve, chosen_by, titre}}}. A record anchored on another table or
-  other QC exclusions is not offered.
+  markers it anchored on their cells and the nuclear stain -- {state, rev,
+  channels: {name: {window, curve, linear_window, chosen_by, titre,
+  checked}}}. A record anchored on another table or other QC exclusions is
+  not offered.
 - `compute(project, channels)`: calibrate those channels in the background,
   one job per project at a time; `describe` says `computing` meanwhile.
 
@@ -58,29 +62,39 @@ def _unavailable(session, project):
 
 
 def entries(record) -> dict:
-    """{channel: {window, curve, linear_window, chosen_by, titre}} for the markers a record
-    anchored on their cells; the nuclear stain and overview-only channels are
-    left to the viewer's own levelling."""
+    """{channel: {window, curve, linear_window, chosen_by, titre, checked}} for the
+    markers a record anchored on their cells, and the nuclear stain measured
+    on its own nuclei, at the windows a canvas is offered (`calibration.
+    view_spec`); overview-only channels are left to the viewer's own
+    levelling."""
     from plexora.agent.evidence import calibration
 
+    choices = (record or {}).get("choices") or {}
     out = {}
     for name, entry in ((record or {}).get("channels") or {}).items():
-        if entry.get("role") != "marker" or not entry.get("rule"):
+        spec = calibration.view_spec(entry)
+        if spec is None:
             continue
-        out[name] = {"window": [float(entry["window"][0]), float(entry["window"][1])],
-                     "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
-                     # The same marker for a viewer drawing Linear.
-                     "linear_window": calibration.linear_window(entry),
-                     "chosen_by": entry.get("chosen_by", "rule"),
-                     "titre": (entry.get("anchors") or {}).get("titre")}
+        nuclear = entry.get("role") == "nuclear"
+        anchors = (entry.get("view") or {}).get("anchors") if nuclear else entry.get("anchors")
+        out[name] = {"window": spec["window"],
+                     "curve": calibration.viewer_curve(spec["curve"]),
+                     # The same channel for a viewer drawing Linear.
+                     "linear_window": spec["linear_window"],
+                     "chosen_by": spec["chosen_by"],
+                     "titre": (anchors or {}).get("titre"),
+                     # A contrast check (an AI auto-contrast run, or gating's)
+                     # settled it: the viewer's Auto wand applies it then. The
+                     # nuclear stain is settled with its image's markers.
+                     "checked": bool(choices) if nuclear else name in choices}
     return out
 
 
 def describe(project, session=None) -> dict:
     """{state: ready|computing|none|unavailable, rev, channels, calibrated,
     reason?}. `calibrated` names every channel the record holds, offered or
-    not (a nuclear stain is calibrated and never offered), so the viewer
-    does not ask for it again. While a job runs the stored record is read
+    not (an overview-only channel is calibrated and never offered), so the
+    viewer does not ask for it again. While a job runs the stored record is read
     as it is -- its table and QC fingerprints are not checked, which would
     read the table the job is reading."""
     from plexora.agent.evidence import calibration

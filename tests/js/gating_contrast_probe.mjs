@@ -1,14 +1,16 @@
 /**
  * The gating calibration's brightness on the viewer's own channels
- * (viewerSidebar.js: syncGatingContrast, the gating button, provenance).
+ * (viewerSidebar.js: syncGatingContrast, the Auto wand, provenance).
  *
  * Pinned here, on the methods as shipped (extracted and run, as
  * channel_auto_revert_probe.mjs does):
  *
  *   - a window the user set -- by hand, or saved before rows said who set
- *     them ("legacy") -- is never replaced; the button is offered instead;
- *   - the button puts the calibration's window AND curve on, says so
- *     (source "gating"), and a second press puts back exactly what was there;
+ *     them ("legacy") -- is never replaced;
+ *   - the Auto wand on a channel a contrast check settled (`checked`) puts
+ *     the calibration's window AND curve on, says so (source "gating"), and
+ *     a second press puts back exactly what was there; on one no check
+ *     settled it fits, as ever;
  *   - a window the viewer levelled itself (auto) or a seeded default is
  *     replaced, and a later drag makes the slot the user's again, so a newer
  *     calibration leaves it alone;
@@ -64,8 +66,8 @@ function extractMethod(source, name) {
 }
 
 const METHODS = [
-    "syncGatingContrast", "applyGatingContrast", "onSlotGatingClick", "syncSlotGatingButton",
-    "gatingEntry", "gatingLook", "showsGating", "setCurveMode", "applyCurveMode", "logCurveFor", "byteStep", "rawToByteRangeFine", "setSlotCurve",
+    "syncGatingContrast", "applyGatingContrast", "onSlotAutoClick", "revertSlotRange",
+    "syncSlotAutoButton", "checkedEntry", "savedCurveMode", "gatingEntry", "gatingLook", "showsGating", "setCurveMode", "applyCurveMode", "logCurveFor", "byteStep", "rawToByteRangeFine", "setSlotCurve",
     "easeSlotRange", "setSlotRange", "normalizeRange", "toRawRangeForSlot", "updateSlotReadout",
     "persistChannelList",
 ];
@@ -90,7 +92,7 @@ function makeButton() {
 }
 
 const ENTRY = { window: [120, 5200], curve: { kind: "asinh", cofactor: 60 },
-                linear_window: [120, 3800], chosen_by: "vision" };
+                linear_window: [120, 3800], chosen_by: "vision", checked: true };
 
 function makeSidebar(slotState = {}) {
     const button = makeButton();
@@ -122,6 +124,7 @@ function makeSidebar(slotState = {}) {
         ensureHdForCurve() {},
         scheduleSaveChannels() { sidebar.saves += 1; },
         autoChannel(index, options) { sidebar.fits.push([index, options]); },
+        syncSlotDom() {},
     };
     return sidebar;
 }
@@ -131,27 +134,41 @@ function makeSidebar(slotState = {}) {
     const sidebar = makeSidebar({ rangeSource: "legacy", userRangeChanged: true });
     assert.equal(sidebar.syncGatingContrast(), 0);
     assert.deepEqual(sidebar.slot.range, [500, 9000]);
-    assert.equal(sidebar.button.hidden, false, "the button is offered");
-    assert.equal(sidebar.button.dataset.state, "apply");
-    ok("a legacy window is kept and the gating contrast offered");
+    assert.equal(sidebar.button.dataset.state, "auto-ai", "the wand says it carries the AI's");
+    assert.match(sidebar.button.title, /AI/);
+    ok("a legacy window is kept, and the wand offers the auto contrast");
 
-    // 2. The button applies window and curve, then puts them back.
-    sidebar.onSlotGatingClick(0);
+    // 2. The wand applies window and curve, then puts them back.
+    await sidebar.onSlotAutoClick(0);
     assert.deepEqual(sidebar.slot.range, ENTRY.window);
     assert.deepEqual(sidebar.slot.curve, ENTRY.curve);
     assert.equal(sidebar.slot.rangeSource, "gating");
     assert.equal(sidebar.slot.displayRev, "r1");
+    assert.deepEqual(sidebar.fits, [], "no fit: the auto contrast is the answer");
     assert.ok(sidebar.saves >= 1, "saved");
     assert.equal(sidebar.button.dataset.state, "revert");
     assert.ok(sidebar.events.some(([name, p]) => name === "CURVE_CHANGE" && p.curve.cofactor === 60),
               "the canvas is told the curve");
-    sidebar.onSlotGatingClick(0);
+    await sidebar.onSlotAutoClick(0);
     assert.deepEqual(sidebar.slot.range, [500, 9000]);
     assert.equal(sidebar.slot.curve, null);
     assert.equal(sidebar.slot.rangeSource, "legacy");
     assert.equal(sidebar.slot.userRangeChanged, true);
-    assert.equal(sidebar.button.dataset.state, "apply");
-    ok("the button applies the window and curve, and a second press restores them");
+    assert.equal(sidebar.button.dataset.state, "auto-ai");
+    ok("the wand applies the auto contrast's window and curve, and a second press restores them");
+}
+
+// 1b. No check settled the channel: the wand fits, as it always has.
+{
+    const sidebar = makeSidebar({ rangeSource: "user", userRangeChanged: true });
+    sidebar.gatingContrast.channels.CD3.checked = false;
+    sidebar.syncSlotAutoButton(sidebar.slot);
+    assert.equal(sidebar.button.dataset.state, "auto");
+    assert.equal(sidebar.button.title, "Auto contrast");
+    await sidebar.onSlotAutoClick(0);
+    assert.deepEqual(sidebar.fits, [[0, { force: true }]], "the mixture fit");
+    assert.deepEqual(sidebar.slot.range, [500, 9000]);
+    ok("without an auto contrast the wand fits");
 }
 
 // 3. An auto-levelled window is replaced; a drag makes it the user's.
@@ -160,7 +177,6 @@ function makeSidebar(slotState = {}) {
     assert.equal(sidebar.syncGatingContrast(), 1);
     assert.deepEqual(sidebar.slot.range, ENTRY.window);
     assert.equal(sidebar.slot.rangeSource, "gating");
-    assert.equal(sidebar.button.hidden, true, "nothing to offer: it is on");
     ok("a window the viewer levelled itself takes the gating contrast");
 
     assert.equal(sidebar.syncGatingContrast(), 0, "already on: nothing moves");
@@ -237,6 +253,19 @@ function makeSidebar(slotState = {}) {
     assert.equal(mine.curve, null);
     assert.deepEqual(mine.range, [40, 700]);
     ok("Log brightness switches every channel: calibrated, levelled and user windows each their way");
+}
+
+// 8. Log brightness is the viewer's default: rows that do not say take it.
+{
+    const sidebar = makeSidebar();
+    sidebar.defaultCurveMode = "asinh";
+    assert.equal(sidebar.savedCurveMode([{ channel: "CD3" }, { channel: "CD8" }]), "asinh",
+                 "rows saved before rows said: the default");
+    assert.equal(sidebar.savedCurveMode([]), "asinh");
+    assert.equal(sidebar.savedCurveMode([{ curve: "linear" }, { channel: "CD8" }]), "linear",
+                 "saved with Log off: off");
+    assert.equal(sidebar.savedCurveMode([{ curve: "linear" }, { curve: "asinh" }]), "asinh");
+    ok("Log brightness is on unless the saved rows say it was off");
 }
 
 console.log(`${passed} checks passed`);

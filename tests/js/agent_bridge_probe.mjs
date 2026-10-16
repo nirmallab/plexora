@@ -228,7 +228,7 @@ function makeSidebar(log) {
             return true;
         },
         syncChannelSlider() {},
-        syncSlotGatingButton() {},
+        syncSlotAutoButton() {},
         async applyLaunchChannels(entries, options) {
             log.push(["applyLaunchChannels", JSON.parse(JSON.stringify(entries)), options]);
             this.channelSlots = entries.map((entry, i) => slot(i, "", false));
@@ -1113,6 +1113,26 @@ async function run(cmd) {
     const launches = show.log.filter((e) => e[0] === "applyLaunchChannels");
     check("after the show only the newest held look is applied",
         launches.length === 1 && launches[0][1].map((e) => e.name).join() === "DAPI,CD8", launches);
+}
+
+// -- animate_contrast: the nuclear stain in its own slot, first ----------------
+
+{
+    const showServer = makeServer();
+    const show = makePage({ server: showServer, storage: makeStorage() });
+    show.fireDomReady();
+    for (let i = 0; i < 20 && !showServer.polls.length; i++) await tick(5);
+    show.bridge.stop();
+    await show.bridge._run(command("animate_contrast", {
+        channels: [{ name: "DAPI", window: [50, 600], slot: 0 },
+                   { name: "CD3", window: [100, 900], color: "#ffd43b" }],
+        slot: 1, pace: "brisk" }));
+    const done = () => show.log.some((e) => e[0] === "revealContrastSlot" && e[2] === false);
+    for (let i = 0; i < 200 && !done(); i++) await tick(50);
+    const staged = show.log.filter((e) => e[0] === "stageContrastSlot");
+    check("a channel's own slot wins over the show's: the nuclear stain in the first, in its own colour",
+        staged.length === 2 && staged[0][1] === 0 && staged[0][2] === "DAPI" && staged[0][3] === null
+        && staged[1][1] === 1 && staged[1][2] === "CD3" && staged[1][3] === "#ffd43b", staged);
 }
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

@@ -2016,14 +2016,6 @@
     outline: none;
 }
 
-/* The gating calibration's window, offered beside Auto (viewerSidebar's
-   syncSlotGatingButton): shown only when the project has one for the channel
-   and the slot does not draw it already. `hidden` must win over the button's
-   own inline-flex. */
-.slider-auto-button.channel-slot-gating[hidden] {
-    display: none;
-}
-
 /* Collapsible per-channel threshold panel - hidden until the expand chevron is clicked */
 .channel-slot-detail {
     max-height: 0;

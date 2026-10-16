@@ -47,6 +47,11 @@ table, too few cells), and so are the two rules above: the coarse-level clip
 and the cell cap are what re-saturate level-0 pixels. The record carries the
 QC fingerprint it was anchored under, so a QC change recomputes it.
 
+The viewer's canvas is offered a little more (`view_spec`): a marker
+VIEW_GAIN brighter than the evidence draws it, and the nuclear stain on its
+own nuclei (`nuclear_view`) rather than the overview window -- dimmer than
+the markers, a backdrop they read over.
+
 It is NOT the channel list the sidebar edits (`channelList`), which the user
 owns and the sidebar rewrites whole; nothing here changes what a user chose.
 """
@@ -62,8 +67,9 @@ import numpy as np
 from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
-#: stale and recomputed.
-VERSION = "5"
+#: stale and recomputed. 6: the nuclear stain is measured on its own cells
+#: (`nuclear_view`).
+VERSION = "6"
 NAMESPACE = "display"
 
 #: [cal] the display levels (0 black .. 1 white) a marker's curve is solved
@@ -82,6 +88,15 @@ RULE_COLUMN = "c3"
 #: `negative_level`, whose bright cells have more than `clipped_share` of
 #: their disc at white, or whose bright cells' p99 draws below `bright_level`.
 VETOES = {"negative_level": 0.35, "clipped_share": 0.05, "bright_level": 0.3}
+#: [cal] the viewer draws a marker this much brighter than the evidence does
+#: (every display level times it, black kept: `view_spec`): the column a
+#: check chose is judged on crops, and a canvas reads a little dark at it.
+VIEW_GAIN = 1.1
+#: [cal] the display levels the viewer draws the nuclear stain at
+#: (`nuclear_view`): a typical nucleus's brightest structure, and the bright
+#: nuclei's -- under a marker's TITRE_LEVEL x VIEW_GAIN, so the nuclei are a
+#: backdrop the markers read over.
+NUCLEAR_LEVELS = {"typical": 0.5, "titre": 0.75}
 
 #: The marker being judged, its reference channels, the nuclear stain.
 MARKER_COLOR = "#ffd60a"
@@ -273,15 +288,79 @@ def apply_choice(entry, choice) -> dict:
 
 def needs_choice(record, name) -> bool:
     """True for a marker whose window a vision check should look at: drawn by
-    the cell rule, with a titre, not empty, and not chosen yet."""
+    the cell rule, with bright cells to show, and not chosen yet. A dim or
+    floored marker is asked too: it is the hardest to draw, and the floor is
+    only the rule's guess at keeping its noise off white."""
     entry = ((record or {}).get("channels") or {}).get(name) or {}
-    if entry.get("role") != "marker" or not entry.get("rule"):
+    if entry.get("role") != "marker" or not entry.get("rule") or not entry.get("columns"):
         return False
     if name in ((record or {}).get("choices") or {}):
         return False
-    return (entry.get("anchors") or {}).get("titre") is not None \
-        and "empty" not in (entry.get("flags") or []) \
-        and not entry["rule"].get("floored")
+    return bool((entry.get("cells") or {}).get("bright"))
+
+
+def nuclear_view(measured) -> dict | None:
+    """{window, curve, linear_window, chosen_by, source, anchors}: how the
+    viewer draws the nuclear stain, from its own cells (`cell_window.
+    measure_nuclear`) -- black in the gaps between nuclei, a typical
+    nucleus's brightest structure at NUCLEAR_LEVELS["typical"] and the bright
+    nuclei's at NUCLEAR_LEVELS["titre"] (Linear: the bright nuclei's alone).
+    None when the measurements cannot place it."""
+    from plexora.agent.evidence import cell_window as cellwin
+    from plexora.server.utils import display_curve
+
+    black = float(measured["black"])
+    typical = float(measured["typical"]) - black
+    if not typical > 0:
+        return None
+    low_at, high_at = NUCLEAR_LEVELS["typical"], NUCLEAR_LEVELS["titre"]
+    titre = measured.get("titre")
+    titre_gap = float(titre) - black if titre is not None else 0.0
+    if titre_gap > typical:
+        curve, white_gap = display_curve.solve(typical, titre_gap, low_at, high_at)
+        linear_gap = titre_gap / high_at
+    else:
+        curve, white_gap = None, typical / low_at
+        linear_gap = white_gap
+    return {"window": [black, black + float(white_gap)], "curve": curve,
+            "linear_window": [black, black + float(linear_gap)],
+            "chosen_by": "rule:nuclear",
+            "source": f"{cellwin.SOURCE}:nuclear:t{low_at:g}-b{high_at:g}@L{cellwin.LEVEL}",
+            "anchors": {"black_source": "cells",
+                        **{k: measured[k] for k in ("black", "typical", "titre", "n_typical",
+                                                     "n_bright", "radius_px", "black_source")
+                           if k in measured}}}
+
+
+def view_spec(entry) -> dict | None:
+    """{window, curve, linear_window, chosen_by} a channel is offered to the
+    viewer at, or None (the viewer's own levelling stands):
+
+    - a marker anchored on its cells: its window -- a check's choice, or the
+      rule's -- VIEW_GAIN brighter, black kept, in Log and in Linear;
+    - the nuclear stain: its `view` (`nuclear_view`).
+
+    The evidence (crops, sheets, an agent's look mirrored into the tab) keeps
+    the entry's own window: this is what a person's canvas settles on."""
+    from plexora.server.utils import display_curve
+
+    entry = entry or {}
+    if entry.get("role") == "nuclear":
+        view = entry.get("view")
+        if not view:
+            return None
+        return {"window": [float(v) for v in view["window"]],
+                "curve": display_curve.normalise(view.get("curve")),
+                "linear_window": [float(v) for v in view["linear_window"]],
+                "chosen_by": view.get("chosen_by", "rule:nuclear")}
+    if entry.get("role") != "marker" or not entry.get("rule"):
+        return None
+    window = [float(v) for v in entry["window"]]
+    curve = entry_curve(entry)
+    linear = linear_window(entry)
+    return {"window": [window[0], gain_white(window, curve, VIEW_GAIN)], "curve": curve,
+            "linear_window": [float(linear[0]), gain_white(linear, None, VIEW_GAIN)],
+            "chosen_by": entry.get("chosen_by", "rule")}
 
 
 def pick_column(columns, negatives_clear, pattern_clear, *, levels=None,
@@ -404,6 +483,17 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
                 entry["rule_low"] = rule_from(anchored["low_band"])
             if anchored.get("reanchored"):
                 flags.append("reanchored_low")
+        elif role == "nuclear" and (cell_windows or {}).get(name):
+            # Its window above stays the evidence's; the viewer's is its cells'.
+            measured = cell_windows[name]
+            view = nuclear_view(measured)
+            if view is None and stats.get("p30") is not None:
+                # Discs that lie inside their nuclei hold no gap to put black
+                # in: the overview's background instead.
+                view = nuclear_view({**measured, "black_source": "overview",
+                                     "black": min(float(measured["black"]), stats["p30"])})
+            if view:
+                entry["view"] = view
         out[name] = entry
     return {"version": VERSION, "level": int(level), "channels": out,
             "nuclear": nuclear}

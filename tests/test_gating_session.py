@@ -1352,24 +1352,37 @@ def test_the_viewer_is_shown_each_marker_settle(tmp_path):
                                        "evidence": {"project": "gsynth"}}, None, record,
                                       current_project="elsewhere")
     assert [c["type"] for c in script] == ["open_project", "set_hd_mode"]
-    animate = mirror_script.display_script(record, ["CD3", "CD8", "DNA", "nope"])
+    animate = mirror_script.display_script(record, ["DNA", "CD3", "CD8", "nope"])
     assert [c["type"] for c in animate] == ["animate_contrast"]
     channels = animate[0]["arguments"]["channels"]
-    assert [c["name"] for c in channels] == ["CD3", "CD8"]
-    assert channels[0]["window"] == pytest.approx(record["channels"]["CD3"]["window"])
-    assert channels[0]["curve"] == calibration.viewer_curve(
-        calibration.entry_curve(record["channels"]["CD3"]))
+    assert [c["name"] for c in channels] == ["DNA", "CD3", "CD8"]
+    # The windows the canvas keeps: a marker a touch brighter than the evidence.
+    cd3 = record["channels"]["CD3"]
+    assert channels[1]["window"] == pytest.approx(calibration.view_spec(cd3)["window"])
+    assert channels[1]["window"][0] == pytest.approx(cd3["window"][0])
+    assert channels[1]["window"][1] < cd3["window"][1]
+    assert channels[1]["curve"] == calibration.viewer_curve(calibration.entry_curve(cd3))
+    # The nuclear stain in the first slot, in the tab's own colour.
+    assert channels[0]["slot"] == mirror_script.NUCLEAR_SLOT and "color" not in channels[0]
+    assert channels[0]["window"] == pytest.approx(record["channels"]["DNA"]["view"]["window"])
+    assert all("slot" not in c for c in channels[1:])
     assert "{name}" in animate[0]["arguments"]["caption"]
     arguments = animate[0]["arguments"]
     assert arguments["pace"] == "natural" and arguments["slot"] == mirror_script.DISPLAY_SLOT
-    bright = record["channels"]["CD3"]["cells"]["bright"]
+    bright = cd3["cells"]["bright"]
     best = max(bright, key=lambda c: c["value"])
-    assert channels[0]["focus"] == {"x": pytest.approx(best["x"], abs=0.1),
+    assert channels[1]["focus"] == {"x": pytest.approx(best["x"], abs=0.1),
                                     "y": pytest.approx(best["y"], abs=0.1)}
-    many = {"channels": {f"M{i}": {"role": "marker", "window": [0.0, 10.0]}
+    rule = {"window": [0.0, 10.0], "curve": None}
+    many = {"channels": {f"M{i}": {"role": "marker", "window": [0.0, 10.0], "rule": rule}
                          for i in range(mirror_script.DISPLAY_PACED + 1)}}
     quick = mirror_script.display_script(many, list(many["channels"]))[0]["arguments"]
     assert quick["pace"] == "brisk" and "focus" not in quick["channels"][0]
+    # The nuclear stain does not count towards the pace.
+    paced = dict(list(many["channels"].items())[:mirror_script.DISPLAY_PACED])
+    paced["DNA"] = record["channels"]["DNA"]
+    natural = mirror_script.display_script({"channels": paced}, list(paced))[0]["arguments"]
+    assert natural["pace"] == "natural"
     # A contrast run opens its image with no tool: the channel panel is the show.
     bare = mirror_script.script_for({"kind": "display_setup", "units": [],
                                      "evidence": {"project": "gsynth"}}, None, record,
@@ -1393,6 +1406,63 @@ def test_the_viewer_is_shown_only_what_the_check_judged(tmp_path):
         "structure_ok": {"CD3": ["c3"], "CD8": ["c3"]}})
     entry = engine.store().load(sid)["display"]["projects"]["gsynth"]
     assert set(entry["unshown"]) == {"CD3", "CD8"}           # CD20: left out, kept the rule
+
+
+def test_the_nuclear_stain_leads_the_first_show_only():
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    projects = {"p": {"unshown": []}}
+    engine = SimpleNamespace(record={"display": {"projects": projects}})
+    assert mirror_script._unshown(engine, "p", nuclear="DNA") == []     # never alone
+    projects["p"]["unshown"] = ["CD3", "CD8"]
+    assert mirror_script._unshown(engine, "p", nuclear="DNA") == ["DNA", "CD3", "CD8"]
+    projects["p"]["unshown"] = ["CD20"]
+    assert mirror_script._unshown(engine, "p", nuclear="DNA") == ["CD20"]
+
+
+def test_the_canvas_is_offered_the_nuclear_stain_and_brighter_markers(tmp_path):
+    """The viewer's offer (`display_contrast.entries`): the nuclear stain on
+    its own nuclei, dimmer than a marker, and each marker a touch brighter
+    than the evidence -- while the evidence keeps its own windows."""
+    from plexora.agent.evidence import calibration, display_contrast
+    from plexora.server.utils import display_curve
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    record, _changed = calibration.calibrate(session, "gsynth")
+    offered = display_contrast.entries(record)
+    dna = record["channels"]["DNA"]
+    assert dna["role"] == "nuclear" and dna["view"]["chosen_by"] == "rule:nuclear"
+    assert offered["DNA"]["chosen_by"] == "rule:nuclear"
+    view, anchors = dna["view"], dna["view"]["anchors"]
+    curve = display_curve.normalise(view["curve"])
+    typical = display_curve.level(anchors["typical"], view["window"], curve)
+    # At its level on a curve; at least there when a straight line already lifts it.
+    assert typical == pytest.approx(calibration.NUCLEAR_LEVELS["typical"], abs=1e-3) \
+        if curve else typical >= calibration.NUCLEAR_LEVELS["typical"] - 1e-3
+    assert display_curve.level(anchors["titre"], view["window"], curve) == \
+        pytest.approx(calibration.NUCLEAR_LEVELS["titre"], abs=1e-3)
+    assert calibration.NUCLEAR_LEVELS["titre"] < calibration.TITRE_LEVEL
+    # The evidence's nuclear window is the overview's, as before.
+    assert dna["window"] != view["window"]
+    cd3 = record["channels"]["CD3"]
+    titre = cd3["anchors"]["titre"]
+    shown = display_curve.level(titre, offered["CD3"]["window"],
+                                display_curve.normalise(offered["CD3"]["curve"]))
+    evidence = display_curve.level(titre, cd3["window"], calibration.entry_curve(cd3))
+    assert shown == pytest.approx(min(1.0, evidence * calibration.VIEW_GAIN), abs=1e-6)
+    linear = calibration.linear_window(cd3)
+    assert display_curve.level(titre, offered["CD3"]["linear_window"]) == \
+        pytest.approx(min(1.0, display_curve.level(titre, linear) * calibration.VIEW_GAIN))
+    # The Auto wand carries a channel's auto contrast once a check settled it.
+    assert not any(e["checked"] for e in offered.values())
+    record, _rev = calibration.record_choices("gsynth", {"CD3": {
+        "column": "c2", "gain": 0.8, "band": "negatives", "chosen_by": "vision"}})
+    offered = display_contrast.entries(record)
+    assert offered["CD3"]["checked"] and offered["DNA"]["checked"]
+    assert not offered["CD8"]["checked"]
 
 
 def _contrast(session, **options):

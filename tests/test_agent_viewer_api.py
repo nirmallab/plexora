@@ -367,8 +367,11 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
         types = [c["type"] for c in tab.seen[before:]]
         assert "animate_contrast" in types, types
         animate = next(c for c in tab.seen[before:] if c["type"] == "animate_contrast")
-        assert {c["name"] for c in animate["arguments"]["channels"]} == set(rows)
-        assert all(c["curve"]["kind"] in ("asinh", "linear") for c in animate["arguments"]["channels"])
+        shown = animate["arguments"]["channels"]
+        # The nuclear stain first, in its own slot; then the markers judged.
+        assert shown[0]["name"] == "DNA" and shown[0]["slot"] == 0
+        assert {c["name"] for c in shown[1:]} == set(rows)
+        assert all(c["curve"]["kind"] in ("asinh", "linear") for c in shown)
         assert animate["arguments"]["slot"] == 1 and animate["arguments"]["pace"] == "natural"
         if "set_channels" in types:
             assert types.index("animate_contrast") < types.index("set_channels")

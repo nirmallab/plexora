@@ -386,3 +386,77 @@ def test_a_calibrated_marker_has_a_linear_window_too():
     darker = cal.linear_window({**entry, "choice": {"gain": 0.8}})
     assert display_curve.level(measured["titre"], darker) == pytest.approx(cal.TITRE_LEVEL * 0.8)
     assert cal.linear_window({"window": [1.0, 9.0]}) == [1.0, 9.0]
+
+
+def test_the_nuclear_stain_is_measured_on_its_own_nuclei():
+    from plexora.agent.evidence import cell_window
+    from plexora.agent.evidence import crops
+
+    def nuclei(n, gap, nucleus, *, start, seed):
+        rng = np.random.default_rng(seed)
+        yy, xx = np.mgrid[:32, :32]
+        inside = np.hypot(yy - 15.5, xx - 15.5) < 6
+        made, cells = {}, []
+        for index in range(n):
+            plane = rng.normal(gap, 5.0, (32, 32)).astype(np.float32)
+            plane[inside] = rng.normal(nucleus, 20.0, int(inside.sum()))
+            crop = crops.Crop(start + index, 15.5, 15.5, (0, 0, 32, 32), 0)
+            crop.planes["DNA"] = plane
+            made[start + index] = crop
+            cells.append({"cell_id": start + index, "x": 15.5, "y": 15.5, "value": 1.0})
+        return made, cells
+
+    typical, typical_cells = nuclei(24, 50.0, 800.0, start=0, seed=1)
+    bright, bright_cells = nuclei(16, 50.0, 2400.0, start=100, seed=2)
+    measured = cell_window.measure_nuclear({**typical, **bright}, "DNA",
+                                           {"negatives": typical_cells, "bright": bright_cells},
+                                           radius_px=9.0)
+    assert measured["black"] == pytest.approx(50.0, abs=15.0)       # the gaps
+    assert measured["typical"] == pytest.approx(850.0, rel=0.05)
+    assert measured["titre"] == pytest.approx(2450.0, rel=0.05)
+    assert measured["n_typical"] == 24 and measured["n_bright"] == 16
+
+
+def test_the_nuclear_view_is_dimmer_than_a_marker():
+    from plexora.agent.evidence import calibration as cal
+    from plexora.server.utils import display_curve
+
+    measured = {"black": 50.0, "typical": 800.0, "titre": 4000.0}
+    view = cal.nuclear_view(measured)
+    curve = display_curve.normalise(view["curve"])
+    assert curve is not None
+    assert display_curve.level(800.0, view["window"], curve) == \
+        pytest.approx(cal.NUCLEAR_LEVELS["typical"], abs=1e-6)
+    assert display_curve.level(4000.0, view["window"], curve) == \
+        pytest.approx(cal.NUCLEAR_LEVELS["titre"], abs=1e-6)
+    assert display_curve.level(4000.0, view["linear_window"]) == \
+        pytest.approx(cal.NUCLEAR_LEVELS["titre"])
+    assert cal.NUCLEAR_LEVELS["titre"] < cal.TITRE_LEVEL * cal.VIEW_GAIN
+    # No bright nuclei: a straight line with the typical one at its level.
+    flat = cal.nuclear_view({**measured, "titre": None})
+    assert flat["curve"] is None
+    assert display_curve.level(800.0, flat["window"]) == \
+        pytest.approx(cal.NUCLEAR_LEVELS["typical"])
+    assert cal.nuclear_view({**measured, "typical": 40.0}) is None
+    entry = {"role": "nuclear", "window": [10.0, 900.0], "view": view}
+    assert cal.view_spec(entry)["window"] == view["window"]
+    assert cal.view_spec({"role": "nuclear", "window": [10.0, 900.0]}) is None
+
+
+def test_every_marker_with_bright_cells_is_asked():
+    """A dim or floored marker is checked too; one with no bright cell to
+    show, or one already chosen, is not."""
+    from plexora.agent.evidence import calibration as cal
+
+    rule = cal.rule_from(_measured(titre=170.0))
+    assert rule["floored"]
+    floored = {"role": "marker", "window": rule["window"], "rule": rule,
+               "columns": cal.columns_for(rule), "flags": ["dim"],
+               "anchors": {"titre": 170.0}, "cells": {"bright": [{"cell_id": 1}]}}
+    record = {"channels": {"A": floored, "B": {**floored, "cells": {"bright": []}},
+                           "C": floored, "N": {"role": "nuclear", "window": [1.0, 2.0]}},
+              "choices": {"C": {"column": "c3"}}}
+    assert cal.needs_choice(record, "A")
+    assert not cal.needs_choice(record, "B")
+    assert not cal.needs_choice(record, "C")
+    assert not cal.needs_choice(record, "N")

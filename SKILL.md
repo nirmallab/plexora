@@ -2808,7 +2808,11 @@ deliberately left out and what should be built next.
   background draws as a faint floor rather than clipped), `background`,
   `noise_p99` and the `titre` (the bright cells' p99, their brightest
   structure), re-anchoring on the `low` band when the negatives band is
-  itself stained; it decides nothing about brightness). `calibration.py`
+  itself stained; `measure_nuclear` reads the nuclear stain on its own
+  cells, banded on its table column with no background band because every
+  cell is stained -- `typical` the p30-50 band's disc p99 median, `black`
+  their discs' low percentile (the gaps between nuclei), `titre` the bright
+  band's p99; it decides nothing about brightness). `calibration.py`
   turns those into a curve: `rule_from` puts black under the background,
   the noise p99 at `NOISE_LEVEL` and the titre at `TITRE_LEVEL` on an asinh
   curve (`server/utils/display_curve.py`; linear when a linear window meets
@@ -2816,7 +2820,18 @@ deliberately left out and what should be built next.
   `TITRE_FLOOR_GAPS` background gaps up so its noise is never stretched to
   white; `columns_for` builds the brightness ladder `c1..c5` over it
   (`GAINS`, `c3` the rule) and `pick_column` chooses one from a vision
-  check's two lists after the numeric `VETOES`; `record_choices` stores the
+  check's two lists after the numeric `VETOES`; `needs_choice` asks every
+  rule-drawn marker with bright cells that is not chosen yet -- dim, floored
+  and empty-flagged ones too, because they are the hardest to draw and the
+  floor is only the rule's guess; `nuclear_view` stores the nuclear entry's
+  `view` (`chosen_by` `rule:nuclear`: black in the gaps, `NUCLEAR_LEVELS`
+  typical 0.5 and titre 0.75, the overview's p30 as black when the discs
+  hold no gap) while its own `window` stays the evidence's overview p30-p99,
+  and `view_spec` is what the viewer's canvas is offered -- a marker's window
+  `VIEW_GAIN` (1.1) brighter, black kept, in Log and Linear, the nuclear
+  stain's `view` -- because a canvas reads a little dark at the column a
+  check judged on crops, and the nuclei should be a backdrop dimmer than the
+  markers; evidence pictures keep the entry's own windows; `record_choices` stores the
   choice and `apply_choices` re-applies it, so it survives a recompute;
   `load_current` returns a record only while the table and QC fingerprints
   still match; `display_spec` gives `{window, curve, source}` at a scale; a
@@ -2824,13 +2839,18 @@ deliberately left out and what should be built next.
   a time, because a session's bulk pass and the viewer's first-open
   calibration may both be at it. Anchoring white on the brightest cells' raw
   maximum let a few bright cells, a fold or an aggregate set the scale, and a
-  cell at a human's gate drew black; `calibration.VERSION` is 5 and a stored
+  cell at a human's gate drew black; `calibration.VERSION` is 6 (the nuclear stain measured on its own cells) and a stored
   record carries the QC fingerprint it was anchored under, so a QC change
   recomputes it), `display_grid.py` (the contrast check: markers in rows,
   the five ladder columns side by side as 2 x 2 level-0 crops, pixels at
   white in `calibration.CLIP_COLOR`, columns unmarked so the picture does not
   suggest an answer; `RENDERER` `display_grid/1`), `display_contrast.py` (the
-  same calibration offered to the viewer: `describe` / `compute`, one
+  same calibration offered to the viewer, through `calibration.view_spec`, so
+  `entries` offers the markers at the lifted window and the nuclear stain on
+  its own nuclei rather than leaving it to the viewer's levelling, each
+  marked `checked` when a contrast check settled it (a marker with a stored
+  choice; the nuclear stain once any marker of the record has one):
+  `describe` / `compute`, one
   background job per project with later requests queued on it, behind core's
   `GET /display_contrast` and `POST /display_contrast/compute` in
   `server/routes/data_routes.py`; a project with no cell table is
@@ -3127,10 +3147,14 @@ deliberately left out and what should be built next.
   right after a `display_setup` answer, so a contrast run, which has no next
   packet to carry it, still plays; `display_packet_script`/`script_for` take
   `tool` (None for a contrast run: no tool opens). `display_script` items carry
-  `window`, `curve`, `linear_window` and `focus` (the brightest bright cell),
-  with `slot` (`DISPLAY_SLOT` = 1) and `pace` natural|brisk; only markers the
-  answer judged are played (`apply_display`'s unshown excludes
-  `rule:no_answer`).
+  `window`, `curve` and `linear_window` from `calibration.view_spec`, and a
+  marker's `focus` (the brightest bright cell), with `slot` (`DISPLAY_SLOT` =
+  1) and `pace` natural|brisk, counted on markers only; the nuclear stain's
+  item carries its own `slot` (`NUCLEAR_SLOT` = 0) and no colour, and
+  `_unshown(engine, project, nuclear=)` puts it first in the image's first
+  show that has markers (`nuclear_shown` on its display entry), so it is
+  shown once; only markers the answer judged are played (`apply_display`'s
+  unshown excludes `rule:no_answer`).
   `SessionOptions.setup` (`ask` default | `wait` | `fail`) says what a start
   does with an unfinished set-up, and `setup_needs(session, images,
   confirmations=True)` says what that is: required keys `Requires.missing_from`
@@ -4734,8 +4758,14 @@ deliberately left out and what should be built next.
   (`data_model._row_meta`, sent as `list_meta` to `save_channel_list`).
   The curve is the image's, not a channel's: one "Log brightness" tick in the
   Image card's menu (`layerManager.js` openRenderMenu, `popoverMenu.js`
-  `checkbox`) calls `viewerSidebar.setCurveMode`, read back from the rows'
-  curves on restore; a levelled channel refits in the new mode, a calibrated
+  `checkbox`) calls `viewerSidebar.setCurveMode`. Log is the viewer's default
+  (`DEFAULT_CURVE_MODE`, held as `defaultCurveMode`; a scoped sidebar copy,
+  whose root is not the document or which has an `idPrefix`, keeps Linear);
+  on restore `savedCurveMode` reads it back from the rows' curves, and rows
+  that record no curve (saved before rows did) take the default. Only a curve
+  the user set asks for HD tiles (`setSlotCurve` calls `ensureHdForCurve` for
+  `source` "user", and `setCurveMode` still asks), because the default Log
+  must not force HD on a streamed image. A levelled channel refits in the new mode, a calibrated
   one takes the calibration's window for it (`linear_window` when Linear), a
   user's window keeps its numbers and takes the curve
   (`ChannelList.events.CURVE_CHANGE`). The Auto wand fits in the mode: Linear
@@ -4743,14 +4773,20 @@ deliberately left out and what should be built next.
   under the background component, its top at `NOISE_LEVEL`, the signal top
   at `TITRE_LEVEL`). The Image card's Rendering row also has Clear
   (`viewerSidebar.clearRendering`: default colours, automatic contrast, Log
-  off, remembered hand-set windows forgotten; the notice's Undo is
-  `restoreRendering`). There is a "Use gating contrast" button that a second
-  press undoes; `syncGatingContrast` (on first open, from
+  back to its default, remembered hand-set windows forgotten; the notice's
+  Undo is `restoreRendering`). There is no separate gating-contrast button:
+  the Auto wand (`onSlotAutoClick`) applies the calibration's window
+  (`applyGatingContrast`, source `gating`) when `checkedEntry` finds an entry
+  a contrast check settled (`display_contrast.entries`' `checked`), and the
+  fit otherwise, with the same revert for both; `syncSlotAutoButton` shows
+  state `auto-ai`, "Auto contrast (the AI's for this image)", when it will
+  apply the AI's. `syncGatingContrast` (on first open, from
   `GET /display_contrast`) replaces only a window the viewer levelled itself,
   a seeded default or an earlier calibration -- never one the user set.
   `agentBridge.js`'s `animate_contrast` is queued and acknowledged at once so
   the session goes on; `performContrast` puts each marker in turn in the
-  given slot (`viewerSidebar` `stageContrastSlot`/`revealContrastSlot`),
+  given slot -- a channel's own `slot` (the nuclear stain's, the first) wins
+  over the command's -- (`viewerSidebar` `stageContrastSlot`/`revealContrastSlot`),
   zooms to its `focus` (`viewerScene` `viewOf`/`glideTo`) and drags the slider
   to the window (`contrastGesture`/`contrastPath`, `dragSlotRange`,
   `slider.js` `showDrag`, `.channel-slot.is-agent-adjusting`; pace from

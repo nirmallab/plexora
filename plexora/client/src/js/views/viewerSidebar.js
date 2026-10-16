@@ -89,6 +89,9 @@ const GATING_POLL_FIRST_MS = 1500;
 //: with -- or "legacy", a row saved before rows said, which counts as the
 //: user's. Only auto, default and gating are ever replaced by a gating window.
 const REPLACEABLE_SOURCES = new Set(["auto", "default", "gating"]);
+//: The viewer's Log brightness when nothing saved says otherwise: on. A
+//: scoped copy of the sidebar (a figure panel's) keeps Linear, as before.
+const DEFAULT_CURVE_MODE = "asinh";
 
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {
@@ -130,8 +133,12 @@ class ViewerSidebar {
         this.markerCurves = new Map();
         //: How brightness follows intensity, for every channel at once:
         //: "linear", or "asinh" (the Image card's "Log brightness"). Saved
-        //: with the channel list (each row's curve) and read back from it.
-        this.curveMode = "linear";
+        //: with the channel list (each row's curve) and read back from it;
+        //: `defaultCurveMode` when the rows do not say (a new image, rows
+        //: saved before rows said), and what Clear puts back.
+        this.defaultCurveMode = this.root === document && !this.idPrefix
+            ? DEFAULT_CURVE_MODE : "linear";
+        this.curveMode = this.defaultCurveMode;
         //: The project's gating calibration as the server offers it
         //: (/display_contrast): {state, rev, channels: {fullName: {window,
         //: curve, chosen_by}}}. Null until fetched; only the viewer's own
@@ -667,17 +674,6 @@ class ViewerSidebar {
         actions.appendChild(auto);
         this.syncSlotAutoButton(slot, auto);
 
-        // The gating calibration's window for this channel, when there is
-        // one: offered, never imposed on a window the user set. Hidden until
-        // the project has one for this channel (syncSlotGatingButton).
-        const gating = document.createElement("button");
-        gating.type = "button";
-        gating.classList.add("slider-auto-button", "channel-slot-auto", "channel-slot-gating");
-        gating.hidden = true;
-        gating.addEventListener("click", () => this.onSlotGatingClick(slot.index));
-        actions.appendChild(gating);
-        this.syncSlotGatingButton(slot, gating);
-
         const remove = document.createElement("button");
         remove.type = "button";
         remove.classList.add("slot-remove-button");
@@ -757,7 +753,6 @@ class ViewerSidebar {
             slot.curve = this.curveMode === "asinh"
                 ? (this.markerCurves?.get(name) || (override ? this.logCurveFor?.(slot) : null))
                 : null;
-            slot.preGatingRange = null;
             slot.autoLeveling = false;
             // A range belonging to the channel that just left the slot. There
             // is nothing here to restore it to any more.
@@ -780,7 +775,6 @@ class ViewerSidebar {
             this.autoLevelChannelIfNeeded(slot);
             this.requestGatingContrast?.([slot.name]);
         }
-        this.syncSlotGatingButton?.(slot);
         this.updateSelectedCount();
         this.scheduleSaveChannels();
     }
@@ -1106,6 +1100,7 @@ class ViewerSidebar {
             this.revertSlotRange(slotIndex);
             return;
         }
+        const checked = this.checkedEntry?.(slot) || null;
         // What the two numbers read right now, which is what Auto is about to
         // overwrite -- not `markerRangeOverrides`, which holds the last range
         // the user set by hand and may be several edits old, or absent.
@@ -1118,8 +1113,12 @@ class ViewerSidebar {
         };
         this.syncSlotAutoButton(slot, null, { busy: true });
         try {
-            // Fitted in the image's curve mode (autoChannel): Linear or Log.
-            await this.autoChannel(slotIndex, { force: true });
+            // An auto contrast already settled for this channel (the AI's
+            // check) is what Auto means here; without one, the fit, in the
+            // image's curve mode (autoChannel): Linear or Log.
+            if (!checked || !this.applyGatingContrast(slotIndex, { entry: checked })) {
+                await this.autoChannel(slotIndex, { force: true });
+            }
         } finally {
             // A fit that never landed -- no stats for the channel, or the
             // marker changed under it -- leaves the window where it was, and
@@ -1167,7 +1166,6 @@ class ViewerSidebar {
         }
         this.scheduleSaveChannels();
         this.syncSlotAutoButton(slot);
-        this.syncSlotGatingButton?.(slot);
     }
 
     /**
@@ -1181,7 +1179,10 @@ class ViewerSidebar {
         const node = button
             || this.slotRow(slot.index)?.querySelector(".slider-auto-button");
         if (!node) return;
-        const state = options.busy ? "busy" : (slot.preAutoRange ? "revert" : "auto");
+        // Which Auto it is: the AI's auto contrast for this channel, or the fit.
+        const ai = Boolean(this.checkedEntry?.(slot));
+        const state = options.busy ? "busy"
+            : (slot.preAutoRange ? "revert" : (ai ? "auto-ai" : "auto"));
         if (node.dataset.state === state) return;
         node.dataset.state = state;
         node.classList.toggle("is-revert", state === "revert");
@@ -1189,7 +1190,8 @@ class ViewerSidebar {
         // Not while the GMM fit is in flight: a second click would read the
         // still-unset `preAutoRange` and start a second fit.
         node.disabled = state === "busy";
-        const label = state === "revert" ? "Restore previous range" : "Auto contrast";
+        const label = state === "revert" ? "Restore previous range"
+            : (ai ? "Auto contrast (the AI's for this image)" : "Auto contrast");
         node.title = label;
         node.setAttribute("aria-label", label);
         node.innerHTML = state === "revert"
@@ -1204,8 +1206,9 @@ class ViewerSidebar {
      * {kind: "asinh", cofactor} in RAW units. The canvas is told
      * (CURVE_CHANGE), the marker remembers it, and `source` (default "user")
      * says who set the slot's look; null leaves the slot's source alone.
-     * A Log curve on 8-bit tiles shows steps at the dark end, so it asks for
-     * HD (ensureHdForCurve).
+     * A Log curve on 8-bit tiles shows steps at the dark end, so one the
+     * user sets asks for HD (ensureHdForCurve); the levelling's own Log (the
+     * default) does not, and a streamed image keeps its fast tiles.
      */
     setSlotCurve(slotIndex, curve, { save = true, source = "user" } = {}) {
         const slot = this.channelSlots[slotIndex];
@@ -1221,7 +1224,7 @@ class ViewerSidebar {
                 curve: next,
             });
         }
-        if (next) this.ensureHdForCurve();
+        if (next && source === "user") this.ensureHdForCurve();
         if (save) this.scheduleSaveChannels();
     }
 
@@ -1352,7 +1355,7 @@ class ViewerSidebar {
         slot.autoLeveled = true;
         this.setSlotCurve(slotIndex, look.curve, { save: false, source: "gating" });
         this.easeSlotRange(slotIndex, slot, target, { ms, force: true });
-        this.syncSlotGatingButton(slot);
+        this.syncSlotAutoButton(slot);
         if (save) this.scheduleSaveChannels();
         return true;
     }
@@ -1366,54 +1369,14 @@ class ViewerSidebar {
     }
 
     /**
-     * The gating button: shown when the calibration has an entry for the
-     * channel. Pressed, it puts that window and curve on (remembering what
-     * was there); pressed again, it puts back what was there.
+     * The calibration's entry for a slot's channel when a contrast check
+     * settled it (`checked`: an AI auto-contrast run, or gating's): what the
+     * Auto wand applies. Null without one -- the wand fits, as ever.
      */
-    onSlotGatingClick(slotIndex) {
-        const slot = this.channelSlots[slotIndex];
-        if (!slot || !slot.name) return;
-        if (slot.preGatingRange) {
-            const before = slot.preGatingRange;
-            slot.preGatingRange = null;
-            this.setSlotRange(slotIndex, before.range, false);
-            slot.userRangeChanged = before.userRangeChanged;
-            slot.autoLeveled = before.autoLeveled;
-            slot.rangeSource = before.rangeSource || null;
-            this.setSlotCurve(slotIndex, before.curve, { save: false, source: null });
-            this.updateSlotReadout(slot);
-            this.syncSlotGatingButton(slot);
-            this.scheduleSaveChannels();
-            return;
-        }
-        const before = {
-            range: [...slot.range],
-            userRangeChanged: slot.userRangeChanged,
-            autoLeveled: slot.autoLeveled,
-            rangeSource: slot.rangeSource || null,
-            curve: slot.curve || null,
-        };
-        if (this.applyGatingContrast(slotIndex)) slot.preGatingRange = before;
-        this.syncSlotGatingButton(slot);
-    }
-
-    syncSlotGatingButton(slot, button = null) {
-        const node = button || this.slotRow(slot.index)?.querySelector(".channel-slot-gating");
-        if (!node) return;
-        const entry = this.gatingEntry(slot);
-        const reverting = Boolean(slot.preGatingRange);
-        node.hidden = !entry || (!reverting && this.showsGating(slot, entry));
-        const state = reverting ? "revert" : "apply";
-        if (node.dataset.state === state) return;
-        node.dataset.state = state;
-        node.classList.toggle("is-revert", reverting);
-        const label = reverting ? "Restore the contrast from before"
-            : "Use gating contrast (calibrated on this image's cells)";
-        node.title = label;
-        node.setAttribute("aria-label", label);
-        node.innerHTML = reverting
-            ? '<span class="fas fa-rotate-left"></span>'
-            : '<span class="fas fa-microscope"></span>';
+    checkedEntry(slot) {
+        if (!this.gatingContrast?.channels) return null;
+        const entry = this.gatingEntry?.(slot);
+        return entry && entry.checked ? entry : null;
     }
 
     /**
@@ -1429,7 +1392,7 @@ class ViewerSidebar {
         this.channelSlots.forEach((slot) => {
             if (!slot || !slot.name || !slot.enabled) return;
             if (only && !only.includes(slot.index)) return;
-            this.syncSlotGatingButton(slot);
+            this.syncSlotAutoButton(slot);
             const source = slot.rangeSource || (slot.userRangeChanged ? "user" : "auto");
             if (!REPLACEABLE_SOURCES.has(source)) return;
             const entry = this.gatingEntry(slot);
@@ -1459,7 +1422,7 @@ class ViewerSidebar {
             const body = await response.json();
             if (body && typeof body === "object") {
                 this.gatingContrast = body;
-                this.channelSlots.forEach((slot) => slot && this.syncSlotGatingButton(slot));
+                this.channelSlots.forEach((slot) => slot && this.syncSlotAutoButton(slot));
             }
             return body;
         } catch (error) {
@@ -1553,9 +1516,9 @@ class ViewerSidebar {
     /**
      * Clear every channel's rendering (the Image card's eraser): the channels
      * on screen stay on, each takes its slot's default colour, Log
-     * brightness goes off, and its contrast is levelled automatically -- the
-     * gating calibration's where the project has one -- with every remembered
-     * hand-set window forgotten. Returns what it replaced, for
+     * brightness goes back to its default (on), and its contrast is levelled
+     * automatically -- the gating calibration's where the project has one --
+     * with every remembered hand-set window forgotten. Returns what it replaced, for
      * `restoreRendering` (the notice's Undo).
      */
     clearRendering() {
@@ -1567,11 +1530,10 @@ class ViewerSidebar {
         };
         this.markerRangeOverrides.clear();
         this.markerCurves.clear();
-        this.curveMode = "linear";
+        this.curveMode = this.defaultCurveMode;
         this.channelSlots.forEach((slot) => {
             if (!slot || !slot.name || !slot.visible) return;
             slot.preAutoRange = null;
-            slot.preGatingRange = null;
             slot.userColorChanged = false;
             this.setSlotColor(slot.index, this.getDefaultColor(slot.index).hex, false);
             slot.userRangeChanged = false;
@@ -1583,7 +1545,6 @@ class ViewerSidebar {
             // takes over from the fit where there is one (autoChannel).
             if (slot.enabled) this.autoChannel(slot.index);
             this.syncSlotAutoButton(slot);
-            this.syncSlotGatingButton(slot);
         });
         this.scheduleSaveChannels();
         return before;
@@ -1643,7 +1604,7 @@ class ViewerSidebar {
                           { save: false, source });
         this.easeSlotRange(slotIndex, slot, target, { ms, force: true });
         await new Promise((resolve) => window.setTimeout(resolve, ms + 40));
-        this.syncSlotGatingButton(slot);
+        this.syncSlotAutoButton(slot);
         return true;
     }
 
@@ -2107,7 +2068,6 @@ class ViewerSidebar {
         slot.autoLeveled = false;
         slot.autoLeveling = false;
         slot.preAutoRange = null;
-        slot.preGatingRange = null;
         slot.curve = null;
         slot.rangeSource = null;
         this.channelSlotSliders.get(slotIndex)?.destroy();
@@ -2436,10 +2396,22 @@ class ViewerSidebar {
         return this._modulesApplied || Promise.resolve([]);
     }
 
+    /**
+     * The image's Log brightness for its saved rows: on when they were saved
+     * on it, off when they were saved with it off, the default
+     * (`defaultCurveMode`) when they do not say -- rows saved before rows
+     * recorded a curve.
+     */
+    savedCurveMode(rows) {
+        const said = (rows || []).filter((row) => row && (row.curve === "asinh"
+                                                          || row.curve === "linear"));
+        if (!said.length) return this.defaultCurveMode;
+        return said.some((row) => row.curve === "asinh") ? "asinh" : "linear";
+    }
+
     async applySavedChannels(rows) {
         const activeRows = rows.filter((row) => row && row.channel_active);
-        // Log brightness is the image's: on when the rows were saved on it.
-        this.curveMode = activeRows.some((row) => row.curve === "asinh") ? "asinh" : "linear";
+        this.curveMode = this.savedCurveMode(activeRows);
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
         this.discardChannelSlots(new Set(activeRows.map((row) => row.channel)));

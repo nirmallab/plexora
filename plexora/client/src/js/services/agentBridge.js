@@ -1863,7 +1863,7 @@ window.PlexoraAgentBridge = (function () {
             panel.setSlotRange(index, target, false);
             panel.syncChannelSlider(slot);
             slot.rangeSource = item.source;
-            panel.syncSlotGatingButton?.(slot);
+            panel.syncSlotAutoButton?.(slot);
             await pause(t("dwell"));
         }
         if (view) await scene().glideTo(viewer(), view, { ms: t("zoom") });
@@ -1994,9 +1994,10 @@ window.PlexoraAgentBridge = (function () {
          * Show a session settling channels' contrast, one channel at a time
          * and at a pace a person can follow (`performContrast`): `channels`
          * [{name, window: [low, high] raw, curve?, color?, focus?: {x, y}
-         * (one of the marker's cells, image pixels, for a zoom)}], `caption`
-         * (default "Adjusting contrast for {name}"), `slot` (the slot each
-         * marker replaces in turn, default the second), `pace` ("natural",
+         * (one of the marker's cells, image pixels, for a zoom), slot? (its
+         * own: the nuclear stain's, the first)}], `caption` (default
+         * "Adjusting contrast for {name}"), `slot` (the slot each marker
+         * replaces in turn, default the second), `pace` ("natural",
          * or "brisk" for many markers). Acknowledged at once with what was
          * queued; the queue plays on, and the view commands the session sends
          * meanwhile wait for it (`holdForShow`). Never saved: an agent holds
@@ -2023,12 +2024,15 @@ window.PlexoraAgentBridge = (function () {
                     && Number.isFinite(Number(raw.focus.y))
                     ? { x: Number(raw.focus.x), y: Number(raw.focus.y) } : null;
                 const linear = windowOf(raw.linear_window);
+                // A channel's own slot (the nuclear stain's, the first) over the show's.
+                const slotOf = (value) => (value !== undefined && value !== null && value !== ""
+                    && Number.isInteger(Number(value)) && Number(value) >= 0
+                    ? Math.min(Number(value), 14) : null);
                 queued.push({
                     name, window: range, curve: curveOf(raw.curve) ?? null, color: colorHex(raw.color),
                     linearWindow: Array.isArray(linear) ? linear : null,
                     caption, source: raw.source === "user" ? "user" : "gating", focus,
-                    slot: Number.isInteger(Number(args.slot)) && Number(args.slot) >= 0
-                        ? Math.min(Number(args.slot), 14) : 1,
+                    slot: slotOf(raw.slot) ?? slotOf(args.slot) ?? 1,
                     pace: args.pace === "brisk" ? "brisk" : "natural",
                 });
             }

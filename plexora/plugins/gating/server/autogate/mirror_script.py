@@ -30,6 +30,8 @@ DISPLAY_PACED = 8
 #: The channel slot each marker replaces in turn while the tab shows it: the
 #: second, beside the nuclear stain in the first.
 DISPLAY_SLOT = 1
+#: The slot the nuclear stain is adjusted in, before the markers.
+NUCLEAR_SLOT = 0
 DEFAULT_TIMEOUT_S = 5.0
 #: The first command of a script: long enough for a background tab to wake.
 WAKE_TIMEOUT_S = 10.0
@@ -192,35 +194,38 @@ def display_packet_script(packet, *, current_project=None, tool="gating") -> lis
 
 
 def display_script(calibration_record, channels) -> list:
-    """`animate_contrast` for `channels` at their calibrated windows and
-    curves: the tab puts each in turn in the second channel slot and drags
-    its slider there, captioned, while the session goes on (the command is
-    acknowledged at once, and the tab holds the session's later view commands
-    until it is done). Each carries one of its bright cells (`focus`) for the
-    tab to zoom in on. [] when none has an entry."""
+    """`animate_contrast` for `channels` at the windows and curves the canvas
+    keeps (`calibration.view_spec`): the tab puts each marker in turn in the
+    second channel slot -- the nuclear stain in the first, in its own colour
+    -- and drags its slider there, captioned, while the session goes on (the
+    command is acknowledged at once, and the tab holds the session's later
+    view commands until it is done). A marker carries one of its bright cells
+    (`focus`) for the tab to zoom in on. [] when none has an entry."""
     from plexora.agent.evidence import calibration
 
     entries = (calibration_record or {}).get("channels") or {}
     items = []
     for name in dict.fromkeys(channels):
-        entry = entries.get(name)
-        if not entry or entry.get("role") != "marker":
+        entry = entries.get(name) or {}
+        spec = calibration.view_spec(entry)
+        if spec is None:
             continue
-        item = {"name": name, "window": [float(v) for v in entry["window"]],
-                "curve": calibration.viewer_curve(calibration.entry_curve(entry)),
-                "color": calibration.MARKER_COLOR}
-        try:
-            # The same choice for a tab whose Log brightness is off.
-            item["linear_window"] = [float(v) for v in calibration.linear_window(entry)]
-        except Exception:
-            pass
-        focus = _focus_cell(entry)
-        if focus is not None:
-            item["focus"] = focus
+        item = {"name": name, "window": spec["window"],
+                "curve": calibration.viewer_curve(spec["curve"]),
+                # The same choice for a tab whose Log brightness is off.
+                "linear_window": spec["linear_window"]}
+        if entry.get("role") == "nuclear":
+            item["slot"] = NUCLEAR_SLOT
+        else:
+            item["color"] = calibration.MARKER_COLOR
+            focus = _focus_cell(entry)
+            if focus is not None:
+                item["focus"] = focus
         items.append(item)
     if not items:
         return []
-    pace = "brisk" if len(items) > DISPLAY_PACED else "natural"
+    markers = [item for item in items if "slot" not in item]
+    pace = "brisk" if len(markers) > DISPLAY_PACED else "natural"
     return [{"type": "animate_contrast", "arguments": {
         "channels": items, "caption": DISPLAY_CAPTION, "slot": DISPLAY_SLOT, "pace": pace}}]
 
@@ -236,10 +241,11 @@ def _focus_cell(entry):
     return {"x": round(float(best["x"]), 1), "y": round(float(best["y"]), 1)}
 
 
-def _unshown(engine, project):
+def _unshown(engine, project, nuclear=None):
     """The channels of `project` whose settled brightness the tab has not
     been shown, taken off the record (shown once). A `rule` session shows
-    every marker of the image once."""
+    every marker of the image once. The nuclear stain (`nuclear`) leads the
+    first show that has markers in it."""
     from plexora.plugins.gating.server.autogate import views
 
     entry = ((engine.record.get("display") or {}).get("projects") or {}).get(project)
@@ -255,6 +261,9 @@ def _unshown(engine, project):
             if channel:
                 channels.append(channel)
     entry["unshown"] = []
+    if nuclear and channels and not entry.get("nuclear_shown"):
+        entry["nuclear_shown"] = True
+        channels.insert(0, nuclear)
     return list(dict.fromkeys(channels))
 
 
@@ -313,7 +322,7 @@ def run(call, session_id, packet):
         # this packet's own channels (the tab plays it while the session asks
         # its next question; a later `set_channels` waits for it).
         with engines.engine_for(call, session_id) as engine:
-            shown = _unshown(engine, project)
+            shown = _unshown(engine, project, nuclear=(stored or {}).get("nuclear"))
         animate = display_script(stored, shown)
         if animate:
             at = next((i for i, c in enumerate(script)
@@ -363,9 +372,10 @@ def run_display(call, session_id, project):
     except AgentError as exc:
         return {"status": "off", "sent": 0,
                 "errors": [{"code": exc.code, "message": exc.message}]}
+    stored = calibration.load(project)
     with engines.engine_for(call, session_id) as engine:
-        shown = _unshown(engine, project)
-    animate = display_script(calibration.load(project), shown)
+        shown = _unshown(engine, project, nuclear=(stored or {}).get("nuclear"))
+    animate = display_script(stored, shown)
     if not animate:
         return {"status": "ok", "sent": 0, "view_id": view["view_id"]}
     state = None

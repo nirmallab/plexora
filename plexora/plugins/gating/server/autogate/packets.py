@@ -1156,9 +1156,10 @@ def display_setup(engine, units):
     """The contrast check for the next image whose calibration is ready: a
     grid of at most `display_batch` of its markers (`display_grid`), each at
     the calibration's brightness ladder. Markers the calibration settles on
-    its own (no bright cells, a floored titre, an overview window, or a
-    choice an earlier session made) are not asked. None, with the image's
-    state moved on, when nothing is left to ask or no grid can be drawn."""
+    its own (no bright cells to show, an overview window, or a choice an
+    earlier session made) are not asked; a dim or floored one is. None, with
+    the image's state moved on, when nothing is left to ask or no grid can be
+    drawn."""
     from plexora.agent.evidence import calibration, display_grid
 
     display = engine.record.setdefault("display", {})

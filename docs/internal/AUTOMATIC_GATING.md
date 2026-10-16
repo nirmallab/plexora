@@ -209,7 +209,9 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   `SessionOptions.display_check`, `vision` by default) shows up to
   `ENGINE["display_batch"]` markers in rows and the calibration's brightness
   ladder in columns (`calibration.columns_for`: every display level times
-  `GAINS`, c1 darker to c5 brighter, c3 the rule), each a 2 x 2 block of a
+  `GAINS`, c1 darker to c5 brighter, c3 the rule) -- every marker with bright
+  cells to show, the dim and floored ones too (`calibration.needs_choice`:
+  they are the hardest to draw) -- each a 2 x 2 block of a
   background, a dim and two bright cells, clipped pixels in a fixed red
   (`agent/evidence/display_grid.py`). The answer is two lists of columns per
   row -- where the background is a faint floor, where the row's compartment
@@ -250,11 +252,22 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   `linear_window` off. The command is acknowledged at once, so the next packet
   goes to the model while it plays, and the tab holds the view commands that
   arrive meanwhile and runs them after it (only the newest look). A marker
-  the rule or an earlier check settled is not played. On open, the viewer asks for the calibration of the channels on
-  screen (`/display_contrast`) and applies it to channels nobody set; a
+  the rule or an earlier check settled is not played. The nuclear stain leads
+  the first show, in the first slot in its own colour. On open, the viewer
+  asks for the calibration of the channels on screen (`/display_contrast`)
+  and applies it to channels nobody set (`calibration.view_spec`): a marker
+  `VIEW_GAIN` brighter than the evidence draws it, and the nuclear stain on
+  its own nuclei (`cell_window.measure_nuclear`, `calibration.nuclear_view`:
+  black in the gaps, a typical nucleus and the bright ones at
+  `NUCLEAR_LEVELS`, dimmer than a marker) so the markers read over it -- the
+  evidence keeps its own windows, the nuclei in muted blue; a
   saved channel row records who set its window (`source`: user, auto,
-  gating, default; a row saved before that is the user's) and a window the
-  user set is only offered ("Use gating contrast").
+  gating, default; a row saved before that is the user's). A window the user
+  set is never replaced: on a channel a check settled (`display_contrast`
+  `checked`) the Auto wand applies it (`viewerSidebar.checkedEntry`), and
+  fits the mixture otherwise. Log brightness is the viewer's default
+  (`DEFAULT_CURVE_MODE`; rows saved with it off keep it off), and that
+  default asks no HD of a streamed image -- only the user's tick does.
 - **A gate is never accepted against the direction on record.**
   `unit["direction"]` holds the way the last look's rows pointed until a
   candidate, `keep` or an about-right look replaces it; a unit closed meanwhile

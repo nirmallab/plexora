@@ -23,6 +23,10 @@ collage reads (level 0), in bands of the marker's own distribution:
   structure (a ring, a nucleus, granules) is;
 - `near` (between): a dim positive, for the contrast grid.
 
+The nuclear stain stains every cell, so it has no background band:
+`measure_nuclear` reads how bright its typical and its bright nuclei are,
+for the window the viewer draws it at (`calibration.nuclear_view`).
+
 `calibration` turns the measurements into a curve; nothing here decides how
 bright anything is drawn.
 
@@ -223,11 +227,39 @@ def measure(crops, name, bands, *, radius_px, spec=CELL_WINDOW):
     return out
 
 
+def measure_nuclear(crops, name, bands, *, radius_px, spec=CELL_WINDOW):
+    """The nuclear stain's measurements from level-0 crops of its own cells,
+    banded on its table column (`select_display_cells`), or None when no
+    typical disc could be read:
+
+    {black, typical, titre, n_typical, n_bright, radius_px, level}
+
+    Every cell is stained, so there is no negative band: the band below the
+    middle holds `typical` nuclei, and `typical` is their brightest
+    structure (each disc's p99, the median across cells); `black` is the
+    discs' low percentile (the gaps between nuclei); `titre` the bright
+    band's p99, None with fewer than MIN_BRIGHT bright discs."""
+    typical = _discs(crops, name, bands.get("negatives"), radius_px)
+    if not typical:
+        return None
+    bright = _discs(crops, name, bands.get("bright"), radius_px)
+    titre = None
+    if len(bright) >= MIN_BRIGHT:
+        titre = float(np.median([np.percentile(px, spec["titre_pct"]) for _c, px in bright]))
+    return {"black": float(np.median([np.percentile(px, spec["black_pct"])
+                                      for _c, px in typical])),
+            "typical": float(np.median([np.percentile(px, spec["noise_pct"])
+                                        for _c, px in typical])),
+            "titre": titre, "n_typical": len(typical), "n_bright": len(bright),
+            "radius_px": float(radius_px), "level": LEVEL}
+
+
 def cell_windows(session, project, channels, *, nuclear=None, seed=0) -> dict:
     """{channel: measurements} (`measure`, plus crop_px, seed and column) for
     the marker channels of `channels` (names -> keys) that have a table
-    column; a channel that cannot be anchored is simply absent (its overview
-    window stands)."""
+    column, and the nuclear stain's (`measure_nuclear`) when it has one; a
+    channel that cannot be anchored is simply absent (its overview window
+    stands)."""
     from plexora.agent import cell_exclusions
     from plexora.agent.evidence import crops as cropmod
     from plexora.ai import vocabulary
@@ -243,8 +275,6 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0) -> dict:
         markers = list(ds.table.markers)
         columns = {}
         for name in channels:
-            if name == nuclear:
-                continue
             column = vocabulary.match_name(name, markers)
             if column is not None:
                 columns[name] = column
@@ -269,13 +299,17 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0) -> dict:
             bands, info = select_display_cells(column_values, ids, xs, ys, seed=seed)
             if bands is None:
                 continue
+            if name == nuclear:
+                # Its typical and bright nuclei only: there is no background band.
+                bands = {"negatives": bands["negatives"], "bright": bands["bright"]}
             # One read for every band: a few dozen cells per marker.
             wanted = list({int(c["cell_id"]): c for band in bands.values()
                            for c in band}.values())
             crops, _read = cropmod.read_cell_crops(
                 session, record, wanted, channels={name: channels[name]},
                 crop_px=side, tile_px=side, mask=False, level=LEVEL)
-            measured = measure(crops, name, bands, radius_px=radius)
+            measured = (measure_nuclear if name == nuclear else measure)(
+                crops, name, bands, radius_px=radius)
             if measured is not None:
                 out[name] = {**measured, "crop_px": side, "seed": int(seed), "column": column}
         except Exception:

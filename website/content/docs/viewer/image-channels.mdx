@@ -44,9 +44,16 @@ levels or a contrast window in other imaging software.
 
 The wand-shaped button beside a slot's chevron levels that channel
 automatically, replacing whatever window was set with one fit to the
-channel's own data. Once pressed, it turns into a revert button so you can
-put back the exact window Auto replaced — useful if the automatic result
-turns out to look worse than what you had.
+channel's own data. When AI Auto Contrast has been run on the image, the
+wand applies the brightness it settled for that channel instead (its
+tooltip then says so). Once pressed, it turns into a revert button so you
+can put back the exact window Auto replaced — useful if the automatic
+result turns out to look worse than what you had.
+
+Brightness follows a log-like curve by default, so dim cells stay visible
+next to bright ones. **Log brightness** in the Image card's menu turns it
+off for a straight linear mapping; the choice is saved with the image's
+channels.
 
 ## Name channels from a file
 
