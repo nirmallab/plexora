@@ -234,6 +234,13 @@ class SessionOptions(AgentModel):
                         "expected and one not-expected partner channel from the panel "
                         "context (reading guide `collage_t2m`). Off, the looks are the "
                         "two-panel cells.")
+    observations: Literal[schemas.OBSERVATION_MODES] = Field(
+        "off", description="Experimental. use: what the image's contrast check saw of each "
+                           "marker (its pattern, dim cells seen stained, bright cells seen to "
+                           "be debris) goes into every look as evidence, starts the gate no "
+                           "higher than the dim stained cells, keeps the tissue fields away "
+                           "from the debris, caps confidence on a doubt, and gives a clean "
+                           "split with a finding a look. off: not used.")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -1099,7 +1106,8 @@ def _display_brief(display):
     if display.get("projects"):
         out["projects"] = {
             p: {k: v for k, v in (("status", e.get("status")), ("reason", e.get("reason")),
-                                  ("chosen", e.get("chosen"))) if v}
+                                  ("chosen", e.get("chosen")),
+                                  ("observed", e.get("observed"))) if v}
             for p, e in display["projects"].items()}
     return out
 

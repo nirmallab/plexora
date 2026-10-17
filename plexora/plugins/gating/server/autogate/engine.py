@@ -84,7 +84,14 @@ EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
                      "no_positive_population": "no_positive_population"}
 
 SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nuclear_bleed",
-                "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup")
+                "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup",
+                # what the contrast check saw (`SessionOptions.observations`)
+                "bright_artifacts", "observed_off_pattern")
+
+#: The packets that carry what the contrast check saw of their marker
+#: (`Engine.observed_brief`, with `observations: use`).
+OBSERVED_PACKETS = ("t2_confirm", "t3_biological", "t4_candidates", "qc_confirm",
+                    "regression_confirm")
 
 #: The regression failures a purity push answers (`Engine.purity_push`):
 #: the partners check, with the spatial checks an over-low gate drags along.
@@ -426,6 +433,165 @@ class Engine(BaseEngine):
         (`SessionOptions.tiles`)."""
         return bool(self.options["tiles"])
 
+    # -- what the contrast check saw (`SessionOptions.observations`) --
+
+    def observations_on(self) -> bool:
+        """Whether gating uses what the contrast check saw of each marker
+        (`SessionOptions.observations`)."""
+        return self.options["observations"] == "use"
+
+    def _calibration_of(self, project):
+        cache = self.__dict__.setdefault("_calibrations", {})
+        if project not in cache:
+            from plexora.agent.evidence import calibration
+
+            try:
+                cache[project] = calibration.load_current(self.call.session, project)
+            except Exception:
+                cache[project] = None
+        return cache[project]
+
+    def forget_observed(self, project):
+        """Drop this call's copy of `project`'s calibration (a contrast
+        check's answer just stored what it saw)."""
+        self.__dict__.get("_calibrations", {}).pop(project, None)
+
+    def observed_for(self, unit):
+        """What the contrast check saw of the unit's marker, read for gating,
+        or None when no check said anything about it:
+
+        {channel, pattern_seen, stain_location, n_dim, dim_stained: [cells],
+         dim_anchor, n_bright, artifacts: [cells], bright_artifacts,
+         off_pattern}
+
+        `dim_anchor` is the lowest table value among the dim cells seen
+        stained, when at least `OBSERVED_MIN["dim_stained"]` were and they
+        were read on the gate's own column; `bright_artifacts` is true when
+        at least `OBSERVED_MIN["bright_artifact"]` of the brightest were
+        debris; `off_pattern` when the stain was not a kind the marker's
+        compartment has (`schemas.OBSERVED_FITS`), or lay between the cells
+        of a marker that is not extracellular."""
+        from plexora.agent.evidence import calibration
+        from plexora.plugins.gating.server.autogate import views
+
+        if unit is None:
+            return None
+        record = self._calibration_of(unit["project"])
+        if not record:
+            return None
+        try:
+            channel = views.image_channel(_data(self.call, unit["project"]), unit["marker"])
+        except Exception:
+            return None
+        seen = calibration.observed(record, channel) if channel else None
+        if not seen:
+            return None
+        entry = (record.get("channels") or {}).get(channel) or {}
+        column = (entry.get("anchors") or {}).get("column")
+        dim = list(seen.get("dim") or [])
+        bright = list(seen.get("bright") or [])
+        stained = [d for d in dim if d.get("stained")]
+        debris = [b for b in bright if b.get("artifact")]
+        least = schemas.OBSERVED_MIN
+        anchor = None
+        if len(stained) >= least["dim_stained"] and column in (None, unit["marker"]):
+            anchor = float(min(float(d["value"]) for d in stained))
+        compartment = (unit.get("context") or {}).get("compartment")
+        fits = schemas.OBSERVED_FITS.get(compartment)
+        kind = schemas.OBSERVED_KINDS.get(seen.get("pattern_seen"))
+        off = fits is not None and (
+            (kind is not None and kind not in fits)
+            or (seen.get("stain_location") == "between_cells" and compartment != "extracellular"))
+        return {"channel": channel, "pattern_seen": seen.get("pattern_seen"),
+                "stain_location": seen.get("stain_location"),
+                "n_dim": len(dim), "dim_stained": stained, "dim_anchor": anchor,
+                "n_bright": len(bright), "artifacts": debris,
+                "bright_artifacts": len(debris) >= least["bright_artifact"],
+                "off_pattern": bool(off)}
+
+    def observed_findings(self, unit, low=None) -> list:
+        """The findings of `observed_for` that bear on a gate at `low` (the
+        unit's candidate by default): `dim_below` (dim cells seen stained sit
+        under it), `bright_artifacts`, `off_pattern`. [] with observations
+        off or nothing seen."""
+        if not self.observations_on():
+            return []
+        seen = self.observed_for(unit)
+        if not seen:
+            return []
+        low = unit.get("candidate") if low is None else low
+        out = []
+        if seen["dim_anchor"] is not None and low is not None and seen["dim_anchor"] < float(low):
+            out.append("dim_below")
+        if seen["bright_artifacts"]:
+            out.append("bright_artifacts")
+        if seen["off_pattern"]:
+            out.append("off_pattern")
+        return out
+
+    def note_observed(self, unit):
+        """Record on the unit what the contrast check saw (`unit.observed`,
+        for packets and the report) and the soft flags it raises; returns
+        the findings for the unit's current candidate. [] with observations
+        off or nothing seen."""
+        findings = self.observed_findings(unit)
+        seen = self.observed_for(unit) if self.observations_on() else None
+        if not seen:
+            return findings
+        flags = list(unit.get("flags") or [])
+        if seen["bright_artifacts"] and "bright_artifacts" not in flags:
+            flags.append("bright_artifacts")
+        if seen["off_pattern"] and "observed_off_pattern" not in flags:
+            flags.append("observed_off_pattern")
+        unit["flags"] = flags
+        unit["observed"] = {"line": observed_line(seen), "findings": findings,
+                            "dim_anchor": seen["dim_anchor"]}
+        return findings
+
+    def observed_brief(self, packet):
+        """`evidence.observed`: what the contrast check saw of this packet's
+        marker, in a few words, and the guide entry that says how to weigh
+        it (with observations on)."""
+        if not self.observations_on() or packet.get("kind") not in OBSERVED_PACKETS:
+            return
+        evidence = packet.get("evidence")
+        refs = packet.get("units") or []
+        if not isinstance(evidence, dict) or len(refs) != 1:
+            return
+        unit = self.record["units"].get(unit_key(refs[0]["project"], refs[0]["marker"]))
+        seen = self.observed_for(unit)
+        if not seen:
+            return
+        brief = {"pattern_seen": seen["pattern_seen"], "stain_location": seen["stain_location"]}
+        if seen["n_dim"]:
+            values = [float(d["value"]) for d in seen["dim_stained"]]
+            brief["dim"] = (f"{len(values)} of {seen['n_dim']} dim cells stained"
+                            + (f" (values {min(values):.4g}-{max(values):.4g})" if values else ""))
+        if seen["n_bright"]:
+            brief["bright"] = (f"{len(seen['artifacts'])} of {seen['n_bright']} of the brightest "
+                               "look like artifacts")
+        evidence["observed"] = {k: v for k, v in brief.items() if v is not None}
+        if isinstance(evidence.get("guide"), list) and "observed" not in evidence["guide"]:
+            evidence["guide"].append("observed")
+        elif "how_to_read" in evidence and self.options["reading"] == "every_packet":
+            from plexora.plugins.gating.server.autogate import packets
+
+            evidence["how_to_read"] += "; " + packets.READING_GUIDE["observed"]
+
+    def observed_digest(self, project) -> str:
+        """A short hash of what the contrast check saw on `project` (every
+        marker's), for the memo key with observations on."""
+        import hashlib
+        import json
+
+        from plexora.agent.evidence import calibration
+
+        record = self._calibration_of(project) or {}
+        seen = {name: calibration.observed(record, name)
+                for name in sorted((record.get("choices") or {}))}
+        blob = json.dumps(seen, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
     def partner_panels(self, unit):
         """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
         `anti` panels): one expected and one not-expected partner of the
@@ -484,6 +650,11 @@ class Engine(BaseEngine):
         if self.tiles_on():
             # The multi-view looks are other pictures: off, the key is today's.
             extra += ("tiles:1",)
+        project = (packet.get("evidence") or {}).get("project")
+        if self.observations_on() and project:
+            # What the contrast check saw shapes the start and the fields:
+            # off, the key is today's.
+            extra += (f"observed:{self.observed_digest(project)}",)
         return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
@@ -501,6 +672,7 @@ class Engine(BaseEngine):
         from plexora.plugins.gating.server.autogate import packets
 
         self._qc_brief(packet)
+        self.observed_brief(packet)
         return packets.lean(packet, self.options)
 
     def _qc_brief(self, packet):
@@ -1169,6 +1341,7 @@ class Engine(BaseEngine):
         unit.pop("lattice", None)
         if proposal is None:
             unit["start"] = {"source": "gmm", "low": unit["gmm"]}
+            self.observed_start(unit, ds)
             return unit["scoring"]
         if unit.get("judged") or unit.get("judged_rows"):
             # A rescore after a look (the marker turned out continuous) never
@@ -1182,7 +1355,44 @@ class Engine(BaseEngine):
         self.log(event="scored", unit=unit_key(unit["project"], unit["marker"]),
                  proposal=float(proposal), gmm=unit["gmm"],
                  basis=result.get("proposal_source"), leading=result.get("leading"))
+        self.observed_start(unit, ds)
         return unit["scoring"]
+
+    def observed_start(self, unit, ds):
+        """With observations on and dim cells the contrast check saw stained
+        (`observed_for`'s `dim_anchor`): the anchor joins the scored
+        candidates (`obs:dim`, a lattice point a look at candidates can
+        test), and a start above it comes down to it -- never below the
+        background's onset, never across a row a look judged. The looks
+        still decide; this only gives them the dim cells to judge."""
+        from plexora.plugins.gating.server.autogate import lattice as latmod
+
+        seen = self.observed_for(unit) if self.observations_on() else None
+        if not seen or seen["dim_anchor"] is None:
+            self.note_observed(unit)
+            return
+        anchor = float(seen["dim_anchor"])
+        scoring = unit.get("scoring") or {}
+        candidates = scoring.setdefault("candidates", [])
+        if not any(c.get("id") == "obs:dim" for c in candidates):
+            candidates.append({"id": "obs:dim", "family": "obs", "low": anchor,
+                               "fraction": None, "score": None, "components": {}})
+        start = unit.get("start") or {}
+        low = start.get("low")
+        onset = next((float(c["low"]) for c in candidates
+                      if latmod.family(c.get("id", "")) == "onset" and c.get("low") is not None),
+                     None)
+        floor = anchor if onset is None else max(anchor, onset)
+        if low is not None and floor < float(low):
+            if unit.get("judged") or unit.get("judged_rows"):
+                floor = self.clamp_to_judged(unit, ds, floor, why="observed")
+            if floor < float(low):
+                unit["start"] = {**start, "low": floor, "observed": "dim", "before": float(low)}
+                unit["candidate"] = floor
+                unit.pop("lattice", None)
+                self.log(event="observed_start", unit=unit_key(unit["project"], unit["marker"]),
+                         before=float(low), start=floor, anchor=anchor, onset=onset)
+        self.note_observed(unit)
 
     def clamp_to_judged(self, unit, ds, low, *, why):
         """`low` clipped so it crosses no row a look judged -- a first look's
@@ -1671,6 +1881,23 @@ class Engine(BaseEngine):
             self.close(unit, "insufficient_information", f"needs the user: {ask_user.question}")
             return True
         return False
+
+
+def observed_line(seen) -> str:
+    """One line of what the contrast check saw of a marker (`Engine.
+    observed_for`), for the report and the status."""
+    parts = []
+    if seen.get("pattern_seen"):
+        location = seen.get("stain_location")
+        parts.append(str(seen["pattern_seen"]).replace("_", " ")
+                     + (f", {location.replace('_', ' ')}" if location else ""))
+    if seen.get("n_dim"):
+        parts.append(f"{len(seen['dim_stained'])} of {seen['n_dim']} dim cells stained")
+    if seen.get("n_bright"):
+        parts.append(f"{len(seen['artifacts'])} of {seen['n_bright']} brightest were debris")
+    if seen.get("off_pattern"):
+        parts.append("not the pattern its compartment has")
+    return "; ".join(parts)
 
 
 def state_confidence(state):

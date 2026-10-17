@@ -34,7 +34,11 @@ HARD_FLAGS = ("saturated", "empty_channel", "illumination_gradient", "no_values"
 SOFT_FLAGS = ("weak_signal", "pileup", "size_correlated", "nuclear_bleed", "edge_enriched",
               "edge_depleted", "near_zero_plane", "spatially_clustered",
               "isolated_positives", "log_ambiguous", "no_image_channel", "sparse",
-              "estimators_disagree", "unstable_fit")
+              "estimators_disagree", "unstable_fit",
+              # What the contrast check saw (`SessionOptions.observations`):
+              # most of the brightest cells' stain was debris, not theirs; the
+              # stain was not the pattern the marker's compartment has.
+              "bright_artifacts", "observed_off_pattern")
 
 #: Artifacts an agent may name when it looks at the cells.
 ARTIFACTS = ("image_quality", "segmentation", "saturation", "bleedthrough",
@@ -160,6 +164,7 @@ EVIDENCE_LABELS = {
     "context_sheet": "{marker} across the tissue",
     "strip": "Markers at their thresholds",
     "display_grid": "Markers at five brightnesses",
+    "display_spread": "Bright and dim cells across the image",
 }
 
 #: What a session does when a marker reaches its allowance (looks, images,
@@ -282,6 +287,34 @@ AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 #: from this one; `unstained` -- nothing touches the nucleus; `mixed` -- the
 #: row holds both kinds about evenly; `cannot_tell`.
 ROW_VERDICTS = ("own_stain", "neighbour_only", "unstained", "mixed", "cannot_tell")
+
+#: What a contrast check says it saw of a marker's stain (`display_setup`'s
+#: `pattern_seen`), finer than a look's `PATTERNS`: fibres and dendrites are
+#: shapes a gate's cell mean summarises badly.
+OBSERVED_PATTERNS = ("membrane", "nuclear", "nuclear_speckled", "cytoplasmic", "granular",
+                     "fibrous", "dendritic", "diffuse", "none")
+#: Where the stain lies (`stain_location`): on the cells, between them, or both.
+STAIN_LOCATIONS = ("on_cells", "between_cells", "mixed")
+#: The kind of structure each observed pattern is (`diffuse` and `none` are
+#: judged against nothing), and which kinds fit each compartment: a stain of
+#: another kind is `observed_off_pattern`.
+OBSERVED_KINDS = {"membrane": "membrane", "nuclear": "nuclear", "nuclear_speckled": "nuclear",
+                  "cytoplasmic": "cytoplasmic", "granular": "cytoplasmic",
+                  "fibrous": "fibrous", "dendritic": "fibrous"}
+OBSERVED_FITS = {"nuclear": ("nuclear",),
+                 "nuclear_cytoplasmic": ("nuclear", "cytoplasmic"),
+                 "cytoplasmic": ("cytoplasmic", "membrane", "fibrous"),
+                 "membrane": ("membrane", "cytoplasmic", "fibrous"),
+                 "extracellular": ("fibrous", "membrane", "cytoplasmic")}
+#: How a session uses what the contrast check saw (`SessionOptions.
+#: observations`): `off` -- not at all (today's gating); `use` -- as evidence
+#: in every look, a lower start where dim cells were seen stained, fields
+#: away from bright debris, and doubts that cap confidence.
+OBSERVATION_MODES = ("off", "use")
+#: [cal] a finding needs at least this many tiles of the spread strip: dim
+#: cells seen stained (of `display_grid.DIM_TILES`), bright cells seen as
+#: debris (of `BRIGHT_TILES`).
+OBSERVED_MIN = {"dim_stained": 2, "bright_artifact": 2}
 
 #: What the stained cells look like (a first look's `pattern`). `none`: no
 #: cell anywhere carries the stain. A pattern outside the compartment's

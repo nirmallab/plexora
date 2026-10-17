@@ -115,8 +115,9 @@ def test_tiles_default_off_and_keep_their_answers_apart():
     packet = {"kind": "t2_confirm", "evidence": {"marker": "CD8"}}
 
     def key(options):
-        fake = SimpleNamespace(options=options)
+        fake = SimpleNamespace(options={"observations": "off", **options})
         fake.tiles_on = lambda: Engine.tiles_on(fake)
+        fake.observations_on = lambda: Engine.observations_on(fake)
         return Engine.memo_key(fake, packet, [])
 
     # Off, the key is the one a session without the option made.

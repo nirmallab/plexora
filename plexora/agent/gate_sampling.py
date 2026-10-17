@@ -46,6 +46,8 @@ WHY = {
     "high_density": "the densest tissue, where outlines and spill-over mislead most",
     "low_density": "sparse tissue, where background is easiest to judge",
     "bright_isolated": "the brightest cell with few neighbours: real signal or artefact",
+    "dim_stained": "around a dim cell seen to carry its own stain: true dim staining the gate "
+                   "should keep",
     "edge": "the edge of the section, where staining and segmentation often fail",
 }
 
@@ -119,13 +121,16 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high, left=N
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
                                    n_per_class=2, classes=DEFAULT_CLASSES, seed=0,
-                                   band=None, max_fields=MAX_FIELDS, avoid=()):
+                                   band=None, max_fields=MAX_FIELDS, avoid=(), around=()):
     """Fields to check a gate in: `{fields: [...], band, grid, ...}`.
 
     `data` is a provider-backed handle set; `field_px` the side of a square
     field in full-resolution pixels; `image_size` (width, height). `avoid`
     holds boxes `(x0, y0, x1, y1)` already shown: a field overlapping one of
-    them more than `MAX_IOU` is not chosen again.
+    them more than `MAX_IOU` is not chosen again. `around` holds points `(x,
+    y)` -- dim cells a contrast check saw stained: the first whose field
+    (centred on it) clears `avoid` and the fields chosen is added as class
+    `dim_stained`.
     """
     from plexora.server.utils.label_overlay import cell_ids
 
@@ -269,6 +274,20 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
             chosen.append({"class": cls, "box": box, "score": value,
                            "density_percentile": float(density_rank[iy, ix] * 100)})
             taken += 1
+    for cx, cy in around or ():
+        if len(chosen) >= max_fields:
+            break
+        x0 = min(max(0.0, float(cx) - side / 2), max(0.0, width - side))
+        y0 = min(max(0.0, float(cy) - side / 2), max(0.0, height - side))
+        box = (float(x0), float(y0), float(x0 + side), float(y0 + side))
+        if any(_iou(box, other["box"]) > MAX_IOU for other in chosen) \
+                or any(_iou(box, tuple(other)) > MAX_IOU for other in avoid):
+            continue
+        iy = min(int(y0 // step), ny - 1)
+        ix = min(int(x0 // step), nx - 1)
+        chosen.append({"class": "dim_stained", "box": box, "score": 0.0,
+                       "density_percentile": float(density_rank[iy, ix] * 100)})
+        break
 
     fields = []
     for index, field in enumerate(chosen):

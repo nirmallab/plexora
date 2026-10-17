@@ -191,6 +191,8 @@ def _why(unit):
                      f"{'s' if unit['extensions'] > 1 else ''} of looks")
     if unit.get("replayed"):
         notes.append("an earlier answer to identical evidence was reused")
+    if (unit.get("observed") or {}).get("line"):
+        notes.append(f"contrast check saw: {unit['observed']['line']}")
     return "; ".join(n for n in notes if n)
 
 

@@ -14,7 +14,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import Field
 
-from plexora.agent.evidence import calibration
+from plexora.agent.evidence import calibration, display_grid
 from plexora.agent.schemas import AgentModel, clipped
 from plexora.ai import vocabulary
 from plexora.plugins.gating.server.autogate import context, pixel_estimate, replan, schemas
@@ -145,6 +145,25 @@ class DisplaySetupAnswer(_Base):
         description="EVERY row: the columns where the bright cells (bottom of each block) show "
                     "the row's `pattern` with its detail -- not washed out to a flat or red "
                     "blob, not too dim to see. [] when none does.")
+    # What the second picture (the spread strip) shows. Optional: an answer
+    # remembered from before it existed still replays.
+    pattern_seen: dict[str, Literal[schemas.OBSERVED_PATTERNS]] = Field(
+        default_factory=dict,
+        description="Per row, from both pictures: what the stain looks like on the cells "
+                    "that carry it. `none` when nothing is stained.")
+    stain_location: dict[str, Literal[schemas.STAIN_LOCATIONS]] = Field(
+        default_factory=dict,
+        description="Per row: whether the stain lies on the cells (`on_cells`), in the "
+                    "spaces between them (`between_cells`), or both (`mixed`).")
+    bright_artifact: dict[str, list[Literal[display_grid.BRIGHT_TILES]]] = Field(
+        default_factory=dict,
+        description="Per row, second picture: the bright tiles (b1..) whose brightness "
+                    "is NOT the marked cell's own stain -- a speck, debris, a blob off "
+                    "the cells, a smear. [] when every bright tile is a stained cell.")
+    dim_stained: dict[str, list[Literal[display_grid.DIM_TILES]]] = Field(
+        default_factory=dict,
+        description="Per row, second picture: the dim tiles (d1..) whose marked cell "
+                    "shows its own stain, however faint. [] when none does.")
 
 
 class PanelEntry(AgentModel):

@@ -180,6 +180,42 @@ class TruthAgent:
             return "about_right"
         return "too_low" if low < best else "too_high"
 
+    def spread_answer(self, packet, rows) -> dict:
+        """What the contrast check's second picture shows, from the truth: a
+        dim tile is `dim_stained` when its cell is truly positive, a bright
+        tile `bright_artifact` when its cell is not (its brightness came from
+        debris). The pattern is not painted, so it is not said. Cells are
+        found by their id (1-based, in the order the values are)."""
+        from plexora.agent import artifacts
+
+        image = next((i for i in packet.get("images") or []
+                      if i.get("role") == "display_spread" and i.get("artifact_id")), None)
+        if image is None:
+            return {}
+        try:
+            _png, sidecar = artifacts.get(image["artifact_id"])
+        except Exception:
+            return {}
+        manifest = sidecar.get("manifest", sidecar)
+        out = {"stain_location": {}, "bright_artifact": {}, "dim_stained": {}}
+        for row in manifest.get("rows") or []:
+            marker = row["marker"]
+            if marker not in rows or marker not in self.truth:
+                continue
+            truth = self.truth[marker]
+
+            def positive(cell):
+                index = int(cell["cell_id"]) - 1
+                return bool(truth[index]) if 0 <= index < truth.size else False
+
+            tiles = row.get("tiles") or {}
+            out["stain_location"][marker] = "on_cells"
+            out["bright_artifact"][marker] = [t for t, c in tiles.items()
+                                              if t.startswith("b") and not positive(c)]
+            out["dim_stained"][marker] = [t for t, c in tiles.items()
+                                          if t.startswith("d") and positive(c)]
+        return {k: v for k, v in out.items() if v}
+
     def answer(self, packet):
         kind = packet["kind"]
         ev = packet.get("evidence") or {}
@@ -223,7 +259,8 @@ class TruthAgent:
             # (c3) is chosen wherever the numbers allow it.
             rows = [r["marker"] for r in ev.get("rows") or []]
             return {"kind": kind, "background_ok": {m: ["c1", "c2", "c3"] for m in rows},
-                    "structure_ok": {m: ["c2", "c3"] for m in rows}}
+                    "structure_ok": {m: ["c2", "c3"] for m in rows},
+                    **self.spread_answer(packet, rows)}
         if kind == "transfer_check":
             project = ev["this"]["project"]
             direction = self.direction(marker, ev["this"]["aligned_gate"])
@@ -244,7 +281,9 @@ class TruthAgent:
 
 #: The ablation's variants: what each sets of a session's options. `tiles`
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
-VARIANTS = {"baseline": {}, "tiles": {"tiles": True}}
+VARIANTS = {"baseline": {}, "tiles": {"tiles": True},
+            # what the contrast check saw, used by gating (`SessionOptions.observations`)
+            "observed": {"observations": "use"}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -455,7 +494,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
     markers = tuple(markers or ("CD3", "CD8", "CD20", "CD4", "FOXP3"))
     variants = check_variants(variants)
     rows = []
-    with tempfile.TemporaryDirectory(prefix="plexora-bench-") as root:
+    with tempfile.TemporaryDirectory(prefix="plexora-bench-", ignore_cleanup_errors=True) as root:
         previous = os.environ.get("PLEXORA_DATA_PATH")
         os.environ["PLEXORA_DATA_PATH"] = root
         paths.reset()
@@ -497,7 +536,7 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
 
     markers = tuple(markers or ("CD3", "CD8", "CD20", "CD4", "FOXP3"))
     rows = []
-    with tempfile.TemporaryDirectory(prefix="plexora-bench-") as root:
+    with tempfile.TemporaryDirectory(prefix="plexora-bench-", ignore_cleanup_errors=True) as root:
         previous = os.environ.get("PLEXORA_DATA_PATH")
         os.environ["PLEXORA_DATA_PATH"] = root
         paths.reset()

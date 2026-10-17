@@ -23,6 +23,12 @@ collage reads (level 0), in bands of the marker's own distribution:
   structure (a ring, a nucleus, granules) is;
 - `near` (between): a dim positive, for the contrast grid.
 
+For the contrast check's second picture (`display_grid.render_spread_strip`)
+`cells.spread` holds a few of the bright and the near cells picked spread out
+across the image (`_spread`): a bright stain that is debris sits in a few
+places, a real one across the tissue, and a dim cell the gate must not miss
+may live away from the brightest.
+
 The nuclear stain stains every cell, so it has no background band:
 `measure_nuclear` reads how bright its typical and its bright nuclei are,
 for the window the viewer draws it at (`calibration.nuclear_view`).
@@ -47,9 +53,11 @@ import numpy as np
 #: [cal] the bands cells are picked from (percentiles of the marker's body),
 #: how many from each, and what is read in their discs.
 CELL_WINDOW = {"negative_pct": (30, 50), "n_each": 24, "noise_pct": 99, "black_pct": 5,
-               "low_pct": (2, 10), "n_low": 12, "near_pct": (85, 92), "n_near": 4,
+               "low_pct": (2, 10), "n_low": 12, "near_pct": (85, 92), "n_near": 8,
                "bright_pct": (97, 99.5), "n_bright": 16, "titre_pct": 99,
                "reanchor_share": 0.1,
+               # the bright and near cells the spread strip shows
+               "spread_bright": 6, "spread_dim": 4,
                "min_cells": 200}
 #: The pyramid level the crops are read at (the collage's own).
 LEVEL = 0
@@ -178,13 +186,33 @@ def _closest(discs, measure_of, target, k):
     return [dict(cell) for cell, _px in ranked[:k]]
 
 
+def _spread(discs, measure_of, target, k):
+    """`k` of the discs' cells spread out in space: the one whose measure is
+    nearest `target` first, then each time the cell farthest from those
+    already taken (ties by cell id). Deterministic for the same discs."""
+    if not discs or k <= 0:
+        return []
+    ranked = sorted(discs, key=lambda item: (abs(float(measure_of(item[1])) - target),
+                                             int(item[0]["cell_id"])))
+    taken = [ranked[0][0]]
+    rest = [cell for cell, _px in ranked[1:]]
+    while rest and len(taken) < k:
+        def gap(cell):
+            return min((cell["x"] - t["x"]) ** 2 + (cell["y"] - t["y"]) ** 2 for t in taken)
+        best = max(rest, key=lambda cell: (gap(cell), -int(cell["cell_id"])))
+        taken.append(best)
+        rest.remove(best)
+    return [dict(cell) for cell in taken]
+
+
 def measure(crops, name, bands, *, radius_px, spec=CELL_WINDOW):
     """The marker's measurements from level-0 crops (`crops` maps a cell id to
     a `crops.Crop`; `bands` is `select_display_cells`'s, or just its
     negatives), or None when no negative disc could be read:
 
     {black, background, noise_p99, band, reanchored, titre, n_negative,
-     n_bright, radius_px, level, cells: {negative, near, bright}, low_band?}
+     n_bright, radius_px, level, cells: {negative, near, bright, spread},
+     low_band?}
 
     `titre` is None with fewer than MIN_BRIGHT bright discs. A negatives band
     whose median pixel is above the low band's noise p99 is stained itself
@@ -214,7 +242,11 @@ def measure(crops, name, bands, *, radius_px, spec=CELL_WINDOW):
                              background["background"], 1),
         "near": _closest(near, np.median, near_mid, 1),
         "bright": _closest(bright, lambda px: np.percentile(px, spec["titre_pct"]),
-                           titre if titre is not None else 0.0, 2)}
+                           titre if titre is not None else 0.0, 2),
+        "spread": {"bright": _spread(bright, lambda px: np.percentile(px, spec["titre_pct"]),
+                                     titre if titre is not None else 0.0,
+                                     spec["spread_bright"]),
+                   "dim": _spread(near, np.median, near_mid, spec["spread_dim"])}}
     out = {"black": min(background["black"], background["background"]),
            "background": background["background"], "noise_p99": background["noise_p99"],
            "band": band, "reanchored": reanchored, "titre": titre,

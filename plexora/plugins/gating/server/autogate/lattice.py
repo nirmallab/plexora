@@ -31,13 +31,15 @@ VERSION = "3"
 #: marker's evidence; the scored proposal on all of it; the Auto gate on the
 #: mixture; the background's onset and ceiling and the estimators on the
 #: distribution; steps and edges on nothing but distance.
-PRIORITY = ("ctrl", "within", "bio", "score", "gmm", "ceiling", "onset", "kde", "otsu",
-            "gmm2", "up", "down", "edge")
+PRIORITY = ("ctrl", "within", "bio", "score", "obs", "gmm", "ceiling", "onset", "kde",
+            "otsu", "gmm2", "up", "down", "edge")
 
 #: Scored candidates that join the lattice (`scoring` families), and are
 #: kept even outside the guard band: the band is drawn around the mixture,
 #: which is exactly what is wrong on the markers these candidates are for.
-SCORED = ("score", "bio", "ceiling", "onset")
+SCORED = ("score", "bio", "ceiling", "onset",
+          # the lowest dim cell a contrast check saw stained (`Engine.observed_start`)
+          "obs")
 
 #: [cal] steps from the Auto gate, in sds of the population the gate moves
 #: into (the positives' going up, the background's going down).

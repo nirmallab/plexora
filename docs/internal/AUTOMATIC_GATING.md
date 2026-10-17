@@ -99,6 +99,56 @@ tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
 keys, provenance and gates are the session's without it, byte for byte. The
 bench runs it as `--variants baseline,tiles`.
 
+## 2d. Observations from the contrast check (`observations`, experimental)
+
+Branch `contrast-observations`, not merged: kept until an A/B on real images
+shows it helps.
+
+**Capture (always on).** The contrast check (`display_setup`) sends a second
+picture, `display_grid.render_spread_strip` (`display_spread/1`): per marker,
+six of its bright-band cells `b1..b6` and four of its near-band cells
+`d1..d4`, each picked far from the others (`cell_window._spread`, a
+farthest-point pick from the cell nearest the titre / the near band's
+median; `CELL_WINDOW["n_near"]` is 8 so there are near cells to spread), drawn
+at the rule's own column c3. The answer may add four optional maps
+(`DisplaySetupAnswer`): `pattern_seen` (`schemas.OBSERVED_PATTERNS`),
+`stain_location` (`STAIN_LOCATIONS`), `bright_artifact` (b tiles that are
+debris, not the cell's stain) and `dim_stained` (d tiles whose cell carries
+its own stain). `transitions.apply_display` keeps them, with each tile's cell
+and the packet's notes and flags, as `choices[channel].observed` on the
+calibration (`calibration.observed`): it survives a recompute and goes with
+`forget_choices`. Calibration VERSION 7 (spread picks, and the column the
+cells were read on in `anchors.column`). The status lists one line per
+marker (`display.projects[p].observed`).
+
+**Use (`SessionOptions.observations`, default `off`).** With `use`, all on
+the primary (nothing on a data node changes):
+
+- every look and check (`engine.OBSERVED_PACKETS`) carries
+  `evidence.observed` and the guide entry `observed` (`Engine.observed_brief`);
+- `Engine.observed_start`: with at least `OBSERVED_MIN["dim_stained"]` dim
+  cells seen stained, their lowest table value joins the scored candidates
+  as `obs:dim` (lattice family `obs`, in `SCORED`), and a start above it
+  comes down to it -- never below the background onset, never across a
+  judged row (`start.observed = "dim"`, `start.before`);
+- soft flags `bright_artifacts` (at least `OBSERVED_MIN["bright_artifact"]`
+  of the brightest were debris) and `observed_off_pattern` (the pattern's
+  kind, `OBSERVED_KINDS`, does not fit the compartment, `OBSERVED_FITS`, or the
+  stain lay between the cells of a marker that is not extracellular) cap
+  confidence at moderate (`SOFT_CAPPING`);
+- the context sheet's fields avoid a field-sized box around each debris cell,
+  and a field centred on a dim stained cell (class `dim_stained`,
+  `gate_sampling`'s `around`) takes the clearly-positive field's place;
+- `bulk.decide_first`: a clean split with any finding (`dim_below`,
+  `bright_artifacts`, `off_pattern`) is not T1-accepted; it gets a look
+  (`unit.observed_routed`);
+- the report's line for the marker says what the check saw.
+
+The memo key carries `observed:<digest>` only when on; off, the session is
+today's. The bench runs it as `--variants baseline,observed`; its
+`TruthAgent` answers the strip from the painted truth (a dim tile is stained
+when its cell is truly positive, a bright tile debris when it is not).
+
 ## 3. Where things live
 
 ```
