@@ -189,8 +189,7 @@ Gating is quoted at 25 credits per marker per run, but real runs came in lower. 
 - **Worktree:** removed too. The branch lives on the `plexora` remote and in the main
   clone's local refs. To work on it again, run from the main clone:
   `git worktree add C:\pxobs contrast-observations`.
-  - Then junction `plexora\client
-ode_modules` from the main clone, or about 110 JS
+  - Then junction `plexora\client\node_modules` from the main clone, or about 110 JS
     probes fail.
   - Run servers and scripts with cwd `C:\pxobs` and `PYTHONPATH=C:\pxobs`: Plexora is
     editable-installed from the main clone.
