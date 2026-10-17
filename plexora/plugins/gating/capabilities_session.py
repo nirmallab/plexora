@@ -6,7 +6,8 @@
                              (`setup: ask`); or `needs_setup` + `setup`, waiting on the
                              viewer's set-up form (`setup: wait`); or refused, saying what
                              is missing (a column not found; `setup: fail`, the matrix too)
-    gating_next           -> one decision packet (+ <= 2 images), or a status
+    gating_next           -> one decision packet (+ <= 2 images, and the reference sheet
+                             once per reader when the session has one), or a status
     gating_answer         -> the outcome, and the next packet inline
     gating_session_status -> every unit's state, the budget, the questions
     gating_session_finish -> close | commit (propose mode) | cancel | rollback
@@ -249,6 +250,31 @@ class SessionOptions(AgentModel):
                                "of cells, cells below the gate seen mixed send it down, and "
                                "the distribution's and spatial whole-image checks no longer "
                                "fail a gate the looks placed. Pair with observations=use.")
+    partners: Literal[schemas.PARTNER_MODES] = Field(
+        "gated", description="Experimental. gated: partner evidence comes from partners' gates "
+                             "once they have one. bands: from every related partner's own "
+                             "cells, gated or not -- its sure-negative cells say where this "
+                             "marker's background ends, its sure-positive cells where real "
+                             "positives sit; co-expressed and exclusive partners vote and "
+                             "the median is used. A look whose gate disagrees with them gets "
+                             "a second look at the cells between (reading guide `bands`).")
+    shapes: bool = Field(False, description="Experimental. Each look is told the shapes the "
+                         "marker's own stain takes (markers.yaml `shapes`: membrane ring, "
+                         "nuclear fill, fibres, dendrites, granules...; the model fills them "
+                         "in for markers the vocabulary does not know) and how own stain looks "
+                         "for that shape (reading guide `shape:*`); a stain of another shape "
+                         "caps confidence.")
+    reference_sheet: str | None = Field(
+        None, max_length=40, pattern=r"^[A-Za-z0-9_-]{1,40}$",
+        description="Experimental. A reference sheet of single cells sorted by eye (strong, "
+                    "faint, at the limit, negative, spill, artifact; `library_build`), shown "
+                    "once to each conversation that answers looks, beside its first look. "
+                    "A sheet's name, or `auto` (the sheet named `default`, else the newest, "
+                    "else none).")
+    strategy: Literal[schemas.STRATEGIES] = Field(
+        "classic", description="classic: gating as it was. vision: the looks lead -- turns on "
+                               "observations=use, vision_first, partners=bands, shapes and "
+                               "reference_sheet=auto, each unless set explicitly here.")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -283,6 +309,17 @@ def session_qc(handler):
             return handler(call, inp)
 
     return wrapped
+
+
+def resolve_strategy(inp):
+    """`inp` with its strategy laid over the options the caller left at their
+    defaults (`schemas.VISION_STRATEGY`); an option set explicitly wins.
+    Classic changes nothing. Idempotent: the stored options are resolved."""
+    if inp.strategy != "vision":
+        return inp
+    given = inp.model_fields_set
+    update = {k: v for k, v in schemas.VISION_STRATEGY.items() if k not in given}
+    return inp.model_copy(update=update) if update else inp
 
 
 def option_defaults() -> dict:
@@ -598,9 +635,13 @@ def _plan_fields(call, inp, images, plan) -> dict:
                                   "judges every gate on the pixels")
             units[engines.unit_key(project, marker)] = unit
     unresolved = [m for m in panel["unresolved"] if m in order]
+    # With shapes on, a marker the vocabulary knows without the shapes of its
+    # stain (learned before shapes were) is asked about too, shapes only.
+    shapeless = [m for m in order if m not in unresolved
+                 and not (panel["entries"].get(m) or {}).get("shapes")] if inp.shapes else []
     return {"order": order, "skipped_markers": plan["skipped"], "units": units,
             "panel_hash": panel["panel_hash"], "biology": biology_record,
-            "panel_pending": bool(unresolved), "unresolved": unresolved,
+            "panel_pending": bool(unresolved or shapeless), "unresolved": unresolved,
             "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
                                                     "unmatched")},
             "pixel": pixel, "display": display, "qc_exclusion": qc_blocks,
@@ -675,6 +716,12 @@ def start(call, inp):
     from plexora.agent.sessions.store import new_session_id
     from plexora.plugins.gating.server.autogate import engine as engines
 
+    inp = resolve_strategy(inp)
+    # The reference sheet a session shows: refused here when it names one that
+    # does not exist; `auto` with none built is simply off.
+    from plexora.plugins.gating.server.autogate import library
+
+    sheet = library.resolve_sheet(inp.reference_sheet)
     if inp.scope == "project":
         if not inp.project:
             raise AgentError("invalid_input", "scope=project needs `project`")
@@ -749,6 +796,8 @@ def start(call, inp):
         "packet_seq": 0, "write_seq": 0, "mirror": _mirror_at_start(call, inp),
         "expression": expression,
     }
+    if sheet["status"] != "off":
+        record["reference"] = sheet
     if needs:
         record["state"] = "needs_setup"
         record["setup_wait"] = needs
@@ -820,6 +869,7 @@ def start(call, inp):
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(record["pixel"]), "state": record["state"],
             "channels": _channels_brief(record["channel_match"]),
+            **_reference_brief(record),
             "qc_exclusion": record["qc_exclusion"],
             **_qc_warning(record["qc_exclusion"]),
             **_unconfirmed_note(call.session, images, inp.setup),
@@ -944,6 +994,17 @@ def _biology_for(call, images, inp, panel):
                                source="user", original=inp.biology.original,
                                interpretation=inp.biology.interpretation)
     return biology.infer(panel, biology.project_metadata(call, images[0]))
+
+
+def _reference_brief(record):
+    """{reference: {status, name, digest, reason?, sent_to?}} for a session
+    asked for a reference sheet; {} otherwise."""
+    ref = record.get("reference")
+    if not ref:
+        return {}
+    return {"reference": {k: ref.get(k) for k in ("status", "requested", "name", "digest",
+                                                  "reason", "missing_since", "sent_to")
+                          if ref.get(k) is not None}}
 
 
 def _biology_brief(record):
@@ -1499,8 +1560,12 @@ def next_packet(call, inp):
                 stale = bool(trimmed) and trimmed["epoch"] != packets.briefed(record)["epoch"]
                 if inp.rerender or stale or len(images) < len(packet.get("images") or []):
                     # Drawn again, it is sent whole to a new reader: whatever
-                    # was sent before may be gone (`packets.as_in`).
-                    packets.new_reader(record)
+                    # was sent before may be gone (`packets.as_in`), the
+                    # reference sheet too (`Engine.extra_images`).
+                    if reader == DEFAULT_READER:
+                        packets.new_reader(record)
+                    else:
+                        engine.new_epoch(reader)
                     packet, images = engine.rerender(outstanding)
                     fresh = packet is not None
                 else:
@@ -1836,6 +1901,9 @@ class StatusInput(AgentModel):
                                                  "session.")
     known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
                                     "reading guide is then not sent again.")
+    reader: str | None = Field(None, max_length=40, pattern=r"^[A-Za-z0-9_.:-]+$",
+                               description="Your reader id, when your brief gave one: without "
+                                           "known_guide this starts your conversation afresh.")
     limits: dict[str, Literal[schemas.LIMIT_DECISIONS]] | None = Field(
         None, description="Answers to the session's limit questions (`requests` of a "
                           "`waiting_for_user` result), by marker: `continue` grants another "
@@ -1914,8 +1982,12 @@ def status(call, inp):
         reader = None
         if engine.options["reading"] == "once" and inp.known_guide != packets.guide_version():
             # A caller without the guide is a new conversation: nothing sent
-            # before may be pointed at (`packets.as_in`).
-            reader = packets.new_reader(record)
+            # before may be pointed at (`packets.as_in`), and the reference
+            # sheet is sent again (`Engine.extra_images`).
+            if inp.reader:
+                reader = engine.new_epoch(inp.reader)
+            else:
+                reader = packets.new_reader(record)
         if inp.reattach_viewer:
             mirror_ = record.setdefault("mirror", {})
             mirror_.update(status="pending", enabled=True,
@@ -1940,6 +2012,7 @@ def status(call, inp):
                **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
                "pixel": _pixel_brief(record.get("pixel")),
                "display": _display_brief(record.get("display")),
+               **_reference_brief(record),
                "summary": engines.summary_of(record),
                **_guide(record["options"]["reading"], inp.known_guide),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
@@ -2199,6 +2272,8 @@ def gating_report(call, inp):
 
 
 def capabilities():
+    from plexora.plugins.gating import capabilities_library
+
     def cap(**kwargs):
         kwargs.setdefault("tags", TAGS)
         return Capability(owner=OWNER, version="1", **kwargs)
@@ -2233,8 +2308,9 @@ def capabilities():
             reads=("table", "gates", "image")),
         cap(name="gating.next", entitlement="ai:gating:session", tool_name="gating_next",
             purpose="The session's next decision packet: one question, compact numbers, at "
-                    "most two small images, and the answer schema. The same packet again "
-                    "if it is still unanswered.",
+                    "most two small images (and a reference sheet once, when the session "
+                    "shows one), and the answer schema. The same packet again if it is "
+                    "still unanswered.",
             permission="reversible_write", input_model=NextInput, handler=session_qc(next_packet),
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
@@ -2275,4 +2351,6 @@ def capabilities():
             permission="read", input_model=ReportInput, handler=session_qc(gating_report),
             egress="rendered_pixels", reads=("gates",),
             tags=TAGS + ("report", "pdf", "html", "review", "provenance")),
+        # The reference library and its sheets (`SessionOptions.reference_sheet`).
+        *capabilities_library.capabilities(),
     ]

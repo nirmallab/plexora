@@ -1,8 +1,66 @@
-# Handoff: contrast observations and vision-first gating (experimental)
+# Handoff: vision-led gating (experimental)
 
-Written 2026-10-16 (late evening, EDT). Branch `contrast-observations`, pushed to the `plexora`
-remote (there is no `origin`). **Not merged to main and not to be merged until the user says
-so.** Delete this file before any merge.
+Updated 2026-10-17 (Mac). Branch `contrast-observations`, pushed to the `plexora` remote
+(there is no `origin`). **Not merged to main and not to be merged until the user says so.**
+Delete this file before any merge.
+
+## Where it stands (2026-10-17)
+
+Everything the user asked for on 2026-10-17 is built and tested; the real-image A/B is not
+run yet. Design: `docs/internal/AUTOMATIC_GATING.md` §2d-§2h and "Strategy".
+
+- **Mixed rows going down** (§2e): with `vision_first`, T4 going down passes rows seen
+  `mixed` and stops at the first unstained / neighbour-only / cannot-tell row
+  (`verdicts.MIXED_DOWN`, `t4_passed_mixed` caps at moderate). On the 10-16 replay CD3E
+  lands at 5.18 (user 5.11). The user liked it.
+- **One switch:** `SessionOptions.strategy: "vision"` turns on `observations: use`,
+  `vision_first`, `partners: bands`, `shapes`, `reference_sheet: auto` unless set
+  explicitly. `plexora ai run gating --strategy vision [--reference-sheet NAME]`;
+  `ai_run_session {start_options: {strategy: "vision"}}`; bench variants `bands`,
+  `vision`, `reference`.
+- **Partner bands** (§2f, `autogate/bands.py`): gate-free floors / anchors / sensitivity
+  from every related partner's own sure-positive and sure-negative cells, median over
+  several co- and anti-expressed partners. Used in scoring (anchor leads, small floor lift),
+  the lattice, a **partner look** (a T4 aimed at the anchor or floor when a look was unsure
+  or about right but the gate sits far from the partners), a T1 sanity check, and an eighth
+  regression check (`partner_window`). A node without the new table op (O2 at 0.0.28)
+  is answered on the primary (`unit.bands.computed == "primary"`).
+- **Shapes** (§2g): markers.yaml v3 has `shapes` on all 50 markers; the panel-context
+  packet asks the model for unknown markers' shapes; looks name the stain by shape and get
+  `shape:<name>` guide entries; a mismatch caps confidence.
+- **T1 fixes** (§2d): a clean split accepted before the contrast check answered is
+  re-checked when it does (`recheck_observed`); the audit strip shows up to three dim
+  cells well below each gate (`strip_dim`), and own stain there answers `suspicious`.
+- **Reference library** (§2h): `library_sample` (a job) draws tiles across five brightness
+  bands and dense/sparse areas into a Finder inbox with class folders; the user sorts;
+  `library_ingest`; `library_build` (`by_shape`, `pairs`, `by_marker`). A session shows the
+  sheet once per worker conversation (rerender / new epoch on rotation).
+- **Tests:** new `tests/test_partner_bands.py`, `test_gating_shapes.py`,
+  `test_reference_library.py`, and a harness test in `test_ai_harness.py`. Baseline sessions
+  stay byte-identical with every option off (no version bumps; per-feature memo tags).
+
+## Next: the real-image A/B (user-driven)
+
+1. The user connects O2 (the Mac's `nodes.json` was empty on 10-17; the image lives on
+   node `hms-o2`), and the project's table must be the MCMICRO cellpose CSV.
+2. Run the contrast check on each source image (so tiles use the vision-chosen windows).
+3. `library_sample` per image and marker the user picks -- cover membrane, nuclear,
+   granular, fibrous and dendritic stains. The user sorts the inbox in the Finder
+   (`library_path` says where), then `library_ingest`.
+4. `library_build` `default` (by_shape), `pairs` (layout pairs), `markers` (by_marker).
+5. `ai_run_session {kind: "gating", mode: "propose", start_options: {strategy: "vision",
+   reference_sheet: <name>}}` vs `{strategy: "classic"}` on the 8 markers; compare to the
+   hand gates (CD3E 5.11, CD8a 7.2). Then decide whether `vision` becomes the default.
+
+## Worktree (Mac)
+
+`/Users/aj/softwares/biocognia/plexora-contrast-obs`, **locked** (work in progress), with a
+`node_modules` symlink to the main clone's client packages (listed in `info/exclude`). Run
+tests with `PYTHONPATH=<worktree>:../spatialagents/src` and the conda interpreter. When the
+work lands or is dropped: unlock, remove the symlink, then
+`bash ~/softwares/biocognia/snapshots/prune-worktrees.sh --now <worktree>`.
+
+## Earlier (2026-10-16)
 
 ## What the user asked for
 

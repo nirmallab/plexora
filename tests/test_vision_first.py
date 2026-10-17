@@ -153,6 +153,7 @@ def test_vision_first_defaults_off_and_keeps_its_answers_apart():
         fake.tiles_on = lambda: Engine.tiles_on(fake)
         fake.observations_on = lambda: Engine.observations_on(fake)
         fake.vision_first_on = lambda: Engine.vision_first_on(fake)
+        fake.partners_bands_on = fake.shapes_on = fake.reference_on = lambda: False
         return Engine.memo_key(fake, packet, [])
 
     assert key(False) == memo.key(packet, [], versions=())

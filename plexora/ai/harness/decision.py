@@ -515,6 +515,9 @@ class DecisionRun:
         self.units = 0
         self.peak_outstanding = 0
         self.reissued = 0
+        #: The session shows a reference sheet once per conversation
+        #: (`SessionOptions.reference_sheet`): a fresh worker must be sent it.
+        self.reference_on = False
         # Lanes share the counters above; a refusal in one stops them all.
         self._lock = threading.Lock()
         self._halt: Exception | None = None
@@ -566,10 +569,13 @@ class DecisionRun:
         """The serial run's worker (lane 0's)."""
         return self.lanes[0].worker
 
-    def _next(self, lane: _Lane | None = None, *, wait_s: float | None = None) -> dict:
+    def _next(self, lane: _Lane | None = None, *, wait_s: float | None = None,
+              rerender: bool = False) -> dict:
         self.check()
         arguments = {"session_id": self.session_id,
                      "wait_s": self.o.wait_s if wait_s is None else wait_s}
+        if rerender:
+            arguments["rerender"] = True
         if self.parallel > 1:
             arguments["parallel"] = self.parallel
             if lane is not None and lane.reader:
@@ -630,7 +636,10 @@ class DecisionRun:
         if self.session_id:
             # Resuming is the user's ask to go on: a pause the harness put on
             # the session (for credit) is lifted before the next packet.
-            self._invoke(self.wf.STATUS, {"session_id": self.session_id, "pause": False})
+            resumed = self._invoke(self.wf.STATUS, {"session_id": self.session_id, "pause": False})
+            if resumed.get("ok"):
+                ref = (resumed.get("result") or {}).get("reference") or {}
+                self.reference_on = ref.get("status") == "on"
             if self.o.declare_run:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"))
@@ -652,6 +661,7 @@ class DecisionRun:
             raise StartRefused(answer.get("error") or {})
         started = answer["result"]
         self.session_id = started["session_id"]
+        self.reference_on = (started.get("reference") or {}).get("status") == "on"
         self.trace.update_run(self.run_id, session_id=self.session_id)
         if started.get("state") == "needs_setup" and started.get("setup"):
             # Nothing is planned until the user has finished the set-up form,
@@ -1124,7 +1134,18 @@ class DecisionRun:
     def _decide(self, result: dict, lane: _Lane) -> dict:
         packet = result["packet"]
         images = result.get("_images") or []
+        before = lane.worker
         self._rotate_if_due(packet, lane)
+        if lane.worker is not before and self.reference_on and before.packets:
+            # A new conversation holds no reference sheet: the packet in hand is
+            # drawn again whole for it, the sheet beside it (`gating_next`
+            # rerender starts the reader afresh).
+            redrawn = self._next(lane, wait_s=0, rerender=True)
+            if redrawn.get("packet"):
+                result = redrawn
+                packet = redrawn["packet"]
+                images = redrawn.get("_images") or []
+                self._rotate_if_due(packet, lane)
         w = lane.worker
         w.task = self.task_of(packet)
         content = self._content(packet, images)

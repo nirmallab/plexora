@@ -86,12 +86,27 @@ EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
 SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nuclear_bleed",
                 "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup",
                 # what the contrast check saw (`SessionOptions.observations`)
-                "bright_artifacts", "observed_off_pattern")
+                "bright_artifacts", "observed_off_pattern",
+                # the start sat under the partners' floor (`SessionOptions.partners`)
+                "below_partner_floor")
+
+#: Lattice points that stand on another marker's evidence, not on a distance
+#: from the start: a T4 gate placed on one is not counted as far from the
+#: start (`confidence_for`) -- a partner's negative control, and the partner
+#: bands' points (`bands`).
+PARTNER_STEPS = ("ctrl", "panchor", "pfloor", "anchor", "floor")
 
 #: The packets that carry what the contrast check saw of their marker
 #: (`Engine.observed_brief`, with `observations: use`).
 OBSERVED_PACKETS = ("t2_confirm", "t3_biological", "t4_candidates", "qc_confirm",
-                    "regression_confirm")
+                    "regression_confirm",
+                    # the audit strip, one brief per marker row
+                    "t1_strip")
+
+#: The packets a reference sheet is shown beside, once per reader
+#: (`SessionOptions.reference_sheet`, `Engine.extra_images`): every look and
+#: check of a marker's cells, the audit strip and the contrast check.
+REFERENCE_PACKETS = OBSERVED_PACKETS + ("display_setup",)
 
 #: The regression failures a purity push answers (`Engine.purity_push`):
 #: the partners check, with the spatial checks an over-low gate drags along.
@@ -220,7 +235,7 @@ def confidence_for(unit) -> str:
     # the distance (`ctrl:` steps).
     step_sd = unit.get("delta_step_sd")
     delta = abs(step_sd if step_sd is not None else (unit.get("delta_bg_sd") or 0.0))
-    if str(unit.get("chosen_step") or "").startswith("ctrl:"):
+    if str(unit.get("chosen_step") or "").split(":", 1)[0] in PARTNER_STEPS:
         delta = 0.0
     d = m.get("d") or 0.0
     if path == "t1":
@@ -283,12 +298,18 @@ def confidence_for(unit) -> str:
 
 def biology_agrees(unit) -> bool:
     """Every line of evidence agrees: the look saw the stain pattern the
-    marker's compartment has, and the start was placed by a partner curve on
-    a reliable gate."""
-    compartment = (unit.get("context") or {}).get("compartment")
-    fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns") or ()
-    if (unit.get("look") or {}).get("pattern") not in fits:
-        return False
+    marker's compartment has (its expected shapes, when the look was held to
+    them: `look.fits`), and the start was placed by a partner curve on a
+    reliable gate."""
+    look = unit.get("look") or {}
+    if "fits" in look:
+        if not look["fits"] or look.get("pattern") in ("none", "cannot_tell"):
+            return False
+    else:
+        compartment = (unit.get("context") or {}).get("compartment")
+        fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns") or ()
+        if look.get("pattern") not in fits:
+            return False
     scored = unit.get("scoring") or {}
     if scored.get("basis") != "coexpression":
         return False
@@ -354,7 +375,9 @@ def compact_scoring(result, partners) -> dict:
                                             "gate_confidence", "weight", "derived",
                                             "down_weighted") if p.get(k) is not None}
                          for p in partners],
-            "candidates": candidates}
+            "candidates": candidates,
+            # Partner bands (`SessionOptions.partners = bands`) only.
+            **({"bands": result["bands"]} if result.get("bands") else {})}
 
 
 # -- the engine -------------------------------------------------------------------
@@ -387,6 +410,8 @@ class Engine(BaseEngine):
     #: strip settles several markers at once.
     EXCLUSIVE_KINDS = schemas.SETUP_KINDS + schemas.PLAN_KINDS + ("t1_strip",)
     INVALID_ANSWERS = ENGINE["invalid_answers"]
+    #: The reference sheet, beside a packet's own two pictures.
+    MAX_EXTRA_IMAGES = 1
     ANSWER_CAPABILITY = "gating.answer"
     NEXT_CAPABILITY = "gating.next"
     UNIT_NOUN = "marker"
@@ -449,6 +474,203 @@ class Engine(BaseEngine):
         (`SessionOptions.vision_first`)."""
         return bool(self.options["vision_first"])
 
+    # -- partner bands, stain shapes, the reference sheet (experimental) --
+
+    def partners_bands_on(self) -> bool:
+        """Whether partner evidence comes from every related partner's own
+        cells, gated or not (`SessionOptions.partners`, `bands.py`)."""
+        return self.options["partners"] == "bands"
+
+    def shapes_on(self) -> bool:
+        """Whether looks are told the shapes the marker's own stain takes
+        (`SessionOptions.shapes`)."""
+        return bool(self.options["shapes"])
+
+    def reference_on(self) -> bool:
+        """Whether the session shows a reference sheet (`SessionOptions.
+        reference_sheet`, resolved at the start to one that exists)."""
+        return (self.record.get("reference") or {}).get("status") == "on"
+
+    def extra_images(self, packet, kind, reader, packet_id, *, force=False) -> list:
+        """The reference sheet beside a look (`SessionOptions.reference_sheet`):
+        sent the first time a reader -- one conversation, in one epoch -- gets
+        a packet of `REFERENCE_PACKETS`; after that the packet says where it
+        was (`reference_sheet.as_in`). A sheet rebuilt since is sent again to
+        everyone; one deleted is `missing`, and looks go on without it."""
+        from plexora.plugins.gating.server.autogate import library
+
+        ref = self.record.get("reference") or {}
+        if ref.get("status") not in ("on", "missing") or kind not in REFERENCE_PACKETS:
+            return []
+        name = ref.get("name")
+        meta = library.read_sheet(name)
+        data = library.sheet_bytes(name, "webp") if meta else None
+        if meta is None or data is None:
+            if ref.get("status") != "missing":
+                ref.update(status="missing", missing_since=packet_id)
+                self.log(event="reference_missing", name=name, packet_id=packet_id)
+            packet["reference_sheet"] = {"name": name, "missing": True}
+            return []
+        if ref.get("status") == "missing":
+            ref["status"] = "on"
+            ref.pop("missing_since", None)
+            self.log(event="reference_back", name=name, packet_id=packet_id)
+        if meta["digest"] != ref.get("digest"):
+            # Rebuilt since: every reader is sent the new one.
+            self.log(event="reference_changed", name=name, before=ref.get("digest"),
+                     after=meta["digest"])
+            ref.update(digest=meta["digest"], caption=meta.get("caption"),
+                       rows=meta.get("rows"), size=meta.get("size"))
+        epoch = int(self.briefed(reader).get("epoch", 0))
+        held = self.reader(reader).get("reference") or {}
+        if not force and held.get("digest") == meta["digest"] and held.get("epoch") == epoch:
+            packet["reference_sheet"] = {"name": name, "digest": meta["digest"],
+                                         "as_in": held.get("sent_in")}
+            return []
+        packet["reference_sheet"] = {"name": name, "digest": meta["digest"]}
+        self._staged = (reader, {"name": name, "digest": meta["digest"],
+                                 "sent_in": packet_id, "epoch": epoch})
+        size = tuple(int(v) for v in meta.get("size") or (0, 0))
+        return [(data, "webp", size, {"role": "reference_sheet",
+                                      "caption": "reference sheet: single cells sorted by eye, "
+                                                 "by shape and class (reading guide "
+                                                 "`reference_sheet`)"})]
+
+    def commit_extra(self, staged):
+        reader, held = staged
+        self.reader(reader)["reference"] = held
+        sent = self.record.setdefault("reference", {}).setdefault("sent_to", [])
+        if reader not in sent:
+            sent.append(reader)
+
+    def bands_wait(self, project) -> bool:
+        """With partner bands, an image's looks and audit strips wait for its
+        whole deterministic pass: the bands are drawn from every partner, and
+        a partner not profiled yet would make them depend on timing."""
+        return self.partners_bands_on() and self.record.get("state") == "bulk_running" \
+            and project not in (self.record.get("images_profiled") or ())
+
+    def band_partners(self, unit, *, scope="image") -> list:
+        """The partners a unit's bands are drawn from (`bands.partner_bands`):
+        every relation the panel's tree gives the marker, stated or derived
+        (`hierarchy.relations`; a low-confidence one only when it is an
+        exclusion, as `scoring.evidence_partners`), whose partner is a column
+        of the image and was not flagged technically broken when profiled.
+        No gate is needed. `scope="earlier"`: only partners earlier in gating
+        order (the deterministic pass's own decisions, made in order)."""
+        from plexora.plugins.gating.server.autogate import hierarchy
+
+        ds = _data(self.call, unit["project"])
+        markers = set(ds.table.markers)
+        panel = self.panel_for(unit["project"])
+        rank = {m: i for i, m in enumerate(self.record["order"])}
+        mine = rank.get(unit["marker"], len(rank))
+        out = []
+        for rel in hierarchy.relations(panel, unit["marker"]):
+            name = rel["marker"]
+            if rel["confidence"] == "low" and rel["relation"] != "exclusive":
+                continue
+            if name not in markers or name == unit["marker"]:
+                continue
+            other = self.record["units"].get(unit_key(unit["project"], name)) or {}
+            if schemas.hard(other.get("flags")) or other.get("state") == "skipped_no_marker":
+                continue
+            if scope == "earlier" and rank.get(name, len(rank)) >= mine:
+                continue
+            out.append({"marker": name, "relation": rel["relation"],
+                        "direction": rel["direction"], "derived": bool(rel["derived"]),
+                        "confidence": rel["confidence"]})
+        return out
+
+    def bands_for(self, unit, *, scope="image", refresh=False):
+        """The unit's partner bands (`bands`, compact), computed once and kept
+        on the unit; None with bands off, for a conditional unit, or when they
+        could not be drawn (`unit.bands.skipped` says why). A data node
+        without the operation is answered on this machine (`computed:
+        primary`)."""
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        if not self.partners_bands_on() or unit.get("condition"):
+            return None
+        held = unit.get("bands")
+        if held is not None and not refresh and held.get("version") == bandmod.VERSION \
+                and (held.get("scope") == "image" or held.get("scope") == scope):
+            return None if held.get("skipped") else held
+        key = unit_key(unit["project"], unit["marker"])
+        partners = self.band_partners(unit, scope=scope)
+        payload = {"marker": unit["marker"], "partners": partners, "gate": unit.get("gmm"),
+                   "seed": int(self.options["seed"])}
+        try:
+            ds = _data(self.call, unit["project"])
+            result, where = tableops.local_or_node_or_fallback(ds, "gating.autogate.bands",
+                                                               payload)
+        except Exception as exc:  # bands are evidence: without them, today's gating
+            unit["bands"] = {"version": bandmod.VERSION, "scope": scope,
+                             "skipped": f"{type(exc).__name__}: {str(exc)[:200]}"}
+            self.log(event="bands_skipped", unit=key, reason=unit["bands"]["skipped"])
+            return None
+        held = bandmod.compact(result)
+        held["scope"] = scope
+        if where == "primary":
+            held["computed"] = "primary"
+            self.log(event="bands_local", unit=key)
+        unit["bands"] = held
+        self.log(event="bands", unit=key, scope=scope, consensus={
+            k: (v or {}).get("low") for k, v in (held.get("consensus") or {}).items()},
+            flags=held.get("flags"))
+        return held
+
+    def partner_target(self, unit):
+        """Where the partner bands say a look should look next, or None: the
+        anchor, when the gate sits more than `partner_look_sd` background sds
+        from it; else the floor, when the gate sits that far under it (and
+        the partners agree about it); else the sensitivity bound, when the
+        gate sits that far over it. {point, low, fit, direction}."""
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        held = unit.get("bands") or {}
+        consensus = held.get("consensus") or {}
+        sd = (held.get("background") or {}).get("sd_fit")
+        if not consensus or not sd or unit.get("candidate") is None or held.get("skipped"):
+            return None
+        col = profmod.column(_data(self.call, unit["project"]), unit["marker"])
+        g = float(col.to_fit(unit["candidate"]))
+        reach = bandmod.PARAMS["partner_look_sd"] * float(sd)
+
+        def target(kind, point, direction):
+            entry = consensus[kind]
+            return {"point": point, "low": float(entry["low"]), "fit": float(entry["fit"]),
+                    "direction": direction, "from": list(entry.get("from") or ())}
+
+        anchor = (consensus.get("anchor") or {}).get("fit")
+        floor = (consensus.get("floor") or {}).get("fit")
+        sens = (consensus.get("sens") or {}).get("fit")
+        if anchor is not None and abs(g - float(anchor)) > reach:
+            return target("anchor", "panchor", "up" if float(anchor) > g else "down")
+        if floor is not None and float(floor) - g > reach \
+                and "partners_disagree" not in (held.get("flags") or ()):
+            return target("floor", "pfloor", "up")
+        if sens is not None and g - float(sens) > reach:
+            return target("sens", "psens", "down")
+        return None
+
+    def partner_sanity(self, unit) -> str | None:
+        """Why a clean split's Auto gate disagrees with its partner bands --
+        under the floor or over the anchor by more than `partner_window_sd`
+        background sds -- or None."""
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        held = unit.get("bands") or {}
+        g = held.get("gate_fit")
+        if g is None or held.get("skipped"):
+            return None
+        low, high = bandmod.window(held)
+        if low is not None and float(g) < low:
+            return "the Auto gate sits under where the partners' own cells say background ends"
+        if high is not None and float(g) > high:
+            return "the Auto gate sits over where a partner's bright cells split this marker"
+        return None
+
     def weak_distribution(self, unit) -> bool:
         """Whether the unit's distribution says little about where its gate
         goes: a weak class, estimators that disagree, or an Auto gate that
@@ -482,6 +704,13 @@ class Engine(BaseEngine):
             if not found:
                 return
             target, basis = found[0][1], f"vision:rung:{schemas.VISION_START_SHARE * 100:g}"
+            held = unit.get("bands") or {}
+            floor = ((held.get("consensus") or {}).get("floor") or {}).get("low")
+            if floor is not None and float(floor) > float(target) \
+                    and "partners_disagree" not in (held.get("flags") or ()):
+                # A share of cells says nothing about this marker; its
+                # partners' sure negatives do: the start is not put under them.
+                target, basis = float(floor), "vision:pfloor"
         if unit.get("judged") or unit.get("judged_rows"):
             target = self.clamp_to_judged(unit, ds, target, why="vision")
         before = start.get("low")
@@ -558,8 +787,18 @@ class Engine(BaseEngine):
         off = fits is not None and (
             (kind is not None and kind not in fits)
             or (seen.get("stain_location") == "between_cells" and compartment != "extracellular"))
+        shaped = schemas.shape_fits(seen.get("pattern_seen"),
+                                    (unit.get("context") or {}).get("shapes")) \
+            if self.shapes_on() else None
+        if shaped is not None:
+            # Held to the marker's expected shapes: a fibre stain on aSMA is
+            # its own; between the cells, a fibrous or dendritic marker's too.
+            between = seen.get("stain_location") == "between_cells" and not (
+                compartment == "extracellular" or set((unit.get("context") or {}).get(
+                    "shapes") or ()) & {"fibrous", "dendritic", "diffuse"})
+            off = (not shaped) or between
         return {"channel": channel, "pattern_seen": seen.get("pattern_seen"),
-                "stain_location": seen.get("stain_location"),
+                "stain_location": seen.get("stain_location"), "column": column, "dim": dim,
                 "n_dim": len(dim), "dim_stained": stained, "dim_anchor": anchor,
                 "n_bright": len(bright), "artifacts": debris,
                 "bright_artifacts": len(debris) >= least["bright_artifact"],
@@ -612,12 +851,40 @@ class Engine(BaseEngine):
             return
         evidence = packet.get("evidence")
         refs = packet.get("units") or []
-        if not isinstance(evidence, dict) or len(refs) != 1:
+        if not isinstance(evidence, dict) or not refs:
             return
-        unit = self.record["units"].get(unit_key(refs[0]["project"], refs[0]["marker"]))
+        if len(refs) != 1:
+            # The audit strip: one brief per marker row it shows.
+            shown = {m.get("marker") for m in evidence.get("markers") or ()}
+            briefs = {}
+            for ref in refs:
+                if ref["marker"] not in shown:
+                    continue
+                brief = self._observed_words(self.record["units"].get(
+                    unit_key(ref["project"], ref["marker"])))
+                if brief:
+                    briefs[ref["marker"]] = brief
+            if not briefs:
+                return
+            evidence["observed"] = briefs
+        else:
+            brief = self._observed_words(self.record["units"].get(
+                unit_key(refs[0]["project"], refs[0]["marker"])))
+            if not brief:
+                return
+            evidence["observed"] = brief
+        if isinstance(evidence.get("guide"), list) and "observed" not in evidence["guide"]:
+            evidence["guide"].append("observed")
+        elif "how_to_read" in evidence and self.options["reading"] == "every_packet":
+            from plexora.plugins.gating.server.autogate import packets
+
+            evidence["how_to_read"] += "; " + packets.READING_GUIDE["observed"]
+
+    def _observed_words(self, unit):
+        """What the contrast check saw of one marker, in a few words, or None."""
         seen = self.observed_for(unit)
         if not seen:
-            return
+            return None
         brief = {"pattern_seen": seen["pattern_seen"], "stain_location": seen["stain_location"]}
         if seen["n_dim"]:
             values = [float(d["value"]) for d in seen["dim_stained"]]
@@ -626,13 +893,33 @@ class Engine(BaseEngine):
         if seen["n_bright"]:
             brief["bright"] = (f"{len(seen['artifacts'])} of {seen['n_bright']} of the brightest "
                                "look like artifacts")
-        evidence["observed"] = {k: v for k, v in brief.items() if v is not None}
-        if isinstance(evidence.get("guide"), list) and "observed" not in evidence["guide"]:
-            evidence["guide"].append("observed")
-        elif "how_to_read" in evidence and self.options["reading"] == "every_packet":
-            from plexora.plugins.gating.server.autogate import packets
+        return {k: v for k, v in brief.items() if v is not None}
 
-            evidence["how_to_read"] += "; " + packets.READING_GUIDE["observed"]
+    def recheck_observed(self, project) -> list:
+        """With observations on, after a contrast check's answer: every marker
+        of `project` accepted on a clean split, still waiting for its audit
+        strip and on no strip that is out, is held to what the check just saw
+        (`note_observed`) -- the deterministic pass may have decided it before
+        the answer came. One with a finding goes to a look, its written gate
+        left as the strip's `suspicious` leaves it. Returns those markers."""
+        if not self.observations_on():
+            return []
+        busy = {k for entry in self.record["outstanding"].values()
+                for k in entry.get("units") or ()}
+        routed = []
+        for unit in self.units_of(project):
+            if unit["state"] != "accepted_t1" or unit.get("strip_verdict") \
+                    or self.key_of(unit) in busy:
+                continue
+            findings = self.note_observed(unit)
+            if findings:
+                unit["observed_routed"] = True
+                unit["state"] = "awaiting_t2"
+                unit["reason"] = ("the contrast check saw what a clean split cannot: "
+                                  + ", ".join(f.replace("_", " ") for f in findings))
+                routed.append(unit["marker"])
+                self.log(event="observed_routed", unit=self.key_of(unit), findings=findings)
+        return routed
 
     def observed_digest(self, project) -> str:
         """A short hash of what the contrast check saw on `project` (every
@@ -714,6 +1001,16 @@ class Engine(BaseEngine):
             # What the contrast check saw shapes the start and the fields:
             # off, the key is today's.
             extra += (f"observed:{self.observed_digest(project)}",)
+        if self.partners_bands_on():
+            from plexora.plugins.gating.server.autogate import bands
+
+            # Other candidates, another start, a partner look: off, today's key.
+            extra += (f"partners:bands:{bands.VERSION}",)
+        if self.shapes_on():
+            extra += ("shapes:1",)
+        if self.reference_on():
+            # The sheet a reader holds beside the look is part of what it judged.
+            extra += (f"reference:{(self.record.get('reference') or {}).get('digest')}",)
         return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
@@ -732,7 +1029,27 @@ class Engine(BaseEngine):
 
         self._qc_brief(packet)
         self.observed_brief(packet)
+        self._reference_brief(packet)
         return packets.lean(packet, self.options)
+
+    def _reference_brief(self, packet):
+        """A packet beside which a reference sheet is (or was) shown names
+        the guide entry that says how to use it."""
+        if not (packet.get("reference_sheet") or {}).get("digest"):
+            return
+        evidence = packet.get("evidence")
+        if not isinstance(evidence, dict):
+            return
+        from plexora.plugins.gating.server.autogate import packets
+
+        if self.options["reading"] == "every_packet":
+            evidence["how_to_read"] = "; ".join(
+                t for t in (evidence.get("how_to_read"), packets.READING_GUIDE[
+                    "reference_sheet"]) if t)
+            return
+        guide = evidence.setdefault("guide", [])
+        if isinstance(guide, list) and "reference_sheet" not in guide:
+            guide.append("reference_sheet")
 
     def _qc_brief(self, packet):
         """`evidence.qc_exclusion`: which cells this packet's numbers and
@@ -1069,6 +1386,7 @@ class Engine(BaseEngine):
             "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
             "prior": prior, "partners": partners})
         result = self._with_lineage(unit, result, {p["partner"] for p in partners})
+        result = self._with_partner_window(unit, result)
         if self.vision_first_on() and unit.get("own_seen"):
             # The looks placed it: the distribution's and spatial checks inform,
             # they do not fail it (`schemas.VISION_IGNORED_CHECKS`).
@@ -1193,6 +1511,33 @@ class Engine(BaseEngine):
             result["checks"].append({"name": "lineage", "ok": False, "value": contaminated,
                                      "limit": dict(LINEAGE)})
             result["failed"].append("lineage")
+        result["ok"] = not result["failed"]
+        return result
+
+    def _with_partner_window(self, unit, result):
+        """The regression's result with the partner bands' window check
+        (`partner_window`, computed here on the primary from the unit's
+        bands): the gate sits no further than `partner_window_sd` background
+        sds under the partners' floor or over their anchor. No verdict (`ok:
+        None`) without either band, or with the floor over the anchor; not
+        added at all with bands off."""
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        held = unit.get("bands") or {}
+        if not self.partners_bands_on() or not held.get("consensus") or held.get("skipped"):
+            return result
+        col = profmod.column(_data(self.call, unit["project"]), unit["marker"])
+        final = float(col.to_fit(unit["candidate"]))
+        low, high = bandmod.window(held)
+        ok = None if low is None and high is None else \
+            bool((low is None or final >= low) and (high is None or final <= high))
+        check = {"name": "partner_window", "ok": ok, "value": round(final, 4),
+                 "limit": [None if low is None else round(low, 4),
+                           None if high is None else round(high, 4)]}
+        result = {**result, "checks": [dict(c) for c in result.get("checks") or []] + [check],
+                  "failed": list(result.get("failed") or [])}
+        if ok is False and "partner_window" not in result["failed"]:
+            result["failed"].append("partner_window")
         result["ok"] = not result["failed"]
         return result
 
@@ -1394,10 +1739,12 @@ class Engine(BaseEngine):
         ds = _data(self.call, unit["project"])
         panel = self.panel_for(unit["project"])
         partners = scoring.evidence_partners(panel, unit["marker"], self.evidence_gates(unit))
+        bands = self.bands_for(unit) if self.partners_bands_on() else None
         try:
             result = scoring.score(ds, unit["marker"], gmm=unit["gmm"],
                                    separation_d=(unit.get("metrics") or {}).get("d"),
-                                   partners=partners, continuous=bool(unit.get("continuous")))
+                                   partners=partners, continuous=bool(unit.get("continuous")),
+                                   bands=bands)
         except Exception as exc:  # the look still has the Auto gate to start from
             unit["scoring"] = {"version": scoring.VERSION, "error": str(exc)[:200],
                                "candidates": []}
@@ -1410,6 +1757,7 @@ class Engine(BaseEngine):
             unit["start"] = {"source": "gmm", "low": unit["gmm"]}
             self.observed_start(unit, ds)
             self.vision_start(unit, ds)
+            self.note_partner_floor(unit, ds)
             return unit["scoring"]
         if unit.get("judged") or unit.get("judged_rows"):
             # A rescore after a look (the marker turned out continuous) never
@@ -1425,7 +1773,23 @@ class Engine(BaseEngine):
                  basis=result.get("proposal_source"), leading=result.get("leading"))
         self.observed_start(unit, ds)
         self.vision_start(unit, ds)
+        self.note_partner_floor(unit, ds)
         return unit["scoring"]
+
+    def note_partner_floor(self, unit, ds):
+        """Flag `below_partner_floor` (it caps confidence) when the start sits
+        under the partner bands' floor and the partners agree about it."""
+        held = unit.get("bands") or {}
+        floor = ((held.get("consensus") or {}).get("floor") or {}).get("fit")
+        start = start_low(unit)
+        if floor is None or start is None or "partners_disagree" in (held.get("flags") or ()):
+            return
+        col = profmod.column(ds, unit["marker"])
+        if float(col.to_fit(start)) < float(floor) - 1e-9:
+            flags = list(unit.get("flags") or [])
+            if "below_partner_floor" not in flags:
+                flags.append("below_partner_floor")
+            unit["flags"] = flags
 
     def observed_start(self, unit, ds):
         """With observations on and dim cells the contrast check saw stained
@@ -1676,6 +2040,8 @@ class Engine(BaseEngine):
             if project in display_waiting:
                 # Its looks are drawn with the brightness its check settles.
                 return blocked("wait")
+            if self.bands_wait(project):
+                return blocked("wait")
             units = self.units_of(project)
             if project != record.get("reference_image") and any(
                     u["state"] == "transfer_pending" for u in units):
@@ -1880,6 +2246,8 @@ class Engine(BaseEngine):
         bulk_running = record.get("state") == "bulk_running"
         for project in record["images"]:
             if project in display_waiting:
+                return "wait", []
+            if self.bands_wait(project):
                 return "wait", []
             units = self.units_of(project)
             if project != record.get("reference_image") and any(

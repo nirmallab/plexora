@@ -970,3 +970,42 @@ def test_several_projects_are_gated_in_parallel_with_one_prefix_write(tmp_path):
     assert len(writes) == 1
     for summary in report["sessions"].values():
         assert summary["cache"]["verdicts"]["miss"] == 0
+
+
+@pytest.mark.paid
+def test_every_worker_conversation_is_sent_the_reference_sheet_once(hard, tmp_path, monkeypatch):
+    """Rolling workers are fresh conversations: each that answers a look is
+    sent the session's reference sheet once, beside its first such packet --
+    including the one a worker inherits when the harness rotates."""
+    from plexora.plugins.gating.server.autogate import library, library_sheet
+    from tests.test_reference_library import _sorted_library
+
+    monkeypatch.setenv("PLEXORA_GATING_LIBRARY_PATH", str(tmp_path / "library"))
+    _sorted_library()
+    library_sheet.build("default")
+    with FakeGateway(oracle_brain(hard)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth", start_options={
+            "reference_sheet": "default", "display_check": "off"}),
+            gateway=client(gateway), trace=TraceStore(tmp_path / "trace.sqlite")).run()
+    assert summary["status"] == "done", summary
+    assert summary["workers"] >= 2
+    conversations = {}
+    for call in gateway.calls:
+        messages = [m for m in call["body"]["request"]["messages"] if m["role"] == "user"]
+        conversations[json.dumps(messages[0], sort_keys=True)[:4000]] = messages
+    with_sheet = 0
+    for messages in conversations.values():
+        referenced = []
+        for message in messages:
+            packet = json.loads(message["content"][-1]["text"])
+            if (packet.get("reference_sheet") or {}).get("digest"):
+                images = sum(1 for b in message["content"] if b["type"] == "image")
+                referenced.append((packet["reference_sheet"].get("as_in"), images,
+                                   len(packet.get("images") or ())))
+        if not referenced:
+            continue
+        with_sheet += 1
+        first_as_in, images, listed = referenced[0]
+        assert first_as_in is None and images == listed, referenced
+        assert all(as_in is not None for as_in, _i, _l in referenced[1:]), referenced
+    assert with_sheet >= 2

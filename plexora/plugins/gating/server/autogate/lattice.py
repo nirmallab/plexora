@@ -31,7 +31,10 @@ VERSION = "3"
 #: marker's evidence; the scored proposal on all of it; the Auto gate on the
 #: mixture; the background's onset and ceiling and the estimators on the
 #: distribution; steps and edges on nothing but distance.
-PRIORITY = ("ctrl", "within", "bio", "score", "obs", "gmm", "ceiling", "onset", "kde",
+PRIORITY = ("ctrl", "within",
+            # partner bands (`bands`): the consensus, then each partner's
+            "panchor", "pfloor", "anchor", "floor", "psens",
+            "bio", "score", "obs", "gmm", "ceiling", "onset", "kde",
             "otsu", "gmm2", "rung", "up", "down", "edge")
 
 #: Scored candidates that join the lattice (`scoring` families), and are
@@ -41,7 +44,9 @@ SCORED = ("score", "bio", "ceiling", "onset",
           # the lowest dim cell a contrast check saw stained (`Engine.observed_start`)
           "obs",
           # shares of cells above, with vision first (`rungs`)
-          "rung")
+          "rung",
+          # partner bands (`SessionOptions.partners = bands`)
+          "panchor", "pfloor", "anchor", "floor", "psens")
 
 #: [cal] steps from the Auto gate, in sds of the population the gate moves
 #: into (the positives' going up, the background's going down).
@@ -53,8 +58,9 @@ ESTIMATORS = ("kde", "otsu", "gmm2")
 #: A T4 look shows at most this many points in its direction.
 MAX_CHAIN = 4
 
-#: Points that anchor a chain: it never runs past the first of them.
-ANCHORS = ("ctrl", "within", "bio")
+#: Points that anchor a chain: it never runs past the first of them (the
+#: partner bands' consensus too; each partner's own point does not).
+ANCHORS = ("ctrl", "within", "bio", "panchor", "pfloor")
 
 #: [cal] an anchor this close to the current gate (table units: about one
 #: snap step) is where the gate already stands, so it does not end the
@@ -214,7 +220,7 @@ def nearest(lattice, value):
     return min(points, key=lambda p: (abs(p["low"] - float(value)), _rank(p["id"])))
 
 
-def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
+def chain(lattice, current, direction, *, max_points=MAX_CHAIN, until=None):
     """The points a T4 look shows, nearest `current` first, in `direction`
     ("up" or "down"): every point beyond the current gate up to and
     including the first anchor (a negative control or within-partner fit --
@@ -223,7 +229,12 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
     `ANCHOR_AT_GATE` of the current gate is where the gate already is and
     does not end the chain. Without an anchor the cap keeps the nearest
     points: dropping the middle would leave one row spanning tens of
-    thousands of cells, which no look can judge (a later round goes on)."""
+    thousands of cells, which no look can judge (a later round goes on).
+
+    `until` (a partner look, `transitions._look`): the points up to and
+    including the one at that value, anchors before it not ending the chain;
+    the cap keeps the nearest `max_points - 1` and the target. [] when the
+    target is where the gate already stands, or is not that way."""
     current = float(current)
     # A point that snaps onto the current gate flips no cell: an empty row.
     gap = SAME_POINT
@@ -232,6 +243,17 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
     else:
         ahead = sorted((p for p in lattice.get("points") or [] if p["low"] < current - gap),
                        key=lambda p: -p["low"])
+    if until is not None:
+        target = float(until)
+        if abs(target - current) <= gap:
+            return []
+        reach = [p for p in ahead if (p["low"] <= target + gap if direction == "up"
+                                      else p["low"] >= target - gap)]
+        if not reach:
+            return []
+        if len(reach) > max_points:
+            reach = reach[:max_points - 1] + [reach[-1]]
+        return reach
     out, anchored = [], False
     for entry in ahead:
         out.append(entry)

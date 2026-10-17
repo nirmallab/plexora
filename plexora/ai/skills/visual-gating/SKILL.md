@@ -64,12 +64,26 @@ same name for the look. A segmentation mask makes the look far better
 7. Only if the user explicitly asks to save the gates into their file:
    `write_gates_to_source` with `confirm: true`.
 
+## A reference library of cells sorted by eye
+
+When the user wants to teach the looks what faint but real stain looks like:
+`library_sample` draws single-cell tiles of a marker from the image (every
+brightness band, dense and sparse areas) into a Finder inbox with a folder
+per class (`library_path` says where). The user drags each into `strong`,
+`faint`, `limit`, `negative`, `spill`, `artifact` or `discard`; you never
+sort for them. `library_ingest` reads the folders (`library_label` labels by
+id instead), `library_list` shows what is sorted, and `library_build` makes
+a sheet -- several, with different layouts, to compare. A gating session
+shows one with `reference_sheet`.
+
 ## Tools
 
 `get_gate`, `profile_marker`, `get_gate_distribution`, `set_gate`,
 `viewer_preview_gate`, `render_gating_collage`, `render_gate_validation`,
 `render_cell_gallery`, `explain_cell`, `adjust_gate`, `undo_operation`,
-`get_gated_summary`, `write_gates_to_source`.
+`get_gated_summary`, `write_gates_to_source`, `library_sample`,
+`library_ingest`, `library_label`, `library_list`, `library_build`,
+`library_path`.
 
 ## Evidence
 

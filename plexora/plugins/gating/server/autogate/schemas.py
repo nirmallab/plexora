@@ -38,7 +38,11 @@ SOFT_FLAGS = ("weak_signal", "pileup", "size_correlated", "nuclear_bleed", "edge
               # What the contrast check saw (`SessionOptions.observations`):
               # most of the brightest cells' stain was debris, not theirs; the
               # stain was not the pattern the marker's compartment has.
-              "bright_artifacts", "observed_off_pattern")
+              "bright_artifacts", "observed_off_pattern",
+              # Partner bands (`SessionOptions.partners`): the gate sits under
+              # what the partners' own cells say is background; the partners'
+              # floors disagree with one another (recorded, caps nothing).
+              "below_partner_floor", "partners_disagree")
 
 #: Artifacts an agent may name when it looks at the cells.
 ARTIFACTS = ("image_quality", "segmentation", "saturation", "bleedthrough",
@@ -197,30 +201,34 @@ LIMIT_DECISIONS = ("continue", "stop")
 COMPARTMENT_POLICY = {
     "nuclear": {
         "image_led": False, "nuclear_bleed_expected": True,
-        "patterns": ("nuclear", "punctate"),
+        "patterns": ("nuclear", "punctate", "nuclear_speckled"),
         "reading": "a nuclear marker: the mask covers the stain, so the cell's value is a fair "
                    "summary; expect the stain inside the blue nucleus"},
     "nuclear_cytoplasmic": {
         "image_led": False, "nuclear_bleed_expected": True,
-        "patterns": ("nuclear", "cytoplasmic", "diffuse", "punctate"),
+        "patterns": ("nuclear", "cytoplasmic", "diffuse", "punctate", "nuclear_speckled",
+                     "granular"),
         "reading": "nuclear and cytoplasmic: the mask covers most of the stain; expect it in "
                    "and around the nucleus"},
     "cytoplasmic": {
         "image_led": True, "nuclear_bleed_expected": False,
-        "patterns": ("cytoplasmic", "membrane", "punctate", "diffuse"),
+        "patterns": ("cytoplasmic", "membrane", "punctate", "diffuse", "granular", "fibrous",
+                     "dendritic"),
         "reading": "a cytoplasmic marker: a nucleus-based mask catches only part of the "
                    "stain, so a real positive can read lower than it looks; trust a clear "
                    "cytoplasmic ring or halo in the image over a borderline number"},
     "membrane": {
         "image_led": True, "nuclear_bleed_expected": False,
-        "patterns": ("membrane", "cytoplasmic", "punctate"),
+        "patterns": ("membrane", "cytoplasmic", "punctate", "granular", "fibrous",
+                     "dendritic"),
         "reading": "a membrane marker: a nucleus-based mask under-represents a ring at the "
                    "cell edge, so positives read lower than they look; trust a clear ring at "
                    "the outline over a borderline number, and judge the tissue pattern in the "
                    "fields first"},
     "extracellular": {
         "image_led": True, "nuclear_bleed_expected": False,
-        "patterns": ("diffuse", "punctate", "membrane", "cytoplasmic"),
+        "patterns": ("diffuse", "punctate", "membrane", "cytoplasmic", "fibrous",
+                     "dendritic", "granular"),
         "reading": "an extracellular marker: the stain lies between cells, so cell means are "
                    "a weak summary; judge the pattern in the fields and the whole image first"},
 }
@@ -264,12 +272,22 @@ STRUCTURE_WORDS = {
     "cytoplasmic": "a cytoplasmic halo around the blue nucleus, its edge and granules visible",
     "membrane": "a ring at the cell's outline, continuous or dotted, not a filled disc",
     "extracellular": "fibres or diffuse stain between cells, their shape visible",
+    # By a marker's expected shape (`STAIN_SHAPES`), when a session asks for
+    # shapes (`SessionOptions.shapes`): the first of the marker's shapes.
+    "nuclear_speckled": "speckles inside the nucleus, each dot visible",
+    "granular": "granules clustered in the cytoplasm around the nucleus, each granule visible",
+    "fibrous": "fibres or bundles along the cells, their length and edges visible",
+    "dendritic": "a cell body with processes reaching away from it, the processes visible",
+    "punctate": "a few distinct dots on or just inside the cell's outline",
+    "diffuse": "an even haze over the cell, brighter than unstained neighbours",
 }
 STRUCTURE_DEFAULT = "the cell's own stained structure (a ring, a fill or granules) visible"
 #: The few words drawn under a row's label on the grid.
 STRUCTURE_SHORT = {"nuclear": "nuclear", "nuclear_cytoplasmic": "nuc+cyto",
                    "cytoplasmic": "cytoplasm", "membrane": "membrane",
-                   "extracellular": "between cells"}
+                   "extracellular": "between cells", "nuclear_speckled": "speckled",
+                   "granular": "granules", "fibrous": "fibres", "dendritic": "dendritic",
+                   "punctate": "dots", "diffuse": "diffuse"}
 
 #: What an agent says about its own judgment: three words, each a fixed
 #: number the confidence rule reads (`ENGINE`'s cut-points sit between them),
@@ -288,11 +306,16 @@ AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 #: row holds both kinds about evenly; `cannot_tell`.
 ROW_VERDICTS = ("own_stain", "neighbour_only", "unstained", "mixed", "cannot_tell")
 
+#: What a marker's own stain looks like on a positive cell: one vocabulary for
+#: a marker's expected shapes (markers.yaml's `shapes`, `plexora.ai.
+#: vocabulary.SHAPES`), what a look saw (`PATTERNS`) and what a contrast
+#: check saw (`OBSERVED_PATTERNS`). Fibres and dendrites are shapes a gate's
+#: cell mean summarises badly.
+STAIN_SHAPES = ("membrane", "cytoplasmic", "nuclear", "nuclear_speckled", "granular",
+                "fibrous", "dendritic", "punctate", "diffuse")
 #: What a contrast check says it saw of a marker's stain (`display_setup`'s
-#: `pattern_seen`), finer than a look's `PATTERNS`: fibres and dendrites are
-#: shapes a gate's cell mean summarises badly.
-OBSERVED_PATTERNS = ("membrane", "nuclear", "nuclear_speckled", "cytoplasmic", "granular",
-                     "fibrous", "dendritic", "diffuse", "none")
+#: `pattern_seen`).
+OBSERVED_PATTERNS = STAIN_SHAPES + ("none",)
 #: Where the stain lies (`stain_location`): on the cells, between them, or both.
 STAIN_LOCATIONS = ("on_cells", "between_cells", "mixed")
 #: The kind of structure each observed pattern is (`diffuse` and `none` are
@@ -306,6 +329,69 @@ OBSERVED_FITS = {"nuclear": ("nuclear",),
                  "cytoplasmic": ("cytoplasmic", "membrane", "fibrous"),
                  "membrane": ("membrane", "cytoplasmic", "fibrous"),
                  "extracellular": ("fibrous", "membrane", "cytoplasmic")}
+#: With a marker's expected shapes known (`SessionOptions.shapes`), the kinds
+#: of stain each expected kind accepts: a membrane marker seen cytoplasmic
+#: (a nucleus-dilated mask, a small cell) still fits; seen as fibres it does
+#: not.
+SHAPE_KIND_FITS = {"membrane": ("membrane", "cytoplasmic"),
+                   "cytoplasmic": ("cytoplasmic", "membrane", "fibrous"),
+                   "nuclear": ("nuclear",),
+                   "fibrous": ("fibrous", "cytoplasmic")}
+#: What OWN stain is, shape by shape: the reading guide's `shape:<name>`
+#: entries, which a look at a marker with that expected shape points to.
+SHAPE_READING = {
+    "membrane": "own stain is a ring tracing the marked cell's outline around its blue "
+                "nucleus, continuous or dotted; a filled disc, or a ring around another "
+                "nucleus, is not",
+    "cytoplasmic": "own stain is a halo of cytoplasm hugging the marked nucleus on at least "
+                   "one side; a halo that belongs to a neighbouring nucleus is not",
+    "nuclear": "own stain fills the marked blue nucleus itself and shares its outline; "
+               "stain only around it, or in a neighbour's nucleus, is not",
+    "nuclear_speckled": "own stain is dots or speckles inside the marked blue nucleus; dots "
+                        "outside the nucleus are not",
+    "granular": "own stain is a cluster of granules in the cytoplasm around the marked "
+                "nucleus; a lone granule, or a speck apart from the cell, is debris",
+    "fibrous": "own stain is a fibre or bundle running along the marked nucleus, hugging its "
+               "long side; a fibre is own stain even where it crosses other nuclei, but a "
+               "fibre passing at a distance, with a dark gap, is not",
+    "dendritic": "own stain is the cell body's halo hugging the marked nucleus, with "
+                 "processes reaching away from it; a process passing a neighbouring nucleus "
+                 "is not that neighbour's own stain",
+    "punctate": "own stain is a few bright dots on or just inside the marked cell's outline; "
+                "dots scattered across the tile, away from the nucleus, are not",
+    "diffuse": "own stain is an even haze over the marked cell with no clear form; judge it "
+               "by brightness against unstained neighbours in the same tile",
+}
+#: One line per shape, for the panel-context packet that asks for them.
+SHAPE_GLOSS = {
+    "membrane": "a ring at the cell's outline",
+    "cytoplasmic": "a halo of cytoplasm around the nucleus",
+    "nuclear": "a fill inside the nucleus",
+    "nuclear_speckled": "dots inside the nucleus",
+    "granular": "granules clustered in the cytoplasm",
+    "fibrous": "fibres or bundles along or between cells",
+    "dendritic": "a cell body with long processes",
+    "punctate": "a few distinct dots on or in the cell",
+    "diffuse": "an even haze with no clear form",
+}
+
+
+def shape_fits(seen, shapes) -> bool | None:
+    """Whether stain seen as `seen` (a `PATTERNS` or `OBSERVED_PATTERNS`
+    word) fits a marker expected to look like `shapes`. None when there is no
+    opinion -- no shapes, or a seen word of no kind (punctate, diffuse) that
+    is not among them -- and the caller falls back to the compartment's rule."""
+    if not shapes:
+        return None
+    if seen in (None, "none", "cannot_tell") or seen in shapes:
+        return True
+    kind = OBSERVED_KINDS.get(seen)
+    if kind is None:
+        return None
+    fits = set()
+    for shape in shapes:
+        fits.update(SHAPE_KIND_FITS.get(OBSERVED_KINDS.get(shape), ()))
+    return kind in fits if fits else None
 #: How a session uses what the contrast check saw (`SessionOptions.
 #: observations`): `off` -- not at all (today's gating); `use` -- as evidence
 #: in every look, a lower start where dim cells were seen stained, fields
@@ -334,11 +420,23 @@ WEAK_CLASSES = ("continuous", "weakly_bimodal", "unimodal", "long_tail")
 VISION_IGNORED_CHECKS = ("guard_band", "delta_from_gmm", "flip_share", "spatial_tiles",
                          "edge_ratio")
 
+#: Where a look's partner evidence comes from (`SessionOptions.partners`):
+#: `gated` -- each partner's gate, once it has one (today's); `bands` --
+#: every related partner's own distribution, gated or not: its sure-positive
+#: and sure-negative cells say where this marker's background ends and its
+#: positives begin (`bands.py`), a consensus over every partner.
+PARTNER_MODES = ("gated", "bands")
+#: One switch for the whole method (`SessionOptions.strategy`): `classic`
+#: is gating as it was; `vision` turns on every option of `VISION_STRATEGY`
+#: the caller left at its default (an option set explicitly wins).
+STRATEGIES = ("classic", "vision")
+VISION_STRATEGY = {"observations": "use", "vision_first": True, "partners": "bands",
+                   "shapes": True, "reference_sheet": "auto"}
+
 #: What the stained cells look like (a first look's `pattern`). `none`: no
 #: cell anywhere carries the stain. A pattern outside the compartment's
 #: `COMPARTMENT_POLICY[...]["patterns"]` caps confidence; it never routes.
-PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
-            "cannot_tell")
+PATTERNS = STAIN_SHAPES + ("none", "cannot_tell")
 
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
 ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,

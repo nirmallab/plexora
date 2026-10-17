@@ -1,5 +1,8 @@
 """One decision packet per kind: the question, the numbers, at most two images.
 
+(A third goes beside them once per reader when the session shows a reference
+sheet: `Engine.extra_images`.)
+
 Every packet is stored self-contained, and it carries numbers only in JSON:
 images show pixels and cell positions, never a value the agent would have to
 read off a picture. Each builder returns `(packet, images)` with
@@ -26,8 +29,10 @@ from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server.autogate import answers, schemas, tableops, views
 from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
 
-#: At most this many images in one packet (`Engine.issue` refuses more).
-MAX_IMAGES = 2
+#: At most this many images in one packet: two of its own (`Engine.issue`
+#: refuses more), and the reference sheet beside the first look each reader
+#: gets (`SessionOptions.reference_sheet`).
+MAX_IMAGES = 3
 
 #: How to read the context sheet (`sheet.py`), the second picture of a look.
 SCALES_READING = (
@@ -152,6 +157,25 @@ READING_GUIDE = {
                       "tile whose marked cell shows its own stain, however faint, is "
                       "`dim_stained`. Say what the stain looks like (`pattern_seen`) and "
                       "where it lies (`stain_location`) from both pictures"),
+    "bands": ("`bands` are where this marker's background ends and its positives begin, read "
+              "off its partners' own cells with no gate: `floor` -- the marker among cells "
+              "that cannot carry it (a superset or co-expressed partner's sure negatives, an "
+              "exclusive partner's sure positives), so a gate under it calls known "
+              "negatives positive; `anchor` -- where a superset partner's bright cells split "
+              "this marker in two; `sens` -- the low end of the marker among cells that "
+              "should all carry it, so a gate over it drops real positives. Each is the "
+              "median over the partners in `from`. Evidence, not an answer: when a look is "
+              "asked toward one of them (`partner_look`), judge the cells between as usual"),
+    "reference_sheet": ("the reference sheet (shown once, with the first packet that "
+                        "carries `reference_sheet`; later ones say `as_in`) is single cells a "
+                        "person sorted by eye, drawn as a look draws its cells, a row per "
+                        "stain shape: `strong`, `faint` and `limit` are all POSITIVES (limit "
+                        "is the faintest still called positive with the cell's shape "
+                        "visible); `negative`; `spill` -- lit only by a neighbour's stain; "
+                        "`artifact` -- debris or a speck. Judge how faint a cell's own stain "
+                        "is against its own tile's background, as the tiles show it, not by "
+                        "absolute brightness: every image is drawn differently. A reference "
+                        "for reading the cells, not evidence about this marker"),
     "observed": ("`observed` is what the image's contrast check saw of this marker: the "
                  "pattern and where the stain lay, how many of a few dim cells spread across "
                  "the image carried their own stain, and how many of the brightest were "
@@ -178,6 +202,8 @@ def reading_guide() -> dict:
     guide = dict(READING_GUIDE)
     for name, policy in sorted(schemas.COMPARTMENT_POLICY.items()):
         guide[f"compartment:{name}"] = policy["reading"]
+    for name in schemas.STAIN_SHAPES:
+        guide[f"shape:{name}"] = schemas.SHAPE_READING[name]
     full = {kind: answers.schema_for(kind) for kind in answers.KINDS}
     # Fields every answer takes (notes, flags, request, ask_user) are
     # spelled once: repeated in each of the eleven schemas they were half
@@ -429,10 +455,11 @@ def _image(rendered, role, caption):
              "artifact_id": (rendered.get("artifact") or {}).get("id")})
 
 
-def _context_brief(unit):
+def _context_brief(unit, *, shapes=False):
     ctx = unit.get("context") or {}
-    return {k: ctx.get(k) for k in ("canonical", "role", "compartment", "lineage", "binary",
-                                    "caveats", "source") if ctx.get(k) is not None}
+    keys = ("canonical", "role", "compartment") + (("shapes",) if shapes else ()) + \
+        ("lineage", "binary", "caveats", "source")
+    return {k: ctx.get(k) for k in keys if ctx.get(k) is not None}
 
 
 def _partner_numbers(engine, unit, ds, low, *, full=False):
@@ -469,6 +496,27 @@ def _partner_numbers(engine, unit, ds, low, *, full=False):
                 "population", "n", "p99", "fraction_above_current")}
         out.append(entry)
     return out
+
+
+def _bands_evidence(engine, unit) -> dict:
+    """`{bands: {floor, anchor, sens: {low, from}, flags}}` -- the unit's
+    partner bands (`bands`, `SessionOptions.partners = bands`) for a look;
+    {} with bands off or none drawn."""
+    if not engine.partners_bands_on():
+        return {}
+    held = unit.get("bands") or {}
+    consensus = held.get("consensus") or {}
+    if not consensus or held.get("skipped"):
+        return {}
+    out = {kind: {"low": entry["low"], "from": list(entry.get("from") or ())}
+           for kind, entry in consensus.items()}
+    if held.get("flags"):
+        out["flags"] = list(held["flags"])
+    return {"bands": out}
+
+
+def _bands_keys(evidence):
+    return ["bands"] if evidence.get("bands") else []
 
 
 def _partner_line(numbers) -> list:
@@ -521,6 +569,42 @@ def _compartment_key(unit):
     compartment = (unit.get("context") or {}).get("compartment")
     return f"compartment:{compartment}" if compartment in schemas.COMPARTMENT_POLICY \
         else None
+
+
+def _shapes(engine, unit):
+    """The shapes the marker's own stain takes (`schemas.STAIN_SHAPES`, most
+    typical first), with shapes on; () otherwise."""
+    if not engine.shapes_on():
+        return ()
+    return tuple(s for s in (unit.get("context") or {}).get("shapes") or ()
+                 if s in schemas.SHAPE_READING)
+
+
+def _shape_keys(engine, unit):
+    """The guide entries for the marker's expected shapes (`shape:<name>`),
+    with shapes on."""
+    return [f"shape:{s}" for s in _shapes(engine, unit)]
+
+
+def _stain_words(engine, unit):
+    """How a look's question names the stain: by the marker's expected
+    shapes with shapes on (`fibrous aSMA`), else by its compartment
+    (`cytoplasmic aSMA`), else the marker alone."""
+    shapes = _shapes(engine, unit)
+    if shapes:
+        return f"{' or '.join(s.replace('_', ' ') for s in shapes[:2])} {unit['marker']}"
+    compartment = (unit.get("context") or {}).get("compartment")
+    return f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+
+
+def _context_evidence(engine, unit):
+    """A look's `evidence.context`: the compartment, and the expected
+    shapes with shapes on."""
+    out = {"compartment": (unit.get("context") or {}).get("compartment")}
+    shapes = _shapes(engine, unit)
+    if shapes:
+        out["shapes"] = list(shapes)
+    return out
 
 
 def _requested_partner(unit):
@@ -744,6 +828,33 @@ def _multiview(engine, unit, ds, reference=None):
                                                 "not_expected": names.get("anti")}}
 
 
+def _partner_look_panels(engine, unit, ds, look):
+    """(layout, partners, evidence) for a partner look (`transitions.
+    _partner_look`): always the 2 x 2 multi-view block, its partner panels
+    taken from the partners the target came from -- an exclusive one in the
+    not-expected panel, the rest in the expected one -- then the panel plan's
+    (`Engine.partner_panels`); a partner a request named takes its panel."""
+    partners = dict(engine.partner_panels(unit) or {})
+    partners["markers"] = dict(partners.get("markers") or {})
+    partners["gates"] = dict(partners.get("gates") or {})
+    relations = {r["marker"]: r.get("relation")
+                 for r in (unit.get("bands") or {}).get("partners") or ()}
+    wanted = _requested_partner(unit)
+    named = ([wanted] if wanted in relations else []) + list(look.get("from") or ())
+    placed = set()
+    for name in named:
+        kind = "anti" if relations.get(name) == "exclusive" else "co"
+        channel = views.image_channel(ds, name)
+        if kind in placed or not channel:
+            continue
+        placed.add(kind)
+        partners[kind] = channel
+        partners["markers"][kind] = name
+    names = partners["markers"]
+    return "t2m", partners, {"partner_panels": {"expected": names.get("co"),
+                                                "not_expected": names.get("anti")}}
+
+
 def _panel_words(layout, partners):
     if layout != "t2m":
         return None
@@ -784,8 +895,7 @@ def t2_confirm(engine, units):
     numbers = _partner_numbers(engine, unit, ds, low)
     context_sheet = _sheet(engine, unit, ds, channel, low, numbers=numbers)
     partners = _partner_line(numbers)
-    compartment = (unit.get("context") or {}).get("compartment")
-    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    stain = _stain_words(engine, unit)
     if condition:
         question = (f"{unit['marker']} ({ds.name}) gated only within {condition['within']}+ "
                     f"cells, at {collage.compact_number(low)}; the collage shows "
@@ -799,6 +909,7 @@ def t2_confirm(engine, units):
     within = within_eligible(partners) if not condition else []
     guide = ["rows", "collage_t2m" if layout else "collage_t2", "sheet", "partners",
              "requests"] + (["within_partner"] if within else [])
+    banded = _bands_evidence(engine, unit)
     packet = {
         "question": question,
         "evidence": {
@@ -810,9 +921,11 @@ def t2_confirm(engine, units):
             "profile": {"class": (unit.get("summary") or {}).get("class")},
             "rows": {r["key"]: r["label"] for r in rows},
             **multiview,
-            "context": {"compartment": compartment}, "flags": _flags(unit),
+            "context": _context_evidence(engine, unit), "flags": _flags(unit),
+            **banded,
             **_sheet_evidence(context_sheet),
-            **_reading(engine, guide + _sheet_keys(context_sheet, unit)),
+            **_reading(engine, guide + _sheet_keys(context_sheet, unit)
+                       + _shape_keys(engine, unit) + _bands_keys(banded)),
         },
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
@@ -859,12 +972,12 @@ def t3_biological(engine, units):
     second = _sheet(engine, unit, ds, channel, low, references=ref_channels[:1],
                     numbers=numbers)
     partners = _partner_line(numbers)
-    compartment = (unit.get("context") or {}).get("compartment")
-    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    stain = _stain_words(engine, unit)
     condition = unit.get("condition")
     within = within_eligible(partners) if not condition else []
     guide = ["rows"] + (["collage_t2m"] if layout else ["collage_t2", "collage_t3"]) + \
         ["sheet", "partners"] + (["within_partner"] if within else [])
+    banded = _bands_evidence(engine, unit)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: for each "
@@ -881,11 +994,13 @@ def t3_biological(engine, units):
             "within_allowed": within,
             "profile": {"class": (unit.get("summary") or {}).get("class")},
             "rows": {r["key"]: r["label"] for r in rows},
-            "context": {"compartment": compartment},
+            "context": _context_evidence(engine, unit),
             "references": [r["marker"] for r in refs],
             **multiview,
+            **banded,
             **_sheet_evidence(second),
-            **_reading(engine, guide + _sheet_keys(second, unit)),
+            **_reading(engine, guide + _sheet_keys(second, unit) + _shape_keys(engine, unit)
+                       + _bands_keys(banded)),
         },
         "allowed": {"rows": [r["key"] for r in rows], "verdicts": list(schemas.ROW_VERDICTS),
                     "patterns": list(schemas.PATTERNS), "within": within},
@@ -927,7 +1042,24 @@ def t4_candidates(engine, units):
     current = float(unit["candidate"])
     numbers = _partner_numbers(engine, unit, ds, current)
     lat = engine.lattice_for(unit)
-    points = latmod.chain(lat, current, direction)
+    # A look aimed at the partners' anchor or floor (`transitions.
+    # _partner_look`): the points up to it, and its partners in the panels.
+    look = unit.get("partner_look") if engine.partners_bands_on() else None
+    aimed = bool(look) and look.get("outcome") is None
+    if aimed:
+        at = latmod.point(lat, look["point"])
+        points = latmod.chain(lat, current, direction,
+                              until=at["low"] if at else look["low"])
+        if not points:
+            # The lattice has nothing between the gate and the target: the
+            # first look's reading stands.
+            look["outcome"] = "no_points"
+            unit.pop("direction", None)
+            unit["state"] = "awaiting_regression"
+            engine.settle(unit)
+            return None
+    else:
+        points = latmod.chain(lat, current, direction)
     if not points:
         engine.close(unit, "manual_review_recommended",
                      f"no admissible threshold {'above' if direction == 'up' else 'below'} "
@@ -955,7 +1087,10 @@ def t4_candidates(engine, units):
                      f"{collage.compact_number(iv['to'])}")
              for index, iv in enumerate(intervals)}
     rows = views.flip_rows(ordered, labels=names)
-    layout, partner_panels, multiview = _multiview(engine, unit, ds)
+    if aimed:
+        layout, partner_panels, multiview = _partner_look_panels(engine, unit, ds, look)
+    else:
+        layout, partner_panels, multiview = _multiview(engine, unit, ds)
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "flips", rows=rows, marker=channel,
         gate=current, high=unit.get("high"), fmt=_fmt(engine),
@@ -976,25 +1111,42 @@ def t4_candidates(engine, units):
     rows_ev = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
                 "n_flip": iv["n_flip"]}
                for index, iv in enumerate(intervals)]
-    compartment = (unit.get("context") or {}).get("compartment")
-    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    stain = _stain_words(engine, unit)
     t4_guide = ["rows", "collage_t2m", "collage_flips_m" if layout else "collage_flips",
                 "sheet_candidates", "sheet", "partners"]
     if not layout:
         t4_guide.remove("collage_t2m")
+    banded = _bands_evidence(engine, unit)
+    question = (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
+                "call between neighbouring thresholds, nearest the current gate first. "
+                f"For EVERY row, do those cells carry their OWN {stain} stain, around "
+                "the nucleus the ticks mark? One word per row.")
+    aimed_at = {}
+    if aimed:
+        word = {"panchor": "anchor", "pfloor": "floor", "psens": "sens"}.get(look["point"],
+                                                                         look["point"])
+        side = "above" if direction == "up" else "below"
+        question = (f"{unit['marker']} ({ds.name}): the partners' own cells ("
+                    f"{', '.join(look.get('from') or ()) or 'the panel'}) put this marker's "
+                    f"`{word}` {side} the gate the first look judged; each row holds the "
+                    "cells between, nearest the gate first. For EVERY row, do those cells "
+                    f"carry their OWN {stain} stain, around the nucleus the ticks mark? One "
+                    "word per row.")
+        aimed_at = {"partner_look": {"point": word, "low": look["low"],
+                                     "from": list(look.get("from") or ()),
+                                     "after": look.get("after")}}
     packet = {
-        "question": (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
-                     "call between neighbouring thresholds, nearest the current gate first. "
-                     f"For EVERY row, do those cells carry their OWN {stain} stain, around "
-                     "the nucleus the ticks mark? One word per row."),
+        "question": question,
         "evidence": {"partners": _partner_line(numbers),
                      "marker": unit["marker"], "project": ds.name, "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
-                     **multiview,
+                     **multiview, **banded, **aimed_at,
                      **({"condition": _condition_brief(unit)} if condition else {}),
                      "round": int(unit.get("rounds", 0)) + 1,
                      **_sheet_evidence(context_sheet),
-                     **_reading(engine, t4_guide + _sheet_keys(context_sheet, unit))},
+                     **_reading(engine, t4_guide + _sheet_keys(context_sheet, unit)
+                                + _shape_keys(engine, unit) + _bands_keys(banded)
+                                + (["bands"] if aimed else []))},
         "allowed": {"intervals": [r["row"] for r in rows_ev],
                     "verdicts": list(schemas.ROW_VERDICTS)},
         "_image_meta": [],
@@ -1056,8 +1208,10 @@ def qc_confirm(engine, units):
         "evidence": {"marker": unit["marker"], "project": ds.name, "flags": unit.get("flags"),
                      "image_qc": unit.get("image_qc"),
                      "profile": profile_digest(unit.get("summary")),
-                     "context": _context_brief(unit), **_sheet_evidence(view),
-                     **_reading(engine, ["sheet"] + _sheet_keys(view, unit))},
+                     "context": _context_brief(unit, shapes=engine.shapes_on()),
+                     **_sheet_evidence(view),
+                     **_reading(engine, ["sheet"] + _sheet_keys(view, unit)
+                                + _shape_keys(engine, unit))},
         "allowed": _allowed(answers.QCAnswer, "verdict"),
         "_image_meta": [],
     }
@@ -1095,8 +1249,10 @@ def regression_confirm(engine, units):
                      "checks": regression.get("checks"), "fraction": regression.get("fraction"),
                      **({"condition": _condition_brief(unit)} if unit.get("condition")
                         else {}),
-                     "context": _context_brief(unit), **_sheet_evidence(view),
-                     **_reading(engine, ["sheet"] + _sheet_keys(view, unit))},
+                     "context": _context_brief(unit, shapes=engine.shapes_on()),
+                     **_sheet_evidence(view),
+                     **_reading(engine, ["sheet"] + _sheet_keys(view, unit)
+                                + _shape_keys(engine, unit))},
         "allowed": allowed,
         "_image_meta": [],
     }
@@ -1175,20 +1331,25 @@ def pixel_setup(engine, units):
 
 def _structure(engine, ds, unit):
     """(words, short) for what a marker's bright cells should show
-    (`schemas.STRUCTURE_WORDS`), by its compartment: the unit's context, else
-    the panel's."""
-    compartment = (unit.get("context") or {}).get("compartment")
-    if compartment is None:
+    (`schemas.STRUCTURE_WORDS`): by its first expected shape with shapes on,
+    else by its compartment -- the unit's context, else the panel's."""
+    ctx = unit.get("context") or {}
+    compartment, shapes = ctx.get("compartment"), ctx.get("shapes")
+    if compartment is None or (engine.shapes_on() and not shapes):
         try:
             from plexora.plugins.gating.server.autogate import context
 
             entry = (context.for_project(ds, create=False).get("entries") or {}).get(
                 unit["marker"]) or {}
-            compartment = entry.get("compartment")
+            compartment = compartment or entry.get("compartment")
+            shapes = shapes or entry.get("shapes")
         except Exception:
-            compartment = None
-    return (schemas.STRUCTURE_WORDS.get(compartment, schemas.STRUCTURE_DEFAULT),
-            schemas.STRUCTURE_SHORT.get(compartment, ""))
+            pass
+    key = compartment
+    if engine.shapes_on() and shapes and shapes[0] in schemas.STRUCTURE_WORDS:
+        key = shapes[0]
+    return (schemas.STRUCTURE_WORDS.get(key, schemas.STRUCTURE_DEFAULT),
+            schemas.STRUCTURE_SHORT.get(key, ""))
 
 
 def display_setup(engine, units):
@@ -1317,11 +1478,16 @@ def t1_strip(engine, units):
     ds = engine.call.session.data(project)
     rows = []
     listed = []
+    dims = {}
     for unit in units:
+        if unit["state"] != "accepted_t1":
+            continue          # taken off an earlier drawing of this strip
         channel = views.image_channel(ds, unit["marker"])
         if channel is None:
             unit["audited"] = False
             engine.finalize(unit, method="gmm")
+            continue
+        if _strip_routes(engine, unit):
             continue
         low = unit["candidate"]
         sample = _sample(engine, ds, unit, low)
@@ -1333,36 +1499,124 @@ def t1_strip(engine, units):
                        key=lambda c: c["value"])[:ENGINE["strip_cells"] // 2]
         cells = [dict(c, call="negative") for c in sorted(below, key=lambda c: c["value"])] + \
                 [dict(c, call="positive") for c in above]
+        if engine.observations_on():
+            dim, dims[unit["marker"]] = _strip_dim(engine, ds, unit, sample, low,
+                                                   {int(c["cell_id"]) for c in cells})
+            cells += dim
         rows.append({"key": unit["marker"], "label": unit["marker"], "marker": channel,
                      "gate": low, "cells": cells})
         listed.append(unit)
     if not listed:
         return None
     half = ENGINE["strip_cells"] // 2
+    with_dim = engine.observations_on()
     sheet = collage.render_collage(
-        engine.call.session, ds, layout="strip", rows=rows, marker=rows[0]["marker"],
+        engine.call.session, ds, layout="strip_dim" if with_dim else "strip", rows=rows,
+        marker=rows[0]["marker"],
         gate=listed[0]["candidate"], fmt=_fmt(engine), pixel=engine.pixel_for(project),
         title=f"accepted automatically - per row: {half} cells just below, {half} just above "
-              "the gate (morphology | context)")
+              "the gate" + (", then dim cells well below it (captions d)" if with_dim else "")
+              + " (morphology | context)")
     for unit in listed:
         unit.setdefault("artifacts", []).extend(
             a["id"] for a in (sheet.get("artifact"),) if a)
+    question = ("These markers were accepted from their distributions alone. For each "
+                f"row: do the {half} cells on the right look positive and the {half} on "
+                "the left negative? Answer per row with one of "
+                + ", ".join(f"`{v}`" for v in _strip_verdicts())
+                + " (`suspicious` sends it to a proper look).")
+    if with_dim:
+        question = ("These markers were accepted from their distributions alone. Each row "
+                    f"shows {half} cells just below the gate, {half} just above it, then up "
+                    "to three dim cells well below it (captions start `d`; `d*` = the "
+                    "contrast check saw that one stained). For each row: do the cells above "
+                    "look positive and those below negative -- and do the dim cells look "
+                    "negative too? A dim cell carrying its OWN stain, however faint, means "
+                    "the gate misses positives: answer `suspicious`. One of "
+                    + ", ".join(f"`{v}`" for v in _strip_verdicts()) + " per row.")
+    markers = []
+    for u in listed:
+        entry = {"marker": u["marker"], "gate": u["candidate"],
+                 "fraction": (u.get("summary") or {}).get("positive_fraction"),
+                 "t1_score": (u.get("t1") or {}).get("score"), "class": u.get("class")}
+        if with_dim and dims.get(u["marker"]):
+            entry["dim"] = dims[u["marker"]]
+        markers.append(entry)
     packet = {
-        "question": ("These markers were accepted from their distributions alone. For each "
-                     f"row: do the {half} cells on the right look positive and the {half} on "
-                     "the left negative? Answer per row with one of "
-                     + ", ".join(f"`{v}`" for v in _strip_verdicts())
-                     + " (`suspicious` sends it to a proper look)."),
-        "evidence": {"markers": [{"marker": u["marker"], "gate": u["candidate"],
-                                  "fraction": (u.get("summary") or {}).get("positive_fraction"),
-                                  "t1_score": (u.get("t1") or {}).get("score"),
-                                  "class": u.get("class")} for u in listed]},
+        "question": question,
+        "evidence": {"markers": markers},
         "allowed": _strip_verdicts(),
         "_image_meta": [],
     }
     image, meta = _image(sheet, "audit_sheet", "near-gate cells, one row per marker")
     packet["_image_meta"].append(meta)
     return packet, [image]
+
+
+#: Dim cells per audit-strip row (`SessionOptions.observations = use`).
+STRIP_DIM = 3
+
+
+def _strip_dim(engine, ds, unit, sample, low, used):
+    """(cells, brief) for an audit-strip row's third group: dim cells well
+    below the gate. The contrast check's dim tiles under the gate when it
+    read this marker's own column, the ones it saw stained first (`d*`);
+    else the two sampled cells nearest the middle of [background mean + two
+    sds, gate]. ([], None) when there are none."""
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    seen = engine.observed_for(unit)
+    cells, source = [], None
+    if seen and seen.get("column") in (None, unit["marker"]):
+        tiles = [d for d in seen.get("dim") or () if d.get("value") is not None
+                 and float(d["value"]) <= float(low) and d.get("cell_id") is not None
+                 and int(d["cell_id"]) not in used]
+        tiles.sort(key=lambda d: (not d.get("stained"), float(d["value"])))
+        for d in tiles[:STRIP_DIM]:
+            mark = "d*" if d.get("stained") else "d "
+            cells.append({"cell_id": int(d["cell_id"]), "x": d["x"], "y": d["y"],
+                          "value": d["value"], "caption": (mark + collage.compact_number(
+                              d["value"]))[:8], "why": "dim:contrast_check"})
+        source = "contrast_check" if cells else None
+    if not cells:
+        m = unit.get("metrics") or {}
+        if m.get("mu_bg") is not None and m.get("sd_bg"):
+            col = profmod.column(ds, unit["marker"])
+            floor = float(m["mu_bg"]) + 2.0 * float(m["sd_bg"])
+            top = float(col.to_fit(low))
+            if floor < top:
+                middle = float(col.from_fit((floor + top) / 2.0))
+                pool = [c for n in ("low_background", "just_below")
+                        for c in (sample["strata"].get(n) or [])
+                        if int(c["cell_id"]) not in used and c["value"] <= low]
+                pool.sort(key=lambda c: (abs(float(c["value"]) - middle), int(c["cell_id"])))
+                for c in pool[:2]:
+                    cells.append({**c, "caption": ("d " + collage.compact_number(
+                        c["value"]))[:8], "why": "dim:midpoint"})
+                source = "midpoint" if cells else None
+    if not cells:
+        return [], None
+    return cells, {"source": source, "n": len(cells),
+                   "stained": sum(1 for c in cells if str(c["caption"]).startswith("d*"))}
+
+
+def _strip_routes(engine, unit) -> bool:
+    """Whether an audit-strip marker goes to a proper look instead (and is
+    sent there): with partner bands, its Auto gate sits outside where every
+    partner's own cells put the boundary (`Engine.partner_sanity`), now that
+    the whole image is profiled."""
+    if not engine.partners_bands_on() or engine.bands_for(unit, scope="image") is None:
+        return False
+    why = engine.partner_sanity(unit)
+    if not why:
+        return False
+    unit["partners_routed"] = True
+    unit["reason"] = why
+    unit["state"] = "awaiting_t2"
+    engine.log(event="partners_routed", unit=f"{unit['project']}::{unit['marker']}",
+               reason=why)
+    return True
 
 
 def _strip_verdicts():
@@ -1377,19 +1631,34 @@ def panel_context(engine, units):
     ds = engine.call.session.data(project)
     panel = context.for_project(ds)
     unresolved = panel["unresolved"]
-    if not unresolved:
+    gated = set(engine.record.get("order") or ())
+    # With shapes on: markers the panel knows without the shapes of their
+    # stain (learned before shapes were), asked for those alone.
+    shapeless = [m for m in panel["markers"] if m in gated and m not in unresolved
+                 and not (panel["entries"].get(m) or {}).get("shapes")] \
+        if engine.shapes_on() else []
+    if not unresolved and not shapeless:
         engine.record["panel_pending"] = False
         return None
+    asks = []
+    if unresolved:
+        asks.append("Plexora's vocabulary does not know the `unresolved` markers. For each, "
+                    "give its role, compartment, the shapes its own stain takes on a "
+                    "positive cell (most typical first), lineage, whether it is binary, and "
+                    "partners -- only markers of this panel, only what you are confident "
+                    "of. Skip any you do not know; they are gated on their own data.")
+    if shapeless:
+        asks.append("For each of the `shapes_only` markers give only `shapes`, the shapes "
+                    "its own stain takes on a positive cell, most typical first.")
     packet = {
-        "question": ("Plexora's vocabulary does not know these markers. For each, give its "
-                     "role, compartment, lineage, whether it is binary, and partners -- only "
-                     "markers of this panel, only what you are confident of. Skip any you "
-                     "do not know; they are gated on their own data."),
+        "question": " ".join(asks),
         "evidence": {"unresolved": unresolved,
+                     **({"shapes_only": shapeless} if shapeless else {}),
                      "panel": [{"marker": m, "canonical": panel["entries"][m].get("canonical"),
                                 "role": panel["entries"][m].get("role")}
                                for m in panel["markers"]],
                      "roles": list(context.ROLES),
+                     "shapes": dict(schemas.SHAPE_GLOSS),
                      "rule": "your entries order the markers and pick references; they never "
                              "move a gate, and the vocabulary outranks them"},
         "allowed": ["entries"],

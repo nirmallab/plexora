@@ -9,7 +9,9 @@ the same for every workflow lives here:
 
 - issuing a packet: the outstanding-packet guard, ids, the answer schema, the
   images' metadata, the charge to the session and to each unit, the memo key,
-  and replaying an identical packet's earlier answer (`memo`);
+  and replaying an identical packet's earlier answer (`memo`); a picture a
+  workflow adds beside a packet's own once per reader (`extra_images`: gating's
+  reference sheet), charged to the session only and never part of the memo key;
 - several packets out at once (`issue(parallel=...)`): each held in
   `record["outstanding"]` with the reader it went to and the ledger
   fingerprint it was built on, the workflow's `next_ready` choosing what may
@@ -92,7 +94,8 @@ class BaseEngine:
     `ASKS` (waiting state -> packet kind), `BUDGETED_KINDS` (the looks a unit's
     allowance pays for), `SETUP_KINDS` (packets whose builder failing fails
     the call), `INVALID_ANSWERS` (unreadable answers before manual review),
-    `MAX_IMAGES`, `ANSWER_CAPABILITY` / `NEXT_CAPABILITY`, `UNIT_NOUN`,
+    `MAX_IMAGES` (a builder's own pictures), `MAX_EXTRA_IMAGES` (what
+    `extra_images` may add beside them), `ANSWER_CAPABILITY` / `NEXT_CAPABILITY`, `UNIT_NOUN`,
     `UNIT_DEFAULT` (a unit's allowance when the session sets none),
     `EXCLUSIVE_KINDS` (packets nothing else is out beside), `MODULE` (the AI
     module its packets' tasks belong to, `plexora/ai/tasks.yaml`).
@@ -110,6 +113,7 @@ class BaseEngine:
     EXCLUSIVE_KINDS: tuple = ()
     INVALID_ANSWERS = 2
     MAX_IMAGES = 2
+    MAX_EXTRA_IMAGES = 0
     ANSWER_CAPABILITY = ""
     NEXT_CAPABILITY = ""
     UNIT_NOUN = "unit"
@@ -202,6 +206,16 @@ class BaseEngine:
 
     def narrate(self, packet) -> str:
         return ""
+
+    def extra_images(self, packet, kind, reader, packet_id, *, force=False) -> list:
+        """[(bytes, format, (width, height), meta)]: pictures to send beside
+        the packet's own to `reader` (at most `MAX_EXTRA_IMAGES`), staged as
+        sent only once the packet goes out (`commit_extra`). `force`: the
+        reader is drawn the packet whole (a rerender). None by default."""
+        return []
+
+    def commit_extra(self, staged):
+        """Record what `extra_images` staged as sent (the packet went out)."""
 
     def lean(self, packet):
         return packet
@@ -552,11 +566,19 @@ class BaseEngine:
                                           "packet_id, answer: {kind, ...}}"})
             packet["narration"] = self.narrate(packet)
             sizes = [tuple(size) for _data_, _fmt, size in images]
-            packet["images"] = self._image_rows(images, packet.pop("_image_meta", []))
+            metas = packet.pop("_image_meta", [])
+            own = list(images)
+            # Beside the packet's own pictures, once per reader (gating's
+            # reference sheet): charged to the session, never to a unit's
+            # allowance, and never part of what the memo key hashes.
+            self._staged = None
+            extras = self.extra_images(packet, kind, reader, packet_id)[:self.MAX_EXTRA_IMAGES]
+            images = own + [(d, f, size) for d, f, size, _meta in extras]
+            packet["images"] = self._image_rows(images, metas + [m for *_rest, m in extras])
             self.lean(packet)
             self.trim(packet)
             fingerprint = self.ledger_fingerprint(units)
-            memo_key = self._with_ledger(self.memo_key(packet, [(d, f) for d, f, _s in images]),
+            memo_key = self._with_ledger(self.memo_key(packet, [(d, f) for d, f, _s in own]),
                                          fingerprint)
             self._stamp_task(packet, kind, units)
             cost = budgets.packet_cost(packet, sizes)
@@ -567,6 +589,10 @@ class BaseEngine:
                 unit.setdefault("packets", []).append(packet_id)
             self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
                                               cost)
+            if extras:
+                budgets.add(self.record["used"], {
+                    "extra_images": len(extras),
+                    "extra_pixels": int(sum(w * h for _d, _f, (w, h), _m in extras))})
             self._hold(packet_id, kind=kind, units=[self.key_of(u) for u in units],
                        memo_key=memo_key, reader=reader, fingerprint=fingerprint,
                        strict=strict)
@@ -585,7 +611,12 @@ class BaseEngine:
             self.log(event="issued", packet_id=packet_id, kind=kind, units=packet["units"],
                      cost=cost, **({"reader": reader} if reader != DEFAULT_READER else {}))
             if self._replay(packet, memo_key):
+                self._staged = None
                 continue      # answered as before; on to the next decision
+            if self._staged is not None:
+                # It goes out: the reader now holds what was beside it.
+                self.commit_extra(self._staged)
+                self._staged = None
             return packet, [(d, f) for d, f, _s in images], "packet"
 
     def _stamp_task(self, packet, kind, units):
@@ -673,7 +704,18 @@ class BaseEngine:
                                        "briefed", "task", "model")
                 if k in packet}
         fresh.update(kept)
-        fresh["images"] = self._image_rows(images, fresh.pop("_image_meta", []))
+        reader = (self.record["outstanding"].get(packet_id) or {}).get("reader") \
+            or DEFAULT_READER
+        # Drawn whole for whoever reads it now: what was beside it goes again.
+        self._staged = None
+        extras = self.extra_images(fresh, packet["kind"], reader, packet_id,
+                                   force=True)[:self.MAX_EXTRA_IMAGES]
+        metas = fresh.pop("_image_meta", [])
+        images = list(images) + [(d, f, size) for d, f, size, _meta in extras]
+        fresh["images"] = self._image_rows(images, metas + [m for *_rest, m in extras])
+        if self._staged is not None:
+            self.commit_extra(self._staged)
+            self._staged = None
         fresh["rerendered"] = int(packet.get("rerendered") or 0) + 1
         self.lean(fresh)
         self.trim(fresh)

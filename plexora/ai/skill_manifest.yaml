@@ -69,7 +69,9 @@ skills:
     tier: judgement
     tools: [get_gate, profile_marker, score_gate_candidates, get_marker_hierarchy, get_gate_distribution, set_gate, viewer_preview_gate,
             render_gating_collage, render_gate_validation, render_cell_gallery, explain_cell,
-            adjust_gate, undo_operation, get_gated_summary, write_gates_to_source]
+            adjust_gate, undo_operation, get_gated_summary, write_gates_to_source,
+            library_sample, library_ingest, library_label, library_build, library_list,
+            library_path]
   - name: gate-image
     prompt: gate_image
     title: Gate every marker of an image automatically
@@ -80,7 +82,7 @@ skills:
             set_pixel_size, get_panel_context, set_panel_context, get_marker_hierarchy, gating_session_start,
             gating_next, gating_answer, gating_session_status, gating_session_finish, gating_qc,
             gating_report, export_gates, get_all_gates, reset_gates, undo_operation,
-            write_gates_to_source]
+            write_gates_to_source, library_sample, library_build]
   - name: gate-packets
     title: Answer a gating session's decision packets
     description: The worker's half of gate-image -- read the guide once, judge each packet, stop at the quota, return one line per marker.

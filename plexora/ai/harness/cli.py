@@ -121,6 +121,11 @@ def run_command(args) -> int:
         # --force: a partial marker/channel match is gated on the markers that
         # match (`gating_session_start`'s `force`); none matching still fails.
         start = {"force": True} if getattr(args, "force", False) else {}
+        if getattr(args, "strategy", None):
+            # classic | vision: the whole method (`SessionOptions.strategy`).
+            start["strategy"] = args.strategy
+        if getattr(args, "reference_sheet", None):
+            start["reference_sheet"] = args.reference_sheet
         try:
             expression = _expression(args)
         except ValueError as exc:

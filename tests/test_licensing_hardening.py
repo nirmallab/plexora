@@ -374,7 +374,8 @@ def test_the_remaining_couplings_are_the_documented_ones():
     for path in (REPO / "plexora").rglob("*.py"):
         rel = path.relative_to(REPO).as_posix()
         if "/autogate/" in rel or "/tests/" in rel or rel.endswith(("capabilities_session.py",
-                                                                    "capabilities_autogate.py")):
+                                                                    "capabilities_autogate.py",
+                                                                    "capabilities_library.py")):
             continue
         if any("gating.server.autogate" in name for name in _imports(path)):
             found.add(rel)

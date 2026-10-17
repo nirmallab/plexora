@@ -150,6 +150,24 @@ def _gates_at(ds, payload):
     return {"lows": lows, "n_positive": counts.tolist(), "n_finite": col.n_finite}
 
 
+def _bands(ds, payload):
+    """Partner bands (`bands.partner_bands`): gate-free, stateless."""
+    from plexora.plugins.gating.server.autogate import bands
+
+    return bands.partner_bands(
+        ds, payload["marker"], payload.get("partners") or [],
+        gate=None if payload.get("gate") is None else float(payload["gate"]),
+        seed=int(payload.get("seed") or 0), min_cells=payload.get("min_cells"))
+
+
+def _library_cells(ds, payload):
+    """Cells for the reference library (`library.library_cells`): stateless."""
+    from plexora.plugins.gating.server.autogate import library
+
+    return library.library_cells(ds, payload["marker"], n=int(payload.get("n") or 30),
+                                 seed=int(payload.get("seed") or 0))
+
+
 OPERATIONS = {
     "gating.autogate.profile": _profile,
     "gating.autogate.profile_all": _profile_all,
@@ -162,6 +180,8 @@ OPERATIONS = {
     "gating.autogate.within": _within,
     "gating.autogate.regression": _regression,
     "gating.autogate.gates_at": _gates_at,
+    "gating.autogate.bands": _bands,
+    "gating.autogate.library_cells": _library_cells,
 }
 
 
@@ -190,3 +210,27 @@ def local_or_node(ds, name, payload):
     if ds.table.is_local:
         return jsonable(fn(ds, dict(payload)))
     return ds.table.run(name, cell_exclusions.attach(ds, payload))
+
+
+def unknown_on_node(exc, name) -> bool:
+    """Whether `exc` is a data node saying it has no operation `name` (an
+    older Plexora there answers HTTP 501: a `ResourceError` on this side)."""
+    from plexora.server.providers import ResourceError
+
+    if not isinstance(exc, ResourceError):
+        return False
+    text = str(exc)
+    return "failed: 501" in text or ("no table operation named" in text and name in text)
+
+
+def local_or_node_or_fallback(ds, name, payload):
+    """(result, where) -- `local_or_node`, and on a data node that does not
+    have the operation (an older Plexora there) the same function run here,
+    over the columns the node serves (`where` = "primary"). Only for
+    operations that are pure over the dataset; any other failure raises."""
+    try:
+        return local_or_node(ds, name, payload), "local" if ds.table.is_local else "node"
+    except Exception as exc:
+        if ds.table.is_local or not unknown_on_node(exc, name):
+            raise
+    return jsonable(OPERATIONS[name](ds, dict(payload))), "primary"

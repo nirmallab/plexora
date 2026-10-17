@@ -34,6 +34,8 @@ Every loop is bounded, so a unit's looks are finite whatever the answers:
     T3                  1 (`t3_done`)
     T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions);
                         one turn back (`t4_reversed`)
+    partner look        1 (`partner_look`, with partner bands: a T4 toward
+                        the partners' anchor or floor, in place of T3)
     whole-image check   one per T4 round, plus one
 
 A marker that reaches a limit while the evidence still says to go on is
@@ -235,6 +237,37 @@ def _honour_request(engine, unit, answer, direction):
     return _outcome(unit, request_honoured=True, references=[r["marker"] for r in refs])
 
 
+def _partner_look(engine, unit, direction):
+    """With partner bands (`SessionOptions.partners = bands`): a look that
+    could not settle the gate, or found it about right, while the partners'
+    own cells say it sits far from where their anchor or floor is
+    (`Engine.partner_target`), gets one look at the cells between -- a look
+    at candidates aimed at that point (`packets.t4_candidates`), in place of
+    the reference look. The look still decides: its rows move the gate or
+    keep it. A code move, so the oscillation guard does not count it. Once
+    per unit; the outcome, or None when it does not apply."""
+    if not engine.partners_bands_on() or unit.get("partner_look") or unit.get("condition"):
+        return None
+    if direction not in ("about_right", "cannot_tell"):
+        return None
+    if int(engine.options["max_tier"]) < 4 or not engine.rounds_left(unit):
+        return None
+    target = engine.partner_target(unit)
+    if target is None:
+        return None
+    _clear_direction(unit)
+    unit["partner_look"] = {**target, "after": direction}
+    unit.setdefault("code_moves", []).append(f"{target['direction']}:partners")
+    unit["direction"] = target["direction"]
+    unit["magnitude"] = None
+    unit["span_from"] = unit["candidate"]
+    unit["state"] = "awaiting_t4"
+    engine.log(event="partner_look", unit=unit_key(unit["project"], unit["marker"]),
+               point=target["point"], low=target["low"], direction=target["direction"],
+               after=direction)
+    return _outcome(unit, partner_look=target["point"], direction=target["direction"])
+
+
 # -- T2 / T3 ------------------------------------------------------------------------
 
 
@@ -257,17 +290,26 @@ def _judge_rows(unit, packet, answer):
         if row in spans and word in ("own_stain", "unstained", "neighbour_only"))
 
 
-def _read_look(unit, answer, direction, why):
+def _read_look(unit, answer, direction, why, *, shapes=False):
     """What a look's words say beside the direction, kept on the unit: the
     rows, the pattern, and two flags -- `pattern_mismatch` (a stain pattern
-    the compartment does not have: caps confidence, `engine.confidence_for`)
-    and `neighbour_spill` (a row of cells lit by a neighbour: recorded)."""
+    the marker does not have: caps confidence, `engine.confidence_for`)
+    and `neighbour_spill` (a row of cells lit by a neighbour: recorded).
+    With `shapes` (`SessionOptions.shapes`) the pattern is held to the
+    marker's expected shapes (`schemas.shape_fits`, kept as `look.fits`),
+    and to its compartment only when they give no opinion."""
     unit["look"] = {"rows": dict(answer.rows), "pattern": answer.pattern,
                     "direction": direction, "why": why}
     compartment = (unit.get("context") or {}).get("compartment")
     fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns")
     flags = set(unit.get("look_flags") or [])
-    if fits and answer.pattern not in fits + ("none", "cannot_tell"):
+    fit = schemas.shape_fits(answer.pattern, (unit.get("context") or {}).get("shapes")) \
+        if shapes else None
+    if fit is not None:
+        unit["look"]["fits"] = fit
+        if not fit:
+            flags.add("pattern_mismatch")
+    elif fits and answer.pattern not in fits + ("none", "cannot_tell"):
         flags.add("pattern_mismatch")
     if "neighbour_only" in answer.rows.values():
         flags.add("neighbour_spill")
@@ -306,7 +348,7 @@ def _look(engine, packet, answer, *, where):
         return _within(engine, unit, packet, answer)
     direction, why = words.direction_from_rows(answer.rows, answer.pattern,
                                                mixed_down=engine.vision_first_on())
-    _read_look(unit, answer, direction, why)
+    _read_look(unit, answer, direction, why, shapes=engine.shapes_on())
     if direction == "no_positives":
         return _no_positives(engine, unit, where)
     if direction in ("up", "down"):
@@ -324,6 +366,9 @@ def _look(engine, packet, answer, *, where):
                 "reason": answer.request.reason, "served": "plot"})
         _to_t4(engine, unit, legacy)
         return _outcome(unit, direction=direction)
+    looked = _partner_look(engine, unit, direction)
+    if looked:
+        return looked
     confident = _confidence(answer) >= ENGINE["t2_min_confidence"]
     if direction == "about_right" and confident:
         _clear_direction(unit)
@@ -404,6 +449,10 @@ def apply_t4(engine, packet, answer):
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
+    # A look aimed at the partners' anchor or floor (`_partner_look`): it
+    # places the gate or keeps it, never turns back or goes on.
+    look = unit.get("partner_look") or {}
+    aimed = bool(look) and look.get("outcome") is None
     mixed_down = engine.vision_first_on()
     placed, passed, why = latmod.place(chain, answer.intervals, direction,
                                        mixed_down=mixed_down)
@@ -413,8 +462,10 @@ def apply_t4(engine, packet, answer):
             unit["t4_passed_mixed"] = True
         unit["candidate"] = float(placed["low"])
         unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
-        if passed == len(chain) and latmod.chain(engine.lattice_for(unit), placed["low"],
-                                                 direction):
+        if aimed:
+            look.update(outcome="moved", to=unit["candidate"], rows_passed=passed)
+        if not aimed and passed == len(chain) and latmod.chain(
+                engine.lattice_for(unit), placed["low"], direction):
             # Every row said move and the look ran out of rows -- it stopped at
             # a partner's anchor or at MAX_CHAIN, not at a row that said stop.
             # Where the gate belongs is not known yet: another look, from here
@@ -429,7 +480,10 @@ def apply_t4(engine, packet, answer):
         engine.settle(unit)
         return _outcome(unit, chosen=placed["id"], point=unit["chosen_step"],
                         rows_passed=passed)
-    if why == "reverse" and not unit.get("t4_reversed") and not unit.get("t4_continued") \
+    if aimed:
+        look["outcome"] = "kept" if why == "reverse" else why
+    if why == "reverse" and not aimed and not unit.get("t4_reversed") \
+            and not unit.get("t4_continued") \
             and direction in ("up", "down") and engine.rounds_left(unit):
         # Code's turn, not a look's: the oscillation guard does not count it.
         turned = "down" if direction == "up" else "up"
@@ -555,8 +609,26 @@ def apply_strip(engine, packet, answer):
     units = _units(engine, packet)
     outcomes = []
     for unit in units:
+        if unit["state"] not in TERMINAL and unit["state"] != "accepted_t1":
+            # Taken off the strip when it was drawn (its partner bands or
+            # what the contrast check saw sent it to a look): not judged here.
+            outcomes.append(_outcome(unit))
+            continue
         verdict = answer.verdicts.get(unit["marker"], "cannot_tell")
         unit["strip_verdict"] = verdict
+        if engine.observations_on():
+            # The strip's remarks are kept with each marker it judged -- for
+            # the record: one strip's flags are about one of its rows, so
+            # they cap no marker's confidence. A request is recorded, never
+            # served from a strip.
+            if answer.notes:
+                unit.setdefault("notes", []).append(answer.notes[:300])
+            if answer.artifact_flags:
+                unit["strip_artifact_flags"] = sorted(set(answer.artifact_flags))
+            if answer.request is not None:
+                unit.setdefault("requests", []).append({
+                    "kind": answer.request.kind, "marker": answer.request.marker,
+                    "reason": answer.request.reason, "served": False})
         if unit["state"] in TERMINAL:
             outcomes.append(_outcome(unit))
             continue
@@ -594,7 +666,8 @@ def apply_panel(engine, packet, answer):
         entry = panel["entries"].get(unit["marker"])
         if entry:
             unit["context"] = {k: entry.get(k) for k in ("canonical", "role", "compartment",
-                                                         "lineage", "binary", "caveats",
+                                                         "shapes", "lineage", "binary",
+                                                         "caveats",
                                                          "expected_fraction", "source",
                                                          "partners")}
     # Known from now on, in every panel: the vocabulary's learned layer.
@@ -771,9 +844,13 @@ def apply_display(engine, packet, answer):
         chosen[marker] = {"channel": channel, "column": choice["column"],
                           "chosen_by": choice["chosen_by"]}
     revision = None
+    routed = []
     if choices:
         _record, revision = calibration.record_choices(project, choices)
         engine.forget_observed(project)
+        # A clean split the deterministic pass accepted before this answer
+        # came is held to what the check saw now (`Engine.recheck_observed`).
+        routed = engine.recheck_observed(project)
     entry.setdefault("chosen", {}).update({m: c["chosen_by"] for m, c in chosen.items()})
     entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ())
                             | {c["channel"] for c in chosen.values()})
@@ -784,7 +861,10 @@ def apply_display(engine, packet, answer):
     entry["unshown"] = list(dict.fromkeys([
         *(entry.get("unshown") or []),
         *[c["channel"] for c in chosen.values() if c["chosen_by"] != "rule:no_answer"]]))
-    return {"project": project, "chosen": chosen, "revision": revision}
+    out = {"project": project, "chosen": chosen, "revision": revision}
+    if routed:
+        out["routed"] = routed
+    return out
 
 
 #: The fields of a contrast check's answer about what it saw (`DisplaySetupAnswer`).

@@ -32,8 +32,9 @@ from plexora.plugins.gating.server.autogate.engine import (TERMINAL, compact_pro
 
 def _context_of(panel, marker):
     entry = (panel.get("entries") or {}).get(marker) or {}
-    return {k: entry.get(k) for k in ("canonical", "role", "compartment", "lineage", "binary",
-                                      "caveats", "expected_fraction", "source", "partners")}
+    return {k: entry.get(k) for k in ("canonical", "role", "compartment", "shapes", "lineage",
+                                      "binary", "caveats", "expected_fraction", "source",
+                                      "partners")}
 
 
 def calibrate_image(call, project, session_id):
@@ -182,6 +183,17 @@ def decide_first(engine, unit):
         unit["observed_routed"] = True
         unit["state"] = "awaiting_t2"
         return
+    if t1.get("accept") and engine.partners_bands_on() \
+            and engine.bands_for(unit, scope="earlier") is not None:
+        # Partner bands (`SessionOptions.partners`): a clean split whose Auto
+        # gate sits far outside where its earlier partners' own cells put the
+        # boundary is not accepted from its distribution alone.
+        why = engine.partner_sanity(unit)
+        if why:
+            unit["partners_routed"] = True
+            unit["reason"] = why
+            unit["state"] = "awaiting_t2"
+            return
     if t1.get("accept"):
         unit["path"] = "t1"
         unit["method"] = "gmm"

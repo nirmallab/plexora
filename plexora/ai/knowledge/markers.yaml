@@ -12,6 +12,11 @@
 #            coexpressed  the two are usually positive together
 #            exclusive    the two should almost never be positive together
 # confidence high | moderate | low
+# shapes     what the marker's own stain looks like on a positive cell, most typical
+#            first: membrane | cytoplasmic | nuclear | nuclear_speckled | granular |
+#            fibrous | dendritic | punctate | diffuse (autogate/schemas.STAIN_SHAPES).
+#            A look judges own stain by these when a session asks for shapes; a
+#            marker missing here has them filled in by the model with the panel context
 # binary     false for markers expressed on a continuum (HLA-ABC, B2M, PD-L1): there
 #            is no valley, but there is background, so the gate marks where real
 #            expression rises out of it (autogate/scoring.py, the `onset`
@@ -21,13 +26,14 @@
 # DNA_1) or autofluorescence / blank (AF1, Blank_3) resolves to DNA or
 # Autofluorescence by pattern even when its spelling is not a synonym below
 # (vocabulary.structural); both are role context and never gated.
-version: "2"
+version: "3"
 markers:
   - canonical: DNA
     synonyms: [DAPI, Hoechst, Hoechst33342, H3342, Ir191, Ir193, Iridium, Nuclear, Nuclei,
                Nucleus, DNA1, DNA2, SYTO13, DRAQ5, Histone H3]
     role: context
     compartment: nuclear
+    shapes: [nuclear]
     lineage: all nucleated cells
     binary: false
     caveats: [a structural stain; used for tissue, focus and segmentation checks]
@@ -36,6 +42,7 @@ markers:
     synonyms: [AF, Blank, Background, Empty, Autofluor]
     role: context
     compartment: cytoplasmic
+    shapes: [diffuse, granular]
     lineage: none
     binary: false
     caveats: [a control channel; cells bright here are autofluorescent in every channel]
@@ -44,6 +51,7 @@ markers:
     synonyms: [PTPRC, LCA]
     role: lineage_reliable
     compartment: membrane
+    shapes: [membrane]
     lineage: immune (all leukocytes)
     binary: true
     partners:
@@ -58,6 +66,7 @@ markers:
     synonyms: [CD45-RA]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: naive T cells, B cells and most NK cells
     binary: true
     partners:
@@ -69,6 +78,7 @@ markers:
     synonyms: [CD45-RO]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: memory and activated T cells; also some myeloid cells
     binary: true
     partners:
@@ -80,6 +90,7 @@ markers:
     synonyms: [CD3e, CD3E, CD3D, CD3G]
     role: lineage_reliable
     compartment: membrane
+    shapes: [membrane]
     lineage: T cells
     binary: true
     partners:
@@ -94,6 +105,7 @@ markers:
     synonyms: [CD4A]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: helper T cells; also monocytes and macrophages (weaker)
     binary: true
     partners:
@@ -107,6 +119,7 @@ markers:
     synonyms: [CD8a, CD8A, CD8b, CD8B, CD8alpha]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: cytotoxic T cells
     binary: true
     partners:
@@ -120,6 +133,7 @@ markers:
     synonyms: [MS4A1]
     role: lineage_reliable
     compartment: membrane
+    shapes: [membrane]
     lineage: B cells
     binary: true
     partners:
@@ -131,6 +145,7 @@ markers:
     synonyms: []
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: B cells
     binary: true
     partners:
@@ -142,6 +157,7 @@ markers:
     synonyms: [KP1]
     role: lineage_other
     compartment: cytoplasmic
+    shapes: [granular, cytoplasmic]
     lineage: macrophages and monocytes
     binary: true
     partners:
@@ -154,6 +170,7 @@ markers:
     synonyms: []
     role: lineage_other
     compartment: membrane
+    shapes: [membrane, cytoplasmic]
     lineage: M2-like macrophages
     binary: true
     partners:
@@ -165,6 +182,7 @@ markers:
     synonyms: [ITGAM]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: myeloid cells
     binary: true
     partners:
@@ -175,6 +193,7 @@ markers:
     synonyms: [ITGAX]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane, dendritic]
     lineage: dendritic cells and some macrophages
     binary: true
     partners:
@@ -185,6 +204,7 @@ markers:
     synonyms: [NCAM1, NCAM]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: NK cells; neuroendocrine cells
     binary: true
     partners:
@@ -194,6 +214,7 @@ markers:
     synonyms: [FCGR3A, FCGR3, FcgRIII]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: NK cells, non-classical monocytes, neutrophils and some macrophages
     binary: true
     partners:
@@ -206,6 +227,7 @@ markers:
     synonyms: [B3GAT1, HNK1, HNK-1, LEU7, Leu-7]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: NK cells and terminally differentiated T cells
     binary: true
     partners:
@@ -218,6 +240,7 @@ markers:
     synonyms: [Neutrophil elastase, NeutrophilElastase, ELA2]
     role: lineage_other
     compartment: cytoplasmic
+    shapes: [granular, cytoplasmic]
     lineage: neutrophils (granules)
     binary: true
     partners:
@@ -229,6 +252,7 @@ markers:
     synonyms: [FoxP3, FOXP-3]
     role: state
     compartment: nuclear
+    shapes: [nuclear, punctate]
     lineage: regulatory T cells
     binary: true
     partners:
@@ -243,6 +267,7 @@ markers:
                AE1/AE3, AE1AE3, CK8, CK18, CK8/18, KRT8, KRT18]
     role: lineage_reliable
     compartment: cytoplasmic
+    shapes: [cytoplasmic]
     lineage: epithelial and carcinoma cells
     binary: true
     partners:
@@ -254,6 +279,7 @@ markers:
     synonyms: [E-cadherin, Ecadherin, CDH1]
     role: tumour_stromal
     compartment: membrane
+    shapes: [membrane]
     lineage: epithelial cells
     binary: true
     partners:
@@ -264,6 +290,7 @@ markers:
     synonyms: []
     role: lineage_reliable
     compartment: nuclear
+    shapes: [nuclear]
     lineage: melanocytes, melanoma, glia
     binary: true
     partners:
@@ -275,6 +302,7 @@ markers:
     synonyms: [MLANA, Melan-A, MelanA]
     role: tumour_stromal
     compartment: cytoplasmic
+    shapes: [cytoplasmic, granular]
     lineage: melanocytes and melanoma
     binary: true
     partners:
@@ -285,6 +313,7 @@ markers:
     synonyms: [S100B, S100A]
     role: tumour_stromal
     compartment: nuclear_cytoplasmic
+    shapes: [cytoplasmic, nuclear, dendritic]
     lineage: melanocytic, neural and dendritic cells
     binary: false
     partners:
@@ -295,6 +324,7 @@ markers:
     synonyms: [MKI67, KI-67, Ki-67]
     role: state
     compartment: nuclear
+    shapes: [nuclear, nuclear_speckled]
     lineage: cycling cells (any lineage)
     binary: true
     caveats: [intensity follows the cell cycle; a dim tail of G1 cells is expected]
@@ -303,6 +333,7 @@ markers:
     synonyms: [PD-1, PDCD1, CD279]
     role: state
     compartment: membrane
+    shapes: [membrane, punctate]
     lineage: activated and exhausted T cells
     binary: true
     partners:
@@ -314,6 +345,7 @@ markers:
     synonyms: [PD-L1, CD274]
     role: state
     compartment: membrane
+    shapes: [membrane, cytoplasmic]
     lineage: tumour cells, macrophages, dendritic cells
     binary: false
     caveats: [graded; scored clinically by fraction at a fixed cut-off, not by a valley]
@@ -322,6 +354,7 @@ markers:
     synonyms: [Granzyme B, GranzymeB, GZM-B]
     role: state
     compartment: cytoplasmic
+    shapes: [granular, cytoplasmic]
     lineage: cytotoxic T and NK cells
     binary: true
     partners:
@@ -331,6 +364,7 @@ markers:
     synonyms: [HLA-DR, HLA DR, MHCII, MHC-II]
     role: state
     compartment: membrane
+    shapes: [membrane, dendritic]
     lineage: antigen-presenting cells; activated T cells; some tumours
     binary: false
 
@@ -338,6 +372,7 @@ markers:
     synonyms: [SMA, alpha-SMA, alphaSMA, ACTA2, a-SMA]
     role: tumour_stromal
     compartment: cytoplasmic
+    shapes: [fibrous]
     lineage: myofibroblasts, smooth muscle, pericytes
     binary: true
     partners:
@@ -349,6 +384,7 @@ markers:
     synonyms: [PECAM1, PECAM-1]
     role: tumour_stromal
     compartment: membrane
+    shapes: [membrane, fibrous]
     lineage: endothelial cells
     binary: true
     partners:
@@ -359,6 +395,7 @@ markers:
     synonyms: [VIM]
     role: tumour_stromal
     compartment: cytoplasmic
+    shapes: [cytoplasmic, fibrous]
     lineage: mesenchymal cells (and many others)
     binary: false
     caveats: [broadly and gradedly expressed]
@@ -367,6 +404,7 @@ markers:
     synonyms: [p-ERK, pERK1/2, phospho-ERK, pMAPK]
     role: signalling
     compartment: nuclear_cytoplasmic
+    shapes: [nuclear, cytoplasmic]
     lineage: any
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
@@ -375,6 +413,7 @@ markers:
     synonyms: [p-S6, pS6RP, phospho-S6]
     role: signalling
     compartment: cytoplasmic
+    shapes: [cytoplasmic]
     lineage: any
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
@@ -383,6 +422,7 @@ markers:
     synonyms: [p-STAT3, phospho-STAT3]
     role: signalling
     compartment: nuclear
+    shapes: [nuclear]
     lineage: any
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
@@ -391,6 +431,7 @@ markers:
     synonyms: [HLA-ABC, HLA ABC, HLA-A/B/C, HLA-I, HLA class I, MHCI, MHC-I, MHC class I]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: all nucleated cells; lost or reduced on some tumour cells
     binary: false
     partners:
@@ -402,6 +443,7 @@ markers:
     synonyms: [beta2-microglobulin, beta-2-microglobulin, B2-microglobulin, b2-m, beta2m]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: all nucleated cells; lost or reduced on some tumour cells
     binary: false
     partners:
@@ -412,6 +454,7 @@ markers:
     synonyms: [PCNA1]
     role: state
     compartment: nuclear
+    shapes: [nuclear, nuclear_speckled]
     lineage: cycling cells (any lineage)
     binary: false
     partners:
@@ -423,6 +466,7 @@ markers:
     synonyms: [TIM-3, HAVCR2, CD366]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: exhausted T cells, NK cells, macrophages and dendritic cells
     binary: true
     partners:
@@ -433,6 +477,7 @@ markers:
     synonyms: [LAG-3, CD223]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: activated and exhausted T cells, NK cells
     binary: true
     partners:
@@ -443,6 +488,7 @@ markers:
     synonyms: [VSIG9, VSTM3]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: T cells and NK cells
     binary: true
     partners:
@@ -452,6 +498,7 @@ markers:
     synonyms: [CTLA-4, CD152]
     role: state
     compartment: cytoplasmic
+    shapes: [punctate, cytoplasmic]
     lineage: regulatory and activated T cells
     binary: true
     partners:
@@ -463,6 +510,7 @@ markers:
     synonyms: [TCF-1, TCF7, TCF 1]
     role: state
     compartment: nuclear
+    shapes: [nuclear]
     lineage: naive and stem-like memory T cells
     binary: true
     partners:
@@ -474,6 +522,7 @@ markers:
     synonyms: [T-bet, TBET, Tbet]
     role: state
     compartment: nuclear
+    shapes: [nuclear]
     lineage: Th1 and cytotoxic T cells, NK cells, some B cells
     binary: true
     partners:
@@ -483,6 +532,7 @@ markers:
     synonyms: [ITGAE, alphaE integrin]
     role: state
     compartment: membrane
+    shapes: [membrane]
     lineage: tissue-resident memory T cells, some dendritic cells
     binary: true
     partners:
@@ -492,6 +542,7 @@ markers:
     synonyms: [TubbIII, TUBB-III, beta-III tubulin, beta3-tubulin, TUJ1]
     role: tumour_stromal
     compartment: cytoplasmic
+    shapes: [fibrous, cytoplasmic]
     lineage: neurons and nerves; many melanomas and other tumours
     binary: true
     partners:
@@ -502,6 +553,7 @@ markers:
     synonyms: [CD271, p75NTR, p75 NTR]
     role: tumour_stromal
     compartment: membrane
+    shapes: [membrane, fibrous]
     lineage: neural crest-derived cells, nerves, dedifferentiated melanoma
     binary: true
     partners:
@@ -512,6 +564,7 @@ markers:
     synonyms: [SOX-9]
     role: tumour_stromal
     compartment: nuclear
+    shapes: [nuclear]
     lineage: epithelial progenitors, chondrocytes, some melanomas
     binary: true
     partners:
@@ -521,6 +574,7 @@ markers:
     synonyms: [SDC1, Syndecan-1, Syndecan1]
     role: lineage_other
     compartment: membrane
+    shapes: [membrane]
     lineage: plasma cells; also squamous epithelium
     binary: true
     partners:
@@ -531,6 +585,7 @@ markers:
     synonyms: [IP-10, IP10]
     role: signalling
     compartment: cytoplasmic
+    shapes: [cytoplasmic, diffuse]
     lineage: interferon-responsive macrophages, tumour and endothelial cells
     binary: false
     caveats: [a secreted chemokine; vessels autofluoresce in its channel in some panels]

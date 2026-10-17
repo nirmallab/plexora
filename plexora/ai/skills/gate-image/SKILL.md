@@ -103,11 +103,14 @@ the marker tree, then the numbers and the looks.
 
 1. `inspect_project`, `get_panel_context`, `get_marker_hierarchy`. Fill only
    what you know of `unresolved` markers with `set_panel_context`
-   (`source: "ai"`); never invent partners.
+   (`source: "ai"`, `shapes` included); never invent partners.
 2. `gating_session_start` with `scope: "project"`, the project, `mode:
    "apply"` (each gate written as decided, undoable) unless the user asked to
    review first (`"propose"`), `biology`, and `agent` (your model's name).
-   `mirror: true` when the user watches in a viewer. Plexora AI (`ai.run_session`)
+   `mirror: true` when the user watches in a viewer. Experimental, when the user
+   asks: `strategy: "vision"` lets the looks lead; `reference_sheet` names a
+   sheet built from cells the user sorted (`library_sample`, `library_build`).
+   Plexora AI (`ai.run_session`)
    collects the same set-up itself before any model call. A start refused with
    `detail.setup` names a column the project does not have (a cell id, the
    coordinates, an image id): tell the user which, and that the viewer's
@@ -171,7 +174,7 @@ the marker tree, then the numbers and the looks.
 `get_marker_hierarchy`, `gating_session_start`, `gating_next`,
 `gating_answer`, `gating_session_status`, `gating_session_finish`,
 `gating_qc`, `gating_report`, `export_gates`, `get_all_gates`, `reset_gates`,
-`undo_operation`, `write_gates_to_source`.
+`undo_operation`, `write_gates_to_source`, `library_sample`, `library_build`.
 
 ## Evidence
 

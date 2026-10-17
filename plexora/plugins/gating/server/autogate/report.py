@@ -193,6 +193,14 @@ def _why(unit):
         notes.append("an earlier answer to identical evidence was reused")
     if (unit.get("observed") or {}).get("line"):
         notes.append(f"contrast check saw: {unit['observed']['line']}")
+    if unit.get("bands"):
+        from plexora.plugins.gating.server.autogate import bands
+
+        notes.append(bands.line(unit["bands"]))
+    if unit.get("partner_look"):
+        look = unit["partner_look"]
+        notes.append(f"second look toward the partners' {look.get('point')} "
+                     f"({look.get('outcome') or 'pending'})")
     return "; ".join(n for n in notes if n)
 
 

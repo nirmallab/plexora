@@ -48,6 +48,11 @@ _signature = {"at": 0.0, "value": None}
 ROLES = ("context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
          "signalling")
 COMPARTMENTS = ("nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic", "extracellular")
+#: What a marker's own stain looks like on a positive cell (an entry's
+#: `shapes`, most typical first): the same words as the gating engine's
+#: `schemas.STAIN_SHAPES` (a test holds them equal).
+SHAPES = ("membrane", "cytoplasmic", "nuclear", "nuclear_speckled", "granular", "fibrous",
+          "dendritic", "punctate", "diffuse")
 RELATIONS = ("subset", "coexpressed", "exclusive")
 CONFIDENCE = ("high", "moderate", "low")
 
@@ -208,6 +213,8 @@ def _load(signature) -> dict:
             entry.setdefault("synonyms", [])
             entry.setdefault("partners", [])
             entry.setdefault("caveats", [])
+            if "shapes" in entry:
+                entry["shapes"] = clean_shapes(entry["shapes"])
             try:
                 check(entry)
             except ValueError:
@@ -222,7 +229,8 @@ def _load(signature) -> dict:
         digest = hashlib.sha1(repr(sorted(
             (e["canonical"], e.get("role"), e.get("compartment"), e.get("lineage"),
              e.get("binary"),
-             tuple((p.get("marker"), p.get("relation")) for p in e["partners"]))
+             tuple((p.get("marker"), p.get("relation")) for p in e["partners"]),
+             tuple(e.get("shapes") or ()))
             for e in learned_entries)).encode("utf-8")).hexdigest()[:10]
         version = f"{version}+learned.{digest}"
     return {"version": version, "entries": entries, "lookup": lookup,
@@ -252,6 +260,25 @@ def check(entry):
             raise ValueError(f"markers.yaml entry {name!r}: partner {partner.get('marker')!r} "
                              f"has confidence {partner.get('confidence')!r}, not one of "
                              f"{CONFIDENCE}")
+    shapes = entry.get("shapes")
+    if shapes is not None and (not isinstance(shapes, (list, tuple))
+                               or any(shape not in SHAPES for shape in shapes)):
+        raise ValueError(f"markers.yaml entry {name!r}: shapes {shapes!r} are not all of "
+                         f"{SHAPES}")
+
+
+def clean_shapes(shapes) -> list | None:
+    """`shapes` as a list of known words, in order, each once; None when none
+    is left. A learned entry's words gone wrong are dropped, not the entry."""
+    if isinstance(shapes, str):
+        shapes = [shapes]
+    if not isinstance(shapes, (list, tuple)):
+        return None
+    kept = []
+    for shape in shapes:
+        if shape in SHAPES and shape not in kept:
+            kept.append(shape)
+    return kept or None
 
 
 def version() -> str:
@@ -391,8 +418,8 @@ def _write_learned(path, entries, note=None):
 def learn(entries, *, source="ai", about=None) -> list:
     """Add markers the shipped layer does not know to the learned layer.
 
-    `entries`: [{canonical, role, compartment?, lineage?, binary?, partners?
-    [{marker (a canonical name), relation, confidence}], caveats?,
+    `entries`: [{canonical, role, compartment?, shapes?, lineage?, binary?,
+    partners? [{marker (a canonical name), relation, confidence}], caveats?,
     expected_fraction?, synonyms?}]. A name the shipped layer knows is never
     written; one already learned is replaced only by the user's word over a
     model's (`LEARNED_SOURCES`). `about` (who, from which session, project)
@@ -400,7 +427,7 @@ def learn(entries, *, source="ai", about=None) -> list:
     if source not in LEARNED_SOURCES:
         raise ValueError(f"source is one of {LEARNED_SOURCES}")
     shipped = _shipped()["lookup"]
-    fields = ("role", "compartment", "lineage", "binary", "partners", "caveats",
+    fields = ("role", "compartment", "shapes", "lineage", "binary", "partners", "caveats",
               "expected_fraction", "synonyms")
     rank = {s: i for i, s in enumerate(LEARNED_SOURCES)}
     written = []
@@ -413,6 +440,10 @@ def learn(entries, *, source="ai", about=None) -> list:
                 continue
             entry = {"canonical": name, **{k: raw[k] for k in fields
                                            if raw.get(k) not in (None, [], "")}}
+            if "shapes" in entry:
+                entry["shapes"] = clean_shapes(entry["shapes"])
+                if entry["shapes"] is None:
+                    del entry["shapes"]
             entry.setdefault("binary", True)
             check(entry)
             held = current.get(name)

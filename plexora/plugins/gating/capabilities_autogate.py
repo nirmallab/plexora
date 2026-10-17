@@ -596,6 +596,9 @@ class MarkerContext(AgentModel):
     marker: str
     role: Literal[vocabulary.ROLES] | None = None
     compartment: Literal[vocabulary.COMPARTMENTS] | None = None
+    shapes: list[Literal[vocabulary.SHAPES]] | None = Field(
+        None, max_length=4,
+        description="What its own stain looks like on a positive cell, most typical first.")
     lineage: str | None = Field(None, max_length=120)
     binary: bool | None = None
     partners: list[dict] | None = Field(
@@ -780,8 +783,8 @@ def capabilities():
             egress="aggregates", tags=TAGS + ("qc", "review", "consistency")),
         cap(name="gating.get_panel_context", entitlement="ai:gating:session", tool_name="get_panel_context",
             purpose="The panel's biology as Plexora resolved it: each marker's role, "
-                    "compartment, lineage, whether it is binary, its partners and caveats "
-                    "(shipped vocabulary first), which markers are unresolved, and the "
+                    "compartment, the shapes its stain takes, lineage, whether it is binary, its "
+                    "partners and caveats (shipped vocabulary first), which markers are unresolved, and the "
                     "gating order that follows.",
             permission="read", input_model=ContextInput, handler=get_panel_context,
             egress="metadata", reads=("table",), tags=TAGS + ("context", "biology", "panel")),

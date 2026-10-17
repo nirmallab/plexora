@@ -36,6 +36,7 @@ VERSION = "1"
 #: shipped, the user's, or an agent's -- is held to.
 ROLES = vocabulary.ROLES
 COMPARTMENTS = vocabulary.COMPARTMENTS
+SHAPES = vocabulary.SHAPES
 RELATIONS = vocabulary.RELATIONS
 UNKNOWN_ROLE_RANK = len(ROLES)
 CONFIDENCE_RANK = {c: len(vocabulary.CONFIDENCE) - 1 - i
@@ -81,7 +82,9 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
                                  "confidence": partner.get("confidence", "moderate")})
     return {
         "marker": marker, "canonical": canonical, "role": found.get("role"),
-        "compartment": found.get("compartment"), "lineage": found.get("lineage"),
+        "compartment": found.get("compartment"),
+        "shapes": vocabulary.clean_shapes(found.get("shapes")),
+        "lineage": found.get("lineage"),
         "binary": bool(found.get("binary", True)), "partners": partners,
         "caveats": list(found.get("caveats") or []),
         "expected_fraction": found.get("expected_fraction"),
@@ -110,7 +113,8 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
             entries[marker] = _entry_from_vocabulary(marker, canonical, by_canonical)
         else:
             entries[marker] = {"marker": marker, "canonical": None, "role": None,
-                               "compartment": None, "lineage": None, "binary": True,
+                               "compartment": None, "shapes": None, "lineage": None,
+                               "binary": True,
                                "partners": [], "caveats": [], "expected_fraction": None,
                                "source": None}
             unresolved.append(marker)
@@ -131,7 +135,7 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
     return context
 
 
-FIELDS = ("role", "compartment", "lineage", "binary", "partners", "caveats",
+FIELDS = ("role", "compartment", "shapes", "lineage", "binary", "partners", "caveats",
           "expected_fraction")
 
 
@@ -152,7 +156,8 @@ def learn_from(context, markers, *, source, about=None) -> list:
                      "relation": p["relation"], "confidence": p.get("confidence", "low")}
                     for p in entry.get("partners") or [] if p.get("marker")]
         teach.append({"canonical": name, "role": entry["role"],
-                      "compartment": entry.get("compartment"), "lineage": entry.get("lineage"),
+                      "compartment": entry.get("compartment"),
+                      "shapes": entry.get("shapes"), "lineage": entry.get("lineage"),
                       "binary": entry.get("binary"), "partners": partners,
                       "caveats": entry.get("caveats"),
                       "expected_fraction": entry.get("expected_fraction"),
@@ -193,7 +198,20 @@ def apply_entry(context, marker, fields, *, source) -> dict:
         fields["partners"] = clean
     if "role" in fields and fields["role"] not in ROLES:
         raise ValueError(f"role is one of {ROLES}")
+    if "shapes" in fields:
+        shapes = fields["shapes"]
+        if shapes is not None and any(shape not in SHAPES for shape in (
+                [shapes] if isinstance(shapes, str) else shapes or ())):
+            raise ValueError(f"each of shapes is one of {SHAPES}")
+        fields["shapes"] = vocabulary.clean_shapes(shapes)
     rank = {s: i for i, s in enumerate(SOURCES)}
+    if source == "ai" and fields.get("shapes") and not entry.get("shapes") \
+            and (entry.get("canonical") or (current and current != "ai")):
+        # The panel knows the marker but not the shapes of its stain (a
+        # learned entry from before shapes, the user's entry without them):
+        # an agent's shapes fill that gap, and only that.
+        entry["shapes"] = fields["shapes"]
+        entry["shapes_source"] = "ai"
     if source == "ai" and entry.get("canonical"):
         # The vocabulary knows this marker: an agent's account of it is kept
         # for the record and not used.
@@ -353,6 +371,10 @@ def for_project(ds, *, create=True) -> dict:
                 overrides[marker] = {**{k: entry.get(k) for k in FIELDS
                                         if entry.get(k) is not None},
                                      "source": entry["source"]}
+            elif entry.get("shapes_source") == "ai" and entry.get("shapes") \
+                    and marker in markers:
+                # Shapes an agent filled in for a known marker (`apply_entry`).
+                overrides[marker] = {"shapes": entry["shapes"], "source": "ai"}
     context = build(markers, overrides=overrides, image_channels=channels)
     if create:
         save(context)

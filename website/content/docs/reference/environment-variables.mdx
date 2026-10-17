@@ -49,6 +49,16 @@ export PLEXORA_VOCABULARY_PATH=/lab/shared/plexora/vocabulary
 
 </Param>
 
+<Param name={"PLEXORA_GATING_LIBRARY_PATH"} default={"<data directory>/.agent/gating/library"}>
+
+Where the gating reference library is kept -- single cells you sorted by eye into strong, faint, limit, negative, spill and artifact, and the reference sheets built from them, which a gating session can show beside its looks (experimental). Point several installs at one shared folder to share a library. `plexora ai library` samples, ingests and builds.
+
+```bash
+export PLEXORA_GATING_LIBRARY_PATH=/lab/shared/plexora/gating-library
+```
+
+</Param>
+
 <Param name={"PLEXORA_MASK_OUTPUT"} default={"beside"}>
 
 Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.

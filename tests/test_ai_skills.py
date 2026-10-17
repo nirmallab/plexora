@@ -59,8 +59,10 @@ def test_the_gating_skills_stay_short():
     session; every worker reads gate-packets. Both say how to judge and point
     at the session's reading guide instead of restating it (the live run's
     gate-image was 31k characters, re-read on every call)."""
-    assert len(skills.read_skill("gate-image")) <= 12_500
-    assert len(skills.read_skill("gate-packets")) <= 6_500
+    # Raised a little (from 12,500 and 6,500) for the experimental strategy,
+    # the stain shapes and the reference sheet, each one line.
+    assert len(skills.read_skill("gate-image")) <= 12_800
+    assert len(skills.read_skill("gate-packets")) <= 6_700
 
 
 def test_every_skill_names_its_model_tier():

@@ -21,7 +21,9 @@ from plexora.agent.limits import MAX_TOOL_CHARS
 #: collage and a context sheet (two images, about one and a half million
 #: pixels between them with the sheet's 400 µm fields at 384 px), so six looks
 #: need twelve images and a little over nine million pixels (a test pins this
-#: against the layouts). `chars` allows for about 8k characters of JSON per
+#: against the layouts). A picture a workflow shows once per reader beside a
+#: packet's own (gating's reference sheet) is charged to the session, never to
+#: a unit (`BaseEngine.extra_images`). `chars` allows for about 8k characters of JSON per
 #: packet. A marker that reaches this while the evidence still says to go on
 #: is not closed on it: the session's limit policy (`schemas.LIMIT_POLICIES`)
 #: asks, extends or flags it for review.

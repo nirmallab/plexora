@@ -36,6 +36,13 @@ start must already be about right, and this module is what makes it so.
 - `sens:<P>` -- for a partner whose positives should be positive for this
   marker (CD8 for CD3), the marker's 5th percentile among P+ cells: a gate
   above it drops true positives. Evidence only.
+- `panchor` / `pfloor` / `psens` and each partner's `anchor:<P>` /
+  `floor:<P>` / `psens:<P>` -- with partner bands (`bands`,
+  `SessionOptions.partners = bands`): where the partners' own sure cells say
+  this marker's background ends and its positives begin, gated or not. The
+  anchor leads like a robust partner curve; a proposal a little under the
+  floor (`bands.PARAMS["floor_lift_sd"]`) is lifted to it, one further under
+  is noted and left to the looks.
 - `children` -- the evidence running up the hierarchy (`hierarchy`): when
   several reliably gated children agree on where their positives sit on
   this marker's axis (the `sens:` values of CD3, CD20 and CD163 on CD45),
@@ -79,7 +86,9 @@ import numpy as np
 VERSION = "3"
 
 #: The candidate families, by id prefix (`bio:CD45`, `anti:SOX10`, `sens:CD8`).
-FAMILIES = ("gmm", "onset", "ceiling", "bio", "anti", "sens", "children", "score")
+FAMILIES = ("gmm", "onset", "ceiling", "bio", "anti", "sens", "children", "score",
+            # partner bands (`bands.candidates`)
+            "panchor", "pfloor", "psens", "anchor", "floor")
 
 #: [cal] calibrated on hand-gated multiplexed images (melanoma CyCIF), where
 #: the hand gates sit near x0 + 2s of a lineage partner's curve.
@@ -288,11 +297,14 @@ def _tiles(ds, eligible, n_tiles):
     return tile
 
 
-def score(ds, marker, *, gmm=None, separation_d=None, partners=(), continuous=False) -> dict:
+def score(ds, marker, *, gmm=None, separation_d=None, partners=(), continuous=False,
+          bands=None) -> dict:
     """{version, candidates, proposal, proposal_source, leading, background,
     region, notes} for one marker. `partners` are dicts {marker, relation,
     gate, direction ("forward": the marker's own relation to the partner;
-    "reverse": the partner's relation to the marker), confidence}."""
+    "reverse": the partner's relation to the marker), confidence}. `bands`
+    (`bands.partner_bands`, compact) adds the partner-band candidates and
+    `bands` to the record; None leaves the record as it was."""
     from plexora.agent import cell_exclusions
     from plexora.plugins.gating.server.autogate import cells as cellmod
     from plexora.plugins.gating.server.autogate import profile as profmod
@@ -305,13 +317,19 @@ def score(ds, marker, *, gmm=None, separation_d=None, partners=(), continuous=Fa
 
     def compute():
         return _score(ds, marker, gmm=gmm, separation_d=separation_d, partners=partners,
-                      continuous=continuous, cellmod=cellmod, profmod=profmod)
+                      continuous=continuous, cellmod=cellmod, profmod=profmod, bands=bands)
 
-    return ds.cached(("autogate.scoring", VERSION, marker, gmm_key, bool(continuous), key,
-                      profmod.fingerprint(ds), qc), compute)
+    cache = ("autogate.scoring", VERSION, marker, gmm_key, bool(continuous), key,
+             profmod.fingerprint(ds), qc)
+    if bands:
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        cache += (f"bands:{bandmod.fingerprint(bands)}",)
+    return ds.cached(cache, compute)
 
 
-def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, profmod):
+def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, profmod,
+           bands=None):
     col = profmod.column(ds, marker)
     body = col.body if col.body.size else col.fit
     out = {"version": VERSION, "marker": marker, "candidates": [], "proposal": None,
@@ -428,6 +446,15 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         raw.append(("children", "sensitivity", children,
                     {"relation": "children", "n_children": len(kids)}))
 
+    # Partner bands: gate-free, from every related partner's own cells.
+    banded = {}
+    if bands:
+        from plexora.plugins.gating.server.autogate import bands as bandmod
+
+        for point_id, family, value in bandmod.candidates(bands):
+            raw.append((point_id, family, value, {"relation": "bands"}))
+            banded[point_id] = value
+
     # -- the proposal --
     groups = []
     robust = [(v, e) for v, e in bio if e["robust"]]
@@ -445,10 +472,15 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         if not lead["reliable"]:
             out["notes"].append(f"led by {leading}, whose gate is of low reliability "
                                 "(no reliable partner curve): down-weighted")
+    if "panchor" in banded:
+        # Where a superset partner's own bright cells split this marker in
+        # two: partner evidence that needs no gate, leading as a robust
+        # partner curve does.
+        groups.append(("partners", banded["panchor"], 2.0))
     d = separation_d or 0.0
     degenerate = gmm is not None and (col.fraction(gmm) or 0.0) > PARAMS["degenerate_fraction"]
-    if children is not None and not trusted and (d < profmod.THRESHOLDS["weak_d"] or degenerate
-                                                     or continuous):
+    if children is not None and not trusted and "panchor" not in banded \
+            and (d < profmod.THRESHOLDS["weak_d"] or degenerate or continuous):
         # Nothing of the marker's own says where its positives begin; its
         # reliable children agree on it.
         groups.append(("children", children, 2.0))
@@ -476,11 +508,11 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
     bound = ("ceiling", ceiling) if ceiling is not None else ("onset", onset)
     if bound[1] is not None:
         groups.append((bound[0], bound[1], 0.5 if groups and groups[0][0] in (
-            "coexpression", "children") else 2.0))
+            "coexpression", "children", "partners") else 2.0))
     if not groups:
         out["notes"].append("no candidate: no mixture, no onset and no partner curve")
         return out
-    if groups[0][0] in ("coexpression", "children"):
+    if groups[0][0] in ("coexpression", "children", "partners"):
         values = np.array([g[1] for g in groups])
         weights = np.array([g[2] for g in groups])
         order = np.argsort(values, kind="stable")
@@ -490,6 +522,8 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         source = groups[chosen][0]
         if source == "children":
             leading = "children"
+        elif source == "partners":
+            leading = "partners"
         elif source != "coexpression":
             leading = None
         if g_fit is not None and abs(g_fit - proposal) < PARAMS["nudge_within_sd"] * sd:
@@ -498,6 +532,18 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         weights = np.array([g[2] for g in groups])
         proposal = float((weights * np.array([g[1] for g in groups])).sum() / weights.sum())
         source = "+".join(g[0] for g in groups)
+    if "pfloor" in banded and proposal < banded["pfloor"]:
+        flags = (bands or {}).get("flags") or ()
+        gap = banded["pfloor"] - proposal
+        if "partners_disagree" in flags:
+            out["notes"].append("the proposal sits under the partners' floor, but the "
+                                "partners disagree about it: not lifted")
+        elif gap <= bandmod.PARAMS["floor_lift_sd"] * sd:
+            proposal = banded["pfloor"]
+            source = f"{source}+pfloor"
+        else:
+            out["notes"].append(f"the proposal sits {gap / sd:.1f} background sds under the "
+                                "partners' floor: not lifted, a look decides")
     raw.append(("score", "proposal", proposal, {}))
 
     # -- scores per candidate --
@@ -546,7 +592,7 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
             entry.update(robust=extra["robust"], relation=extra["relation"],
                          elasticity=extra["elasticity"],
                          rise=extra["curve"]["rise"])
-        elif family in ("anti", "sensitivity"):
+        elif family in ("anti", "sensitivity", "partner_anchor", "partner_floor"):
             entry["relation"] = extra["relation"]
             if extra.get("n_children"):
                 entry["n_children"] = extra["n_children"]
@@ -565,6 +611,10 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
                             "does not lead")
     out["control"] = _control(ds, marker, partners, gmm if gmm is not None
                               else out["proposal"], cellmod, profmod)
+    if bands:
+        out["bands"] = {"consensus": bands.get("consensus") or {},
+                        "flags": list(bands.get("flags") or ()),
+                        "fingerprint": bandmod.fingerprint(bands)}
     return out
 
 

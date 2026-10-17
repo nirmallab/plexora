@@ -134,13 +134,15 @@ ROWS_FOR = {"too_low": {"below": "unstained", "near": "unstained", "above": "uns
 
 def rows_for(direction, evidence) -> dict:
     """{rows, pattern} a scripted first look answers for `direction`: the rows
-    the packet has, and the first pattern the marker's compartment allows."""
+    the packet has, and the marker's first expected shape when the packet
+    names its shapes, else the first pattern its compartment allows."""
     from plexora.plugins.gating.server.autogate import schemas
 
     keys = list((evidence or {}).get("rows") or ("below", "near", "above"))
     words = ROWS_FOR[direction]
-    compartment = ((evidence or {}).get("context") or {}).get("compartment")
-    patterns = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns") \
+    context = (evidence or {}).get("context") or {}
+    patterns = context.get("shapes") or \
+        (schemas.COMPARTMENT_POLICY.get(context.get("compartment")) or {}).get("patterns") \
         or ("membrane",)
     return {"rows": {k: words[k] for k in keys if k in words}, "pattern": patterns[0]}
 
@@ -283,7 +285,13 @@ class TruthAgent:
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
 VARIANTS = {"baseline": {}, "tiles": {"tiles": True},
             # what the contrast check saw, used by gating (`SessionOptions.observations`)
-            "observed": {"observations": "use"}}
+            "observed": {"observations": "use"},
+            # partner evidence from every partner's own cells (`SessionOptions.partners`)
+            "bands": {"partners": "bands"},
+            # the whole vision-led method (`SessionOptions.strategy`); the reference
+            # sheet named `default` must exist for `reference`
+            "vision": {"strategy": "vision"},
+            "reference": {"strategy": "vision", "reference_sheet": "default"}}
 
 
 def variant_arm(variant, variants) -> str:

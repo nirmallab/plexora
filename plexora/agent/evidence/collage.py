@@ -71,6 +71,11 @@ LAYOUTS = {
               "max_width": 1024, "offered": True},
     "strip": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 832, "row_label_px": 64},
+    # The audit strip with a third group of dim cells well below each gate
+    # (gating's `SessionOptions.observations = use`): nine cells a row at
+    # the strip's own tile side.
+    "strip_dim": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 9,
+                  "max_width": 1224, "row_label_px": 64},
     "quadrants": {"panels": ("a", "b"), "grid": (2, 1), "per_row": 6, "max_width": 768,
                   "offered": True},
     "comparison": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,

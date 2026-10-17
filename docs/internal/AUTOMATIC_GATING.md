@@ -38,7 +38,7 @@ proposed, or flags an artifact.
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
 | T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
-| Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
+| Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`), and with partner bands an eighth on the primary (`partner_window`, §2f); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 | Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`), and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
 
@@ -142,7 +142,20 @@ the primary (nothing on a data node changes):
 - `bulk.decide_first`: a clean split with any finding (`dim_below`,
   `bright_artifacts`, `off_pattern`) is not T1-accepted; it gets a look
   (`unit.observed_routed`);
-- the report's line for the marker says what the check saw.
+- the report's line for the marker says what the check saw;
+- the race: the bulk pass may T1-accept a marker before the check's answer
+  comes; `transitions.apply_display` then calls `Engine.recheck_observed`,
+  which holds every `accepted_t1` marker of the image not yet on a strip to
+  what was just seen, and sends one with a finding to a look (outcome
+  `routed`). Strips go out only after the image's check
+  (`display_due`/`display_waiting`), so none is missed;
+- the audit strip gets a third group per row (layout `strip_dim`, nine cells):
+  up to three of the check's dim tiles under the gate (`d*` = seen stained),
+  else two sampled cells near the middle of [background mean + 2 sd, gate];
+  the question asks whether they look negative, and a dim cell with its own
+  stain answers `suspicious` (`evidence.markers[i].dim`). The strip carries
+  `evidence.observed` per marker, and keeps its notes, flags (recorded,
+  capping nothing) and requests (never served) on each marker.
 
 The memo key carries `observed:<digest>` only when on; off, the session is
 today's. The bench runs it as `--variants baseline,observed`; its
@@ -179,6 +192,129 @@ The memo key carries `vision_first:1` when on. First result
 (lsp35766_p193, 2026-10-16), with the user's gates as reference:
 - CD3E: 5.94 before, 5.32 with it, 5.11 the user's;
 - CD8a: 8.00 before, 7.29 with it, 7.2 the user's.
+
+## 2f. Partner bands (`partners: "bands"`, experimental)
+
+Every other use of a partner goes through its gate, so a partner under
+review, or not gated yet, says nothing. Bands need no gate (`bands.py`,
+table operation `gating.autogate.bands`, stateless, so it runs on a data
+node; a node without it -- HTTP 501 -- is answered by the same function on
+the primary, `tableops.local_or_node_or_fallback`, `unit.bands.computed =
+"primary"`, event `bands_local`). Each related partner P (`hierarchy.
+relations`, stated or derived; low confidence only for an exclusion; a
+partner flagged technically broken when profiled left out) splits its own
+cells by its own mixture: sure positives above its positive mean, sure
+negatives under its background mean + `dark_sd` sds (quantiles p99 / p30
+without a mixture). Then, in the marker's fit space on QC-kept cells:
+
+- `floor:<P>` = q99 of the marker among cells that cannot carry it -- a
+  superset or co-expressed partner's sure negatives, an exclusive partner's
+  sure positives;
+- `anchor:<P>` = the valley of a two-component refit among a superset's sure
+  positives, when its separation is at least `anchor_min_d`;
+- `sens:<P>` = q05 among cells that should all carry it -- a co-expressed
+  partner's or a child's sure positives.
+
+A side with fewer than `min_cells` gives nothing. The consensus is the median
+of each kind (`from` lists the partners); `partners_disagree` when the floors
+spread over `disagree_sd` background sds, `floor_above_anchor` when they
+cross. Use (all behind the option):
+
+- scoring: candidates `panchor`, `pfloor`, `psens` and each partner's; the
+  anchor leads as a robust partner curve does (`leading = "partners"`); a
+  proposal under the floor by at most `floor_lift_sd` sds is lifted to it
+  (`+pfloor`), one further under is noted and left to the looks, and never
+  when the partners disagree;
+- the lattice takes the points (`SCORED`; the consensus points are
+  `ANCHORS`); `vision_start`'s rung never sits under an agreed floor;
+  `below_partner_floor` caps confidence when the start does;
+- looks carry `evidence.bands` and guide entry `bands`;
+- **the partner look** (`transitions._partner_look`): a first look that
+  could not settle the gate, or found it about right, while the gate sits
+  more than `partner_look_sd` sds from the anchor (else under the agreed
+  floor, else over the sensitivity bound) gets one look at the cells between:
+  a `t4_candidates` aimed there (`lattice.chain(until=)`), its partner panels
+  from the partners the target came from (always the 2 x 2 block). A code
+  move, once per unit, in place of T3; its rows move the gate or keep it,
+  never turn it back or go on;
+- T1: a clean split whose Auto gate sits outside [floor - k sd, anchor + k sd]
+  of its earlier partners (at the bulk pass), or of every partner (when the
+  strip is drawn), goes to a look (`partners_routed`);
+- regression: `partner_window` fails a gate outside that window (no verdict
+  without a band, or with the floor over the anchor). Not waived by vision
+  first, not pushable.
+
+Determinism: with bands on, an image's looks and strips wait for its whole
+bulk pass (`Engine.bands_wait`), so the partners a band is drawn from never
+depend on timing; at the bulk pass only earlier partners vote. The memo key
+carries `partners:bands:<bands.VERSION>`.
+
+## 2g. Stain shapes (`shapes`, experimental)
+
+markers.yaml (version 3) names each marker's `shapes`, most typical first,
+from `schemas.STAIN_SHAPES` (membrane, cytoplasmic, nuclear,
+nuclear_speckled, granular, fibrous, dendritic, punctate, diffuse; the same
+words as `vocabulary.SHAPES`). The panel context asks a model for them for a
+marker the vocabulary does not know (and the vocabulary learns them), and --
+with shapes on -- for a known marker whose entry has none (`shapes_only`;
+an agent's shapes fill that gap and nothing else, `shapes_source: ai`).
+With shapes on, a look's question names the stain by shape (`fibrous aSMA`),
+its evidence and guide carry the shapes (`shape:<name>` = `SHAPE_READING`:
+what own stain is for that shape), the contrast grid's row words follow the
+first shape, and a look's pattern or the check's `pattern_seen` is held to
+the shapes (`schemas.shape_fits`, falling back to the compartment's rule):
+a mismatch caps confidence (`pattern_mismatch`, `observed_off_pattern`),
+never routes. The memo key carries `shapes:1`. `PATTERNS` and
+`OBSERVED_PATTERNS` gained the shape words in both arms (one memo miss).
+
+## 2h. The reference library (`reference_sheet`, experimental)
+
+`library.py`, `library_sheet.py`, tools `library_*` (`capabilities_library.py`,
+`ai:gating:analytics`), CLI `plexora ai library`. The library lives at
+`PLEXORA_GATING_LIBRARY_PATH`, else `<data_root>/.agent/gating/library`.
+
+- **Sample** (`library_sample`, a job): `gating.autogate.library_cells`
+  (stateless, node fallback as above) picks `n` cells across five brightness
+  bands of the marker's body, within each across dense, sparse and typical
+  areas (terciles of neighbour density), spread over the image (seeded
+  farthest-point). Each is drawn as the first cell of a one-row `t2` collage
+  and cut out: byte for byte the cell a look shows (a test pins it). Tiles
+  are self-describing JSON + PNG; copies at twice the size go to
+  `inbox/<project>/<marker>/` with a folder per class and a numbered contact
+  sheet (also stored as an artifact). A labelled tile is never overwritten.
+- **Sort**: drag each copy into `strong`, `faint`, `limit` (all positives),
+  `negative`, `spill`, `artifact` or `discard`; one folder deeper names its
+  shape. `library_ingest` labels them (an unknown folder refuses the whole
+  ingest first) and clears what was sorted; `library_label` does it by id.
+- **Sheets** (`library_build`): `by_shape` (a row per shape, a column per
+  class, dense and sparse alternating, a dark slot for a missing class),
+  `pairs` (faint and limit positives each beside the closest negative,
+  same marker and density first) or `by_marker`; at most 1024 x 768, six rows
+  of six; deterministic, with a `digest`.
+- **Use**: `SessionOptions.reference_sheet` (a name, or `auto`: `default`,
+  else the newest, else off without error). `Engine.extra_images` puts the
+  sheet beside the first packet of `REFERENCE_PACKETS` each reader gets in
+  its epoch (`MAX_EXTRA_IMAGES` 1, so at most three images); later packets
+  say `reference_sheet.as_in`. A rebuilt sheet (new digest) goes to everyone
+  again; a deleted one is `missing` and looks go on without it. Charged to
+  the session (`used.extra_images`), never to a marker's allowance, and
+  never part of the memo key's bytes (the key carries `reference:<digest>`;
+  `reference_sheet` is volatile). Committed as sent only when the packet goes
+  out (not on a memo replay). A rerender, or a status call without the guide
+  (with `reader` for a named worker), starts the reader afresh; the harness
+  asks for a rerender whenever it hands the packet in hand to a fresh
+  worker, so every worker conversation sees the sheet once.
+
+## Strategy
+
+`SessionOptions.strategy`: `classic` (default) is gating as above without
+the experimental options; `vision` turns on `observations: use`,
+`vision_first`, `partners: bands`, `shapes` and `reference_sheet: auto`,
+each unless set explicitly (`resolve_strategy`, at the start; the record
+keeps the resolved options). `plexora ai run gating --strategy vision`,
+`ai_run_session {start_options: {strategy: "vision"}}`, bench variants
+`bands`, `vision`, `reference`. No version is bumped: with every option off
+each memo key and record is today's.
 
 ## 3. Where things live
 
@@ -222,8 +358,12 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     report.py        HTML + reportlab PDF; CSV export
     tableops.py      the column work as table operations (runs on a data node)
     partners.py      the expected / not-expected partners a multi-view look shows
+    bands.py         partner bands: floors, anchors and sensitivity from partners' own cells
+    library.py       the reference library: tiles, labels, the Finder inbox, sampling
+    library_sheet.py reference sheets from the labelled tiles
 plexora/plugins/gating/capabilities_autogate.py   analytical tools
 plexora/plugins/gating/capabilities_session.py    the session tools
+plexora/plugins/gating/capabilities_library.py    the reference library's tools
 plexora/ai/knowledge/markers.yaml, vocabulary.py  shipped marker vocabulary
 plexora/ai/skills/{gate-image,gate-dataset,review-gating,diagnose-marker}
 plexora/mcp/prompts.py, resources_gating.py       prompts and plexora://gating/*

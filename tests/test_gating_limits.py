@@ -201,6 +201,9 @@ class _T4Engine:
     def rounds_left(self, unit):
         return True
 
+    def vision_first_on(self):
+        return False
+
 
 def _point(pid, low):
     return {"id": pid, "low": low, "sources": [pid], "n_positive": 0, "fraction": 0.0}
@@ -315,6 +318,9 @@ def test_a_whole_image_check_that_cannot_tell_is_reviewed(tmp_path):
     class Engine:
         def close(self, unit, state, reason, **kw):
             closed.update(state=state, reason=reason, **kw)
+
+        def vision_first_on(self):
+            return False
 
     unit = {"project": "p", "marker": "M", "candidate": 1.5, "state": "regression_confirm"}
     engine = Engine()

@@ -168,8 +168,14 @@ class DisplaySetupAnswer(_Base):
 
 class PanelEntry(AgentModel):
     marker: str
-    role: Literal[vocabulary.ROLES]
+    role: Literal[vocabulary.ROLES] | None = Field(
+        None, description="Required for a marker the vocabulary does not know; left out for "
+                          "one whose packet asks only for its shapes.")
     compartment: Literal[vocabulary.COMPARTMENTS] | None = None
+    shapes: list[Literal[schemas.STAIN_SHAPES]] | None = Field(
+        None, max_length=4,
+        description="What its own stain looks like on a positive cell, most typical first "
+                    "(the packet's evidence glosses each word).")
     lineage: Annotated[str | None, clipped(120)] = Field(None, max_length=120)
     binary: bool = True
     partners: list[dict] = Field(default_factory=list, max_length=context.MAX_PARTNERS,

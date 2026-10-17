@@ -26,7 +26,10 @@ VERSION = "1"
 #: Packet fields that vary between identical questions (ids, charges, the
 #: viewer, the reader it went to): left out of the key.
 VOLATILE = ("session_id", "packet_id", "budget", "progress", "mirror", "rerendered",
-            "answer_schema", "answer_with", "images", "narration", "briefed")
+            "answer_schema", "answer_with", "images", "narration", "briefed",
+            # whether a reader was sent gating's reference sheet with this packet
+            # or holds it already (the sheet itself is in the key: `Engine.memo_key`)
+            "reference_sheet")
 
 _LOCK = threading.Lock()
 

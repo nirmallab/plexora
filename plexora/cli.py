@@ -1594,8 +1594,10 @@ def _build_ai_parser():
                        help="Gating: the ablation's variants, comma-separated -- "
                             "baseline, tiles (every look drawn as the 2 x 2 multi-view "
                             "block), observed (what the contrast check saw, used by "
-                            "gating: experimental); each runs its own session (default "
-                            "baseline).")
+                            "gating), bands (partner bands), vision (the looks lead: "
+                            "--strategy vision), reference (vision with the reference "
+                            "sheet named default) -- all but baseline and tiles "
+                            "experimental; each runs its own session (default baseline).")
     bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
                        help="With --truth csv:<path>: the header column holding the gates "
                             "(\"Human gate\"); the markers are the first column.")
@@ -1651,7 +1653,36 @@ def _build_ai_parser():
     run.add_argument("--gateway", default=None, help="Gateway URL (default: the BioCognia AI gateway; "
                                                      "also BIOCOGNIA_AI_GATEWAY).")
     run.add_argument("--json", dest="run_json", action="store_true", help="Print the summary as JSON.")
+    run.add_argument("--strategy", choices=("classic", "vision"), default=None,
+                     help="gating: classic (default) gates as before; vision lets the looks "
+                          "lead -- what the contrast check saw, the looks placing weak "
+                          "markers' gates, partner bands, stain shapes and the reference "
+                          "sheet (experimental).")
+    run.add_argument("--reference-sheet", dest="reference_sheet", default=None, metavar="NAME",
+                     help="gating: show this reference sheet (plexora ai library build) once "
+                          "to each worker beside its first look; `auto` takes the one named "
+                          "default, else the newest.")
     _gating_limit_arguments(run, "--on-limit", "--max-extensions")
+    library = subs.add_parser("library", help="The gating reference library: single cells you "
+                                              "sort by eye, and the sheets built from them.")
+    library.add_argument("action", choices=("sample", "ingest", "build", "list", "path",
+                                            "forget"),
+                         help="sample: draw tiles of --marker from PROJECT into the inbox; "
+                              "ingest: read how you sorted the inbox's class folders; build: "
+                              "a sheet named --name from the sorted tiles; list: tiles and "
+                              "sheets; path: where they are (PLEXORA_GATING_LIBRARY_PATH "
+                              "moves them); forget: take --tiles or --name out.")
+    library.add_argument("project", nargs="?", default=None, help="With sample: the project.")
+    library.add_argument("--marker", default=None, help="With sample: the marker.")
+    library.add_argument("--n", type=int, default=None, help="With sample: how many tiles.")
+    library.add_argument("--name", default=None, help="With build or forget: the sheet.")
+    library.add_argument("--layout", default="by_shape",
+                         choices=("by_shape", "pairs", "by_marker"),
+                         help="With build: the sheet's layout (default by_shape).")
+    library.add_argument("--tiles", default=None, help="With forget: comma-separated tile ids.")
+    library.add_argument("--dry-run", dest="library_dry_run", action="store_true",
+                         help="With ingest: say what would be labelled.")
+    library.add_argument("--seed", type=int, default=0)
     trace = subs.add_parser("trace", help="What the harness did: runs, calls, cache hits.")
     trace.add_argument("trace_run", nargs="?", default=None, metavar="RUN",
                        help="A run id (or prefix); default lists recent runs.")
@@ -1901,6 +1932,8 @@ def _run_ai(args):
         return ai_setup.skills_command(check=args.check)
     if command == "vocabulary":
         return _vocabulary_command(args)
+    if command == "library":
+        return _library_command(args)
     return ai_setup.setup(args.client, scope=args.scope or "project",
                           project_dir=args.project_dir, dry_run=args.dry_run,
                           install_skills=args.install_skills,
@@ -1935,6 +1968,93 @@ def _vocabulary_command(args) -> int:
         print(f"  {entry['canonical']:<14} {entry.get('role') or '-':<16} "
               f"{entry.get('compartment') or '-':<20} {said.get('source', 'ai')}"
               + (f" ({where})" if where else "") + (f" {said['at']}" if said.get("at") else ""))
+    return 0
+
+
+def _library_command(args) -> int:
+    """`plexora ai library`: the gating reference library, through its tools
+    (`library_*`) in this process -- the same licence and checks as an agent's
+    call, and no reach into the gating plugin's internals."""
+    from plexora.agent import AgentSession, discover, invoke, jobs
+
+    discover(["gating"])
+    session = AgentSession()
+
+    def call(tool, arguments):
+        out = invoke(session, tool, arguments)
+        if not out.get("ok"):
+            error = out.get("error") or {}
+            print(error.get("message") or error, file=sys.stderr)
+            return None
+        return out["result"]
+
+    if args.action == "path":
+        found = call("library_path", {})
+        if found is None:
+            return 1
+        print(found["library"])
+        return 0
+    if args.action == "list":
+        found = call("library_list", {})
+        if found is None:
+            return 1
+        print(f"{found['n_tiles']} tile(s) in {found['library']}: "
+              + (", ".join(f"{k} {v}" for k, v in sorted(found["by_class"].items()))
+                 or "none"))
+        for sheet in found["sheets"]:
+            print(f"  sheet {sheet['name']}: {sheet['layout']}, {sheet['size'][0]}x"
+                  f"{sheet['size'][1]}, digest {sheet['digest']}")
+        for box in found["inbox"]:
+            print(f"  inbox {box['project']}/{box['marker']}: {box['unsorted']} to sort, "
+                  f"{box['sorted']} sorted ({box['path']})")
+        for warning in found["warnings"]:
+            print(f"  ! {warning}")
+        return 0
+    if args.action == "ingest":
+        found = call("library_ingest", {"dry_run": bool(args.library_dry_run)})
+        if found is None:
+            return 1
+        verb = "would label" if args.library_dry_run else "labelled"
+        print(f"{verb} {len(found['labelled'])} tile(s); {found['left_unsorted']} left to sort")
+        return 0
+    if args.action == "build":
+        if not args.name:
+            print("build needs --name.", file=sys.stderr)
+            return 2
+        built = call("library_build", {"name": args.name, "layout": args.layout,
+                                       "seed": args.seed})
+        if built is None:
+            return 1
+        print(f"built {built['name']}: {len(built['tile_ids'])} tiles, "
+              f"{built['size'][0]}x{built['size'][1]} ({built['path']})")
+        return 0
+    if args.action == "forget":
+        tiles = [t.strip() for t in (args.tiles or "").split(",") if t.strip()]
+        found = call("library_forget", {"tile_ids": tiles,
+                                        **({"sheet": args.name} if args.name else {})})
+        if found is None:
+            return 1
+        print(f"removed {len(found['removed'])}; not found {len(found['missing'])}")
+        return 0
+    if not args.project or not args.marker:
+        print("sample needs PROJECT and --marker.", file=sys.stderr)
+        return 2
+    started = call("library_sample", {"project": args.project, "marker": args.marker,
+                                      "seed": args.seed,
+                                      **({"n": args.n} if args.n else {})})
+    if started is None:
+        return 1
+    job_id = started.get("job_id")
+    done = jobs.store().wait(job_id, 3600) if job_id else {"status": "done",
+                                                            "result": started}
+    if (done or {}).get("status") != "done":
+        print(f"the sample did not finish: {(done or {}).get('error') or done}",
+              file=sys.stderr)
+        return 1
+    out = done.get("result") or {}
+    print(f"{len(out.get('tiles') or ())} tiles of {args.marker} in {out.get('inbox')}")
+    print(f"contact sheet: {out.get('contact_sheet')}")
+    print(out.get("how_to_sort") or "")
     return 0
 
 
