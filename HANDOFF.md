@@ -111,20 +111,19 @@ credits):**
 
 ## The sandbox
 
-**State:** it is still running at the time of writing. Restart it if it isn't.
+**Removed** (2026-10-16, at the user's request), along with its snapshots. To rebuild it:
 
-**Paths:**
-- Data root: `C:\pxobstest`. It is a copy of the user's `lsp35766_p193` config entry and
-  folder, plus `nodes.json`, `settings.json`, `datasets.json`, `remotes.json`,
-  `servers.json` and `license/`. **These hold licence and node-token files: delete the
-  folder when testing ends.**
-- Snapshot taken after the contrast check, before any gating: `C:\pxobssnap`. It holds the
-  project `.db`, the memo `.jsonl` and `panels/`. Before each new run, stop the servers and
-  restore it (`.db` → `C:\pxobstest\lsp35766_p193\`, memo →
-  `C:\pxobstest\.agent\memo\gating\`, `panels` → `C:\pxobstest\.agent\gating\panels`).
-  Otherwise the gates I set by hand look like user edits.
-- `C:\pxobsA`: arm A's `.db` and memo. `C:\pxobsviewed`: the `.db` with the 8 viewed
-  gates. Both can be deleted.
+1. Make `C:\pxobstest` and copy in, from `%LOCALAPPDATA%\plexora`:
+   - a `config.json` holding only the `lsp35766_p193` entry;
+   - the `lsp35766_p193\` folder;
+   - `nodes.json`, `settings.json`, `datasets.json`, `remotes.json` and `servers.json`;
+   - `license\`.
+
+   **These hold licence and node-token files: delete the folder when testing ends.**
+2. Run the contrast check once (`redo: true`). Then stop the servers and snapshot the
+   project `.db`, `.agent\memo\gating\lsp35766_p193.jsonl` and `.agent\gating\panels`.
+3. Before each gating run, stop the servers and restore that snapshot. Otherwise gates set
+   by hand look like user edits.
 
 **Servers**, run from the worktree `C:\pxobs` with cwd `C:\pxobs`:
 ```
@@ -155,8 +154,7 @@ be gone; to rebuild it:
   `C:\pxobstest\.agent\sessions\gating\<sid>\session.json` and `decisions.jsonl`.
 - **Showing gates:** propose mode writes no gates. For the user to look, write them with
   `set_gate {project, marker, low}` and point them to
-  `http://127.0.0.1:8931/lsp35766_p193?tool=gating`. Currently CD3E 5.32 and CD8a 7.29 are
-  set there.
+  `http://127.0.0.1:8931/lsp35766_p193?tool=gating`.
 - **Observations:** read what the contrast check saw with `calibration.load(project)` and
   `calibration.observed(record, channel)`. Run with `PYTHONPATH=C:/pxobs` and
   `PLEXORA_DATA_PATH=C:/pxobstest`.
@@ -186,9 +184,8 @@ Gating is quoted at 25 credits per marker per run, but real runs came in lower. 
 
 ## Cleanup when done
 
-- **Servers:** stop them (the listeners on 8931 and 8322).
-- **Sandbox and copies:** delete `C:\pxobstest`, `C:\pxobssnap`, `C:\pxobsA` and
-  `C:\pxobsviewed`.
+- **Already done:** the servers, the sandbox, the snapshot copies and the scratchpad are
+  gone.
 - **Worktree `C:\pxobs`:** it is locked with the reason "A/B of contrast observations until
   the user decides", and has a `plexora/client/node_modules` junction into the main clone.
   Once the branch lands or is abandoned:
