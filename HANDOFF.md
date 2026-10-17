@@ -125,7 +125,7 @@ credits):**
 3. Before each gating run, stop the servers and restore that snapshot. Otherwise gates set
    by hand look like user edits.
 
-**Servers**, run from the worktree `C:\pxobs` with cwd `C:\pxobs`:
+**Servers**, run from a worktree of the branch at `C:\pxobs` (see Cleanup), with cwd `C:\pxobs`:
 ```
 PLEXORA_DATA_PATH=C:/pxobstest python -m plexora --port 8931 --no-browser --no-detect --data-dir C:/pxobstest
 PLEXORA_DATA_PATH=C:/pxobstest python -m plexora mcp serve --transport http --host 127.0.0.1 --port 8322 --no-auth --server http://127.0.0.1:8931 --data-dir C:/pxobstest
@@ -186,10 +186,11 @@ Gating is quoted at 25 credits per marker per run, but real runs came in lower. 
 
 - **Already done:** the servers, the sandbox, the snapshot copies and the scratchpad are
   gone.
-- **Worktree `C:\pxobs`:** it is locked with the reason "A/B of contrast observations until
-  the user decides", and has a `plexora/client/node_modules` junction into the main clone.
-  Once the branch lands or is abandoned:
-  1. unlock it;
-  2. remove the junction with `cmd /c rmdir`;
-  3. run `bash C:/Users/aj/Documents/softwares/biocognia/snapshots/prune-worktrees.sh --now
-     C:/pxobs`.
+- **Worktree:** removed too. The branch lives on the `plexora` remote and in the main
+  clone's local refs. To work on it again, run from the main clone:
+  `git worktree add C:\pxobs contrast-observations`.
+  - Then junction `plexora\client
+ode_modules` from the main clone, or about 110 JS
+    probes fail.
+  - Run servers and scripts with cwd `C:\pxobs` and `PYTHONPATH=C:\pxobs`: Plexora is
+    editable-installed from the main clone.
