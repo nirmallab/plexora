@@ -316,6 +316,24 @@ OBSERVATION_MODES = ("off", "use")
 #: debris (of `BRIGHT_TILES`).
 OBSERVED_MIN = {"dim_stained": 2, "bright_artifact": 2}
 
+#: `SessionOptions.vision_first` (experimental): on a marker whose
+#: distribution says little (`WEAK_CLASSES`, estimators that disagree, an Auto
+#: gate calling nearly every cell positive), the looks place the gate and the
+#: distribution only offers points. The lattice gets rungs at these shares
+#: of cells above (`lattice.rungs`)...
+VISION_RUNGS = (0.40, 0.25, 0.15, 0.08, 0.03, 0.01)
+#: ...and the first look starts at the dim cells the contrast check saw
+#: stained, else at this rung.
+VISION_START_SHARE = 0.15
+#: The distribution classes that count as weak.
+WEAK_CLASSES = ("continuous", "weakly_bimodal", "unimodal", "long_tail")
+#: Whole-image checks that stand on the distribution (the mixture's band, the
+#: distance from the Auto gate, resampling) or on where the positives lie
+#: (clustered T or B cells): with vision first they do not fail a gate the
+#: looks placed. Purity against partners, lineage and the prior still do.
+VISION_IGNORED_CHECKS = ("guard_band", "delta_from_gmm", "flip_share", "spatial_tiles",
+                         "edge_ratio")
+
 #: What the stained cells look like (a first look's `pattern`). `none`: no
 #: cell anywhere carries the stain. A pattern outside the compartment's
 #: `COMPARTMENT_POLICY[...]["patterns"]` caps confidence; it never routes.

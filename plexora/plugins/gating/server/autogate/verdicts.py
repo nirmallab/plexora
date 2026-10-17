@@ -52,9 +52,12 @@ AGAINST = {"up": ("own_stain",), "down": NOT_OWN}
 DIRECTIONS = ("up", "down", "about_right", "cannot_tell", "no_positives")
 
 
-def direction_from_rows(rows, pattern=None) -> tuple:
+def direction_from_rows(rows, pattern=None, *, mixed_down=False) -> tuple:
     """(direction, why) for a first look's rows (see the module docstring).
-    `direction` is one of `DIRECTIONS`; `why` names the rule that fired."""
+    `direction` is one of `DIRECTIONS`; `why` names the rule that fired.
+    `mixed_down` (`SessionOptions.vision_first`): cells below the gate seen
+    mixed, with none at the gate seen unstained, hold positives the gate
+    misses, so it goes down -- the way cells above seen mixed send it up."""
     rows = {k: v for k, v in (rows or {}).items() if v in schemas.ROW_VERDICTS}
     judged = {k: v for k, v in rows.items() if v != "cannot_tell"}
     above, below, near = rows.get("above"), rows.get("below"), rows.get("near")
@@ -72,6 +75,8 @@ def direction_from_rows(rows, pattern=None) -> tuple:
         return "down", "the cells at the gate are positive"
     if not judged:
         return "cannot_tell", "no row could be judged"
+    if mixed_down and below == "mixed" and near in ("mixed", "cannot_tell", None):
+        return "down", "the cells below the gate include positives"
     return "about_right", "positive above, not below"
 
 

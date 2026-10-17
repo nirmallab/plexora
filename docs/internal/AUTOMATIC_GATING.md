@@ -149,6 +149,33 @@ today's. The bench runs it as `--variants baseline,observed`; its
 `TruthAgent` answers the strip from the painted truth (a dim tile is stained
 when its cell is truly positive, a bright tile debris when it is not).
 
+## 2e. The looks place a weak marker's gate (`vision_first`, experimental)
+
+Branch `contrast-observations`, not merged. Off by default; run with
+`observations: "use"`. On a marker whose distribution says little
+(`Engine.weak_distribution`: a class in `schemas.WEAK_CLASSES`,
+`estimators_disagree`, or an Auto gate above 90% positive):
+
+- `observed_for` needs one stained dim cell, not two, and `observed_start`
+  no longer holds the dim anchor at the background onset (on dense tissue the
+  onset can sit above p99);
+- `Engine.vision_start`: with no dim anchor, the first look starts at the 15%
+  rung (`VISION_START_SHARE`), not at the noise ceiling. A start already
+  below the anchor stays where it is;
+- the lattice gains rungs by share of cells (`lattice.rungs`,
+  `schemas.VISION_RUNGS`, family `rung`);
+- `verdicts.direction_from_rows(mixed_down=True)`: with cells below the gate
+  seen `mixed` and none at the gate `unstained`, the gate goes down;
+- `run_regression` waives `VISION_IGNORED_CHECKS` (mixture band, distance
+  from the Auto gate, resampling, spatial clustering) once a look saw the
+  stain itself (`own_seen`), and `apply_regression` keeps such a gate at low
+  confidence on `cannot_tell` (`vision_kept`).
+
+The memo key carries `vision_first:1` when on. First result
+(lsp35766_p193, 2026-10-16), with the user's gates as reference:
+- CD3E: 5.94 before, 5.32 with it, 5.11 the user's;
+- CD8a: 8.00 before, 7.29 with it, 7.2 the user's.
+
 ## 3. Where things live
 
 ```

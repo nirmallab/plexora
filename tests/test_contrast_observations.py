@@ -307,6 +307,7 @@ def test_observations_default_off_and_keep_their_answers_apart():
         fake = SimpleNamespace(options={"tiles": False, "observations": mode})
         fake.tiles_on = lambda: Engine.tiles_on(fake)
         fake.observations_on = lambda: Engine.observations_on(fake)
+        fake.vision_first_on = lambda: False
         fake.observed_digest = lambda project: "abc"
         return Engine.memo_key(fake, packet, [])
 

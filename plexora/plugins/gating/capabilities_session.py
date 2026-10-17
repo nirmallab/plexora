@@ -241,6 +241,14 @@ class SessionOptions(AgentModel):
                            "higher than the dim stained cells, keeps the tissue fields away "
                            "from the debris, caps confidence on a doubt, and gives a clean "
                            "split with a finding a look. off: not used.")
+    vision_first: bool = Field(False, description="Experimental. On a marker whose "
+                               "distribution says little (no valley, estimators that "
+                               "disagree), the looks place the gate: the first look starts "
+                               "at the dim cells the contrast check saw stained (else the "
+                               "cell share's 15% rung), the candidates are rungs by share "
+                               "of cells, cells below the gate seen mixed send it down, and "
+                               "the distribution's and spatial whole-image checks no longer "
+                               "fail a gate the looks placed. Pair with observations=use.")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "

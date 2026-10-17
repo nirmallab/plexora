@@ -304,7 +304,8 @@ def _look(engine, packet, answer, *, where):
         return _outcome(unit, asked=True)
     if answer.within:
         return _within(engine, unit, packet, answer)
-    direction, why = words.direction_from_rows(answer.rows, answer.pattern)
+    direction, why = words.direction_from_rows(answer.rows, answer.pattern,
+                                               mixed_down=engine.vision_first_on())
     _read_look(unit, answer, direction, why)
     if direction == "no_positives":
         return _no_positives(engine, unit, where)
@@ -531,8 +532,13 @@ def apply_regression(engine, packet, answer):
                      "the whole-image view shows an artifact driving the positives")
         return _outcome(unit)
     # cannot_tell: a gate that failed a whole-image check and that the image
-    # does not vouch for is not accepted.
+    # does not vouch for is not accepted -- unless the looks placed it with
+    # vision first: then it stands, at low confidence (`confidence_for`).
     unit["regression_confirmed"] = False
+    if engine.vision_first_on() and unit.get("own_seen") and unit.get("path") in ("t2", "t3", "t4"):
+        unit["vision_kept"] = True
+        engine.finalize(unit, method=unit.get("method") or "ai_accepted")
+        return _outcome(unit)
     engine.close(unit, "manual_review_recommended",
                  "the gate failed a whole-image check and the whole-image view could not "
                  "settle it; it is written for manual review", proposed=unit.get("candidate"))

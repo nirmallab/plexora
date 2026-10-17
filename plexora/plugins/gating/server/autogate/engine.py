@@ -440,6 +440,57 @@ class Engine(BaseEngine):
         (`SessionOptions.observations`)."""
         return self.options["observations"] == "use"
 
+    # -- the looks place the gate (`SessionOptions.vision_first`) --
+
+    def vision_first_on(self) -> bool:
+        """Whether looks, not the distribution, place a weak marker's gate
+        (`SessionOptions.vision_first`)."""
+        return bool(self.options["vision_first"])
+
+    def weak_distribution(self, unit) -> bool:
+        """Whether the unit's distribution says little about where its gate
+        goes: a weak class, estimators that disagree, or an Auto gate that
+        calls nearly every cell positive."""
+        flags = set(unit.get("flags") or ())
+        fraction = ((unit.get("summary") or {}).get("positive_fraction") or 0.0)
+        return (unit.get("class") in schemas.WEAK_CLASSES or "estimators_disagree" in flags
+                or fraction > 0.9)
+
+    def vision_start(self, unit, ds):
+        """With vision first, on a weak distribution: the first look starts at
+        the lowest dim cell the contrast check saw stained (`obs:dim`), else
+        at the `VISION_START_SHARE` rung -- not at the noise ceiling, where
+        no dim positive is ever shown to a look. A start already below the
+        dim cells stays. Never across a judged row."""
+        from plexora.plugins.gating.server.autogate import lattice as latmod
+
+        if not self.vision_first_on() or not self.weak_distribution(unit):
+            return
+        start = unit.get("start") or {}
+        anchor = next((float(c["low"]) for c in (unit.get("scoring") or {}).get("candidates") or ()
+                       if c.get("id") == "obs:dim" and c.get("low") is not None), None)
+        if anchor is not None:
+            # A dim cell seen stained is a positive: the gate goes no higher.
+            target, basis = anchor, "vision:obs"
+            if start.get("low") is not None and float(start["low"]) <= anchor:
+                return
+        else:
+            found = latmod.rungs(profmod.column(ds, unit["marker"]),
+                                 (schemas.VISION_START_SHARE,))
+            if not found:
+                return
+            target, basis = found[0][1], f"vision:rung:{schemas.VISION_START_SHARE * 100:g}"
+        if unit.get("judged") or unit.get("judged_rows"):
+            target = self.clamp_to_judged(unit, ds, target, why="vision")
+        before = start.get("low")
+        unit["start"] = {**start, "source": "scoring", "low": float(target), "basis": basis,
+                         "vision": True, "before": before}
+        unit["candidate"] = float(target)
+        unit["source"] = "scoring"
+        unit.pop("lattice", None)
+        self.log(event="vision_start", unit=unit_key(unit["project"], unit["marker"]),
+                 before=before, start=float(target), basis=basis)
+
     def _calibration_of(self, project):
         cache = self.__dict__.setdefault("_calibrations", {})
         if project not in cache:
@@ -492,7 +543,10 @@ class Engine(BaseEngine):
         bright = list(seen.get("bright") or [])
         stained = [d for d in dim if d.get("stained")]
         debris = [b for b in bright if b.get("artifact")]
-        least = schemas.OBSERVED_MIN
+        least = dict(schemas.OBSERVED_MIN)
+        if self.vision_first_on():
+            # One dim cell seen stained is what the image says; the looks judge it.
+            least["dim_stained"] = 1
         anchor = None
         if len(stained) >= least["dim_stained"] and column in (None, unit["marker"]):
             anchor = float(min(float(d["value"]) for d in stained))
@@ -650,6 +704,9 @@ class Engine(BaseEngine):
         if self.tiles_on():
             # The multi-view looks are other pictures: off, the key is today's.
             extra += ("tiles:1",)
+        if self.vision_first_on():
+            # Other starts and other candidates: off, the key is today's.
+            extra += ("vision_first:1",)
         project = (packet.get("evidence") or {}).get("project")
         if self.observations_on() and project:
             # What the contrast check saw shapes the start and the fields:
@@ -739,7 +796,8 @@ class Engine(BaseEngine):
             estimators_raw=(unit.get("summary") or {}).get("estimators_raw"),
             references=refs, high=unit.get("high"), seed=int(self.options["seed"]),
             scoring=unit.get("scoring"),
-            start=start.get("low") if start.get("source") == "scoring" else None)
+            start=start.get("low") if start.get("source") == "scoring" else None,
+            with_rungs=self.vision_first_on() and self.weak_distribution(unit))
         unit["depends_on"] = {r["marker"]: float(r["gate"]) for r in refs}
         return unit["lattice"]
 
@@ -1009,6 +1067,13 @@ class Engine(BaseEngine):
             "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
             "prior": prior, "partners": partners})
         result = self._with_lineage(unit, result, {p["partner"] for p in partners})
+        if self.vision_first_on() and unit.get("own_seen"):
+            # The looks placed it: the distribution's and spatial checks inform,
+            # they do not fail it (`schemas.VISION_IGNORED_CHECKS`).
+            kept = [f for f in result["failed"] if f not in schemas.VISION_IGNORED_CHECKS]
+            if kept != list(result["failed"]):
+                unit["vision_waived"] = sorted(set(result["failed"]) - set(kept))
+                result = {**result, "failed": kept, "ok": not kept}
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],
                               "checks": result["checks"],
@@ -1342,6 +1407,7 @@ class Engine(BaseEngine):
         if proposal is None:
             unit["start"] = {"source": "gmm", "low": unit["gmm"]}
             self.observed_start(unit, ds)
+            self.vision_start(unit, ds)
             return unit["scoring"]
         if unit.get("judged") or unit.get("judged_rows"):
             # A rescore after a look (the marker turned out continuous) never
@@ -1356,6 +1422,7 @@ class Engine(BaseEngine):
                  proposal=float(proposal), gmm=unit["gmm"],
                  basis=result.get("proposal_source"), leading=result.get("leading"))
         self.observed_start(unit, ds)
+        self.vision_start(unit, ds)
         return unit["scoring"]
 
     def observed_start(self, unit, ds):
@@ -1382,7 +1449,9 @@ class Engine(BaseEngine):
         onset = next((float(c["low"]) for c in candidates
                       if latmod.family(c.get("id", "")) == "onset" and c.get("low") is not None),
                      None)
-        floor = anchor if onset is None else max(anchor, onset)
+        # Vision first: the dim cells the check saw are not held at the
+        # background's onset, which a dim population's shoulder sits inside.
+        floor = anchor if onset is None or self.vision_first_on() else max(anchor, onset)
         if low is not None and floor < float(low):
             if unit.get("judged") or unit.get("judged_rows"):
                 floor = self.clamp_to_judged(unit, ds, floor, why="observed")
