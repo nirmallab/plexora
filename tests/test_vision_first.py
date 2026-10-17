@@ -4,9 +4,10 @@ On a marker whose distribution says little -- no valley, estimators that
 disagree, an Auto gate calling nearly every cell positive -- the start no
 longer sits at the noise ceiling: it comes down to the dim cells the
 contrast check saw stained, else to the 15% rung; the candidates include
-rungs by share of cells; cells below the gate seen mixed send it down; and
-the distribution's and spatial whole-image checks no longer fail a gate the
-looks placed. Off, the session is today's.
+rungs by share of cells; cells below the gate seen mixed send it down, and
+a look going down passes rows seen mixed; and the distribution's and spatial
+whole-image checks no longer fail a gate the looks placed. Off, the session
+is today's.
 """
 
 from types import SimpleNamespace
@@ -38,6 +39,37 @@ def test_mixed_below_sends_the_gate_down_only_with_vision_first():
                                mixed_down=True)[0] == "up"
     assert direction_from_rows({**rows, "below": "neighbour_only"},
                                mixed_down=True)[0] == "about_right"
+
+
+def test_going_down_passes_mixed_rows_only_with_vision_first():
+    """CD3E on lsp35766_p193 (2026-10-16): from 5.32 the rows read mixed,
+    mixed, mixed, neighbour_only; the gate stayed at 5.32 against the user's
+    5.11. Passing the mixed rows stops it at 5.18."""
+    from plexora.plugins.gating.server.autogate import lattice
+
+    chain = [{"id": f"c{i}", "low": low} for i, low in enumerate((5.28, 5.19, 5.18, 5.06), 1)]
+    rows = {"i1": "mixed", "i2": "mixed", "i3": "mixed", "i4": "neighbour_only"}
+    assert lattice.place(chain, rows, "down")[:3:2] == (None, "mixed")
+    placed, passed, why = lattice.place(chain, rows, "down", mixed_down=True)
+    assert (placed["low"], passed, why) == (5.18, 3, "moved")
+    # Unstained or untellable cells stop it as neighbour-only ones do.
+    assert lattice.place(chain, {**rows, "i3": "unstained"}, "down",
+                         mixed_down=True)[0]["low"] == 5.19
+    assert lattice.place(chain, {**rows, "i2": "cannot_tell"}, "down",
+                         mixed_down=True)[0]["low"] == 5.28
+    assert lattice.place(chain, {"i1": "neighbour_only"}, "down",
+                         mixed_down=True)[:3:2] == (None, "reverse")
+    # Going up is unchanged: a mixed first row is still the boundary.
+    assert lattice.place(chain, {"i1": "mixed"}, "up", mixed_down=True)[:3:2] == (None, "mixed")
+
+
+def test_a_gate_that_passed_mixed_rows_is_at_most_moderate():
+    from plexora.plugins.gating.server.autogate.engine import confidence_for
+
+    unit = {"path": "t4", "ai_confidence": 0.95, "delta_step_sd": 0.0,
+            "metrics": {"d": 3.0}, "flags": []}
+    assert confidence_for(dict(unit)) == "high"
+    assert confidence_for({**unit, "t4_passed_mixed": True}) == "moderate"
 
 
 def test_rungs_are_shares_of_cells():

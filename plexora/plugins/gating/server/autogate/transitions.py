@@ -367,7 +367,8 @@ def apply_t4(engine, packet, answer):
     - `mixed` (the first row holds both kinds): the gate is at the boundary
       and stays, at no more than moderate confidence (`t4_stopped_mixed`) --
       with overlapping populations "mixed" is the honest answer, not a
-      failure;
+      failure. Going down with vision first, mixed rows are passed instead
+      (`verdicts.MIXED_DOWN`), at the same cap (`t4_passed_mixed`);
     - `keep`: the gate stays."""
     from plexora.agent.errors import AgentError
     from plexora.plugins.gating.server.autogate import lattice as latmod
@@ -403,8 +404,13 @@ def apply_t4(engine, packet, answer):
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
-    placed, passed, why = latmod.place(chain, answer.intervals, direction)
+    mixed_down = engine.vision_first_on()
+    placed, passed, why = latmod.place(chain, answer.intervals, direction,
+                                       mixed_down=mixed_down)
     if placed is not None:
+        if mixed_down and direction == "down" and "mixed" in (
+                answer.intervals.get(f"i{index + 1}") for index in range(passed)):
+            unit["t4_passed_mixed"] = True
         unit["candidate"] = float(placed["low"])
         unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
         if passed == len(chain) and latmod.chain(engine.lattice_for(unit), placed["low"],

@@ -166,6 +166,10 @@ Branch `contrast-observations`, not merged. Off by default; run with
   `schemas.VISION_RUNGS`, family `rung`);
 - `verdicts.direction_from_rows(mixed_down=True)`: with cells below the gate
   seen `mixed` and none at the gate `unstained`, the gate goes down;
+- `lattice.place(mixed_down=True)`: going down, T4 passes rows seen `mixed`
+  too (`verdicts.MIXED_DOWN`) and stops at the first `unstained`,
+  `neighbour_only` or `cannot_tell` row; such a gate is capped at moderate
+  (`t4_passed_mixed`), as one stopped at a mixed row is;
 - `run_regression` waives `VISION_IGNORED_CHECKS` (mixture band, distance
   from the Auto gate, resampling, spatial clustering) once a look saw the
   stain itself (`own_seen`), and `apply_regression` keeps such a gate at low

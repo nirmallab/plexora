@@ -244,7 +244,7 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
     return out
 
 
-def place(chain_points, verdicts, direction):
+def place(chain_points, verdicts, direction, *, mixed_down=False):
     """(point or None, passed, why): where the rows put the gate.
 
     Row i is the cells between the gate before it and chain point i. The
@@ -254,10 +254,14 @@ def place(chain_points, verdicts, direction):
     with `why`: `mixed` (the first row holds both kinds: the gate is at the
     boundary), `reverse` (the first row says the opposite of moving -- going
     up, cells just above the gate are clearly positive: the look that sent
-    the gate up may have been wrong, `verdicts.AGAINST`), or `keep`."""
+    the gate up may have been wrong, `verdicts.AGAINST`), or `keep`.
+    `mixed_down` (`SessionOptions.vision_first`): going down, rows seen mixed
+    are passed too (`verdicts.MIXED_DOWN`)."""
     from plexora.plugins.gating.server.autogate import verdicts as words
 
     moving = words.MOVES.get(direction, ())
+    if mixed_down and direction == "down":
+        moving = words.MIXED_DOWN
     passed = 0
     for index, _entry in enumerate(chain_points):
         if verdicts.get(f"i{index + 1}") not in moving:

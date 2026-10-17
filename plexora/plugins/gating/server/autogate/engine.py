@@ -263,9 +263,11 @@ def confidence_for(unit) -> str:
         # Most of the image failed QC: what remains may not be representative.
         # A cap, never a route -- the evidence is judged as usual.
         cap = "moderate" if cap == "high" else cap
-    if "pattern_mismatch" in (unit.get("look_flags") or ()) or unit.get("t4_stopped_mixed"):
+    if "pattern_mismatch" in (unit.get("look_flags") or ()) or unit.get("t4_stopped_mixed") \
+            or unit.get("t4_passed_mixed"):
         # The stain was not the compartment's pattern, or the gate stopped at
-        # a row that held both kinds of cell: a doubt, never a route.
+        # (or, with vision first, went down past) a row that held both kinds
+        # of cell: a doubt, never a route.
         cap = "moderate" if cap == "high" else cap
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):

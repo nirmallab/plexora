@@ -26,7 +26,9 @@ At a right gate the cells AT it are the ones a stained neighbour lifts, so
 puts the gate in plain background.
 
 Looks at candidates (`MOVES`, `lattice.place`): going up the gate passes each
-row whose cells are not positive, going down each row whose cells are.
+row whose cells are not positive, going down each row whose cells are. With
+vision first (`MIXED_DOWN`), going down also passes rows seen mixed, and the
+first row of cells that are not positive themselves stops it.
 
 `about_right` is the weakest of these readings (wrong 22 of 24 times on
 lsp11385_2 when the human gate lay elsewhere; behind most PCA misses, with
@@ -44,6 +46,12 @@ NOT_OWN = ("unstained", "neighbour_only")
 
 #: Which rows a look at candidates moves the gate past, by direction.
 MOVES = {"up": NOT_OWN, "down": ("own_stain",)}
+
+#: Going down with vision first (`SessionOptions.vision_first`): a row seen
+#: mixed still holds positives the gate would miss, so the gate passes it.
+#: The first row of unstained or neighbour-only cells (or one that cannot be
+#: told) stops it, which is what keeps a neighbour's spill out.
+MIXED_DOWN = ("own_stain", "mixed")
 
 #: The words that say the opposite of moving, by direction: a first row of
 #: these is a reason to look the other way once (`lattice.place`).
