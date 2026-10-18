@@ -102,8 +102,10 @@ bench runs it as `--variants baseline,tiles`.
 
 ## 2d. Absence, wide mixed rows, whole-image disagreement (2026-10-18)
 
-Three rules, each a session switch, from the region-look study and the user's
-recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`):
+Five rules, each a session switch, from the region-look study, the user's
+recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`)
+and a test of fixes on the remaining misses
+(`docs/internal/bench/GATING_GENERALISE_2026-10-18.md`):
 
 - **`absence_check`** (default on). A mixture splits every column in two, so
   only the image can say a marker has no positive population. Before the
@@ -128,6 +130,17 @@ recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`):
   check whose positives at a low gate were epithelial artifact, though the
   user gates a real 1 % population there. Not budgeted; once per unit
   (`absence_done`).
+- **`absence_confirm`** (default on). A picture in which exactly one region
+  reads `clear` and at least two others `few` / `none` (`absence.lone_clear`)
+  shows that region again before it keeps the marker open
+  (`absence.render_close`): close up and in its surroundings, the region
+  boxed, so an edge band or a fold reads as one. A `few` / `none` there
+  replaces the region's word and the picture is judged again; `clear` or
+  `cannot_tell` leaves it. At most one close look per picture. LSP11761
+  PD-L1 (the user: 2 of 22,117 cells) had stayed open on one `clear` region
+  of four; with the close looks both of its pictures said absent. A real
+  population in one aggregate (lsp11385 CD20L's lymphoid area) read `clear`
+  close up and stayed open.
 - **`split_mixed`** (default on). A T4 walk stops at the first row that does
   not move it; a `mixed` row wider than `lattice.SPLIT_MIN_SD` background sds
   is split into at most `MAX_CHAIN` parts (`lattice.split`: evenly in fit
@@ -144,6 +157,15 @@ recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`):
   partner's evidence (`hierarchy.grade`); LSP11321's CD45 sat at 7.76 (user
   7.8) in review, and 13 markers were gated without it. Before any T4 look a
   whole-image direction still sends the gate to the candidates.
+- **`whole_image_reopen`** (default on). The exception: after a T4 look, a
+  whole-image `too_low` sends the gate up for ONE more look at the candidates
+  above (`transitions._reopen`), whose first row passes even when `mixed` --
+  the rows and the whole image then agree the cells there are not the
+  positives; the rows still place the gate, and a look that moves nothing
+  (or turns) keeps it, at low confidence as above. Of seven whole-image
+  `too_low` verdicts after a walk on 2026-10-18 six sat below the user's
+  gate; `holds` came back on gates 0.6 off, and `too_high` never, so only
+  `too_low` reopens.
 
 A session stored before these switches is completed with their defaults
 when it is loaded, like every newer option.

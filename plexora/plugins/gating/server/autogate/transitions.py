@@ -28,8 +28,11 @@ rules the agent cannot talk its way past:
   continuous or badly segmented marker says;
 - a look at candidates that stops at a wide `mixed` row has that row split
   and looked at again (`lattice.split`); after such a look, a whole-image
-  check's "too low" / "too high" leaves the gate where the rows put it, at
-  low confidence (`SessionOptions.whole_image_moves`).
+  check's "too low" sends the gate up for one more look whose first row
+  passes even when mixed (`SessionOptions.whole_image_reopen`), and
+  otherwise -- or after that look -- "too low" / "too high" leaves the gate
+  where the rows put it, at low confidence
+  (`SessionOptions.whole_image_moves`).
 
 Every loop is bounded, so a unit's looks are finite whatever the answers:
 
@@ -37,11 +40,13 @@ Every loop is bounded, so a unit's looks are finite whatever the answers:
     T2                  1 (a second only after a technical check or a
                         conditional refit)
     technical check     1 per unit (`qc_done`)
-    absence check       1 per unit (`absence_done`)
+    absence check       `absence.ROUNDS` pictures, each with at most one close
+                        look at a lone clear region (`absence_done`)
     T3                  1 (`t3_done`)
     T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions);
                         one turn back (`t4_reversed`); a split is a round
-    whole-image check   one per T4 round, plus one
+    whole-image check   one per T4 round, plus one; one reopened look
+                        (`whole_image_reopened`)
 
 A marker that reaches a limit while the evidence still says to go on is
 handled by the session's limit policy (`Engine.limit_reached`): another
@@ -377,6 +382,7 @@ def apply_t4(engine, packet, answer):
     - `keep`: the gate stays."""
     from plexora.agent.errors import AgentError
     from plexora.plugins.gating.server.autogate import lattice as latmod
+    from plexora.plugins.gating.server.autogate import verdicts as words
 
     unit = _units(engine, packet)[0]
     candidates = unit.get("candidates") or {}
@@ -409,7 +415,27 @@ def apply_t4(engine, packet, answer):
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
-    placed, passed, why = latmod.place(chain, answer.intervals, direction)
+    intervals = answer.intervals
+    reopened = unit.get("whole_image_reopened")
+    reopened_look = bool(reopened) and "looked" not in reopened and direction == "up"
+    if reopened_look:
+        # The whole image said too low; a first row the rows call mixed
+        # passes (`_reopen`).
+        reopened["looked"] = intervals.get("i1")
+        if intervals.get("i1") == "mixed":
+            intervals = {**intervals, "i1": words.MOVES["up"][0]}
+    placed, passed, why = latmod.place(chain, intervals, direction)
+    if reopened_look and placed is None:
+        # Nothing above moved it: the rows stand, the disagreement noted.
+        unit["whole_image_disagreed"] = "too_low"
+        unit["look_flags"] = sorted(set(unit.get("look_flags") or [])
+                                    | {"whole_image_disagreed"})
+        unit["method"] = "ai_conditional" if conditional else "ai_accepted"
+        _clear_direction(unit)
+        engine.finalize(unit, method=unit["method"])
+        return _outcome(unit, chosen="keep", why=why, reopened=True)
+    if reopened_look:
+        reopened["to"] = float(placed["low"])
     split = _split_mixed(engine, unit, chain, answer, placed, passed)
     if split is not None:
         return split
@@ -579,9 +605,26 @@ def apply_absence(engine, packet, answer):
         raise AgentError("invalid_input", f"judge every region; missing {missing}",
                          detail={"regions": regions})
     _note(unit, answer)
-    words = {r: answer.regions[r] for r in regions}
     rounds = unit.setdefault("absence_rounds", [])
-    rounds.append({"words": words, "regions": unit.pop("absence_regions", None) or []})
+    lone = unit.pop("absence_confirming", None)
+    if lone and rounds:
+        # The close look at the one region that showed clear positives: its
+        # word replaces the picture's when it takes the clear back (an edge
+        # band, a fold); `clear` or `cannot_tell` leave it standing.
+        word = answer.regions.get(regions[0]) if regions else None
+        last = rounds[-1]
+        last["close_look"] = {"region": lone, "word": word}
+        if word in ("few", "none"):
+            last["words"] = {**last["words"], lone: word}
+        words = last["words"]
+    else:
+        words = {r: answer.regions[r] for r in regions}
+        rounds.append({"words": words, "regions": unit.pop("absence_regions", None) or []})
+        lone = absence.lone_clear(words)
+        if lone and engine.options["absence_confirm"]:
+            unit["absence_confirming"] = lone
+            unit["state"] = "awaiting_absence"
+            return _outcome(unit, absent=None, close_look=lone)
     unit["absence"] = {"words": words, "rounds": len(rounds),
                        "clear": [f"{len(rounds)}:{r}" for r, w in words.items() if w == "clear"]}
     if absence.absent(words) and len(rounds) < absence.ROUNDS:
@@ -622,6 +665,9 @@ def apply_regression(engine, packet, answer):
         unit["regression_confirmed"] = True
         engine.finalize(unit, method=unit.get("method") or "ai_accepted")
         return _outcome(unit)
+    if answer.verdict == "too_low" and unit.get("judged") \
+            and not engine.options["whole_image_moves"] and _reopen(engine, unit):
+        return _outcome(unit, whole_image=answer.verdict, reopened=True)
     if answer.verdict in ("too_low", "too_high") and unit.get("judged") \
             and not engine.options["whole_image_moves"]:
         # The rows of a look at candidates judged the very cells a move would
@@ -663,6 +709,28 @@ def apply_regression(engine, packet, answer):
                  "the gate failed a whole-image check and the whole-image view could not "
                  "settle it; it is written for manual review", proposed=unit.get("candidate"))
     return _outcome(unit)
+
+
+def _reopen(engine, unit) -> bool:
+    """After a look at candidates, a whole-image "too low": one more look at
+    the candidates above (`SessionOptions.whole_image_reopen`), whose first
+    row passes even when judged `mixed` -- the rows and the whole image then
+    agree the cells there are not the positives (`apply_t4`). The rows still
+    place the gate. Of seven such verdicts on 2026-10-18 six sat below the
+    person's gate (by 0.13 to 0.93), where the gate had stopped at a mixed
+    row. False (nothing done) when it is off, was used, or has nowhere to go."""
+    from plexora.plugins.gating.server.autogate import lattice as latmod
+
+    if not engine.options["whole_image_reopen"] or unit.get("whole_image_reopened") \
+            or not engine.rounds_left(unit) \
+            or not latmod.chain(engine.lattice_for(unit), unit["candidate"], "up"):
+        return False
+    unit["whole_image_reopened"] = {"at": float(unit["candidate"])}
+    unit.setdefault("directions", []).append("up")
+    unit["direction"] = "up"
+    unit["span_from"] = unit["candidate"]
+    unit["state"] = "awaiting_t4"
+    return True
 
 
 def apply_strip(engine, packet, answer):

@@ -26,6 +26,13 @@ missed LSP11361's dim, widespread E-cadherin (the person gates 26 % of the
 cells positive) and closed it, where six regions over two packets of the
 region-look study had shown it clear in three.
 
+A region that alone shows clear positives while the others show none or few
+is seen again before it keeps the marker open (`lone_clear`,
+`render_close`): close up, and in its surroundings with the region boxed.
+An edge band, a fold or debris reads as one there; a cluster of real cells
+(a follicle) still as cells. LSP11761 PD-L1 (the person: no positives) stayed
+open on one `clear` region of four, beside an `edge` flag.
+
 Measured before it was built (docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md):
 over 51 markers on three PCA images, six regions a marker closed the two the
 person called absent and that the classic engine had gated, and no other.
@@ -77,7 +84,15 @@ BAND_SD = 1.0
 
 #: The renderer's version (`memo.versions`): a change here must not replay
 #: answers given to the old pictures.
-RENDERER = "plexora.gating.absence/3"
+RENDERER = "plexora.gating.absence/4"
+
+#: [cal] the close look's surroundings panel: this many region sides across,
+#: centred on the region (kept inside the image), so a tissue edge shows.
+CONTEXT_TIMES = 3
+
+#: [cal] each panel of the close look, in output pixels (twice a region's
+#: panel: rings and fills of single cells readable).
+CLOSE_PX = 640
 
 CAPTION_H = 14
 GAP = 4
@@ -91,6 +106,15 @@ def absent(words) -> bool:
     if len(judged) < MIN_JUDGED:
         return False
     return "clear" not in judged
+
+
+def lone_clear(words):
+    """The one region read `clear` when no other was and at least
+    `MIN_JUDGED` others were judged (`few` / `none`); else None."""
+    words = words or {}
+    clear = [r for r, w in words.items() if w == "clear"]
+    judged = [w for w in words.values() if w in ("few", "none")]
+    return clear[0] if len(clear) == 1 and len(judged) >= MIN_JUDGED else None
 
 
 def band(unit, col):
@@ -114,36 +138,18 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     from PIL import Image, ImageDraw
 
     from plexora.agent import gate_sampling, render as rendermod, sections
-    from plexora.agent.evidence import calibration, collage
-    from plexora.agent.presets import nuclear_channel
-    from plexora.agent.render_spec import (Bounds, ChannelCurve, ChannelSpec, OutputSpec,
-                                           RenderInput)
+    from plexora.agent.evidence import collage
+    from plexora.agent.render_spec import Bounds, OutputSpec, RenderInput
     from plexora.plugins.gating.server.autogate import profile as profmod
     from plexora.plugins.gating.server.autogate import sheet
     from plexora.server.utils import fast_png
 
     record = ds.project
-    names_all = [c.get("fullname") or c.get("name") for c in record.image.real_channels]
-    nuclear = nuclear_channel(names_all)
-    names = [n for n in (nuclear, channel) if n]
-    windows = collage.resolve_windows(session, record, dict.fromkeys(names))
-    col = profmod.column(ds, marker)
-    top = float(unit.get("high")) if unit.get("high") is not None else float(col.sorted32[-1])
     field = sheet.field_side_px(record, FIELD_UM, pixel)
     side = field["side_px"]
-    calibrated = calibration.current(session, record.name, names)
-
-    def layer(name, colour):
-        at = calibration.display_spec(calibrated, name, side / PANEL_PX) or {
-            "window": windows[name]["window"], "curve": windows[name].get("curve")}
-        return ChannelSpec(name=name, color=colour, window=list(at["window"]),
-                           curve=ChannelCurve(**at["curve"]) if at.get("curve")
-                           else ChannelCurve(kind="linear"))
-
-    layers = []
-    if nuclear and nuclear != channel:
-        layers.append(layer(nuclear, calibration.NUCLEAR_MUTED_BLUE))
-    layers.append(layer(channel, calibration.MARKER_COLOR))
+    names, windows, layers = _layers(session, record, channel, side / PANEL_PX)
+    col = profmod.column(ds, marker)
+    top = float(unit.get("high")) if unit.get("high") is not None else float(col.sorted32[-1])
     the_band = band(unit, col)
     image_size = (record.image.width or 1, record.image.height or 1)
     sampled = gate_sampling.sample_gate_validation_regions(
@@ -195,6 +201,106 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     }
     return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest,
             "fields": records}
+
+
+def _layers(session, record, channel, scale):
+    """(names, windows, [ChannelSpec]): the nuclei muted blue under the
+    marker in the engine's calibrated display at `scale` (full-resolution
+    pixels per output pixel), else the resolved window."""
+    from plexora.agent.evidence import calibration, collage
+    from plexora.agent.presets import nuclear_channel
+    from plexora.agent.render_spec import ChannelCurve, ChannelSpec
+
+    names_all = [c.get("fullname") or c.get("name") for c in record.image.real_channels]
+    nuclear = nuclear_channel(names_all)
+    names = [n for n in (nuclear, channel) if n]
+    windows = collage.resolve_windows(session, record, dict.fromkeys(names))
+    calibrated = calibration.current(session, record.name, names)
+
+    def layer(name, colour):
+        at = calibration.display_spec(calibrated, name, scale) or {
+            "window": windows[name]["window"], "curve": windows[name].get("curve")}
+        return ChannelSpec(name=name, color=colour, window=list(at["window"]),
+                           curve=ChannelCurve(**at["curve"]) if at.get("curve")
+                           else ChannelCurve(kind="linear"))
+
+    layers = []
+    if nuclear and nuclear != channel:
+        layers.append(layer(nuclear, calibration.NUCLEAR_MUTED_BLUE))
+    layers.append(layer(channel, calibration.MARKER_COLOR))
+    return names, windows, layers
+
+
+def surroundings(bounds, image_size, times=CONTEXT_TIMES):
+    """A square `times` the region's side, centred on it and shifted to stay
+    inside the image (smaller only when the image is)."""
+    w, h = int(image_size[0]), int(image_size[1])
+    side = int(min(times * max(bounds["width"], bounds["height"]), w, h))
+    cx = bounds["x"] + bounds["width"] / 2
+    cy = bounds["y"] + bounds["height"] / 2
+    x = int(min(max(0, round(cx - side / 2)), max(0, w - side)))
+    y = int(min(max(0, round(cy - side / 2)), max(0, h - side)))
+    return {"x": x, "y": y, "width": side, "height": side}
+
+
+def render_close(session, ds, *, marker, channel, region, fmt="webp", pixel=None):
+    """{png, image, format, manifest} for a lone clear region seen again: the
+    region close up (left) and its surroundings with the region boxed
+    (right), unmarked otherwise, captioned r1 and r1 in its surroundings."""
+    from PIL import Image, ImageDraw
+
+    from plexora.agent import render as rendermod, sections
+    from plexora.agent.evidence import collage
+    from plexora.agent.render_spec import Bounds, OutputSpec, RenderInput
+    from plexora.server.utils import fast_png
+
+    record = ds.project
+    bounds = dict(region["bounds"])
+    image_size = (record.image.width or 1, record.image.height or 1)
+    around = surroundings(bounds, image_size)
+    plane = sections.field_plane(ds, bounds)
+    width = 2 * CLOSE_PX + GAP
+    height = TITLE_H + CLOSE_PX + CAPTION_H
+    canvas = Image.new("RGB", (width, height), collage.BG)
+    draw = ImageDraw.Draw(canvas)
+    font, small = collage._font(11), collage._font(10)
+    draw.rectangle((0, 0, width - 1, TITLE_H - 1), fill=collage.HEADER_BG)
+    draw.text((4, 1), f"{marker}: yellow = stain, blue = nuclei; r1 close up (left) and in "
+                      "its surroundings (right, white box)", fill=collage.TEXT, font=font)
+    names = None
+    for index, (box, caption) in enumerate(((bounds, "r1"),
+                                            (around, "r1 in its surroundings"))):
+        names, windows, layers = _layers(session, record, channel, box["width"] / CLOSE_PX)
+        spec = RenderInput(project=record.name, bounds=Bounds(**box), channels=layers,
+                           segmentation="none",
+                           output=OutputSpec(width=CLOSE_PX, height=CLOSE_PX), scale_bar=True,
+                           **({"view": f"z{plane}"} if plane is not None else {}))
+        rendered = rendermod.render_region(session, spec, store=False, pixel_size=pixel)
+        panel = Image.open(io.BytesIO(rendered["png"])).convert("RGB")
+        if panel.size != (CLOSE_PX, CLOSE_PX):
+            panel = panel.resize((CLOSE_PX, CLOSE_PX))
+        x = index * (CLOSE_PX + GAP)
+        canvas.paste(panel, (x, TITLE_H))
+        if index == 1:
+            k = CLOSE_PX / max(1, around["width"])
+            x0 = x + (bounds["x"] - around["x"]) * k
+            y0 = TITLE_H + (bounds["y"] - around["y"]) * k
+            draw.rectangle((x0, y0, x0 + bounds["width"] * k, y0 + bounds["height"] * k),
+                           outline=(255, 255, 255), width=2)
+        draw.text((x + 2, TITLE_H + CLOSE_PX + 1), caption, fill=collage.TEXT, font=small)
+    png = fast_png.encode_rgb8_png(np.asarray(canvas))
+    transported, transport_fmt = collage.encode(canvas, fmt)
+    manifest = {
+        "kind": "gating_absence_close", "project": record.name, "marker": marker,
+        "channel": channel, "region": {k: region[k] for k in ("region", "class", "cells")
+                                       if k in region},
+        "bounds": bounds, "surroundings": around, "size": [width, height],
+        "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
+                      "window_source": windows[n]["source"]} for n in names or ()],
+        "estimated_vision_tokens": collage.estimated_tokens(width, height),
+        "renderer": RENDERER, "egress": "rendered_pixels",
+    }
+    return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest}
 
 
 def boxes(regions):

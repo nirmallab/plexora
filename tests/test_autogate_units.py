@@ -1791,15 +1791,23 @@ def test_confidence_is_three_words_with_fixed_numbers():
 class _StubEngine:
     """Just what the transitions below call."""
 
-    def __init__(self, unit, *, split=(), rounds=True, **options):
+    def __init__(self, unit, *, split=(), rounds=True, points=(), **options):
         self.record = {"units": {f"{unit['project']}::{unit['marker']}": unit}}
         self.options = options
         self.split = list(split)
         self.rounds = rounds
+        self.points = [{"id": f"p:{v:g}", "low": v, "sources": ["gmm"]} for v in points]
         self.finalized = []
+        self.settled = []
 
     def rounds_left(self, unit):
         return self.rounds
+
+    def lattice_for(self, unit):
+        return {"points": self.points}
+
+    def settle(self, unit):
+        self.settled.append(unit["state"])
 
     def split_row(self, unit, a, b):
         return [{"id": f"split:{v:g}", "low": v} for v in self.split if min(a, b) < v < max(a, b)]
@@ -1855,8 +1863,147 @@ def test_a_whole_image_check_does_not_overrule_rows_that_judged_the_cells():
     unit = {"project": "p", "marker": "CD45", "candidate": 7.76, "state": "regression_confirm",
             "judged": [[7.76, 7.93, "own_stain"]], "directions": ["down"]}
     packet = {"units": [{"project": "p", "marker": "CD45"}]}
-    engine = _StubEngine(unit, whole_image_moves=False)
+    engine = _StubEngine(unit, whole_image_moves=False, whole_image_reopen=False)
     out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
     assert out["kept"] and unit["candidate"] == 7.76 and engine.finalized
     assert unit["whole_image_disagreed"] == "too_low"
     assert "whole_image_disagreed" in unit["look_flags"]
+
+
+# -- whole-image "too low" reopens the walk; a lone clear region is looked at again --
+
+
+def _reopened_unit():
+    """p193 CD31: the walk stopped at 4.94 under a mixed row, the whole image
+    said too low; the person's gate is 5.79."""
+    return {"project": "p", "marker": "CD31", "candidate": 4.94, "state": "regression_confirm",
+            "judged": [[4.86, 4.94, "neighbour_only"], [4.94, 5.10, "mixed"]],
+            "directions": ["up"], "rounds": 1}
+
+
+def test_a_whole_image_too_low_after_the_walk_looks_up_once_more():
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import ConfirmAnswer
+
+    packet = {"units": [{"project": "p", "marker": "CD31"}]}
+    unit = _reopened_unit()
+    engine = _StubEngine(unit, points=(5.10, 5.30, 5.60), whole_image_moves=False,
+                         whole_image_reopen=True)
+    out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
+    assert out["reopened"] and unit["state"] == "awaiting_t4" and unit["direction"] == "up"
+    assert unit["whole_image_reopened"] == {"at": 4.94} and not engine.finalized
+    # Once only: the second "too low" keeps the gate, at low confidence.
+    unit["state"] = "regression_confirm"
+    out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
+    assert out["kept"] and unit["whole_image_disagreed"] == "too_low" and engine.finalized
+    # Off, nothing above, no round left, or "too high": as before.
+    for engine in (_StubEngine(_reopened_unit(), points=(5.1,), whole_image_moves=False,
+                               whole_image_reopen=False),
+                   _StubEngine(_reopened_unit(), points=(), whole_image_moves=False,
+                               whole_image_reopen=True),
+                   _StubEngine(_reopened_unit(), points=(5.1,), rounds=False,
+                               whole_image_moves=False, whole_image_reopen=True)):
+        unit = engine.record["units"]["p::CD31"]
+        out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
+        assert out["kept"] and "whole_image_reopened" not in unit
+    unit = _reopened_unit()
+    engine = _StubEngine(unit, points=(5.1,), whole_image_moves=False, whole_image_reopen=True)
+    out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_high"))
+    assert out["kept"] and "whole_image_reopened" not in unit
+
+
+def _reopened_t4(points):
+    unit = _reopened_unit()
+    unit.update(state="awaiting_t4", direction="up", whole_image_reopened={"at": 4.94},
+                candidates={f"c{i + 1}": v for i, v in enumerate(points)},
+                candidate_steps={f"c{i + 1}": f"p:{v:g}" for i, v in enumerate(points)})
+    return unit
+
+
+def test_the_reopened_look_passes_a_first_mixed_row_and_stops_at_own_stain():
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import T4Answer
+
+    packet = {"units": [{"project": "p", "marker": "CD31"}], "evidence": {}}
+    unit = _reopened_t4((5.10, 5.30, 5.60))
+    engine = _StubEngine(unit, split_mixed=False)
+    out = transitions.apply_t4(engine, packet, T4Answer(
+        intervals={"i1": "mixed", "i2": "neighbour_only", "i3": "own_stain"},
+        confidence="fairly_sure"))
+    assert unit["candidate"] == 5.30 and out["rows_passed"] == 2
+    assert unit["whole_image_reopened"] == {"at": 4.94, "looked": "mixed", "to": 5.30}
+    assert unit["state"] == "awaiting_regression" and engine.settled
+    # Only the reopened look: the next mixed first row stops the walk as before.
+    unit["state"], unit["direction"] = "awaiting_t4", "up"
+    unit["candidates"] = {"c1": 5.60}
+    unit["candidate_steps"] = {"c1": "p:5.6"}
+    out = transitions.apply_t4(_StubEngine(unit, split_mixed=False), packet,
+                               T4Answer(intervals={"i1": "mixed"}, confidence="fairly_sure"))
+    assert out["chosen"] == "keep" and unit["candidate"] == 5.30
+
+
+def test_a_reopened_look_that_moves_nothing_keeps_the_gate_and_never_turns():
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import T4Answer
+
+    packet = {"units": [{"project": "p", "marker": "CD31"}], "evidence": {}}
+    unit = _reopened_t4((5.10, 5.30))
+    engine = _StubEngine(unit, split_mixed=False)
+    out = transitions.apply_t4(engine, packet, T4Answer(
+        intervals={"i1": "own_stain", "i2": "own_stain"}, confidence="sure"))
+    assert out["reopened"] and unit["candidate"] == 4.94 and engine.finalized
+    assert unit["whole_image_disagreed"] == "too_low" and "t4_reversed" not in unit
+
+
+def test_a_lone_clear_region_is_one_clear_among_judged_others():
+    from plexora.plugins.gating.server.autogate import absence
+
+    assert absence.lone_clear({"r1": "few", "r2": "few", "r3": "few", "r4": "clear"}) == "r4"
+    assert absence.lone_clear({"r1": "clear", "r2": "clear", "r3": "none"}) is None
+    assert absence.lone_clear({"r1": "clear", "r2": "cannot_tell", "r3": "none"}) is None
+    assert absence.lone_clear({"r1": "none", "r2": "none"}) is None
+    box = absence.surroundings({"x": 10, "y": 900, "width": 100, "height": 100}, (1000, 1000))
+    assert box == {"x": 0, "y": 700, "width": 300, "height": 300}
+    assert absence.surroundings({"x": 0, "y": 0, "width": 100, "height": 100},
+                                (200, 500))["width"] == 200
+
+
+def _absence_unit():
+    return {"project": "p", "marker": "PDL1", "candidate": 6.98, "state": "awaiting_absence"}
+
+
+def test_a_lone_clear_region_is_looked_at_again_before_it_keeps_the_marker_open():
+    """LSP11761 PD-L1 (no positives to the person): regions few, few, few
+    and one clear beside an edge flag kept it open."""
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import AbsenceAnswer
+
+    packet = {"units": [{"project": "p", "marker": "PDL1"}],
+              "allowed": {"regions": ["r1", "r2", "r3", "r4"]}}
+    close = {"units": [{"project": "p", "marker": "PDL1"}], "allowed": {"regions": ["r1"]}}
+    unit = _absence_unit()
+    engine = _StubEngine(unit, absence_confirm=True)
+    out = transitions.apply_absence(engine, packet, AbsenceAnswer(
+        regions={"r1": "few", "r2": "few", "r3": "few", "r4": "clear"}))
+    assert out["close_look"] == "r4" and unit["absence_confirming"] == "r4"
+    assert unit["state"] == "awaiting_absence" and len(unit["absence_rounds"]) == 1
+    # The close look takes it back: the picture says absent, so another round.
+    out = transitions.apply_absence(engine, close, AbsenceAnswer(regions={"r1": "none"}))
+    assert out["again"] and unit["state"] == "awaiting_absence"
+    assert unit["absence_rounds"][0]["words"]["r4"] == "none"
+    assert unit["absence_rounds"][0]["close_look"] == {"region": "r4", "word": "none"}
+    # A close look that still sees cells keeps the marker open.
+    unit = _absence_unit()
+    engine = _StubEngine(unit, absence_confirm=True)
+    transitions.apply_absence(engine, packet, AbsenceAnswer(
+        regions={"r1": "few", "r2": "none", "r3": "few", "r4": "clear"}))
+    out = transitions.apply_absence(engine, close, AbsenceAnswer(regions={"r1": "clear"}))
+    assert out["absent"] is False and unit["state"] == "awaiting_t2"
+    assert unit["absence"]["clear"] == ["1:r4"]
+    # Switched off, a lone clear region keeps the marker open at once.
+    unit = _absence_unit()
+    out = transitions.apply_absence(_StubEngine(unit, absence_confirm=False), packet,
+                                    AbsenceAnswer(regions={"r1": "few", "r2": "few",
+                                                           "r3": "few", "r4": "clear"}))
+    assert out["absent"] is False and "absence_confirming" not in unit
+

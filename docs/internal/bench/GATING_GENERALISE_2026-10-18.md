@@ -63,3 +63,27 @@ LSP11761 PD-L1 (above), CD11c 7.35 (6.6, the start; both engines), CD68 6.44 (7.
 ## Next
 
 The bar the plan set is judged on held-out images: twelve PCA images, both arms, two runs each.
+
+## Addendum: three fixes on the remaining misses (same day)
+
+From the session records above: a whole-image `too_low` after a walk pointed toward the user's
+gate 6 times of 7 but only lowered confidence; CD31 and SMA sat below the user on 9 of 10
+images (mean -0.33; LSP11321 SMA: round cells in a fibre-bordered cluster read positive);
+LSP11761 PD-L1 stayed open on one `clear` region of four. Three switches were built and tested
+with keep / discard rules written before the runs (`~/gatevision/fix/PLAN.md`): solo propose
+sessions on a fresh scratch copy, blind subagent readers. Arm X: all three on, 17 markers
+(the fixes' targets, the CD31/SMA pair on all five images, and the three real populations that
+had shown one clear region); arm Y: the structure wording off, CD31 and SMA on all five images.
+
+| fix | result | rule | verdict |
+|---|---|---|---|
+| `whole_image_reopen` | 3 reopens (LSP11361 CD31 in both arms, p193 E-cadherin); all moved toward the user: -0.34 -> -0.19, -0.34 -> -0.27, -0.12 -> -0.07 (mean gap 0.27 -> 0.18) | >= 3 events, more toward than away, mean gap smaller | **kept** |
+| structure wording (CD31 / SMA: stain running past a cell belongs to the vessel or fibre) | CD31/SMA mean gap X 0.253 vs Y 0.291 (signed -0.22 vs -0.27), 0.4+ off 2 vs 2; better on 5, worse on 3 (by 0.03-0.04), equal on 2 | MAE lower by >= 0.05 and no more 0.4+ | **discarded** (right direction, under the bar) |
+| `absence_confirm` | LSP11761 PD-L1 closed (two pictures, a lone clear region in each, both `few` close up): 0 cells positive vs the user's 2 of 22,117 (was 130 at 6.98). lsp11385 CD20L's lone clear region read `clear` close up and stayed open; LSP11361 CD11c, p193 CD20, LSP11361 CD68 showed two or more clear regions and stayed open | target closes, no real population closed | **kept** |
+
+Both arms' CD31/SMA beat the earlier full run on the same ten (0.329); part of that is the
+reopen, part reader variance (one reader per session). Still wrong: LSP11321 SMA (-0.86 / -0.94:
+the readers call those cells positive with either wording), p193 CD31 (-0.61 / -0.80), and
+LSP11361 CD11c +0.38 (-0.24 in the full run: reader variance; no fix touched it). 112 packets
+for 27 markers (4.15 each; solo sessions carry their own set-up packet).
+
