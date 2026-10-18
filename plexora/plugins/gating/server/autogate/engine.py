@@ -1576,11 +1576,14 @@ class Engine(BaseEngine):
             return None
         kind = ASKS[unit["state"]]
         # The absence check is a marker's first look when it has one: the same
-        # scored start, lineage screen and wait for children come first.
+        # scored start and wait for children come first. The lineage screen
+        # waits for the cell look: whether any cell carries the stain comes
+        # before whose cells the brightest are (LSP11761 PD1, absent to the
+        # person, was closed for review by the screen and never shown).
         first = kind in ("t2_confirm", "absence_check")
         if first and unit.get("scoring") is None:
             self.propose(unit)
-        if first and self.lineage_screen(unit):
+        if kind == "t2_confirm" and self.lineage_screen(unit):
             return None
         if first and self.defer_for_children(unit):
             return None
