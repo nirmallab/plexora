@@ -207,6 +207,7 @@ def resolve_windows(session, record, names):
         _index, found = resolve_channel(name, channel_records)
         wanted[found.get("fullname") or found.get("name")] = source_image.channel_key(found)
     have = calibration.current(session, record.name, list(wanted)).get("channels") or {}
+    have = {n: calibration.drawn_entry(have[n]) for n in wanted}
     return {n: {"key": k, "window": have[n]["window"],
                 "curve": calibration.entry_curve(have[n]),
                 "source": have[n].get("window_source", "calib"),

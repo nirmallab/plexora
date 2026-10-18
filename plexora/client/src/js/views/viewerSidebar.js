@@ -89,9 +89,10 @@ const GATING_POLL_FIRST_MS = 1500;
 //: with -- or "legacy", a row saved before rows said, which counts as the
 //: user's. Only auto, default and gating are ever replaced by a gating window.
 const REPLACEABLE_SOURCES = new Set(["auto", "default", "gating"]);
-//: The viewer's Log brightness when nothing saved says otherwise: on. A
-//: scoped copy of the sidebar (a figure panel's) keeps Linear, as before.
-const DEFAULT_CURVE_MODE = "asinh";
+//: The viewer's Log brightness when nothing saved says otherwise: off --
+//: Linear, the scale every picture is drawn on by default
+//: (`calibration.SCALE`). An image whose rows were saved with Log on keeps it.
+const DEFAULT_CURVE_MODE = "linear";
 
 class ViewerSidebar {
     constructor(config, columns, dataLayer, eventHandler, channelList, options) {

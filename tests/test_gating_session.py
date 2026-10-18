@@ -1292,9 +1292,14 @@ def test_the_contrast_check_comes_before_the_first_look(tmp_path):
     cd3 = record["channels"]["CD3"]
     assert cd3["window"][1] == pytest.approx(cd3["columns"][1]["white"])
     assert cd3["chosen_by"] == "vision"
-    # Every later picture draws with the choice.
+    # Every later picture draws with the choice, on the default (linear) scale:
+    # the chosen column's gain over the marker's linear window, no curve.
     drawn = collage.resolve_windows(session, session.project("gsynth"), {"CD3": None})
-    assert drawn["CD3"]["window"] == pytest.approx(cd3["window"])
+    assert calibration.SCALE == "linear" and drawn["CD3"]["curve"] is None
+    assert drawn["CD3"]["window"] == pytest.approx(calibration.linear_window(cd3))
+    unchosen = calibration.linear_window({**cd3, "choice": None})
+    assert drawn["CD3"]["window"][1] == pytest.approx(
+        calibration.gain_white(unchosen, None, cd3["choice"]["gain"]))
     following, _ = next_packet(session, sid)
     assert following is None or following["kind"] != "display_setup"
     status = ok(invoke(session, "gating_session_status", {"session_id": sid}))

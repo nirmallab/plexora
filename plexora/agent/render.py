@@ -676,9 +676,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
                 if channel.window == "auto" and calibration is not None:
                     calibrated = display.window_for(
                         calibration, found.get("fullname") or found.get("name"))
-                    curve = display.entry_curve(
+                    curve = display.entry_curve(display.drawn_entry(
                         (calibration.get("channels") or {}).get(
-                            found.get("fullname") or found.get("name")))
+                            found.get("fullname") or found.get("name"))))
                 if calibrated[0] is not None:
                     window, window_source = calibrated
                 elif channel.window in ("auto", "percentiles"):

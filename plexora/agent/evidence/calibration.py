@@ -92,6 +92,16 @@ VETOES = {"negative_level": 0.35, "clipped_share": 0.05, "bright_level": 0.3}
 #: (every display level times it, black kept: `view_spec`): the column a
 #: check chose is judged on crops, and a canvas reads a little dark at it.
 VIEW_GAIN = 1.1
+#: The intensity scale every picture is drawn on by default -- a reader's
+#: evidence, the contrast check, the mirrored viewer and the viewer's canvas:
+#: "linear", or "log" (the calibrated asinh curve). Linear since 2026-10-18:
+#: on lsp35766_p193 the asinh curve lifted the stroma's haze to the level of
+#: CD8a's weak rings and the nuclei (drawn at their overview p99) washed the
+#: tiles out; drawn as the canvas draws Linear, the same cells read as their
+#: own stain and the walk went from 8.00 to 7.69 (the user's gate 7.3). The
+#: record keeps both scales (`window`/`curve` and `linear_window`), so the
+#: viewer's Log brightness switch still offers Log (`view_spec`).
+SCALE = "linear"
 #: [cal] the display levels the viewer draws the nuclear stain at
 #: (`nuclear_view`): a typical nucleus's brightest structure, and the bright
 #: nuclei's -- under a marker's TITRE_LEVEL x VIEW_GAIN, so the nuclei are a
@@ -266,6 +276,31 @@ def linear_window(entry) -> list:
     return [black, gain_white([black, white], None, float(choice.get("gain") or 1.0))]
 
 
+def drawn_entry(entry):
+    """`entry` as a picture draws it on the default scale (`SCALE`). Linear: a
+    cell-calibrated marker at its linear window (a vision choice's gain
+    included, `linear_window`), the nuclear stain at its view's linear window
+    -- a dim backdrop the markers read over, never its overview p99 -- and no
+    curve. Log: as stored. Every evidence window is read through this
+    (`window_for`, `display_spec`); `view_spec` offers the viewer both."""
+    if not entry or SCALE != "linear":
+        return entry
+    if entry.get("role") == "nuclear":
+        window = (entry.get("view") or {}).get("linear_window") or entry["window"]
+    else:
+        window = linear_window(entry)
+    return {**entry, "window": [float(v) for v in window], "curve": None}
+
+
+def linear_columns(entry) -> list:
+    """The brightness ladder over a marker's linear window, any choice left
+    out: [{id, gain, white}], c3 the rule's own. A column picked from it is a
+    gain `linear_window` applies, as `columns_for`'s is over the Log rule."""
+    base = linear_window({**entry, "choice": None})
+    return [{"id": cid, "gain": gain, "white": gain_white(base, None, gain)}
+            for cid, gain in zip(COLUMN_IDS, GAINS)]
+
+
 def entry_curve(entry):
     """A record entry's curve (`display_curve`), None for linear."""
     from plexora.server.utils import display_curve
@@ -286,15 +321,24 @@ def apply_choice(entry, choice) -> dict:
             "chosen_by": choice.get("chosen_by", "vision"), "choice": dict(choice)}
 
 
+def chosen_on_scale(record, name) -> bool:
+    """Whether a check chose `name`'s column on the ladder of the scale
+    pictures are drawn on now (`SCALE`); a choice stored before choices said
+    was made on Log's."""
+    choice = ((record or {}).get("choices") or {}).get(name)
+    return bool(choice) and choice.get("scale", "log") == SCALE
+
+
 def needs_choice(record, name) -> bool:
     """True for a marker whose window a vision check should look at: drawn by
-    the cell rule, with bright cells to show, and not chosen yet. A dim or
-    floored marker is asked too: it is the hardest to draw, and the floor is
-    only the rule's guess at keeping its noise off white."""
+    the cell rule, with bright cells to show, and not chosen yet on the scale
+    pictures are drawn on (a Log-ladder choice is asked again on Linear's). A
+    dim or floored marker is asked too: it is the hardest to draw, and the
+    floor is only the rule's guess at keeping its noise off white."""
     entry = ((record or {}).get("channels") or {}).get(name) or {}
     if entry.get("role") != "marker" or not entry.get("rule") or not entry.get("columns"):
         return False
-    if name in ((record or {}).get("choices") or {}):
+    if chosen_on_scale(record, name):
         return False
     return bool((entry.get("cells") or {}).get("bright"))
 
@@ -683,7 +727,9 @@ def _record_choices(project, choices):
     record = load(project)
     if record is None:
         return None, revision(project)
-    known = {k: v for k, v in (choices or {}).items() if k in (record.get("channels") or {})}
+    # Each choice says which ladder it was picked on (`chosen_on_scale`).
+    known = {k: {**v, "scale": v.get("scale", SCALE)} for k, v in (choices or {}).items()
+             if k in (record.get("channels") or {})}
     record = {**record, "choices": {**(record.get("choices") or {}), **known}}
     record = apply_choices(record)
     return record, save(project, record)
@@ -764,7 +810,7 @@ def current(session, project, channels) -> dict:
 
 def window_for(record, name):
     """(window, source) for a channel from a calibration record, or (None, None)."""
-    entry = ((record or {}).get("channels") or {}).get(name)
+    entry = drawn_entry(((record or {}).get("channels") or {}).get(name))
     if not entry:
         return None, None
     return list(entry["window"]), entry.get("window_source", "calib")
@@ -777,7 +823,7 @@ def display_spec(record, name, px_per_px=None) -> dict | None:
     record has no entry for it."""
     from plexora.server.utils import display_curve
 
-    entry = ((record or {}).get("channels") or {}).get(name)
+    entry = drawn_entry(((record or {}).get("channels") or {}).get(name))
     if not entry:
         return None
     base = [float(v) for v in entry["window"]]

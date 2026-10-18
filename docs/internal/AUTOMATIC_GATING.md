@@ -275,12 +275,26 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   each cell on its own disc, floored where the context window draws
   `crops.MORPHOLOGY_FLOOR`, so a negative stays dark. Outlines are thin and
   grey; the ticks mark the centroid, which every project has.
+- **Pictures are drawn linear.** The record keeps both scales -- the asinh
+  window and curve above and `linear_window` (black kept, the titre at
+  `TITRE_LEVEL`, a check's gain over that) -- and every picture draws on
+  `calibration.SCALE`, `linear` by default (`drawn_entry`, read through
+  `window_for`/`display_spec`/`resolve_windows`: the cell tiles, the fields,
+  the absence regions, the whole image, the contrast check's ladder, the
+  mirrored viewer, QC's sheets): a marker at its linear window, the nuclear
+  stain at its view's linear window (a dim backdrop, not its overview p99),
+  no curve. On lsp35766_p193 (2026-10-18) the asinh curve lifted the stroma's
+  haze to the level of CD8a's weak rings and the nuclei washed the tiles out:
+  the first look read glow and walked up (8.00, review); drawn as the canvas
+  draws Linear, the same cells read as their own stain and the walk came down
+  to 7.69 (the user's gate 7.3). The memo keys carry the scale.
 - **A model checks the brightness, code sets it.** `display_setup` (per
   image, after the panel context, before that image's first look;
   `SessionOptions.display_check`, `vision` by default) shows up to
   `ENGINE["display_batch"]` markers in rows and the calibration's brightness
-  ladder in columns (`calibration.columns_for`: every display level times
-  `GAINS`, c1 darker to c5 brighter, c3 the rule) -- every marker with bright
+  ladder in columns (on the linear scale `calibration.linear_columns`, gains
+  over the linear window; on log `columns_for`, every display level times
+  `GAINS`; c1 darker to c5 brighter, c3 the rule) -- every marker with bright
   cells to show, the dim and floored ones too (`calibration.needs_choice`:
   they are the hardest to draw) -- each a 2 x 2 block of a
   background, a dim and two bright cells, clipped pixels in a fixed red
@@ -319,8 +333,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   too bright in turn, the black end moved for two markers in three, a small
   overshoot and correction for every second or third, a gradual zoom on one
   of its bright cells, `focus`, for every fourth). The window shown is the one
-  the canvas keeps: the choice's asinh window with Log brightness on, its
-  `linear_window` off. The command is acknowledged at once, so the next packet
+  the canvas keeps: its `linear_window` with Log brightness off (the default),
+  the choice's asinh window on. The command is acknowledged at once, so the next packet
   goes to the model while it plays, and the tab holds the view commands that
   arrive meanwhile and runs them after it (only the newest look). A marker
   the rule or an earlier check settled is not played. The nuclear stain leads
@@ -336,9 +350,9 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   gating, default; a row saved before that is the user's). A window the user
   set is never replaced: on a channel a check settled (`display_contrast`
   `checked`) the Auto wand applies it (`viewerSidebar.checkedEntry`), and
-  fits the mixture otherwise. Log brightness is the viewer's default
-  (`DEFAULT_CURVE_MODE`; rows saved with it off keep it off), and that
-  default asks no HD of a streamed image -- only the user's tick does.
+  fits the mixture otherwise. Linear is the viewer's default since 2026-10-18
+  (`DEFAULT_CURVE_MODE`, Log brightness off; rows saved with Log on keep it),
+  and the default asks no HD of a streamed image -- only the user's tick does.
 - **A gate is never accepted against the direction on record.**
   `unit["direction"]` holds the way the last look's rows pointed until a
   candidate, `keep` or an about-right look replaces it; a unit closed meanwhile

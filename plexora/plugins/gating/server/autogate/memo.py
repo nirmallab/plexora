@@ -24,7 +24,8 @@ def versions() -> tuple:
     from plexora.plugins.gating.server.autogate import absence, lattice, schemas, scoring
 
     return (schemas.PROFILE_VERSION, lattice.VERSION, scoring.VERSION, calibration.VERSION,
-            collage.RENDERER, display_grid.RENDERER, absence.RENDERER)
+            f"scale:{calibration.SCALE}", collage.RENDERER, display_grid.RENDERER,
+            absence.RENDERER)
 
 
 def key(packet, images, *, versions=()) -> str:
