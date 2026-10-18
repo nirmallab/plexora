@@ -1812,6 +1812,8 @@ def test_no_clear_positive_in_any_region_closes_the_marker_before_any_look(tmp_p
     assert gate["low"] == gate["high"]
     absence = [p for p in seen if p["kind"] == "absence_check"]
     assert all(len(p["images"]) == 1 and len(p["allowed"]["regions"]) >= 2 for p in absence)
+    # Closed only after a second picture of other regions agreed.
+    assert [p["evidence"]["round"] for p in absence if p["units"][0]["marker"] == "CD4"] == [1, 2]
     assert all(p["evidence"]["guide"][0] == "absence" for p in absence)
     if final["CD8"]["state"] not in ("accepted_t1",):
         assert final["CD8"]["state"] != "no_positive_population"

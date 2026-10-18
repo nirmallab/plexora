@@ -201,7 +201,7 @@ BULK_WORDS = {
     "accepted_t1": "clean split, written for the audit sheet",
     "awaiting_t2": "waiting for a look",
     "qc_confirm": "the stain gets a look first",
-    "awaiting_absence": "waiting for a look at four regions",
+    "awaiting_absence": "waiting for a look at six regions",
     "transfer_pending": "waiting for the reference image",
     "transfer_check": "reference gate carried, waiting for a look",
     "skipped_no_channel": "no image channel, skipped",

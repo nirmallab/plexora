@@ -7,20 +7,26 @@ debris -- they close the marker with no positives ("err on the safe side")
 instead of gating noise. A mixture always splits a column in two, so the
 numbers alone never say this; the regions do.
 
-One picture per marker, before its first look: four regions of the tissue,
+One picture per marker, before its first look: six regions of the tissue,
 the marker on the engine's calibrated display with nuclei dim, nothing
 marked (the reader judges the stain, not a gate). The regions are the ones
-most likely to hold real positives if there are any (`bright`: the most
-cells well above the start's band; `high_density`: crowded tissue such as
-an aggregate) and the ones where a dim stain shows (`borderline`, `weak`).
-Per region one word (`REAL_WORDS`); the marker is absent when at least
-`MIN_JUDGED` regions were judged and none shows clear positives. A region
-without positives is no evidence of absence while another shows them: the
-weak and borderline regions are chosen to have few.
+most likely to hold real positives if there are any (`clear_positive`: the
+most cells well above the start's band; `bright`: the brightest of them; `high_density`: crowded tissue such as an aggregate) and the ones
+where a dim stain shows (`borderline`, `weak`, `sparse`). Per region one
+word (`REAL_WORDS`); a picture says absent when at least `MIN_JUDGED`
+regions were judged and none shows clear positives. A region without
+positives is no evidence of absence while another shows them: the weak and
+borderline regions are chosen to have few.
+
+A marker is closed only when `ROUNDS` pictures of different regions (each
+avoiding the ones shown) say absent: four regions chosen around the start
+missed LSP11361's dim, widespread E-cadherin (the person gates 26 % of the
+cells positive) and closed it, where six regions over two packets of the
+region-look study had shown it clear in three.
 
 Measured before it was built (docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md):
-over 51 markers on three PCA images it closed the two the person called
-absent and that the classic engine had gated, and no other.
+over 51 markers on three PCA images, six regions a marker closed the two the
+person called absent and that the classic engine had gated, and no other.
 """
 
 from __future__ import annotations
@@ -30,7 +36,14 @@ import io
 import numpy as np
 
 #: The region classes shown, in panel order (`gate_sampling.CLASSES`).
-CLASSES = ("bright", "high_density", "borderline", "weak")
+CLASSES = ("clear_positive", "bright", "high_density", "borderline", "weak", "sparse")
+
+#: Panels a row of the picture.
+COLUMNS = 3
+
+#: Pictures of different regions that must all say absent before a marker
+#: is closed (a second costs a packet only on a marker about to close).
+ROUNDS = 2
 
 #: The words a region takes: `clear` -- cells clearly positive by their own
 #: stain; `few` -- one or two such cells; `none`; `cannot_tell`.
@@ -44,7 +57,7 @@ MIN_JUDGED = 2
 #: across, rings and fills visible.
 FIELD_UM = 200.0
 
-#: [cal] one region's side in output pixels (2 x 2 regions a picture).
+#: [cal] one region's side in output pixels (3 x 2 regions a picture).
 PANEL_PX = 400
 
 #: [cal] the start's band, in background core sds each side: the cells near
@@ -54,7 +67,7 @@ BAND_SD = 1.0
 
 #: The renderer's version (`memo.versions`): a change here must not replay
 #: answers given to the old pictures.
-RENDERER = "plexora.gating.absence/1"
+RENDERER = "plexora.gating.absence/2"
 
 CAPTION_H = 14
 GAP = 4
@@ -83,9 +96,11 @@ def band(unit, col):
     return (float(col.from_fit(g - BAND_SD * sd)), float(col.from_fit(g + BAND_SD * sd)))
 
 
-def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None):
+def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None,
+           avoid=()):
     """{png, image, format, manifest, fields} for one marker's absence
-    picture: up to four regions, unmarked, captioned r1..r4."""
+    picture: up to six regions, unmarked, captioned r1..r6, none overlapping
+    a box in `avoid` ((x0, y0, x1, y1), full-resolution pixels)."""
     from PIL import Image, ImageDraw
 
     from plexora.agent import gate_sampling, render as rendermod, sections
@@ -123,12 +138,13 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     image_size = (record.image.width or 1, record.image.height or 1)
     sampled = gate_sampling.sample_gate_validation_regions(
         ds, marker, float(unit["candidate"]), top, field_px=side, image_size=image_size,
-        n_per_class=1, classes=CLASSES, seed=seed, band=the_band)
+        n_per_class=1, classes=CLASSES, seed=seed, band=the_band, avoid=tuple(avoid))
     by_class = {f["class"]: f for f in sampled["fields"]}
     found = [by_class[c] for c in CLASSES if c in by_class]
 
-    width = 2 * PANEL_PX + GAP
-    height = TITLE_H + 2 * (PANEL_PX + CAPTION_H) + GAP
+    rows = max(1, -(-len(found) // COLUMNS))
+    width = COLUMNS * PANEL_PX + (COLUMNS - 1) * GAP
+    height = TITLE_H + rows * (PANEL_PX + CAPTION_H) + (rows - 1) * GAP
     canvas = Image.new("RGB", (width, height), collage.BG)
     draw = ImageDraw.Draw(canvas)
     font, small = collage._font(11), collage._font(10)
@@ -138,8 +154,8 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     records = []
     for index, region in enumerate(found):
         name = f"r{index + 1}"
-        x = (index % 2) * (PANEL_PX + GAP)
-        y = TITLE_H + (index // 2) * (PANEL_PX + CAPTION_H + GAP)
+        x = (index % COLUMNS) * (PANEL_PX + GAP)
+        y = TITLE_H + (index // COLUMNS) * (PANEL_PX + CAPTION_H + GAP)
         plane = sections.field_plane(ds, region["bounds"])
         spec = RenderInput(project=record.name, bounds=Bounds(**region["bounds"]),
                            channels=layers, segmentation="none",
@@ -161,7 +177,7 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
         "classes_without_field": [c for c in CLASSES if c not in by_class],
         "band": list(the_band) if the_band else None, "field_px": side,
         "field": {k: field[k] for k in ("field_um", "um_per_px", "source", "label")},
-        "seed": int(seed), "size": [width, height],
+        "seed": int(seed), "size": [width, height], "avoided": len(tuple(avoid)),
         "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
                       "window_source": windows[n]["source"]} for n in names],
         "estimated_vision_tokens": collage.estimated_tokens(width, height),
@@ -169,3 +185,13 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     }
     return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest,
             "fields": records}
+
+
+def boxes(regions):
+    """The (x0, y0, x1, y1) boxes of regions already shown (`avoid`)."""
+    out = []
+    for region in regions or ():
+        b = region.get("bounds") or {}
+        if b:
+            out.append((b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
+    return out

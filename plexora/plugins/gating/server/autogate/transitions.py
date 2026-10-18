@@ -569,16 +569,22 @@ def apply_absence(engine, packet, answer):
                          detail={"regions": regions})
     _note(unit, answer)
     words = {r: answer.regions[r] for r in regions}
+    rounds = unit.setdefault("absence_rounds", [])
+    rounds.append({"words": words, "regions": unit.pop("absence_regions", None) or []})
+    unit["absence"] = {"words": words, "rounds": len(rounds),
+                       "clear": [f"{len(rounds)}:{r}" for r, w in words.items() if w == "clear"]}
+    if absence.absent(words) and len(rounds) < absence.ROUNDS:
+        # Absent in these regions: shown other regions before anything closes.
+        unit["state"] = "awaiting_absence"
+        return _outcome(unit, absent=None, again=True)
     unit["absence_done"] = True
-    unit["absence"] = {"words": words, "regions": unit.pop("absence_regions", None) or [],
-                       "clear": [r for r, w in words.items() if w == "clear"]}
     after = unit.pop("absence_after", None)
     if absence.absent(words):
         state = after or "no_positive_population"
-        judged = sum(w in ("few", "none") for w in words.values())
+        judged = sum(w in ("few", "none") for r in rounds for w in r["words"].values())
         engine.close(unit, state,
                      f"no region showed a cell clearly positive by its own stain ({judged} "
-                     "regions judged); the gate is put at the maximum"
+                     f"regions judged in {len(rounds)} pictures); the gate is put at the maximum"
                      + (" -- the technical check's verdict, confirmed" if after else ""),
                      **({"confidence": "failed_qc"} if state == "technically_failed" else {}))
         return _outcome(unit, absent=True)

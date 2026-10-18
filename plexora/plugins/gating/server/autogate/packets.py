@@ -102,7 +102,7 @@ READING_GUIDE = {
                       "and candidate c1, row i2 between c1 and c2, and so on. Judge every row "
                       "on its own"),
     "sheet": SCALES_READING,
-    "absence": ("an absence check: up to four regions of one marker, each about 200 um "
+    "absence": ("an absence check: up to six regions of one marker, each about 200 um "
                 "across, the marker in yellow on the session's display, nuclei dim blue, no "
                 "cell marked and no threshold anywhere. The regions are where real positives "
                 "would most likely show (the most bright cells, crowded tissue) and where a "
@@ -112,8 +112,8 @@ READING_GUIDE = {
                 "unstained cells beside them show; `few` -- one or two such cells; `none` -- "
                 "only that floor, light at the edge a cell shares with a bright neighbour, "
                 "debris, specks or a smear; `cannot_tell`. Nothing is gated from these "
-                "words: a marker no region shows a clear positive for is closed with no "
-                "positives, as a person would"),
+                "words: a marker no region shows a clear positive for, in this picture and a "
+                "second of other regions, is closed with no positives, as a person would"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -1064,9 +1064,11 @@ def absence_check(engine, units):
         ds, channel = _unit_channel(engine, unit)
     except AgentError:
         return _absence_skipped(engine, unit, "no image channel to draw")
+    earlier = unit.get("absence_rounds") or []
     view = absence.render(engine.call.session, ds, marker=unit["marker"], channel=channel,
                           unit=unit, seed=_seed(engine), fmt=_fmt(engine),
-                          pixel=engine.pixel_for(ds.name))
+                          pixel=engine.pixel_for(ds.name),
+                          avoid=[b for r in earlier for b in absence.boxes(r["regions"])])
     regions = [r["region"] for r in view["fields"]]
     if len(regions) < absence.MIN_JUDGED:
         return _absence_skipped(engine, unit, "fewer regions than the check needs",
@@ -1074,7 +1076,8 @@ def absence_check(engine, units):
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     packet = {
-        "question": (f"{unit['marker']} ({ds.name}): {len(regions)} regions of the tissue, "
+        "question": (f"{unit['marker']} ({ds.name}): {len(regions)} "
+                     + ("other " if earlier else "") + "regions of the tissue, "
                      f"the {stain} stain in yellow, nuclei dim blue, NO cell marked. For "
                      "EVERY region: does it show cells clearly positive by their OWN stain "
                      "-- brighter than the faint floor the unstained cells there show, where "
@@ -1083,6 +1086,7 @@ def absence_check(engine, units):
                      "smears; `cannot_tell`)? Judge the cells, not the brightness of the "
                      "picture."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
+                     "round": len(earlier) + 1,
                      "regions": [{k: r[k] for k in ("region", "class", "cells") if k in r}
                                  for r in view["fields"]],
                      "field": view["manifest"]["field"].get("label"),

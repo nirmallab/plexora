@@ -143,7 +143,7 @@ NARRATION = {
     "regression_confirm": "Checking whether the {marker} threshold is consistent across "
                           "representative tissue regions.",
     "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
-    "absence_check": "Looking for cells clearly positive for {marker} in four regions of the "
+    "absence_check": "Looking for cells clearly positive for {marker} in six regions of the "
                      "tissue before trusting any threshold.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
@@ -161,7 +161,7 @@ EVIDENCE_LABELS = {
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
     "context_sheet": "{marker} across the tissue",
-    "absence_regions": "{marker} in four regions, nothing marked",
+    "absence_regions": "{marker} in six regions, nothing marked",
     "strip": "Markers at their thresholds",
     "display_grid": "Markers at five brightnesses",
 }
