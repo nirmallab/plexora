@@ -191,6 +191,8 @@ class _T4Engine:
         self.unit, self.lat = unit, lattice
         self.record = {"units": {"p::M": unit}}
         self.settled = []
+        # The rules these tests pin, from before a mixed row could be split.
+        self.options = {"split_mixed": False}
 
     def lattice_for(self, unit):
         return self.lat

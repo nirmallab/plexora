@@ -351,6 +351,22 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   (`Engine._review_gate`) -- with method `needs_review` and confidence
   `manual_review`. Only a gate the user changed in the viewer mid-session is
   not overwritten. Failed and all-negative markers keep their empty gate.
+- **No marker is closed without a look.** Empty, failed or review
+  (`engine.JUDGED_STATES`) needs a packet that showed the marker; numbers
+  only raise a suspicion a look settles. The lineage screen before the first
+  look only records `lineage_suspect`; a population still on an exclusive
+  lineage after its looks gets a whole-image look (`Engine.lineage_by_eye`),
+  and `real_signal` keeps the gate the looks reached (confidence capped at
+  moderate). The `replan` planner may call a marker absent or failed only
+  when a picture did (`replan.seen_failing`); a gate a failed partner alone
+  placed is looked at again from a re-scored start, not closed
+  (`replan.demote_led`). The exceptions say why no look could settle it
+  (`close(unlooked=...)`: the user's edit, data that could not be read, a
+  question for the user); any other unlooked judgement is logged
+  `closed_without_look` and fails the session tests. lsp35766_p193 CD8a
+  (2026-10-18) was closed for review by the lineage numbers before any look,
+  at its scored start (8.0, 1 % positive); the user found the CD3+ cells the
+  run missed were mostly CD8+.
 - **Structural channels are never gated.** A nuclear counterstain or an
   autofluorescence / blank channel resolves to the vocabulary's `DNA` /
   `Autofluorescence` entry by name pattern (`vocabulary.structural`: `Nucleus2`,

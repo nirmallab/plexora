@@ -148,6 +148,7 @@ def drive(session, session_id, agent, limit=60):
     for _ in range(limit):
         if result["state"] != "decision":
             assert result["state"] in ("decided", "done"), result
+            assert not unlooked_closes(session_id)
             return seen
         packet = result["packet"]
         seen.append(packet)
@@ -156,6 +157,17 @@ def drive(session, session_id, agent, limit=60):
             "answer": agent.answer(packet)}))
         result = answered["next"]
     raise AssertionError("the session did not finish")
+
+
+def unlooked_closes(session_id):
+    """Markers a session judged (empty, failed, review) with no look behind it
+    (`Engine.close`): none, ever."""
+    from plexora import paths
+
+    record = json.loads((paths.data_root() / ".agent" / "sessions" / "gating" / session_id
+                         / "session.json").read_text())
+    return {u["marker"]: u.get("reason") for u in record["units"].values()
+            if u.get("closed_unlooked")}
 
 
 def start(session, **options):

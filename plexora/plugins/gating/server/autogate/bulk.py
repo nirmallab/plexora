@@ -107,7 +107,8 @@ def settle_unit(engine, unit, prepared):
     unit["thresholded"] = prepared.get("thresholded")
     if "close" in prepared:
         state, reason = prepared["close"]
-        engine.close(unit, state, reason)
+        # The user's own gate, or data that could not be read: no look can settle it.
+        engine.close(unit, state, reason, unlooked="not_profiled")
         return
     fill_unit(unit, prepared)
     record = engine.record
