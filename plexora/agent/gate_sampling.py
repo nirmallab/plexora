@@ -129,13 +129,16 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high, left=N
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
                                    n_per_class=2, classes=DEFAULT_CLASSES, seed=0,
-                                   band=None, max_fields=MAX_FIELDS, avoid=(), min_fill=None):
+                                   band=None, max_fields=MAX_FIELDS, avoid=(), min_fill=None,
+                                   max_iou=MAX_IOU):
     """Fields to check a gate in: `{fields: [...], band, grid, ...}`.
 
     `data` is a provider-backed handle set; `field_px` the side of a square
     field in full-resolution pixels; `image_size` (width, height). `avoid`
     holds boxes `(x0, y0, x1, y1)` already shown: a field overlapping one of
-    them more than `MAX_IOU` is not chosen again.
+    them -- or another chosen field -- more than `max_iou` (intersection over
+    union) is not chosen. 0 allows no shared tissue at all: two windows half a
+    side apart each way share a quarter of their area at an IoU of 0.14.
     """
     from plexora.server.utils.label_overlay import cell_ids
 
@@ -291,8 +294,8 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
             if taken >= n_per_class or len(chosen) >= max_fields:
                 break
             box = box_of(iy, ix)
-            if any(_iou(box, other["box"]) > MAX_IOU for other in chosen) \
-                    or any(_iou(box, tuple(other)) > MAX_IOU for other in avoid):
+            if any(_iou(box, other["box"]) > max_iou for other in chosen) \
+                    or any(_iou(box, tuple(other)) > max_iou for other in avoid):
                 continue
             chosen.append({"class": cls, "box": box, "score": value,
                            "density_percentile": float(density_rank[iy, ix] * 100)})

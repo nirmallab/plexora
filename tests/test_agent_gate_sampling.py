@@ -78,6 +78,24 @@ def test_fields_do_not_overlap_much(ds):
             assert _iou(boxes[i], boxes[j]) <= MAX_IOU
 
 
+def test_max_iou_zero_shares_no_tissue_within_or_with_an_earlier_picture(ds):
+    """lsp35766_p193 NGFR: a second absence picture of "other" regions sat
+    half a field from the first one's, sharing a quarter of each."""
+    from plexora.agent.gate_sampling import _iou
+
+    def boxes(fields):
+        return [(f["bounds"]["x"], f["bounds"]["y"], f["bounds"]["x"] + f["bounds"]["width"],
+                 f["bounds"]["y"] + f["bounds"]["height"]) for f in fields]
+
+    first = boxes(_sample(ds, classes=ALL, n_per_class=2, max_iou=0.0)["fields"])
+    assert all(_iou(a, b) == 0 for i, a in enumerate(first) for b in first[i + 1:])
+    second = boxes(_sample(ds, classes=ALL, n_per_class=2, max_iou=0.0, avoid=first)["fields"])
+    assert all(_iou(a, b) == 0 for a in second for b in first)
+    # The default still lets a field half a side away through.
+    half = _sample(ds, classes=ALL, n_per_class=4)["fields"]
+    assert len(half) >= len(_sample(ds, classes=ALL, n_per_class=4, max_iou=0.0)["fields"])
+
+
 def test_unknown_class_is_refused(ds):
     from plexora.agent import AgentError
 

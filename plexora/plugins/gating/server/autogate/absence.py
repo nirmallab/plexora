@@ -55,6 +55,14 @@ CLASSES = ("clear_positive", "bright", "high_density", "borderline", "weak", "cl
 #: 110-cell edge band read `clear`; typical fields hold 300-400).
 MIN_FILL = 0.5
 
+#: Regions share no tissue, with each other or with an earlier picture's
+#: (`gate_sampling`'s `max_iou`): at its default a window half a side away
+#: each way passes, so a second "other regions" picture of lsp35766_p193 NGFR
+#: showed mostly the first one's tissue again (2026-10-18), and three of
+#: cKit's six regions sat on one spot. An image too small to hold
+#: `MIN_JUDGED` such regions falls back to the sampler's default.
+MAX_IOU = 0.0
+
 #: Panels a row of the picture.
 COLUMNS = 3
 
@@ -84,7 +92,7 @@ BAND_SD = 1.0
 
 #: The renderer's version (`memo.versions`): a change here must not replay
 #: answers given to the old pictures.
-RENDERER = "plexora.gating.absence/4"
+RENDERER = "plexora.gating.absence/5"
 
 #: [cal] the close look's surroundings panel: this many region sides across,
 #: centred on the region (kept inside the image), so a tissue edge shows.
@@ -152,10 +160,17 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     top = float(unit.get("high")) if unit.get("high") is not None else float(col.sorted32[-1])
     the_band = band(unit, col)
     image_size = (record.image.width or 1, record.image.height or 1)
-    sampled = gate_sampling.sample_gate_validation_regions(
-        ds, marker, float(unit["candidate"]), top, field_px=side, image_size=image_size,
-        n_per_class=1, classes=CLASSES, seed=seed, band=the_band, avoid=tuple(avoid),
-        min_fill=MIN_FILL)
+    def sample(max_iou):
+        return gate_sampling.sample_gate_validation_regions(
+            ds, marker, float(unit["candidate"]), top, field_px=side, image_size=image_size,
+            n_per_class=1, classes=CLASSES, seed=seed, band=the_band, avoid=tuple(avoid),
+            min_fill=MIN_FILL, max_iou=max_iou)
+
+    sampled = sample(MAX_IOU)
+    if len(sampled["fields"]) < MIN_JUDGED:
+        # An image too small for regions that share no tissue: the sampler's
+        # own overlap rule.
+        sampled = sample(gate_sampling.MAX_IOU)
     found = list(sampled["fields"])
 
     rows = max(1, -(-len(found) // COLUMNS))
