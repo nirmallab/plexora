@@ -189,7 +189,10 @@ def decide_first(engine, unit):
             unit["audited"] = False
             engine.finalize(unit, method="gmm")
         return
-    unit["state"] = "awaiting_t2"
+    # Whether the marker has a positive population at all comes first: a
+    # mixture splits every column in two (`absence`).
+    unit["state"] = "awaiting_absence" if engine.options["absence_check"] \
+        and not unit.get("absence_done") else "awaiting_t2"
 
 
 #: How a marker's first decision reads on the agent panel's progress line
@@ -198,6 +201,7 @@ BULK_WORDS = {
     "accepted_t1": "clean split, written for the audit sheet",
     "awaiting_t2": "waiting for a look",
     "qc_confirm": "the stain gets a look first",
+    "awaiting_absence": "waiting for a look at four regions",
     "transfer_pending": "waiting for the reference image",
     "transfer_check": "reference gate carried, waiting for a look",
     "skipped_no_channel": "no image channel, skipped",

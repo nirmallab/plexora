@@ -1587,7 +1587,10 @@ def test_a_chain_runs_nearest_first_and_stops_at_an_anchor():
     wide = _lattice([("gmm", 0.0)] + [(f"up:{i}sd", float(i)) for i in range(1, 8)]
                     + [("ctrl:CD3", 9.0)])
     capped = lattice.chain(wide, 0.0, "up", max_points=4)
-    assert len(capped) == 4 and capped[-1]["id"] == "ctrl:CD3"      # the anchor survives
+    # The nearest points, not three and a far anchor: LSP11321 FOXP3's last
+    # row ran from 6.13 to its MART1 control at 6.97 and could not be judged.
+    assert [p["id"] for p in capped] == ["up:1sd", "up:2sd", "up:3sd", "up:4sd"]
+    assert lattice.chain(wide, 7.0, "up")[-1]["id"] == "ctrl:CD3"   # a later round gets there
     assert lattice.chain(lat, 7.0, "up") == []
 
 
@@ -1600,6 +1603,47 @@ def test_a_capped_chain_without_an_anchor_keeps_the_nearest_points():
                     ("ceiling", 7.05), ("onset", 6.57)])
     down = lattice.chain(lat, 7.277, "down", max_points=4)
     assert [p["id"] for p in down] == ["score", "otsu", "down:0.5sd", "ceiling"]
+
+
+def test_a_wide_mixed_row_is_split_into_lattice_points(tmp_path):
+    """A row too wide for one word is split evenly in the fit space, into
+    snapped points joined to the lattice; a narrow one is left alone."""
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import lattice
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    make_gating_project(tmp_path)
+    ds = AgentSession().data("gsynth")
+    gmm = model.fit_for(ds, "CD8")["gate"]
+    lat = lattice.build(ds, "CD8", gmm=gmm)
+    col = profmod.column(ds, "CD8")
+    a = float(gmm)
+    b = float(col.from_fit(col.to_fit(a) + 3.0))
+    before = lat["fingerprint"]
+    assert lattice.split(lat, ds, "CD8", a, b, core_sd=2.0) == []        # 1.5 sds: kept
+    added = lattice.split(lat, ds, "CD8", a, b, core_sd=0.5)            # 6 sds
+    assert 1 <= len(added) <= lattice.MAX_CHAIN - 1
+    assert all(a < p["low"] < b and p["id"].startswith("split:") for p in added)
+    lows = [p["low"] for p in lat["points"]]
+    assert lows == sorted(lows) and all(p in lat["points"] for p in added)
+    assert lat["fingerprint"] != before
+    again = lattice.build(ds, "CD8", gmm=gmm)
+    assert [p["low"] for p in lattice.split(again, ds, "CD8", a, b, core_sd=0.5)] == \
+        [p["low"] for p in added]                                         # the same points
+    up = [p["low"] for p in lattice.chain(lat, a, "up", max_points=100)]
+    assert [v for v in up if v in {p["low"] for p in added}] == [p["low"] for p in added]
+
+
+def test_a_marker_is_absent_only_when_no_judged_region_shows_clear_positives():
+    from plexora.plugins.gating.server.autogate import absence
+
+    assert absence.absent({"r1": "none", "r2": "few", "r3": "none", "r4": "cannot_tell"})
+    # Sparse and weak regions are chosen to have few positives: one clear
+    # region anywhere is a population.
+    assert not absence.absent({"r1": "clear", "r2": "none", "r3": "none", "r4": "few"})
+    assert not absence.absent({"r1": "none", "r2": "cannot_tell", "r3": "cannot_tell"})
+    assert not absence.absent({})
 
 
 def test_an_anchor_at_the_gate_and_a_point_on_it_do_not_stop_a_chain():
@@ -1739,3 +1783,80 @@ def test_confidence_is_three_words_with_fixed_numbers():
     words = schemas.AI_CONFIDENCE
     assert words["sure"] >= e["high_ai"] > words["fairly_sure"] >= e["t2_min_confidence"] \
         > words["unsure"]
+
+
+# -- mixed rows split, whole-image disagreement kept (2026-10-18) --------------------
+
+
+class _StubEngine:
+    """Just what the transitions below call."""
+
+    def __init__(self, unit, *, split=(), rounds=True, **options):
+        self.record = {"units": {f"{unit['project']}::{unit['marker']}": unit}}
+        self.options = options
+        self.split = list(split)
+        self.rounds = rounds
+        self.finalized = []
+
+    def rounds_left(self, unit):
+        return self.rounds
+
+    def split_row(self, unit, a, b):
+        return [{"id": f"split:{v:g}", "low": v} for v in self.split if min(a, b) < v < max(a, b)]
+
+    def finalize(self, unit, *, method):
+        self.finalized.append(method)
+        unit["state"] = "accepted_low_confidence"
+
+
+def _t4_unit():
+    return {"project": "p", "marker": "FOXP3", "candidate": 6.04, "direction": "up",
+            "state": "awaiting_t4", "rounds": 1}
+
+
+def test_a_walk_that_stops_at_a_wide_mixed_row_looks_inside_it():
+    """LSP11321 FOXP3: three rows passed, the fourth (6.13 to 6.97) read
+    mixed and the gate stopped at 6.13; the person's is 6.93."""
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import T4Answer
+
+    unit = _t4_unit()
+    unit["candidate_steps"] = {"c1": "up:0.5sd", "c2": "gmm", "c3": "up:1sd", "c4": "up:2sd"}
+    chain = [{"id": "c1", "low": 6.08}, {"id": "c2", "low": 6.09}, {"id": "c3", "low": 6.13},
+             {"id": "c4", "low": 6.97}]
+    words = T4Answer(intervals={"i1": "neighbour_only", "i2": "neighbour_only",
+                                "i3": "neighbour_only", "i4": "mixed"}, confidence="sure")
+    engine = _StubEngine(unit, split=(6.34, 6.55, 6.76), split_mixed=True)
+    out = transitions._split_mixed(engine, unit, chain, words, chain[2], 3)
+    assert out["split"] == [6.34, 6.55, 6.76]
+    assert unit["candidate"] == 6.13 and unit["state"] == "awaiting_t4"
+    assert unit["chosen_step"] == "up:1sd" and unit["t4_splits"][0]["row"] == "i4"
+    # A narrow row, the switch off, or no round left: the walk stops as before.
+    for engine in (_StubEngine(_t4_unit(), split=(), split_mixed=True),
+                   _StubEngine(_t4_unit(), split=(6.5,), split_mixed=False),
+                   _StubEngine(_t4_unit(), split=(6.5,), rounds=False, split_mixed=True)):
+        assert transitions._split_mixed(engine, _t4_unit(), chain, words, chain[2], 3) is None
+    # A first row that is mixed is split from the current gate.
+    first = T4Answer(intervals={"i1": "mixed", "i2": "own_stain", "i3": "own_stain",
+                                "i4": "own_stain"}, confidence="sure")
+    unit = _t4_unit()
+    out = transitions._split_mixed(_StubEngine(unit, split=(6.06,), split_mixed=True), unit,
+                                   chain, first, None, 0)
+    assert out["chosen"] == "split" and unit["candidate"] == 6.04
+
+
+def test_a_whole_image_check_does_not_overrule_rows_that_judged_the_cells():
+    """LSP11321 CD45: the walk ended at 7.76 (the person's 7.8), the
+    whole-image check said too low, and the gate went to review -- after
+    which 13 markers could not lean on it."""
+    from plexora.plugins.gating.server.autogate import transitions
+    from plexora.plugins.gating.server.autogate.answers import ConfirmAnswer
+
+    unit = {"project": "p", "marker": "CD45", "candidate": 7.76, "state": "regression_confirm",
+            "judged": [[7.76, 7.93, "own_stain"]], "directions": ["down"]}
+    packet = {"units": [{"project": "p", "marker": "CD45"}]}
+    engine = _StubEngine(unit, whole_image_moves=False)
+    out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
+    assert out["kept"] and unit["candidate"] == 7.76 and engine.finalized
+    assert unit["whole_image_disagreed"] == "too_low"
+    assert "whole_image_disagreed" in unit["look_flags"]

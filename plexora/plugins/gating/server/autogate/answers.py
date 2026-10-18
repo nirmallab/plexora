@@ -76,6 +76,16 @@ class QCAnswer(_Base):
                     "positive (the gate is put at the maximum).")
 
 
+class AbsenceAnswer(_Base):
+    kind: Literal["absence_check"] = "absence_check"
+    regions: dict[str, Literal["clear", "few", "none", "cannot_tell"]] = Field(
+        description="Per region (r1, r2, ...): does it show cells clearly positive by their "
+                    "OWN stain -- brighter than the faint floor the unstained cells there "
+                    "show, in the stain's compartment? clear: several such cells; few: one "
+                    "or two; none: no cell (only the floor, glow beside a bright neighbour, "
+                    "debris); cannot_tell.")
+
+
 class T2Answer(_Base):
     kind: Literal["t2_confirm"] = "t2_confirm"
     rows: dict[Literal["below", "near", "above"], RowVerdict] = Field(
@@ -177,7 +187,7 @@ class ReplanAnswer(_Base):
                     "reaches every marker there; `not_image_level`.")
 
 
-MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
+MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
           ReplanAnswer, DisplaySetupAnswer)
 

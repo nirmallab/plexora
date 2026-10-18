@@ -64,12 +64,13 @@ How to judge (the guide says how to read each picture):
   only when the stain is real inside a subset partner's positives and noise
   outside them (one of `allowed.within`). In a `t3_biological` look the
   third panel of each cell is the reference channel.
-- `t4_candidates`: the same word for EVERY row of `intervals`, about the
-  cells that change call there. A row of zero cells: `cannot_tell`, and say
-  so in `notes`.
+- `t4_candidates`: a word for EVERY row of `intervals`, about the cells
+  that change call there. A row of zero cells: `cannot_tell`.
 - `qc_confirm`: `real_signal`, `technical_failure`, `no_positive_population`
-  or `cannot_tell`. After a look that saw no stain it may show the sheet you
-  just judged (or none, `as_in`): answer from that look.
+  or `cannot_tell`. It may repeat a sheet you just judged (`as_in`): answer
+  from that look.
+- `absence_check`: per region of `allowed.regions`, `clear` (cells stained
+  as their own), `few`, `none` or `cannot_tell`. Nothing is marked.
 - `regression_confirm`: `holds` unless a region is clearly wrong; the failing
   `checks` say what to look at.
 - `replan`: failed markers and images, as notes and numbers. Per marker:
@@ -82,8 +83,8 @@ How to judge (the guide says how to read each picture):
   `keep_for_review`. Per image: `image_artifact` when the flag is the
   image's own (edge, fold, autofluorescence), else `not_image_level`.
   A lineage the tissue surely holds is rarely absent: unsure, keep it.
-- Every look: set `artifact_flags` when segmentation, focus, saturation,
-  bleed-through, autofluorescence, folds or edges affect the cells shown.
+- Every look: set `artifact_flags` when an artifact (segmentation, focus,
+  bleed-through, folds) affects the cells shown.
   `confidence` is `sure`, `fairly_sure` or `unsure`; say `unsure` rather than
   guess, and ask with `request` for the evidence that would settle it.
 

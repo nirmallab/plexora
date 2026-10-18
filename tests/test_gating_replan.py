@@ -228,7 +228,8 @@ class _Engine(_Log):
         super().__init__()
         self.record = {"images": ["p"], "order": [u["marker"] for u in units],
                        "units": {f"p::{u['marker']}": u for u in units}}
-        self.options = {"replan": True, "max_tier": 4, **(options or {})}
+        self.options = {"replan": True, "max_tier": 4, "absence_check": False,
+                        **(options or {})}
         self.closed = []
         self.refreshed = []
 

@@ -482,7 +482,7 @@ def write_source(call, inp):
 # -- visual validation -------------------------------------------------------
 
 FieldClass = Literal["clear_negative", "clear_positive", "borderline", "high_density",
-                     "low_density", "bright_isolated", "edge"]
+                     "low_density", "bright_isolated", "edge", "weak", "bright", "sparse"]
 
 
 class SampleInput(MarkerInput):

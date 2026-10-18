@@ -20,10 +20,16 @@ rules the agent cannot talk its way past:
   with a value; a person checks the ones the evidence could not settle);
 - a user's edit in the viewer always wins (checked before any write);
 - an empty gate (at the column's maximum: no cell positive) is written only on
-  an explicit statement -- a technical check's `technical_failure` or
-  `no_positive_population`, or a look's `no_positives` confirmed on the whole
-  image -- never because no candidate separated the cells, which is also what
-  a continuous or badly segmented marker says.
+  an explicit statement -- an absence check whose regions show no clear
+  positive (`absence`), a technical check's `technical_failure` or
+  `no_positive_population` (which the regions must confirm when the session
+  checks absence), or a look's `no_positives` confirmed on the whole image --
+  never because no candidate separated the cells, which is also what a
+  continuous or badly segmented marker says;
+- a look at candidates that stops at a wide `mixed` row has that row split
+  and looked at again (`lattice.split`); after such a look, a whole-image
+  check's "too low" / "too high" leaves the gate where the rows put it, at
+  low confidence (`SessionOptions.whole_image_moves`).
 
 Every loop is bounded, so a unit's looks are finite whatever the answers:
 
@@ -31,9 +37,10 @@ Every loop is bounded, so a unit's looks are finite whatever the answers:
     T2                  1 (a second only after a technical check or a
                         conditional refit)
     technical check     1 per unit (`qc_done`)
+    absence check       1 per unit (`absence_done`)
     T3                  1 (`t3_done`)
     T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions);
-                        one turn back (`t4_reversed`)
+                        one turn back (`t4_reversed`); a split is a round
     whole-image check   one per T4 round, plus one
 
 A marker that reaches a limit while the evidence still says to go on is
@@ -403,6 +410,9 @@ def apply_t4(engine, packet, answer):
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
     placed, passed, why = latmod.place(chain, answer.intervals, direction)
+    split = _split_mixed(engine, unit, chain, answer, placed, passed)
+    if split is not None:
+        return split
     if placed is not None:
         unit["candidate"] = float(placed["low"])
         unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
@@ -444,6 +454,31 @@ def apply_t4(engine, packet, answer):
     return _outcome(unit, chosen="keep", why=why)
 
 
+def _split_mixed(engine, unit, chain, answer, placed, passed):
+    """When the walk stopped at a row judged `mixed` that is too wide for one
+    word (`lattice.SPLIT_MIN_SD`), the gate goes to where the walk stopped
+    and that row is split into finer candidates for another look
+    (`lattice.split`) -- the boundary is somewhere inside it, not at its
+    edge. None when there is nothing to split (the outcome otherwise)."""
+    if passed >= len(chain) or answer.intervals.get(f"i{passed + 1}") != "mixed" \
+            or not engine.options["split_mixed"] or not engine.rounds_left(unit):
+        return None
+    a = float(chain[passed - 1]["low"]) if passed else float(unit["candidate"])
+    b = float(chain[passed]["low"])
+    added = engine.split_row(unit, a, b)
+    if not added:
+        return None
+    if placed is not None:
+        unit["candidate"] = float(placed["low"])
+        unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
+    unit.setdefault("t4_splits", []).append(
+        {"row": f"i{passed + 1}", "from": a, "to": b, "points": [p["low"] for p in added]})
+    unit["span_from"] = unit["candidate"]
+    unit["state"] = "awaiting_t4"
+    return _outcome(unit, chosen=placed["id"] if placed is not None else "split",
+                    rows_passed=passed, split=[p["low"] for p in added])
+
+
 # -- confirmations -------------------------------------------------------------------
 
 
@@ -456,6 +491,21 @@ def apply_qc(engine, packet, answer):
 
         if replan.after_whole_image(engine, unit, answer.verdict):
             return _outcome(unit, whole_image=answer.verdict)
+    if answer.verdict in ("technical_failure", "no_positive_population") \
+            and engine.options["absence_check"]:
+        said = {"technical_failure": "technically_failed",
+                "no_positive_population": "no_positive_population"}[answer.verdict]
+        if not unit.get("absence_done"):
+            # One picture of the whole tissue at a candidate's gate shows that
+            # gate's positives; whether ANY cell carries the stain is the
+            # regions' question (`absence`). Its answer decides.
+            unit["absence_after"] = said
+            unit["state"] = "awaiting_absence"
+            return _outcome(unit, absence_check=True)
+        if (unit.get("absence") or {}).get("clear"):
+            # The regions showed clear positives already: the stain worked and
+            # some cells carry it, whatever this gate's positives look like.
+            return _qc_real_signal(engine, unit, overruled=said)
     if answer.verdict == "technical_failure":
         engine.close(unit, "technically_failed",
                      "confirmed by eye: no usable staining (" +
@@ -469,19 +519,7 @@ def apply_qc(engine, packet, answer):
                      + "); the gate is put at the maximum")
         return _outcome(unit)
     if answer.verdict == "real_signal":
-        unit["flags"] = [f for f in unit.get("flags") or [] if f not in schemas.HARD_FLAGS] + \
-            [f"{f}_downgraded" for f in unit.get("flags") or [] if f in schemas.HARD_FLAGS]
-        came_from_look = bool(unit.get("qc_reason")) and unit.get("path") in ("t2", "t3")
-        if came_from_look and int(engine.options["max_tier"]) >= 3 \
-                and not unit.get("t3_done") and engine.references_ready(unit):
-            # The channel is real; beside a reference is the look most
-            # likely to settle what the first look could not.
-            unit["state"] = "awaiting_t3"
-            return _outcome(unit, references=[r["marker"] for r in unit["reference_gates"]])
-        # A second look; a second plausibility failure closes the unit
-        # (`qc_done`).
-        unit["state"] = "awaiting_t2"
-        return _outcome(unit)
+        return _qc_real_signal(engine, unit)
     if unit.get("qc_verdict") == "usable" and not unit.get("t2_after_qc"):
         # QC reviewed this channel and found a working stain: an unsure
         # technical look does not close it; the marker gets its ordinary look.
@@ -491,6 +529,63 @@ def apply_qc(engine, packet, answer):
     engine.close(unit, "manual_review_recommended",
                  "the technical check could not tell whether the channel is usable")
     return _outcome(unit)
+
+
+def _qc_real_signal(engine, unit, overruled=None):
+    """The channel is real: hard flags are downgraded and the marker gets a
+    look (beside a reference when a look already failed to settle it)."""
+    unit["flags"] = [f for f in unit.get("flags") or [] if f not in schemas.HARD_FLAGS] + \
+        [f"{f}_downgraded" for f in unit.get("flags") or [] if f in schemas.HARD_FLAGS]
+    if overruled:
+        unit["absence_overruled"] = overruled
+    came_from_look = bool(unit.get("qc_reason")) and unit.get("path") in ("t2", "t3")
+    if came_from_look and int(engine.options["max_tier"]) >= 3 \
+            and not unit.get("t3_done") and engine.references_ready(unit):
+        # The channel is real; beside a reference is the look most
+        # likely to settle what the first look could not.
+        unit["state"] = "awaiting_t3"
+        return _outcome(unit, references=[r["marker"] for r in unit["reference_gates"]],
+                        **({"overruled": overruled} if overruled else {}))
+    # A second look; a second plausibility failure closes the unit
+    # (`qc_done`).
+    unit["state"] = "awaiting_t2"
+    return _outcome(unit, **({"overruled": overruled} if overruled else {}))
+
+
+def apply_absence(engine, packet, answer):
+    """The regions decide whether the marker has a positive population
+    (`absence.absent`): none shows a clear positive -> closed with no
+    positives (or, after a technical check called the stain failed, failed);
+    any does -> the marker goes on to its look, a technical check's failed
+    or empty verdict overruled."""
+    from plexora.agent.errors import AgentError
+    from plexora.plugins.gating.server.autogate import absence
+
+    unit = _units(engine, packet)[0]
+    regions = list((packet.get("allowed") or {}).get("regions") or ())
+    missing = [r for r in regions if r not in answer.regions]
+    if missing:
+        raise AgentError("invalid_input", f"judge every region; missing {missing}",
+                         detail={"regions": regions})
+    _note(unit, answer)
+    words = {r: answer.regions[r] for r in regions}
+    unit["absence_done"] = True
+    unit["absence"] = {"words": words, "regions": unit.pop("absence_regions", None) or [],
+                       "clear": [r for r, w in words.items() if w == "clear"]}
+    after = unit.pop("absence_after", None)
+    if absence.absent(words):
+        state = after or "no_positive_population"
+        judged = sum(w in ("few", "none") for w in words.values())
+        engine.close(unit, state,
+                     f"no region showed a cell clearly positive by its own stain ({judged} "
+                     "regions judged); the gate is put at the maximum"
+                     + (" -- the technical check's verdict, confirmed" if after else ""),
+                     **({"confidence": "failed_qc"} if state == "technically_failed" else {}))
+        return _outcome(unit, absent=True)
+    if after:
+        return _qc_real_signal(engine, unit, overruled=after)
+    unit["state"] = "awaiting_t2"
+    return _outcome(unit, absent=False)
 
 
 def apply_regression(engine, packet, answer):
@@ -509,6 +604,19 @@ def apply_regression(engine, packet, answer):
         unit["regression_confirmed"] = True
         engine.finalize(unit, method=unit.get("method") or "ai_accepted")
         return _outcome(unit)
+    if answer.verdict in ("too_low", "too_high") and unit.get("judged") \
+            and not engine.options["whole_image_moves"]:
+        # The rows of a look at candidates judged the very cells a move would
+        # flip; one glance at the whole image does not overrule them. The
+        # gate stays, the failed checks unconfirmed (low confidence), and
+        # the disagreement is on the record -- not a review: a review gate is
+        # no partner's evidence, and the rows had settled it.
+        unit["whole_image_disagreed"] = answer.verdict
+        unit["look_flags"] = sorted(set(unit.get("look_flags") or [])
+                                    | {"whole_image_disagreed"})
+        _clear_direction(unit)
+        engine.finalize(unit, method=unit.get("method") or "ai_accepted")
+        return _outcome(unit, whole_image=answer.verdict, kept=True)
     if answer.verdict in ("too_low", "too_high"):
         step = "up" if answer.verdict == "too_low" else "down"
         kept = unit.get("t4_kept") or {}
@@ -793,7 +901,8 @@ def apply_transfer(engine, packet, answer):
 
 
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
-         "qc_confirm": apply_qc, "regression_confirm": apply_regression,
+         "qc_confirm": apply_qc, "absence_check": apply_absence,
+         "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "display_setup": apply_display}

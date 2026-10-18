@@ -102,6 +102,18 @@ READING_GUIDE = {
                       "and candidate c1, row i2 between c1 and c2, and so on. Judge every row "
                       "on its own"),
     "sheet": SCALES_READING,
+    "absence": ("an absence check: up to four regions of one marker, each about 200 um "
+                "across, the marker in yellow on the session's display, nuclei dim blue, no "
+                "cell marked and no threshold anywhere. The regions are where real positives "
+                "would most likely show (the most bright cells, crowded tissue) and where a "
+                "dim stain shows (cells near the threshold). Per region one word for what "
+                "you see: `clear` -- several cells carry the stain as their own (a ring, a "
+                "fill, cytoplasm hugging the nucleus), clearly above the faint floor the "
+                "unstained cells beside them show; `few` -- one or two such cells; `none` -- "
+                "only that floor, light at the edge a cell shares with a bright neighbour, "
+                "debris, specks or a smear; `cannot_tell`. Nothing is gated from these "
+                "words: a marker no region shows a clear positive for is closed with no "
+                "positives, as a person would"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -1026,6 +1038,65 @@ def qc_confirm(engine, units):
                                      "the whole image and three fields"),))
 
 
+def _absence_skipped(engine, unit, why, regions=()):
+    """No absence picture could be drawn: what was decided without it
+    stands -- a technical check's verdict closes the marker, anything else
+    goes on to its first look. None (the unit settled without a packet)."""
+    unit["absence_done"] = True
+    unit["absence"] = {"skipped": why, "regions": list(regions)}
+    after = unit.pop("absence_after", None)
+    if after:
+        engine.close(unit, after, unit.pop("absence_reason", None) or why,
+                     **({"confidence": "failed_qc"} if after == "technically_failed" else {}))
+    else:
+        unit["state"] = "awaiting_t2"
+    return None
+
+
+def absence_check(engine, units):
+    """Four regions of the tissue, nothing marked: is any cell clearly
+    positive by its own stain (`absence`)? Before the marker's first look,
+    or after a technical check called the stain failed or empty."""
+    from plexora.plugins.gating.server.autogate import absence
+
+    unit = units[0]
+    try:
+        ds, channel = _unit_channel(engine, unit)
+    except AgentError:
+        return _absence_skipped(engine, unit, "no image channel to draw")
+    view = absence.render(engine.call.session, ds, marker=unit["marker"], channel=channel,
+                          unit=unit, seed=_seed(engine), fmt=_fmt(engine),
+                          pixel=engine.pixel_for(ds.name))
+    regions = [r["region"] for r in view["fields"]]
+    if len(regions) < absence.MIN_JUDGED:
+        return _absence_skipped(engine, unit, "fewer regions than the check needs",
+                                regions=view["fields"])
+    compartment = (unit.get("context") or {}).get("compartment")
+    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    packet = {
+        "question": (f"{unit['marker']} ({ds.name}): {len(regions)} regions of the tissue, "
+                     f"the {stain} stain in yellow, nuclei dim blue, NO cell marked. For "
+                     "EVERY region: does it show cells clearly positive by their OWN stain "
+                     "-- brighter than the faint floor the unstained cells there show, where "
+                     "the stain belongs on the cell -- (`clear`: several; `few`: one or two; "
+                     "`none`: only the floor, glow beside a bright neighbour, debris or "
+                     "smears; `cannot_tell`)? Judge the cells, not the brightness of the "
+                     "picture."),
+        "evidence": {"marker": unit["marker"], "project": ds.name,
+                     "regions": [{k: r[k] for k in ("region", "class", "cells") if k in r}
+                                 for r in view["fields"]],
+                     "field": view["manifest"]["field"].get("label"),
+                     "context": _context_brief(unit),
+                     **_reading(engine, ["absence"]
+                                + [k for k in (_compartment_key(unit),) if k])},
+        "allowed": {"regions": regions, "words": list(absence.REAL_WORDS)},
+        "_image_meta": [],
+    }
+    unit["absence_regions"] = view["fields"]
+    return packet, _images(packet, ((view, "absence_regions",
+                                     f"{len(regions)} regions, nothing marked"),))
+
+
 def regression_confirm(engine, units):
     from plexora.agent.evidence import collage
 
@@ -1379,6 +1450,7 @@ def transfer_check(engine, units):
 
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
+            "absence_check": absence_check,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "replan": replan_packet,
             "transfer_check": transfer_check,

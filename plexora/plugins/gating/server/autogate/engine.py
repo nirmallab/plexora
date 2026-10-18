@@ -66,8 +66,9 @@ TERMINAL = schemas.TERMINAL_STATES
 BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
 
 #: The packet kind each waiting state asks for.
-ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
-        "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
+ASKS = {"qc_confirm": "qc_confirm", "awaiting_absence": "absence_check",
+        "awaiting_t2": "t2_confirm", "awaiting_t3": "t3_biological",
+        "awaiting_t4": "t4_candidates",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
@@ -425,6 +426,20 @@ class Engine(BaseEngine):
         """Whether the session draws its looks as the 2 x 2 multi-view block
         (`SessionOptions.tiles`)."""
         return bool(self.options["tiles"])
+
+    def split_row(self, unit, a, b):
+        """The points a mixed row from `a` to `b` is split into
+        (`lattice.split`), joined to the unit's frozen lattice; [] when the
+        row is no wider than `lattice.SPLIT_MIN_SD` background sds."""
+        from plexora.plugins.gating.server.autogate import lattice as latmod
+
+        sd = (((unit.get("scoring") or {}).get("background") or {}).get("sd_fit")
+              or (unit.get("metrics") or {}).get("sd_bg"))
+        if not sd:
+            return []
+        ds = _data(self.call, unit["project"])
+        return latmod.split(self.lattice_for(unit), ds, unit["marker"], a, b, core_sd=float(sd),
+                            high=unit.get("high"))
 
     def partner_panels(self, unit):
         """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
@@ -1560,11 +1575,14 @@ class Engine(BaseEngine):
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
             return None
         kind = ASKS[unit["state"]]
-        if kind == "t2_confirm" and unit.get("scoring") is None:
+        # The absence check is a marker's first look when it has one: the same
+        # scored start, lineage screen and wait for children come first.
+        first = kind in ("t2_confirm", "absence_check")
+        if first and unit.get("scoring") is None:
             self.propose(unit)
-        if kind == "t2_confirm" and self.lineage_screen(unit):
+        if first and self.lineage_screen(unit):
             return None
-        if kind == "t2_confirm" and self.defer_for_children(unit):
+        if first and self.defer_for_children(unit):
             return None
         if kind == "t4_candidates" and not self.rounds_left(unit) \
                 and not self.limit_reached(unit, "rounds"):

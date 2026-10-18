@@ -14,7 +14,7 @@ def ds(tmp_path):
 
 
 ALL = ("clear_negative", "clear_positive", "borderline", "high_density", "low_density",
-       "bright_isolated", "edge")
+       "bright_isolated", "edge", "weak", "bright", "sparse")
 
 
 def _sample(ds, **kwargs):
@@ -39,6 +39,19 @@ def test_fields_are_what_their_class_says(ds):
     assert all(f["positives"] == 0 for f in by_class["clear_negative"])
     assert all(f["positives"] > 0 for f in by_class["clear_positive"])
     assert all(f["borderline_below"] + f["borderline_above"] > 0 for f in by_class["borderline"])
+
+
+def test_weak_and_bright_fields_show_dim_and_clear_stain(ds):
+    # `weak`: band cells and no clear positive beside them; `bright`: a few
+    # clear positives (the brightest such field).
+    result = _sample(ds, classes=("weak", "bright"), band=(400.0, 1000.0), field_px=64)
+    by_class = {f["class"]: f for f in result["fields"]}
+    weak = by_class.get("weak")
+    if weak is not None:
+        assert weak["borderline_below"] + weak["borderline_above"] > 0
+    bright = by_class.get("bright")
+    if bright is not None:
+        assert bright["positives"] >= 3
 
 
 def test_stats_match_the_range_mask(ds):

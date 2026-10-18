@@ -29,7 +29,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_FIELDS, MAX_PER_CLASS, SAMPLING_CELL_CAP
 
 CLASSES = ("clear_negative", "clear_positive", "borderline", "high_density",
-           "low_density", "bright_isolated", "edge")
+           "low_density", "bright_isolated", "edge", "weak", "bright", "sparse")
 DEFAULT_CLASSES = ("clear_negative", "clear_positive", "borderline")
 
 #: Half-width of the default borderline band, in percentile points of the
@@ -47,7 +47,17 @@ WHY = {
     "low_density": "sparse tissue, where background is easiest to judge",
     "bright_isolated": "the brightest cell with few neighbours: real signal or artefact",
     "edge": "the edge of the section, where staining and segmentation often fail",
+    "weak": "many cells near the threshold and few clear positives: where the stain is dim",
+    "bright": "several clearly positive cells: what this stain looks like at its brightest",
+    "sparse": "sparse tissue with cells near the threshold: background without crowding",
 }
+
+#: [cal] the density ranks (0 sparsest, 1 densest occupied window) a
+#: `sparse` field is drawn from: thin tissue, not an empty corner.
+SPARSE_RANKS = (0.1, 0.5)
+
+#: [cal] a `bright` field holds at least this many cells well above the band.
+BRIGHT_MIN_POSITIVES = 3
 
 
 def _band(values, low, band):
@@ -240,6 +250,13 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         "bright_isolated": np.where(occupied, w_bright - 1e-3 * w_count * np.nanmax(
             np.abs(sv[finite])) if finite.any() else 0, -np.inf),
     }
+    # Dim stain: band cells without the clear positives that would make the
+    # field easy; bright stain: the brightest field that holds a few clear
+    # positives, not one speck.
+    scores["weak"] = np.where(occupied, w_near - 2.0 * w_farpos, -np.inf)
+    scores["bright"] = np.where(occupied & (w_farpos >= BRIGHT_MIN_POSITIVES), w_bright, -np.inf)
+    thin = occupied & (density_rank >= SPARSE_RANKS[0]) & (density_rank <= SPARSE_RANKS[1])
+    scores["sparse"] = np.where(thin, w_near, -np.inf)
     edge = np.zeros_like(w_count, dtype=bool)
     edge[0, :] = edge[:, 0] = True
     last_y = int(np.flatnonzero(inside_y)[-1]) if inside_y.any() else 0

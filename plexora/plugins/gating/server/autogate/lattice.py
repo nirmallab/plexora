@@ -23,8 +23,9 @@ import hashlib
 import json
 
 #: Bumped whenever the points a lattice holds, or how rows place a gate on
-#: them, change meaning ("3": rows are `schemas.ROW_VERDICTS`).
-VERSION = "3"
+#: them, change meaning ("3": rows are `schemas.ROW_VERDICTS`; "4": a capped
+#: chain keeps its nearest points, and a wide mixed row is split, `split`).
+VERSION = "4"
 
 #: Which name a merged point keeps, strongest first: a partner's negative
 #: control, a within-partner fit and a partner curve stand on another
@@ -32,7 +33,7 @@ VERSION = "3"
 #: mixture; the background's onset and ceiling and the estimators on the
 #: distribution; steps and edges on nothing but distance.
 PRIORITY = ("ctrl", "within", "bio", "score", "gmm", "ceiling", "onset", "kde", "otsu",
-            "gmm2", "up", "down", "edge")
+            "gmm2", "up", "down", "split", "edge")
 
 #: Scored candidates that join the lattice (`scoring` families), and are
 #: kept even outside the guard band: the band is drawn around the mixture,
@@ -48,6 +49,17 @@ ESTIMATORS = ("kde", "otsu", "gmm2")
 
 #: A T4 look shows at most this many points in its direction.
 MAX_CHAIN = 4
+
+#: [cal] a row a look at candidates judged `mixed` that is wider than this,
+#: in background core sds (fit space), is split and looked at again
+#: (`split`): its cells are too spread to share one word, so where in it the
+#: boundary sits is not known (LSP11321 FOXP3: one row 6.13-6.97, the
+#: person's gate 6.93 at its top; the walk had stopped at its bottom).
+SPLIT_MIN_SD = 2.0
+
+#: [cal] the widest a split row's parts may be, in the same sds (at most
+#: `MAX_CHAIN` parts, so one more look shows them all).
+SPLIT_TO_SD = 1.0
 
 #: Points that anchor a chain: it never runs past the first of them.
 ANCHORS = ("ctrl", "within", "bio")
@@ -195,11 +207,12 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
     ("up" or "down"): every point beyond the current gate up to and
     including the first anchor (a negative control or within-partner fit --
     the gate never jumps past another marker's evidence in one look), at
-    most `max_points` (the anchor kept when the cap bites). An anchor within
-    `ANCHOR_AT_GATE` of the current gate is where the gate already is and
-    does not end the chain. Without an anchor the cap keeps the nearest
-    points: dropping the middle would leave one row spanning tens of
-    thousands of cells, which no look can judge (a later round goes on)."""
+    most `max_points`, the nearest. An anchor within `ANCHOR_AT_GATE` of the
+    current gate is where the gate already is and does not end the chain.
+    The cap always keeps the nearest points, an anchor or not: keeping a far
+    anchor and dropping the points before it left one row spanning every
+    cell between them (LSP11321 FOXP3: 6.13 to its MART1 control at 6.97),
+    which no look can judge; a later round goes on to the anchor."""
     current = float(current)
     # A point that snaps onto the current gate flips no cell: an empty row.
     gap = SAME_POINT
@@ -208,16 +221,52 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
     else:
         ahead = sorted((p for p in lattice.get("points") or [] if p["low"] < current - gap),
                        key=lambda p: -p["low"])
-    out, anchored = [], False
+    out = []
     for entry in ahead:
         out.append(entry)
         if any(family(s) in ANCHORS for s in entry["sources"]) \
                 and abs(entry["low"] - current) > ANCHOR_AT_GATE:
-            anchored = True
             break
-    if len(out) > max_points:
-        out = out[:max_points - 1] + [out[-1]] if anchored else out[:max_points]
-    return out
+    return out[:max_points]
+
+
+def split(lattice, ds, marker, a, b, *, core_sd, high=None):
+    """Points that split the row between gates `a` and `b` into parts no
+    wider than `SPLIT_TO_SD` core sds (at most `MAX_CHAIN`), evenly in the
+    fit space and snapped like every point, joined to `lattice` (in place,
+    fingerprint renewed) and returned; [] when the row is no wider than
+    `SPLIT_MIN_SD` core sds or every split point is one already there. Pure
+    over (lattice, data, the row): two runs that judged the same row mixed
+    get the same points, so a split gate is a lattice point like any other."""
+    import math
+
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    col = profmod.column(ds, marker)
+    fa, fb = sorted((float(col.to_fit(a)), float(col.to_fit(b))))
+    if not core_sd or (fb - fa) / core_sd <= SPLIT_MIN_SD + 1e-9:
+        return []
+    parts = min(MAX_CHAIN, max(2, math.ceil((fb - fa) / (SPLIT_TO_SD * core_sd))))
+    desc = model._description(ds).get(marker) or {}
+    top = float(col.sorted32[-1]) if high is None and col.n_finite else float(high)
+    have = [p["low"] for p in lattice.get("points") or []] + [float(a), float(b)]
+    added = []
+    for k in range(1, parts):
+        value = float(col.from_fit(fa + (fb - fa) * k / parts))
+        snapped = float(model.snap_to_grid(value, top, desc)[0]) if desc else value
+        if any(abs(snapped - h) <= SAME_POINT for h in have):
+            continue
+        have.append(snapped)
+        n_positive = col.n_positive(snapped, top)
+        added.append({"id": f"split:{snapped:g}", "low": snapped,
+                      "sources": [f"split:{snapped:g}"], "n_positive": int(n_positive),
+                      "fraction": n_positive / col.n_finite if col.n_finite else None})
+    if added:
+        lattice["points"] = sorted([*(lattice.get("points") or []), *added],
+                                   key=lambda p: p["low"])
+        lattice["fingerprint"] = fingerprint(lattice)
+    return added
 
 
 def place(chain_points, verdicts, direction):

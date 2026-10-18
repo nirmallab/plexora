@@ -211,6 +211,11 @@ class TruthAgent:
         if kind == "qc_confirm":
             real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
+        if kind == "absence_check":
+            # Every region shows the population the truth holds, or none.
+            real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
+            regions = (packet.get("allowed") or {}).get("regions") or ()
+            return {"kind": kind, "regions": {r: "clear" if real else "none" for r in regions}}
         if kind == "regression_confirm":
             return {"kind": kind, "verdict": "holds"}
         if kind == "pixel_setup":

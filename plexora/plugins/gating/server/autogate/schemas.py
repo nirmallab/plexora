@@ -74,7 +74,8 @@ SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 
 #: A marker waiting on something: the audit sheet, a look, a check.
 #: `awaiting_replan`: a marker held for the planning task's `replan` answer.
-WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
+WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_absence", "awaiting_t2",
+                  "awaiting_t3", "awaiting_t4",
                   "awaiting_regression", "regression_confirm", "transfer_check",
                   "awaiting_replan")
 
@@ -106,7 +107,7 @@ SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "display_setup
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
 LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
-CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check")
+CHECK_KINDS = ("qc_confirm", "absence_check", "regression_confirm", "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
@@ -142,6 +143,8 @@ NARRATION = {
     "regression_confirm": "Checking whether the {marker} threshold is consistent across "
                           "representative tissue regions.",
     "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
+    "absence_check": "Looking for cells clearly positive for {marker} in four regions of the "
+                     "tissue before trusting any threshold.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
     "panel_context": "Reading the panel to learn which markers belong together.",
@@ -158,6 +161,7 @@ EVIDENCE_LABELS = {
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
     "context_sheet": "{marker} across the tissue",
+    "absence_regions": "{marker} in four regions, nothing marked",
     "strip": "Markers at their thresholds",
     "display_grid": "Markers at five brightnesses",
 }

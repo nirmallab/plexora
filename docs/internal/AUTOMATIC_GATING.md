@@ -35,9 +35,10 @@ proposed, or flags an artifact.
 |---|---|---|
 | T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (`ENGINE["strip_batch"]` markers a sheet) | ~70 vision tokens per marker |
 | QC | A hard technical flag (`schemas.HARD_FLAGS`: saturation, empty channel, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
+| Absence | Before a marker's first look, and after a technical check calls a stain failed or empty: four regions (`bright`, `high_density`, `borderline`, `weak`; 200 µm, the calibrated display, nothing marked), one word each (`clear` / `few` / `none` / `cannot_tell`); no judged region `clear` closes the marker `no_positive_population` (§2d) | ~450 |
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
-| T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
+| T4 | The rows said which way: the lattice points that way, nearest first (a capped chain keeps the nearest, never a far anchor), and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once; a mixed row wider than two background sds is split and looked at again (§2d), a narrower one keeps the gate at moderate at most | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 | Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`), and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
@@ -98,6 +99,46 @@ Guide entries `collage_t2m`, `collage_flips_m`. The pictures differ, so a
 tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
 keys, provenance and gates are the session's without it, byte for byte. The
 bench runs it as `--variants baseline,tiles`.
+
+## 2d. Absence, wide mixed rows, whole-image disagreement (2026-10-18)
+
+Three rules, each a session switch, from the region-look study and the user's
+recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`):
+
+- **`absence_check`** (default on). A mixture splits every column in two, so
+  only the image can say a marker has no positive population. Before the
+  first look, `absence.render` draws four regions chosen around the scored
+  start's band (`absence.CLASSES`; `gate_sampling` gained `weak`, `bright`
+  and `sparse`), unmarked, and `absence.absent` closes the marker when at
+  least two regions were judged and none is `clear` -- a region without
+  positives is no evidence while another shows them. A technical check's
+  `technical_failure` / `no_positive_population` goes to the same picture and
+  stands only if it agrees; clear regions overrule it (`absence_overruled`)
+  and the marker gets its look. Measured: on three PCA images it closed the
+  two markers the user called absent that the engine had gated (LSP11761
+  PD1, CD20L) and no other of 51; LSP11321 CD20L was failed by a technical
+  check whose positives at a low gate were epithelial artifact, though the
+  user gates a real 1 % population there. Not budgeted; once per unit
+  (`absence_done`).
+- **`split_mixed`** (default on). A T4 walk stops at the first row that does
+  not move it; a `mixed` row wider than `lattice.SPLIT_MIN_SD` background sds
+  is split into at most `MAX_CHAIN` parts (`lattice.split`: evenly in fit
+  space, snapped, joined to the frozen lattice, so a split gate is still a
+  lattice point and two runs that judged the same row get the same points)
+  and looked at again; a split is a round. With the chain cap keeping its
+  nearest points, rows are wide only where the lattice has a gap (LSP11321
+  FOXP3: 6.36 to its MART1 control at 6.97; the user's gate 6.93).
+- **`whole_image_moves`** (default off). After a T4 look, a whole-image
+  check's `too_low` / `too_high` no longer sends the gate back to the
+  candidates (where a turn counted as oscillation and closed it for review):
+  the gate stays where the rows put it, `whole_image_disagreed` on the record,
+  at low confidence (the failed checks are unconfirmed). A review gate is no
+  partner's evidence (`hierarchy.grade`); LSP11321's CD45 sat at 7.76 (user
+  7.8) in review, and 13 markers were gated without it. Before any T4 look a
+  whole-image direction still sends the gate to the candidates.
+
+A session stored before these switches is completed with their defaults
+when it is loaded, like every newer option.
 
 ## 3. Where things live
 
