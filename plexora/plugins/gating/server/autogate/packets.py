@@ -111,7 +111,9 @@ READING_GUIDE = {
                 "fill, cytoplasm hugging the nucleus), clearly above the faint floor the "
                 "unstained cells beside them show; `few` -- one or two such cells; `none` -- "
                 "only that floor, light at the edge a cell shares with a bright neighbour, "
-                "debris, specks or a smear; `cannot_tell`. Nothing is gated from these "
+                "debris, specks or a smear, a band of stain along the tissue's edge, or a "
+                "stain lighting every cell of the field alike; `cannot_tell`. Nothing is "
+                "gated from these "
                 "words: a marker no region shows a clear positive for, in this picture and a "
                 "second of other regions, is closed with no positives, as a person would"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "

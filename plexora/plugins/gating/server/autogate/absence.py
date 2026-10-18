@@ -10,9 +10,11 @@ numbers alone never say this; the regions do.
 One picture per marker, before its first look: six regions of the tissue,
 the marker on the engine's calibrated display with nuclei dim, nothing
 marked (the reader judges the stain, not a gate). The regions are the ones
-most likely to hold real positives if there are any (`clear_positive`: the
-most cells well above the start's band; `bright`: the brightest of them; `high_density`: crowded tissue such as an aggregate) and the ones
-where a dim stain shows (`borderline`, `weak`, `sparse`). Per region one
+most likely to hold real positives if there are any (`clear_positive`, its
+two best fields: the most cells well above the start's band; `bright`: the
+brightest of them; `high_density`: crowded tissue such as an aggregate) and
+the ones where a dim stain shows (`borderline`, `weak`), all from fields
+about as full of cells as a typical one (`MIN_FILL`). Per region one
 word (`REAL_WORDS`); a picture says absent when at least `MIN_JUDGED`
 regions were judged and none shows clear positives. A region without
 positives is no evidence of absence while another shows them: the weak and
@@ -35,8 +37,16 @@ import io
 
 import numpy as np
 
-#: The region classes shown, in panel order (`gate_sampling.CLASSES`).
-CLASSES = ("clear_positive", "bright", "high_density", "borderline", "weak", "sparse")
+#: The region classes shown, in panel order (`gate_sampling.CLASSES`); a
+#: class twice is its next best field.
+CLASSES = ("clear_positive", "bright", "high_density", "borderline", "weak", "clear_positive")
+
+#: [cal] a region is drawn only from fields at least this full of cells
+#: relative to the typical field (`gate_sampling`'s `min_fill`): the most
+#: positive and the brightest fields of a marker with no population are the
+#: half-empty ones at a tissue edge, where stain pools (LSP11761 CD20L: a
+#: 110-cell edge band read `clear`; typical fields hold 300-400).
+MIN_FILL = 0.5
 
 #: Panels a row of the picture.
 COLUMNS = 3
@@ -67,7 +77,7 @@ BAND_SD = 1.0
 
 #: The renderer's version (`memo.versions`): a change here must not replay
 #: answers given to the old pictures.
-RENDERER = "plexora.gating.absence/2"
+RENDERER = "plexora.gating.absence/3"
 
 CAPTION_H = 14
 GAP = 4
@@ -138,9 +148,9 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     image_size = (record.image.width or 1, record.image.height or 1)
     sampled = gate_sampling.sample_gate_validation_regions(
         ds, marker, float(unit["candidate"]), top, field_px=side, image_size=image_size,
-        n_per_class=1, classes=CLASSES, seed=seed, band=the_band, avoid=tuple(avoid))
-    by_class = {f["class"]: f for f in sampled["fields"]}
-    found = [by_class[c] for c in CLASSES if c in by_class]
+        n_per_class=1, classes=CLASSES, seed=seed, band=the_band, avoid=tuple(avoid),
+        min_fill=MIN_FILL)
+    found = list(sampled["fields"])
 
     rows = max(1, -(-len(found) // COLUMNS))
     width = COLUMNS * PANEL_PX + (COLUMNS - 1) * GAP
@@ -174,7 +184,7 @@ def render(session, ds, *, marker, channel, unit, seed=0, fmt="webp", pixel=None
     manifest = {
         "kind": "gating_absence_regions", "project": record.name, "marker": marker,
         "channel": channel, "regions": records,
-        "classes_without_field": [c for c in CLASSES if c not in by_class],
+        "classes_without_field": sampled["classes_without_field"],
         "band": list(the_band) if the_band else None, "field_px": side,
         "field": {k: field[k] for k in ("field_um", "um_per_px", "source", "label")},
         "seed": int(seed), "size": [width, height], "avoided": len(tuple(avoid)),

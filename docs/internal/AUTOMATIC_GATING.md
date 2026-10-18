@@ -35,7 +35,7 @@ proposed, or flags an artifact.
 |---|---|---|
 | T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (`ENGINE["strip_batch"]` markers a sheet) | ~70 vision tokens per marker |
 | QC | A hard technical flag (`schemas.HARD_FLAGS`: saturation, empty channel, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
-| Absence | Before a marker's first look, and after a technical check calls a stain failed or empty or cannot tell: six regions (`clear_positive`, `bright`, `high_density`, `borderline`, `weak`, `sparse`; 200 µm, the calibrated display, nothing marked), one word each (`clear` / `few` / `none` / `cannot_tell`); no judged region `clear` in two pictures of different regions closes the marker `no_positive_population` (§2d) | ~650 (a second only before a close) |
+| Absence | Before a marker's first look, and after a technical check calls a stain failed or empty or cannot tell: six regions (`clear_positive` twice, `bright`, `high_density`, `borderline`, `weak`, from fields at least half as full of cells as a typical one; 200 µm, the calibrated display, nothing marked), one word each (`clear` / `few` / `none` / `cannot_tell`); no judged region `clear` in two pictures of different regions closes the marker `no_positive_population` (§2d) | ~650 (a second only before a close) |
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
 | T4 | The rows said which way: the lattice points that way, nearest first (a capped chain keeps the nearest, never a far anchor), and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once; a mixed row wider than two background sds is split and looked at again (§2d), a narrower one keeps the gate at moderate at most | ~320 |
@@ -109,7 +109,9 @@ recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`):
   only the image can say a marker has no positive population. Before the
   first look, `absence.render` draws six regions chosen around the scored
   start's band (`absence.CLASSES`; `gate_sampling` gained `weak`, `bright`
-  and `sparse`), unmarked; a picture says absent (`absence.absent`) when at
+  and `sparse`, and `min_fill`: half-empty fields at tissue edges, holes and
+  folds -- where stain pools, and where LSP11761's edge band read `clear` --
+  are left out), unmarked; a picture says absent (`absence.absent`) when at
   least two regions were judged and none is `clear` -- a region without
   positives is no evidence while another shows them -- and the marker is
   closed only when a second picture of other regions agrees

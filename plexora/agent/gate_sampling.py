@@ -129,7 +129,7 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high, left=N
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
                                    n_per_class=2, classes=DEFAULT_CLASSES, seed=0,
-                                   band=None, max_fields=MAX_FIELDS, avoid=()):
+                                   band=None, max_fields=MAX_FIELDS, avoid=(), min_fill=None):
     """Fields to check a gate in: `{fields: [...], band, grid, ...}`.
 
     `data` is a provider-backed handle set; `field_px` the side of a square
@@ -229,6 +229,17 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     left_fraction = w_left / np.maximum(w_count + w_left, 1)
     qc_rejected = int((occupied & (left_fraction > cell_exclusions.FIELD_QC_MAX_FRACTION)).sum())
     occupied &= left_fraction <= cell_exclusions.FIELD_QC_MAX_FRACTION
+    if min_fill and occupied.any():
+        # Only fields at least `min_fill` as full of cells as the one the
+        # typical cell sits in (the cell-weighted median; most occupied
+        # fields are near-empty specks): a half-empty field is a tissue edge,
+        # a hole or a fold, where stain pools and debris lies. Kept as they
+        # are when too few would remain.
+        held = np.sort(w_count[occupied])
+        typical = float(held[np.searchsorted(np.cumsum(held), held.sum() / 2.0)])
+        filled = occupied & (w_count >= float(min_fill) * typical)
+        if int(filled.sum()) >= max(4, len(classes)):
+            occupied = filled
     density_rank = np.zeros_like(w_count)
     if occupied.any():
         order = np.argsort(w_count[occupied], kind="stable")

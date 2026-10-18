@@ -83,7 +83,7 @@ class AbsenceAnswer(_Base):
                     "OWN stain -- brighter than the faint floor the unstained cells there "
                     "show, in the stain's compartment? clear: several such cells; few: one "
                     "or two; none: no cell (only the floor, glow beside a bright neighbour, "
-                    "debris); cannot_tell.")
+                    "debris, a band along the tissue edge); cannot_tell.")
 
 
 class T2Answer(_Base):
