@@ -1848,3 +1848,26 @@ def test_without_the_absence_check_the_first_look_comes_straight_away(tmp_path):
     started = start(session, markers=["CD4"], absence_check=False)
     seen = drive(session, started["session_id"], Oracle(info))
     assert "absence_check" not in [p["kind"] for p in seen]
+
+
+class UnsureQCSeesNothing(Oracle):
+    """A technical check that cannot tell; the regions show nothing."""
+
+    def answer(self, packet):
+        if packet["kind"] == "qc_confirm":
+            return {"kind": "qc_confirm", "verdict": "cannot_tell"}
+        if packet["kind"] == "absence_check":
+            return {"kind": "absence_check",
+                    "regions": {r: "none" for r in packet["allowed"]["regions"]}}
+        return super().answer(packet)
+
+
+def test_a_technical_check_that_cannot_tell_asks_the_regions(tmp_path):
+    info = make_gating_project(tmp_path, variant="flat")
+    session = AgentSession()
+    started = start(session, markers=["CD20"], absence_check=True)
+    seen = drive(session, started["session_id"], UnsureQCSeesNothing(info))
+    kinds = [p["kind"] for p in seen if p["kind"] in ("qc_confirm", "absence_check")]
+    # A second picture needs room for other regions; this scene is small.
+    assert kinds[:2] == ["qc_confirm", "absence_check"]
+    assert units(session, started["session_id"])["CD20"]["state"] == "no_positive_population"

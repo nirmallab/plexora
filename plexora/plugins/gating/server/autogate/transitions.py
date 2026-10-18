@@ -526,6 +526,17 @@ def apply_qc(engine, packet, answer):
         unit["t2_after_qc"] = True
         unit["state"] = "awaiting_t2"
         return _outcome(unit, qc_verdict="usable")
+    if engine.options["absence_check"]:
+        if not unit.get("absence_done"):
+            # The technical check could not tell; whether any cell carries
+            # the stain at all is the regions' simpler question (LSP11761 and
+            # LSP11321 CD20L both stopped here, one absent, one a real 1 %).
+            unit["absence_after"] = "no_positive_population"
+            unit["absence_qc"] = "cannot_tell"
+            unit["state"] = "awaiting_absence"
+            return _outcome(unit, absence_check=True)
+        if (unit.get("absence") or {}).get("clear"):
+            return _qc_real_signal(engine, unit, overruled="cannot_tell")
     engine.close(unit, "manual_review_recommended",
                  "the technical check could not tell whether the channel is usable")
     return _outcome(unit)
@@ -580,6 +591,7 @@ def apply_absence(engine, packet, answer):
     unit["absence_done"] = True
     after = unit.pop("absence_after", None)
     if absence.absent(words):
+        unit.pop("absence_qc", None)
         state = after or "no_positive_population"
         judged = sum(w in ("few", "none") for r in rounds for w in r["words"].values())
         engine.close(unit, state,
@@ -589,7 +601,7 @@ def apply_absence(engine, packet, answer):
                      **({"confidence": "failed_qc"} if state == "technically_failed" else {}))
         return _outcome(unit, absent=True)
     if after:
-        return _qc_real_signal(engine, unit, overruled=after)
+        return _qc_real_signal(engine, unit, overruled=unit.pop("absence_qc", None) or after)
     unit["state"] = "awaiting_t2"
     return _outcome(unit, absent=False)
 
