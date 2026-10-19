@@ -96,7 +96,7 @@ def test_a_run_calls_every_eligible_cell(ds, made):
     _label(ds, made)
     steps = []
     record = runs.run(ds, "CD8", progress=lambda d, t, m: steps.append(m))
-    assert [s for s in runs.STAGES if s in steps] == list(runs.STAGES)
+    assert [s for s in runs.STAGES if s in steps] == [s for s in runs.STAGES if s != "pick"]
     assert "pixels" in record["feature_groups"] and "nuclear" in record["feature_groups"]
     assert record["n_eligible"] == len(made["cells"])
     assert calls.active_source(ds, "CD8") == "classifier"
@@ -290,3 +290,80 @@ def test_the_mode_is_project_state(ds):
     assert panel.state(ds)["mode"] == "classifier"
     with pytest.raises(ClassifierRefused):
         panel.set_mode(ds, "other")
+
+
+# -- the wand: examples picked, and how sure the calls are ----------------------------
+
+
+def test_the_wand_picks_clear_examples_across_the_image(ds, made):
+    from plexora.plugins.gating.server.classifier import autopick
+
+    pos, neg, info = autopick.pick(ds, "CD8")
+    assert len(pos) == len(neg) == autopick.N_PER_CLASS
+    assert set(pos) <= set(made["positives"]), "a picked positive is a positive cell"
+    assert set(neg) <= set(made["negatives"]) | set(made["borderline"]) - set(made["positives"])
+    assert not set(pos) & set(made["borderline"]) or info["how"] == "ranks"
+    # Spread: the picks are not one corner of the grid.
+    rows = {int((c["y"] // 64)) for c in made["cells"] if c["id"] in pos}
+    assert len(rows) >= 4
+    # The same project picks the same cells again.
+    assert autopick.pick(ds, "CD8")[0] == pos
+
+
+def test_a_wand_run_keeps_a_persons_labels_and_replaces_its_own(ds, made):
+    border = made["borderline"][0]
+    panel.annotate(ds, "CD8", border, "negative")
+    record = runs.run(ds, "CD8", auto_pick=True)
+    assert record["auto_pick"]["how"] in ("gate", "ranks")
+    origins = store.origins(ds.name, "CD8")
+    assert origins[border] == "click"
+    assert sum(1 for o in origins.values() if o == "auto") == 20
+    payload = panel.examples_payload(ds, "CD8")
+    assert payload["n_auto"] == 20
+    assert any(e["auto"] for e in payload["positive"])
+    assert not next(e for e in payload["negative"] if e["cell_id"] == border)["auto"]
+    # A second press replaces the wand's picks, never adds to them.
+    runs.run(ds, "CD8", auto_pick=True)
+    assert sum(1 for o in store.origins(ds.name, "CD8").values() if o == "auto") == 20
+    called, _ = calls.marker_calls(ds, "CD8")
+    assert called[_row_of(ds, border)] == 0
+
+
+def test_uncertainty_comes_from_resampled_models_and_narrows_with_examples(ds, made):
+    from plexora.plugins.gating.server.classifier import learner
+
+    _label(ds, made, n_pos=3, n_neg=3)
+    few = runs.run(ds, "CD8")
+    _record, arrays = calls.run_arrays(ds, "CD8")
+    agreement = arrays["agreement"]
+    assert agreement is not None and agreement.max() <= 100
+    assert few["uncertain_rule"].startswith("at least 20% of 25 models")
+    # A labelled cell is certain; the uncertain flag is the agreement rule.
+    assert agreement[_row_of(ds, made["positives"][0])] == 100
+    eligible = arrays["calls"] >= 0
+    np.testing.assert_array_equal(
+        arrays["uncertain"][eligible],
+        learner.uncertain(agreement[eligible] / 100.0) & (agreement[eligible] < 100))
+
+
+def test_the_uncertain_band_is_as_wide_as_the_examples_leave_it():
+    """Two overlapping populations: fitted on six examples the resampled
+    models disagree over a wide stretch; on sixty, over a narrow one around
+    where the populations cross."""
+    from plexora.plugins.gating.server.classifier import learner
+
+    rng = np.random.default_rng(1)
+
+    def examples(n):
+        x = np.concatenate([rng.normal(0, 1, n), rng.normal(2, 1, n)])[:, None]
+        return x.astype(np.float32), np.repeat([0, 1], n)
+
+    grid = np.linspace(-3, 5, 801, dtype=np.float32)[:, None]
+    widths = []
+    for n in (3, 30):
+        fitted = learner.fit(*examples(n))
+        _score, agreement = fitted.scores(grid)
+        unsure = grid[learner.uncertain(agreement), 0]
+        widths.append(float(unsure.max() - unsure.min()) if unsure.size else 0.0)
+        assert unsure.size == 0 or (unsure.min() > -3 and unsure.max() < 5)
+    assert widths[0] > widths[1] > 0

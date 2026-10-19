@@ -24,10 +24,11 @@ the slider left, so going back to Thresholding finds it as it was.
 #: Fewest examples of EACH class a run accepts.
 MIN_EXAMPLES = 3
 
-#: A cell whose score is within this of 0.5 is drawn as uncertain. It is
-#: still called (positive at 0.5 and above): the band is a thing to look at,
-#: not a third answer.
-UNCERTAIN_BAND = 0.15
+#: A cell is drawn as uncertain when at least this share of the models fitted
+#: to resampled examples call it the other way (learner.py). It is still
+#: called (positive at 0.5 and above): uncertain is a thing to look at, not a
+#: third answer.
+UNCERTAIN_DISAGREEMENT = 0.2
 
 #: The two sources a marker's calls can come from.
 SOURCES = ("threshold", "classifier")

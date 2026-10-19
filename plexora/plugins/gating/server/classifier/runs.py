@@ -19,10 +19,12 @@ import secrets
 import numpy as np
 
 from plexora.plugins.gating.server.classifier import (
-    MIN_EXAMPLES, UNCERTAIN_BAND, ClassifierRefused, features, learner, store)
+    MIN_EXAMPLES, UNCERTAIN_DISAGREEMENT, ClassifierRefused, autopick, features, learner,
+    store)
 
-#: Stages a run reports, in order (`progress` messages).
-STAGES = ("examples", "features", "fit", "predict", "store")
+#: Stages a run reports, in order (`progress` messages). "pick" only when the
+#: wand chooses the examples itself.
+STAGES = ("pick", "examples", "features", "fit", "predict", "store")
 
 
 def example_rows(ds, marker):
@@ -73,9 +75,14 @@ def qc_state(ds, marker):
             cell_exclusions.fingerprint(record), cell_exclusions.current_call_mode())
 
 
-def run(ds, marker, *, progress=None, cancelled=None, pixels=True) -> dict:
+def run(ds, marker, *, progress=None, cancelled=None, pixels=True, auto_pick=False) -> dict:
     """Train on the marker's examples and call every eligible cell; the new
-    run's record. `progress(done, total, message)`; `cancelled()` polled."""
+    run's record. `progress(done, total, message)`; `cancelled()` polled.
+
+    `auto_pick`: the wand. About ten positives and ten negatives are picked
+    across the image first (autopick.py), replacing its earlier picks for the
+    marker; the examples a person gave are kept and trained on too.
+    """
 
     def say(stage, done=None, total=None):
         if progress is not None:
@@ -86,13 +93,25 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True) -> dict:
         if cancelled is not None and cancelled():
             raise InterruptedError("cancelled")
 
+    picked = None
+    if auto_pick:
+        say("pick")
+        if marker not in ds.table.markers:
+            raise ClassifierRefused(f"{marker!r} is not a marker of this project")
+        manual = [cell for cell, origin in store.origins(ds.name, marker).items()
+                  if origin != "auto"]
+        pos, neg, picked = autopick.pick(ds, marker, exclude=manual)
+        stop()
+        store.set_auto(ds.name, marker, pos, neg)
     say("examples")
     rows, labels, report = check_ready(ds, marker)
     stop()
     say("features")
 
     def pixel_progress(done, total):
-        say("features", 1 + done / max(total, 1), len(STAGES))
+        # The one long stage reports its own tiles, which the panel shows as
+        # a percent.
+        say("features", done, total)
 
     matrix, names, info = features.feature_matrix(ds, marker, progress=pixel_progress,
                                                   cancelled=cancelled, pixels=pixels)
@@ -107,17 +126,19 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True) -> dict:
     if skip is not None and skip.shape[0] == eligible.shape[0]:
         eligible &= ~skip
     scores = np.full(raw.shape[0], np.nan, dtype=np.float32)
-    picked = np.flatnonzero(eligible)
-    scores[picked] = fitted.scores(matrix[picked], cancelled=cancelled)
+    agreement = np.full(raw.shape[0], np.nan, dtype=np.float32)
+    called = np.flatnonzero(eligible)
+    scores[called], agreement[called] = fitted.scores(matrix[called], cancelled=cancelled)
     calls = np.full(raw.shape[0], -1, dtype=np.int8)
-    calls[picked] = (scores[picked] >= 0.5).astype(np.int8)
+    calls[called] = (scores[called] >= 0.5).astype(np.int8)
     uncertain = np.zeros(raw.shape[0], dtype=bool)
-    uncertain[picked] = np.abs(scores[picked] - 0.5) < UNCERTAIN_BAND
+    uncertain[called] = learner.uncertain(agreement[called])
     # A cell a person labelled is called as they labelled it: the model is
     # for the cells nobody looked at.
     labelled = rows[eligible[rows]]
     calls[labelled] = labels[eligible[rows]]
     uncertain[labelled] = False
+    agreement[labelled] = 1.0
     stop()
     say("store")
     run_id = secrets.token_hex(6)
@@ -139,19 +160,22 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True) -> dict:
         "pixel_reason": info.get("pixel_reason"),
         "pixels": info.get("pixels") if isinstance(info.get("pixels"), dict) else None,
         "n_rows": int(raw.shape[0]),
-        "n_eligible": int(picked.size),
+        "n_eligible": int(called.size),
         "n_positive": int((calls == 1).sum()),
         "n_negative": int((calls == 0).sum()),
         "n_uncertain": int(uncertain.sum()),
         "n_not_classified": int((calls == -1).sum()),
-        "uncertain_band": UNCERTAIN_BAND,
+        "uncertain_rule": (f"at least {round(UNCERTAIN_DISAGREEMENT * 100)}% of "
+                           f"{learner.RESAMPLES_TREES if fitted.kind == 'gradient_boosting' else learner.RESAMPLES} "
+                           "models fitted to resampled examples call it the other way"),
+        "auto_pick": picked,
         "table_fp": features.table_fingerprint(ds),
         "mask_fp": features.mask_fingerprint(ds),
         "qc_fp": qc_fp,
         "qc_mode": qc_mode,
     }
     store.write_arrays(ds.name, marker, run_id, calls=calls, scores=scores,
-                       uncertain=uncertain)
+                       uncertain=uncertain, agreement=agreement)
     try:
         with store.editing(ds.name) as document:
             # Checked again under the lock the eraser takes: an eraser pressed

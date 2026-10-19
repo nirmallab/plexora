@@ -84,23 +84,38 @@ those examples. Use it when one number per cell does not separate the
 positives — a membrane stain whose mean is pulled up by a bright neighbour,
 or a speckled stain whose positives are not simply the brightest.
 
-1. Pick a marker, as for a threshold.
-2. Press **+ Positive** and click cells on the image that are positive; press
-   **− Negative** and click cells that are not. Clicking a labelled cell again
-   removes its label. **Esc**, or pressing the active button again, stops
-   labelling so the image pans as usual. Positive examples are marked with a
-   green ring and a plus, negative ones with a red ring and a minus.
-3. With at least 3 of each, press the **wand**. A small model is trained on
-   each cell's value, its neighbours' values and — when the marker is an image
-   channel and the project has a mask — the marker's own pixels inside the
-   cell (brightness, edge against middle, contrast with the tissue around it).
-   It then classifies every cell QC lets be called. Positives are outlined in
-   white; cells the model is unsure about (a score within 0.15 of 0.5) in
-   amber; cells QC rules out in grey.
-4. Add or correct examples and press the wand again: the new run replaces the
-   old one. A cell you labelled is always called the way you labelled it.
-5. The **eraser** undoes the run and hands the marker back to its threshold.
-   The examples are kept.
+1. Pick a marker, as for a threshold. Every cell is outlined, so there is
+   something to click.
+2. Press the **wand**. Plexora picks about 10 clear positive and 10 clear
+   negative cells spread across the image — from the marker's own
+   distribution, away from where positive starts — then trains and
+   classifies every cell. Its picks are marked with dashed rings.
+3. Or label cells yourself: press **+ Positive** and click cells on the image
+   that are positive; press **− Negative** and click cells that are not. A
+   labelled cell turns green or red and gets a solid ring with a plus or a
+   minus; clicking it again removes the label. **Esc**, or pressing the
+   active button again, stops labelling so the image pans as usual. Then
+   press **▶** (Train, at the end of that row) to train on exactly the
+   examples there are — at least 3 of each. Your labels are kept when you
+   press the wand, which only replaces its own earlier picks.
+4. The model learns from each cell's value, its neighbours' values and —
+   when the marker is an image channel and the project has a mask — the
+   marker's own pixels inside the cell (brightness, edge against middle,
+   contrast with the tissue around it, how much sits on the nucleus). After
+   a run, positives are outlined in white, uncertain cells in amber and cells
+   QC rules out in grey. A cell you labelled is always called the way you
+   labelled it.
+5. Rest the pointer on a cell to see its call, its score and how many of the
+   resampled models agree.
+6. Add or correct examples and train again: the new run replaces the old
+   one. The **eraser** undoes the run and hands the marker back to its
+   threshold; the examples are kept.
+
+**Uncertain** is not a fixed band around 0.5. The examples are resampled 25
+times and a model is fitted to each draw; a cell is uncertain when at least
+a fifth of those models call it the other way. With a handful of examples
+that is a wide stretch of cells — label more like them — and it narrows as
+examples are added.
 
 The line under the buttons reads **Positive cells: N / M**, where M is the
 cells that could be classified, with how many are uncertain. A run is marked
@@ -143,12 +158,14 @@ image, on the data node for one held there.
 - **Save Gates to Source File** — writes gates into the project's own
   AnnData or SpatialData file; see below. Only offered for a project
   imported from one of those.
-- **Cells** (bottom of the sidebar) — how gated cells are drawn: **None**,
-  **Centroids**, **Outlines** or **Filled**, plus **Point size** (centroids
+- **Cells** (bottom of the sidebar) — how gated cells are drawn: **None**
+  (cells off the image), **Centroids**, **Outlines** or **Filled**, plus **Point size** (centroids
   only) and **Opacity**. This row is shared with any other tool that colours
   cells, so it is not part of this card.
 
 ## Keyboard shortcuts
+
+The two marker keys are also printed at the foot of the panel.
 
 | Key | Action |
 | --- | --- |

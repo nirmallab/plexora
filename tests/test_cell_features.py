@@ -110,3 +110,22 @@ def test_pad_to_box_places_a_clipped_read():
     out = cf.pad_to_box(np.ones((2, 3)), (0, 0, 3, 2), (-1, -1, 4, 3))
     assert out.shape == (4, 5)
     assert out[1:3, 1:4].sum() == 6 and out.sum() == 6
+
+
+def test_the_compiled_kernel_and_the_numpy_form_agree():
+    """Two implementations of one tile's sums (cell_features docstring): the
+    same features from either, tile size and nuclear channel varied."""
+    labels, marker, dna = _scene()
+    rng = np.random.default_rng(3)
+    marker = marker + rng.normal(0, 2, marker.shape).astype(np.float32)
+    for tile in (16, 1024):
+        for with_dna in (True, False):
+            runs = [cf.accumulate(_reader(marker), _labels(labels), width=64, height=64,
+                                  read_dna=_reader(dna) if with_dna else None, tile=tile,
+                                  compiled=compiled) for compiled in (True, False)]
+            (ids_a, a), (ids_b, b) = runs
+            assert ids_a.tolist() == ids_b.tolist()
+            assert set(a) == set(b)
+            for name in a:
+                np.testing.assert_allclose(a[name], b[name], rtol=1e-4, atol=1e-4,
+                                           err_msg=f"{name} tile={tile} dna={with_dna}")

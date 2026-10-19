@@ -44,6 +44,9 @@ class AnnotateInput(MarkerInput):
 class RunInput(MarkerInput):
     pixels: bool = Field(True, description="Also learn from the marker's pixels in each "
                                            "cell (needs an image channel and a mask).")
+    auto_pick: bool = Field(False, description="Pick about 10 clear positive and 10 clear "
+                            "negative cells across the image first (the panel's wand), "
+                            "replacing earlier automatic picks; labelled cells are kept.")
 
 
 class ClearInput(ProjectInput):
@@ -108,7 +111,7 @@ def run(call, inp):
     runs.started(ds.name, (call.job or {}).get("job_id"), inp.marker)
     try:
         record = runs.run(
-            ds, inp.marker, pixels=inp.pixels,
+            ds, inp.marker, pixels=inp.pixels, auto_pick=inp.auto_pick,
             progress=lambda done, total, message: call.progress(done=done, total=total,
                                                                 message=message),
             cancelled=call.cancelled)
@@ -218,8 +221,10 @@ def capabilities(requires):
             writes=("gates",), persistent=True, egress="aggregates"),
         cap(name="gating.classifier_run", tool_name="classifier_run",
             purpose="Train the Single Cell Classifier on a marker's examples (at least 3 "
-                    "positive and 3 negative) and call every eligible cell (a job). Replaces "
-                    "the marker's previous run; the threshold is kept for classifier_revert.",
+                    "positive and 3 negative, or auto_pick: true to have about 10 of each "
+                    "picked across the image) and call every eligible cell (a job). "
+                    "Replaces the marker's previous run; the threshold is kept for "
+                    "classifier_revert.",
             permission="reversible_write", input_model=RunInput, handler=run,
             writes=("gates",), persistent=True, execution="job", egress="aggregates",
             reads=("table", "gates", "image", "mask")),

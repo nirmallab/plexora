@@ -96,12 +96,13 @@
         <button id="gate_clear_button" class="slider-auto-button gate-marker-auto gate-marker-clear"
                 title="Clear this marker's gate" aria-label="Clear this marker's gate"
                 type="button"><span class="fas fa-eraser"></span></button>
-        {# The classifier's pair, in the same places: the wand trains on this
-           marker's examples and calls every cell; the eraser takes the marker
-           back to how it was before its first run and keeps the examples. #}
+        {# The classifier's pair, in the same places: the wand picks about ten
+           clear positives and ten clear negatives across the image itself,
+           then trains and calls every cell; the eraser takes the marker back
+           to how it was before its first run and keeps the examples. #}
         <button id="clf_run_button" class="slider-auto-button gate-marker-auto gate-classifier-only"
-                title="Train on the examples and classify every cell"
-                aria-label="Train on the examples and classify every cell" type="button">
+                title="Pick about 10 positive and 10 negative cells across the image, then train and classify every cell"
+                aria-label="Pick examples automatically, then train and classify every cell" type="button">
             <span class="fas fa-wand-magic-sparkles"></span></button>
         <button id="clf_revert_button"
                 class="slider-auto-button gate-marker-auto gate-marker-clear gate-classifier-only"
@@ -111,7 +112,9 @@
     </div>
     {# Which label a click on a cell gives, one at a time; pressing the active
        one again (or Escape) stops labelling, so the canvas pans as usual.
-       The counts are this marker's examples. #}
+       The counts are this marker's examples. Train, at the end of the row,
+       learns from exactly these examples -- the ones clicked, loaded or left
+       by the wand -- without picking any of its own. #}
     <div class="clf-label-row gate-classifier-only">
         <div class="cell-mode-options clf-label-options" role="group" aria-label="Label cells">
             <button id="clf_positive_button" class="cell-mode-option clf-label-option is-positive"
@@ -127,6 +130,10 @@
                 <span id="clf_negative_count" class="clf-label-count">0</span>
             </button>
         </div>
+        <button id="clf_train_button" class="slider-auto-button clf-train-button" type="button"
+                title="Train on these examples and classify every cell"
+                aria-label="Train on these examples and classify every cell">
+            <span class="fas fa-play" aria-hidden="true"></span></button>
     </div>
     {# After a run: "Positive cells: 12,458 / 38,291", the uncertain and the
        not-classified counts beside it. And one status line under it: what
@@ -224,4 +231,10 @@
         </div>
         <div id="save_anndata_status"></div>
     </div>
+    {# The panel's two keys, where the hand on the mouse finds them: the
+       same key caps the canvas's own hint uses (core's `.plx-kbd`). #}
+    <footer class="gate-panel-footer" aria-label="Keyboard shortcuts">
+        <span class="gate-panel-shortcut"><kbd class="plx-kbd">Z</kbd> Previous marker</span>
+        <span class="gate-panel-shortcut"><kbd class="plx-kbd">X</kbd> Next marker</span>
+    </footer>
 </section>

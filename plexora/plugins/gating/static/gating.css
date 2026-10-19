@@ -825,3 +825,107 @@
 .clf-status[data-tone="warning"] {
     color: var(--accent-warning);
 }
+
+/* The label row: the two toggles take the width, Train (the play button)
+   ends the line the way the wand ends the marker's. */
+.clf-label-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+}
+
+.clf-label-row > .clf-label-options {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.clf-train-button {
+    flex: 0 0 auto;
+}
+
+.clf-train-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+/* The panel's footer: its two keys, centred under everything else, on a
+   hairline so it reads as the card's last line rather than one more row. */
+.gate-panel-footer {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 11px;
+    gap: var(--space-1) var(--space-4);
+    justify-content: center;
+    padding-top: var(--space-2);
+}
+
+.gate-panel-shortcut {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+/* The hover card after a run: a small dark card beside the pointer, in the
+   manner of QC's (qcHover.js), never taking the pointer itself. */
+.clf-hover-card {
+    background: var(--surface-1, #0b0f15);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    max-width: 260px;
+    padding: 8px 10px;
+    pointer-events: none;
+    position: fixed;
+    z-index: 2000;
+}
+
+.clf-hover-title {
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+/* The call's own colour on the image, as a mark before the words. */
+.clf-hover-title::before {
+    background: #ffffff;
+    border-radius: 50%;
+    content: "";
+    display: inline-block;
+    height: 7px;
+    margin-right: 6px;
+    vertical-align: 1px;
+    width: 7px;
+}
+
+.clf-hover-title[data-tone="negative"]::before {
+    background: var(--text-muted);
+}
+
+.clf-hover-title[data-tone="uncertain"]::before {
+    background: var(--accent-warning);
+}
+
+.clf-hover-rows {
+    column-gap: 10px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    margin: 0;
+    row-gap: 2px;
+}
+
+.clf-hover-rows dt {
+    color: var(--text-muted);
+}
+
+.clf-hover-rows dd {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+}

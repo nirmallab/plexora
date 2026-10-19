@@ -148,6 +148,30 @@ def examples(project, marker) -> tuple[list, list]:
     return [int(v) for v in pos], [int(v) for v in neg]
 
 
+def origins(project, marker) -> dict:
+    """{cell id: origin} for one marker's examples ("click", "import", "auto",
+    "agent")."""
+    frame = all_examples(project).filter(pl.col("marker") == marker)
+    return {int(c): str(o) for c, o in zip(frame["cell_id"].to_list(),
+                                           frame["origin"].to_list())}
+
+
+def set_auto(project, marker, pos, neg) -> None:
+    """The wand's picks for one marker: its earlier picks are replaced, and
+    the examples a person gave are kept (and win over a pick of the same
+    cell)."""
+    with lock(project):
+        frame = all_examples(project)
+        frame = frame.filter(~((pl.col("marker") == marker) & (pl.col("origin") == "auto")))
+        kept = set(frame.filter(pl.col("marker") == marker)["cell_id"].to_list())
+        stamp = now()
+        rows = ([(marker, int(v), 1, stamp, "auto") for v in pos if int(v) not in kept]
+                + [(marker, int(v), 0, stamp, "auto") for v in neg if int(v) not in kept])
+        if rows:
+            frame = pl.concat([frame, pl.DataFrame(rows, schema=_EXAMPLE_SCHEMA, orient="row")])
+        put_examples(project, frame)
+
+
 def counts(project) -> dict:
     """{marker: (n positive, n negative)} for every marker with examples."""
     frame = all_examples(project)
@@ -222,13 +246,19 @@ def run_path(project, marker, run_id) -> Path:
     return folder(project) / safe_name(marker) / f"run_{run_id}.npz"
 
 
-def write_arrays(project, marker, run_id, *, calls, scores, uncertain) -> Path:
+def write_arrays(project, marker, run_id, *, calls, scores, uncertain, agreement=None) -> Path:
+    """`agreement`: the share of resampled models agreeing with each call,
+    kept as a whole percent (learner.py)."""
     import io
 
     buffer = io.BytesIO()
+    extra = {}
+    if agreement is not None:
+        extra["agreement"] = np.round(np.nan_to_num(np.asarray(agreement, dtype=np.float32),
+                                                    nan=0.0) * 100).astype(np.uint8)
     np.savez_compressed(buffer, calls=np.asarray(calls, dtype=np.int8),
                         scores=np.asarray(scores, dtype=np.float32),
-                        uncertain=np.asarray(uncertain, dtype=bool))
+                        uncertain=np.asarray(uncertain, dtype=bool), **extra)
     path = run_path(project, marker, run_id)
     write_atomic(path, buffer.getvalue())
     return path
@@ -238,7 +268,10 @@ def read_arrays(project, marker, run_id) -> dict | None:
     path = run_path(project, marker, run_id)
     try:
         with np.load(path, allow_pickle=False) as held:
-            return {name: np.asarray(held[name]) for name in ("calls", "scores", "uncertain")}
+            out = {name: np.asarray(held[name]) for name in ("calls", "scores", "uncertain")}
+            out["agreement"] = (np.asarray(held["agreement"]) if "agreement" in held.files
+                                else None)
+            return out
     except (OSError, KeyError, ValueError):
         return None
 

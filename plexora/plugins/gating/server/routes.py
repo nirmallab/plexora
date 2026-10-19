@@ -536,11 +536,18 @@ def classifier_run():
     if held is not None:
         return api.json_response({"ok": True, "job_id": held["job_id"], "running": held,
                                   "already_running": True})
+    auto = body.get('auto') is True
     try:
-        runs.check_ready(ds, marker)
+        if auto:
+            # The wand picks its own examples in the job; only the marker
+            # is checked here.
+            if marker not in ds.table.markers:
+                raise ClassifierRefused(f"{marker!r} is not a marker of this project")
+        else:
+            runs.check_ready(ds, marker)
     except ClassifierRefused as exc:
         return api.json_response({"ok": False, "error": {"message": str(exc)}}), 400
-    return _invoke("classifier_run", {"project": ds.name, "marker": marker,
+    return _invoke("classifier_run", {"project": ds.name, "marker": marker, "auto_pick": auto,
                                       "pixels": body.get('pixels', True) is not False})
 
 
@@ -590,6 +597,40 @@ def classifier_calls():
     response.headers['X-Classifier-Eligible'] = info["eligible"]
     response.headers['X-Classifier-Uncertain'] = info["uncertain"]
     response.headers['X-Classifier-Not-Classified'] = info["not_classified"]
+    return response
+
+
+@gating_bp.route('/classifier/scores', methods=['GET'])
+def classifier_scores():
+    """What the hover card reads: the run's score per table row (float32,
+    NaN where not classified), then each row's agreement as a whole percent
+    (uint8) -- one block of 5 bytes a row, gzipped. Empty without a run."""
+    import gzip
+
+    import numpy as np
+
+    from plexora.plugins.gating.server.classifier import calls
+
+    ds = _classifier_ds(request.args.get('datasource'))
+    marker = request.args.get('marker')
+    if marker not in ds.table.markers:
+        abort(404)
+    record, arrays = calls.run_arrays(ds, marker)
+    body = b""
+    if arrays is not None:
+        scores = np.where(arrays["calls"] >= 0, arrays["scores"], np.nan).astype(np.float32)
+        agreement = arrays.get("agreement")
+        if agreement is None:
+            agreement = np.zeros(scores.shape[0], dtype=np.uint8)
+        body = scores.tobytes() + np.asarray(agreement, dtype=np.uint8).tobytes()
+    content = gzip.compress(body)
+    response = make_response(content)
+    response.headers.set('Content-Type', 'application/octet-stream')
+    response.headers['Content-length'] = len(content)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Classifier-Run'] = record["run_id"] if record else ""
+    response.headers['X-Classifier-Score-Name'] = (record or {}).get("score_name") or "score"
     return response
 
 

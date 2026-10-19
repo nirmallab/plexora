@@ -123,3 +123,21 @@ def test_the_mode_switch_is_remembered(client):
 
 def test_a_job_that_is_not_gatings_is_not_served(client):
     assert client.get("/plugins/gating/jobs/nope").status_code == 404
+
+
+def test_the_wand_needs_no_examples_and_the_scores_are_served(client, made):
+    started = post(client, "run", marker="CD8", auto=True).get_json()
+    assert started["ok"], started
+    job = _follow(client, started["job_id"])
+    assert job["status"] == "done", job["error"]
+    state = get(client, "state", marker="CD8").get_json()["marker"]
+    assert state["examples"]["n_auto"] == 20 and state["run"]["auto_pick"]
+    response = get(client, "scores", marker="CD8")
+    body = gzip.decompress(response.data)
+    n = len(made["cells"])
+    assert len(body) == 5 * n
+    scores = np.frombuffer(body[:4 * n], dtype=np.float32)
+    agreement = np.frombuffer(body[4 * n:], dtype=np.uint8)
+    assert np.isfinite(scores).all() and agreement.max() <= 100
+    assert response.headers["X-Classifier-Run"] == state["run"]["run_id"]
+    assert response.headers["X-Classifier-Score-Name"] == "score"

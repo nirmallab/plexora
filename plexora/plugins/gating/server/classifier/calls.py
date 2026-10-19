@@ -48,7 +48,8 @@ def run_arrays(ds, marker):
     if skip is not None and skip.shape[0] == calls.shape[0]:
         calls[skip] = -1
         uncertain[skip] = False
-    arrays = {"calls": calls, "scores": arrays["scores"], "uncertain": uncertain}
+    arrays = {"calls": calls, "scores": arrays["scores"], "uncertain": uncertain,
+              "agreement": arrays.get("agreement")}
     return record, arrays
 
 
@@ -129,5 +130,5 @@ def public_run(record):
     keep = ("run_id", "created", "model", "calibrated", "score_name",
             "cv_balanced_accuracy", "n_examples_positive", "n_examples_negative",
             "feature_groups", "pixel_reason", "n_eligible", "n_positive", "n_uncertain",
-            "n_not_classified", "qc_mode", "uncertain_band", "notes")
+            "n_not_classified", "qc_mode", "uncertain_rule", "auto_pick", "notes")
     return {k: record.get(k) for k in keep}

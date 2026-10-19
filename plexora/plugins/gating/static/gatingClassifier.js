@@ -4,21 +4,27 @@
  *
  * Owned by GatingSidebarController and switched by the cog in the card's
  * header. Thresholding calls a marker positive by one number; this calls it
- * from examples: + Positive / - Negative arm a click on the image that labels
- * the cell under it, the wand trains a small model on the marker's examples
- * and calls every cell QC lets be called, and the eraser takes the marker back
- * to how it was before its first run, keeping the examples.
+ * from examples. The wand picks about ten clear positives and ten clear
+ * negatives across the image itself and trains on them; + Positive /
+ * - Negative arm a click on the image that labels the cell under it, and Train
+ * (the play button) learns from exactly the examples there are. Either calls
+ * every cell QC lets be called. The eraser takes the marker back to how it was
+ * before its first run, keeping the examples. After a run, the pointer resting
+ * on a cell shows its score (GateClassifierHover, below).
  *
  * Drawing reuses what the viewer already has, with no shader of its own:
  *
- * - The calls are the gating cell layer's colour table (`ctx.layers.
- *   setColorLUT("cells", ...)`): white for positive, as a gated cell is drawn,
- *   amber for uncertain, the not-called grey for cells not classified, and
- *   nothing for negatives. While this mode is on, the layer's provider reports
- *   no range gate (CSVGatingList.getColorCodedRanges), so the table decides.
- * - The examples are an overlay (`ctx.layers.addOverlay`): a green ring with a
- *   plus, a red ring with a minus, sized in screen pixels so they read at any
- *   zoom, and drawn before any run.
+ * - The cells are the gating cell layer's colour table (`ctx.layers.
+ *   setColorLUT("cells", ...)`). Before a run every cell is drawn, in the
+ *   mask's own white, so there is something to click; after one, white for
+ *   positive, as a gated cell is drawn, amber for uncertain, the not-called
+ *   grey for cells not classified, and nothing for negatives. A labelled cell
+ *   is green (positive) or red (negative) throughout. While this mode is on,
+ *   the layer's provider reports no range gate
+ *   (CSVGatingList.getColorCodedRanges), so the table decides.
+ * - The examples are also an overlay (`ctx.layers.addOverlay`): a ring with a
+ *   plus or a minus, sized in screen pixels so it reads at any zoom -- solid
+ *   for a cell a person labelled, dashed for one the wand picked.
  *
  * Everything the server keeps (examples, runs, mode) is per project
  * (classifier/ on the server); this class holds only what is on screen.
@@ -36,8 +42,11 @@ const CLASSIFIER_COLORS = {
     3: [243, 184, 69, 235],
 };
 
-//: The example rings (--accent-success, --accent-danger).
+//: The example rings and cells (--accent-success, --accent-danger).
 const EXAMPLE_COLORS = { positive: "#34d399", negative: "#f87171" };
+const EXAMPLE_RGBA = { positive: [52, 211, 153, 255], negative: [248, 113, 113, 255] };
+//: Every cell before a run: the mask's own white (labelTile.js).
+const UNRUN_RGBA = [255, 255, 255, 220];
 
 //: Above this many ids a dense colour table is too big to build (4 bytes
 //: per id); the sparse form is used instead.
@@ -45,6 +54,7 @@ const DENSE_LUT_MAX_ID = 1 << 25;
 
 //: What the server's run stages are called on the status line.
 const STAGE_WORDS = {
+    pick: "Picking examples across the image",
     examples: "Checking the examples",
     features: "Reading each cell's pixels",
     fit: "Training",
@@ -101,7 +111,9 @@ class GateClassifierControl {
             event.stopPropagation();
             this.openModeMenu();
         });
-        this.runButton?.addEventListener("click", () => this.onRunClick());
+        this.trainButton = byId("clf_train_button");
+        this.runButton?.addEventListener("click", () => this.onRunClick({ auto: true }));
+        this.trainButton?.addEventListener("click", () => this.onRunClick({ auto: false }));
         this.revertButton?.addEventListener("click", () => this.onRevertClick());
         this.positiveButton?.addEventListener("click", () => this.toggleLabel("positive"));
         this.negativeButton?.addEventListener("click", () => this.toggleLabel("negative"));
@@ -118,6 +130,7 @@ class GateClassifierControl {
             this.openMoreMenu(more);
         });
         window.addEventListener("plexora:agent-state-changed", this._onServer);
+        this.hover = new GateClassifierHover(this);
         this.ctx.onCleanup?.(() => this.dispose());
         this.paint();
 
@@ -130,6 +143,7 @@ class GateClassifierControl {
 
     dispose() {
         this.disarm();
+        this.hover?.destroy();
         document.removeEventListener("keydown", this._onKey);
         window.removeEventListener("plexora:agent-state-changed", this._onServer);
         this.ctx.layers?.removeOverlay?.("classifier-examples");
@@ -139,12 +153,14 @@ class GateClassifierControl {
         this.shown = true;
         document.addEventListener("keydown", this._onKey);
         this.syncArming();
+        this.hover?.sync();
     }
 
     hide() {
         this.shown = false;
         document.removeEventListener("keydown", this._onKey);
         this.syncArming();
+        this.hover?.sync();
     }
 
     // -- mode ----------------------------------------------------------------
@@ -178,9 +194,6 @@ class GateClassifierControl {
         const gatingList = this.controller.gatingList;
         if (gatingList) gatingList.classifierMode = next === "classifier";
         if (next === "classifier") {
-            // Nothing drawn until the calls arrive: an empty table, not the
-            // plain white every cell would get with no range gate and no table.
-            this.ctx.layers?.setColorLUT?.("cells", { colors: new Uint8Array(4), maxId: 0 });
             this.mountOverlay();
             this.follow(this.controller.gateMarker, { force: true });
         } else {
@@ -188,7 +201,9 @@ class GateClassifierControl {
             this.ctx.layers?.removeOverlay?.("classifier-examples");
             this.ctx.layers?.setColorLUT?.("cells", null);
             this.calls = null;
+            this.scores = null;
         }
+        this.hover?.sync();
         // The layer's gate again: none in this mode, the slider's in the other.
         this.controller.eventHandler?.trigger?.(CSVGatingList.events.SELECTION_CHANGED,
                                                 gatingList?.selections || {});
@@ -237,17 +252,20 @@ class GateClassifierControl {
         const run = state.marker?.run;
         if (!run) {
             this.calls = null;
-            this.drawCalls(null);
+            this.scores = null;
         } else if (!this.calls || this.calls.run !== run.run_id) {
             try {
                 const calls = await this.api.classifierCalls(marker);
                 if (seq !== this._seq || marker !== this.marker) return;
                 this.calls = calls;
-                await this.drawCalls(calls);
+                this.scores = null;
+                this.loadScores(marker, calls.run);
             } catch (error) {
                 this.setStatus(`The calls could not be read (${error.message || error})`, "error");
             }
         }
+        await this.drawCalls(this.calls);
+        this.hover?.sync();
         // A run this tab did not start (another tab, an agent) is followed too.
         const running = state.running;
         if (running && !this.job) {
@@ -286,34 +304,69 @@ class GateClassifierControl {
         return this._ids;
     }
 
+    /** The scores the hover card reads, fetched once per run. */
+    async loadScores(marker, run) {
+        try {
+            const scores = await this.api.classifierScores(marker);
+            if (marker === this.marker && this.calls && this.calls.run === run) this.scores = scores;
+        } catch (error) {
+            console.error("classifier: no scores", error);
+        }
+    }
+
+    /** id -> table row, for the hover card (built once with the ids). */
+    async rowOf(cellId) {
+        const ids = await this.cellIds();
+        if (!ids) return -1;
+        if (!this._rowOf) {
+            this._rowOf = new Map();
+            for (let i = 0; i < ids.length; i += 1) this._rowOf.set(ids[i], i);
+        }
+        const row = this._rowOf.get(cellId);
+        return row === undefined ? -1 : row;
+    }
+
+    /**
+     * The layer's colour table: before a run every cell in the mask's
+     * white; after one, the calls; and the labelled cells green or red over
+     * either. Rebuilt whole -- a few bytes a cell, from arrays in hand.
+     */
     async drawCalls(calls) {
         if (!this.isOn()) return;
         const layers = this.ctx.layers;
-        if (!calls || calls.state !== "ready") {
-            layers?.setColorLUT?.("cells", { colors: new Uint8Array(4), maxId: 0 });
+        const ids = await this.cellIds();
+        if (!ids || !ids.length) {
+            layers?.setColorLUT?.("cells", null);
             return;
         }
-        const ids = await this.cellIds();
-        if (!ids || ids.length !== calls.codes.length) {
-            layers?.setColorLUT?.("cells", { colors: new Uint8Array(4), maxId: 0 });
+        const ready = calls && calls.state === "ready";
+        if (ready && ids.length !== calls.codes.length) {
             this.setStatus("The table on screen is not the one the calls were made on; "
                            + "reopen the project", "warning");
-            return;
         }
+        const codes = ready && ids.length === calls.codes.length ? calls.codes : null;
+        const examples = this.state?.examples || {};
+        const labelled = new Map();
+        for (const entry of examples.positive || []) labelled.set(entry.cell_id, EXAMPLE_RGBA.positive);
+        for (const entry of examples.negative || []) labelled.set(entry.cell_id, EXAMPLE_RGBA.negative);
+        const colorOf = (i) => {
+            const own = labelled.get(ids[i]);
+            if (own) return own;
+            return codes ? CLASSIFIER_COLORS[codes[i]] : UNRUN_RGBA;
+        };
         let maxId = 0;
         for (let i = 0; i < ids.length; i += 1) if (ids[i] > maxId) maxId = ids[i];
         if (maxId <= DENSE_LUT_MAX_ID) {
             const colors = new Uint8Array((maxId + 1) * 4);
             for (let i = 0; i < ids.length; i += 1) {
-                const color = CLASSIFIER_COLORS[calls.codes[i]];
-                if (!color || !color[3]) continue;
-                colors.set(color, ids[i] * 4);
+                const color = colorOf(i);
+                if (color && color[3]) colors.set(color, ids[i] * 4);
             }
             layers?.setColorLUT?.("cells", { colors, maxId });
         } else {
             const map = new Map();
             for (let i = 0; i < ids.length; i += 1) {
-                const color = CLASSIFIER_COLORS[calls.codes[i]];
+                const color = colorOf(i);
                 if (color && color[3]) map.set(ids[i], color);
             }
             layers?.setColorLUT?.("cells", { map });
@@ -343,12 +396,16 @@ class GateClassifierControl {
                 context.beginPath();
                 context.arc(point.x, point.y, ring, 0, Math.PI * 2);
                 // A dark rim first, so the ring reads on bright tissue too.
+                context.setLineDash([]);
                 context.lineWidth = 4 * px;
                 context.strokeStyle = "rgba(0, 0, 0, 0.55)";
                 context.stroke();
+                // Dashed: the wand picked it, nobody has looked at it yet.
+                context.setLineDash(point.auto ? [3 * px, 2.5 * px] : []);
                 context.lineWidth = 2 * px;
                 context.strokeStyle = color;
                 context.stroke();
+                context.setLineDash([]);
                 context.beginPath();
                 context.moveTo(point.x - arm, point.y);
                 context.lineTo(point.x + arm, point.y);
@@ -448,6 +505,7 @@ class GateClassifierControl {
             if (this.state) this.state.examples = answer.examples;
             this.status = null;
             this.ctx.telemetry?.feature?.("classifier.annotate");
+            await this.drawCalls(this.calls);
             this.repaintOverlay();
             this.paint();
         } catch (error) {
@@ -463,13 +521,15 @@ class GateClassifierControl {
 
     // -- run and revert ---------------------------------------------------------------
 
-    async onRunClick() {
+    /** The wand (`auto`: pick the examples, then train) or Train (the
+     *  examples there are). */
+    async onRunClick({ auto = false } = {}) {
         if (this.job || !this.marker) return;
         const marker = this.marker;
-        this.setStatus("Starting…");
+        this.setStatus(auto ? "Picking examples…" : "Starting…");
         let answer;
         try {
-            answer = await this.api.classifierRun(marker);
+            answer = await this.api.classifierRun(marker, auto);
         } catch (error) {
             this.setStatus(String(error.message || error), "error");
             return;
@@ -479,7 +539,7 @@ class GateClassifierControl {
         if (answer.already_running && running !== marker) {
             this.setStatus(`A run on ${running} is in progress`, "warning");
         }
-        this.ctx.telemetry?.feature?.("classifier.run");
+        this.ctx.telemetry?.feature?.(auto ? "classifier.wand" : "classifier.train");
         this.paint();
         await this.followJob();
     }
@@ -527,11 +587,10 @@ class GateClassifierControl {
         const words = STAGE_WORDS[progress.message] || "Working";
         const total = Number(progress.total) || 0;
         const done = Number(progress.done) || 0;
-        // The pixel pass reports itself as a fraction of the features stage
-        // (stage 1 of 5 running from 1 to 2): the only stage long enough to
+        // The pixel pass reports its own tiles: the one stage long enough to
         // need a number.
         const pct = progress.message === "features" && total
-            ? ` ${Math.max(0, Math.min(100, Math.round((done - 1) * 100)))}%` : "";
+            ? ` ${Math.max(0, Math.min(100, Math.round((done / total) * 100)))}%` : "";
         this.setStatus(`${words}…${pct}`);
     }
 
@@ -723,12 +782,18 @@ class GateClassifierControl {
         const min = this.minExamples || 3;
         const busy = Boolean(this.job);
         if (this.runButton) {
-            this.runButton.disabled = busy || !state || nPos < min || nNeg < min;
+            this.runButton.disabled = busy || !this.marker;
             this.runButton.classList.toggle("is-busy", busy);
             this.runButton.title = busy ? "Running…"
-                : (nPos < min || nNeg < min)
-                    ? `Needs ${min} positive and ${min} negative examples`
-                    : "Train on the examples and classify every cell";
+                : "Pick about 10 positive and 10 negative cells across the image, then train "
+                  + "and classify every cell";
+        }
+        if (this.trainButton) {
+            const short = nPos < min || nNeg < min;
+            this.trainButton.disabled = busy || !state || short;
+            this.trainButton.title = busy ? "Running…"
+                : short ? `Train needs ${min} positive and ${min} negative examples`
+                    : `Train on these ${nPos + nNeg} examples and classify every cell`;
         }
         if (this.revertButton) this.revertButton.disabled = !state?.run;
         this.paintSummary();
@@ -762,12 +827,13 @@ class GateClassifierControl {
         const run = this.state?.run;
         if (run) {
             const what = run.score_name === "probability" ? "calibrated" : "uncalibrated scores";
+            const auto = run.auto_pick ? "; examples picked by the wand" : "";
             const cv = run.cv_balanced_accuracy != null
                 ? `, cross-validated ${Math.round(run.cv_balanced_accuracy * 100)}%` : "";
             node.title = `${run.model === "gradient_boosting" ? "Gradient boosting"
                 : "Logistic regression"} on ${run.n_examples_positive} + `
                 + `${run.n_examples_negative} examples (${(run.feature_groups || []).join(", ")}; `
-                + `${what}${cv})`;
+                + `${what}${cv}${auto}). Uncertain: ${run.uncertain_rule || "near the boundary"}.`;
         }
         node.hidden = false;
     }
@@ -784,10 +850,10 @@ class GateClassifierControl {
             tone = "warning";
         } else if (this.state && (nPos < min || nNeg < min)) {
             text = this.label
-                ? `Click cells to label them ${this.label}. Needs ${min} positive and `
-                  + `${min} negative to run.`
-                : `Choose Positive or Negative, then click cells on the image. Needs ${min} `
-                  + `of each to run.`;
+                ? `Click cells to label them ${this.label}. Train needs ${min} positive and `
+                  + `${min} negative.`
+                : "Press the wand to pick examples automatically, or choose Positive or "
+                  + `Negative and click cells, then \u25B6 (${min} of each).`;
         } else if (this.label) {
             text = `Click cells to label them ${this.label}; click again to remove. Esc stops.`;
         }
@@ -795,5 +861,249 @@ class GateClassifierControl {
         node.textContent = text || "";
         if (tone) node.dataset.tone = tone;
         else delete node.dataset.tone;
+    }
+}
+
+
+/**
+ * GateClassifierHover - what a cell says when the pointer rests on it after a
+ * run: its call, the model's score (or probability, once calibrated), how many
+ * of the models fitted to resampled examples agree, and whether a person or
+ * the wand labelled it.
+ *
+ * The cell under the pointer is the mask's (`cell_at`, the route a click on a
+ * cell uses), asked once per new spot -- one question in flight, always about
+ * the newest point, and a small move over the same spot answered from the last
+ * reply. The scores are in hand (`classifierScores`, one fetch per run), so
+ * nothing else is asked. On only in this mode, with the panel on screen and a
+ * run drawn; a press, a drag, a wheel or the pointer leaving clears it.
+ */
+class GateClassifierHover {
+    static get GAP() { return 16; }
+    static get PAD() { return 8; }
+
+    constructor(control) {
+        this.control = control;
+        this.ctx = control.ctx;
+        this.tracker = null;
+        this.viewer = null;
+        this.card = null;
+        this.position = null;
+        this.last = null;
+        this.wanted = null;
+        this.inflight = false;
+        this._frame = 0;
+        this._handlers = [];
+    }
+
+    wantsOn() {
+        const control = this.control;
+        return control.isOn() && control.shown && Boolean(control.calls)
+            && control.calls.state === "ready";
+    }
+
+    sync() {
+        if (this.wantsOn()) this.arm();
+        else this.disarm();
+    }
+
+    arm() {
+        if (this.tracker) return;
+        const viewer = this.ctx.viewer?.viewer;
+        if (!viewer?.canvas) return;
+        this.viewer = viewer;
+        // Plain pointer events rather than an OSD MouseTracker: a tracker
+        // made while the pointer is already over the image (a run finishing
+        // under a resting hand) hears nothing until the pointer leaves and
+        // comes back.
+        const element = viewer.canvas;
+        const onMove = (event) => {
+            const box = element.getBoundingClientRect();
+            this.moved({ position: { x: event.clientX - box.left, y: event.clientY - box.top } });
+        };
+        const onLeave = () => this.clear();
+        element.addEventListener("pointermove", onMove);
+        element.addEventListener("pointerleave", onLeave);
+        this.tracker = {
+            destroy: () => {
+                element.removeEventListener("pointermove", onMove);
+                element.removeEventListener("pointerleave", onLeave);
+            },
+        };
+        for (const name of ["canvas-press", "canvas-drag", "canvas-scroll"]) {
+            const fn = () => this.clear();
+            viewer.addHandler(name, fn);
+            this._handlers.push([name, fn]);
+        }
+    }
+
+    disarm() {
+        this.clear();
+        this.tracker?.destroy?.();
+        this.tracker = null;
+        for (const [name, fn] of this._handlers) this.viewer?.removeHandler?.(name, fn);
+        this._handlers = [];
+        this.viewer = null;
+        this.last = null;
+    }
+
+    destroy() {
+        this.disarm();
+        this.card?.remove();
+        this.card = null;
+    }
+
+    moved(event) {
+        if (!event?.position) return;
+        const OSD = window.OpenSeadragon;
+        this.position = OSD?.Point ? new OSD.Point(event.position.x, event.position.y)
+            : event.position;
+        if (this._frame) return;
+        this._frame = requestAnimationFrame(() => {
+            this._frame = 0;
+            this.resolve();
+        });
+    }
+
+    resolve() {
+        if (!this.tracker || !this.position || !this.wantsOn()) {
+            this.clear();
+            return;
+        }
+        const point = this.control.toImage(this.position);
+        if (!point) return;
+        const [x, y] = point;
+        const scale = this.control.imageDistance(1);
+        const last = this.last;
+        if (last && Math.hypot(x - last.x, y - last.y) < scale * 3) {
+            this.render(last.hit);
+            return;
+        }
+        this.wanted = { x, y, scale };
+        this.ask();
+    }
+
+    async ask() {
+        if (this.inflight || !this.wanted) return;
+        const { x, y, scale } = this.wanted;
+        this.wanted = null;
+        this.inflight = true;
+        try {
+            const hit = await this.control.api.classifierCellAt(
+                x, y, Math.max(1, Math.min(32, scale * 3)));
+            this.last = { x, y, hit };
+            if (this.tracker) this.render(hit);
+        } catch (error) {
+            this.clear();
+        } finally {
+            this.inflight = false;
+            if (this.wanted) this.ask();
+        }
+    }
+
+    async render(hit) {
+        const control = this.control;
+        if (!hit || hit.cell_id === null || hit.cell_id === undefined) {
+            this.hideCard();
+            return;
+        }
+        const row = await control.rowOf(hit.cell_id);
+        const calls = control.calls;
+        if (row < 0 || !calls || row >= calls.codes.length) {
+            this.hideCard();
+            return;
+        }
+        const code = calls.codes[row];
+        const examples = control.state?.examples || {};
+        let label = null;
+        for (const kind of ["positive", "negative"]) {
+            const entry = (examples[kind] || []).find((e) => e.cell_id === hit.cell_id);
+            if (entry) label = [kind, entry];
+        }
+        if (code === 2 && !label) {
+            this.hideCard();
+            return;
+        }
+        const marker = control.marker;
+        const scores = control.scores;
+        const score = scores && row < scores.scores.length ? scores.scores[row] : NaN;
+        const agreement = scores && row < scores.agreement.length ? scores.agreement[row] : null;
+        const call = code === 1 || (code === 3 && score >= 0.5) ? "positive"
+            : code === 2 ? "not classified" : "negative";
+        const title = code === 3 ? `${marker} ${call} · uncertain` : `${marker} ${call}`;
+        const rows = [];
+        if (Number.isFinite(score)) {
+            rows.push([scores.scoreName === "probability" ? "Probability" : "Score",
+                       score.toFixed(2)]);
+        }
+        if (agreement !== null && Number.isFinite(score)) {
+            rows.push(["Agreement", `${agreement}% of resampled models`]);
+        }
+        if (label) {
+            rows.push(["Example", label[1].auto ? `${label[0]}, picked by the wand`
+                : `${label[0]}, labelled by you`]);
+        }
+        rows.push(["Cell", String(hit.cell_id)]);
+        const tone = code === 3 ? "uncertain" : call === "positive" ? "positive" : "negative";
+        this.showCard(title, tone, rows);
+    }
+
+    ensureCard() {
+        if (this.card) return this.card;
+        const card = document.createElement("div");
+        card.className = "clf-hover-card";
+        card.setAttribute("role", "tooltip");
+        card.hidden = true;
+        document.body.appendChild(card);
+        this.card = card;
+        return card;
+    }
+
+    showCard(title, tone, rows) {
+        const card = this.ensureCard();
+        card.replaceChildren();
+        const head = document.createElement("div");
+        head.className = "clf-hover-title";
+        head.dataset.tone = tone;
+        head.textContent = title;
+        const list = document.createElement("dl");
+        list.className = "clf-hover-rows";
+        for (const [name, value] of rows) {
+            const dt = document.createElement("dt");
+            dt.textContent = name;
+            const dd = document.createElement("dd");
+            dd.textContent = value;
+            list.append(dt, dd);
+        }
+        card.append(head, list);
+        card.hidden = false;
+        this.place();
+    }
+
+    /** Beside the pointer, flipped where the image ends. */
+    place() {
+        const card = this.card;
+        const canvas = this.viewer?.canvas;
+        if (!card || !canvas || !this.position) return;
+        const bounds = canvas.getBoundingClientRect();
+        const box = card.getBoundingClientRect();
+        const anchor = { x: bounds.left + this.position.x, y: bounds.top + this.position.y };
+        const gap = GateClassifierHover.GAP;
+        const pad = GateClassifierHover.PAD;
+        let left = anchor.x + gap;
+        if (left + box.width > bounds.right - pad) left = anchor.x - gap - box.width;
+        let top = anchor.y + gap;
+        if (top + box.height > bounds.bottom - pad) top = anchor.y - gap - box.height;
+        card.style.left = `${Math.round(Math.max(bounds.left + pad, left))}px`;
+        card.style.top = `${Math.round(Math.max(bounds.top + pad, top))}px`;
+    }
+
+    hideCard() {
+        if (this.card) this.card.hidden = true;
+    }
+
+    clear() {
+        this.hideCard();
+        this.wanted = null;
     }
 }

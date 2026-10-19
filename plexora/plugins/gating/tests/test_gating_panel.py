@@ -387,6 +387,7 @@ def test_the_classifier_is_a_second_mode_of_the_same_card():
     assert panel.count('id="gate_marker_select"') == 1
     for element_id in ("clf_load_button", "clf_download_button", "clf_more_button",
                        "clf_run_button", "clf_revert_button", "clf_positive_button",
+                       "clf_train_button",
                        "clf_negative_button", "clf_summary", "clf_status", "clf_load_input"):
         assert f'id="{element_id}"' in panel, element_id
     for label in ("Load Annotations", "Download Cells"):
@@ -430,3 +431,39 @@ def test_the_classifier_draws_through_the_layer_and_follows_the_marker():
     assert init.index('"gatingClassifier.js"') < init.index('"gatingSidebarController.js"')
     # The run is a job the panel follows; a second press while one runs waits.
     assert "gatingJob(" in classifier and "if (this.job || !this.marker) return;" in classifier
+
+
+def test_train_ends_the_label_row_and_the_wand_picks_its_own_examples():
+    """Two ways to train: the wand on the marker's line picks about ten of
+    each class itself; Train, at the end of the Positive / Negative row,
+    learns from exactly the examples there are."""
+    panel, classifier = _code(PANEL), _code(CLASSIFIER)
+    label_row = panel[panel.index('class="clf-label-row'):panel.index('id="clf_summary"')]
+    assert label_row.index('id="clf_negative_button"') < label_row.index('id="clf_train_button"')
+    assert "fa-play" in label_row
+    assert "this.onRunClick({ auto: true })" in classifier
+    assert "this.onRunClick({ auto: false })" in classifier
+    assert "classifierRun(marker, auto)" in classifier
+
+
+def test_the_footer_names_the_two_marker_keys_as_key_caps():
+    panel, styles = _code(PANEL), _code(STYLES)
+    footer = panel[panel.index('<footer class="gate-panel-footer"'):panel.index("</footer>")]
+    assert '<kbd class="plx-kbd">Z</kbd> Previous marker' in footer
+    assert '<kbd class="plx-kbd">X</kbd> Next marker' in footer
+    rule = styles[styles.index(".gate-panel-footer {"):]
+    rule = rule[:rule.index("}")]
+    assert "justify-content: center" in rule and "border-top" in rule
+    # The last thing in the section.
+    assert panel.index("</footer>") > panel.index('id="gating_save_anndata_panel"')
+
+
+def test_the_cells_are_drawn_before_a_run_and_none_is_offered():
+    classifier = _code(CLASSIFIER)
+    gating_list = _code(PLUGIN_ROOT / "static" / "csvGatingList.js")
+    assert 'supportedCellModes: ["none", "centroids", "outlines", "filled"]' in gating_list
+    # Before a run every cell takes the mask's white; a labelled one its colour.
+    assert "codes ? CLASSIFIER_COLORS[codes[i]] : UNRUN_RGBA" in classifier
+    assert "EXAMPLE_RGBA.positive" in classifier and "EXAMPLE_RGBA.negative" in classifier
+    # The hover card reads the scores route, once per run.
+    assert "class GateClassifierHover" in classifier and "classifierScores(marker)" in classifier

@@ -916,6 +916,10 @@ if (window.Plexora) {
         // is the pairing the layer model exists for.
         // See ImageViewer.registerCellLayer.
         ownsCellLayer: true,
+        // None as well as the three drawings, so the cells can be taken off
+        // the image from the row that draws them (viewerControls.offeredModes);
+        // they are drawn, in Outlines, until somebody does.
+        supportedCellModes: ["none", "centroids", "outlines", "filled"],
         // What the `?` on the Thresholding card explains (views/pluginHelp.js).
         // The open/close chord is added by core from the Tools menu row.
         help: {
@@ -930,10 +934,11 @@ if (window.Plexora) {
                 "The ‹ and › in the corner of the distribution move the lower threshold "
                     + "one step at a time, the same step the arrow keys take with its "
                     + "handle selected. After a click, the arrow keys carry on from there.",
-                "The cog switches the card to the Single Cell Classifier: choose Positive "
-                    + "or Negative and click cells on the image to label them, then the wand "
-                    + "trains on those examples and calls every cell. The eraser undoes the "
-                    + "run and keeps the examples.",
+                "The cog switches the card to the Single Cell Classifier. The wand picks "
+                    + "about ten positive and ten negative cells across the image and trains on "
+                    + "them; or choose Positive or Negative, click cells to label them, and "
+                    + "press ▶ to train on your own. Hover a cell after a run for its score. "
+                    + "The eraser undoes the run and keeps the examples.",
             ],
             shortcuts: [
                 { keys: "Z", label: "Previous marker" },

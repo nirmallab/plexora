@@ -48,9 +48,19 @@ def positions(ds, ids):
 
 
 def examples_payload(ds, marker):
+    """The marker's examples with their places, and which the wand picked."""
     pos, neg = store.examples(ds.name, marker)
-    return {"positive": positions(ds, pos), "negative": positions(ds, neg),
-            "n_positive": len(pos), "n_negative": len(neg)}
+    origin = store.origins(ds.name, marker)
+
+    def placed(ids):
+        out = positions(ds, ids)
+        for entry in out:
+            entry["auto"] = origin.get(entry["cell_id"]) == "auto"
+        return out
+
+    return {"positive": placed(pos), "negative": placed(neg),
+            "n_positive": len(pos), "n_negative": len(neg),
+            "n_auto": sum(1 for o in origin.values() if o == "auto")}
 
 
 def state(ds, marker=None) -> dict:

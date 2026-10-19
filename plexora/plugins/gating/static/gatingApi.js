@@ -342,10 +342,27 @@ class GatingApi {
             'plugins/gating/classifier/examples/clear', markers ? { markers } : {}));
     }
 
-    /** Start a run: {job_id}, or the job already running on this project. */
-    async classifierRun(marker) {
+    /** Start a run: {job_id}, or the job already running on this project.
+     *  `auto`: the wand -- the server picks the examples first. */
+    async classifierRun(marker, auto) {
         return this._classifierAnswer(await this._classifierPost(
-            'plugins/gating/classifier/run', { marker }));
+            'plugins/gating/classifier/run', { marker, auto: auto === true }));
+    }
+
+    /** Per table row: the run's score (NaN where not classified) and the share
+     *  of resampled models agreeing with its call (0-100). */
+    async classifierScores(marker) {
+        const response = await fetch(this.url('plugins/gating/classifier/scores') + '?'
+            + new URLSearchParams({ datasource: this.datasource, marker }));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.arrayBuffer();
+        const rows = body.byteLength / 5;
+        return {
+            run: response.headers.get('X-Classifier-Run') || '',
+            scoreName: response.headers.get('X-Classifier-Score-Name') || 'score',
+            scores: new Float32Array(body.slice(0, rows * 4)),
+            agreement: new Uint8Array(body.slice(rows * 4)),
+        };
     }
 
     async classifierRevert(marker) {

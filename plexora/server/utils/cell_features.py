@@ -14,6 +14,14 @@ statistic is a running sum per label, accumulated tile by tile with
 `np.bincount`, so the pass is O(pixels) in time and O(cells) in memory
 whatever the image's size.
 
+Two implementations of one tile's sums, kept equal by the tests: a compiled
+kernel (`_tile_kernel`, numba through `utils.jit`) that walks the tile's
+pixels once and adds every statistic as it goes, and the numpy form
+(`_tile_sums`, a `bincount` per statistic) that runs when kernels are not
+compiled. On a 64-megapixel mask with 250,000 cells the kernel's pass is
+several times faster, because the numpy form allocates a temporary per
+statistic and the kernel allocates none.
+
 The readers are callables so this module never knows where pixels live:
 `read_marker(box)` and `read_labels(box)` return the box asked for, padded
 with zeros where it runs off the image (`label_overlay.padded_label_region`
@@ -26,6 +34,9 @@ from __future__ import annotations
 import io
 
 import numpy as np
+
+from plexora.server.utils.jit import enabled as _jit_enabled
+from plexora.server.utils.jit import njit, register_primer
 
 #: Bumped when a feature's definition changes, so a cached matrix built by the
 #: old code is not read as the new one.
@@ -154,15 +165,123 @@ def _tile_sums(marker_h, labels_h, dna_h):
     return ids, sums, maxima
 
 
+@njit
+def _background_blocks(marker, labels, step, percentile, min_pixels):
+    """The local background of each `step`-sided block of a tile: the
+    `percentile` of its unlabelled pixels, NaN with fewer than `min_pixels`."""
+    height, width = marker.shape
+    rows = (height + step - 1) // step
+    cols = (width + step - 1) // step
+    out = np.full((rows, cols), np.nan)
+    buffer = np.empty(step * step, dtype=np.float64)
+    for by in range(rows):
+        for bx in range(cols):
+            count = 0
+            for y in range(by * step, min(height, (by + 1) * step)):
+                for x in range(bx * step, min(width, (bx + 1) * step)):
+                    if labels[y, x] == 0:
+                        buffer[count] = marker[y, x]
+                        count += 1
+            if count >= min_pixels:
+                out[by, bx] = np.percentile(buffer[:count], percentile)
+    return out
+
+
+@njit
+def _tile_kernel(labels_h, marker_h, dna_h, use_dna, background, step, uniq, sums, maxima):
+    """One pass over a tile's core (the `_h` planes carry a 1 px halo):
+    every statistic `_Sums.FIELDS` names, into `sums[slot]`, the slot being
+    the label's place in `uniq` (sorted)."""
+    height = labels_h.shape[0] - 2
+    width = labels_h.shape[1] - 2
+    last_label = 0
+    slot = -1
+    for y in range(height):
+        for x in range(width):
+            label = labels_h[y + 1, x + 1]
+            if label == 0:
+                continue
+            if label != last_label:
+                slot = np.searchsorted(uniq, label)
+                last_label = label
+            value = np.float64(marker_h[y + 1, x + 1])
+            sums[slot, 0] += 1.0
+            sums[slot, 1] += value
+            sums[slot, 2] += value * value
+            if (labels_h[y, x + 1] != label or labels_h[y + 2, x + 1] != label
+                    or labels_h[y + 1, x] != label or labels_h[y + 1, x + 2] != label):
+                sums[slot, 3] += 1.0
+                sums[slot, 4] += value
+            back = background[y // step, x // step]
+            if back == back:
+                sums[slot, 5] += 1.0
+                sums[slot, 6] += back
+            gx = (np.float64(marker_h[y + 1, x + 2]) - np.float64(marker_h[y + 1, x])) * 0.5
+            gy = (np.float64(marker_h[y + 2, x + 1]) - np.float64(marker_h[y, x + 1])) * 0.5
+            sums[slot, 7] += np.sqrt(gx * gx + gy * gy)
+            if use_dna:
+                dna = np.float64(dna_h[y + 1, x + 1])
+                if dna < 0.0:
+                    dna = 0.0
+                sums[slot, 8] += dna
+                sums[slot, 9] += dna * value
+            if value > maxima[slot]:
+                maxima[slot] = value
+
+
+@njit
+def _run_labels(labels):
+    """The label at the start of every run of one label along each row,
+    background left out: every label present, each a handful of times, so
+    their unique set is a sort of thousands rather than of a million."""
+    height, width = labels.shape
+    out = np.empty(height * width, dtype=labels.dtype)
+    count = 0
+    for y in range(height):
+        last = 0
+        for x in range(width):
+            label = labels[y, x]
+            if label != last and label != 0:
+                out[count] = label
+                count += 1
+            last = label
+    return out[:count]
+
+
+def _tile_sums_compiled(marker_h, labels_h, dna_h):
+    """`_tile_sums`, through the kernels."""
+    labels_h = np.ascontiguousarray(labels_h, dtype=np.uint32)
+    core = np.ascontiguousarray(labels_h[1:-1, 1:-1])
+    uniq = np.unique(_run_labels(core))
+    if uniq.size == 0:
+        return None
+    marker_h = np.ascontiguousarray(marker_h, dtype=np.float32)
+    background = _background_blocks(marker_h[1:-1, 1:-1], core, BACKGROUND_BLOCK,
+                                    BACKGROUND_PERCENTILE, BACKGROUND_MIN_PIXELS)
+    use_dna = dna_h is not None
+    dna = (np.ascontiguousarray(dna_h, dtype=np.float32) if use_dna
+           else np.zeros((1, 1), dtype=np.float32))
+    sums = np.zeros((uniq.size, len(_Sums.FIELDS)), dtype=np.float64)
+    maxima = np.full(uniq.size, -np.inf)
+    _tile_kernel(labels_h, marker_h, dna, use_dna, background, BACKGROUND_BLOCK, uniq,
+                 sums, maxima)
+    return (uniq.astype(np.int64),
+            {name: sums[:, i] for i, name in enumerate(_Sums.FIELDS)}, maxima)
+
+
 def accumulate(read_marker, read_labels, *, width, height, read_dna=None, tile=TILE,
-               progress=None, cancelled=None):
+               progress=None, cancelled=None, compiled=None):
     """`(labels, features)` for every label in the mask: `labels` int64
     sorted, `features` {name: float32 array aligned to it} (see NAMES;
     `px_nuclear_ratio` only with `read_dna`).
 
     `progress(done, total)` after every tile; `cancelled()` is polled before
-    each and raises InterruptedError when it answers True.
+    each and raises InterruptedError when it answers True. `compiled` picks
+    the kernel (True) or the numpy form (False); None, the kernel whenever
+    kernels are compiled in this process.
     """
+    use_kernel = _jit_enabled() if compiled is None else bool(compiled)
+    tile_sums = _tile_sums_compiled if use_kernel else _tile_sums
     boxes = list(tiles(width, height, tile))
     sums = _Sums()
     for done, (x0, y0, x1, y1) in enumerate(boxes):
@@ -174,7 +293,7 @@ def accumulate(read_marker, read_labels, *, width, height, read_dna=None, tile=T
             marker_h = np.asarray(read_marker(halo), dtype=np.float32)
             dna_h = (np.asarray(read_dna(halo), dtype=np.float32)
                      if read_dna is not None else None)
-            got = _tile_sums(marker_h, labels_h, dna_h)
+            got = tile_sums(marker_h, labels_h, dna_h)
             if got is not None:
                 sums.add(got[0], got[1], got[2])
         if progress is not None:
@@ -266,3 +385,16 @@ def clipped_box(box, width, height):
     x0, y0, x1, y1 = (int(v) for v in box)
     cx0, cy0 = max(0, min(x0, width)), max(0, min(y0, height))
     return cx0, cy0, max(cx0, min(x1, width)), max(cy0, min(y1, height))
+
+
+def prime():
+    """Compile the kernels on a tiny tile (utils/jit.py)."""
+    labels = np.zeros((10, 10), dtype=np.uint32)
+    labels[2:6, 2:6] = 4
+    labels[6:9, 5:9] = 9
+    marker = np.arange(100, dtype=np.float32).reshape(10, 10)
+    _tile_sums_compiled(marker, labels, marker)
+    _tile_sums_compiled(marker, labels, None)
+
+
+register_primer(__name__)
