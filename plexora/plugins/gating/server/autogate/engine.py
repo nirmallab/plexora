@@ -66,8 +66,9 @@ TERMINAL = schemas.TERMINAL_STATES
 BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
 
 #: The packet kind each waiting state asks for.
-ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
-        "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
+ASKS = {"qc_confirm": "qc_confirm", "awaiting_absence": "absence_check",
+        "awaiting_t2": "t2_confirm", "awaiting_t3": "t3_biological",
+        "awaiting_t4": "t4_candidates",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
@@ -78,6 +79,15 @@ ENGINE = schemas.ENGINE
 #: best gate the evidence reached, tagged so the sidebar and reports say a
 #: person should check it.
 REVIEW_METHOD = "needs_review"
+
+#: The terminal states that judge the marker itself: empty, failed, or for a
+#: person to check. Code never reaches one on numbers alone -- a look stands
+#: behind it (`close`) -- unless the close says why none could
+#: (`unlooked`: the user changed the gate, the data could not be read, the
+#: question is the user's). lsp35766_p193 CD8a (2026-10-18) was closed for
+#: review by the lineage numbers before any look, at its scored start.
+JUDGED_STATES = ("manual_review_recommended", "no_positive_population", "technically_failed",
+                 "insufficient_information", "not_binary")
 
 #: The provenance method an empty gate is written with, per terminal state.
 EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
@@ -260,6 +270,11 @@ def confidence_for(unit) -> str:
         # The stain was not the compartment's pattern, or the gate stopped at
         # a row that held both kinds of cell: a doubt, never a route.
         cap = "moderate" if cap == "high" else cap
+    if unit.get("lineage_seen_real"):
+        # The brightest positives sit on an exclusive lineage by the numbers,
+        # and the whole image says the stain is real: the population stands,
+        # the doubt about where its edge is does too.
+        cap = "moderate" if cap == "high" else cap
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
         cap = "low"
@@ -426,6 +441,20 @@ class Engine(BaseEngine):
         (`SessionOptions.tiles`)."""
         return bool(self.options["tiles"])
 
+    def split_row(self, unit, a, b):
+        """The points a mixed row from `a` to `b` is split into
+        (`lattice.split`), joined to the unit's frozen lattice; [] when the
+        row is no wider than `lattice.SPLIT_MIN_SD` background sds."""
+        from plexora.plugins.gating.server.autogate import lattice as latmod
+
+        sd = (((unit.get("scoring") or {}).get("background") or {}).get("sd_fit")
+              or (unit.get("metrics") or {}).get("sd_bg"))
+        if not sd:
+            return []
+        ds = _data(self.call, unit["project"])
+        return latmod.split(self.lattice_for(unit), ds, unit["marker"], a, b, core_sd=float(sd),
+                            high=unit.get("high"))
+
     def partner_panels(self, unit):
         """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
         `anti` panels): one expected and one not-expected partner of the
@@ -588,7 +617,7 @@ class Engine(BaseEngine):
         unit["user_edited"] = True
         self.close(unit, "manual_review_recommended",
                    "the gate was changed in the viewer while the session was deciding it; "
-                   "the user's gate is kept")
+                   "the user's gate is kept", unlooked="user_edit")
         return True
 
     def write(self, unit, low, *, method, confidence, state, tier, empty=False):
@@ -658,7 +687,7 @@ class Engine(BaseEngine):
             unit["user_edited"] = True
             self.close(unit, "manual_review_recommended",
                        "the gate was changed in the viewer while the session was deciding "
-                       "it; the user's gate is kept")
+                       "it; the user's gate is kept", unlooked="user_edit")
             return None
         if _same_pair(current, [snapped_low, snapped_high]):
             # Already the stored gate (a T1 gate confirmed by the audit sheet):
@@ -694,13 +723,22 @@ class Engine(BaseEngine):
         return receipt.operation_id
 
     def close(self, unit, state, reason, *, write=False, confidence=None, method=None,
-              tier=None, low=None, proposed=None):
+              tier=None, low=None, proposed=None, unlooked=None):
         """Put a unit in a terminal state (writing `low` first when asked).
 
         `proposed` is the best threshold the evidence reached when it could
         not be accepted. A unit closed for review (`schemas.REVIEW_WRITE_STATES`)
         is written there anyway, tagged `needs_review` with confidence
-        `manual_review` (`_review_gate`): every gated marker ends with a value."""
+        `manual_review` (`_review_gate`): every gated marker ends with a value.
+
+        A judgement (`JUDGED_STATES`) on a unit no packet has shown is a bug
+        in the path that made it, unless `unlooked` says why no look could
+        settle it; it is logged (`closed_without_look`) and marked on the unit."""
+        if state in JUDGED_STATES and not unit.get("packets") and unlooked is None:
+            unit["closed_unlooked"] = True
+            self.log(event="closed_without_look",
+                     unit=unit_key(unit["project"], unit["marker"]), state=state,
+                     reason=reason)
         unit["reason"] = reason
         if proposed is not None:
             unit["proposed"] = float(proposed)
@@ -967,36 +1005,53 @@ class Engine(BaseEngine):
                    "of all cells): the whole population is suspect",
                    proposed=unit.get("candidate"))
 
-    def lineage_screen(self, unit) -> bool:
-        """Before the first look: a population whose brightest cells sit on an
-        exclusive lineage is closed for review at once, not looked at. Once
-        per unit; True when it closed it."""
+    def lineage_screen(self, unit) -> None:
+        """Before the first look: whether the population's brightest cells sit
+        on an exclusive lineage, recorded (`lineage_suspect`) and nothing more.
+        The looks gate the marker as any other; a population still on that
+        lineage at the regression is shown on the whole image before anything
+        closes it (`lineage_by_eye`). It used to close the unit for review
+        here: lsp35766_p193 CD8a (2026-10-18) ended at its scored start with no
+        look, on a low-confidence exclusion (CD11b, derived through CD3), and
+        the whole-image check replan sent it to later called its signal real.
+        Once per unit."""
         if unit.get("lineage_screened") or unit.get("lineage_ack") \
                 or (unit.get("used") or {}).get("packets"):
-            return False
+            return
         unit["lineage_screened"] = True
         try:
             rows = self.lineage_purity(unit)
         except Exception as exc:
             self.log(event="lineage_error", unit=unit_key(unit["project"], unit["marker"]),
                      error=str(exc)[:200])
-            return False
+            return
         unit["lineage"] = rows
         contaminated = [r for r in rows if r["contaminated"]]
-        if not contaminated:
+        if contaminated:
+            unit["lineage_suspect"] = max(contaminated, key=lambda r: r["at_top"])
+            self.log(event="lineage_suspect", unit=unit_key(unit["project"], unit["marker"]),
+                     before_look=True, **unit["lineage_suspect"])
+
+    def lineage_by_eye(self, unit) -> bool:
+        """A gated population whose brightest cells still sit on an exclusive
+        lineage gets one whole-image look (`qc_confirm`) before anything
+        closes it: a real stain keeps the gate its looks reached
+        (`replan.after_whole_image`), an empty or failed one closes on that
+        picture. False -- the review close then stands on that look -- when a
+        whole-image look has judged it already, or there is no gate to show."""
+        from plexora.plugins.gating.server.autogate import replan
+
+        if unit.get("whole_image") is not None:
             return False
-        unit["lineage_contamination"] = max(contaminated, key=lambda r: r["at_top"])
-        self.log(event="lineage_contaminated", unit=unit_key(unit["project"], unit["marker"]),
-                 before_look=True, **unit["lineage_contamination"])
-        self.close_contaminated(unit)
-        return True
+        return replan.check_whole_image(self, unit)
 
     def settle(self, unit):
         """Advance a unit through every deterministic step it is waiting on."""
         if unit["state"] == "awaiting_regression":
             result = self.run_regression(unit)
             if "lineage" in result["failed"]:
-                self.close_contaminated(unit)
+                if not self.lineage_by_eye(unit):
+                    self.close_contaminated(unit)
                 return
             if result["ok"] or unit.get("regression_confirmed"):
                 self.finalize(unit, method=unit.get("method") or "ai_accepted")
@@ -1415,7 +1470,8 @@ class Engine(BaseEngine):
                         due = True
                         break
                     self.close(unit, "manual_review_recommended",
-                               "the deterministic pass did not reach this marker")
+                               "the deterministic pass did not reach this marker",
+                               unlooked="not_profiled")
                     continue
                 if unit["state"] != "accepted_t1" and not self._settled(unit, links):
                     continue
@@ -1560,11 +1616,17 @@ class Engine(BaseEngine):
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
             return None
         kind = ASKS[unit["state"]]
-        if kind == "t2_confirm" and unit.get("scoring") is None:
+        # The absence check is a marker's first look when it has one: the same
+        # scored start and wait for children come first. The lineage screen
+        # waits for the cell look: whether any cell carries the stain comes
+        # before whose cells the brightest are (LSP11761 PD1, absent to the
+        # person, was closed for review by the screen and never shown).
+        first = kind in ("t2_confirm", "absence_check")
+        if first and unit.get("scoring") is None:
             self.propose(unit)
-        if kind == "t2_confirm" and self.lineage_screen(unit):
-            return None
-        if kind == "t2_confirm" and self.defer_for_children(unit):
+        if kind == "t2_confirm":
+            self.lineage_screen(unit)
+        if first and self.defer_for_children(unit):
             return None
         if kind == "t4_candidates" and not self.rounds_left(unit) \
                 and not self.limit_reached(unit, "rounds"):
@@ -1623,7 +1685,8 @@ class Engine(BaseEngine):
                             return "t1_strip", strip
                         return "wait", []
                     self.close(unit, "manual_review_recommended",
-                               "the deterministic pass did not reach this marker")
+                               "the deterministic pass did not reach this marker",
+                               unlooked="not_profiled")
                     continue
                 kind = self._decision(unit)
                 if kind:
@@ -1668,7 +1731,8 @@ class Engine(BaseEngine):
         self.record.setdefault("questions", []).append(question)
         unit["question"] = question
         if int(self.options["max_tier"]) >= 5:
-            self.close(unit, "insufficient_information", f"needs the user: {ask_user.question}")
+            self.close(unit, "insufficient_information", f"needs the user: {ask_user.question}",
+                       unlooked="needs_user")
             return True
         return False
 

@@ -21,10 +21,11 @@ VOLATILE = _memo.VOLATILE
 
 def versions() -> tuple:
     from plexora.agent.evidence import calibration, collage, display_grid
-    from plexora.plugins.gating.server.autogate import lattice, schemas, scoring
+    from plexora.plugins.gating.server.autogate import absence, lattice, schemas, scoring
 
     return (schemas.PROFILE_VERSION, lattice.VERSION, scoring.VERSION, calibration.VERSION,
-            collage.RENDERER, display_grid.RENDERER)
+            f"scale:{calibration.SCALE}", collage.RENDERER, display_grid.RENDERER,
+            absence.RENDERER)
 
 
 def key(packet, images, *, versions=()) -> str:

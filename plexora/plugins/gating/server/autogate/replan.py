@@ -15,9 +15,11 @@ Deterministic, by code, every time:
    gate (`Engine.reference_failed`); an open one past a look gets its
    references refreshed (`Engine.references_ready`) -- a packet already out
    is stale by its ledger fingerprint; an accepted one whose scored start
-   the failed gate led, and that no look walked from, is closed for review:
-   nothing but the failed gate placed it. That close is itself a failure,
-   so the loop runs on through the hierarchy.
+   the failed gate led, and that no look walked from, is looked at again
+   from a start scored without it: nothing but the failed gate placed it.
+
+Nothing here closes a marker on numbers: a close needs a picture behind it
+(`seen_failing`, `Engine.close`).
 3. **Patterns.** Failures are read by scope: one marker of one image; an
    image -- `image_flag_min` of its markers whose looks named the same
    artifact (`IMAGE_FLAGS`); the panel -- the same marker failing the same
@@ -205,6 +207,13 @@ def after_whole_image(engine, unit, verdict) -> bool:
         unit.pop("replan_from", None)
         return False
     unit["state"] = unit.pop("replan_from", "manual_review_recommended")
+    if verdict == "real_signal" and unit["state"] == "awaiting_regression":
+        # Still open (`Engine.lineage_by_eye`): the picture says the stain is
+        # real, so the gate its looks reached stands, its confidence capped.
+        unit["lineage_ack"] = True
+        unit["lineage_seen_real"] = True
+        engine.log(event="lineage_seen_real", unit=_key(unit))
+        return True
     queue(engine, unit, suspicion(unit) or {"why": "lineage_contamination"})
     return True
 
@@ -310,9 +319,11 @@ def reorder(engine):
 
 def demote_led(engine, failed_unit):
     """Accepted units whose scored start the failed gate led, and that were
-    accepted where they started (no look walked them), lose their acceptance:
-    nothing but the failed gate placed them. Open units past a look get their
-    references refreshed."""
+    accepted where they started (no look walked them), are looked at again
+    from a start scored without it: nothing but the failed gate placed them,
+    and a look, not the failure, says where they go. Once per unit; a session
+    that asks for no looks closes them for review instead. Open units past a
+    look get their references refreshed."""
     marker = failed_unit["marker"]
     for other in engine.units_of(failed_unit["project"]):
         if other is failed_unit:
@@ -330,6 +341,14 @@ def demote_led(engine, failed_unit):
         final = other.get("final")
         if start is None or final is None or abs(float(final) - float(start)) > 1e-6:
             continue                      # a look moved it: its own evidence placed it
+        if int(engine.options["max_tier"]) >= 2 and not other.get("relooked"):
+            other["relooked"] = marker
+            other.pop("reference_gates", None)
+            other["state"] = "awaiting_t2"
+            engine.propose(other, rescore=True)
+            engine.log(event="replan_relook", unit=_key(other), because=marker,
+                       start=(other.get("start") or {}).get("low"))
+            continue
         other["state"] = "replanning"     # not terminal, so the close below takes
         engine.close(other, "manual_review_recommended",
                      f"accepted where its scored start was, and {marker} led that start; "
@@ -473,7 +492,21 @@ def apply(engine, packet_, answer):
     return {"applied": applied, "round": len(rp["rounds"]), "pending_again": pending(engine.record)}
 
 
+def seen_failing(unit) -> bool:
+    """Whether a picture stands behind calling the marker absent or failed:
+    the whole-image view called its positives an artifact, or its
+    whole-image check said empty or failed. The planner reads numbers and
+    words; it never closes a marker on them alone."""
+    return bool(unit.get("artifact_verdict")) or \
+        unit.get("whole_image") in ("no_positive_population", "technical_failure")
+
+
 def _apply_marker(engine, unit, verdict):
+    if verdict in ("absent", "technical_failure") and not seen_failing(unit):
+        engine.log(event="replan_close_refused", unit=_key(unit), verdict=verdict,
+                   whole_image=unit.get("whole_image"))
+        release(unit)
+        return "kept_for_review"
     unit.pop("replan_from", None) if verdict in ("absent", "technical_failure") else None
     if verdict == "absent":
         unit["state"] = "replanning"

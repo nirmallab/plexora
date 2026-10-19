@@ -141,7 +141,8 @@ def _channel(name, color, calibration):
             if len(_OVERVIEW) >= _OVERVIEW_LIMIT:
                 _OVERVIEW.pop(next(iter(_OVERVIEW)))
             _OVERVIEW[(name, tuple(window))] = list(overview)
-        shape = display.entry_curve(((calibration or {}).get("channels") or {}).get(name))
+        shape = display.entry_curve(display.drawn_entry(
+            ((calibration or {}).get("channels") or {}).get(name)))
         curve = ChannelCurve(**shape) if shape else ChannelCurve(kind="linear")
     return ChannelSpec(name=name, color=color, window=window, curve=curve)
 

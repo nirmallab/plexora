@@ -90,7 +90,8 @@ def memo_versions():
     from plexora.agent.evidence import calibration
     from plexora.plugins.qc.server import checks_bulk, detectors, score_fields, sheets
 
-    return (schemas.SCAN_VERSION, schemas.CELLS_VERSION, calibration.VERSION, sheets.RENDERER,
+    return (schemas.SCAN_VERSION, schemas.CELLS_VERSION, calibration.VERSION,
+            f"scale:{calibration.SCALE}", sheets.RENDERER,
             f"checks:{checks_bulk.VERSION}", f"score_fields:{score_fields.VERSION}",
             *sorted(f"{k}:{v}" for k, v in detectors.versions().items()))
 

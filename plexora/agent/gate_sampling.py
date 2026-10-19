@@ -29,7 +29,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_FIELDS, MAX_PER_CLASS, SAMPLING_CELL_CAP
 
 CLASSES = ("clear_negative", "clear_positive", "borderline", "high_density",
-           "low_density", "bright_isolated", "edge")
+           "low_density", "bright_isolated", "edge", "weak", "bright", "sparse")
 DEFAULT_CLASSES = ("clear_negative", "clear_positive", "borderline")
 
 #: Half-width of the default borderline band, in percentile points of the
@@ -47,7 +47,17 @@ WHY = {
     "low_density": "sparse tissue, where background is easiest to judge",
     "bright_isolated": "the brightest cell with few neighbours: real signal or artefact",
     "edge": "the edge of the section, where staining and segmentation often fail",
+    "weak": "many cells near the threshold and few clear positives: where the stain is dim",
+    "bright": "several clearly positive cells: what this stain looks like at its brightest",
+    "sparse": "sparse tissue with cells near the threshold: background without crowding",
 }
+
+#: [cal] the density ranks (0 sparsest, 1 densest occupied window) a
+#: `sparse` field is drawn from: thin tissue, not an empty corner.
+SPARSE_RANKS = (0.1, 0.5)
+
+#: [cal] a `bright` field holds at least this many cells well above the band.
+BRIGHT_MIN_POSITIVES = 3
 
 
 def _band(values, low, band):
@@ -119,13 +129,16 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high, left=N
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
                                    n_per_class=2, classes=DEFAULT_CLASSES, seed=0,
-                                   band=None, max_fields=MAX_FIELDS, avoid=()):
+                                   band=None, max_fields=MAX_FIELDS, avoid=(), min_fill=None,
+                                   max_iou=MAX_IOU):
     """Fields to check a gate in: `{fields: [...], band, grid, ...}`.
 
     `data` is a provider-backed handle set; `field_px` the side of a square
     field in full-resolution pixels; `image_size` (width, height). `avoid`
     holds boxes `(x0, y0, x1, y1)` already shown: a field overlapping one of
-    them more than `MAX_IOU` is not chosen again.
+    them -- or another chosen field -- more than `max_iou` (intersection over
+    union) is not chosen. 0 allows no shared tissue at all: two windows half a
+    side apart each way share a quarter of their area at an IoU of 0.14.
     """
     from plexora.server.utils.label_overlay import cell_ids
 
@@ -219,6 +232,17 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     left_fraction = w_left / np.maximum(w_count + w_left, 1)
     qc_rejected = int((occupied & (left_fraction > cell_exclusions.FIELD_QC_MAX_FRACTION)).sum())
     occupied &= left_fraction <= cell_exclusions.FIELD_QC_MAX_FRACTION
+    if min_fill and occupied.any():
+        # Only fields at least `min_fill` as full of cells as the one the
+        # typical cell sits in (the cell-weighted median; most occupied
+        # fields are near-empty specks): a half-empty field is a tissue edge,
+        # a hole or a fold, where stain pools and debris lies. Kept as they
+        # are when too few would remain.
+        held = np.sort(w_count[occupied])
+        typical = float(held[np.searchsorted(np.cumsum(held), held.sum() / 2.0)])
+        filled = occupied & (w_count >= float(min_fill) * typical)
+        if int(filled.sum()) >= max(4, len(classes)):
+            occupied = filled
     density_rank = np.zeros_like(w_count)
     if occupied.any():
         order = np.argsort(w_count[occupied], kind="stable")
@@ -240,6 +264,13 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         "bright_isolated": np.where(occupied, w_bright - 1e-3 * w_count * np.nanmax(
             np.abs(sv[finite])) if finite.any() else 0, -np.inf),
     }
+    # Dim stain: band cells without the clear positives that would make the
+    # field easy; bright stain: the brightest field that holds a few clear
+    # positives, not one speck.
+    scores["weak"] = np.where(occupied, w_near - 2.0 * w_farpos, -np.inf)
+    scores["bright"] = np.where(occupied & (w_farpos >= BRIGHT_MIN_POSITIVES), w_bright, -np.inf)
+    thin = occupied & (density_rank >= SPARSE_RANKS[0]) & (density_rank <= SPARSE_RANKS[1])
+    scores["sparse"] = np.where(thin, w_near, -np.inf)
     edge = np.zeros_like(w_count, dtype=bool)
     edge[0, :] = edge[:, 0] = True
     last_y = int(np.flatnonzero(inside_y)[-1]) if inside_y.any() else 0
@@ -263,8 +294,8 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
             if taken >= n_per_class or len(chosen) >= max_fields:
                 break
             box = box_of(iy, ix)
-            if any(_iou(box, other["box"]) > MAX_IOU for other in chosen) \
-                    or any(_iou(box, tuple(other)) > MAX_IOU for other in avoid):
+            if any(_iou(box, other["box"]) > max_iou for other in chosen) \
+                    or any(_iou(box, tuple(other)) > max_iou for other in avoid):
                 continue
             chosen.append({"class": cls, "box": box, "score": value,
                            "density_percentile": float(density_rank[iy, ix] * 100)})

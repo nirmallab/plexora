@@ -35,9 +35,10 @@ proposed, or flags an artifact.
 |---|---|---|
 | T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (`ENGINE["strip_batch"]` markers a sheet) | ~70 vision tokens per marker |
 | QC | A hard technical flag (`schemas.HARD_FLAGS`: saturation, empty channel, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
+| Absence | Before a marker's first look, and after a technical check calls a stain failed or empty or cannot tell: six regions (`clear_positive` twice, `bright`, `high_density`, `borderline`, `weak`, from fields at least half as full of cells as a typical one; 200 µm, the calibrated display, nothing marked), one word each (`clear` / `few` / `none` / `cannot_tell`); no judged region `clear` in two pictures of different regions closes the marker `no_positive_population` (§2d) | ~650 (a second only before a close) |
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
-| T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
+| T4 | The rows said which way: the lattice points that way, nearest first (a capped chain keeps the nearest, never a far anchor), and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once; a mixed row wider than two background sds is split and looked at again (§2d), a narrower one keeps the gate at moderate at most | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 | Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`), and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
@@ -98,6 +99,76 @@ Guide entries `collage_t2m`, `collage_flips_m`. The pictures differ, so a
 tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
 keys, provenance and gates are the session's without it, byte for byte. The
 bench runs it as `--variants baseline,tiles`.
+
+## 2d. Absence, wide mixed rows, whole-image disagreement (2026-10-18)
+
+Five rules, each a session switch, from the region-look study, the user's
+recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`)
+and a test of fixes on the remaining misses
+(`docs/internal/bench/GATING_GENERALISE_2026-10-18.md`):
+
+- **`absence_check`** (default on). A mixture splits every column in two, so
+  only the image can say a marker has no positive population. Before the
+  first look, `absence.render` draws six regions chosen around the scored
+  start's band (`absence.CLASSES`; `gate_sampling` gained `weak`, `bright`
+  and `sparse`, and `min_fill`: half-empty fields at tissue edges, holes and
+  folds -- where stain pools, and where LSP11761's edge band read `clear` --
+  are left out), unmarked; a picture says absent (`absence.absent`) when at
+  least two regions were judged and none is `clear` -- a region without
+  positives is no evidence while another shows them -- and the marker is
+  closed only when a second picture of other regions agrees
+  (`absence.ROUNDS`). Four regions in one picture closed LSP11361's dim,
+  widespread E-cadherin (the user gates 26 % positive) in the first live
+  run. A technical check's
+  `technical_failure` / `no_positive_population` goes to the same picture and
+  stands only if it agrees; clear regions overrule it (`absence_overruled`)
+  and the marker gets its look. One that `cannot_tell` goes there too
+  instead of to review (no clear region: no positives; clear ones: its
+  look). Measured: on three PCA images it closed the
+  two markers the user called absent that the engine had gated (LSP11761
+  PD1, CD20L) and no other of 51; LSP11321 CD20L was failed by a technical
+  check whose positives at a low gate were epithelial artifact, though the
+  user gates a real 1 % population there. Not budgeted; once per unit
+  (`absence_done`).
+- **`absence_confirm`** (default on). A picture in which exactly one region
+  reads `clear` and at least two others `few` / `none` (`absence.lone_clear`)
+  shows that region again before it keeps the marker open
+  (`absence.render_close`): close up and in its surroundings, the region
+  boxed, so an edge band or a fold reads as one. A `few` / `none` there
+  replaces the region's word and the picture is judged again; `clear` or
+  `cannot_tell` leaves it. At most one close look per picture. LSP11761
+  PD-L1 (the user: 2 of 22,117 cells) had stayed open on one `clear` region
+  of four; with the close looks both of its pictures said absent. A real
+  population in one aggregate (lsp11385 CD20L's lymphoid area) read `clear`
+  close up and stayed open.
+- **`split_mixed`** (default on). A T4 walk stops at the first row that does
+  not move it; a `mixed` row wider than `lattice.SPLIT_MIN_SD` background sds
+  is split into at most `MAX_CHAIN` parts (`lattice.split`: evenly in fit
+  space, snapped, joined to the frozen lattice, so a split gate is still a
+  lattice point and two runs that judged the same row get the same points)
+  and looked at again; a split is a round. With the chain cap keeping its
+  nearest points, rows are wide only where the lattice has a gap (LSP11321
+  FOXP3: 6.36 to its MART1 control at 6.97; the user's gate 6.93).
+- **`whole_image_moves`** (default off). After a T4 look, a whole-image
+  check's `too_low` / `too_high` no longer sends the gate back to the
+  candidates (where a turn counted as oscillation and closed it for review):
+  the gate stays where the rows put it, `whole_image_disagreed` on the record,
+  at low confidence (the failed checks are unconfirmed). A review gate is no
+  partner's evidence (`hierarchy.grade`); LSP11321's CD45 sat at 7.76 (user
+  7.8) in review, and 13 markers were gated without it. Before any T4 look a
+  whole-image direction still sends the gate to the candidates.
+- **`whole_image_reopen`** (default on). The exception: after a T4 look, a
+  whole-image `too_low` sends the gate up for ONE more look at the candidates
+  above (`transitions._reopen`), whose first row passes even when `mixed` --
+  the rows and the whole image then agree the cells there are not the
+  positives; the rows still place the gate, and a look that moves nothing
+  (or turns) keeps it, at low confidence as above. Of seven whole-image
+  `too_low` verdicts after a walk on 2026-10-18 six sat below the user's
+  gate; `holds` came back on gates 0.6 off, and `too_high` never, so only
+  `too_low` reopens.
+
+A session stored before these switches is completed with their defaults
+when it is loaded, like every newer option.
 
 ## 3. Where things live
 
@@ -204,12 +275,26 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   each cell on its own disc, floored where the context window draws
   `crops.MORPHOLOGY_FLOOR`, so a negative stays dark. Outlines are thin and
   grey; the ticks mark the centroid, which every project has.
+- **Pictures are drawn linear.** The record keeps both scales -- the asinh
+  window and curve above and `linear_window` (black kept, the titre at
+  `TITRE_LEVEL`, a check's gain over that) -- and every picture draws on
+  `calibration.SCALE`, `linear` by default (`drawn_entry`, read through
+  `window_for`/`display_spec`/`resolve_windows`: the cell tiles, the fields,
+  the absence regions, the whole image, the contrast check's ladder, the
+  mirrored viewer, QC's sheets): a marker at its linear window, the nuclear
+  stain at its view's linear window (a dim backdrop, not its overview p99),
+  no curve. On lsp35766_p193 (2026-10-18) the asinh curve lifted the stroma's
+  haze to the level of CD8a's weak rings and the nuclei washed the tiles out:
+  the first look read glow and walked up (8.00, review); drawn as the canvas
+  draws Linear, the same cells read as their own stain and the walk came down
+  to 7.69 (the user's gate 7.3). The memo keys carry the scale.
 - **A model checks the brightness, code sets it.** `display_setup` (per
   image, after the panel context, before that image's first look;
   `SessionOptions.display_check`, `vision` by default) shows up to
   `ENGINE["display_batch"]` markers in rows and the calibration's brightness
-  ladder in columns (`calibration.columns_for`: every display level times
-  `GAINS`, c1 darker to c5 brighter, c3 the rule) -- every marker with bright
+  ladder in columns (on the linear scale `calibration.linear_columns`, gains
+  over the linear window; on log `columns_for`, every display level times
+  `GAINS`; c1 darker to c5 brighter, c3 the rule) -- every marker with bright
   cells to show, the dim and floored ones too (`calibration.needs_choice`:
   they are the hardest to draw) -- each a 2 x 2 block of a
   background, a dim and two bright cells, clipped pixels in a fixed red
@@ -248,8 +333,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   too bright in turn, the black end moved for two markers in three, a small
   overshoot and correction for every second or third, a gradual zoom on one
   of its bright cells, `focus`, for every fourth). The window shown is the one
-  the canvas keeps: the choice's asinh window with Log brightness on, its
-  `linear_window` off. The command is acknowledged at once, so the next packet
+  the canvas keeps: its `linear_window` with Log brightness off (the default),
+  the choice's asinh window on. The command is acknowledged at once, so the next packet
   goes to the model while it plays, and the tab holds the view commands that
   arrive meanwhile and runs them after it (only the newest look). A marker
   the rule or an earlier check settled is not played. The nuclear stain leads
@@ -265,9 +350,9 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   gating, default; a row saved before that is the user's). A window the user
   set is never replaced: on a channel a check settled (`display_contrast`
   `checked`) the Auto wand applies it (`viewerSidebar.checkedEntry`), and
-  fits the mixture otherwise. Log brightness is the viewer's default
-  (`DEFAULT_CURVE_MODE`; rows saved with it off keep it off), and that
-  default asks no HD of a streamed image -- only the user's tick does.
+  fits the mixture otherwise. Linear is the viewer's default since 2026-10-18
+  (`DEFAULT_CURVE_MODE`, Log brightness off; rows saved with Log on keep it),
+  and the default asks no HD of a streamed image -- only the user's tick does.
 - **A gate is never accepted against the direction on record.**
   `unit["direction"]` holds the way the last look's rows pointed until a
   candidate, `keep` or an about-right look replaces it; a unit closed meanwhile
@@ -280,6 +365,22 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   (`Engine._review_gate`) -- with method `needs_review` and confidence
   `manual_review`. Only a gate the user changed in the viewer mid-session is
   not overwritten. Failed and all-negative markers keep their empty gate.
+- **No marker is closed without a look.** Empty, failed or review
+  (`engine.JUDGED_STATES`) needs a packet that showed the marker; numbers
+  only raise a suspicion a look settles. The lineage screen before the first
+  look only records `lineage_suspect`; a population still on an exclusive
+  lineage after its looks gets a whole-image look (`Engine.lineage_by_eye`),
+  and `real_signal` keeps the gate the looks reached (confidence capped at
+  moderate). The `replan` planner may call a marker absent or failed only
+  when a picture did (`replan.seen_failing`); a gate a failed partner alone
+  placed is looked at again from a re-scored start, not closed
+  (`replan.demote_led`). The exceptions say why no look could settle it
+  (`close(unlooked=...)`: the user's edit, data that could not be read, a
+  question for the user); any other unlooked judgement is logged
+  `closed_without_look` and fails the session tests. lsp35766_p193 CD8a
+  (2026-10-18) was closed for review by the lineage numbers before any look,
+  at its scored start (8.0, 1 % positive); the user found the CD3+ cells the
+  run missed were mostly CD8+.
 - **Structural channels are never gated.** A nuclear counterstain or an
   autofluorescence / blank channel resolves to the vocabulary's `DNA` /
   `Autofluorescence` entry by name pattern (`vocabulary.structural`: `Nucleus2`,

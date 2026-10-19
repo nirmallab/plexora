@@ -69,7 +69,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: medium
-        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm]
+        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm, absence_check]
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.

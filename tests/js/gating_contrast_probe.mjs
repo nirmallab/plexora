@@ -255,17 +255,21 @@ function makeSidebar(slotState = {}) {
     ok("Log brightness switches every channel: calibrated, levelled and user windows each their way");
 }
 
-// 8. Log brightness is the viewer's default: rows that do not say take it.
+// 8. Linear is the viewer's default (2026-10-18): rows that do not say take
+//    it; rows saved with Log on keep Log.
 {
+    const shipped = await readFile(path.join(repoRoot, "plexora", "client", "src", "js", "views",
+                                             "viewerSidebar.js"), "utf8");
+    assert.match(shipped, /const DEFAULT_CURVE_MODE = "linear";/);
     const sidebar = makeSidebar();
-    sidebar.defaultCurveMode = "asinh";
-    assert.equal(sidebar.savedCurveMode([{ channel: "CD3" }, { channel: "CD8" }]), "asinh",
+    sidebar.defaultCurveMode = "linear";
+    assert.equal(sidebar.savedCurveMode([{ channel: "CD3" }, { channel: "CD8" }]), "linear",
                  "rows saved before rows said: the default");
-    assert.equal(sidebar.savedCurveMode([]), "asinh");
-    assert.equal(sidebar.savedCurveMode([{ curve: "linear" }, { channel: "CD8" }]), "linear",
-                 "saved with Log off: off");
+    assert.equal(sidebar.savedCurveMode([]), "linear");
+    assert.equal(sidebar.savedCurveMode([{ curve: "asinh" }, { channel: "CD8" }]), "asinh",
+                 "saved with Log on: on");
     assert.equal(sidebar.savedCurveMode([{ curve: "linear" }, { curve: "asinh" }]), "asinh");
-    ok("Log brightness is on unless the saved rows say it was off");
+    ok("Linear unless the saved rows say Log was on");
 }
 
 console.log(`${passed} checks passed`);

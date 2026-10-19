@@ -228,7 +228,8 @@ class _Engine(_Log):
         super().__init__()
         self.record = {"images": ["p"], "order": [u["marker"] for u in units],
                        "units": {f"p::{u['marker']}": u for u in units}}
-        self.options = {"replan": True, "max_tier": 4, **(options or {})}
+        self.options = {"replan": True, "max_tier": 4, "absence_check": False,
+                        **(options or {})}
         self.closed = []
         self.refreshed = []
 
@@ -249,6 +250,10 @@ class _Engine(_Log):
         self.refreshed.append(unit["marker"])
         return []
 
+    def propose(self, unit, *, rescore=False):
+        unit["start"] = {"low": 6.2, "leading": None, "rescored": rescore}
+        unit["candidate"] = 6.2
+
     def close(self, unit, state, reason, *, proposed=None, confidence=None):
         from plexora.plugins.gating.server.autogate import replan
 
@@ -263,23 +268,34 @@ def _u(marker, state, **extra):
     return {"project": "p", "marker": marker, "state": state, **extra}
 
 
-def test_a_failure_sends_what_it_alone_placed_to_review_down_the_tree():
+def test_a_failure_sends_what_it_alone_placed_back_for_a_look():
+    """CD8a was accepted where CD3e's curve put its start; CD3e failed, so a
+    look from a start scored without it says where CD8a goes -- not a close
+    for review on the failure alone. Asked once; with no looks allowed the
+    close stands."""
     from plexora.plugins.gating.server.autogate import replan
 
-    cd3 = _u("CD3e", "manual_review_recommended", needs_review=True)
-    led = _u("CD8a", "accepted", confidence="moderate", start={"low": 6.5, "leading": "CD3e"},
-             final=6.5)
-    walked = _u("CD20", "accepted", confidence="moderate",
-                start={"low": 6.0, "leading": "CD3e"}, final=6.4)
-    looked = _u("PD1", "awaiting_t4", used={"packets": 2},
-                reference_gates=[{"marker": "CD3e"}])
-    engine = _Engine([_u("CD45", "accepted", confidence="high"), cd3, led, walked, looked,
-                      _u("SOX10", "accepted", confidence="high")])
-    replan.after_close(engine, cd3)
-    assert ("CD8a", "manual_review_recommended") in engine.closed
+    def run(options=None):
+        cd3 = _u("CD3e", "manual_review_recommended", needs_review=True)
+        led = _u("CD8a", "accepted", confidence="moderate",
+                 start={"low": 6.5, "leading": "CD3e"}, final=6.5)
+        walked = _u("CD20", "accepted", confidence="moderate",
+                    start={"low": 6.0, "leading": "CD3e"}, final=6.4)
+        looked = _u("PD1", "awaiting_t4", used={"packets": 2},
+                    reference_gates=[{"marker": "CD3e"}])
+        engine = _Engine([_u("CD45", "accepted", confidence="high"), cd3, led, walked, looked,
+                          _u("SOX10", "accepted", confidence="high")], options=options)
+        replan.after_close(engine, cd3)
+        return engine, led, walked
+
+    engine, led, walked = run()
+    assert led["state"] == "awaiting_t2" and led["relooked"] == "CD3e"
+    assert led["start"]["rescored"] and ("CD8a", "manual_review_recommended") not in engine.closed
     assert walked["state"] == "accepted"                    # a look placed it
     assert engine.refreshed == ["PD1"]
     assert not replan.pending(engine.record)                # nothing only biology can call
+    engine, led, _walked = run({"max_tier": 1})
+    assert ("CD8a", "manual_review_recommended") in engine.closed
 
 
 def test_a_suspect_population_is_queued_once_and_its_answer_routes_it():
@@ -288,26 +304,35 @@ def test_a_suspect_population_is_queued_once_and_its_answer_routes_it():
 
     contaminated = {"partner": "SOX10", "at_top": 0.63, "prevalence": 0.08, "at_gate": 0.5}
     pd1 = _u("PD1", "manual_review_recommended", needs_review=True, candidate=7.69,
-             lineage_contamination=contaminated, qc_done=True)
+             lineage_contamination=contaminated, qc_done=True, whole_image="cannot_tell")
     cd20 = _u("CD20", "manual_review_recommended", needs_review=True, candidate=7.12,
               artifact_verdict=True)
+    cd8 = _u("CD8a", "manual_review_recommended", needs_review=True, candidate=6.5,
+             artifact_verdict=True)
     engine = _Engine([_u("CD45", "accepted", confidence="high"),
-                      _u("SOX10", "accepted", confidence="high"), pd1, cd20])
-    replan.after_close(engine, pd1)
-    replan.after_close(engine, cd20)
+                      _u("SOX10", "accepted", confidence="high"), pd1, cd20, cd8])
+    for unit in (pd1, cd20, cd8):
+        replan.after_close(engine, unit)
     assert replan.pending(engine.record)
     packet, images = replan.packet(engine, [])
-    assert images == [] and packet["allowed"]["markers"] == ["p::PD1", "p::CD20"]
+    assert images == [] and packet["allowed"]["markers"] == ["p::PD1", "p::CD20", "p::CD8a"]
     shown = {m["marker"]: m for m in packet["evidence"]["markers"]}
     assert shown["PD1"]["suspected"]["why"] == "lineage_contamination"
     assert shown["CD20"]["suspected"]["why"] == "artifact"
     partial = answers.ReplanAnswer(markers={"p::PD1": "absent"})
     with pytest.raises(AgentError):
         replan.apply(engine, packet, partial)
-    answer = answers.ReplanAnswer(markers={"p::PD1": "absent", "p::CD20": "bleed_through"})
+    answer = answers.ReplanAnswer(markers={"p::PD1": "absent", "p::CD20": "absent",
+                                           "p::CD8a": "bleed_through"})
     out = replan.apply(engine, packet, answer)
-    assert pd1["state"] == "no_positive_population"
-    assert cd20["state"] == "awaiting_t4" and cd20["direction"] == "up" and cd20["lineage_ack"]
+    # No picture said PD1 is empty (its whole image could not tell): the
+    # planner's word alone keeps it for review. CD20's whole image called
+    # its positives an artifact: that picture stands behind the close.
+    assert pd1["state"] == "manual_review_recommended"
+    assert out["applied"]["p::PD1"] == "kept_for_review"
+    assert any(e.get("event") == "replan_close_refused" for e in engine.events)
+    assert cd20["state"] == "no_positive_population"
+    assert cd8["state"] == "awaiting_t4" and cd8["direction"] == "up" and cd8["lineage_ack"]
     assert out["round"] == 1 and not replan.pending(engine.record)
     # Asked once: closing again does not queue it again.
     replan.after_close(engine, pd1)
@@ -496,3 +521,122 @@ def test_contamination_is_read_across_lineages_never_between_siblings_of_one():
     assert pd1["SOX10"]["cross_lineage"] is True and pd1["SOX10"]["contaminated"]
 
 
+
+
+# -- no close without a look -------------------------------------------------------------
+
+
+_ON_CD11B = [{"partner": "CD11b", "derived": True, "confidence": "low", "at_gate": 0.14,
+              "at_top": 0.55, "excess": -0.41, "prevalence": 0.05, "contaminated": True,
+              "n_top": 867}]
+
+
+def test_the_lineage_numbers_never_close_a_marker_before_its_first_look():
+    """lsp35766_p193 CD8a, 2026-10-18: its brightest cells sat on CD11b (a
+    low, derived exclusion) and the screen closed it for review at its
+    scored start; no cell look ever ran. Now the screen notes it and the
+    looks go out."""
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    unit = {"project": "p", "marker": "CD8a", "state": "awaiting_t2", "candidate": 8.0}
+    stub = _LineageStub(_ON_CD11B)
+    assert Engine.lineage_screen(stub, unit) is None
+    assert unit["state"] == "awaiting_t2" and unit["lineage_suspect"]["partner"] == "CD11b"
+    assert "lineage_contamination" not in unit
+    assert [e["event"] for e in stub.events] == ["lineage_suspect"]
+
+
+class _Settling(_Engine):
+    """`Engine.settle` with the regression's result scripted."""
+
+    def __init__(self, units, results):
+        super().__init__(units)
+        self.results = list(results)
+        self.finalized = []
+
+    def run_regression(self, unit):
+        result = self.results.pop(0)
+        if "lineage" in result["failed"]:
+            unit["lineage_contamination"] = dict(_ON_CD11B[0])
+        return result
+
+    def finalize(self, unit, *, method):
+        unit["state"] = "accepted"
+        self.finalized.append(unit["marker"])
+
+    def purity_capped(self, unit, result):
+        return False
+
+    def purity_push(self, unit, result):
+        return False
+
+
+def _settle(engine, unit):
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    engine.lineage_by_eye = lambda u: Engine.lineage_by_eye(engine, u)
+    engine.close_contaminated = lambda u: Engine.close_contaminated(engine, u)
+    Engine.settle(engine, unit)
+
+
+def test_a_gated_population_on_an_exclusive_lineage_is_shown_whole_before_any_close():
+    """After its looks, a population still on an exclusive lineage gets the
+    whole-image look; `real_signal` keeps the gate the looks reached."""
+    from plexora.plugins.gating.server.autogate import answers, transitions
+
+    lineage = {"ok": False, "failed": ["lineage"], "checks": []}
+    clean = {"ok": True, "failed": [], "checks": []}
+    cd8 = _u("CD8a", "awaiting_regression", candidate=7.1, packets=["pk_0001"])
+    engine = _Settling([_u("CD3e", "accepted", confidence="high"), cd8], [lineage, clean])
+    _settle(engine, cd8)
+    assert cd8["state"] == "qc_confirm" and cd8["lineage_check"] and not engine.closed
+    transitions.apply_qc(engine, {"units": [{"project": "p", "marker": "CD8a"}]},
+                         answers.QCAnswer(verdict="real_signal"))
+    assert cd8["state"] == "awaiting_regression" and cd8["lineage_seen_real"]
+    _settle(engine, cd8)
+    assert engine.finalized == ["CD8a"] and not engine.closed
+
+
+def test_a_lineage_look_that_cannot_tell_ends_in_review_on_that_look_not_the_planners_word():
+    from plexora.plugins.gating.server.autogate import answers, replan, transitions
+
+    lineage = {"ok": False, "failed": ["lineage"], "checks": []}
+    cd8 = _u("CD8a", "awaiting_regression", candidate=7.1, packets=["pk_0001"])
+    engine = _Settling([_u("CD3e", "accepted", confidence="high"), cd8], [lineage, lineage])
+    _settle(engine, cd8)
+    transitions.apply_qc(engine, {"units": [{"project": "p", "marker": "CD8a"}]},
+                         answers.QCAnswer(verdict="cannot_tell"))
+    assert replan.pending(engine.record)
+    packet, _ = replan.packet(engine, [])
+    replan.apply(engine, packet, answers.ReplanAnswer(markers={"p::CD8a": "absent"}))
+    assert cd8["state"] == "awaiting_regression"           # the word alone closes nothing
+    _settle(engine, cd8)
+    assert engine.closed == [("CD8a", "manual_review_recommended")]
+
+
+def test_a_judgement_with_no_look_behind_it_is_flagged_unless_it_says_why():
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    class _Closing(_Log):
+        call = None
+
+        def reference_failed(self, unit):
+            pass
+
+    def close(unit, state, **kw):
+        stub = _Closing()
+        stub._review_gate = lambda u, s, p: Engine._review_gate(stub, u, s, p)
+        stub._close_tail = lambda *a: Engine._close_tail(stub, *a)
+        Engine.close(stub, unit, state, "why", **kw)
+        return [e["event"] for e in stub.events]
+
+    bare = {"project": "p", "marker": "CD8a", "state": "awaiting_t2"}
+    assert "closed_without_look" in close(bare, "manual_review_recommended")
+    assert bare["closed_unlooked"]
+    edited = {"project": "p", "marker": "CD8a", "state": "awaiting_t2"}
+    assert "closed_without_look" not in close(edited, "manual_review_recommended",
+                                              unlooked="user_edit")
+    looked = {"project": "p", "marker": "CD8a", "state": "awaiting_t2", "packets": ["pk_1"]}
+    assert "closed_without_look" not in close(looked, "no_positive_population")
+    locked = {"project": "p", "marker": "CD8a", "state": "pending"}
+    assert "closed_without_look" not in close(locked, "skipped_locked")

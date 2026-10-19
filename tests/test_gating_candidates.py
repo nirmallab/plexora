@@ -221,7 +221,8 @@ def test_scored_candidates_join_the_lattice_outside_the_band_and_anchor_the_walk
 
 class _Engine:
     def __init__(self, max_tier=4):
-        self.options = {"max_tier": max_tier, "audit_sheet": True, "seed": 0}
+        self.options = {"max_tier": max_tier, "audit_sheet": True, "seed": 0,
+                        "absence_check": False}
         self.closed = []
         self.proposed = []
 

@@ -154,11 +154,17 @@ def render_display_grid(session, data, record, rows, *, fmt="webp", store=True,
         if row.get("short_pattern"):
             draw.text((3, y + block // 2 + 2), str(row["short_pattern"])[:12],
                       fill=collage.DIM, font=small)
-        rule = entry.get("rule") or entry
-        black = float(rule["window"][0])
-        curve = calibration.entry_curve(rule)
+        if calibration.SCALE == "linear":
+            # The ladder the viewer's Linear canvas would draw: gains over the
+            # marker's linear window, the column picked applied to it there.
+            ladder = calibration.linear_columns(entry)
+            black, curve = float(calibration.linear_window({**entry, "choice": None})[0]), None
+        else:
+            rule = entry.get("rule") or entry
+            ladder = entry["columns"]
+            black, curve = float(rule["window"][0]), calibration.entry_curve(rule)
         levels = {}
-        for index, column in enumerate(entry["columns"]):
+        for index, column in enumerate(ladder):
             window = (black, float(column["white"]))
             x0 = LABEL_PX + index * (block + COLUMN_GAP)
             bright_levels, negative_p90 = [], None
@@ -192,7 +198,7 @@ def render_display_grid(session, data, record, rows, *, fmt="webp", store=True,
                       "bright": [c["cell_id"] for c in picked["bright"] if c]},
             "black": black, "curve": curve,
             "columns": [{"id": c["id"], "gain": c["gain"], "white": c["white"]}
-                        for c in entry["columns"]],
+                        for c in ladder], "scale": calibration.SCALE,
             "levels": levels,
             "titre": (entry.get("anchors") or {}).get("titre")})
     png = fast_png.encode_rgb8_png(np.asarray(canvas))

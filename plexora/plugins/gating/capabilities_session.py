@@ -234,6 +234,35 @@ class SessionOptions(AgentModel):
                         "expected and one not-expected partner channel from the panel "
                         "context (reading guide `collage_t2m`). Off, the looks are the "
                         "two-panel cells.")
+    absence_check: bool = Field(True, description="Before a marker's first look, show four "
+                                "regions of the tissue with nothing marked and ask whether "
+                                "any cell is clearly positive by its own stain: none in any "
+                                "region closes the marker with no positives (gate at the "
+                                "maximum), and a technical check's failed-stain verdict "
+                                "stands only when the regions agree. False: the first look "
+                                "comes straight away.")
+    split_mixed: bool = Field(True, description="A look at candidates that stops at a row "
+                              "judged mixed and wider than two background sds gets that row "
+                              "split into finer candidates and looked at again, instead of "
+                              "the gate stopping at its edge.")
+    whole_image_moves: bool = Field(False, description="After a look at candidates, a "
+                                    "whole-image check that calls the gate too low or too "
+                                    "high sends it back to the candidates (opposite ways end "
+                                    "in review). False: the gate stays where the rows put it, "
+                                    "at low confidence, the disagreement noted -- the rows "
+                                    "judged those very cells.")
+    whole_image_reopen: bool = Field(True, description="After a look at candidates, a "
+                                     "whole-image check that calls the gate too low sends it "
+                                     "up for one more look at the candidates above, where the "
+                                     "first row passes even when judged mixed (two views "
+                                     "agree); the rows still place the gate. False: it stays "
+                                     "where the rows put it, at low confidence.")
+    absence_confirm: bool = Field(True, description="When exactly one region of an absence "
+                                  "picture shows clear positives and the others none or few, "
+                                  "that region is shown again close up and in its "
+                                  "surroundings before it keeps the marker open: an edge band "
+                                  "or a fold reads as one there, a cluster of real cells "
+                                  "still as cells.")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "

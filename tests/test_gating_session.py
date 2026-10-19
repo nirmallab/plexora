@@ -119,6 +119,10 @@ class Oracle:
                                                    rows)}
         if kind == "qc_confirm":
             return {"kind": kind, "verdict": "real_signal"}
+        if kind == "absence_check":
+            real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
+            return {"kind": kind, "regions": {r: "clear" if real else "none"
+                                              for r in packet["allowed"]["regions"]}}
         if kind == "regression_confirm":
             return {"kind": kind, "verdict": "holds"}
         if kind == "transfer_check":
@@ -144,6 +148,7 @@ def drive(session, session_id, agent, limit=60):
     for _ in range(limit):
         if result["state"] != "decision":
             assert result["state"] in ("decided", "done"), result
+            assert not unlooked_closes(session_id)
             return seen
         packet = result["packet"]
         seen.append(packet)
@@ -154,7 +159,21 @@ def drive(session, session_id, agent, limit=60):
     raise AssertionError("the session did not finish")
 
 
+def unlooked_closes(session_id):
+    """Markers a session judged (empty, failed, review) with no look behind it
+    (`Engine.close`): none, ever."""
+    from plexora import paths
+
+    record = json.loads((paths.data_root() / ".agent" / "sessions" / "gating" / session_id
+                         / "session.json").read_text())
+    return {u["marker"]: u.get("reason") for u in record["units"].values()
+            if u.get("closed_unlooked")}
+
+
 def start(session, **options):
+    # The flows below were written for a first look straight away; the
+    # absence check's own tests switch it on.
+    options.setdefault("absence_check", False)
     started = ok(invoke(session, "gating_session_start", {"scope": "project",
                                                           "project": "gsynth", **options}))
     jobs.drain(120)
@@ -775,11 +794,15 @@ def test_an_outstanding_packet_can_be_drawn_again(tmp_path):
 
 
 class FailingQC(Oracle):
-    """Calls a flagged channel failed (the oracle calls it real)."""
+    """Calls a flagged channel failed (the oracle calls it real), and sees no
+    clear positive in any region."""
 
     def answer(self, packet):
         if packet["kind"] == "qc_confirm":
             return {"kind": "qc_confirm", "verdict": "technical_failure"}
+        if packet["kind"] == "absence_check":
+            return {"kind": "absence_check",
+                    "regions": {r: "none" for r in packet["allowed"]["regions"]}}
         return super().answer(packet)
 
 
@@ -1269,9 +1292,14 @@ def test_the_contrast_check_comes_before_the_first_look(tmp_path):
     cd3 = record["channels"]["CD3"]
     assert cd3["window"][1] == pytest.approx(cd3["columns"][1]["white"])
     assert cd3["chosen_by"] == "vision"
-    # Every later picture draws with the choice.
+    # Every later picture draws with the choice, on the default (linear) scale:
+    # the chosen column's gain over the marker's linear window, no curve.
     drawn = collage.resolve_windows(session, session.project("gsynth"), {"CD3": None})
-    assert drawn["CD3"]["window"] == pytest.approx(cd3["window"])
+    assert calibration.SCALE == "linear" and drawn["CD3"]["curve"] is None
+    assert drawn["CD3"]["window"] == pytest.approx(calibration.linear_window(cd3))
+    unchosen = calibration.linear_window({**cd3, "choice": None})
+    assert drawn["CD3"]["window"][1] == pytest.approx(
+        calibration.gain_white(unchosen, None, cd3["choice"]["gain"]))
     following, _ = next_packet(session, sid)
     assert following is None or following["kind"] != "display_setup"
     status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
@@ -1764,3 +1792,99 @@ def test_a_stored_session_replays_and_its_pictures_draw_again_byte_for_byte(tmp_
     assert compared and all(a == 1.0 for a in compared)
     drawn = [i for r in rows for i in r["images"] if i["rerendered"]]
     assert drawn and all(i["identical"] for i in drawn), drawn
+
+
+# -- the absence check (2026-10-18) -------------------------------------------------
+
+
+class SeesNothing(Oracle):
+    """Sees no clear positive in any region for one marker."""
+
+    def __init__(self, info, marker, **kwargs):
+        super().__init__(info, **kwargs)
+        self.marker = marker
+
+    def answer(self, packet):
+        marker = packet["units"][0]["marker"] if packet["units"] else None
+        if marker == self.marker and packet["kind"] == "absence_check":
+            return {"kind": "absence_check",
+                    "regions": {r: "none" for r in packet["allowed"]["regions"]}}
+        return super().answer(packet)
+
+
+def test_no_clear_positive_in_any_region_closes_the_marker_before_any_look(tmp_path):
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD4", "CD8"], absence_check=True)
+    seen = drive(session, started["session_id"], SeesNothing(info, "CD4"))
+    final = units(session, started["session_id"])
+    kinds = [(p["kind"], p["units"][0]["marker"]) for p in seen if p["units"]]
+    if ("absence_check", "CD4") not in kinds:
+        pytest.skip("CD4 was settled at T1 in this scene")
+    assert final["CD4"]["state"] == "no_positive_population"
+    assert not any(k in ("t2_confirm", "t4_candidates") and m == "CD4" for k, m in kinds)
+    gate = model.get_gate(session.data("gsynth"), "CD4")
+    assert gate["low"] == gate["high"]
+    absence = [p for p in seen if p["kind"] == "absence_check"]
+    assert all(len(p["images"]) == 1 and len(p["allowed"]["regions"]) >= 2 for p in absence)
+    # Closed only after a second picture of other regions agreed.
+    assert [p["evidence"]["round"] for p in absence if p["units"][0]["marker"] == "CD4"] == [1, 2]
+    assert all(p["evidence"]["guide"][0] == "absence" for p in absence)
+    if final["CD8"]["state"] not in ("accepted_t1",):
+        assert final["CD8"]["state"] != "no_positive_population"
+
+
+class FailedButSeen(Oracle):
+    """Calls a flagged channel failed; the regions then show clear positives."""
+
+    def answer(self, packet):
+        if packet["kind"] == "qc_confirm":
+            return {"kind": "qc_confirm", "verdict": "technical_failure"}
+        if packet["kind"] == "absence_check":
+            return {"kind": "absence_check",
+                    "regions": {r: "clear" for r in packet["allowed"]["regions"]}}
+        return super().answer(packet)
+
+
+def test_clear_regions_overrule_a_failed_stain_verdict(tmp_path):
+    info = make_gating_project(tmp_path, variant="flat")
+    session = AgentSession()
+    started = start(session, markers=["CD20"], absence_check=True)
+    seen = drive(session, started["session_id"], FailedButSeen(info))
+    kinds = [p["kind"] for p in seen if p["kind"] in ("qc_confirm", "absence_check")]
+    assert kinds[:2] == ["qc_confirm", "absence_check"]
+    final = units(session, started["session_id"])["CD20"]
+    assert final["state"] != "technically_failed"
+
+
+def test_without_the_absence_check_the_first_look_comes_straight_away(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD4"], absence_check=False)
+    seen = drive(session, started["session_id"], Oracle(info))
+    assert "absence_check" not in [p["kind"] for p in seen]
+
+
+class UnsureQCSeesNothing(Oracle):
+    """A technical check that cannot tell; the regions show nothing."""
+
+    def answer(self, packet):
+        if packet["kind"] == "qc_confirm":
+            return {"kind": "qc_confirm", "verdict": "cannot_tell"}
+        if packet["kind"] == "absence_check":
+            return {"kind": "absence_check",
+                    "regions": {r: "none" for r in packet["allowed"]["regions"]}}
+        return super().answer(packet)
+
+
+def test_a_technical_check_that_cannot_tell_asks_the_regions(tmp_path):
+    info = make_gating_project(tmp_path, variant="flat")
+    session = AgentSession()
+    started = start(session, markers=["CD20"], absence_check=True)
+    seen = drive(session, started["session_id"], UnsureQCSeesNothing(info))
+    kinds = [p["kind"] for p in seen if p["kind"] in ("qc_confirm", "absence_check")]
+    # A second picture needs room for other regions; this scene is small.
+    assert kinds[:2] == ["qc_confirm", "absence_check"]
+    assert units(session, started["session_id"])["CD20"]["state"] == "no_positive_population"

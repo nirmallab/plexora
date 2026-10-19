@@ -388,6 +388,49 @@ def test_a_calibrated_marker_has_a_linear_window_too():
     assert cal.linear_window({"window": [1.0, 9.0]}) == [1.0, 9.0]
 
 
+def test_pictures_are_drawn_linear_by_default_and_the_record_keeps_log(monkeypatch):
+    """lsp35766_p193 CD8a (2026-10-18): on the asinh curve the stroma's haze
+    drew as bright as the weak rings and the nuclei washed the tiles out. Every
+    picture now draws a marker at its linear window and the nuclei as their dim
+    backdrop; the stored Log window and curve are untouched, for the viewer's
+    Log brightness switch."""
+    from plexora.agent.evidence import calibration as cal
+
+    measured = _measured()
+    rule = cal.rule_from(measured)
+    marker = {"role": "marker", "window": list(rule["window"]), "curve": rule["curve"],
+              "rule": rule, "anchors": dict(measured), "choice": {"gain": 0.8}}
+    view = cal.nuclear_view({"black": 50.0, "typical": 800.0, "titre": 4000.0})
+    nuclear = {"role": "nuclear", "window": [10.0, 9000.0], "view": view}
+    assert cal.SCALE == "linear"
+    drawn = cal.drawn_entry(marker)
+    assert drawn["curve"] is None and drawn["window"] == pytest.approx(cal.linear_window(marker))
+    assert marker["curve"] == rule["curve"]                      # the record is not changed
+    assert cal.drawn_entry(nuclear)["window"] == pytest.approx(view["linear_window"])
+    assert cal.drawn_entry({"role": "nuclear", "window": [10.0, 9000.0]})["window"] == \
+        [10.0, 9000.0]
+    record = {"channels": {"M": marker, "DNA": nuclear}}
+    assert cal.window_for(record, "M")[0] == pytest.approx(drawn["window"])
+    assert cal.display_spec(record, "M")["curve"] is None
+    assert cal.view_spec(marker)["curve"] == cal.entry_curve(marker)   # Log still offered
+    # The contrast check's ladder is over the linear window; c3 is the rule's.
+    ladder = cal.linear_columns(marker)
+    assert [c["id"] for c in ladder] == list(cal.COLUMN_IDS)
+    assert ladder[2]["white"] == pytest.approx(cal.linear_window({**marker, "choice": None})[1])
+    # A choice picked on the Log ladder is asked again on Linear's.
+    asked = {"role": "marker", "rule": rule, "columns": cal.columns_for(rule),
+             "cells": {"bright": [{"cell_id": 1}]}}
+    old = {"channels": {"M": asked}, "choices": {"M": {"column": "c2", "gain": 0.8}}}
+    assert cal.needs_choice(old, "M")
+    new = {"channels": {"M": asked}, "choices": {"M": {"column": "c2", "gain": 0.8,
+                                                       "scale": "linear"}}}
+    assert not cal.needs_choice(new, "M")
+    monkeypatch.setattr(cal, "SCALE", "log")
+    assert not cal.needs_choice(old, "M")
+    assert cal.drawn_entry(marker) is marker
+    assert cal.display_spec(record, "M")["curve"] == cal.entry_curve(marker)
+
+
 def test_the_nuclear_stain_is_measured_on_its_own_nuclei():
     from plexora.agent.evidence import cell_window
     from plexora.agent.evidence import crops
@@ -455,7 +498,7 @@ def test_every_marker_with_bright_cells_is_asked():
                "anchors": {"titre": 170.0}, "cells": {"bright": [{"cell_id": 1}]}}
     record = {"channels": {"A": floored, "B": {**floored, "cells": {"bright": []}},
                            "C": floored, "N": {"role": "nuclear", "window": [1.0, 2.0]}},
-              "choices": {"C": {"column": "c3"}}}
+              "choices": {"C": {"column": "c3", "scale": cal.SCALE}}}
     assert cal.needs_choice(record, "A")
     assert not cal.needs_choice(record, "B")
     assert not cal.needs_choice(record, "C")

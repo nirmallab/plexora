@@ -102,6 +102,20 @@ READING_GUIDE = {
                       "and candidate c1, row i2 between c1 and c2, and so on. Judge every row "
                       "on its own"),
     "sheet": SCALES_READING,
+    "absence": ("an absence check: up to six regions of one marker, each about 200 um "
+                "across, the marker in yellow on the session's display, nuclei dim blue, no "
+                "cell marked and no threshold anywhere. The regions are where real positives "
+                "would most likely show (the most bright cells, crowded tissue) and where a "
+                "dim stain shows (cells near the threshold). Per region one word for what "
+                "you see: `clear` -- several cells carry the stain as their own (a ring, a "
+                "fill, cytoplasm hugging the nucleus), clearly above the faint floor the "
+                "unstained cells beside them show; `few` -- one or two such cells; `none` -- "
+                "only that floor, light at the edge a cell shares with a bright neighbour, "
+                "debris, specks or a smear, a band of stain along the tissue's edge, or a "
+                "stain lighting every cell of the field alike; `cannot_tell`. Nothing is "
+                "gated from these "
+                "words: a marker no region shows a clear positive for, in this picture and a "
+                "second of other regions, is closed with no positives, as a person would"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -1026,6 +1040,113 @@ def qc_confirm(engine, units):
                                      "the whole image and three fields"),))
 
 
+def _absence_skipped(engine, unit, why, regions=()):
+    """No absence picture could be drawn: what was decided without it
+    stands -- a technical check's verdict closes the marker, anything else
+    goes on to its first look. None (the unit settled without a packet)."""
+    unit["absence_done"] = True
+    unit["absence"] = {"skipped": why, "regions": list(regions)}
+    after = unit.pop("absence_after", None)
+    if after:
+        engine.close(unit, after, unit.pop("absence_reason", None) or why,
+                     **({"confidence": "failed_qc"} if after == "technically_failed" else {}))
+    else:
+        unit["state"] = "awaiting_t2"
+    return None
+
+
+def absence_check(engine, units):
+    """Four regions of the tissue, nothing marked: is any cell clearly
+    positive by its own stain (`absence`)? Before the marker's first look,
+    or after a technical check called the stain failed or empty."""
+    from plexora.plugins.gating.server.autogate import absence
+
+    unit = units[0]
+    try:
+        ds, channel = _unit_channel(engine, unit)
+    except AgentError:
+        return _absence_skipped(engine, unit, "no image channel to draw")
+    earlier = unit.get("absence_rounds") or []
+    lone = unit.get("absence_confirming")
+    if lone and earlier:
+        return _absence_close(engine, unit, ds, channel, lone, earlier)
+    view = absence.render(engine.call.session, ds, marker=unit["marker"], channel=channel,
+                          unit=unit, seed=_seed(engine), fmt=_fmt(engine),
+                          pixel=engine.pixel_for(ds.name),
+                          avoid=[b for r in earlier for b in absence.boxes(r["regions"])])
+    regions = [r["region"] for r in view["fields"]]
+    if len(regions) < absence.MIN_JUDGED:
+        return _absence_skipped(engine, unit, "fewer regions than the check needs",
+                                regions=view["fields"])
+    compartment = (unit.get("context") or {}).get("compartment")
+    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    packet = {
+        "question": (f"{unit['marker']} ({ds.name}): {len(regions)} "
+                     + ("other " if earlier else "") + "regions of the tissue, "
+                     f"the {stain} stain in yellow, nuclei dim blue, NO cell marked. For "
+                     "EVERY region: does it show cells clearly positive by their OWN stain "
+                     "-- brighter than the faint floor the unstained cells there show, where "
+                     "the stain belongs on the cell -- (`clear`: several; `few`: one or two; "
+                     "`none`: only the floor, glow beside a bright neighbour, debris or "
+                     "smears; `cannot_tell`)? Judge the cells, not the brightness of the "
+                     "picture."),
+        "evidence": {"marker": unit["marker"], "project": ds.name,
+                     "round": len(earlier) + 1,
+                     "regions": [{k: r[k] for k in ("region", "class", "cells") if k in r}
+                                 for r in view["fields"]],
+                     "field": view["manifest"]["field"].get("label"),
+                     "context": _context_brief(unit),
+                     **_reading(engine, ["absence"]
+                                + [k for k in (_compartment_key(unit),) if k])},
+        "allowed": {"regions": regions, "words": list(absence.REAL_WORDS)},
+        "_image_meta": [],
+    }
+    unit["absence_regions"] = view["fields"]
+    return packet, _images(packet, ((view, "absence_regions",
+                                     f"{len(regions)} regions, nothing marked"),))
+
+
+def _absence_close(engine, unit, ds, channel, lone, earlier):
+    """The one region of the last absence picture that showed clear
+    positives, seen again close up and in its surroundings
+    (`absence.render_close`): cells, or an edge band, a fold, debris?"""
+    from plexora.plugins.gating.server.autogate import absence
+
+    region = next((r for r in earlier[-1].get("regions") or () if r.get("region") == lone),
+                  None)
+    if region is None:
+        unit.pop("absence_confirming", None)
+        return _absence_skipped(engine, unit, "the region to look at again is not on record")
+    view = absence.render_close(engine.call.session, ds, marker=unit["marker"],
+                                channel=channel, region=region, fmt=_fmt(engine),
+                                pixel=engine.pixel_for(ds.name))
+    compartment = (unit.get("context") or {}).get("compartment")
+    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    packet = {
+        "question": (f"{unit['marker']} ({ds.name}): in the last picture only region {lone} "
+                     "showed cells clearly positive. Here it is again as r1: close up (left) "
+                     f"and in its surroundings (right, the white box), the {stain} stain in "
+                     "yellow, nuclei dim blue, NO cell marked. Does r1 show cells clearly "
+                     "positive by their OWN stain -- each stained where the stain belongs on "
+                     "that cell, brighter than the floor the unstained cells show -- "
+                     "(`clear`: several; `few`: one or two; `none`: no such cell -- a band "
+                     "along the tissue edge, a fold, debris or smears, glow beside a bright "
+                     "neighbour, or a stain lighting every cell of the field alike; "
+                     "`cannot_tell`)? Judge the cells, not the brightness of the picture."),
+        "evidence": {"marker": unit["marker"], "project": ds.name,
+                     "round": len(earlier), "close_look": True,
+                     "regions": [{"region": "r1", **{k: region[k] for k in ("class", "cells")
+                                                     if k in region}}],
+                     "context": _context_brief(unit),
+                     **_reading(engine, ["absence"]
+                                + [k for k in (_compartment_key(unit),) if k])},
+        "allowed": {"regions": ["r1"], "words": list(absence.REAL_WORDS)},
+        "_image_meta": [],
+    }
+    return packet, _images(packet, ((view, "absence_close",
+                                     "one region close up and in its surroundings"),))
+
+
 def regression_confirm(engine, units):
     from plexora.agent.evidence import collage
 
@@ -1379,6 +1500,7 @@ def transfer_check(engine, units):
 
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
+            "absence_check": absence_check,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "replan": replan_packet,
             "transfer_check": transfer_check,
