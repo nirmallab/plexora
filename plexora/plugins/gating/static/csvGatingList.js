@@ -871,6 +871,10 @@ class CSVGatingList {
      * @returns {object}
      */
     getColorCodedRanges() {
+        // The Single Cell Classifier mode draws its calls as this layer's
+        // colour table (gatingClassifier.js): no range gate, so the table
+        // decides which cells are drawn and in what colour.
+        if (this.classifierMode) return {};
         return this.selections;
     }
 }
@@ -926,10 +930,15 @@ if (window.Plexora) {
                 "The ‹ and › in the corner of the distribution move the lower threshold "
                     + "one step at a time, the same step the arrow keys take with its "
                     + "handle selected. After a click, the arrow keys carry on from there.",
+                "The cog switches the card to the Single Cell Classifier: choose Positive "
+                    + "or Negative and click cells on the image to label them, then the wand "
+                    + "trains on those examples and calls every cell. The eraser undoes the "
+                    + "run and keeps the examples.",
             ],
             shortcuts: [
                 { keys: "Z", label: "Previous marker" },
                 { keys: "X", label: "Next marker" },
+                { keys: "Esc", label: "Stop labelling cells (Single Cell Classifier)" },
             ],
             docs: "plugins/thresholding",
         },

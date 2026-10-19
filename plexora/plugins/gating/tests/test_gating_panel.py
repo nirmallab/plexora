@@ -218,10 +218,16 @@ def test_clear_is_beside_auto_and_clear_all_behind_the_overflow():
 
 def test_the_csv_pair_is_a_labelled_line_in_the_panel():
     """`data-tool-extras` is what lifts markup into the card's header
-    (views/toolLoader.js). Dropping it is half the move; the other half is the
-    words, which is what an icon in a header could never have room for."""
+    (views/toolLoader.js). Moving the CSV pair out of it is half the move; the
+    other half is the words, which is what an icon in a header could never
+    have room for. The one thing it lifts now is the mode cog -- a switch of
+    what the whole card is, not an action -- and nothing labelled."""
     panel = _code(PANEL)
-    assert "data-tool-extras" not in panel
+    extras = re.search(r"<div data-tool-extras>(.*?)</div>", panel, re.S)
+    assert extras, "the mode cog is staged for the header"
+    assert re.findall(r"<button\b", extras.group(1)) == ["<button"]
+    assert 'id="gating_mode_button"' in extras.group(1) and "fa-gear" in extras.group(1)
+    assert "gating_upload_icon" not in extras.group(1)
     assert 'class="layer-card-actions"' in panel
     for label in ("Load Gates", "Download Gates"):
         assert f">{label}<" in panel
@@ -298,8 +304,12 @@ def test_the_mismatch_notes_are_muted_and_not_alarming():
     assert "border-left: 2px solid var(--accent-warning);" in note
     assert "color: var(--text-muted);" in note
     assert "background" not in note
-    # Red is for something that failed. Nothing here has.
-    assert "--accent-danger" not in styles
+    # Red is for something that failed. Nothing here has -- the one red in
+    # the file is the classifier's status line when a run did fail.
+    assert "--accent-danger" not in note
+    error = styles.index('.clf-status[data-tone="error"] {')
+    error_rule = styles[error:styles.index("}", error)]
+    assert styles.count("--accent-danger") == 1 and "--accent-danger" in error_rule
 
 
 def test_the_marker_note_is_only_for_a_project_whose_names_overlap():
@@ -361,3 +371,62 @@ def test_a_panel_restored_on_reload_still_shows_the_contrast_slider():
     show = controller[controller.index("    onShow() {"):]
     show = show[:show.index("    armKeys() {")]
     assert "this._shown = true;" in show and "this._shown = false;" in show
+
+
+CLASSIFIER = PLUGIN_ROOT / "static" / "gatingClassifier.js"
+
+
+def test_the_classifier_is_a_second_mode_of_the_same_card():
+    """The Single Cell Classifier is not a second plugin: one section, its
+    mode in `data-gate-mode`, the marker picker shared, and each mode's rows
+    hidden by the stylesheet in the other -- with no rule that would make a
+    `[hidden]` row show."""
+    panel, styles = _code(PANEL), _code(STYLES)
+    assert '<section class="sidebar-section" id="gate_marker_section" data-gate-mode="threshold">' \
+        in panel
+    assert panel.count('id="gate_marker_select"') == 1
+    for element_id in ("clf_load_button", "clf_download_button", "clf_more_button",
+                       "clf_run_button", "clf_revert_button", "clf_positive_button",
+                       "clf_negative_button", "clf_summary", "clf_status", "clf_load_input"):
+        assert f'id="{element_id}"' in panel, element_id
+    for label in ("Load Annotations", "Download Cells"):
+        assert f">{label}<" in panel
+    # The wand and the eraser end the marker's line, as Auto and Clear do.
+    marker_row = panel[panel.index('class="control-row"'):panel.index('class="clf-label-row')]
+    assert marker_row.index('id="gate_marker_select"') < marker_row.index('id="clf_run_button"') \
+        < marker_row.index('id="clf_revert_button"')
+    assert "fa-wand-magic-sparkles" in marker_row and "fa-eraser" in marker_row
+    # +Positive / -Negative are core's segmented control, pressed or not, and
+    # pressed in the viewer's accent like any other toggle.
+    assert 'class="cell-mode-options clf-label-options"' in panel
+    assert panel.count('aria-pressed="false"') >= 2
+    pressed = styles[styles.index('.clf-label-option[aria-pressed="true"]'):]
+    assert "var(--accent-channel)" in pressed[:pressed.index("}")]
+    # Each mode's rows are hidden in the other; nothing is shown by a display value.
+    assert '#gate_marker_section:not([data-gate-mode="classifier"]) .gate-classifier-only' in styles
+    assert '[data-gate-mode="classifier"] #gate_distribution_plot' in styles
+    hiding = styles[styles.index('[data-gate-mode="classifier"] > .layer-card-actions'):]
+    assert hiding[:hiding.index("}")].count("display") == 1
+    assert "display: none !important" in hiding[:hiding.index("}")]
+
+
+def test_the_classifier_draws_through_the_layer_and_follows_the_marker():
+    """No renderer of its own: the calls are the cell layer's colour table and
+    the examples an overlay, through `ctx.layers`; while the mode is on the
+    provider reports no range gate, so the table decides."""
+    classifier, controller = _code(CLASSIFIER), _code(CONTROLLER)
+    gating_list = _code(PLUGIN_ROOT / "static" / "csvGatingList.js")
+    assert 'setColorLUT?.("cells"' in classifier
+    assert 'addOverlay?.({' in classifier and '"classifier-examples"' in classifier
+    assert 'addHandler("canvas-click"' in classifier and 'removeHandler?.("canvas-click"' in classifier
+    assert "event.preventDefaultAction = true" in classifier
+    assert "if (this.classifierMode) return {};" in gating_list
+    # Owned by the controller and told about the marker, the show and the hide.
+    assert "new GateClassifierControl(this)" in controller
+    assert "this.classifier?.follow(name)" in controller
+    assert "this.classifier?.show()" in controller and "this.classifier?.hide()" in controller
+    # Loaded before the controller that builds it.
+    init = (PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
+    assert init.index('"gatingClassifier.js"') < init.index('"gatingSidebarController.js"')
+    # The run is a job the panel follows; a second press while one runs waits.
+    assert "gatingJob(" in classifier and "if (this.job || !this.marker) return;" in classifier

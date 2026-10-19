@@ -282,4 +282,139 @@ class GatingApi {
             console.log("Error Getting Gating GMM", e);
         }
     }
+
+    // -- Single Cell Classifier (gatingClassifier.js) --------------------------
+    //
+    // Unlike the methods above these THROW on failure, with the server's own
+    // sentence as the message: every one answers something the user just
+    // pressed, and the panel says why it did not happen.
+
+    async _classifierAnswer(response) {
+        let body = null;
+        try {
+            body = await response.json();
+        } catch (e) {
+            body = null;
+        }
+        if (!response.ok || !body || body.ok === false) {
+            const message = body?.error?.message || body?.error || `HTTP ${response.status}`;
+            throw new Error(String(message));
+        }
+        return body;
+    }
+
+    _classifierPost(path, payload) {
+        return fetch(this.url(path), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasource: this.datasource, ...payload }),
+        });
+    }
+
+    /** Mode, example counts, and for `marker` its examples, run and staleness. */
+    async classifierState(marker) {
+        const query = new URLSearchParams({ datasource: this.datasource });
+        if (marker) query.set('marker', marker);
+        const response = await fetch(this.url('plugins/gating/classifier/state') + '?' + query);
+        return this._classifierAnswer(response);
+    }
+
+    async setClassifierMode(mode) {
+        return this._classifierAnswer(await this._classifierPost('plugins/gating/classifier/mode', { mode }));
+    }
+
+    /** The cell under an image point (level 0 pixels): {cell_id, method, x, y}. */
+    async classifierCellAt(x, y, radius) {
+        const query = new URLSearchParams({ datasource: this.datasource, x, y });
+        if (radius) query.set('radius', radius);
+        const response = await fetch(this.url('plugins/gating/classifier/cell_at') + '?' + query);
+        return this._classifierAnswer(response);
+    }
+
+    /** label: "positive" | "negative" | null. Same label again removes it. */
+    async classifierAnnotate(marker, cellId, label) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/annotate', { marker, cell_id: cellId, label }));
+    }
+
+    async classifierClearExamples(markers) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/examples/clear', markers ? { markers } : {}));
+    }
+
+    /** Start a run: {job_id}, or the job already running on this project. */
+    async classifierRun(marker) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/run', { marker }));
+    }
+
+    async classifierRevert(marker) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/revert', { marker }));
+    }
+
+    async classifierReset() {
+        return this._classifierAnswer(await this._classifierPost('plugins/gating/classifier/reset', {}));
+    }
+
+    /** One byte per table row (0 negative, 1 positive, 2 not classified,
+     *  3 uncertain) and the counts from the headers. */
+    async classifierCalls(marker) {
+        const response = await fetch(this.url('plugins/gating/classifier/calls') + '?'
+            + new URLSearchParams({ datasource: this.datasource, marker }));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const header = (name) => response.headers.get(`X-Classifier-${name}`);
+        return {
+            codes: new Uint8Array(await response.arrayBuffer()),
+            state: header('State') || 'not_run',
+            run: header('Run') || '',
+            positive: Number(header('Positive') || 0),
+            eligible: Number(header('Eligible') || 0),
+            uncertain: Number(header('Uncertain') || 0),
+            notClassified: Number(header('Not-Classified') || 0),
+        };
+    }
+
+    /** kind: "binary" | "scores" | "annotations"; the file as a Blob. */
+    async classifierDownload(kind) {
+        const path = kind === 'annotations'
+            ? 'plugins/gating/classifier/export/annotations.json'
+            : `plugins/gating/classifier/export/${kind}.csv`;
+        const response = await fetch(this.url(path) + '?'
+            + new URLSearchParams({ datasource: this.datasource }));
+        if (!response.ok) {
+            await this._classifierAnswer(response);
+        }
+        return response.blob();
+    }
+
+    /** Check an annotations file; nothing is applied. {token, markers, problems, warnings}. */
+    async classifierPreview(file) {
+        const form = new FormData();
+        form.append('datasource', this.datasource);
+        form.append('file', file);
+        const response = await fetch(this.url('plugins/gating/classifier/annotations/preview'), {
+            method: 'POST', body: form,
+        });
+        return this._classifierAnswer(response);
+    }
+
+    /** mode: "merge" | "replace". */
+    async classifierApply(token, mode) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/annotations/apply', { token, mode }));
+    }
+
+    /** A gating job's record: {status, progress, error, result}. */
+    async gatingJob(jobId) {
+        const response = await fetch(this.url(`plugins/gating/jobs/${encodeURIComponent(jobId)}`));
+        return (await this._classifierAnswer(response)).job;
+    }
+
+    async cancelGatingJob(jobId) {
+        const response = await fetch(this.url(`plugins/gating/jobs/${encodeURIComponent(jobId)}/cancel`), {
+            method: 'POST',
+        });
+        return this._classifierAnswer(response);
+    }
 }

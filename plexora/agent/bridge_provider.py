@@ -225,8 +225,17 @@ class PlexoraProvider(Adapter):
                          **{k: prov.get(k) for k in ("method", "status", "confidence",
                                                      "session_id", "operation_id")}})
         image = self._image_id(project, image_id)
+        # A marker the Single Cell Classifier decides has no threshold that
+        # means anything: it travels as `params.classifier` (where its calls
+        # are in the file), never as a gate a reader would apply.
+        from plexora.plugins.gating.server.classifier import calls as classifier_calls
+        from plexora.plugins.gating.server.classifier import source_write
+
+        classified = set(classifier_calls.classified_markers(ds))
         gates = []
         for row in rows:
+            if row.get("channel") in classified:
+                continue
             if not row.get("thresholded") or row.get("gate_start") is None:
                 continue
             confidence = row.get("confidence")
@@ -249,6 +258,18 @@ class PlexoraProvider(Adapter):
         from plexora.agent import cell_exclusions
 
         params = {"project": project, "call_mode": cell_exclusions.current_call_mode()}
+        if classified:
+            runs = {m: classifier_calls.public_run(
+                        classifier_calls.run_arrays(ds, m)[0]) for m in sorted(classified)}
+            params["classifier"] = {
+                "markers": sorted(classified),
+                "binary": f"layers/{source_write.BINARY_KEY} (or obsm/{source_write.BINARY_KEY})",
+                "scores": f"layers/{source_write.SCORES_KEY} (or obsm/{source_write.SCORES_KEY})",
+                "uns": source_write.UNS_KEY,
+                "codes": dict(source_write.CODES),
+                "runs": {m: (r or {}).get("run_id") for m, r in runs.items()},
+                "written_to_source": "only after write_gates_to_source",
+            }
         try:
             record = cell_exclusions.call_record(ds)
         except Exception:  # an annotation; the gates stand without it

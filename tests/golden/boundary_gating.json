@@ -468,14 +468,15 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261015_display_contrast",
-          "/plugins/gating/static/csvGatingList.js?v=20261015_display_contrast",
-          "/plugins/gating/static/gatingPlanes.js?v=20261015_display_contrast",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261015_display_contrast",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261015_display_contrast"
+          "/plugins/gating/static/gatingApi.js?v=20261018_single_cell_classifier",
+          "/plugins/gating/static/csvGatingList.js?v=20261018_single_cell_classifier",
+          "/plugins/gating/static/gatingPlanes.js?v=20261018_single_cell_classifier",
+          "/plugins/gating/static/gatingClassifier.js?v=20261018_single_cell_classifier",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261018_single_cell_classifier",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261018_single_cell_classifier"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261015_display_contrast"
+          "/plugins/gating/static/gating.css?v=20261018_single_cell_classifier"
         ],
         "available_tools": [
           {
@@ -538,6 +539,18 @@
         "channel_list_wrapper",
         "channel_slot_list",
         "channels_upload_icon",
+        "clf_download_button",
+        "clf_load_button",
+        "clf_load_input",
+        "clf_more_button",
+        "clf_negative_button",
+        "clf_negative_count",
+        "clf_positive_button",
+        "clf_positive_count",
+        "clf_revert_button",
+        "clf_run_button",
+        "clf_status",
+        "clf_summary",
         "container",
         "csv_channel_list_wrapper",
         "csv_gating_list",
@@ -563,6 +576,7 @@
         "gating-upload-from-arrow",
         "gating_agent_pill",
         "gating_download_icon",
+        "gating_mode_button",
         "gating_more_button",
         "gating_save_anndata_panel",
         "gating_upload_icon",
@@ -707,11 +721,12 @@
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261015_display_contrast",
-        "/plugins/gating/static/csvGatingList.js?v=20261015_display_contrast",
-        "/plugins/gating/static/gatingPlanes.js?v=20261015_display_contrast",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261015_display_contrast",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261015_display_contrast",
+        "/plugins/gating/static/gatingApi.js?v=20261018_single_cell_classifier",
+        "/plugins/gating/static/csvGatingList.js?v=20261018_single_cell_classifier",
+        "/plugins/gating/static/gatingPlanes.js?v=20261018_single_cell_classifier",
+        "/plugins/gating/static/gatingClassifier.js?v=20261018_single_cell_classifier",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261018_single_cell_classifier",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261018_single_cell_classifier",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -773,7 +788,7 @@
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261015_display_contrast"
+        "/plugins/gating/static/gating.css?v=20261018_single_cell_classifier"
       ],
       "tool_mounts": [
         [
@@ -787,7 +802,7 @@
       ]
     }
   },
-  "route_count": 239,
+  "route_count": 254,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -853,11 +868,17 @@
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",
     "GET /picker_prefs",
+    "GET /plugins/gating/classifier/calls",
+    "GET /plugins/gating/classifier/cell_at",
+    "GET /plugins/gating/classifier/export/<kind>.csv",
+    "GET /plugins/gating/classifier/export/annotations.json",
+    "GET /plugins/gating/classifier/state",
     "GET /plugins/gating/get_gate_provenance",
     "GET /plugins/gating/get_gated_cell_ids",
     "GET /plugins/gating/get_gates_from_anndata",
     "GET /plugins/gating/get_saved_gating_list",
     "GET /plugins/gating/get_uploaded_gating_csv_values",
+    "GET /plugins/gating/jobs/<job_id>",
     "GET /plugins/gating/static/<path:filename>",
     "GET /project/<string:name>/manifest",
     "GET /project/<string:name>/resources",
@@ -957,9 +978,18 @@
     "POST /nodes/<name>/resources",
     "POST /picker_prefs",
     "POST /plugins/gating/agent_session/<session_id>/control",
+    "POST /plugins/gating/classifier/annotate",
+    "POST /plugins/gating/classifier/annotations/apply",
+    "POST /plugins/gating/classifier/annotations/preview",
+    "POST /plugins/gating/classifier/examples/clear",
+    "POST /plugins/gating/classifier/mode",
+    "POST /plugins/gating/classifier/reset",
+    "POST /plugins/gating/classifier/revert",
+    "POST /plugins/gating/classifier/run",
     "POST /plugins/gating/clear_gates",
     "POST /plugins/gating/download_gating_csv",
     "POST /plugins/gating/get_gating_gmm",
+    "POST /plugins/gating/jobs/<job_id>/cancel",
     "POST /plugins/gating/save_gates_to_anndata",
     "POST /plugins/gating/save_gating_list",
     "POST /plugins/gating/set_gate_status",

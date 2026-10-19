@@ -732,3 +732,96 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* ------------------------------------------------------------------------
+   Single Cell Classifier mode (gatingClassifier.js).
+
+   One section, two modes: `data-gate-mode` on #gate_marker_section says which,
+   and each row says which mode it belongs to. These rules only ever HIDE, with
+   no display value of their own for a shown row, so a row that hides itself
+   with [hidden] (the summary, the status line, the z-stack controls) still
+   does -- a class that sets `display` defeats [hidden], and there is no global
+   guard for that in Plexora.
+   ------------------------------------------------------------------------ */
+/* Thresholding's own rows are named by id rather than given a class: the
+   panel's markup is pinned as it was (tests/test_gating_panel.py), and the
+   mode is this file's business, not theirs. */
+#gate_marker_section[data-gate-mode="classifier"] > .layer-card-actions:not(.gate-classifier-only),
+#gate_marker_section[data-gate-mode="classifier"] .gate-marker-auto:not(.gate-classifier-only),
+#gate_marker_section[data-gate-mode="classifier"] #gate_planes,
+#gate_marker_section[data-gate-mode="classifier"] > .slider-auto-row,
+#gate_marker_section[data-gate-mode="classifier"] #gate_distribution_plot,
+#gate_marker_section[data-gate-mode="classifier"] #gate_plane_readout,
+#gate_marker_section[data-gate-mode="classifier"] #gate_qc_note,
+#gate_marker_section[data-gate-mode="classifier"] #gate_provenance,
+#gate_marker_section:not([data-gate-mode="classifier"]) .gate-classifier-only {
+    display: none !important;
+}
+
+/* The cog, lifted into the card's header. Tinted while the card is in its
+   second mode, so a folded card still says which one it is. */
+.gating-mode-button.is-classifier {
+    color: var(--accent-channel);
+}
+
+/* +Positive / -Negative: core's segmented control (`.cell-mode-options`),
+   pressed in Signal Cyan like every active toggle (DESIGN.md) -- the green
+   and red belong to the rings on the image, which are data, not chrome. */
+.clf-label-option {
+    align-items: center;
+    display: inline-flex;
+    gap: 5px;
+    justify-content: center;
+}
+
+.clf-label-option[aria-pressed="true"] {
+    background: var(--accent-channel);
+    color: #0b1118;
+    font-weight: 600;
+}
+
+.clf-label-count {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+}
+
+/* The wand, busy: the slider-auto-button busy state, here too. */
+#clf_run_button:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+#clf_revert_button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.clf-summary,
+.clf-status {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.clf-summary strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.clf-summary .clf-uncertain {
+    color: var(--accent-warning);
+}
+
+.clf-status {
+    color: var(--text-muted);
+}
+
+/* The one red in this file: a run that failed, or a request that did. */
+.clf-status[data-tone="error"] {
+    color: var(--accent-danger);
+}
+
+.clf-status[data-tone="warning"] {
+    color: var(--accent-warning);
+}

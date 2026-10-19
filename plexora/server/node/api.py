@@ -1295,6 +1295,73 @@ def volume_job_status(job_id):
                    result=job["meta"])
 
 
+# -- per-cell pixel features, read where the pixels are --------------------
+#
+# The Thresholding panel's Single Cell Classifier learns from each cell's
+# pixels as well as its table row. For an image this node holds the pass runs
+# here (`utils.cell_features.accumulate`, the code the primary runs for a
+# local image) and one row of numbers per cell travels back -- never a plane.
+# The job is polled, read and cancelled through the generic `/volume/jobs/`
+# routes above.
+
+
+@node_bp.route("/cells/features", methods=["POST"])
+def cells_features():
+    """Start building one marker's per-cell pixel features: `image` and its
+    channel `marker_index` (with an optional nuclear `dna_index`) at `level`,
+    against the 2-D mask `segmentation` at `mask_level`."""
+    body = request.get_json(silent=True) or {}
+    image = _registry().get(str(body.get("image") or ""), kind="image")
+    seg = _registry().get(str(body.get("segmentation") or ""), kind="segmentation")
+    marker_index = int(body.get("marker_index"))
+    dna_index = body.get("dna_index")
+    dna_index = int(dna_index) if dna_index is not None else None
+    level = int(body.get("level") or 0)
+    mask_level = int(body.get("mask_level") if body.get("mask_level") is not None else level)
+    _prepare_on_first_use(seg)
+
+    def work(job):
+        import numpy as np
+
+        from plexora.server.utils import cell_features
+        from plexora.server.utils.label_overlay import padded_label_region
+
+        # One short read section per tile: a pass over a whole slide must not
+        # hold the resource's lock against a reload for its whole length.
+        with _reading(image) as pyramid:
+            plane = pyramid if hasattr(pyramid, "shape") else pyramid[str(level)]
+            height, width = int(plane.shape[-2]), int(plane.shape[-1])
+
+        def reader(index):
+            def read(box):
+                clipped = cell_features.clipped_box(box, width, height)
+                x0, y0, x1, y1 = clipped
+                with _reading(image) as pyramid:
+                    plane = pyramid if hasattr(pyramid, "shape") else pyramid[str(level)]
+                    block = (np.asarray(plane[index, y0:y1, x0:x1]) if plane.ndim == 3
+                             else np.asarray(plane[y0:y1, x0:x1]))
+                return cell_features.pad_to_box(block, clipped, box)
+            return read
+
+        def read_labels(box):
+            with _reading(seg) as pyramid:
+                volume = _label_volume_of(pyramid)
+                if volume is not None:
+                    pyramid = volume.frame(0).default_plane()
+                return padded_label_region(pyramid, mask_level, box)
+
+        job["stage"] = "pixels"
+        labels, features = cell_features.accumulate(
+            reader(marker_index), read_labels, width=width, height=height,
+            read_dna=reader(dna_index) if dna_index is not None else None,
+            progress=_progress_of(job), cancelled=job["cancel"].is_set)
+        job.update(meta={"cells": int(labels.size), "level": level,
+                         "feature_version": cell_features.FEATURE_VERSION},
+                   result=cell_features.pack(labels, features))
+
+    return jsonify(success=True, job=_start_job("cell-features", work)), 202
+
+
 # -- surfaces, extracted where the voxels are -----------------------------
 #
 # Surface Studio's extraction reads a whole channel or a whole label volume,

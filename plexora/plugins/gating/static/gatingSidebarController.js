@@ -87,6 +87,8 @@ class GatingSidebarController {
         this._plotRedrawFrame = 0;
         //: The contrast slider over the viewer (GateContrastControl below).
         this.contrast = null;
+        //: The card's second mode (gatingClassifier.js), built at setup().
+        this.classifier = null;
         //: A z-stack with a 3-D mask: the plane or the slab around it on screen,
         //: and the plane's cells under the histogram (gatingPlanes.js). Null
         //: otherwise -- a 2-D project's panel is exactly what it was.
@@ -157,6 +159,15 @@ class GatingSidebarController {
             }]);
         });
 
+        // The card's second mode, the Single Cell Classifier
+        // (gatingClassifier.js): its rows, its click on the image, its calls.
+        if (typeof GateClassifierControl === "function") {
+            this.classifier = new GateClassifierControl(this);
+            this.classifier.init();
+            // A panel restored on reload was shown before this line ran.
+            if (this._shown) this.classifier.show();
+        }
+
         // The contrast of the marker being gated, over the viewer, under the
         // "Toggle selected cells" caption. Built lazily on first show; it
         // holds no window of its own -- see GateContrastControl.
@@ -215,6 +226,7 @@ class GatingSidebarController {
         this.armKeys();
         this._shown = true;
         this.contrast?.show();
+        this.classifier?.show();
         // Opening the panel on a z-stack shows the slab around the plane.
         if (!this._viewerCovered) this.planes?.enterSlab();
         this._viewerCovered = false;
@@ -227,6 +239,7 @@ class GatingSidebarController {
         this.disarmKeys();
         this._shown = false;
         this.contrast?.hide();
+        this.classifier?.hide();
     }
 
     armKeys() {
@@ -381,7 +394,11 @@ class GatingSidebarController {
      * same marker, or its own full range if it has none.
      */
     captureCarryState() {
-        return this.gateMarker ? { marker: this.gateMarker } : null;
+        if (!this.gateMarker) return null;
+        // The mode travels with the marker; a classifier's examples and calls
+        // are this sample's own and never do.
+        return this.classifier?.isOn()
+            ? { marker: this.gateMarker, mode: "classifier" } : { marker: this.gateMarker };
     }
 
     /**
@@ -404,6 +421,7 @@ class GatingSidebarController {
             return { skipped: [`Thresholding: ${marker} is not a marker in this sample`] };
         }
         this.setGateMarker(marker, { force: true, syncSlot: false, enableSlot: false });
+        if (state.mode === "classifier") this.classifier?.setMode("classifier");
         return { skipped: [] };
     }
 
@@ -547,6 +565,8 @@ class GatingSidebarController {
         this.paintQcNote();
         // The plane on screen's cells, read for this marker.
         this.planes?.follow();
+        // The classifier's examples and calls for this marker, in that mode.
+        this.classifier?.follow(name);
         // Gating always works off the feature-table column (ensureGateSelection
         // above), independent of the image -- a gate marker is very often not
         // an image channel at all (adata.var_names vs. the image's channel
@@ -1647,6 +1667,9 @@ class GatingSidebarController {
     // Hover-tooltip text for the marker dropdown's gated-indicator dot; null
     // means "don't show a dot" (SearchableSelect skips rendering it).
     describeGateIndicator(name) {
+        // A marker the Single Cell Classifier decides: its calls, not a range.
+        const classified = this.classifier?.describeIndicator(name);
+        if (classified) return classified;
         if (!this.hasCustomGate(name)) return null;
         const fullName = this.dataLayer.getFullChannelName(name);
         const range = this.gatingList.gating_channels[fullName];

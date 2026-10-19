@@ -49,20 +49,33 @@ def _marker(call, marker):
 
 
 def get_gate(call, inp):
+    from plexora.plugins.gating.server.classifier import calls as classifier_calls
+
     _marker(call, inp.marker)
     gate = model.get_gate(call.data, inp.marker)
-    return {"gate": gate, "summary": model.gated_summary(call.data, inp.marker),
-            "revision": model.revision(call.data),
-            "log_transformed": call.data.table.log_transformed}
+    out = {"gate": gate, "summary": model.gated_summary(call.data, inp.marker),
+           "revision": model.revision(call.data),
+           "log_transformed": call.data.table.log_transformed,
+           "source": classifier_calls.active_source(call.data, inp.marker)}
+    # A marker the Single Cell Classifier decides: its calls, not the gate's,
+    # are the marker's positives (the gate stays stored, unused, until the
+    # eraser hands the marker back to Thresholding).
+    classified = classifier_calls.summary(call.data, inp.marker)
+    if classified is not None:
+        out["classifier_summary"] = classified
+    return out
 
 
 def get_all(call, inp):
     from plexora.plugins.gating.server import provenance
 
+    from plexora.plugins.gating.server.classifier import calls as classifier_calls
+
     gates = model.all_gates(call.data)
     active = model.active_gates(call.data)
     return {"gates": gates[:MAX_LIST], "truncated": len(gates) > MAX_LIST,
             "thresholded": sorted(active), "revision": model.revision(call.data),
+            "classified": classifier_calls.classified_markers(call.data),
             "provenance": provenance.summary(call.data.name, gates),
             "provenance_revision": provenance.revision(call.data.name),
             "log_transformed": call.data.table.log_transformed}
@@ -465,6 +478,11 @@ def write_source(call, inp):
             {**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp,
              "n_not_called": len(not_called.get(row.get("marker"), ()))}
             for row in report.provenance_long(call, [ds.name])]
+    from plexora.plugins.gating.server.classifier import source_write
+
+    classifier = source_write.payload_for(ds)
+    if classifier is not None:
+        payload["classifier"] = classifier
     result = ds.table.run("gating.save_gates", payload)
     if not result.get("ok"):
         raise AgentError("invalid_input", result.get("message") or "the write was refused",
@@ -472,7 +490,8 @@ def write_source(call, inp):
     source = ds.table.source
     receipt = make_receipt(
         call, changed=True, before=None,
-        after={"gates": gates, "table_name": inp.table_name},
+        after={"gates": gates, "table_name": inp.table_name,
+               "classified_markers": sorted((classifier or {}).get("markers") or {})},
         persistent_state="source_file", source_file_modified=True,
         source_path=source.path if source else None, reversible=False)
     return {"receipt": receipt.model_dump(mode="json"),
@@ -615,7 +634,7 @@ def render_validation(call, inp):
 
 
 def capabilities():
-    from plexora.plugins.gating import capabilities_autogate
+    from plexora.plugins.gating import capabilities_autogate, capabilities_classifier
 
     requires = PLUGIN.requires
     tags = ("gate", "gating", "threshold", "positive", "negative", "marker", "cutoff")
@@ -712,4 +731,5 @@ def capabilities():
             tags=tags + ("render", "visual", "look", "check", "validate", "verify",
                          "inspect", "image")),
         *capabilities_autogate.capabilities(),
+        *capabilities_classifier.capabilities(requires),
     ]

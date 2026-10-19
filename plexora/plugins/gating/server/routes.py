@@ -1,6 +1,6 @@
 import json
 
-from flask import Blueprint, Response, abort, jsonify, request
+from flask import Blueprint, Response, abort, jsonify, make_response, request
 import polars as pl
 
 from plexora import api
@@ -302,12 +302,20 @@ def save_gates_to_anndata():
     active_gates = {channel: low for channel, (low, _high)
                     in gating_model.active_gates(dataset).items()}
 
-    result = dataset.table.run("gating.save_gates", {
+    payload = {
         "image_id": datasource,
         "gates": active_gates,
         "table_name": table_name,
         "imageid_column": imageid_column,
-    })
+    }
+    # Markers the Single Cell Classifier decides travel with the gates:
+    # their calls and scores as layers (or obsm), their examples in uns.
+    from plexora.plugins.gating.server.classifier import source_write
+
+    classifier = source_write.payload_for(dataset)
+    if classifier is not None:
+        payload["classifier"] = classifier
+    result = dataset.table.run("gating.save_gates", payload)
     if not result.get("ok"):
         return jsonify(success=False, error=result.get("message", "")), 400
 
@@ -358,3 +366,308 @@ def get_gating_csv_values():
     csv = pl.read_csv(file_path)
     obj = csv.to_dicts()
     return api.json_response(obj)
+
+
+# -- the Single Cell Classifier (classifier/) ------------------------------------
+#
+# The panel's second mode. Every route is a thin wrapper over
+# classifier/panel.py, runs.py and export.py; the run itself is a capability
+# job (`gating.classifier_run`) so it reports progress and can be cancelled,
+# and the panel follows it through `jobs/<id>`.
+
+_ROUTE_SESSION = {}
+
+
+def _agent_session():
+    """One data session for the routes that start jobs, made on first use
+    and kept."""
+    import threading
+
+    from plexora.agent import AgentSession
+
+    lock = _ROUTE_SESSION.setdefault("lock", threading.Lock())
+    with lock:
+        if "session" not in _ROUTE_SESSION:
+            _ROUTE_SESSION["session"] = AgentSession(table_limit=2)
+        return _ROUTE_SESSION["session"]
+
+
+def _invoke(tool, arguments):
+    """A gating capability on the viewer's behalf (a job answers `{job_id}`)."""
+    import dataclasses
+
+    from plexora.agent import registry
+    from plexora.agent.policy import Policy
+
+    try:
+        registry.get("gating.classifier_run")
+    except Exception:
+        registry.discover(["gating"])
+    policy = dataclasses.replace(Policy.from_flags(), principal="viewer")
+    answer = registry.invoke(_agent_session(), tool, arguments, policy=policy,
+                             notify=lambda project, plugin, kind, body:
+                             api.notify_viewers(project, plugin, kind, body))
+    if not answer["ok"]:
+        return api.json_response({"ok": False, "error": answer["error"]}), 400
+    return api.json_response({"ok": True, **(answer["result"] or {})})
+
+
+def _gating_job(job_id):
+    """A job record, only when it is one of gating's (the panel reads nothing else)."""
+    from plexora.agent import jobs
+
+    record = jobs.store().get(job_id)
+    if record is None or not str(record.get("capability") or "").startswith("gating."):
+        abort(404)
+    return record
+
+
+@gating_bp.route('/jobs/<job_id>', methods=['GET'])
+def job_state(job_id):
+    record = _gating_job(job_id)
+    return api.json_response({"ok": True, "job": {k: record.get(k) for k in (
+        "job_id", "status", "progress", "project", "capability", "error", "result")}})
+
+
+@gating_bp.route('/jobs/<job_id>/cancel', methods=['POST'])
+def job_cancel(job_id):
+    _gating_job(job_id)
+    return _invoke("job_cancel", {"job_id": job_id})
+
+
+def _body():
+    try:
+        return json.loads(request.data or b"{}")
+    except ValueError:
+        abort(400)
+
+
+def _classifier_ds(datasource):
+    if not datasource:
+        abort(400)
+    try:
+        return api.project_data(datasource)
+    except KeyError:
+        abort(404)
+
+
+def _classifier_answer(work, datasource, marker=None, notify=True):
+    """Run `work()`; a refusal is a 400 with the panel's message. A change is
+    told to the project's other tabs."""
+    from plexora.plugins.gating.server.classifier import ClassifierRefused
+
+    try:
+        result = work()
+    except ClassifierRefused as exc:
+        return api.json_response({"ok": False, "error": {"message": str(exc)}}), 400
+    if notify:
+        api.notify_viewers(datasource, PLUGIN_NAME, "classifier.changed", {"marker": marker})
+    return api.json_response({"ok": True, **(result or {})})
+
+
+@gating_bp.route('/classifier/state', methods=['GET'])
+def classifier_state():
+    from plexora.plugins.gating.server.classifier import panel
+
+    datasource = request.args.get('datasource')
+    marker = request.args.get('marker') or None
+    ds = _classifier_ds(datasource)
+    return _classifier_answer(lambda: panel.state(ds, marker), datasource, notify=False)
+
+
+@gating_bp.route('/classifier/mode', methods=['POST'])
+def classifier_mode():
+    from plexora.plugins.gating.server.classifier import panel
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    return _classifier_answer(lambda: {"mode": panel.set_mode(ds, body.get('mode'))},
+                              ds.name, notify=False)
+
+
+@gating_bp.route('/classifier/cell_at', methods=['GET'])
+def classifier_cell_at():
+    from plexora.plugins.gating.server.classifier import panel
+
+    ds = _classifier_ds(request.args.get('datasource'))
+    try:
+        x, y = float(request.args['x']), float(request.args['y'])
+        radius = float(request.args.get('radius') or panel.PICK_RADIUS_PX)
+    except (KeyError, ValueError):
+        abort(400)
+    return _classifier_answer(lambda: panel.cell_at(ds, x, y, radius), ds.name, notify=False)
+
+
+@gating_bp.route('/classifier/annotate', methods=['POST'])
+def classifier_annotate():
+    from plexora.plugins.gating.server.classifier import panel
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    marker = body.get('marker')
+    return _classifier_answer(
+        lambda: panel.annotate(ds, marker, body.get('cell_id'), body.get('label'),
+                               toggle=body.get('toggle', True) is not False),
+        ds.name, marker)
+
+
+@gating_bp.route('/classifier/examples/clear', methods=['POST'])
+def classifier_clear_examples():
+    from plexora.plugins.gating.server.classifier import panel
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    markers = body.get('markers')
+    if markers is not None and not isinstance(markers, list):
+        abort(400)
+    return _classifier_answer(lambda: panel.clear_examples(ds, markers), ds.name)
+
+
+@gating_bp.route('/classifier/run', methods=['POST'])
+def classifier_run():
+    """Start a run (a job). One at a time per project: while one runs, a
+    second press answers with the running job instead of starting another."""
+    from plexora.plugins.gating.server.classifier import ClassifierRefused, runs
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    marker = body.get('marker')
+    held = runs.running(ds.name)
+    if held is not None:
+        return api.json_response({"ok": True, "job_id": held["job_id"], "running": held,
+                                  "already_running": True})
+    try:
+        runs.check_ready(ds, marker)
+    except ClassifierRefused as exc:
+        return api.json_response({"ok": False, "error": {"message": str(exc)}}), 400
+    return _invoke("classifier_run", {"project": ds.name, "marker": marker,
+                                      "pixels": body.get('pixels', True) is not False})
+
+
+@gating_bp.route('/classifier/revert', methods=['POST'])
+def classifier_revert():
+    from plexora.plugins.gating.server.classifier import panel, runs
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    marker = body.get('marker')
+    return _classifier_answer(lambda: (panel.marker_of(ds, marker), runs.revert(ds, marker))[1],
+                              ds.name, marker)
+
+
+@gating_bp.route('/classifier/reset', methods=['POST'])
+def classifier_reset():
+    from plexora.plugins.gating.server.classifier import runs
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    return _classifier_answer(lambda: runs.reset(ds), ds.name)
+
+
+@gating_bp.route('/classifier/calls', methods=['GET'])
+def classifier_calls():
+    """One byte per table row (the order /get_all_cells sends ids in): 0
+    negative, 1 positive, 2 not classified, 3 uncertain. Headers carry the
+    state (ready, stale, not_run) and the counts."""
+    import gzip
+
+    from plexora.plugins.gating.server.classifier import calls
+
+    ds = _classifier_ds(request.args.get('datasource'))
+    marker = request.args.get('marker')
+    if marker not in ds.table.markers:
+        abort(404)
+    codes, info = calls.viewer_codes(ds, marker)
+    content = gzip.compress(codes.tobytes('C'))
+    response = make_response(content)
+    response.headers.set('Content-Type', 'application/octet-stream')
+    response.headers['Content-length'] = len(content)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Classifier-State'] = info["state"]
+    response.headers['X-Classifier-Run'] = info["run"]
+    response.headers['X-Classifier-Positive'] = info["positive"]
+    response.headers['X-Classifier-Eligible'] = info["eligible"]
+    response.headers['X-Classifier-Uncertain'] = info["uncertain"]
+    response.headers['X-Classifier-Not-Classified'] = info["not_classified"]
+    return response
+
+
+def _download(chunks, filename, mimetype):
+    """Stream `chunks` (text) as an attachment, gzipped when `gz=1`."""
+    import zlib
+
+    if request.args.get('gz') in ('1', 'true'):
+        def zipped():
+            packer = zlib.compressobj(6, zlib.DEFLATED, 31)
+            for chunk in chunks:
+                data = packer.compress(chunk.encode('utf-8'))
+                if data:
+                    yield data
+            yield packer.flush()
+        return Response(zipped(), mimetype='application/gzip', headers={
+            "Content-disposition": f"attachment; filename={filename}.gz"})
+    return Response((c.encode('utf-8') for c in chunks), mimetype=mimetype, headers={
+        "Content-disposition": f"attachment; filename={filename}"})
+
+
+@gating_bp.route('/classifier/export/<kind>.csv', methods=['GET'])
+def classifier_export_csv(kind):
+    from plexora.plugins.gating.server.classifier import export, store
+
+    if kind not in ('binary', 'scores'):
+        abort(404)
+    ds = _classifier_ds(request.args.get('datasource'))
+    markers, chunks = export.stream_csv(ds, kind)
+    if not markers:
+        return api.json_response({"ok": False, "error": {
+            "message": "No marker has a classifier run to download"}}), 409
+    return _download(chunks, f"{store.safe_name(ds.name)}_classifier_{kind}.csv", 'text/csv')
+
+
+@gating_bp.route('/classifier/export/annotations.json', methods=['GET'])
+def classifier_export_annotations():
+    from plexora.plugins.gating.server.classifier import export, store
+
+    ds = _classifier_ds(request.args.get('datasource'))
+    text = json.dumps(export.annotations_document(ds), indent=1)
+    return _download([text], f"{store.safe_name(ds.name)}_classifier_annotations.json",
+                     'application/json')
+
+
+#: The largest annotations file the panel accepts.
+MAX_ANNOTATIONS_BYTES = 64 * 1024 * 1024
+
+
+@gating_bp.route('/classifier/annotations/preview', methods=['POST'])
+def classifier_annotations_preview():
+    from plexora.plugins.gating.server.classifier import ClassifierRefused, export
+
+    ds = _classifier_ds(request.form.get('datasource'))
+    upload = request.files.get('file')
+    if upload is None:
+        abort(400)
+    data = upload.read(MAX_ANNOTATIONS_BYTES + 1)
+    if len(data) > MAX_ANNOTATIONS_BYTES:
+        return api.json_response({"ok": False, "error": {
+            "message": "This annotations file is too large"}}), 400
+    try:
+        document = json.loads(data.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        return api.json_response({"ok": False, "error": {
+            "message": "This file is not JSON"}}), 400
+    try:
+        report = export.preview(ds, document)
+    except ClassifierRefused as exc:
+        return api.json_response({"ok": False, "error": {"message": str(exc)}}), 400
+    return api.json_response({"ok": True, **report})
+
+
+@gating_bp.route('/classifier/annotations/apply', methods=['POST'])
+def classifier_annotations_apply():
+    from plexora.plugins.gating.server.classifier import export
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    return _classifier_answer(lambda: export.apply(ds, body.get('token'), body.get('mode')),
+                              ds.name)

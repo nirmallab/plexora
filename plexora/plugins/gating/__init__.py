@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261015_display_contrast"
+VERSION = "20261018_single_cell_classifier"
 
 
 def _blueprint():
@@ -51,7 +51,9 @@ PLUGIN = Plugin(
     # gatingAgentBridge.js answers core's viewer control plane (agentBridge.js)
     # through window events; nothing else references it.
     # gatingPlanes.js before the controller, which builds its plane control.
-    scripts=("gatingApi.js", "csvGatingList.js", "gatingPlanes.js",
+    # gatingClassifier.js before the controller too: setup() builds its
+    # GateClassifierControl when the class is defined.
+    scripts=("gatingApi.js", "csvGatingList.js", "gatingPlanes.js", "gatingClassifier.js",
              "gatingSidebarController.js", "gatingAgentBridge.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has

@@ -66,6 +66,17 @@ def save_gates(dataset, payload):
                 table_name=payload.get("table_name") or "gates",
                 imageid_column=payload.get("imageid_column"),
             ))
+        if payload.get("classifier"):
+            # The Single Cell Classifier's calls and scores, beside the gates
+            # (classifier/source_write.py): layers or obsm, and uns.
+            from plexora.plugins.gating.server.classifier import source_write
+
+            result.update(source_write.save_classifier(
+                dataset.table.source,
+                payload.get("image_id") or dataset.name,
+                payload["classifier"],
+                payload.get("imageid_column"),
+            ))
     except ValueError as exc:
         return _refused(INVALID, message=str(exc))
     return _done(result)

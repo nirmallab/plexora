@@ -75,6 +75,57 @@ you want a copy that leaves Plexora; see [What it saves](#what-it-saves).
 
 <Screenshot src="/screenshots/plugins/thresholding-cd3-gate.webp" alt="The Thresholding panel with a marker selected and cells inside the gate outlined" caption="Thresholding on a multiplexed image: the marker, the two-handle threshold slider over the marker's distribution, and cells inside the gate outlined." />
 
+## Single Cell Classifier
+
+The cog in the card's header switches Thresholding to a second mode, the
+**Single Cell Classifier**: instead of setting a threshold, you label a few
+cells positive and a few negative, and Plexora calls every other cell from
+those examples. Use it when one number per cell does not separate the
+positives — a membrane stain whose mean is pulled up by a bright neighbour,
+or a speckled stain whose positives are not simply the brightest.
+
+1. Pick a marker, as for a threshold.
+2. Press **+ Positive** and click cells on the image that are positive; press
+   **− Negative** and click cells that are not. Clicking a labelled cell again
+   removes its label. **Esc**, or pressing the active button again, stops
+   labelling so the image pans as usual. Positive examples are marked with a
+   green ring and a plus, negative ones with a red ring and a minus.
+3. With at least 3 of each, press the **wand**. A small model is trained on
+   each cell's value, its neighbours' values and — when the marker is an image
+   channel and the project has a mask — the marker's own pixels inside the
+   cell (brightness, edge against middle, contrast with the tissue around it).
+   It then classifies every cell QC lets be called. Positives are outlined in
+   white; cells the model is unsure about (a score within 0.15 of 0.5) in
+   amber; cells QC rules out in grey.
+4. Add or correct examples and press the wand again: the new run replaces the
+   old one. A cell you labelled is always called the way you labelled it.
+5. The **eraser** undoes the run and hands the marker back to its threshold.
+   The examples are kept.
+
+The line under the buttons reads **Positive cells: N / M**, where M is the
+cells that could be classified, with how many are uncertain. A run is marked
+stale if the table, the mask or QC changes afterwards; press the wand to
+update it.
+
+**Files.** **Download Cells** offers a binary CSV (one row per cell —
+`image_id`, `cell_id`, then a 1/0 column per classified marker, blank where a
+cell was not classified), a scores CSV with the model's score in the same
+layout (called a probability only once a run had 50 or more examples and
+was calibrated), and the training examples as JSON. **Load Annotations**
+reads such a JSON back, reports what matches this sample (unknown cells,
+cells labelled both ways, a different mask), and asks whether to **Merge**
+it into the examples you have or **Replace** the examples of the markers it
+names. **•••** holds **Clear training examples** and **Reset classifier**.
+
+**Save Gates to Source File** also writes the classifier's results:
+`layers["plexora_binary"]` (1 positive, 0 negative, −1 not classified) and
+`layers["plexora_scores"]` when every classified marker is a var name, or
+the same as `obsm` frames when one is not, plus `uns["plexora_classifier"]`
+with each image's examples and runs. Only this image's rows are written.
+
+The pixel features are built where the image is: on this machine for a local
+image, on the data node for one held there.
+
 ## Controls
 
 - **Marker** — which column's values the slider and the picture on screen
@@ -104,6 +155,7 @@ you want a copy that leaves Plexora; see [What it saves](#what-it-saves).
 | Ctrl+B / ⌘B | Open or close Thresholding |
 | Z | Previous marker |
 | X | Next marker |
+| Esc | Stop labelling cells (Single Cell Classifier) |
 
 ## What it saves
 

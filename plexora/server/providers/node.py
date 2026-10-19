@@ -1146,6 +1146,54 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
     return pl.read_parquet(io.BytesIO(data)), dict(status.get("manifest") or {})
 
 
+def cell_features_on_node(image_binding, seg_binding, *, marker_index, dna_index=None,
+                          level=0, mask_level=None, progress=None, cancelled=None,
+                          poll=MEASURE_POLL_SECONDS):
+    """`utils.cell_features.accumulate`, run on the node that holds the image
+    and its mask: `(labels, features)`, exactly what a local pass returns.
+
+    A job over there, like `measure_objects_on_node`: progress is relayed,
+    `cancelled()` stops it, and only one row of numbers per cell crosses the
+    network (`cell_features.pack`).
+    """
+    import time
+
+    from plexora.server.utils import cell_features
+
+    node = node_for(image_binding)
+    started = http.json_request(
+        node, "POST", "/node/v1/cells/features",
+        body={"image": image_binding.resource_id, "segmentation": seg_binding.resource_id,
+              "marker_index": int(marker_index),
+              "dna_index": int(dna_index) if dna_index is not None else None,
+              "level": int(level),
+              "mask_level": int(mask_level if mask_level is not None else level)},
+        expected_api=API_VERSION)
+    job = str(started.get("job") or "")
+    if not job:
+        raise ResourceError("the data node did not start building cell features")
+    while True:
+        if cancelled is not None and cancelled():
+            http.json_request(node, "POST", f"/node/v1/volume/jobs/{job}/cancel",
+                              expected_api=API_VERSION)
+            raise InterruptedError("cancelled")
+        status = http.json_request(node, "GET", f"/node/v1/volume/jobs/{job}",
+                                   expected_api=API_VERSION)
+        if progress is not None and status.get("total"):
+            progress(int(status.get("done") or 0), int(status["total"]))
+        state = status.get("state")
+        if state == "done":
+            break
+        if state == "error":
+            raise ResourceError(status.get("error") or "building cell features failed on the node")
+        if state == "cancelled":
+            raise InterruptedError("cancelled")
+        time.sleep(poll)
+    data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/jobs/{job}/result",
+                                 expected_api=API_VERSION)
+    return cell_features.unpack(data)
+
+
 def _fetch_planes(node, job, folder):
     """A finished node measurement's plane index, streamed to disk and unpacked."""
     import os
