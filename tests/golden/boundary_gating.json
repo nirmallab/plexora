@@ -468,15 +468,15 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261019_classifier_footer",
-          "/plugins/gating/static/csvGatingList.js?v=20261019_classifier_footer",
-          "/plugins/gating/static/gatingPlanes.js?v=20261019_classifier_footer",
-          "/plugins/gating/static/gatingClassifier.js?v=20261019_classifier_footer",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261019_classifier_footer",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261019_classifier_footer"
+          "/plugins/gating/static/gatingApi.js?v=20261019_classifier_review",
+          "/plugins/gating/static/csvGatingList.js?v=20261019_classifier_review",
+          "/plugins/gating/static/gatingPlanes.js?v=20261019_classifier_review",
+          "/plugins/gating/static/gatingClassifier.js?v=20261019_classifier_review",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261019_classifier_review",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261019_classifier_review"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261019_classifier_footer"
+          "/plugins/gating/static/gating.css?v=20261019_classifier_review"
         ],
         "available_tools": [
           {
@@ -548,6 +548,11 @@
         "clf_positive_button",
         "clf_positive_count",
         "clf_revert_button",
+        "clf_review_bar",
+        "clf_review_button",
+        "clf_review_line",
+        "clf_review_stop",
+        "clf_review_where",
         "clf_run_button",
         "clf_status",
         "clf_summary",
@@ -722,12 +727,12 @@
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261019_classifier_footer",
-        "/plugins/gating/static/csvGatingList.js?v=20261019_classifier_footer",
-        "/plugins/gating/static/gatingPlanes.js?v=20261019_classifier_footer",
-        "/plugins/gating/static/gatingClassifier.js?v=20261019_classifier_footer",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261019_classifier_footer",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261019_classifier_footer",
+        "/plugins/gating/static/gatingApi.js?v=20261019_classifier_review",
+        "/plugins/gating/static/csvGatingList.js?v=20261019_classifier_review",
+        "/plugins/gating/static/gatingPlanes.js?v=20261019_classifier_review",
+        "/plugins/gating/static/gatingClassifier.js?v=20261019_classifier_review",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261019_classifier_review",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261019_classifier_review",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -789,7 +794,7 @@
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261019_classifier_footer"
+        "/plugins/gating/static/gating.css?v=20261019_classifier_review"
       ],
       "tool_mounts": [
         [
@@ -803,7 +808,7 @@
       ]
     }
   },
-  "route_count": 255,
+  "route_count": 256,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -873,6 +878,7 @@
     "GET /plugins/gating/classifier/cell_at",
     "GET /plugins/gating/classifier/export/<kind>.csv",
     "GET /plugins/gating/classifier/export/annotations.json",
+    "GET /plugins/gating/classifier/review",
     "GET /plugins/gating/classifier/scores",
     "GET /plugins/gating/classifier/state",
     "GET /plugins/gating/get_gate_provenance",

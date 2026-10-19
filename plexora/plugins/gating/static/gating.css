@@ -826,6 +826,69 @@
     color: var(--accent-warning);
 }
 
+/* Reviewing uncertain cells. The line and the bar both set `display`, so
+   each restates `[hidden]` (an attribute loses to a class that sets it). */
+.clf-review-line[hidden],
+.clf-review-bar[hidden] {
+    display: none;
+}
+
+.clf-review-line {
+    margin: 0;
+}
+
+/* Edged in Signal Cyan: the one thing on the panel the keys are answering. */
+.clf-review-bar {
+    border: 1px solid var(--accent-channel);
+    border-radius: var(--radius-sm);
+    display: grid;
+    gap: 6px;
+    padding: 6px;
+}
+
+.clf-review-head {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.clf-review-where {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.clf-review-stop {
+    flex: 0 0 auto;
+}
+
+.clf-review-keys {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.clf-review-key {
+    align-items: center;
+    display: inline-flex;
+    gap: 5px;
+    justify-content: center;
+    white-space: nowrap;
+}
+
+/* The canvas hint's cap, as in the footer. */
+.clf-review-key .plx-kbd {
+    border-radius: calc(var(--radius-sm) - 3px);
+    font-size: 9px;
+    line-height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
+}
+
 /* The label row: the two toggles take the width, Train (the play button)
    ends the line the way the wand ends the marker's. */
 .clf-label-row {

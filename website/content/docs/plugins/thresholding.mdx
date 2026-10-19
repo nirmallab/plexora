@@ -86,10 +86,15 @@ or a speckled stain whose positives are not simply the brightest.
 
 1. Pick a marker, as for a threshold. Every cell is outlined, so there is
    something to click.
-2. Press the **wand**. Plexora picks about 10 clear positive and 10 clear
+2. Press the **wand**. Plexora picks about 40 clear positive and 40 clear
    negative cells spread across the image — from the marker's own
    distribution, away from where positive starts — then trains and
-   classifies every cell. Its picks are marked with dashed rings.
+   classifies every cell. Its picks are marked with dashed rings. A positive
+   must look positive in its pixels as well as in the table, and not be lit
+   mainly by a much brighter neighbour; a third of the negatives are dim
+   cells sitting beside bright ones, so the model learns what light spilling
+   from a neighbour looks like. Your own labels count twice as much as the
+   wand's.
 3. Or label cells yourself: press **+ Positive** and click cells on the image
    that are positive; press **− Negative** and click cells that are not. A
    labelled cell turns green or red and gets a solid ring with a plus or a
@@ -108,7 +113,13 @@ or a speckled stain whose positives are not simply the brightest.
 5. Rest the pointer on a positive or uncertain cell to see its call, its
    score and how many of the resampled models agree. Negative cells show no
    card.
-6. Add or correct examples and train again: the new run replaces the old
+6. Press **Review uncertain cells** to go through up to 8 amber cells,
+   spread across the tissue. The view moves to each one and rings it; press
+   **P** if it is positive, **N** if it is not, **S** to skip it and **Esc**
+   to stop. Then press **▶** to train with your answers. A few answers here
+   do the most good: on our own labelled test cells, labelling four amber
+   cells after a wand run raised agreement from 72% to about 76%.
+7. Add or correct examples and train again: the new run replaces the old
    one. The **eraser** undoes the run and hands the marker back to its
    threshold; the examples are kept.
 
@@ -126,8 +137,8 @@ update it.
 **Files.** **Download Cells** offers a binary CSV (one row per cell —
 `image_id`, `cell_id`, then a 1/0 column per classified marker, blank where a
 cell was not classified), a scores CSV with the model's score in the same
-layout (called a probability only once a run had 50 or more examples and
-was calibrated), and the training examples as JSON. **Load Annotations**
+layout (called a probability only once a run had 50 or more examples that you
+gave and was calibrated), and the training examples as JSON. **Load Annotations**
 reads such a JSON back, reports what matches this sample (unknown cells,
 cells labelled both ways, a different mask), and asks whether to **Merge**
 it into the examples you have or **Replace** the examples of the markers it

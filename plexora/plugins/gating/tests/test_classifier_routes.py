@@ -125,13 +125,24 @@ def test_a_job_that_is_not_gatings_is_not_served(client):
     assert client.get("/plugins/gating/jobs/nope").status_code == 404
 
 
+def test_the_review_queue_is_served(client, made):
+    empty = get(client, "review", marker="CD8").get_json()
+    assert empty["cells"] == [] and empty["run_id"] is None
+    started = post(client, "run", marker="CD8", auto=True).get_json()
+    assert _follow(client, started["job_id"])["status"] == "done"
+    queue = get(client, "review", marker="CD8", count=3).get_json()
+    assert len(queue["cells"]) <= 3 and queue["run_id"]
+    assert get(client, "review", marker="CD8", count="many").status_code == 400
+    assert get(client, "review", marker="nope").status_code >= 400
+
+
 def test_the_wand_needs_no_examples_and_the_scores_are_served(client, made):
     started = post(client, "run", marker="CD8", auto=True).get_json()
     assert started["ok"], started
     job = _follow(client, started["job_id"])
     assert job["status"] == "done", job["error"]
     state = get(client, "state", marker="CD8").get_json()["marker"]
-    assert state["examples"]["n_auto"] == 20 and state["run"]["auto_pick"]
+    assert state["examples"]["n_auto"] >= 6 and state["run"]["auto_pick"]
     response = get(client, "scores", marker="CD8")
     body = gzip.decompress(response.data)
     n = len(made["cells"])

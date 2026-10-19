@@ -4,13 +4,15 @@
  *
  * Owned by GatingSidebarController and switched by the cog in the card's
  * header. Thresholding calls a marker positive by one number; this calls it
- * from examples. The wand picks about ten clear positives and ten clear
+ * from examples. The wand picks about 40 clear positives and 40 clear
  * negatives across the image itself and trains on them; + Positive /
  * - Negative arm a click on the image that labels the cell under it, and Train
  * (the play button) learns from exactly the examples there are. Either calls
  * every cell QC lets be called. The eraser takes the marker back to how it was
  * before its first run, keeping the examples. After a run, the pointer resting
- * on a cell shows its score (GateClassifierHover, below).
+ * on a cell shows its score (GateClassifierHover, below), and Review uncertain
+ * cells walks through a few of the amber ones, spread across the tissue, to be
+ * labelled from the keyboard (P, N, S, Esc) before training again.
  *
  * Drawing reuses what the viewer already has, with no shader of its own:
  *
@@ -65,6 +67,13 @@ const STAGE_WORDS = {
 //: How far from a cell (screen px) a click still picks it.
 const PICK_SCREEN_PX = 8;
 
+//: Reviewing: the cell is framed in this much tissue (full-resolution px) --
+//: enough around it to see what its neighbours are doing -- unless the view
+//: is already closer, when it only pans.
+const REVIEW_VIEW_PX = 400;
+//: The ring round the cell under review (--accent-channel: the active thing).
+const REVIEW_COLOR = "#38bdf8";
+
 class GateClassifierControl {
     constructor(controller) {
         this.controller = controller;
@@ -83,6 +92,8 @@ class GateClassifierControl {
         this.label = null;
         //: {id, marker} of the run being followed.
         this.job = null;
+        //: The review under way: {marker, cells, at, labelled, skipped}.
+        this.review = null;
         this.status = null;
         this.shown = false;
         this._ids = null;
@@ -112,6 +123,15 @@ class GateClassifierControl {
             this.openModeMenu();
         });
         this.trainButton = byId("clf_train_button");
+        this.reviewButton = byId("clf_review_button");
+        this.reviewLine = byId("clf_review_line");
+        this.reviewBar = byId("clf_review_bar");
+        this.reviewWhere = byId("clf_review_where");
+        this.reviewButton?.addEventListener("click", () => this.startReview());
+        byId("clf_review_stop")?.addEventListener("click", () => this.stopReview());
+        for (const key of this.reviewBar?.querySelectorAll("[data-review]") || []) {
+            key.addEventListener("click", () => this.answerReview(key.dataset.review));
+        }
         this.runButton?.addEventListener("click", () => this.onRunClick({ auto: true }));
         this.trainButton?.addEventListener("click", () => this.onRunClick({ auto: false }));
         this.revertButton?.addEventListener("click", () => this.onRevertClick());
@@ -158,6 +178,7 @@ class GateClassifierControl {
 
     hide() {
         this.shown = false;
+        if (this.review) this.stopReview();
         document.removeEventListener("keydown", this._onKey);
         this.syncArming();
         this.hover?.sync();
@@ -198,6 +219,7 @@ class GateClassifierControl {
             this.follow(this.controller.gateMarker, { force: true });
         } else {
             this.setLabel(null);
+            if (this.review) this.stopReview();
             this.ctx.layers?.removeOverlay?.("classifier-examples");
             this.ctx.layers?.setColorLUT?.("cells", null);
             this.calls = null;
@@ -227,6 +249,7 @@ class GateClassifierControl {
     follow(marker, { force = false } = {}) {
         if (!marker) return;
         if (marker === this.marker && !force) return;
+        if (this.review && this.review.marker !== marker) this.stopReview();
         this.marker = marker;
         if (!this.isOn()) return;
         this.status = null;
@@ -418,6 +441,27 @@ class GateClassifierControl {
         };
         draw(examples.negative, EXAMPLE_COLORS.negative, false);
         draw(examples.positive, EXAMPLE_COLORS.positive, true);
+        const cell = this.review?.cells[this.review.at];
+        if (cell) {
+            // A target round the cell -- wider than an example's ring and
+            // than the cell itself when its size is known -- with four ticks
+            // outside it so it is found at a glance on a busy field.
+            const radius = Math.max(15 * px, (Number(cell.radius) || 0) * 1.35 + 3 * px);
+            const tick = 6 * px;
+            context.setLineDash([]);
+            for (const [width, colour] of [[5 * px, "rgba(0, 0, 0, 0.6)"], [2.5 * px, REVIEW_COLOR]]) {
+                context.lineWidth = width;
+                context.strokeStyle = colour;
+                context.beginPath();
+                context.arc(cell.x, cell.y, radius, 0, Math.PI * 2);
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    context.moveTo(cell.x + dx * (radius + 2 * px), cell.y + dy * (radius + 2 * px));
+                    context.lineTo(cell.x + dx * (radius + 2 * px + tick),
+                                   cell.y + dy * (radius + 2 * px + tick));
+                }
+                context.stroke();
+            }
+        }
     }
 
     // -- labelling cells -----------------------------------------------------------
@@ -514,9 +558,134 @@ class GateClassifierControl {
     }
 
     onKey(event) {
+        if (this.review) {
+            const answer = { p: "positive", n: "negative", s: "skip", escape: "stop" }[
+                String(event.key || "").toLowerCase()];
+            if (!answer || !this.controller.acceptsKeys(event)) return;
+            event.preventDefault();
+            this.answerReview(answer);
+            return;
+        }
         if (event.key !== "Escape" || !this.label) return;
         if (!this.controller.acceptsKeys(event)) return;
         this.setLabel(null);
+    }
+
+    // -- reviewing uncertain cells ------------------------------------------------------
+
+    /** A few of the run's amber cells, spread across the tissue (panel.
+     *  review_cells), one at a time: P positive, N negative, S skip, Esc
+     *  stops. Then ▶ trains with them. */
+    async startReview() {
+        if (this.review || this.job || !this.marker) return;
+        const marker = this.marker;
+        this.setLabel(null);
+        let answer;
+        try {
+            answer = await this.api.classifierReview(marker);
+        } catch (error) {
+            this.setStatus(String(error.message || error), "error");
+            return;
+        }
+        if (marker !== this.marker) return;
+        if (!answer.cells?.length) {
+            this.setStatus("No uncertain cells left to review: every one is labelled");
+            return;
+        }
+        this.ctx.telemetry?.feature?.("classifier.review.start");
+        this.review = { marker, cells: answer.cells, at: 0, labelled: 0, skipped: 0 };
+        this.status = null;
+        this.focusReviewCell();
+        this.paint();
+    }
+
+    focusReviewCell() {
+        const cell = this.review?.cells[this.review.at];
+        const scene = window.PlexoraViewerScene;
+        const imageViewer = this.ctx.viewer;
+        if (!cell || !scene || !imageViewer) return;
+        try {
+            const view = this.ctx.viewer.viewer.viewport.getContainerSize();
+            const wanted = Math.min(view.x, view.y) / REVIEW_VIEW_PX;
+            const now = scene.scaleOf(imageViewer);
+            if (now !== null && now >= wanted) {
+                scene.panTo(imageViewer, cell.x, cell.y, { immediately: false });
+            } else {
+                scene.fitRegion(imageViewer, {
+                    x: cell.x - REVIEW_VIEW_PX / 2, y: cell.y - REVIEW_VIEW_PX / 2,
+                    width: REVIEW_VIEW_PX, height: REVIEW_VIEW_PX,
+                }, { immediately: false });
+            }
+        } catch (error) {
+            console.error("classifier: could not move to the cell", error);
+        }
+        this.repaintOverlay();
+    }
+
+    async answerReview(answer) {
+        const review = this.review;
+        if (!review || review.busy) return;
+        if (answer === "stop") {
+            this.stopReview();
+            return;
+        }
+        const cell = review.cells[review.at];
+        if (cell && (answer === "positive" || answer === "negative")) {
+            review.busy = true;
+            try {
+                const result = await this.api.classifierAnnotate(review.marker, cell.cell_id, answer);
+                if (this.review !== review) return;
+                if (this.state && review.marker === this.marker) this.state.examples = result.examples;
+                review.labelled += 1;
+                this.ctx.telemetry?.feature?.("classifier.review.label");
+                await this.drawCalls(this.calls);
+            } catch (error) {
+                this.setStatus(String(error.message || error), "error");
+                return;
+            } finally {
+                review.busy = false;
+            }
+        } else if (cell) {
+            review.skipped += 1;
+        }
+        review.at += 1;
+        if (review.at >= review.cells.length) {
+            this.stopReview();
+            return;
+        }
+        this.focusReviewCell();
+        this.paint();
+    }
+
+    stopReview() {
+        const review = this.review;
+        if (!review) return;
+        this.review = null;
+        const total = review.cells.length;
+        this.status = review.labelled
+            ? { text: `Labelled ${review.labelled} of ${total} uncertain cells. Press \u25B6 to `
+                      + "train with them.", tone: null }
+            : null;
+        this.repaintOverlay();
+        this.paint();
+    }
+
+    paintReview() {
+        const review = this.review;
+        const calls = this.calls;
+        const offer = this.isOn() && !review && !this.job && Boolean(calls)
+            && calls.state === "ready" && calls.uncertain > 0;
+        if (this.reviewLine) this.reviewLine.hidden = !offer;
+        if (this.reviewBar) this.reviewBar.hidden = !(this.isOn() && review);
+        if (review && this.reviewWhere) {
+            const cell = review.cells[review.at];
+            const score = cell && Number.isFinite(cell.score) ? ` · score ${cell.score.toFixed(2)}` : "";
+            this.reviewWhere.textContent = `Uncertain cell ${Math.min(review.at + 1, review.cells.length)}`
+                + ` of ${review.cells.length}${score}`;
+        }
+        for (const key of this.reviewBar?.querySelectorAll("[data-review]") || []) {
+            key.disabled = Boolean(review?.busy);
+        }
     }
 
     // -- run and revert ---------------------------------------------------------------
@@ -785,7 +954,7 @@ class GateClassifierControl {
             this.runButton.disabled = busy || !this.marker;
             this.runButton.classList.toggle("is-busy", busy);
             this.runButton.title = busy ? "Running…"
-                : "Pick about 10 positive and 10 negative cells across the image, then train "
+                : "Pick about 40 positive and 40 negative cells across the image, then train "
                   + "and classify every cell";
         }
         if (this.trainButton) {
@@ -797,6 +966,7 @@ class GateClassifierControl {
         }
         if (this.revertButton) this.revertButton.disabled = !state?.run;
         this.paintSummary();
+        this.paintReview();
         this.paintStatus(nPos, nNeg, min);
         this.repaintOverlay();
     }
@@ -827,7 +997,12 @@ class GateClassifierControl {
         const run = this.state?.run;
         if (run) {
             const what = run.score_name === "probability" ? "calibrated" : "uncalibrated scores";
-            const auto = run.auto_pick ? "; examples picked by the wand" : "";
+            // The wand's picks weigh half a person's (runs.AUTO_WEIGHT).
+            const given = Number(run.n_examples_given);
+            const auto = !run.auto_pick ? ""
+                : Number.isFinite(given) && given > 0
+                    ? `; ${given} labelled by you, the rest picked by the wand at half weight`
+                    : "; examples picked by the wand";
             const cv = run.cv_balanced_accuracy != null
                 ? `, cross-validated ${Math.round(run.cv_balanced_accuracy * 100)}%` : "";
             node.title = `${run.model === "gradient_boosting" ? "Gradient boosting"
@@ -867,9 +1042,10 @@ class GateClassifierControl {
 
 /**
  * GateClassifierHover - what a positive or uncertain cell says when the
- * pointer rests on it after a run (a negative says nothing): its call, the model's score (or probability, once calibrated), how many
- * of the models fitted to resampled examples agree, and whether a person or
- * the wand labelled it.
+ * pointer rests on it after a run (a negative says nothing): its call, the
+ * model's score (or probability, once calibrated), how many of the models
+ * fitted to resampled examples agree, and whether a person or the wand
+ * labelled it.
  *
  * The cell under the pointer is the mask's (`cell_at`, the route a click on a
  * cell uses), asked once per new spot -- one question in flight, always about

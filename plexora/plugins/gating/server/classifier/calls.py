@@ -129,6 +129,6 @@ def public_run(record):
         return None
     keep = ("run_id", "created", "model", "calibrated", "score_name",
             "cv_balanced_accuracy", "n_examples_positive", "n_examples_negative",
-            "feature_groups", "pixel_reason", "n_eligible", "n_positive", "n_uncertain",
+            "n_examples_given", "feature_groups", "pixel_reason", "n_eligible", "n_positive", "n_uncertain",
             "n_not_classified", "qc_mode", "uncertain_rule", "auto_pick", "notes")
     return {k: record.get(k) for k in keep}

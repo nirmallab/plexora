@@ -158,14 +158,14 @@ def test_gating_build_installs_its_routes(gating):
     # Thirteen API routes plus the blueprint's own static route: a plugin serves
     # its client assets out of its own directory rather than core's. Three
     # are automatic gating's: provenance, a gate's status, and the viewer's
-    # control over a mirrored session; one is the panel's Clear. Sixteen more
-    # are the Single Cell Classifier's: fourteen under classifier/, and the
+    # control over a mirrored session; one is the panel's Clear. Seventeen more
+    # are the Single Cell Classifier's: fifteen under classifier/, and the
     # two the panel follows its run through (jobs/<id> and its cancel).
     classifier = {r for r in gating_routes if r.startswith("/plugins/gating/classifier/")}
-    assert len(classifier) == 14
+    assert len(classifier) == 15
     assert {"/plugins/gating/jobs/<job_id>", "/plugins/gating/jobs/<job_id>/cancel"} \
         <= gating_routes
-    assert len(gating_routes) == 14 + 16
+    assert len(gating_routes) == 14 + 17
     assert {"/plugins/gating/get_gate_provenance", "/plugins/gating/set_gate_status",
             "/plugins/gating/agent_session/<session_id>/control",
             "/plugins/gating/clear_gates"} <= gating_routes

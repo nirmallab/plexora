@@ -935,15 +935,20 @@ if (window.Plexora) {
                     + "one step at a time, the same step the arrow keys take with its "
                     + "handle selected. After a click, the arrow keys carry on from there.",
                 "The cog switches the card to the Single Cell Classifier. The wand picks "
-                    + "about ten positive and ten negative cells across the image and trains on "
+                    + "about 40 positive and 40 negative cells across the image and trains on "
                     + "them; or choose Positive or Negative, click cells to label them, and "
-                    + "press ▶ to train on your own. Hover a cell after a run for its score. "
+                    + "press ▶ to train on your own. Hover a cell after a run for its score; "
+                    + "Review uncertain cells shows a few amber cells one at a time to label "
+                    + "with P or N (S skips), then ▶ trains with them. "
                     + "The eraser undoes the run and keeps the examples.",
             ],
             shortcuts: [
                 { keys: "Z", label: "Previous marker" },
                 { keys: "X", label: "Next marker" },
                 { keys: "Esc", label: "Stop labelling cells (Single Cell Classifier)" },
+                { keys: "P", label: "Positive, while reviewing uncertain cells" },
+                { keys: "N", label: "Negative, while reviewing uncertain cells" },
+                { keys: "S", label: "Skip, while reviewing uncertain cells" },
             ],
             docs: "plugins/thresholding",
         },

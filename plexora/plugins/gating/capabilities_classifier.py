@@ -44,9 +44,10 @@ class AnnotateInput(MarkerInput):
 class RunInput(MarkerInput):
     pixels: bool = Field(True, description="Also learn from the marker's pixels in each "
                                            "cell (needs an image channel and a mask).")
-    auto_pick: bool = Field(False, description="Pick about 10 clear positive and 10 clear "
+    auto_pick: bool = Field(False, description="Pick about 40 clear positive and 40 clear "
                             "negative cells across the image first (the panel's wand), "
-                            "replacing earlier automatic picks; labelled cells are kept.")
+                            "replacing earlier automatic picks; labelled cells are kept "
+                            "and weigh twice as much.")
 
 
 class ClearInput(ProjectInput):
@@ -221,7 +222,7 @@ def capabilities(requires):
             writes=("gates",), persistent=True, egress="aggregates"),
         cap(name="gating.classifier_run", tool_name="classifier_run",
             purpose="Train the Single Cell Classifier on a marker's examples (at least 3 "
-                    "positive and 3 negative, or auto_pick: true to have about 10 of each "
+                    "positive and 3 negative, or auto_pick: true to have about 40 of each "
                     "picked across the image) and call every eligible cell (a job). "
                     "Replaces the marker's previous run; the threshold is kept for "
                     "classifier_revert.",

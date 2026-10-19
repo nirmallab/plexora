@@ -22,9 +22,14 @@ from plexora.plugins.gating.server.classifier import (
     MIN_EXAMPLES, UNCERTAIN_DISAGREEMENT, ClassifierRefused, autopick, features, learner,
     store)
 
-#: Stages a run reports, in order (`progress` messages). "pick" only when the
-#: wand chooses the examples itself.
-STAGES = ("pick", "examples", "features", "fit", "predict", "store")
+#: Stages a run reports (`progress` messages). "pick" only when the wand
+#: chooses the examples itself, and then after "features", because its picks
+#: read the pixels; Train checks the examples first, so that a refusal comes
+#: before any pixel is read.
+STAGES = ("features", "pick", "examples", "fit", "predict", "store")
+
+#: What one of the wand's examples weighs against one a person gave.
+AUTO_WEIGHT = 0.5
 
 
 def example_rows(ds, marker):
@@ -54,6 +59,17 @@ def example_rows(ds, marker):
                                                                              neg_missing]))}
 
 
+def example_weights(ds, marker, rows):
+    """(one weight per example row, how many a person gave): AUTO_WEIGHT for
+    the wand's picks, 1 for the rest."""
+    from plexora.plugins.gating.server.classifier.geometry import cells
+
+    origin = store.origins(ds.name, marker)
+    ids = cells(ds).ids[rows]
+    auto = np.asarray([origin.get(int(v)) == "auto" for v in ids], dtype=bool)
+    return np.where(auto, AUTO_WEIGHT, 1.0), int((~auto).sum())
+
+
 def check_ready(ds, marker):
     """The examples' report, or ClassifierRefused saying what is missing."""
     if marker not in ds.table.markers:
@@ -79,9 +95,9 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True, auto_pick=Fal
     """Train on the marker's examples and call every eligible cell; the new
     run's record. `progress(done, total, message)`; `cancelled()` polled.
 
-    `auto_pick`: the wand. About ten positives and ten negatives are picked
-    across the image first (autopick.py), replacing its earlier picks for the
-    marker; the examples a person gave are kept and trained on too.
+    `auto_pick`: the wand. Positives and negatives are picked across the
+    image first (autopick.py), replacing its earlier picks for the marker; the
+    examples a person gave are kept, trained on too, and weigh more.
     """
 
     def say(stage, done=None, total=None):
@@ -93,31 +109,38 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True, auto_pick=Fal
         if cancelled is not None and cancelled():
             raise InterruptedError("cancelled")
 
-    picked = None
-    if auto_pick:
-        say("pick")
-        if marker not in ds.table.markers:
-            raise ClassifierRefused(f"{marker!r} is not a marker of this project")
-        manual = [cell for cell, origin in store.origins(ds.name, marker).items()
-                  if origin != "auto"]
-        pos, neg, picked = autopick.pick(ds, marker, exclude=manual)
-        stop()
-        store.set_auto(ds.name, marker, pos, neg)
-    say("examples")
-    rows, labels, report = check_ready(ds, marker)
-    stop()
-    say("features")
-
     def pixel_progress(done, total):
         # The one long stage reports its own tiles, which the panel shows as
         # a percent.
         say("features", done, total)
 
-    matrix, names, info = features.feature_matrix(ds, marker, progress=pixel_progress,
-                                                  cancelled=cancelled, pixels=pixels)
+    def read_features():
+        say("features")
+        out = features.feature_matrix(ds, marker, progress=pixel_progress,
+                                      cancelled=cancelled, pixels=pixels)
+        stop()
+        return out
+
+    picked = None
+    if auto_pick:
+        if marker not in ds.table.markers:
+            raise ClassifierRefused(f"{marker!r} is not a marker of this project")
+        matrix, names, info = read_features()
+        say("pick")
+        manual = [cell for cell, origin in store.origins(ds.name, marker).items()
+                  if origin != "auto"]
+        pos, neg, picked = autopick.pick(ds, marker, exclude=manual, matrix=matrix,
+                                         names=names)
+        stop()
+        store.set_auto(ds.name, marker, pos, neg)
+    say("examples")
+    rows, labels, report = check_ready(ds, marker)
     stop()
+    if not auto_pick:
+        matrix, names, info = read_features()
     say("fit")
-    fitted = learner.fit(matrix[rows], labels)
+    weights, n_given = example_weights(ds, marker, rows)
+    fitted = learner.fit(matrix[rows], labels, weights=weights, n_given=n_given)
     stop()
     say("predict")
     raw = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
@@ -148,6 +171,7 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True, auto_pick=Fal
         "marker": marker,
         "n_examples_positive": report["n_positive"],
         "n_examples_negative": report["n_negative"],
+        "n_examples_given": n_given,
         "examples_missing": report["missing"][:50],
         "model": fitted.kind,
         "calibrated": bool(fitted.calibrated),

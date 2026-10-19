@@ -498,6 +498,20 @@ def classifier_cell_at():
     return _classifier_answer(lambda: panel.cell_at(ds, x, y, radius), ds.name, notify=False)
 
 
+@gating_bp.route('/classifier/review', methods=['GET'])
+def classifier_review():
+    from plexora.plugins.gating.server.classifier import panel
+
+    ds = _classifier_ds(request.args.get('datasource'))
+    try:
+        count = int(request.args.get('count') or panel.REVIEW_COUNT)
+    except ValueError:
+        abort(400)
+    return _classifier_answer(
+        lambda: panel.review_cells(ds, request.args.get('marker'), count), ds.name,
+        notify=False)
+
+
 @gating_bp.route('/classifier/annotate', methods=['POST'])
 def classifier_annotate():
     from plexora.plugins.gating.server.classifier import panel

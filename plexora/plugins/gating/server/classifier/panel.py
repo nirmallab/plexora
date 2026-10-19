@@ -18,6 +18,9 @@ MODES = ("threshold", "classifier")
 #: when the click is not on a labelled pixel.
 PICK_RADIUS_PX = 8
 
+#: Uncertain cells the panel offers to review at a time.
+REVIEW_COUNT = 8
+
 
 def marker_of(ds, marker):
     if marker not in ds.table.markers:
@@ -189,3 +192,51 @@ def clear_examples(ds, markers=None) -> dict:
             marker_of(ds, marker)
     return {"cleared": store.clear_examples(ds.name, markers),
             "markers": None if markers is None else list(markers)}
+
+
+def review_cells(ds, marker, count=REVIEW_COUNT) -> dict:
+    """Up to `count` of the run's uncertain cells nobody has labelled, spread
+    across the tissue, for a person to call one at a time.
+
+    Spread, not the least agreed-on first. On the user's own labelled cells
+    (2026-10-19, three images) labelling four cells near the boundary after a
+    wand run lifted agreement with them from 72% to 76-77%, and eight to 79%
+    -- but the least agreed-on of those cells did no better than any of them.
+    What counts is that the cells are boundary cells, so the queue covers the
+    tissue rather than one patch of coin flips. The same run offers the same
+    queue; a cell labelled since drops out of it.
+    """
+    from plexora.plugins.gating.server.classifier.autopick import _spread
+    from plexora.plugins.gating.server.classifier.geometry import cells
+
+    marker_of(ds, marker)
+    count = max(1, min(50, int(count)))
+    record, arrays = calls.run_arrays(ds, marker)
+    if record is None:
+        return {"marker": marker, "run_id": None, "cells": [], "n_uncertain": 0,
+                "n_unlabelled": 0}
+    if arrays is None:
+        raise ClassifierRefused("The run no longer matches the table; run the wand again")
+    geometry = cells(ds)
+    unsure = arrays["uncertain"] & (arrays["calls"] >= 0) & geometry.valid
+    pos, neg = store.examples(ds.name, marker)
+    labelled = np.isin(geometry.ids, np.asarray(pos + neg, dtype=np.int64))
+    rows = np.flatnonzero(unsure & ~labelled)
+    rng = np.random.default_rng(int(record["run_id"], 16) % (2 ** 32))
+    picked = _spread(rows, geometry.xs, geometry.ys, count, rng)
+    scores, agreement = arrays["scores"], arrays.get("agreement")
+    area = geometry.area
+
+    def radius(row):
+        # The ring is drawn round the cell, so it needs the cell's size.
+        if area is None or not np.isfinite(area[row]) or area[row] <= 0:
+            return None
+        return round(float(np.sqrt(area[row] / np.pi)), 2)
+
+    out = [{"cell_id": int(geometry.ids[row]), "x": float(geometry.xs[row]),
+            "y": float(geometry.ys[row]), "radius": radius(row),
+            "score": round(float(scores[row]), 4),
+            "agreement": None if agreement is None else int(agreement[row])}
+           for row in picked.tolist()]
+    return {"marker": marker, "run_id": record["run_id"], "cells": out,
+            "n_uncertain": int(unsure.sum()), "n_unlabelled": int(rows.size)}

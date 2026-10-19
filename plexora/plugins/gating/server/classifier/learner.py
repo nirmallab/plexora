@@ -2,13 +2,19 @@
 
 A handful of clicked cells is very little to learn from, so the default is a
 logistic regression with a firm L2 penalty over standardised features, its
-classes weighted so ten positives and three negatives pull equally. Once there
+classes weighted so forty positives and three negatives pull equally. Once there
 are enough examples to tell, a gradient-boosted tree model is tried as well
 and kept only when cross-validation says it is clearly better.
 
 The score is a logistic output in [0, 1]. It is called a probability only
 when it was calibrated, which needs enough examples to hold some out
-(`CALIBRATE_AT`); below that it is a score, and the exports say so.
+(`CALIBRATE_AT`) -- examples a person gave, because the wand's are clear
+cells far from the boundary, and a calibration fitted to those says nothing
+about the cells in between. Below that it is a score, and the exports say so.
+
+**The wand's examples weigh less** than a person's (`weights`, AUTO_WEIGHT
+in runs.py): a person's click is the better evidence, so where the two
+disagree about a kind of cell the person's labels decide it.
 
 **Which cells are uncertain** is not a fixed band around 0.5. The examples
 are resampled (`RESAMPLES` bootstrap draws, each class drawn on its own so
@@ -94,6 +100,13 @@ def _draws(labels, count, seed=0):
             for _ in range(count)]
 
 
+def _weighed(weights, idx=None):
+    """`sample_weight` for an estimator's fit, or nothing."""
+    if weights is None:
+        return {}
+    return {"sample_weight": weights if idx is None else weights[idx]}
+
+
 @dataclass
 class Fitted:
     kind: str
@@ -139,9 +152,16 @@ def uncertain(agreement):
     return np.asarray(agreement) <= (1.0 - UNCERTAIN_DISAGREEMENT)
 
 
-def fit(matrix, labels) -> Fitted:
-    """Fit on the examples' rows (`matrix`) and their labels (1/0)."""
+def fit(matrix, labels, weights=None, n_given=None) -> Fitted:
+    """Fit on the examples' rows (`matrix`) and their labels (1/0).
+
+    `weights`: one per example (None: all 1). `n_given`: how many of the
+    examples a person gave (None: all of them); only those count towards
+    calibration.
+    """
     labels = np.asarray(labels, dtype=np.int64)
+    weights = (None if weights is None
+               else np.asarray(weights, dtype=np.float64).reshape(labels.shape))
     n_pos, n_neg = int((labels == 1).sum()), int((labels == 0).sum())
     if n_pos < MIN_EXAMPLES or n_neg < MIN_EXAMPLES:
         from plexora.plugins.gating.server.classifier import ClassifierRefused
@@ -160,11 +180,11 @@ def fit(matrix, labels) -> Fitted:
             notes.append(f"gradient boosting cross-validated {boosted:.3f} against "
                          f"{cv:.3f} for logistic regression")
             kind, cv = "gradient_boosting", boosted
-    calibrated = n_pos + n_neg >= CALIBRATE_AT
+    calibrated = (n_pos + n_neg if n_given is None else int(n_given)) >= CALIBRATE_AT
     fitted = Fitted(kind, calibrated, cv, n_pos, n_neg, notes=notes)
     if kind == "gradient_boosting":
         base = _boosted
-        fitted.trees = [_boosted().fit(matrix[idx], labels[idx])
+        fitted.trees = [_boosted().fit(matrix[idx], labels[idx], **_weighed(weights, idx))
                         for idx in _draws(labels, RESAMPLES_TREES)]
         if calibrated:
             from sklearn.calibration import CalibratedClassifierCV
@@ -172,7 +192,7 @@ def fit(matrix, labels) -> Fitted:
             fitted.estimator = CalibratedClassifierCV(base(), method="sigmoid", cv=3)
         else:
             fitted.estimator = base()
-        fitted.estimator.fit(matrix, labels)
+        fitted.estimator.fit(matrix, labels, **_weighed(weights))
         return fitted
     fitted.prep = _prep().fit(matrix)
     scaled = fitted.prep.transform(matrix)
@@ -182,12 +202,12 @@ def fit(matrix, labels) -> Fitted:
         fitted.estimator = CalibratedClassifierCV(_logistic(), method="sigmoid", cv=3)
     else:
         fitted.estimator = _logistic()
-    fitted.estimator.fit(scaled, labels)
-    weights, intercepts = [], []
+    fitted.estimator.fit(scaled, labels, **_weighed(weights))
+    coefs, intercepts = [], []
     for idx in _draws(labels, RESAMPLES):
-        model = _logistic().fit(scaled[idx], labels[idx])
-        weights.append(model.coef_[0])
+        model = _logistic().fit(scaled[idx], labels[idx], **_weighed(weights, idx))
+        coefs.append(model.coef_[0])
         intercepts.append(model.intercept_[0])
-    fitted.weights = np.asarray(weights, dtype=np.float64).T
+    fitted.weights = np.asarray(coefs, dtype=np.float64).T
     fitted.intercepts = np.asarray(intercepts, dtype=np.float64)
     return fitted

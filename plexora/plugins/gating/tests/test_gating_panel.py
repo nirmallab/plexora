@@ -434,7 +434,7 @@ def test_the_classifier_draws_through_the_layer_and_follows_the_marker():
 
 
 def test_train_ends_the_label_row_and_the_wand_picks_its_own_examples():
-    """Two ways to train: the wand on the marker's line picks about ten of
+    """Two ways to train: the wand on the marker's line picks about 40 of
     each class itself; Train, at the end of the Positive / Negative row,
     learns from exactly the examples there are."""
     panel, classifier = _code(PANEL), _code(CLASSIFIER)
@@ -474,3 +474,21 @@ def test_the_cells_are_drawn_before_a_run_and_none_is_offered():
     assert "class GateClassifierHover" in classifier and "classifierScores(marker)" in classifier
     # ...and says nothing over a negative, which is drawn as nothing.
     assert "if (code === 0 || (code === 2 && !label))" in classifier
+
+
+def test_review_walks_uncertain_cells_from_the_keyboard():
+    panel, styles, classifier = _code(PANEL), _code(STYLES), _code(CLASSIFIER)
+    bar = panel[panel.index('id="clf_review_bar"'):]
+    bar = bar[:bar.index("</div>\n    </div>")]
+    for key, word in (("P", "Positive"), ("N", "Negative"), ("S", "Skip")):
+        assert f'<kbd class="plx-kbd">{key}</kbd> {word}' in bar
+    assert 'id="clf_review_button"' in panel and 'id="clf_review_stop"' in bar
+    # Both set `display`, so both restate [hidden].
+    assert ".clf-review-line[hidden],\n.clf-review-bar[hidden] {" in styles
+    # The keys while reviewing, scoped like every other gating key.
+    assert '{ p: "positive", n: "negative", s: "skip", escape: "stop" }' in classifier
+    assert "this.controller.acceptsKeys(event)" in classifier
+    # The camera through core's scene helpers, right on a turned view.
+    assert "scene.fitRegion(imageViewer" in classifier and "scene.panTo(imageViewer" in classifier
+    assert "classifierReview(marker)" in classifier
+

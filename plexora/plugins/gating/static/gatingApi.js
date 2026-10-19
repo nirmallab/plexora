@@ -331,6 +331,15 @@ class GatingApi {
         return this._classifierAnswer(response);
     }
 
+    /** Up to `count` of the run's uncertain, unlabelled cells, spread across
+     *  the tissue: {cells: [{cell_id, x, y, score, agreement}], n_uncertain}. */
+    async classifierReview(marker, count) {
+        const query = new URLSearchParams({ datasource: this.datasource, marker });
+        if (count) query.set('count', count);
+        const response = await fetch(this.url('plugins/gating/classifier/review') + '?' + query);
+        return this._classifierAnswer(response);
+    }
+
     /** label: "positive" | "negative" | null. Same label again removes it. */
     async classifierAnnotate(marker, cellId, label) {
         return this._classifierAnswer(await this._classifierPost(

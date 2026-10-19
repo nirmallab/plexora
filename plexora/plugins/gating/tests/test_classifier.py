@@ -298,8 +298,9 @@ def test_the_mode_is_project_state(ds):
 def test_the_wand_picks_clear_examples_across_the_image(ds, made):
     from plexora.plugins.gating.server.classifier import autopick
 
-    pos, neg, info = autopick.pick(ds, "CD8")
-    assert len(pos) == len(neg) == autopick.N_PER_CLASS
+    # Ten a class: the 64-cell grid has too few clear cells for forty.
+    pos, neg, info = autopick.pick(ds, "CD8", recipe=autopick.Recipe(count=10))
+    assert len(pos) == len(neg) == 10
     assert set(pos) <= set(made["positives"]), "a picked positive is a positive cell"
     assert set(neg) <= set(made["negatives"]) | set(made["borderline"]) - set(made["positives"])
     assert not set(pos) & set(made["borderline"]) or info["how"] == "ranks"
@@ -307,7 +308,119 @@ def test_the_wand_picks_clear_examples_across_the_image(ds, made):
     rows = {int((c["y"] // 64)) for c in made["cells"] if c["id"] in pos}
     assert len(rows) >= 4
     # The same project picks the same cells again.
-    assert autopick.pick(ds, "CD8")[0] == pos
+    assert autopick.pick(ds, "CD8", recipe=autopick.Recipe(count=10))[0] == pos
+    # The first wand's picks, kept as FIRST, are still what it picked.
+    first, _neg, _info = autopick.pick(ds, "CD8", recipe=autopick.FIRST)
+    assert len(first) == 10 and set(first) <= set(made["positives"])
+
+
+class _Table:
+    log_transformed = False
+
+    def __init__(self, values):
+        self.values = values
+        self.markers = ["M"]
+
+    def columns(self, names):
+        return {"M": self.values}
+
+
+class _Project:
+    """Only what autopick reads: a table, and (patched) geometry, QC and gate."""
+
+    name = "fake"
+
+    def __init__(self, values):
+        self.table = _Table(values)
+
+
+def _scene():
+    """Five places on one image, far enough apart that a cell's six nearest
+    neighbours are its own place's:
+
+    - 30 clear positives (9-11), alone;
+    - 10 glow-like cells (12-14) each beside a bright one (40);
+    - 10 dim cells (3.5) each beside a positive (10): the hard negatives;
+    - 60 ordinary negatives (0.5-2.5).
+    The gate is 5; the pixels say what the table says.
+    """
+    rng = np.random.default_rng(0)
+    xs, ys, values, kind = [], [], [], []
+
+    def add(x, y, value, what):
+        xs.append(x), ys.append(y), values.append(value), kind.append(what)
+
+    for i in range(30):
+        add(100 * (i % 6), 100 * (i // 6), rng.uniform(9, 11), "positive")
+    for i in range(10):
+        x, y = 5000 + 100 * (i % 5), 100 * (i // 5)
+        add(x, y, rng.uniform(12, 14), "glow")
+        add(x + 6, y, 40.0, "bright")
+    for i in range(10):
+        x, y = 10000 + 100 * (i % 5), 100 * (i // 5)
+        add(x, y, 3.5, "dim_beside_bright")
+        add(x + 6, y, 10.0, "positive_partner")
+    for i in range(60):
+        add(15000 + 100 * (i % 10), 100 * (i // 10), rng.uniform(0.5, 2.5), "negative")
+    values = np.asarray(values)
+    matrix = np.column_stack([np.log1p(values), values - 1.0]).astype(np.float32)
+    return (np.asarray(xs, float), np.asarray(ys, float), values, np.asarray(kind),
+            matrix, ["px_mean", "px_contrast"])
+
+
+@pytest.fixture
+def scene(monkeypatch):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.classifier import geometry
+
+    xs, ys, values, kind, matrix, names = _scene()
+    n = values.size
+    shape = geometry.Cells(np.arange(1, n + 1, dtype=np.int64), xs, ys,
+                           np.ones(n, dtype=bool), None)
+    monkeypatch.setattr(geometry, "cells", lambda ds: shape)
+    monkeypatch.setattr(runs, "qc_state", lambda ds, marker: (None, "", "qc"))
+    monkeypatch.setattr(model, "gmm_for", lambda ds, marker: {"gate": 5.0})
+    return _Project(values), kind, matrix, names
+
+
+def _kinds(ids, kind):
+    return {str(kind[i - 1]) for i in ids}
+
+
+def test_the_wand_passes_over_glow_and_picks_hard_negatives(scene):
+    from plexora.plugins.gating.server.classifier import autopick
+
+    project, kind, matrix, names = scene
+    recipe = autopick.Recipe(count=9)
+    pos, neg, info = autopick.pick(project, "M", recipe=recipe, matrix=matrix, names=names)
+    # A cell lit by a neighbour twice as bright is never a positive.
+    assert "glow" not in _kinds(pos, kind)
+    # A third of the negatives sit dim beside a cell reading positive.
+    assert info["glow_test"] == "pixels" and info["hard_negatives"] == 3
+    assert [str(kind[i - 1]) for i in neg].count("dim_beside_bright") == 3
+    assert _kinds(neg, kind) <= {"negative", "dim_beside_bright"}
+    # By value alone (the first wand) the glow cells are fair game, and no
+    # negative is a hard one.
+    seen = set()
+    for seed in range(4):
+        pos, neg, _ = autopick.pick(project, "M", seed=seed, recipe=autopick.Recipe(
+            count=9, agree=False, glow=False, hard_share=0.0))
+        seen |= _kinds(pos, kind)
+        assert "dim_beside_bright" not in _kinds(neg, kind)
+    assert "glow" in seen
+
+
+def test_without_pixels_or_with_a_logged_table_there_is_no_glow_test(scene):
+    from plexora.plugins.gating.server.classifier import autopick
+
+    project, _kind, _matrix, _names = scene
+    # The table's own values stand in for the pixels when they are not logged...
+    _pos, _neg, info = autopick.pick(project, "M", recipe=autopick.Recipe(count=9))
+    assert info["glow_test"] == "table" and info["hard_negatives"] == 3
+    # ...and when they are, a ratio of them means nothing: no glow test.
+    project.table.log_transformed = True
+    _pos, _neg, info = autopick.pick(project, "M", recipe=autopick.Recipe(count=9))
+    assert info["glow_test"] is None and info["hard_negatives"] == 0
 
 
 def test_a_wand_run_keeps_a_persons_labels_and_replaces_its_own(ds, made):
@@ -317,14 +430,17 @@ def test_a_wand_run_keeps_a_persons_labels_and_replaces_its_own(ds, made):
     assert record["auto_pick"]["how"] in ("gate", "ranks")
     origins = store.origins(ds.name, "CD8")
     assert origins[border] == "click"
-    assert sum(1 for o in origins.values() if o == "auto") == 20
+    n_auto = sum(1 for o in origins.values() if o == "auto")
+    assert n_auto >= 6
+    # The person's one label is the one example given; the wand's weigh less.
+    assert record["n_examples_given"] == 1
     payload = panel.examples_payload(ds, "CD8")
-    assert payload["n_auto"] == 20
+    assert payload["n_auto"] == n_auto
     assert any(e["auto"] for e in payload["positive"])
     assert not next(e for e in payload["negative"] if e["cell_id"] == border)["auto"]
     # A second press replaces the wand's picks, never adds to them.
     runs.run(ds, "CD8", auto_pick=True)
-    assert sum(1 for o in store.origins(ds.name, "CD8").values() if o == "auto") == 20
+    assert sum(1 for o in store.origins(ds.name, "CD8").values() if o == "auto") == n_auto
     called, _ = calls.marker_calls(ds, "CD8")
     assert called[_row_of(ds, border)] == 0
 
@@ -344,6 +460,65 @@ def test_uncertainty_comes_from_resampled_models_and_narrows_with_examples(ds, m
     np.testing.assert_array_equal(
         arrays["uncertain"][eligible],
         learner.uncertain(agreement[eligible] / 100.0) & (agreement[eligible] < 100))
+
+
+def test_a_persons_examples_outweigh_the_wands_and_only_theirs_calibrate():
+    """The wand calls cells from 0 to 2 positive; a person says the ones at
+    0.5-1 are not. Weighed equally the boundary sits between; with the
+    wand's at half weight it moves towards the person's."""
+    from plexora.plugins.gating.server.classifier import learner
+
+    rng = np.random.default_rng(2)
+
+    def examples(n_wand, n_person):
+        wand = np.concatenate([rng.uniform(-2, 0, n_wand), rng.uniform(0, 2, n_wand)])
+        x = np.concatenate([wand, rng.uniform(0.5, 1.0, n_person)])[:, None]
+        return (x.astype(np.float32),
+                np.concatenate([np.repeat([0, 1], n_wand), np.zeros(n_person, int)]))
+
+    # Few enough that the model is the logistic one.
+    x, y = examples(15, 6)
+    grid = np.linspace(-2, 2, 401, dtype=np.float32)[:, None]
+
+    def boundary(weights):
+        fitted = learner.fit(x, y, weights=weights, n_given=6)
+        assert fitted.kind == "logistic_regression"
+        score, _ = fitted.scores(grid)
+        return float(grid[np.argmax(score >= 0.5), 0])
+
+    assert boundary(np.concatenate([np.full(30, 0.5), np.ones(6)])) > boundary(None) + 0.05
+    # 72 examples, but only 12 a person's: a score, not a probability.
+    x, y = examples(30, 12)
+    assert not learner.fit(x, y, n_given=12).calibrated
+    assert learner.fit(x, y).calibrated
+
+
+def test_review_offers_uncertain_unlabelled_cells_and_drops_the_ones_labelled(ds, made):
+    assert panel.review_cells(ds, "CD8")["cells"] == []
+    _label(ds, made, n_pos=3, n_neg=3)
+    # Borderline cells labelled both ways: the resampled models part over them.
+    border = made["borderline"]
+    for cell in border[:2]:
+        panel.annotate(ds, "CD8", cell, "positive")
+    for cell in border[2:4]:
+        panel.annotate(ds, "CD8", cell, "negative")
+    runs.run(ds, "CD8")
+    _record, arrays = calls.run_arrays(ds, "CD8")
+    unsure = {int(made["cells"][i]["id"]) for i in np.flatnonzero(arrays["uncertain"])}
+    assert unsure, "three examples a side leave cells uncertain"
+    first = panel.review_cells(ds, "CD8", count=4)
+    offered = [c["cell_id"] for c in first["cells"]]
+    assert 0 < len(offered) <= 4 and set(offered) <= unsure
+    assert first["n_uncertain"] == len(unsure)
+    labelled = set(made["positives"][:3]) | set(made["negatives"][:3]) | set(border[:4])
+    assert not set(offered) & labelled
+    assert all(np.isfinite(c["x"]) and 0 <= c["agreement"] <= 100 for c in first["cells"])
+    # The same run offers the same queue; a cell labelled since drops out.
+    assert [c["cell_id"] for c in panel.review_cells(ds, "CD8", count=4)["cells"]] == offered
+    panel.annotate(ds, "CD8", offered[0], "positive")
+    again = panel.review_cells(ds, "CD8", count=4)
+    assert offered[0] not in [c["cell_id"] for c in again["cells"]]
+    assert again["n_unlabelled"] == first["n_unlabelled"] - 1
 
 
 def test_the_uncertain_band_is_as_wide_as_the_examples_leave_it():

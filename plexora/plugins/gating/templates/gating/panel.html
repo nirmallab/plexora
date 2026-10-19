@@ -96,12 +96,12 @@
         <button id="gate_clear_button" class="slider-auto-button gate-marker-auto gate-marker-clear"
                 title="Clear this marker's gate" aria-label="Clear this marker's gate"
                 type="button"><span class="fas fa-eraser"></span></button>
-        {# The classifier's pair, in the same places: the wand picks about ten
-           clear positives and ten clear negatives across the image itself,
+        {# The classifier's pair, in the same places: the wand picks about 40
+           clear positives and 40 clear negatives across the image itself,
            then trains and calls every cell; the eraser takes the marker back
            to how it was before its first run and keeps the examples. #}
         <button id="clf_run_button" class="slider-auto-button gate-marker-auto gate-classifier-only"
-                title="Pick about 10 positive and 10 negative cells across the image, then train and classify every cell"
+                title="Pick about 40 positive and 40 negative cells across the image, then train and classify every cell"
                 aria-label="Pick examples automatically, then train and classify every cell" type="button">
             <span class="fas fa-wand-magic-sparkles"></span></button>
         <button id="clf_revert_button"
@@ -139,6 +139,35 @@
        not-classified counts beside it. And one status line under it: what
        is happening, what is missing, or why the calls are stale. #}
     <div id="clf_summary" class="clf-summary gate-classifier-only" hidden></div>
+    {# After a run with amber cells: a few of them, spread across the tissue,
+       one at a time, each labelled from the keyboard; then Train again. On
+       the user's own labelled cells, four such labels after a wand run lifted
+       agreement from 72% to 76-77% (panel.review_cells). The bar takes the
+       button's place while a review is on. #}
+    <div id="clf_review_line" class="layer-card-actions clf-review-line gate-classifier-only" hidden>
+        <button id="clf_review_button" class="layer-card-action" type="button"
+                title="Show uncertain cells one at a time to label positive or negative">
+            <span class="fas fa-list-check" aria-hidden="true"></span>
+            <span class="layer-card-action-text">Review uncertain cells</span>
+        </button>
+    </div>
+    <div id="clf_review_bar" class="clf-review-bar gate-classifier-only" role="group"
+         aria-label="Review uncertain cells" hidden>
+        <div class="clf-review-head">
+            <span id="clf_review_where" class="clf-review-where"></span>
+            <button id="clf_review_stop" class="icon-button clf-review-stop" type="button"
+                    title="Stop reviewing (Esc)" aria-label="Stop reviewing (Esc)">
+                <span class="fas fa-xmark" aria-hidden="true"></span></button>
+        </div>
+        <div class="cell-mode-options clf-review-keys">
+            <button class="cell-mode-option clf-review-key" data-review="positive" type="button"
+                    title="Label this cell positive (P)"><kbd class="plx-kbd">P</kbd> Positive</button>
+            <button class="cell-mode-option clf-review-key" data-review="negative" type="button"
+                    title="Label this cell negative (N)"><kbd class="plx-kbd">N</kbd> Negative</button>
+            <button class="cell-mode-option clf-review-key" data-review="skip" type="button"
+                    title="Leave this cell and go to the next (S)"><kbd class="plx-kbd">S</kbd> Skip</button>
+        </div>
+    </div>
     <div id="clf_status" class="clf-status gate-classifier-only" role="status" hidden></div>
     {# A Z-STACK ONLY: what the image shows while gating -- the plane, or a slab
        of planes around it combined (mean, max or median; 5 um by default),
