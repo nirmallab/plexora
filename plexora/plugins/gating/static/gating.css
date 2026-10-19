@@ -848,25 +848,51 @@
     opacity: 0.35;
 }
 
-/* The panel's footer: its two keys, centred under everything else, on a
-   hairline so it reads as the card's last line rather than one more row. */
+/* The panel's footer: its two keys, centred, worn as a band like the card's
+   header (viewer.css, "EVERY CARD IN THIS SIDEBAR WEARS ITS HEADER AS A
+   BAND") -- the same tint, a rule on the side facing the panel, the card's
+   rounded corners -- so it reads as the card's last line, not one more row.
+   The band starts 3px in for the header's reason: the card's hue is an inset
+   shadow down its left edge, painted under a child's background. */
 .gate-panel-footer {
     align-items: center;
+    background: linear-gradient(to right,
+        transparent 0 3px, rgba(255, 255, 255, 0.035) 3px);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
     border-top: 1px solid var(--border-subtle);
     color: var(--text-muted);
     display: flex;
     flex-wrap: wrap;
-    font-size: 11px;
+    /* The canvas's "T  Toggle selected cells" hint, size for size. */
+    font-size: 10px;
     gap: var(--space-1) var(--space-4);
     justify-content: center;
-    padding-top: var(--space-2);
+    letter-spacing: 0.02em;
+    margin-top: var(--space-3);
+    padding: 6px 8px;
+}
+
+/* In a tool card the band runs edge to edge and down to the card's foot,
+   through the body's 8px at the sides and bottom (viewer.css .tool-card-body). */
+.tool-card-body .gate-panel-footer {
+    margin: var(--space-3) -8px -8px;
 }
 
 .gate-panel-shortcut {
     align-items: center;
     display: inline-flex;
-    gap: 6px;
+    gap: 5px;
     white-space: nowrap;
+}
+
+/* The canvas hint's cap (viewer.css .viewer-overlay-hint-key), not the
+   larger default `.plx-kbd`. */
+.gate-panel-footer .plx-kbd {
+    border-radius: calc(var(--radius-sm) - 3px);
+    font-size: 9px;
+    line-height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
 }
 
 /* The hover card after a run: a small dark card beside the pointer, in the

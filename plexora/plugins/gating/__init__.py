@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261019_classifier_wand"
+VERSION = "20261019_classifier_footer"
 
 
 def _blueprint():

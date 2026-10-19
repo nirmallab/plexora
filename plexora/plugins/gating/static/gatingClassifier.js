@@ -866,8 +866,8 @@ class GateClassifierControl {
 
 
 /**
- * GateClassifierHover - what a cell says when the pointer rests on it after a
- * run: its call, the model's score (or probability, once calibrated), how many
+ * GateClassifierHover - what a positive or uncertain cell says when the
+ * pointer rests on it after a run (a negative says nothing): its call, the model's score (or probability, once calibrated), how many
  * of the models fitted to resampled examples agree, and whether a person or
  * the wand labelled it.
  *
@@ -1020,7 +1020,10 @@ class GateClassifierHover {
             const entry = (examples[kind] || []).find((e) => e.cell_id === hit.cell_id);
             if (entry) label = [kind, entry];
         }
-        if (code === 2 && !label) {
+        // Only the cells the run draws -- positive and uncertain. A negative
+        // is most of the tissue and drawn as nothing, so a card on every one
+        // would follow the pointer everywhere it goes.
+        if (code === 0 || (code === 2 && !label)) {
             this.hideCard();
             return;
         }

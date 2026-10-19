@@ -454,6 +454,11 @@ def test_the_footer_names_the_two_marker_keys_as_key_caps():
     rule = styles[styles.index(".gate-panel-footer {"):]
     rule = rule[:rule.index("}")]
     assert "justify-content: center" in rule and "border-top" in rule
+    # A band like the card's header, and the canvas hint's key cap size.
+    assert "rgba(255, 255, 255, 0.035) 3px" in rule and "font-size: 10px" in rule
+    assert ".tool-card-body .gate-panel-footer {" in styles
+    cap = styles[styles.index(".gate-panel-footer .plx-kbd {"):]
+    assert "font-size: 9px" in cap[:cap.index("}")]
     # The last thing in the section.
     assert panel.index("</footer>") > panel.index('id="gating_save_anndata_panel"')
 
@@ -467,3 +472,5 @@ def test_the_cells_are_drawn_before_a_run_and_none_is_offered():
     assert "EXAMPLE_RGBA.positive" in classifier and "EXAMPLE_RGBA.negative" in classifier
     # The hover card reads the scores route, once per run.
     assert "class GateClassifierHover" in classifier and "classifierScores(marker)" in classifier
+    # ...and says nothing over a negative, which is drawn as nothing.
+    assert "if (code === 0 || (code === 2 && !label))" in classifier
