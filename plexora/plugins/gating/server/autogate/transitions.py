@@ -386,10 +386,20 @@ def apply_t4(engine, packet, answer):
 
     unit = _units(engine, packet)[0]
     candidates = unit.get("candidates") or {}
-    rows = [f"i{index + 1}" for index in range(len(candidates))]
-    missing = [r for r in rows if r not in answer.intervals]
+    pairs = int((packet.get("evidence") or {}).get("pairs") or 0)
+    check = unit.get("classifier_check") if pairs else None
+    if check is not None:
+        rows = [f"i{k + 1}{half}" for k in range(pairs) for half in "ab"]
+    else:
+        rows = [f"i{index + 1}" for index in range(len(candidates))]
+    counted = check is not None and check.get("reading") == "count"
+    given = (answer.counts or {}) if counted else answer.intervals
+    missing = [r for r in rows if r not in given]
+    if counted and not missing:
+        _check_counts(check, given, pairs)
     if missing:
-        raise AgentError("invalid_input", f"judge every interval row; missing {missing}",
+        raise AgentError("invalid_input", f"{'count' if counted else 'judge'} every interval "
+                         f"row; missing {missing}",
                          detail={"rows": rows})
     _note(unit, answer)
     unit["ai_confidence"] = _confidence(answer)
@@ -400,8 +410,12 @@ def apply_t4(engine, packet, answer):
     spans = {row["row"]: (row["from"], row["to"])
              for row in (packet.get("evidence") or {}).get("intervals") or ()
              if row.get("from") is not None and row.get("to") is not None}
+    judged_words = answer.intervals
+    if check is not None:
+        judged_words = _read_check(check, answer, pairs)
+        spans = {f"i{k + 1}": spans[f"i{k + 1}a"] for k in range(pairs) if f"i{k + 1}a" in spans}
     unit.setdefault("judged", []).extend(
-        [min(spans[row]), max(spans[row]), word] for row, word in answer.intervals.items()
+        [min(spans[row]), max(spans[row]), word] for row, word in judged_words.items()
         if row in spans)
     conditional = bool(unit.get("condition"))
     unit["method"] = "ai_conditional" if conditional else "ai_refined"
@@ -415,9 +429,10 @@ def apply_t4(engine, packet, answer):
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
     direction = unit.get("direction")
-    intervals = answer.intervals
+    intervals = judged_words
     reopened = unit.get("whole_image_reopened")
-    reopened_look = bool(reopened) and "looked" not in reopened and direction == "up"
+    reopened_look = bool(reopened) and "looked" not in reopened and direction == "up" \
+        and check is None
     if reopened_look:
         # The whole image said too low; a first row the rows call mixed
         # passes (`_reopen`).
@@ -468,7 +483,9 @@ def apply_t4(engine, packet, answer):
         unit["span_from"] = unit["candidate"]
         unit["state"] = "awaiting_t4"
         return _outcome(unit, chosen="reverse", direction=turned)
-    if why == "mixed":
+    if why == "mixed" and check is None:
+        # A check's `mixed` is code's reading of an unconfirmed pair, not a
+        # look's word: it stops the walk without capping confidence.
         unit["t4_stopped_mixed"] = True
     unit["method"] = "ai_conditional" if conditional else "ai_accepted"
     # Remembered so a whole-image "still too low" does not re-serve the very
@@ -478,6 +495,64 @@ def apply_t4(engine, packet, answer):
     unit["state"] = "awaiting_regression"
     engine.settle(unit)
     return _outcome(unit, chosen="keep", why=why)
+
+
+def _read_check(check, answer, pairs):
+    """A classifier check's pairs of rows read as one word per interval
+    (`cellcalls.confirms`): the word that moves the gate where the halves
+    reading the gate's way hold enough of the row's cells, else `mixed`,
+    which stops the walk there."""
+    from plexora.plugins.gating.server.autogate import cellcalls
+    from plexora.plugins.gating.server.autogate import verdicts as words
+
+    direction = check["direction"]
+    reading = check.get("reading") or "word"
+    read, said = {}, []
+    for k, row in enumerate(check["rows"][:pairs]):
+        other = "b" if row["flagged_is"] == "a" else "a"
+        # The row's cells by half; a row recorded without them is read on
+        # its flagged half alone.
+        cells = ((row["n_flagged"], row["n_control"] if row["control"] else 0)
+                 if "n_flagged" in row else (1, 0))
+        # An empty other half (the classifier flags the whole row) is not
+        # read: its `cannot_tell` says nothing about the flagged cells.
+        if reading == "count":
+            flagged, control = (_count(answer.counts[f"i{k + 1}{half}"])
+                                for half in (row["flagged_is"], other))
+            control = control if row["control"] else None
+            confirmed = cellcalls.confirms_count(direction, flagged, len(row["flagged"]),
+                                                 control, len(row["control"]), cells)
+        else:
+            flagged = answer.intervals[f"i{k + 1}{row['flagged_is']}"]
+            control = answer.intervals[f"i{k + 1}{other}"] if row["control"] else None
+            confirmed = cellcalls.confirms(direction, flagged, control, reading, cells)
+        read[f"i{k + 1}"] = words.MOVES[direction][0] if confirmed else "mixed"
+        # `alike`: both halves read the same -- kept for the report, never
+        # a reason to stay (`cellcalls.confirms`).
+        said.append({"flagged": flagged, "control": control, "confirmed": confirmed,
+                     "alike": control is not None and flagged == control})
+    check["asked"] = True
+    check["answers"] = said
+    check["confirmed"] = next((k for k, x in enumerate(said) if not x["confirmed"]), len(said))
+    return read
+
+
+def _count(value):
+    return None if value == "cannot_tell" else int(value)
+
+
+def _check_counts(check, counts, pairs):
+    """A count above its row's cell count is refused, naming the row."""
+    from plexora.agent.errors import AgentError
+
+    for k, row in enumerate(check["rows"][:pairs]):
+        other = "b" if row["flagged_is"] == "a" else "a"
+        for half, cells in ((row["flagged_is"], row["flagged"]), (other, row["control"])):
+            value = counts[f"i{k + 1}{half}"]
+            if value != "cannot_tell" and int(value) > len(cells):
+                raise AgentError("invalid_input", f"i{k + 1}{half} holds {len(cells)} cells; "
+                                 f"{value} is more than that",
+                                 detail={"row": f"i{k + 1}{half}", "cells": len(cells)})
 
 
 def _split_mixed(engine, unit, chain, answer, placed, passed):

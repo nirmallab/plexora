@@ -34,6 +34,23 @@ def test_a_learned_marker_is_known_under_its_spellings():
     assert vocabulary.learned_path().is_file()
 
 
+def test_an_edited_shipped_caveat_changes_the_version(tmp_path, monkeypatch):
+    """A stored panel context rebuilds on a new version; an edit that left the
+    file's `version` alone kept the old caveat (lsp11385 PCNA, 2026-10-20)."""
+    edited = tmp_path / "markers.yaml"
+    edited.write_text(vocabulary.PATH.read_text(encoding="utf-8").replace(
+        "long-lived protein", "long-lived protein, edited"), encoding="utf-8")
+    before = vocabulary.version()
+    monkeypatch.setattr(vocabulary, "PATH", edited)
+    vocabulary.clear_cache()
+    try:
+        assert vocabulary.version() != before
+        assert vocabulary.version().split(".")[0] == before.split(".")[0]
+    finally:
+        monkeypatch.undo()
+        vocabulary.clear_cache()
+
+
 def test_the_first_account_stands_unless_the_user_says_otherwise():
     vocabulary.learn([_cdx2()])
     assert vocabulary.learn([_cdx2(role="state")], source="ai") == []
@@ -105,3 +122,32 @@ def test_a_panel_answer_teaches_every_later_panel():
     context.apply_entry(other, "CDX2_c2", {"role": "state"}, source="ai")
     assert other["entries"]["CDX2_c2"]["role"] == "tumour_stromal"
     assert "CDX2_c2" in other["ai_suggestions"]
+
+
+def test_a_marker_says_whether_its_stain_is_fibrous():
+    """markers.yaml `morphology`: smooth muscle and vessel walls cross the
+    masks beside them; a classifier check reads such a marker strictly."""
+    from plexora.plugins.gating.server.autogate import context
+
+    entries = vocabulary.load()["entries"]
+    assert entries["aSMA"]["morphology"] == "fibrous"
+    assert entries["CD31"]["morphology"] == "fibrous"
+    assert "morphology" not in entries["CD3"]
+    panel = context.build(["aSMA", "CD3", "CDX2"])
+    assert panel["entries"]["aSMA"]["morphology"] == "fibrous"
+    assert panel["entries"]["CD3"]["morphology"] == "cell"
+    assert panel["entries"]["CDX2"]["morphology"] is None
+    # The upfront step fills it for a marker the vocabulary does not know,
+    # and is kept to the vocabulary's words.
+    context.apply_entry(panel, "CDX2", {"role": "tumour_stromal", "morphology": "fibrous"},
+                        source="ai")
+    assert panel["entries"]["CDX2"]["morphology"] == "fibrous"
+    with pytest.raises(ValueError):
+        context.apply_entry(panel, "CDX2", {"morphology": "stringy"}, source="user")
+    # ... and teaches it to the learned layer.
+    assert context.learn_from(panel, ["CDX2"], source="ai") == ["CDX2"]
+    assert vocabulary.load()["entries"]["CDX2"]["morphology"] == "fibrous"
+    # An agent's word on a marker the vocabulary knows is not used.
+    context.apply_entry(panel, "aSMA", {"role": "tumour_stromal", "morphology": "cell"},
+                        source="ai")
+    assert panel["entries"]["aSMA"]["morphology"] == "fibrous"

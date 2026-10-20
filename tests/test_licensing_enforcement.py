@@ -26,6 +26,8 @@ PAID = {
     "ai.run_session": "ai", "ai.run_status": "ai", "ai.run_control": "ai", "ai.balance": "ai",
     "gating.session_start": "ai:gating:session",
     "gating.session_bulk": "ai:gating:session",
+    "gating.session_classifier": "ai:gating:session",
+    "gating.contrast_start": "ai:gating:session",
     "gating.next": "ai:gating:session",
     "gating.answer": "ai:gating:session",
     "gating.session_status": "ai:gating:session",

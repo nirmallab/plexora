@@ -1670,12 +1670,17 @@ class GatingSidebarController {
         // A marker the Single Cell Classifier decides: its calls, not a range.
         const classified = this.classifier?.describeIndicator(name);
         if (classified) return classified;
-        if (!this.hasCustomGate(name)) return null;
+        // A gating session's layer beside a threshold that still decides: the
+        // dot is drawn hollow (gating.css matches these words), and the gate
+        // follows them.
+        const layer = this.classifier?.describeSessionLayer?.(name) || null;
+        if (!this.hasCustomGate(name)) return layer;
         const fullName = this.dataLayer.getFullChannelName(name);
         const range = this.gatingList.gating_channels[fullName];
         const row = this.provenance[fullName] || this.provenance[name];
         const how = row ? ` · ${describeGateProvenance(row, { long: true })}` : "";
-        return `Gated ${this.sidebar.formatValue(range[0])}–${this.sidebar.formatValue(range[1])}${how}`;
+        const gated = `Gated ${this.sidebar.formatValue(range[0])}–${this.sidebar.formatValue(range[1])}${how}`;
+        return layer ? `${layer} · ${gated}` : gated;
     }
 
     // Gate-specific rounding: precision is derived from the channel's own

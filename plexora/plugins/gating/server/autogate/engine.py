@@ -411,6 +411,11 @@ class Engine(BaseEngine):
         super()._migrate()
         record = self.record
         options = record["options"]
+        if "classifier" not in record:
+            # Stored before the classifier layer (2026-10-19): it resumes
+            # without one, as it was started.
+            record["classifier"] = {"schema": 0}
+            options["classifier"] = "off"
         if "hybrid" in options:
             if options.pop("hybrid") in ("tiles", "full"):
                 options["tiles"] = True
@@ -817,6 +822,9 @@ class Engine(BaseEngine):
             unit["confidence"] = state_confidence(state)
         self.log(event="closed", unit=unit_key(unit["project"], unit["marker"]),
                  state=state, reason=reason, confidence=unit.get("confidence"))
+        from plexora.plugins.gating.server.autogate import cellcalls
+
+        cellcalls.after_write(self, unit)
         try:
             self.reference_failed(unit)
         except Exception:  # the evidence graph is a guide; closing must not fail on it
@@ -841,6 +849,12 @@ class Engine(BaseEngine):
                        f"{'low' if direction == 'up' else 'high'} and no candidate was chosen; "
                        "written there for manual review", proposed=unit.get("candidate"))
             return
+        from plexora.plugins.gating.server.autogate import cellcalls
+
+        if cellcalls.check(self, unit):
+            # The classifier disagrees with this gate beside it: the cells it
+            # flags get a look first (once per marker; `cellcalls.check`).
+            return
         confidence = confidence_for(unit)
         state = state_for(confidence)
         tier = {"t1": "T1", "t2": "T2", "t3": "T3", "t4": "T4",
@@ -855,6 +869,7 @@ class Engine(BaseEngine):
         unit["reason"] = unit.get("reason") or f"accepted at {tier}"
         self.log(event="accepted", unit=unit_key(unit["project"], unit["marker"]),
                  state=state, confidence=confidence, low=unit.get("final"), tier=tier)
+        cellcalls.after_write(self, unit)
         try:
             from plexora.plugins.gating.server.autogate import replan
 
@@ -1150,6 +1165,17 @@ class Engine(BaseEngine):
         return ([{"marker": r["marker"], "relation": r["relation"], "gate": book[r["marker"]]["gate"],
                   "confidence": r["grade"], "weight": r["weight"], "derived": r["derived"]}
                  for r in refs if book[r["marker"]]["gate"] is not None], panel, grades)
+
+    def task_of(self, kind, units):
+        """A look at candidates that is a classifier check is its own task,
+        `gating.classifier_check` (`tasks.yaml`), so its model is set apart
+        from the candidate look's."""
+        from plexora.ai import tasks
+        from plexora.plugins.gating.server.autogate import cellcalls
+
+        if kind == "t4_candidates" and any(cellcalls.pending(u) for u in units or ()):
+            return tasks.task_for(self.MODULE, kind, check="classifier")
+        return super().task_of(kind, units)
 
     def panel_for(self, project):
         """The image's panel context with the session's biology laid over it

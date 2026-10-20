@@ -826,6 +826,135 @@
     color: var(--accent-warning);
 }
 
+/* A GATING SESSION'S LAYER (gatingClassifier.paintSession). A quiet inset
+   box, not a coloured one: the only colours in it are the two the canvas
+   draws the disagreements in, so the counts are the legend. Every part that
+   hides itself sets `display`, so each restates `[hidden]`. */
+.clf-session[hidden],
+.clf-session-counts[hidden],
+.clf-raw-line[hidden],
+.clf-session-actions[hidden] {
+    display: none;
+}
+
+.clf-session {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: grid;
+    gap: 7px;
+    padding: 8px;
+}
+
+.clf-session-head {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.clf-session-decides {
+    color: var(--text-muted);
+}
+
+.clf-session-counts {
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 11px;
+    gap: 3px 12px;
+    line-height: 1.4;
+}
+
+.clf-session-count {
+    align-items: center;
+    display: inline-flex;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.clf-session-count strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+/* The canvas's own colours for codes 4 and 5 (gatingClassifier.js
+   CLASSIFIER_COLORS): sky blue, a positive below the threshold; magenta, a
+   negative above it. Data colours, not chrome (DESIGN.md). */
+.clf-swatch {
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    flex: 0 0 auto;
+    height: 8px;
+    width: 8px;
+}
+
+.clf-session-count[data-code="4"] .clf-swatch {
+    background: rgb(86, 180, 233);
+}
+
+.clf-session-count[data-code="5"] .clf-swatch {
+    background: rgb(255, 70, 230);
+}
+
+/* None of a kind: still said, so "0 positive below" reads as an answer. */
+.clf-session-count.is-zero {
+    opacity: 0.6;
+}
+
+.clf-raw-line {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    gap: 8px;
+    margin: 0;
+    min-width: 0;
+}
+
+.clf-raw-line .channel-toggle-switch {
+    flex: 0 0 auto;
+}
+
+.clf-session-actions {
+    margin-top: 0;
+}
+
+/* Adopt is the block's one primary action: Signal Cyan with near-black
+   lettering (DESIGN.md, Buttons). Discard beside it stays secondary. */
+.clf-adopt-button {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #05070a;
+    font-weight: 600;
+}
+
+.clf-adopt-button:hover,
+.clf-adopt-button:focus-visible {
+    background: #5cc9fb;
+    color: #05070a;
+}
+
+.clf-adopt-button:disabled,
+.clf-adopt-button:disabled:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* The marker list's dot for a marker a gating session classified while the
+   threshold decides: hollow, in the filled dot's green. The list is core's
+   (SearchableSelect, viewer.css) and takes only a title for its dot, so the
+   rule matches the words gatingClassifier.describeSessionLayer starts it
+   with; the list is mounted outside this panel, hence no id in front. */
+.marker-combobox-option-indicator[title^="Classified by gating session"] {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px #2bd46f;
+}
+
 /* Reviewing uncertain cells. The line and the bar both set `display`, so
    each restates `[hidden]` (an attribute loses to a class that sets it). */
 .clf-review-line[hidden],
@@ -999,6 +1128,14 @@
 
 .clf-hover-title[data-tone="uncertain"]::before {
     background: var(--accent-warning);
+}
+
+.clf-hover-title[data-tone="added"]::before {
+    background: rgb(86, 180, 233);
+}
+
+.clf-hover-title[data-tone="removed"]::before {
+    background: rgb(255, 70, 230);
 }
 
 .clf-hover-rows {

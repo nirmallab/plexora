@@ -349,6 +349,16 @@ def test_gating_cores_shared_maths_imports_nothing_from_autogate():
         assert not any("autogate" in name for name in _imports(REPO / rel)), rel
 
 
+def test_the_classifier_and_the_experience_record_import_nothing_from_autogate():
+    """The Single Cell Classifier is Free: automatic gating trains it at its
+    gates (autogate/cellcalls.py), never the other way round."""
+    files = sorted((REPO / "plexora/plugins/gating/server/classifier").glob("*.py"))
+    files.append(REPO / "plexora/plugins/gating/server/experience.py")
+    files.append(REPO / "plexora/plugins/gating/capabilities_classifier.py")
+    for path in files:
+        assert not any("autogate" in name for name in _imports(path)), path.name
+
+
 #: Every place gating's manual half, or core, still reaches into the automatic
 #: (Paid) package. Pinned so the list can only shrink on purpose; each entry is
 #: a step in docs/LICENSING.md's "splitting out plexora-ai".

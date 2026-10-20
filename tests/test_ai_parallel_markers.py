@@ -370,6 +370,9 @@ def test_a_record_with_one_outstanding_packet_in_scalars_still_loads(tmp_path, s
                                          "include_next": False}))
     packet = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))["packet"]
     unit_key = engines.unit_key("gpar", packet["units"][0]["marker"])
+    # The session's classifier job (it reads features ahead) saves the record
+    # too: done before the record is rewritten by hand here.
+    jobs.drain(60)
     store = engines.store()
     record = store.load(sid)
     entry = record.pop("outstanding")[packet["packet_id"]]

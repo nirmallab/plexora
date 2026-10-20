@@ -153,6 +153,37 @@ with each image's examples and runs. Only this image's rows are written.
 The pixel features are built where the image is: on this machine for a local
 image, on the data node for one held there.
 
+### After automatic gating
+
+A gating session also trains the classifier at each gate it writes and keeps
+its calls beside the threshold. The threshold still decides the marker: it
+is what Thresholding shows, saves and exports. In classifier mode a marker
+with such a layer has a hollow dot, and the line under the buttons says
+which session made it, at which gate, and how many cells it calls the other
+way from the gate. Cells above the gate that it calls negative are drawn
+magenta; cells below the gate it calls positive, sky blue.
+
+- **Adopt** lets the layer decide the marker, as a run of your own would.
+  The eraser hands the marker back to its threshold and keeps the layer
+  drawn.
+- **Discard** removes the layer (also in **•••**).
+- **Show the classifier's own opinion** draws what the model called before
+  it was weighed against the gate.
+
+The layer only takes positives away: a cell above the gate is called
+negative when the model is sure (score below 0.3); it adds none below the
+gate. On our own labelled test cells that agreed better with them than the
+gate alone, and every cell it took away was one we had called negative,
+where the model's own additions below the gate were right about half the
+time. Moving
+the gate afterwards marks the layer stale (**the gate moved since this
+run**). **Review uncertain cells** works on a layer as on a run of your own;
+your answers train the next run.
+
+The binary, scores and **overrides** CSVs carry the layers too. In the
+overrides file, 1 is a cell called positive below its gate, −1 one called
+negative above it and 0 one that agrees.
+
 ## Controls
 
 - **Marker** — which column's values the slider and the picture on screen

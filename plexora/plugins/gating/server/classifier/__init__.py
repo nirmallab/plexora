@@ -11,7 +11,10 @@ before its first run and keeps the examples.
 - `store`    -- examples, run records and per-row arrays, in gating's store
 - `features` -- the per-cell feature matrix, cached; pixels read where they are
 - `learner`  -- the model and its fit
-- `runs`     -- run / revert / reset: the state machine
+- `runs`     -- run / revert / reset: the state machine, and a gating
+                session's layer at its gate (`session_run`)
+- `rules`    -- gate unless confident: how a gate and a score make one call
+- `signal`   -- how well a marker separates; the bands either side of a gate
 - `calls`    -- which source decides a marker (threshold or classifier), and
                 its calls -- the seam every consumer reads through
 - `export`   -- the two wide CSVs, the annotations JSON, and its import
@@ -35,6 +38,9 @@ SOURCES = ("threshold", "classifier")
 
 #: One byte per table row in what the viewer draws (`calls.viewer_codes`).
 VIEW_NEGATIVE, VIEW_POSITIVE, VIEW_NOT_CLASSIFIED, VIEW_UNCERTAIN = 0, 1, 2, 3
+#: Where a run made at a gate parts ways with it: positive below the
+#: threshold, negative above it.
+VIEW_ADDED, VIEW_REMOVED = 4, 5
 
 
 class ClassifierRefused(ValueError):

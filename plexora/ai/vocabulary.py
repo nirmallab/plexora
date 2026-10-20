@@ -49,6 +49,11 @@ ROLES = ("context", "lineage_reliable", "lineage_other", "tumour_stromal", "stat
          "signalling")
 COMPARTMENTS = ("nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic", "extracellular")
 RELATIONS = ("subset", "coexpressed", "exclusive")
+#: What the stain is shaped like (markers.yaml's `morphology`; absent is
+#: `cell`). `fibrous`: fibres, processes or vessel walls run between cells
+#: and across their masks, so stain beside a nucleus is weak evidence of its
+#: own (`autogate/cellcalls.reading_for`).
+MORPHOLOGIES = ("cell", "fibrous")
 CONFIDENCE = ("high", "moderate", "low")
 
 #: The canonical name of the nuclear stain.
@@ -166,8 +171,13 @@ def load() -> dict:
 def _shipped() -> dict:
     import yaml
 
-    with open(PATH, encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
+    text = PATH.read_bytes()
+    raw = yaml.safe_load(text) or {}
+    # The file's own digest beside its `version`: a stored panel context
+    # rebuilds when the version changes (`context.for_project`), and an edited
+    # caveat that left `version` alone kept reaching readers in its old words
+    # (lsp11385 PCNA, 2026-10-20).
+    digest = hashlib.sha1(text).hexdigest()[:8]
     entries = {}
     lookup = {}
     for entry in raw.get("markers") or []:
@@ -180,7 +190,8 @@ def _shipped() -> dict:
         entries[entry["canonical"]] = entry
         for alias in [entry["canonical"], *entry["synonyms"]]:
             lookup.setdefault(fold(alias), entry["canonical"])
-    return {"version": str(raw.get("version") or "0"), "entries": entries, "lookup": lookup}
+    return {"version": f"{raw.get('version') or 0}.{digest}", "entries": entries,
+            "lookup": lookup}
 
 
 def _read_learned(path) -> list:
@@ -221,7 +232,7 @@ def _load(signature) -> dict:
     if learned_entries:
         digest = hashlib.sha1(repr(sorted(
             (e["canonical"], e.get("role"), e.get("compartment"), e.get("lineage"),
-             e.get("binary"),
+             e.get("binary"), e.get("morphology"),
              tuple((p.get("marker"), p.get("relation")) for p in e["partners"]))
             for e in learned_entries)).encode("utf-8")).hexdigest()[:10]
         version = f"{version}+learned.{digest}"
@@ -232,13 +243,14 @@ def _load(signature) -> dict:
 def clear_cache():
     """Forget what was read: the next `load` reads both layers again."""
     _signature.update(at=0.0, value=None)
+    _shipped.cache_clear()
     _load.cache_clear()
 
 
 def check(entry):
     """ValueError naming the entry when it uses a value outside the schema."""
     name = entry.get("canonical")
-    allowed = {"role": ROLES, "compartment": COMPARTMENTS}
+    allowed = {"role": ROLES, "compartment": COMPARTMENTS, "morphology": MORPHOLOGIES}
     for field, values in allowed.items():
         if entry.get(field) is not None and entry[field] not in values:
             raise ValueError(f"markers.yaml entry {name!r}: {field} {entry[field]!r} is not "
@@ -393,7 +405,7 @@ def learn(entries, *, source="ai", about=None) -> list:
 
     `entries`: [{canonical, role, compartment?, lineage?, binary?, partners?
     [{marker (a canonical name), relation, confidence}], caveats?,
-    expected_fraction?, synonyms?}]. A name the shipped layer knows is never
+    expected_fraction?, synonyms?, morphology?}]. A name the shipped layer knows is never
     written; one already learned is replaced only by the user's word over a
     model's (`LEARNED_SOURCES`). `about` (who, from which session, project)
     is kept with each entry. Returns the names written."""
@@ -401,7 +413,7 @@ def learn(entries, *, source="ai", about=None) -> list:
         raise ValueError(f"source is one of {LEARNED_SOURCES}")
     shipped = _shipped()["lookup"]
     fields = ("role", "compartment", "lineage", "binary", "partners", "caveats",
-              "expected_fraction", "synonyms")
+              "expected_fraction", "synonyms", "morphology")
     rank = {s: i for i, s in enumerate(LEARNED_SOURCES)}
     written = []
     with _LEARN_LOCK:

@@ -1550,7 +1550,9 @@ def _build_ai_parser():
                        help="Print the raw lines as JSON, one per line.")
     bench = subs.add_parser("bench", help="Benchmark automatic gating or QC against known "
                                           "truth.")
-    bench.add_argument("bench_target", choices=("gating", "qc"))
+    bench.add_argument("bench_target", choices=("gating", "qc", "experience"),
+                       help="experience: what finished gating sessions and the corrections "
+                            "after them say, as ledger lines (reads, changes nothing).")
     from plexora.ai import bench as bench_module, bench_data
 
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
@@ -1593,10 +1595,18 @@ def _build_ai_parser():
     bench.add_argument("--variants", default="baseline",
                        help="Gating: the ablation's variants, comma-separated -- "
                             "baseline, tiles (every look drawn as the 2 x 2 multi-view "
-                            "block); each runs its own session (default baseline).")
+                            "block), absence (the absence check on), check (the classifier "
+                            "check on), no_classifier (no classifier layer); each runs its "
+                            "own session (default baseline).")
     bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
                        help="With --truth csv:<path>: the header column holding the gates "
                             "(\"Human gate\"); the markers are the first column.")
+    bench.add_argument("--exclude-version", dest="exclude_version", action="append",
+                       default=None, metavar="TAG",
+                       help="With experience: leave out decisions made on a version whose "
+                            "tag contains TAG (repeatable).")
+    bench.add_argument("--json", dest="bench_json", action="store_true",
+                       help="With experience: print the summary as JSON.")
     _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
 
     # Plexora's own harness: AI features with no external agent, billed in
@@ -1841,6 +1851,12 @@ def _run_ai(args):
                              label=getattr(args, "label", ""),
                              expires_days=getattr(args, "expires_days", None),
                              token_id=getattr(args, "token_id", None))
+    if command == "bench" and args.bench_target == "experience":
+        from plexora.ai import bench_experience
+
+        return bench_experience.command(projects=args.bench_projects, out=args.out,
+                                        exclude_version=tuple(args.exclude_version or ()),
+                                        as_json=args.bench_json)
     if command == "bench" and args.bench_target == "qc":
         from plexora.ai import bench_qc
 

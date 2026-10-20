@@ -49,6 +49,9 @@ PROFILES: dict[str, tuple | None] = {
         "render_region", "render_gate_validation", "render_gating_collage", "render_cell_gallery",
         "sample_gating_cells", "sample_gate_validation_regions", "explain_cell", "get_qc_exclusions",
         "object_z_profile",
+        # The classifier layer a session leaves beside each gate (review-gating).
+        "gating_session_classifier", "classifier_state", "classifier_review",
+        "classifier_adopt", "classifier_revert", "classifier_export",
     ),
     # Auto contrast on its own: how bright each marker is drawn, set by a
     # contrast run (contrast_session_start), whose packets go through the

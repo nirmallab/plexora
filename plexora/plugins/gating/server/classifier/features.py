@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 
 import numpy as np
 
@@ -262,6 +263,29 @@ def _transform_pixels(features):
     return out
 
 
+#: {(project, marker): lock}: one pixel pass per marker at a time, so a
+#: gating session reading ahead and a wand press share it.
+_PASS_LOCKS: dict = {}
+_PASS_GUARD = threading.Lock()
+
+
+def _pass_lock(ds, marker):
+    with _PASS_GUARD:
+        return _PASS_LOCKS.setdefault((ds.name, marker), threading.Lock())
+
+
+def pixels_ready(ds, marker) -> tuple:
+    """(ready, reason): whether the marker's pixel features are cached (or
+    cannot exist, so there is nothing to wait for -- `reason` says why)."""
+    try:
+        plan = _PixelPlan(ds, marker)
+    except Exception as exc:  # noqa: BLE001
+        return True, f"pixels unreadable: {exc}"
+    if plan.reason:
+        return True, plan.reason
+    return _cache_path(ds, marker, plan.key()).is_file(), None
+
+
 def pixel_features(ds, marker, *, progress=None, cancelled=None):
     """(matrix float32 [rows, k] or None, names, info)."""
     from plexora.plugins.gating.server.classifier.geometry import cells
@@ -271,28 +295,29 @@ def pixel_features(ds, marker, *, progress=None, cancelled=None):
     if plan.reason:
         return None, [], {"pixels": False, "reason": plan.reason}
     path = _cache_path(ds, marker, plan.key())
-    cached = None
-    if path.is_file():
-        try:
-            cached = cell_features.unpack(path.read_bytes())
-        except (OSError, ValueError, KeyError):
-            cached = None
     where = "cache"
-    if cached is None:
-        image_binding = ds.project.resource("image")
-        where = "node" if image_binding is not None else "local"
-        if image_binding is not None:
-            labels, features = _accumulate_node(ds, plan, progress, cancelled)
+    with _pass_lock(ds, marker):
+        cached = None
+        if path.is_file():
+            try:
+                cached = cell_features.unpack(path.read_bytes())
+            except (OSError, ValueError, KeyError):
+                cached = None
+        if cached is None:
+            image_binding = ds.project.resource("image")
+            where = "node" if image_binding is not None else "local"
+            if image_binding is not None:
+                labels, features = _accumulate_node(ds, plan, progress, cancelled)
+            else:
+                labels, features = _accumulate_local(ds, plan, progress, cancelled)
+            store.write_atomic(path, cell_features.pack(labels, features))
+            # One cached matrix per marker: an older one was built from pixels
+            # or a mask that are no longer the project's.
+            for old in path.parent.glob(f"{store.safe_name(marker)}_*.npz"):
+                if old != path:
+                    old.unlink(missing_ok=True)
         else:
-            labels, features = _accumulate_local(ds, plan, progress, cancelled)
-        store.write_atomic(path, cell_features.pack(labels, features))
-        # One cached matrix per marker: an older one was built from pixels or
-        # a mask that are no longer the project's.
-        for old in path.parent.glob(f"{store.safe_name(marker)}_*.npz"):
-            if old != path:
-                old.unlink(missing_ok=True)
-    else:
-        labels, features = cached
+            labels, features = cached
     geometry = cells(ds)
     ids = geometry.ids
     rows_hit = np.zeros(ids.shape[0], dtype=bool)

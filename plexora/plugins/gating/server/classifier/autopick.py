@@ -53,6 +53,10 @@ import numpy as np
 
 from plexora.plugins.gating.server.classifier import ClassifierRefused
 
+#: Bumped whenever the same project, marker, gate and seed would pick other
+#: cells.
+VERSION = "2"
+
 #: Examples of each class the wand picks.
 N_PER_CLASS = 40
 
@@ -159,12 +163,20 @@ class _Pixels:
                 self.source = None
 
 
-def pick(ds, marker, *, exclude=(), seed=0, recipe=RECIPE, matrix=None, names=None):
+def pick(ds, marker, *, exclude=(), seed=0, recipe=RECIPE, matrix=None, names=None,
+         gate=None, exclude_range=None):
     """(positive cell ids, negative cell ids, info).
 
     `matrix`/`names`: the marker's feature matrix (features.feature_matrix),
     whose pixel columns the agreement, glow and hard-negative rules read.
     Without them the picks are by the table alone.
+
+    `gate`: the value positive starts at, in the table's units -- a gating
+    session's gate; None picks from the mixture fit's (`model.gmm_for`), as
+    the panel's wand does. `exclude_range` (low, high): no cell whose value
+    lies inside it is picked -- the bands just either side of a session's
+    gate, which are what its layer is asked to judge, never what it learns
+    from.
     """
     from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.classifier import runs
@@ -179,14 +191,18 @@ def pick(ds, marker, *, exclude=(), seed=0, recipe=RECIPE, matrix=None, names=No
         eligible &= ~skip
     if exclude:
         eligible &= ~np.isin(geometry.ids, np.asarray(list(exclude), dtype=np.int64))
+    if exclude_range is not None:
+        lo, hi = (float(v) for v in exclude_range)
+        eligible &= ~((values >= lo) & (values <= hi))
     rows = np.flatnonzero(eligible)
     if rows.size < 6:
         raise ClassifierRefused(f"Too few cells with a value for {marker} to pick examples from")
-    gate = None
-    try:
-        gate = (model.gmm_for(ds, marker) or {}).get("gate")
-    except Exception:
-        gate = None
+    gate_from = "given" if gate is not None else "mixture"
+    if gate is None:
+        try:
+            gate = (model.gmm_for(ds, marker) or {}).get("gate")
+        except Exception:
+            gate = None
     how = "gate"
     hard = np.zeros(0, dtype=np.int64)
     glow_test = None
@@ -236,7 +252,9 @@ def pick(ds, marker, *, exclude=(), seed=0, recipe=RECIPE, matrix=None, names=No
         raise ClassifierRefused(f"No clear positive and negative cells to pick for {marker}; "
                                 "label a few yourself and press Train")
     return ([int(v) for v in geometry.ids[pos_rows]], [int(v) for v in geometry.ids[neg_rows]],
-            {"how": how, "gate": gate,
+            {"how": how, "gate": gate, "gate_from": gate_from,
+             "exclude_range": None if exclude_range is None else [float(v) for v in exclude_range],
+             "version": VERSION,
              "candidates_positive": int(positives.size),
              "candidates_negative": int(negatives.size),
              "hard_negatives": int(hard_rows.size),

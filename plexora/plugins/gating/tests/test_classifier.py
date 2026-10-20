@@ -159,7 +159,7 @@ def test_the_eraser_restores_the_baseline_and_keeps_examples(ds, made):
     assert state["baseline"]["active"] == "threshold"
     assert state["baseline"]["gate"]["low"] == 400.0
     result = runs.revert(ds, "CD8")
-    assert result == {"reverted": True, "active": "threshold"}
+    assert result == {"reverted": True, "active": "threshold", "discarded": False}
     assert calls.active_source(ds, "CD8") == "threshold"
     assert store.run_record(ds.name, "CD8") is None
     assert store.examples(ds.name, "CD8") == ([*made["positives"][:4]], [*made["negatives"][:4]])

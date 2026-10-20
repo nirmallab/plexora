@@ -326,9 +326,14 @@ def save_gates_to_anndata(
 #: `operation_id` is the receipt that last set the gate, so a reader of the
 #: file (SCIMAP Pro, through the bridge) can find the operation in Plexora's
 #: audit log; empty for a gate set by hand in the sidebar, which leaves none.
+#: `source` is what decides the marker's calls: "threshold" (this value) or
+#: "classifier" (the Single Cell Classifier's column of
+#: `layers["plexora_binary"]`); `classifier_run` the run whose calls are in
+#: that column -- the deciding run, else a gating session's layer -- whose
+#: record is in `uns["plexora_classifier"]`. Empty for a marker without one.
 PROVENANCE_COLUMNS = ("marker", "image_id", "value", "method", "status", "confidence",
                       "session_id", "timestamp", "operation_id", "call_mode",
-                      "qc_fingerprint", "n_not_called")
+                      "qc_fingerprint", "n_not_called", "source", "classifier_run")
 
 
 def save_gate_provenance(source, datasource_name, rows, table_name="gates_provenance",

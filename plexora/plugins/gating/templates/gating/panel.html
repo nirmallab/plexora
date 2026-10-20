@@ -139,6 +139,46 @@
        not-classified counts beside it. And one status line under it: what
        is happening, what is missing, or why the calls are stale. #}
     <div id="clf_summary" class="clf-summary gate-classifier-only" hidden></div>
+    {# A GATING SESSION'S LAYER. Automatic gating trains the classifier at
+       each gate it writes and keeps the calls beside the threshold, which
+       still decides the marker (and is what Thresholding exports) until the
+       layer is adopted here. The block names the session and the gate, and
+       counts where the two part ways in the two colours the canvas draws them
+       in -- the legend and the numbers are one thing. Adopt makes the layer
+       decide; Discard forgets it; the switch draws the classifier's own 0.5
+       call instead of the rule's. Hidden without a layer; for an adopted one
+       only the head and the counts stay (gatingClassifier.paintSession). #}
+    <div id="clf_session" class="clf-session gate-classifier-only" role="group"
+         aria-label="Gating session layer" hidden>
+        <div id="clf_session_head" class="clf-session-head"></div>
+        <div class="clf-session-counts">
+            <span class="clf-session-count" data-code="5"
+                  title="Cells above the threshold the classifier calls negative">
+                <span class="clf-swatch" aria-hidden="true"></span>
+                <strong id="clf_session_removed">0</strong> negative above the gate</span>
+            <span class="clf-session-count" data-code="4"
+                  title="Cells below the threshold the classifier calls positive">
+                <span class="clf-swatch" aria-hidden="true"></span>
+                <strong id="clf_session_added">0</strong> positive below</span>
+        </div>
+        <label id="clf_raw_line" class="clf-raw-line"
+               title="Draw the classifier's own call (score 0.5 and above is positive) instead of the threshold's call corrected where the classifier is confident">
+            <input id="clf_raw_toggle" class="channel-toggle-switch" type="checkbox">
+            <span>Show the classifier's own opinion</span>
+        </label>
+        <div id="clf_session_actions" class="layer-card-actions clf-session-actions">
+            <button id="clf_adopt_button" class="layer-card-action clf-adopt-button" type="button"
+                    title="Let these calls decide the marker instead of the threshold">
+                <span class="fas fa-check" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Adopt</span>
+            </button>
+            <button id="clf_discard_button" class="layer-card-action" type="button"
+                    title="Forget this session's calls for the marker (the threshold is not changed)">
+                <span class="fas fa-trash-can" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Discard</span>
+            </button>
+        </div>
+    </div>
     {# After a run with amber cells: a few of them, spread across the tissue,
        one at a time, each labelled from the keyboard; then Train again. On
        the user's own labelled cells, four such labels after a wand run lifted

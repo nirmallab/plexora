@@ -142,20 +142,21 @@ def server_is_remote():
 
 
 def image_streamed(project):
-    """Whether a sample's image reaches this process over a network.
-
-    Read from a web address (http(s), s3, gs, az ...: `is_remote_locator`) or
-    held by a data node (a `node://` address, or the image resource bound to
-    one), rather than off this machine's disk. What the viewer's default tile
-    quality turns on (main.js): HD tiles are 16-bit PNGs, many times the bytes
-    of the fast WebP ones, which costs nothing over loopback and a great deal
-    over a link.
+    """Whether a sample's image is read from a web address with no compute
+    beside it (http(s), s3, gs, az ...: `is_remote_locator`), rather than off
+    a disk some Plexora reads -- this machine's, or a data node's. What the
+    viewer's default tile quality turns on (main.js): from a web address
+    every tile is built here from ranged reads across the link, and a 16-bit
+    HD PNG is many times the bytes of a fast WebP one. A data node builds its
+    tiles where the image is (the user's rule, 2026-10-19: a node does not
+    count; through an ssh tunnel to HMS O2 a 2.1 MB HD tile took ~35 ms).
     """
-    from plexora.server.providers.base import is_addressed
+    from plexora.server.providers.base import is_remote_locator
 
     binding = project.resources.get("image") if project.resources else None
-    return bool(is_addressed(project.image.src)
-                or (binding is not None and binding.is_node))
+    if binding is not None and binding.is_node:
+        return False
+    return bool(is_remote_locator(project.image.src))
 
 
 def template_data(**values):

@@ -908,6 +908,15 @@ def t4_candidates(engine, units):
                      f"no admissible threshold {'above' if direction == 'up' else 'below'} "
                      "the current gate (the marker's lattice ends here)")
         return None
+    from plexora.plugins.gating.server.autogate import cellcalls
+
+    reach = latmod.chain(lat, current, direction, max_points=cellcalls.CHECK_REACH)
+    check = _pending_check(unit, current, direction, reach)
+    if check is not None:
+        # The check's own points (`cellcalls.check_points`: none a sliver,
+        # any along the walk to its anchor).
+        ends = [round(float(r["point"]), 9) for r in check["rows"]]
+        points = [p for p in reach if round(float(p["low"]), 9) in ends]
     ids = [f"c{index + 1}" for index in range(len(points))]
     unit["candidates"] = {cid: p["low"] for cid, p in zip(ids, points)}
     unit["candidate_steps"] = {cid: p["id"] for cid, p in zip(ids, points)}
@@ -929,7 +938,8 @@ def t4_candidates(engine, units):
     names = {index: (f"{collage.compact_number(iv['from'])} to "
                      f"{collage.compact_number(iv['to'])}")
              for index, iv in enumerate(intervals)}
-    rows = views.flip_rows(ordered, labels=names)
+    rows = views.flip_rows(ordered, labels=names) if check is None \
+        else _check_rows(ds, unit, check, names)
     layout, partner_panels, multiview = _multiview(engine, unit, ds)
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "flips", rows=rows, marker=channel,
@@ -951,17 +961,37 @@ def t4_candidates(engine, units):
     rows_ev = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
                 "n_flip": iv["n_flip"]}
                for index, iv in enumerate(intervals)]
+    if check is not None:
+        rows_ev = [{"row": row["key"], "from": iv["from"], "to": iv["to"],
+                    "n_shown": len(row["cells"])}
+                   for iv, pair in zip(intervals, _pairs(rows)) for row in pair]
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     t4_guide = ["rows", "collage_t2m", "collage_flips_m" if layout else "collage_flips",
                 "sheet_candidates", "sheet", "partners"]
     if not layout:
         t4_guide.remove("collage_t2m")
+    question = (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
+                "call between neighbouring thresholds, nearest the current gate first. "
+                f"For EVERY row, do those cells carry their OWN {stain} stain, around "
+                "the nucleus the ticks mark? One word per row.")
+    if check is not None:
+        question = (f"{unit['marker']} ({ds.name}): the rows come in pairs (i1a and i1b, "
+                    "i2a and i2b, ...), nearest the current gate first; both rows of a pair "
+                    "hold cells from the same range of values, picked in two different ways. "
+                    f"Judge EVERY row on its own: do its cells carry their OWN {stain} stain, "
+                    "around the nucleus the ticks mark? One word per row.")
+        if check.get("reading") == "count":
+            question = (f"{unit['marker']} ({ds.name}): the rows come in pairs (i1a and i1b, "
+                        "i2a and i2b, ...), nearest the current gate first; both rows of a "
+                        "pair hold cells from the same range of values, picked in two "
+                        "different ways. For EVERY row on its own, count its cells that "
+                        f"carry their OWN {stain} stain around the nucleus the ticks mark "
+                        "(a ring or halo around it, a fill inside it, cytoplasm hugging it); "
+                        "stain around another nucleus does not count. Answer `counts`, one "
+                        "number per row (or `cannot_tell`).")
     packet = {
-        "question": (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
-                     "call between neighbouring thresholds, nearest the current gate first. "
-                     f"For EVERY row, do those cells carry their OWN {stain} stain, around "
-                     "the nucleus the ticks mark? One word per row."),
+        "question": question,
         "evidence": {"partners": _partner_line(numbers),
                      "marker": unit["marker"], "project": ds.name, "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
@@ -974,12 +1004,71 @@ def t4_candidates(engine, units):
                     "verdicts": list(schemas.ROW_VERDICTS)},
         "_image_meta": [],
     }
+    if check is not None:
+        packet["evidence"]["pairs"] = len(rows) // 2
+        # Its own AI task (`tasks.yaml` gating.classifier_check), for a
+        # harness that routes by the packet.
+        packet["evidence"]["check"] = "classifier"
+        if check.get("reading") == "count":
+            packet["evidence"]["reading"] = "count"
+            # Each row's most: its cell count.
+            packet["allowed"] = {"intervals": packet["allowed"]["intervals"],
+                                 "counts": {r["key"]: len(r["cells"]) for r in rows}}
     images = _images(packet, (
         (main, "flips_collage", "cells between neighbouring thresholds, nearest first"),
         (context_sheet, "context_sheet", "each candidate in the tissue, candidates on the "
                                          "plot")))
     unit["last_manifest"] = main["manifest"]
     return packet, images
+
+
+def _pending_check(unit, current, direction, points):
+    """The classifier check this look is for (`cellcalls.check`), when the
+    unit has one not yet shown and its rows end at points of this chain; a
+    check whose points moved (the lattice was split since) is dropped."""
+    from plexora.plugins.gating.server.autogate import cellcalls
+
+    check = cellcalls.pending({**unit, "direction": direction, "candidate": current})
+    if check is None:
+        return None
+    ends = [round(float(r["point"]), 9) for r in check["rows"]]
+    lows = [round(float(p["low"]), 9) for p in points]
+    if [e for e in lows if e in ends] != ends:
+        check["asked"] = True
+        check["dropped"] = "the candidates changed before the look"
+        return None
+    return check
+
+
+def _check_rows(ds, unit, check, names):
+    """Two collage rows per interval, `i<k>a` and `i<k>b`: the cells the
+    classifier flags and the cells it agrees on, in the order `check_rows`
+    drew (which is which is never in the packet)."""
+    from plexora.agent.evidence.collage import compact_number
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+    from plexora.plugins.gating.server.autogate import profile as profmod
+    from plexora.plugins.gating.server.autogate import sampler
+
+    c = cellmod.cells(ds)
+    v = cellmod.values(ds, unit["marker"])
+    col = profmod.column(ds, unit["marker"])
+    rows = []
+    for index, row in enumerate(check["rows"]):
+        halves = {row["flagged_is"]: row["flagged"],
+                  "b" if row["flagged_is"] == "a" else "a": row["control"]}
+        for tag in ("a", "b"):
+            key = f"i{index + 1}{tag}"
+            cells = [sampler._record(c, v, col, int(r), "flip", "flips", None)
+                     for r in halves[tag]]
+            rows.append({"key": key,
+                         "label": f"{key}: {names.get(index) or ''} ({len(cells)} cells)",
+                         "cells": [dict(cell, caption=compact_number(cell["value"]))
+                                   for cell in cells]})
+    return rows
+
+
+def _pairs(rows):
+    return [rows[i:i + 2] for i in range(0, len(rows), 2)]
 
 
 # -- confirmations -------------------------------------------------------------------
@@ -1438,14 +1527,17 @@ def panel_context(engine, units):
         return None
     packet = {
         "question": ("Plexora's vocabulary does not know these markers. For each, give its "
-                     "role, compartment, lineage, whether it is binary, and partners -- only "
-                     "markers of this panel, only what you are confident of. Skip any you "
-                     "do not know; they are gated on their own data."),
+                     "role, compartment, lineage, whether it is binary, its morphology (cell, "
+                     "or fibrous: fibres, processes or vessel walls running between cells), "
+                     "and partners -- only markers of this panel, only what you are "
+                     "confident of. Skip any you do not know; they are gated on their own "
+                     "data."),
         "evidence": {"unresolved": unresolved,
                      "panel": [{"marker": m, "canonical": panel["entries"][m].get("canonical"),
                                 "role": panel["entries"][m].get("role")}
                                for m in panel["markers"]],
                      "roles": list(context.ROLES),
+                     "morphologies": list(context.MORPHOLOGIES),
                      "rule": "your entries order the markers and pick references; they never "
                              "move a gate, and the vocabulary outranks them"},
         "allowed": ["entries"],

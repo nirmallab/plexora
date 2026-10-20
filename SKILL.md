@@ -3253,6 +3253,39 @@ deliberately left out and what should be built next.
   (`anndata_gates.save_not_called`, from the `gating.save_gates` payload
   `capabilities.py` builds), and the provenance rows written with it carry
   `call_mode`, `qc_fingerprint` and `n_not_called`.
+- `plexora/plugins/gating/server/autogate/cellcalls.py` and `plugins/gating/server/classifier/` — the Single Cell Classifier beside a gating session's gates.
+  `SessionOptions.classifier` is `off|layer|check`, default `layer`
+  (`schemas.CLASSIFIER_MODES`): the session job `gating.session_classifier`
+  reads pixel features ahead and builds a *pending* layer per written gate,
+  which never decides the marker until the user adopts it. `check` (off by
+  default, unmeasured) trains the classifier at a looked-at candidate and,
+  where it disagrees with the gate in the next row on either side, shows the
+  flagged cells beside agreed ones (unmarked pairs `i<k>a/b`) in a T4 look;
+  the gate walks past each pair the look reads the classifier's way
+  (`cellcalls.confirms`; rows at least a half-band wide, `check_points`;
+  `check_reading` auto|word|mixed|count; auto = word for a fibrous marker,
+  markers.yaml `morphology`, else mixed); the check look is AI task
+  `gating.classifier_check`. The layer's own rule still adds nothing:
+  the classifier's positives below a gate were right 47 % of the time
+  (`docs/internal/bench/CLASSIFIER_RULE_2026-10-19.md`). `rules.py`
+  is the one per-cell rule the session layer, the viewer's codes and the bench
+  all call (`apply`): `gate_unless_confident` cleans only (`C_CLEAN` 0.3,
+  `C_ADD` None), because on poor-signal images the classifier over-calls, so
+  its negatives above a gate are better evidence than its positives below
+  one. `signal.py` grades a marker's signal (Ashman D) and builds the bands
+  beside a gate. The store keeps a second slot, `session_run`, beside `run`
+  in `state.json` (`runs.session_run`, `adopt_session`, `drop_session_run`,
+  `discard_session_runs`, `revert(discard=)`), so a session never overwrites a
+  panel run. `calls.viewer_codes` adds code 4 (positive below the threshold)
+  and 5 (negative above it). Exports: an overrides CSV, annotations JSON
+  schema 2, `uns["plexora_classifier"]` schema 2; table writes are chunked
+  ops `gating.save_classifier_marker` / `gating.save_classifier_done`.
+- `plexora/plugins/gating/server/experience.py` — the experience record: a
+  decision row per marker a session handled and the correction rows that
+  follow (folder override `PLEXORA_EXPERIENCE_PATH`). `plexora/ai/bench_experience.py`
+  reads it (`plexora ai bench experience`) into ledger lines for a person;
+  nothing tunes itself from it. Bench variants `absence`, `push` and
+  `no_classifier` are in `ai/bench.py`.
 - `plexora/plugins/qc/` — automated image QC, built on the shared
   `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
   Server: `schemas.py` (the closed vocabulary of QC classes and the
@@ -8798,6 +8831,16 @@ in **5.6 s**.
   metadata or an agent (`set_panel_context`) added to them. Neither module hardcodes a CD-number or
   a disease's marker list; a panel with no vocabulary entries builds a tree of
   `unplaced` nodes and a biology overlay with no relations, not a wrong guess.
+- **Autogate imports the classifier, never the reverse** (pinned in
+  `tests/test_licensing_hardening.py`, which also covers `experience.py` and
+  `capabilities_classifier.py`), because the classifier is Free and
+  automatic gating is not. A session never flips which source decides a
+  marker: its layer is pending until adopted. Agent labels weigh 0.5 and never
+  calibrate, and nothing tunes itself from the experience record, because a
+  rule that moved on its own would make the bench unrepeatable.
+- **`absence_check` is off by default** (`SessionOptions.absence_check`,
+  since `feature/gating-generalise`: it lost on the held-out run; bench it
+  with `--variants absence`).
 - **Biology is a prior that never moves a gate.** `SessionOptions.biology`
   (and what `biology.infer` reads off the panel when the user names nothing)
   only orders markers, weighs a reference's relevance

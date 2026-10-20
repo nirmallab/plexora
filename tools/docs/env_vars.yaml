@@ -29,6 +29,11 @@ public:
     description: Where Plexora keeps the markers it learned -- what a model or you said about markers its own vocabulary does not know, so they are not asked about again. A file, or a folder for `learned_markers.yaml`; point several installs at one shared folder and they learn together. `plexora ai vocabulary` lists and forgets them.
     default: <data directory>/vocabulary/learned_markers.yaml
     example: /lab/shared/plexora/vocabulary
+  - name: PLEXORA_EXPERIENCE_PATH
+    group: Data
+    description: A folder for automatic gating's experience record -- one line per marker each finished gating session decided, and what was done to it afterwards (a gate moved, a classifier layer adopted or discarded). Names, counts, gates and versions only. Read by `plexora ai bench experience`; nothing reads it into a gate. Point several installs at one shared folder to read their runs together.
+    default: <data directory>/.agent/gating/experience
+    example: /lab/shared/plexora/experience
   - name: PLEXORA_MASK_OUTPUT
     group: Data
     description: Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.

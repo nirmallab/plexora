@@ -109,9 +109,15 @@ class T3Answer(T2Answer):
 class T4Answer(_Base):
     kind: Literal["t4_candidates"] = "t4_candidates"
     intervals: dict[str, RowVerdict] = Field(
+        default_factory=dict,
         description="EVERY interval row (i1 nearest the current gate, i2, ...), about the "
                     "cells that change call there. " + _ROWS + " The gate is placed from "
-                    "these words.")
+                    "these words. Leave it empty only when the packet asks for `counts`.")
+    counts: dict[str, Annotated[int, Field(ge=0)] | Literal["cannot_tell"]] | None = Field(
+        None, description="Only when the packet asks for counts (`evidence.reading: "
+                          "count`): EVERY row, how many of its cells carry their OWN stain "
+                          "around the nucleus the ticks mark (0 up to the row's cell "
+                          "count), or `cannot_tell`.")
     confidence: Confidence = Field(description=_CONFIDENCE)
 
 
@@ -165,6 +171,10 @@ class PanelEntry(AgentModel):
     binary: bool = True
     partners: list[dict] = Field(default_factory=list, max_length=context.MAX_PARTNERS,
                                  description=_PARTNERS)
+    morphology: Literal[vocabulary.MORPHOLOGIES] | None = Field(
+        None, description="`fibrous` when the stain runs between cells as fibres, processes "
+                          "or vessel walls (smooth muscle, fibroblasts, endothelium, nerves); "
+                          "`cell` when it belongs to one cell's outline, cytoplasm or nucleus.")
 
 
 class PanelContextAnswer(_Base):

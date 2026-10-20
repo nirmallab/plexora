@@ -234,12 +234,14 @@ class SessionOptions(AgentModel):
                         "expected and one not-expected partner channel from the panel "
                         "context (reading guide `collage_t2m`). Off, the looks are the "
                         "two-panel cells.")
-    absence_check: bool = Field(True, description="Before a marker's first look, show four "
+    absence_check: bool = Field(False, description="Before a marker's first look, show six "
                                 "regions of the tissue with nothing marked and ask whether "
                                 "any cell is clearly positive by its own stain: none in any "
                                 "region closes the marker with no positives (gate at the "
                                 "maximum), and a technical check's failed-stain verdict "
-                                "stands only when the regions agree. False: the first look "
+                                "stands only when the regions agree. Off by default: on 12 "
+                                "held-out images 9 of its 17 closes were real populations of "
+                                "0.5-8 % (bench GATING_GENERALISE). False: the first look "
                                 "comes straight away.")
     split_mixed: bool = Field(True, description="A look at candidates that stops at a row "
                               "judged mixed and wider than two background sds gets that row "
@@ -263,6 +265,26 @@ class SessionOptions(AgentModel):
                                   "surroundings before it keeps the marker open: an edge band "
                                   "or a fold reads as one there, a cluster of real cells "
                                   "still as cells.")
+    classifier: Literal[schemas.CLASSIFIER_MODES] = Field(
+        "layer", description="The Single Cell Classifier beside each gate. layer: after a "
+                             "gate is written, the classifier is trained at it and calls "
+                             "every cell -- the gate's call unless it is confident the other "
+                             "way, taking positives away more readily than adding them, and "
+                             "only taking them away where the marker's signal is poor; kept "
+                             "beside the threshold (which still decides the marker) until "
+                             "the user adopts it in the Thresholding panel. check: that, and "
+                             "where the classifier trained at a gate disagrees with it beside "
+                             "it, the cells it flags are shown in a look at the candidates on "
+                             "that side, beside cells it agrees on; the gate moves past each "
+                             "row the look confirms (unmeasured). off: neither.")
+    check_reading: Literal[schemas.CHECK_READINGS] = Field(
+        "auto", description="How a classifier check's look is read. auto: word for a marker "
+                            "whose stain is fibrous (smooth muscle, vessel walls: the panel's "
+                            "morphology), mixed for the rest. word: one word per row; "
+                            "the cells the classifier flags must read as their own stain. "
+                            "mixed: the same words, and flagged cells read as mixed count "
+                            "as stained. count: the reader counts the cells in each row "
+                            "that carry their own stain (unmeasured).")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -761,7 +783,7 @@ def start(call, inp):
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": list(given_receipts) + list(expression_receipts), "questions": [],
         "packet_seq": 0, "write_seq": 0, "mirror": _mirror_at_start(call, inp),
-        "expression": expression,
+        "expression": expression, "classifier": {"schema": 1},
     }
     if needs:
         record["state"] = "needs_setup"
@@ -1367,6 +1389,16 @@ def bulk(call, inp):
     return bulk_pass.run(call, inp)
 
 
+class JobInput(AgentModel):
+    session_id: str
+
+
+def session_classifier(call, inp):
+    from plexora.plugins.gating.server.autogate import cellcalls
+
+    return cellcalls.run_job(call, inp.session_id)
+
+
 # -- next / answer ------------------------------------------------------------
 
 
@@ -1525,6 +1557,12 @@ def next_packet(call, inp):
                                                       tasks=inp.tasks)
                 fresh = status == "packet"
                 needs = engine.needs
+                if fresh:
+                    from plexora.plugins.gating.server.autogate import cellcalls
+
+                    # The classifier's features are read while the look is
+                    # answered, so its layer is ready with the gate.
+                    cellcalls.after_issue(engine, packet)
             asking = []
             if status == "wait_user":
                 # `images` holds the waiting units here (`Engine.issue`).
@@ -1884,7 +1922,36 @@ def _unit_row(unit):
     row = {k: unit.get(k) for k in ("project", "marker", "state", "confidence", "final",
                                     "proposed", "gmm", "tier", "class", "reason")
            if unit.get(k) is not None}
+    layer = unit.get("classifier")
+    if layer:
+        compare = layer.get("compare") or {}
+        row["classifier"] = {k: v for k, v in (
+            ("status", layer.get("status")), ("why", layer.get("why")),
+            ("removed", compare.get("n_removed")), ("added", compare.get("n_added")),
+            ("grade", (layer.get("snr") or {}).get("grade"))) if v is not None}
+    if unit.get("classifier_check"):
+        row["classifier_check"] = unit["classifier_check"]["direction"]
     return row
+
+
+def _classifier_brief(record):
+    """What the session's classifier did, for status: the mode, counts, and
+    how to look at a marker's layer."""
+    mode = (record.get("options") or {}).get("classifier", "off")
+    units = (record.get("units") or {}).values()
+    if mode == "off":
+        return {"mode": "off"}
+    count = {}
+    for unit in units:
+        status = (unit.get("classifier") or {}).get("status")
+        if status:
+            count[status] = count.get(status, 0) + 1
+    state = record.get("classifier") or {}
+    return {"mode": mode, "layers": count,
+            "checked": sum(1 for u in units if u.get("classifier_check")),
+            "reading_ahead": len(state.get("queue") or []),
+            "next": (f"{tool_name_of('gating.classifier_state')}(project, marker) for a "
+                     "marker's layer; the threshold decides until the user adopts it")}
 
 
 def _bulk_status(record):
@@ -1966,6 +2033,7 @@ def status(call, inp):
                "limit_requests": [_limit_brief(u["limit_request"])
                                   for u in engine.waiting_for_user()],
                "biology": _biology_brief(record.get("biology")),
+               "classifier": _classifier_brief(record),
                **({"reader": reader} if reader is not None else {}),
                **_delegate_block(record, inp.session_id, engine.options)}
         if record.get("scope") == "dataset":
@@ -2005,10 +2073,13 @@ def finish(call, inp):
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         out = {"session_id": inp.session_id, "action": action}
+        from plexora.plugins.gating.server.autogate import cellcalls
+
         if action == "cancel":
             job_id = record.get("bulk_job_id")
             if job_id:
                 out["job"] = jobs.store().cancel(job_id)
+            cellcalls.on_cancel(engine)
             record["state"] = "cancelled"
         elif action == "commit":
             if record["options"]["mode"] != "propose":
@@ -2027,6 +2098,9 @@ def finish(call, inp):
                     if op:
                         written.append(op)
             out["written"] = written
+            # Each written gate's classifier layer, stored now (the session's
+            # job: never a wait here).
+            cellcalls.on_commit(engine)
             record["options"]["mode"] = "propose"
             record["state"] = "done"
         elif action == "rollback":
@@ -2055,6 +2129,7 @@ def finish(call, inp):
                     refused.append({"operation_id": operation_id,
                                     "reason": answer_["error"]["message"]})
             out.update(undone=undone, refused=refused)
+            out["classifier_discarded"] = cellcalls.on_rollback(engine)
             record["state"] = "rolled_back"
         else:
             if record["state"] == "bulk_running":
@@ -2062,6 +2137,13 @@ def finish(call, inp):
                                  "wait for it", retryable=True)
             record["state"] = "done"
         record["finished_at"] = _now()
+        if action != "cancel":
+            from plexora.plugins.gating.server import experience
+            from plexora.plugins.gating.server.autogate import memo
+
+            # What this session decided, for a person to learn from across
+            # runs (`server/experience.py`); nothing reads it into a gate.
+            experience.after_finish(record, action, memo.versions())
         engine.release_all()
         out["progress"] = engine.progress()
         out["units"] = [_unit_row(u) for u in record["units"].values()][:MAX_LIST]
@@ -2244,6 +2326,14 @@ def capabilities():
             permission="reversible_write", input_model=BulkInput, handler=session_qc(bulk),
             writes=("gates",), persistent=True, execution="job", egress="aggregates",
             reads=("table", "gates", "image")),
+        cap(name="gating.session_classifier", entitlement="ai:gating:session",
+            tool_name="gating_session_classifier",
+            purpose="A gating session's classifier work: the pixel features read ahead "
+                    "and the per-cell layers waiting on them (started by the session; "
+                    "call it yourself only to finish one a stopped server left pending).",
+            permission="reversible_write", input_model=JobInput,
+            handler=session_qc(session_classifier), writes=("gates",), persistent=True,
+            execution="job", egress="aggregates", reads=("table", "gates", "image", "mask")),
         cap(name="gating.next", entitlement="ai:gating:session", tool_name="gating_next",
             purpose="The session's next decision packet: one question, compact numbers, at "
                     "most two small images, and the answer schema. The same packet again "

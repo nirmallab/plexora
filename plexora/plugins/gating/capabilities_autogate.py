@@ -516,6 +516,24 @@ def stale_qc(ds, rows) -> list:
     return out
 
 
+def stale_classifier(ds) -> list:
+    """Classifier runs whose calls no longer describe the marker (the gate
+    they were made at moved, the table, mask or QC changed): a run that
+    decides the marker needs review; a session layer beside a threshold is
+    listed so it can be made again or discarded."""
+    from plexora.plugins.gating.server.classifier import calls, runs, store
+
+    out = []
+    for marker, entry in calls.markers_with_runs(ds).items():
+        for which, record in (("run", store.run_record(ds.name, marker)),
+                              ("session_run", store.session_run_record(ds.name, marker))):
+            reason = runs.stale_reason(ds, record) if record else None
+            if reason:
+                out.append({"marker": marker, "which": which, "reason": reason,
+                            "decides": which == "run" and entry["active"] == "classifier"})
+    return out
+
+
 def gating_qc(call, inp):
     from plexora.plugins.gating.server.autogate import context, provenance
 
@@ -524,9 +542,14 @@ def gating_qc(call, inp):
     active = model.active_gates(ds)
     rows = provenance.read(ds.name)
     fractions = {}
+    from plexora.plugins.gating.server.classifier import calls as classifier_calls
+
     for marker, (low, high) in active.items():
-        summary = model.gated_summary(ds, marker, low, high)
+        # A marker the classifier decides is counted by its calls.
+        summary = classifier_calls.summary(ds, marker) or model.gated_summary(ds, marker, low,
+                                                                              high)
         fractions[marker] = {"low": low, "fraction": summary["fraction"],
+                             "source": summary.get("source", "threshold"),
                              "n_positive": summary["n_positive"],
                              "method": (rows.get(marker) or {}).get("method"),
                              "status": (rows.get(marker) or {}).get("status"),
@@ -562,14 +585,17 @@ def gating_qc(call, inp):
                              if r.get("state") in schemas.REVIEW_STATES})
     stale = stale_dependencies(ds, rows)
     qc_stale = stale_qc(ds, rows)
+    classifier_stale = stale_classifier(ds)
     needs_review = sorted(set(needs_review) | {s["marker"] for s in stale}
-                          | {s["marker"] for s in qc_stale})
+                          | {s["marker"] for s in qc_stale}
+                          | {s["marker"] for s in classifier_stale if s["decides"]})
     from plexora.agent import cell_exclusions
 
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
             "zero_positive_pairs": zero_positive_pairs[:MAX_LIST],
             "stale_dependencies": stale[:MAX_LIST],
             "stale_qc": qc_stale[:MAX_LIST],
+            "stale_classifier": classifier_stale[:MAX_LIST],
             "qc_exclusion": cell_exclusions.describe(ds),
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}
@@ -604,6 +630,10 @@ class MarkerContext(AgentModel):
                     f"{'|'.join(vocabulary.CONFIDENCE)}}}] -- markers of THIS panel only.")
     caveats: list[str] | None = None
     expected_fraction: list[float] | None = Field(None, min_length=2, max_length=2)
+    morphology: Literal[vocabulary.MORPHOLOGIES] | None = Field(
+        None, description="fibrous: fibres, processes or vessel walls run between cells (a "
+                          "classifier check then moves its gate only on rows read as the "
+                          "cells' own stain); cell: the stain belongs to one cell.")
 
 
 class SetContextInput(AgentModel):
@@ -672,6 +702,13 @@ def set_gate_status(call, inp):
         principal=getattr(call.policy, "principal", None) or "agent",
         current=(gate["low"], gate["high"]))
     revision_after = provenance.revision(ds.name)
+    from plexora.plugins.gating.server import experience
+
+    session_id = experience.session_of(ds.name, inp.marker)
+    if session_id and before != after:
+        experience.correction(ds.name, inp.marker, "status_set", session_id=session_id,
+                              by=getattr(call.policy, "principal", None) or "agent",
+                              before=before, after=after, low=gate["low"])
     undo = {"approved": "unapproved", "locked": "unlocked", "excluded": "included"}.get(after)
     if before in ("approved", "locked", "excluded") and after not in (before,):
         undo = before

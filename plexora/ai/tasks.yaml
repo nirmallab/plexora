@@ -78,6 +78,17 @@ modules:
         max_tokens: 16000
         effort: high
         kinds: [t4_candidates]
+      classifier_check:
+        label: Classifier check
+        blurb: Judges whether the cells the Single Cell Classifier calls the other way from a gate carry their own stain, beside cells it agrees on.
+        # A look at candidates whose rows are the classifier's flagged cells
+        # paired with cells it agrees on (autogate/cellcalls.check): a
+        # per-cell perceptual question, routed apart from the candidate look.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: medium
+        kinds: ["t4_candidates:classifier"]
       final_validation:
         label: Final validation
         blurb: Checks the decided gates across the image, regressions and transfers.

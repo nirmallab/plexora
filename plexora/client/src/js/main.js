@@ -808,9 +808,9 @@ async function init(config, savedViewTransform = null) {
     });
 
     // HD from the start -- 16-bit tiles, the data's own precision -- unless
-    // the tiles cross a network to get here: an image read from a web address
-    // or a data node (page_routes.image_streamed), or this server on another
-    // machine than the browser. There a 16-bit PNG is many times the bytes of
+    // the image is read from a web address with no compute beside it
+    // (page_routes.image_streamed; a data node builds its own tiles and does
+    // not count), or this server is on another machine than the browser. There a 16-bit PNG is many times the bytes of
     // a fast WebP tile on every pan. Channel images only: a brightfield or RGB
     // picture has no 16-bit to show, and its HD tile is just a bigger one.
     // A sample walked to from a sibling keeps that sample's choice instead,

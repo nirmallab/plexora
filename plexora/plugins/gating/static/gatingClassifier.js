@@ -14,14 +14,27 @@
  * cells walks through a few of the amber ones, spread across the tissue, to be
  * labelled from the keyboard (P, N, S, Esc) before training again.
  *
+ * A gating session trains the classifier too, at each gate it writes, and
+ * keeps the calls as a LAYER beside the threshold (the server's
+ * `session_run`): drawn here, never deciding the marker until it is adopted.
+ * Its block (paintSession) names the session and the gate, counts where the
+ * two part ways -- sky blue for a positive below the threshold, magenta for a
+ * negative above it, the colours the canvas draws them in -- and offers Adopt
+ * and Discard; a switch draws the classifier's own 0.5 call instead. The
+ * marker list's dot is filled for a marker the classifier decides and hollow
+ * for one a session has classified while the threshold decides. Nothing here
+ * switches the card into this mode on a session's account: the mode is the
+ * person's.
+ *
  * Drawing reuses what the viewer already has, with no shader of its own:
  *
  * - The cells are the gating cell layer's colour table (`ctx.layers.
  *   setColorLUT("cells", ...)`). Before a run every cell is drawn, in the
  *   mask's own white, so there is something to click; after one, white for
  *   positive, as a gated cell is drawn, amber for uncertain, the not-called
- *   grey for cells not classified, and nothing for negatives. A labelled cell
- *   is green (positive) or red (negative) throughout. While this mode is on,
+ *   grey for cells not classified, and nothing for negatives -- and for a run
+ *   made at a gate, sky blue and magenta where it parts ways with the gate. A
+ *   labelled cell is green (positive) or red (negative) throughout. While this mode is on,
  *   the layer's provider reports no range gate
  *   (CSVGatingList.getColorCodedRanges), so the table decides.
  * - The examples are also an overlay (`ctx.layers.addOverlay`): a ring with a
@@ -42,6 +55,19 @@ const CLASSIFIER_COLORS = {
     2: [122, 122, 122, 200],
     // --accent-warning: look here.
     3: [243, 184, 69, 235],
+    // Where a run made at a gate parts ways with it (calls.VIEW_ADDED and
+    // VIEW_REMOVED): Okabe-Ito sky blue for a positive below the threshold,
+    // magenta for a negative above it. Neither is the gate's white, the
+    // uncertain amber, or the examples' green and red, and the two stay
+    // apart for the common colour-vision deficiencies.
+    4: [86, 180, 233, 235],
+    5: [255, 70, 230, 235],
+};
+
+//: What codes 4 and 5 say, wherever they are named.
+const CODE_WORDS = {
+    4: "positive below the threshold",
+    5: "negative above the threshold",
 };
 
 //: The example rings and cells (--accent-success, --accent-danger).
@@ -86,6 +112,12 @@ class GateClassifierControl {
         this.state = null;
         //: Markers the classifier decides, for the marker list's dots.
         this.classified = new Set();
+        //: {marker: {active, run, session_run, session_id}} for every marker
+        //: with a run or a session's layer (calls.markers_with_runs).
+        this.runs = {};
+        //: "integrated" | "raw": the run's calls, or the classifier's own
+        //: 0.5 call ("Show the classifier's own opinion").
+        this.view = "integrated";
         //: The calls on screen and the run they came from.
         this.calls = null;
         //: "positive" | "negative" | null: what a click on a cell does.
@@ -102,6 +134,7 @@ class GateClassifierControl {
         this._onClick = (event) => this.onCanvasClick(event);
         this._onKey = (event) => this.onKey(event);
         this._onServer = (event) => this.onServerChange(event);
+        this._runsTimer = 0;
     }
 
     // -- lifecycle -----------------------------------------------------------
@@ -117,6 +150,17 @@ class GateClassifierControl {
         this.summary = byId("clf_summary");
         this.statusLine = byId("clf_status");
         this.loadInput = byId("clf_load_input");
+        this.session = byId("clf_session");
+        this.sessionHead = byId("clf_session_head");
+        this.sessionActions = byId("clf_session_actions");
+        this.adoptButton = byId("clf_adopt_button");
+        this.discardButton = byId("clf_discard_button");
+        this.rawLine = byId("clf_raw_line");
+        this.rawToggle = byId("clf_raw_toggle");
+        this.adoptButton?.addEventListener("click", () => this.onAdoptClick());
+        this.discardButton?.addEventListener("click", () => this.onDiscardClick());
+        this.rawToggle?.addEventListener("change", () => this.setView(
+            this.rawToggle.checked ? "raw" : "integrated"));
 
         this.cog?.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -163,6 +207,7 @@ class GateClassifierControl {
 
     dispose() {
         this.disarm();
+        window.clearTimeout(this._runsTimer);
         this.hover?.destroy();
         document.removeEventListener("keydown", this._onKey);
         window.removeEventListener("plexora:agent-state-changed", this._onServer);
@@ -272,17 +317,27 @@ class GateClassifierControl {
         }
         if (seq !== this._seq || marker !== this.marker) return;
         this.takeState(state);
-        const run = state.marker?.run;
+        // The run the canvas draws: the one that decides the marker, else a
+        // gating session's layer, else the last panel run (panel.state's
+        // `shown`, calls.shown_arrays on the server).
+        const run = this.shownRun();
+        const view = this.wantedView();
+        const which = this.state?.shown || "run";
         if (!run) {
             this.calls = null;
             this.scores = null;
-        } else if (!this.calls || this.calls.run !== run.run_id) {
+        } else if (!this.calls || this.calls.run !== run.run_id || this.calls.view !== view
+                   || this.calls.which !== which) {
             try {
-                const calls = await this.api.classifierCalls(marker);
+                const calls = await this.api.classifierCalls(marker, view);
                 if (seq !== this._seq || marker !== this.marker) return;
+                const sameRun = this.scores && this.scores.run === calls.run;
                 this.calls = calls;
-                this.scores = null;
-                this.loadScores(marker, calls.run);
+                // The scores are the run's, whichever view is drawn.
+                if (!sameRun) {
+                    this.scores = null;
+                    this.loadScores(marker, calls.run);
+                }
             } catch (error) {
                 this.setStatus(`The calls could not be read (${error.message || error})`, "error");
             }
@@ -302,8 +357,35 @@ class GateClassifierControl {
         if (!state) return;
         if (state.marker && state.marker.marker === this.marker) this.state = state.marker;
         this.classified = new Set(state.classified || []);
+        this.runs = state.runs || {};
         this.minExamples = state.min_examples || 3;
         this.refreshMarkerDots();
+    }
+
+    /** The record of the run the canvas draws for the marker on screen. */
+    shownRun() {
+        const state = this.state;
+        if (!state) return null;
+        if (state.shown === "session_run") return state.session_run || null;
+        return state.run || null;
+    }
+
+    /** Whether the drawn run kept the classifier's own call beside its own
+     *  (a run made at a gate by "gate unless confident" does). */
+    hasRawView() {
+        return this.shownRun()?.call_rule === "gate_unless_confident";
+    }
+
+    wantedView() {
+        return this.view === "raw" && this.hasRawView() ? "raw" : "integrated";
+    }
+
+    setView(view) {
+        const next = view === "raw" ? "raw" : "integrated";
+        if (next === this.view) return;
+        this.view = next;
+        this.ctx.telemetry?.feature?.(`classifier.view.${next}`);
+        this.refresh();
     }
 
     refreshMarkerDots() {
@@ -311,9 +393,22 @@ class GateClassifierControl {
         select?.setOptions?.(this.controller.getGateMarkerNames());
     }
 
-    /** "Decided by the Single Cell Classifier", or null (the marker list's dot). */
+    /** "Decided by the Single Cell Classifier", or null (the marker list's
+     *  dot, drawn filled). */
     describeIndicator(name) {
         return this.classified.has(name) ? "Decided by the Single Cell Classifier" : null;
+    }
+
+    /** For a marker a gating session has classified while the threshold
+     *  still decides: "Classified by gating session gs_... (threshold
+     *  decides)", else null. The dot is drawn hollow for it: gating.css
+     *  matches the words, since the marker list is core's and takes only a
+     *  title (SearchableSelect getIndicator). */
+    describeSessionLayer(name) {
+        const entry = this.runs?.[name];
+        if (!entry || !entry.session_run || this.classified.has(name)) return null;
+        const session = entry.session_id ? ` ${entry.session_id}` : "";
+        return `Classified by gating session${session} (threshold decides)`;
     }
 
     // -- drawing ---------------------------------------------------------------
@@ -766,6 +861,7 @@ class GateClassifierControl {
     async onRevertClick() {
         if (!this.marker) return;
         const marker = this.marker;
+        const layer = Boolean(this.state?.session_run);
         try {
             await this.api.classifierRevert(marker);
         } catch (error) {
@@ -774,8 +870,65 @@ class GateClassifierControl {
         }
         if (this.job && this.job.marker === marker) this.job = null;
         this.calls = null;
-        this.setStatus(`${marker} is back to Thresholding; the examples are kept`);
+        // The eraser keeps a gating session's layer (Discard forgets it).
+        this.setStatus(layer
+            ? `${marker} is back to Thresholding; the session's layer is still drawn and the `
+              + "examples are kept"
+            : `${marker} is back to Thresholding; the examples are kept`);
         this.ctx.telemetry?.feature?.("classifier.revert");
+        await this.refresh();
+    }
+
+    /** A gating session's layer decides the marker from now on; the eraser
+     *  goes back to Thresholding and leaves the layer drawn. */
+    async onAdoptClick() {
+        const layer = this.state?.session_run;
+        if (!this.marker || this.job || !layer) return;
+        const marker = this.marker;
+        let answer;
+        try {
+            answer = await this.api.classifierAdopt(marker);
+        } catch (error) {
+            this.setStatus(String(error.message || error), "error");
+            return;
+        }
+        if (marker !== this.marker) return;
+        this.calls = null;
+        const session = answer.session_id || layer.session_id;
+        this.setStatus(`${marker} is decided by the classifier now (session ${session || "layer"}). `
+                       + "The eraser goes back to Thresholding.");
+        this.ctx.telemetry?.feature?.("classifier.session.adopt");
+        await this.refresh();
+    }
+
+    /** Forget a gating session's layer for the marker on screen. The
+     *  threshold is not touched, and an adopted run keeps deciding. */
+    async onDiscardClick() {
+        const layer = this.state?.session_run;
+        if (!this.marker || !layer) return;
+        const marker = this.marker;
+        const adopted = this.state?.source === "classifier"
+            && this.state?.run?.run_id === layer.run_id;
+        const who = layer.session_id ? `gating session ${layer.session_id}` : "the gating session";
+        const sure = await window.PlexoraConfirm?.ask?.({
+            title: "Discard session run",
+            body: [`The calls ${who} made for ${marker} are forgotten. The threshold is not `
+                   + "changed.",
+                   ...(adopted ? ["The adopted run keeps deciding the marker until the eraser "
+                                  + "takes it back to Thresholding."] : [])],
+            confirm: "Discard",
+            danger: true,
+        });
+        if (!sure || marker !== this.marker) return;
+        try {
+            await this.api.classifierDiscard(marker);
+        } catch (error) {
+            this.setStatus(String(error.message || error), "error");
+            return;
+        }
+        this.calls = null;
+        this.setStatus(`The session's layer for ${marker} is discarded`);
+        this.ctx.telemetry?.feature?.("classifier.session.discard");
         await this.refresh();
     }
 
@@ -866,12 +1019,18 @@ class GateClassifierControl {
     }
 
     openMoreMenu(anchor) {
+        const layer = this.state?.session_run;
         window.PlexoraMenu?.open(anchor, [
             { label: "Clear training examples…",
               title: "Forget labelled cells (runs already made are kept)",
               onSelect: () => this.onClearExamples() },
+            { label: "Discard session run…", disabled: !layer,
+              title: layer ? `Forget the calls the gating session made for ${this.marker} `
+                             + "(the threshold is not changed)"
+                  : "No gating session has classified this marker",
+              onSelect: () => this.onDiscardClick() },
             { label: "Reset classifier…",
-              title: "Undo every marker's run and forget every example",
+              title: "Undo every marker's run, drop every session's layer and forget every example",
               onSelect: () => this.onReset() },
         ]);
     }
@@ -900,7 +1059,8 @@ class GateClassifierControl {
         const sure = await window.PlexoraConfirm?.ask?.({
             title: "Reset classifier",
             body: ["Every marker's classifier run is undone (its calls go back to "
-                   + "Thresholding) and every training example is forgotten."],
+                   + "Thresholding), every gating session's layer is dropped and every "
+                   + "training example is forgotten. No threshold is changed."],
             confirm: "Reset",
             danger: true,
         });
@@ -920,8 +1080,23 @@ class GateClassifierControl {
 
     onServerChange(event) {
         const detail = event.detail || {};
-        if (detail.plugin !== "gating" || detail.kind !== "classifier.changed") return;
-        const marker = detail.payload?.marker;
+        if (detail.plugin !== "gating") return;
+        if (detail.kind !== "classifier.changed") {
+            // A gating session closing a marker (or finishing) may have left
+            // a layer, and a gate that moved makes one stale: the dots and,
+            // in this mode, the block catch up -- once, after the burst.
+            const what = detail.payload?.event;
+            if (detail.kind === "gating.session" && what !== "unit_closed" && what !== "finished") {
+                return;
+            }
+            window.clearTimeout(this._runsTimer);
+            this._runsTimer = window.setTimeout(() => this.catchUp(null), 600);
+            return;
+        }
+        this.catchUp(detail.payload?.marker);
+    }
+
+    catchUp(marker) {
         if (!this.isOn() || (marker && marker !== this.marker)) {
             // Another marker's run: only the dots move.
             this.api.classifierState().then((state) => this.takeState(state)).catch(() => {});
@@ -964,11 +1139,130 @@ class GateClassifierControl {
                 : short ? `Train needs ${min} positive and ${min} negative examples`
                     : `Train on these ${nPos + nNeg} examples and classify every cell`;
         }
-        if (this.revertButton) this.revertButton.disabled = !state?.run;
+        if (this.revertButton) {
+            this.revertButton.disabled = !state?.run;
+            // After an adoption the eraser is the way back, and the layer stays.
+            const words = state?.run && state?.session_run
+                ? "Back to Thresholding (the session's layer stays drawn; the examples are kept)"
+                : "Undo the classifier run (the examples are kept)";
+            this.revertButton.title = words;
+            this.revertButton.setAttribute("aria-label", words);
+        }
         this.paintSummary();
+        this.paintSession();
         this.paintReview();
         this.paintStatus(nPos, nNeg, min);
         this.repaintOverlay();
+    }
+
+    /** A gate value as the slider's numbers show one at rest. */
+    formatGate(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "?";
+        return this.controller.sidebar?.formatValue?.(number) ?? number.toFixed(2);
+    }
+
+    /**
+     * The block for a run made at a gate (the panel's `clf_session`):
+     *
+     * - a session's layer while the threshold decides: who made it, at which
+     *   gate, the two disagreement counts as a legend, the raw switch, Adopt
+     *   and Discard;
+     * - the run that decides, made at a gate (an adopted layer, an agent's
+     *   run): the same head and counts, no Adopt;
+     * - a panel run deciding over a kept layer: one line saying the layer is
+     *   kept and the eraser draws it again.
+     *
+     * The counts are the calls on screen (`X-Classifier-Added`/`-Removed`),
+     * so the raw switch moves them with the colours.
+     */
+    paintSession() {
+        const node = this.session;
+        if (!node) return;
+        const state = this.state;
+        const layer = state?.session_run || null;
+        const run = this.shownRun();
+        const gate = run?.gate_used?.[0];
+        const atGate = Boolean(run) && gate !== null && gate !== undefined;
+        if (!this.isOn() || !state || (!atGate && !layer)) {
+            node.hidden = true;
+            return;
+        }
+        const calls = this.calls;
+        const ready = Boolean(calls) && calls.state === "ready" && calls.run === run?.run_id;
+        const pending = state.shown === "session_run";
+        const decided = state.source === "classifier" && state.shown === "run";
+        const who = (record) => (record?.session_id ? `session ${record.session_id}` : "a gating session");
+        let head;
+        if (pending) {
+            head = [`Classified by ${who(layer)} at gate ${this.formatGate(gate)}.`,
+                    "The threshold decides."];
+        } else if (decided && atGate) {
+            head = run.origin === "session"
+                ? [`Decided by the classifier: adopted from ${who(run)} at gate `
+                   + `${this.formatGate(gate)}.`]
+                : [`Decided by the classifier, made at gate ${this.formatGate(gate)}.`];
+        } else {
+            head = [`The layer ${who(layer)} made is kept beneath this run; the eraser draws `
+                    + "it again."];
+        }
+        this.sessionHead.replaceChildren();
+        head.forEach((text, index) => {
+            if (index) this.sessionHead.append(" ");
+            const span = document.createElement("span");
+            span.textContent = text;
+            if (index) span.className = "clf-session-decides";
+            this.sessionHead.append(span);
+        });
+        this.sessionHead.title = this.describeLayer(run && atGate ? run : layer);
+        const counts = node.querySelector(".clf-session-counts");
+        const showCounts = atGate && ready;
+        if (counts) counts.hidden = !showCounts;
+        if (showCounts) {
+            const format = (n) => Number(n).toLocaleString();
+            const removed = document.getElementById("clf_session_removed");
+            const added = document.getElementById("clf_session_added");
+            if (removed) removed.textContent = format(calls.removed);
+            if (added) added.textContent = format(calls.added);
+            for (const item of counts.querySelectorAll("[data-code]")) {
+                const n = item.dataset.code === "5" ? calls.removed : calls.added;
+                item.classList.toggle("is-zero", !n);
+            }
+        }
+        if (this.rawLine) this.rawLine.hidden = !(atGate && this.hasRawView());
+        if (this.rawToggle) this.rawToggle.checked = this.wantedView() === "raw";
+        if (this.sessionActions) this.sessionActions.hidden = !pending;
+        if (this.adoptButton) {
+            this.adoptButton.disabled = !ready || Boolean(this.job);
+            this.adoptButton.title = !ready
+                ? "These calls no longer match the table; a new gating session makes them again"
+                : layer?.stale
+                    ? `Let these calls decide the marker instead of the threshold (they were made `
+                      + `at gate ${this.formatGate(gate)}: ${layer.stale})`
+                    : "Let these calls decide the marker instead of the threshold";
+        }
+        node.hidden = false;
+    }
+
+    /** The tooltip of the block's head: how a run made at a gate called. */
+    describeLayer(record) {
+        if (!record) return "";
+        const parts = [];
+        if (record.call_rule === "gate_unless_confident") {
+            const clean = record.c_clean != null
+                ? `a positive above the gate is called negative when its score is below `
+                  + `${record.c_clean}` : null;
+            const add = record.c_add_used != null
+                ? "a negative below it positive when its score is above "
+                  + `${Number((1 - record.c_add_used).toFixed(2))}`
+                : "it never calls a cell below the gate positive";
+            parts.push(`The gate's call, unless the classifier is confident: ${
+                [clean, add].filter(Boolean).join("; ")}.`);
+        }
+        const grade = record.snr?.grade;
+        if (grade) parts.push(`Signal: ${grade === "ok" ? "clear" : grade}.`);
+        if (record.created) parts.push(`Made ${String(record.created).replace("T", " ").slice(0, 16)} UTC.`);
+        return parts.join(" ");
     }
 
     paintSummary() {
@@ -994,15 +1288,16 @@ class GateClassifierControl {
             node.append(" · ", span);
         }
         if (calls.notClassified) node.append(` · ${format(calls.notClassified)} not classified`);
-        const run = this.state?.run;
+        const run = this.shownRun();
         if (run) {
             const what = run.score_name === "probability" ? "calibrated" : "uncalibrated scores";
             // The wand's picks weigh half a person's (runs.AUTO_WEIGHT).
             const given = Number(run.n_examples_given);
+            const picker = run.origin === "session" ? "the gating session" : "the wand";
             const auto = !run.auto_pick ? ""
                 : Number.isFinite(given) && given > 0
-                    ? `; ${given} labelled by you, the rest picked by the wand at half weight`
-                    : "; examples picked by the wand";
+                    ? `; ${given} labelled by you, the rest picked by ${picker} at half weight`
+                    : `; examples picked by ${picker}`;
             const cv = run.cv_balanced_accuracy != null
                 ? `, cross-validated ${Math.round(run.cv_balanced_accuracy * 100)}%` : "";
             node.title = `${run.model === "gradient_boosting" ? "Gradient boosting"
@@ -1018,12 +1313,22 @@ class GateClassifierControl {
         if (!node) return;
         let text = null;
         let tone = null;
+        // The run on screen: a session's layer, or the run that decides --
+        // which may be one adopted from a session, made at a gate too.
+        const layerShown = this.state?.shown === "session_run";
+        const shown = this.shownRun();
+        const stale = layerShown ? shown?.stale : this.state?.stale;
+        const atGate = shown?.gate_used?.[0];
         if (this.status) {
             ({ text, tone } = this.status);
-        } else if (this.state?.stale) {
-            text = `Stale: ${this.state.stale}. Run the wand again to update.`;
+        } else if (stale) {
+            text = atGate !== null && atGate !== undefined
+                ? `Stale: ${stale}. These calls were made at gate ${this.formatGate(atGate)}.`
+                : `Stale: ${stale}. Run the wand again to update.`;
             tone = "warning";
-        } else if (this.state && (nPos < min || nNeg < min)) {
+        } else if (this.state && shown?.origin !== "session" && (nPos < min || nNeg < min)) {
+            // Not under a session's calls: those were trained on picks of the
+            // session's own, so no examples is no shortfall there.
             text = this.label
                 ? `Click cells to label them ${this.label}. Train needs ${min} positive and `
                   + `${min} negative.`
@@ -1044,8 +1349,9 @@ class GateClassifierControl {
  * GateClassifierHover - what a positive or uncertain cell says when the
  * pointer rests on it after a run (a negative says nothing): its call, the
  * model's score (or probability, once calibrated), how many of the models
- * fitted to resampled examples agree, and whether a person or the wand
- * labelled it.
+ * fitted to resampled examples agree, the gate's own call for a run made at a
+ * gate (where the two part ways the cell is drawn sky blue or magenta, and
+ * the card names which), and whether a person or the wand labelled it.
  *
  * The cell under the pointer is the mask's (`cell_at`, the route a click on a
  * cell uses), asked once per new spot -- one question in flight, always about
@@ -1196,20 +1502,32 @@ class GateClassifierHover {
             const entry = (examples[kind] || []).find((e) => e.cell_id === hit.cell_id);
             if (entry) label = [kind, entry];
         }
-        // Only the cells the run draws -- positive and uncertain. A negative
-        // is most of the tissue and drawn as nothing, so a card on every one
-        // would follow the pointer everywhere it goes.
+        // Only the cells the run draws -- positive, uncertain, and where a run
+        // made at a gate parts ways with it. A negative is most of the tissue
+        // and drawn as nothing, so a card on every one would follow the
+        // pointer everywhere it goes.
         if (code === 0 || (code === 2 && !label)) {
             this.hideCard();
             return;
         }
         const marker = control.marker;
-        const scores = control.scores;
+        const scores = control.scores && control.scores.run === calls.run ? control.scores : null;
         const score = scores && row < scores.scores.length ? scores.scores[row] : NaN;
         const agreement = scores && row < scores.agreement.length ? scores.agreement[row] : null;
-        const call = code === 1 || (code === 3 && score >= 0.5) ? "positive"
+        // The gate's own call, for a run made at one (-1: the gate does not
+        // call the cell).
+        const gate = scores?.gate && row < scores.gate.length && scores.gate[row] >= 0
+            ? scores.gate[row] : null;
+        // An uncertain cell agrees with its gate (a disagreement is drawn as 4
+        // or 5 over it), so the gate's call is its call; without a gate it is
+        // the score's.
+        const uncertainCall = gate !== null ? gate === 1 : score >= 0.5;
+        const call = code === 1 || code === 4 || (code === 3 && uncertainCall) ? "positive"
             : code === 2 ? "not classified" : "negative";
-        const title = code === 3 ? `${marker} ${call} · uncertain` : `${marker} ${call}`;
+        const title = code === 3 ? `${marker} ${call} · uncertain`
+            : code === 4 ? `${marker} positive · below the threshold`
+                : code === 5 ? `${marker} negative · above the threshold`
+                    : `${marker} ${call}`;
         const rows = [];
         if (Number.isFinite(score)) {
             rows.push([scores.scoreName === "probability" ? "Probability" : "Score",
@@ -1218,12 +1536,15 @@ class GateClassifierHover {
         if (agreement !== null && Number.isFinite(score)) {
             rows.push(["Agreement", `${agreement}% of resampled models`]);
         }
+        if (gate !== null) rows.push(["Gate", gate === 1 ? "positive" : "negative"]);
+        if (calls.view === "raw" && code !== 2) rows.push(["Showing", "the classifier's own call"]);
         if (label) {
             rows.push(["Example", label[1].auto ? `${label[0]}, picked by the wand`
                 : `${label[0]}, labelled by you`]);
         }
         rows.push(["Cell", String(hit.cell_id)]);
-        const tone = code === 3 ? "uncertain" : call === "positive" ? "positive" : "negative";
+        const tone = code === 3 ? "uncertain" : code === 4 ? "added" : code === 5 ? "removed"
+            : call === "positive" ? "positive" : "negative";
         this.showCard(title, tone, rows);
     }
 

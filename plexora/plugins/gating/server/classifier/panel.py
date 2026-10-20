@@ -67,8 +67,12 @@ def examples_payload(ds, marker):
 
 
 def state(ds, marker=None) -> dict:
-    """The mode, every marker's example counts and active source, and for
-    `marker` its examples (with positions), run and stale reason."""
+    """The mode, every marker's example counts, active source and runs
+    (`runs`: calls.markers_with_runs -- the marker list's dots), and for
+    `marker` its examples (with positions), run and stale reason, a gating
+    session's layer (`session_run`, with its stale reason and where it parts
+    ways with its gate under today's QC), and which of the two the canvas
+    draws (`shown`: "run", "session_run" or None)."""
     document = store.read_state(ds.name)
     counts = store.counts(ds.name)
     sources = {m: ("classifier" if (e or {}).get("active") == "classifier"
@@ -77,21 +81,49 @@ def state(ds, marker=None) -> dict:
     out = {"mode": document.get("mode") or "threshold", "min_examples": MIN_EXAMPLES,
            "counts": {m: {"positive": p, "negative": n} for m, (p, n) in counts.items()},
            "classified": [m for m, s in sources.items() if s == "classifier"],
+           "runs": calls.markers_with_runs(ds),
            "running": runs.running(ds.name)}
     if marker is not None:
         marker_of(ds, marker)
-        record = store.run_record(ds.name, marker)
+        entry = document["markers"].get(marker) or {}
+        record = entry.get("run")
+        session = entry.get("session_run")
         examples = examples_payload(ds, marker)
+        source = sources.get(marker, "threshold")
         out["marker"] = {
             "marker": marker,
-            "source": sources.get(marker, "threshold"),
+            "source": source,
             "examples": examples,
             "run": calls.public_run(record),
             "stale": runs.stale_reason(ds, record) if record else None,
+            "session_run": _session_payload(ds, marker, session),
+            "shown": _shown(source, record, session),
             "can_run": (examples["n_positive"] >= MIN_EXAMPLES
                         and examples["n_negative"] >= MIN_EXAMPLES),
-            "has_baseline": bool((document["markers"].get(marker) or {}).get("baseline")),
+            "has_baseline": bool(entry.get("baseline")),
         }
+    return out
+
+
+def _shown(source, record, session):
+    """Which run the canvas draws -- `calls.shown_arrays`'s choice, read off
+    the state alone so the panel's every refresh does not load the arrays."""
+    if source == "classifier" and record:
+        return "run"
+    if session:
+        return "session_run"
+    return "run" if record else None
+
+
+def _session_payload(ds, marker, record):
+    """A session's layer as the panel shows it: its record, why it is stale,
+    and its disagreements with its gate counted under today's QC (the
+    record's own `compare` is as the session left them)."""
+    if not record:
+        return None
+    out = calls.public_run(record)
+    out["stale"] = runs.stale_reason(ds, record)
+    out["compare"] = calls.compare(ds, marker, "session_run") or out.get("compare")
     return out
 
 
@@ -195,8 +227,11 @@ def clear_examples(ds, markers=None) -> dict:
 
 
 def review_cells(ds, marker, count=REVIEW_COUNT) -> dict:
-    """Up to `count` of the run's uncertain cells nobody has labelled, spread
-    across the tissue, for a person to call one at a time.
+    """Up to `count` of the shown run's uncertain cells nobody has labelled,
+    spread across the tissue, for a person to call one at a time. The shown
+    run is the one the canvas draws (`calls.shown_arrays`): the run that
+    decides the marker, else a gating session's layer, else the last panel
+    run -- so a session's layer is reviewed exactly as a panel run is.
 
     Spread, not the least agreed-on first. On the user's own labelled cells
     (2026-10-19, three images) labelling four cells near the boundary after a
@@ -211,10 +246,10 @@ def review_cells(ds, marker, count=REVIEW_COUNT) -> dict:
 
     marker_of(ds, marker)
     count = max(1, min(50, int(count)))
-    record, arrays = calls.run_arrays(ds, marker)
+    record, arrays, which = calls.shown_arrays(ds, marker)
     if record is None:
-        return {"marker": marker, "run_id": None, "cells": [], "n_uncertain": 0,
-                "n_unlabelled": 0}
+        return {"marker": marker, "run_id": None, "which": None, "cells": [],
+                "n_uncertain": 0, "n_unlabelled": 0}
     if arrays is None:
         raise ClassifierRefused("The run no longer matches the table; run the wand again")
     geometry = cells(ds)
@@ -238,5 +273,23 @@ def review_cells(ds, marker, count=REVIEW_COUNT) -> dict:
             "score": round(float(scores[row]), 4),
             "agreement": None if agreement is None else int(agreement[row])}
            for row in picked.tolist()]
-    return {"marker": marker, "run_id": record["run_id"], "cells": out,
+    return {"marker": marker, "run_id": record["run_id"], "which": which, "cells": out,
             "n_uncertain": int(unsure.sum()), "n_unlabelled": int(rows.size)}
+
+
+def hover_arrays(ds, marker):
+    """(record, scores, agreement, gate calls or None, which) of the run the
+    canvas draws, for the hover card; (record or None, None, None, None,
+    which) when there is none to read. The gate calls are the ones a run made
+    at a gate is compared with (stored, else its gate's under today's QC)."""
+    record, arrays, which = calls.shown_arrays(ds, marker)
+    if arrays is None:
+        return record, None, None, None, which
+    scores = np.where(arrays["calls"] >= 0, arrays["scores"], np.nan).astype(np.float32)
+    agreement = arrays.get("agreement")
+    if agreement is None:
+        agreement = np.zeros(scores.shape[0], dtype=np.uint8)
+    gate = calls._gate_of(ds, marker, record, arrays)
+    if gate is not None and gate.shape[0] != scores.shape[0]:
+        gate = None
+    return record, scores, np.asarray(agreement, dtype=np.uint8), gate, which

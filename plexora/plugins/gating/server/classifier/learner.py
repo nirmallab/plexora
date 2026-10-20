@@ -39,6 +39,9 @@ import numpy as np
 
 from plexora.plugins.gating.server.classifier import MIN_EXAMPLES, UNCERTAIN_DISAGREEMENT
 
+#: Bumped whenever the same examples would be fitted or scored differently.
+VERSION = "1"
+
 #: Examples (both classes together) before gradient boosting is tried.
 BOOST_AT = 40
 #: How much better (balanced accuracy) boosting must cross-validate to be kept.

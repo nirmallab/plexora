@@ -923,8 +923,9 @@ def test_every_vocabulary_has_one_source():
     assert any(getattr(m, "ge", None) == 2
                for m in capabilities_session.SessionOptions.model_fields["max_tier"].metadata)
     assert packets._allowed(answers.T2Answer, "pattern") == list(schemas.PATTERNS)
+    # `counts` answers a classifier check read by counts (`check_reading`).
     assert set(answers.T4Answer.model_fields) - set(answers.T2Answer.model_fields) \
-        == {"intervals"}
+        == {"intervals", "counts"}
 
 
 def test_the_row_builders_draw_as_many_cells_as_their_layouts():

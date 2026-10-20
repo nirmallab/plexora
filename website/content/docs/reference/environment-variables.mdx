@@ -49,6 +49,16 @@ export PLEXORA_VOCABULARY_PATH=/lab/shared/plexora/vocabulary
 
 </Param>
 
+<Param name={"PLEXORA_EXPERIENCE_PATH"} default={"<data directory>/.agent/gating/experience"}>
+
+A folder for automatic gating's experience record -- one line per marker each finished gating session decided, and what was done to it afterwards (a gate moved, a classifier layer adopted or discarded). Names, counts, gates and versions only. Read by `plexora ai bench experience`; nothing reads it into a gate. Point several installs at one shared folder to read their runs together.
+
+```bash
+export PLEXORA_EXPERIENCE_PATH=/lab/shared/plexora/experience
+```
+
+</Param>
+
 <Param name={"PLEXORA_MASK_OUTPUT"} default={"beside"}>
 
 Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.

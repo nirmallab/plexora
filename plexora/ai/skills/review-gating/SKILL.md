@@ -51,13 +51,22 @@ set (older gates show as manual).
    - exclude (`excluded`) -- automatic runs skip it;
    - undo an agent write -- `undo_operation` with its `operation_id`
      (`get_gate_provenance` lists them).
-5. `gating_report` for a session's review document if the user wants one.
+5. The classifier's layer, where a session left one (`get_gate`
+   `session_run`; `gating_qc` `stale_classifier` when the gate moved since):
+   `classifier_state` for its counts, `classifier_review` for the uncertain
+   cells it would like a person to call, and `render_cell_gallery` on those
+   ids, or on cells it took away from the gate, to show them. The user labels
+   cells in the panel and adopts or discards the layer there; `classifier_adopt`
+   / `classifier_revert` only on the user's word. Never label cells for them
+   (`classifier_annotate`): an agent's word about a cell is not a person's.
+6. `gating_report` for a session's review document if the user wants one.
 
 ## Tools
 
 `get_all_gates`, `gating_qc`, `get_gate_provenance`, `render_gating_collage`,
 `bivariate_evidence`, `render_cell_gallery`, `set_gate_status`, `undo_operation`,
-`gating_report`.
+`gating_report`, `get_gate`, `classifier_state`, `classifier_review`,
+`classifier_adopt`, `classifier_revert`.
 
 ## Evidence
 
@@ -84,6 +93,7 @@ artifact id for any gate discussed.
   undo hint restores the previous status).
 - `undo_operation` refuses when the gates changed since; never force it.
 - Never change a value the user approved or locked.
+- A classifier layer is adopted, reverted or discarded only on the user's word.
 
 ## Provenance
 

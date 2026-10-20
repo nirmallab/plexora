@@ -117,7 +117,9 @@ skills:
     when: The user asks to review, approve, lock or undo gates, or after a gating session.
     tier: judgement
     tools: [get_all_gates, gating_qc, get_gate_provenance, score_gate_candidates, get_marker_hierarchy, render_gating_collage,
-            bivariate_evidence, set_gate_status, undo_operation, gating_report]
+            bivariate_evidence, set_gate_status, undo_operation, gating_report, get_gate,
+            render_cell_gallery, classifier_state, classifier_review, classifier_adopt,
+            classifier_revert]
   - name: diagnose-marker
     prompt: diagnose_marker
     title: Find out why a marker is hard to gate

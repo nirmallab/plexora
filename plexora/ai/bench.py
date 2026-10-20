@@ -249,7 +249,8 @@ class TruthAgent:
 
 #: The ablation's variants: what each sets of a session's options. `tiles`
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
-VARIANTS = {"baseline": {}, "tiles": {"tiles": True}}
+VARIANTS = {"baseline": {}, "tiles": {"tiles": True}, "absence": {"absence_check": True},
+            "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -481,6 +482,11 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                     rows.append(row)
             session.close()
         finally:
+            from plexora.agent import jobs
+
+            # A session's jobs (its classifier layers) write under the data
+            # root: done before the temporary one goes.
+            jobs.drain(120)
             if previous is None:
                 os.environ.pop("PLEXORA_DATA_PATH", None)
             else:

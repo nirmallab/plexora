@@ -312,6 +312,45 @@ ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
           "markers_per_worker": 4}
 
 
+#: What a session does with the Single Cell Classifier (`SessionOptions.classifier`,
+#: `autogate/cellcalls.py`): nothing; a per-cell layer at each written gate
+#: (never deciding the marker until the user adopts it); or that layer and,
+#: once per marker, a look at the cells the classifier disagrees with the
+#: gate on, which may move the gate either way.
+CLASSIFIER_MODES = ("off", "layer", "check")
+
+#: How a classifier check's pairs are read (`cellcalls.confirms`), each an
+#: arm of the p193 comparison (2026-10-19): `auto` -- `word` for a marker the
+#: panel calls fibrous (markers.yaml `morphology`: smooth muscle, vessel
+#: walls), `mixed` for the rest (the user's rule, after aSMA went to 30 %
+#: positive on `mixed` while CD3E and CD8a reached the user's gates); `word` -- one row word per half,
+#: the flagged half must read `own_stain`; `mixed` -- the same words, a
+#: flagged half read `mixed` counts as stained (segmentation splits and merges
+#: cells, so a half-stained row may be positives cut badly); `count` -- the
+#: reader counts the cells in each half that carry their own stain.
+CHECK_READINGS = ("auto", "word", "mixed", "count")
+
+#: [cal] The classifier check (`cellcalls.check`). UNMEASURED: the first row
+#: of candidates beside the gate on one side needs `min_cells` cells the
+#: classifier calls the other way from the gate, `min_share` of that row's
+#: cells, over `min_tiles` tiles; the look then shows at most `rows` rows,
+#: each as two halves (flagged, and cells it agrees on), and each at least
+#: `row_halves` half-bands wide (`signal.band_half`): the candidates next to a
+#: gate can sit a hundredth apart, and a look confirming such a sliver moves
+#: the gate by nothing (p193 CD11c 5.617 -> 5.61). Read by counts, a half
+#: reads the classifier's way when at least `count_share` of its shown cells
+#: do. A row is walked when the halves reading the way the gate would move
+#: hold at least `row_share` of the row's cells (`cellcalls.confirms`):
+#: replayed on lsp11385 and p193, 0.5 lost SOX9 and CD8a on rows 49.8 % and
+#: 48.8 % flagged, 0.25 (`min_share`, the share that opens a check) lost none.
+CLASSIFIER = {
+    "band_halves": 2.0,
+    "check": {"min_cells": 20, "min_share": 0.25, "min_tiles": 3, "rows": 2, "row_halves": 1.0,
+              "count_share": 0.5, "row_share": 0.25},
+    "measured": False,
+}
+
+
 def hard(flags) -> list:
     return [flag for flag in flags or () if flag in HARD_FLAGS]
 

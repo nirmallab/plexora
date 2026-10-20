@@ -358,25 +358,44 @@ class GatingApi {
             'plugins/gating/classifier/run', { marker, auto: auto === true }));
     }
 
-    /** Per table row: the run's score (NaN where not classified) and the share
-     *  of resampled models agreeing with its call (0-100). */
+    /** Per table row of the run the canvas draws: its score (NaN where not
+     *  classified), the share of resampled models agreeing with its call
+     *  (0-100), and for a run made at a gate the gate's call (1/0/-1; `gate`
+     *  is null otherwise). */
     async classifierScores(marker) {
         const response = await fetch(this.url('plugins/gating/classifier/scores') + '?'
             + new URLSearchParams({ datasource: this.datasource, marker }));
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = await response.arrayBuffer();
-        const rows = body.byteLength / 5;
+        const withGate = response.headers.get('X-Classifier-Gate-Calls') === '1';
+        const rows = body.byteLength / (withGate ? 6 : 5);
         return {
             run: response.headers.get('X-Classifier-Run') || '',
+            which: response.headers.get('X-Classifier-Which') || '',
             scoreName: response.headers.get('X-Classifier-Score-Name') || 'score',
             scores: new Float32Array(body.slice(0, rows * 4)),
-            agreement: new Uint8Array(body.slice(rows * 4)),
+            agreement: new Uint8Array(body.slice(rows * 4, rows * 5)),
+            gate: withGate ? new Int8Array(body.slice(rows * 5, rows * 6)) : null,
         };
     }
 
-    async classifierRevert(marker) {
+    /** The eraser. `discard`: a gating session's layer goes too (it is kept
+     *  otherwise, and drawn again). */
+    async classifierRevert(marker, { discard = false } = {}) {
         return this._classifierAnswer(await this._classifierPost(
-            'plugins/gating/classifier/revert', { marker }));
+            'plugins/gating/classifier/revert', discard ? { marker, discard: true } : { marker }));
+    }
+
+    /** A gating session's layer decides the marker from now on. */
+    async classifierAdopt(marker) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/adopt', { marker }));
+    }
+
+    /** Forget a gating session's layer for one marker. */
+    async classifierDiscard(marker) {
+        return this._classifierAnswer(await this._classifierPost(
+            'plugins/gating/classifier/discard', { marker }));
     }
 
     async classifierReset() {
@@ -384,20 +403,27 @@ class GatingApi {
     }
 
     /** One byte per table row (0 negative, 1 positive, 2 not classified,
-     *  3 uncertain) and the counts from the headers. */
-    async classifierCalls(marker) {
-        const response = await fetch(this.url('plugins/gating/classifier/calls') + '?'
-            + new URLSearchParams({ datasource: this.datasource, marker }));
+     *  3 uncertain, 4 positive below the gate, 5 negative above it) and the
+     *  counts from the headers. `view`: "integrated" (the run's calls) or
+     *  "raw" (the classifier's own 0.5 call, where the run kept one). */
+    async classifierCalls(marker, view = 'integrated') {
+        const query = new URLSearchParams({ datasource: this.datasource, marker });
+        if (view === 'raw') query.set('view', 'raw');
+        const response = await fetch(this.url('plugins/gating/classifier/calls') + '?' + query);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const header = (name) => response.headers.get(`X-Classifier-${name}`);
         return {
             codes: new Uint8Array(await response.arrayBuffer()),
             state: header('State') || 'not_run',
             run: header('Run') || '',
+            which: header('Which') || 'run',
+            view: header('View') || 'integrated',
             positive: Number(header('Positive') || 0),
             eligible: Number(header('Eligible') || 0),
             uncertain: Number(header('Uncertain') || 0),
             notClassified: Number(header('Not-Classified') || 0),
+            added: Number(header('Added') || 0),
+            removed: Number(header('Removed') || 0),
         };
     }
 

@@ -171,9 +171,6 @@ def unlooked_closes(session_id):
 
 
 def start(session, **options):
-    # The flows below were written for a first look straight away; the
-    # absence check's own tests switch it on.
-    options.setdefault("absence_check", False)
     started = ok(invoke(session, "gating_session_start", {"scope": "project",
                                                           "project": "gsynth", **options}))
     jobs.drain(120)

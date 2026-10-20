@@ -85,6 +85,7 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
         "binary": bool(found.get("binary", True)), "partners": partners,
         "caveats": list(found.get("caveats") or []),
         "expected_fraction": found.get("expected_fraction"),
+        "morphology": found.get("morphology") or "cell",
         "source": "learned" if found.get("origin") == "learned" else "vocabulary",
     }
 
@@ -112,7 +113,7 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
             entries[marker] = {"marker": marker, "canonical": None, "role": None,
                                "compartment": None, "lineage": None, "binary": True,
                                "partners": [], "caveats": [], "expected_fraction": None,
-                               "source": None}
+                               "morphology": None, "source": None}
             unresolved.append(marker)
         if image_channels is not None and marker not in image_channels:
             entries[marker]["no_image_channel"] = True
@@ -132,7 +133,8 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
 
 
 FIELDS = ("role", "compartment", "lineage", "binary", "partners", "caveats",
-          "expected_fraction")
+          "expected_fraction", "morphology")
+MORPHOLOGIES = vocabulary.MORPHOLOGIES
 
 
 def learn_from(context, markers, *, source, about=None) -> list:
@@ -156,6 +158,7 @@ def learn_from(context, markers, *, source, about=None) -> list:
                       "binary": entry.get("binary"), "partners": partners,
                       "caveats": entry.get("caveats"),
                       "expected_fraction": entry.get("expected_fraction"),
+                      "morphology": entry.get("morphology"),
                       "synonyms": [marker] if name != marker else None})
     if not teach:
         return []
@@ -193,6 +196,8 @@ def apply_entry(context, marker, fields, *, source) -> dict:
         fields["partners"] = clean
     if "role" in fields and fields["role"] not in ROLES:
         raise ValueError(f"role is one of {ROLES}")
+    if fields.get("morphology") is not None and fields["morphology"] not in MORPHOLOGIES:
+        raise ValueError(f"morphology is one of {MORPHOLOGIES}")
     rank = {s: i for i, s in enumerate(SOURCES)}
     if source == "ai" and entry.get("canonical"):
         # The vocabulary knows this marker: an agent's account of it is kept

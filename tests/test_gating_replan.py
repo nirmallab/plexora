@@ -619,6 +619,7 @@ def test_a_judgement_with_no_look_behind_it_is_flagged_unless_it_says_why():
 
     class _Closing(_Log):
         call = None
+        options = {"classifier": "off", "purpose": "gating"}
 
         def reference_failed(self, unit):
             pass

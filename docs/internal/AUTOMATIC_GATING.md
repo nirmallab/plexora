@@ -100,6 +100,17 @@ tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
 keys, provenance and gates are the session's without it, byte for byte. The
 bench runs it as `--variants baseline,tiles`.
 
+Split looks, tried and removed (2026-10-20): a dim marker's first look and
+every look at candidates drew each cell as DNA | marker (display black to the
+gate at mid-grey, blurred 2 px) | combined. A/B on lsp11385 (11 markers) and
+p193 (7) with the user's gates, split off vs auto, one run each, propose,
+fresh readers: pooled mean |gap| 0.344 off, 0.355 auto -- within the 0.02 bar --
+but two split markers lost more than the pre-registered 0.30 (p193 CD8a 0.06 ->
+0.70: candidate rows read `mixed` and it stayed at 8.00 for review; SOX9 0.35
+-> 0.69), while others gained (lsp CD8a 0.20 -> 0.05, FOXP3 0.59 -> 0.37,
+CD163 0.33 -> 0.13). Removed by the user's rule; the code, test and result are
+in `~/gatevision/splitab/`. The looks stay morphology | context.
+
 ## 2d. Absence, wide mixed rows, whole-image disagreement (2026-10-18)
 
 Five rules, each a session switch, from the region-look study, the user's
@@ -107,7 +118,10 @@ recheck of LSP11321 (`docs/internal/bench/GATEVISION_PHASE1_2026-10-18.md`)
 and a test of fixes on the remaining misses
 (`docs/internal/bench/GATING_GENERALISE_2026-10-18.md`):
 
-- **`absence_check`** (default on). A mixture splits every column in two, so
+- **`absence_check`** (default **off** since 2026-10-19: on the 12 held-out PCA
+  images 9 of its 17 closes were real 0.5-7.7 % populations the user gates,
+  0.449 vs classic 0.368 MAE, `~/gatevision/heldout/RESULT.md`; the bench
+  runs it as `--variants absence`). A mixture splits every column in two, so
   only the image can say a marker has no positive population. Before the
   first look, `absence.render` draws six regions chosen around the scored
   start's band (`absence.CLASSES`; `gate_sampling` gained `weak`, `bright`
@@ -170,6 +184,109 @@ and a test of fixes on the remaining misses
 A session stored before these switches is completed with their defaults
 when it is loaded, like every newer option.
 
+## 2e. The classifier layer beside the gate (2026-10-19)
+
+Automatic gating places thresholds; the Single Cell Classifier
+(`plugins/gating/server/classifier/`, Free) calls cells. A threshold is the
+best gate placer measured (held-out 12 PCA images: 0.368 MAE against the
+user's gates) but a poor caller of the cells beside it: near the gate it
+agrees with the user's own cell labels about as often as the user's own gate
+does (~59 %), where the classifier trained at the gate agrees 72 % with no
+label and 76-79 % with four to eight (`bench/CLASSIFIER_WAND_2026-10-19.md`).
+So each written gate gets a per-cell layer, and the two outputs stay
+distinct. `SessionOptions.classifier` (`schemas.CLASSIFIER_MODES`):
+
+- **`layer`** (default). After a gate is written -- accepted
+  (`Engine.finalize`) or written for review, or a user's gate kept
+  (`skipped_manual`, at that gate; `Engine._close_tail`) -- `cellcalls.after_write`
+  trains the classifier at it (`classifier.runs.session_run`): about 40 picks a
+  class made AT the gate (`autopick.pick(gate=)`), none from the two
+  half-bands either side of it (`signal.band`, the cells the layer is asked
+  about), plus the examples a person gave (weight 1; an agent's and the
+  wand's weigh 0.5, `runs.PERSON_ORIGINS`). Its calls are the gate's unless it
+  is confident the other way (`classifier.rules.apply`, `gate_unless_confident`):
+  as benched, it only takes positives away (`C_CLEAN` 0.3, `C_ADD` None;
+  `bench/CLASSIFIER_RULE_2026-10-19.md`: +2.0 balanced accuracy pooled, every
+  removal right, additions 47 % right). A marker whose fit barely separates
+  (`signal.grade` on Ashman's D; unmeasured guards) gets a cleaning-only
+  layer below `SNR_LOW` (no grade skips a marker). The layer goes in the
+  marker's session slot (`state.json` `session_run`), its own 0.5 call
+  (`raw_calls`) and the gate's (`gate_calls`) beside it; `active` is never
+  flipped: the threshold decides and Thresholding exports it until the user
+  adopts the layer in the panel (`runs.adopt_session`). Without cached pixel
+  features the layer is `pending` and the session's job
+  (`gating.session_classifier`) makes it -- never a wait in `gating_next` or
+  `gating_answer`. Propose mode computes it without storing; `commit` stores
+  it, `rollback` drops it (`runs.discard_session_runs`).
+- **Read ahead.** When a marker's packet goes out (`cellcalls.after_issue`)
+  the job builds its pixel features while the reader looks, so the layer is
+  usually ready with the gate; a per-marker lock (`features._pass_lock`)
+  makes a wand press and the job share one pass.
+- **`check`** (unmeasured, `schemas.CLASSIFIER["measured"]`; the user's
+  design, 2026-10-19). Once per marker, in `Engine.finalize` before a
+  looked-at (t2/t3/t4) gate is accepted, the classifier is trained at the
+  candidate. If the gate is right the two largely agree; where, in the first
+  row of candidates on one side, it calls a share of the cells the other way
+  (`cellcalls.disagreement`: below the gate positive, above it negative;
+  `CLASSIFIER["check"]`), the cells it flags go to a T4 look at the
+  candidates on that side -- each row as a pair, `i<k>a` / `i<k>b`, one half
+  the flagged cells and one the cells it agrees on, which is which never
+  shown (`cellcalls.check_rows`, `packets._check_rows`). Walking a row turns
+  every cell in it, so a pair is read by its cells (`cellcalls.confirms`):
+  each half reads the way the gate would move or not, and the halves that do
+  must hold `row_share` (0.25) of the row's cells, counted when the row was
+  chosen. The other half keeps the reader blind to which is which and counts
+  by its cells like the flagged one -- both halves stained is a row of
+  positives (p193 CD3E, 2026-10-19: `own_stain` beside `own_stain` held the
+  gate at 5.94 against the user's 5.08 under the earlier halves-must-differ
+  rule) -- and a stained flagged half that is a sliver of its row walks
+  nothing (lsp11385 Ki67, 2026-10-20: 230 stained cells beside 28,217
+  unstained took the gate 6.19 -> 5.89 under the flagged-half rule, 18 %
+  positive against the user's 3 %). The gate walks past each confirmed row
+  and stops at the first that is not (`transitions._read_check`), so the
+  look decides, in either direction.
+  Why: on p193 the classifier trained at the session's gate called 12.6 % of
+  cells CD3E positive (gate 5.3 %, the user 22.5 %) and 10.4 % CD8a (gate
+  5.0 %, the user 12.9 %) -- weak positives the cleaning-only layer could
+  never add, and a gate only a look may move. Each row is at least one
+  half-band wide (`cellcalls.check_points`), and a row the classifier flags
+  whole is read on its flagged half alone. `check_reading` says how a pair
+  is read (`schemas.CHECK_READINGS`): `word` (the flagged half must read
+  `own_stain`), `mixed` (a flagged half read `mixed` counts as stained:
+  segmentation splits and merges cells) or `count` (the reader counts the
+  stained cells of each half; a row confirms on `count_share` of its
+  flagged cells). On p193 blind
+  (an LSP image) `mixed` moved CD3E and CD8a to the user's gates and aSMA
+  the wrong way; counts moved nothing (bench record above). The default,
+  `auto` (`cellcalls.reading_for`, the user's rule), reads a marker whose
+  stain is fibrous strictly (`word`) and every other by `mixed`. Which
+  markers are fibrous is biology, not a tuned value: markers.yaml
+  `morphology` (aSMA, CD31, Vimentin), the panel-context step's answer for a
+  marker the vocabulary does not know, or the user (`set_panel_context`),
+  by the usual precedence (`context.apply_entry`). A check look is its own
+  AI task, `gating.classifier_check` (`tasks.yaml` kind
+  `t4_candidates:classifier`, `Engine.task_of`, `evidence.check` for the
+  harness), so `ai-models.yaml` sets its model apart from the candidate
+  look's.
+- **Off the record of looks.** Nothing classifier-derived enters a packet,
+  a memo key or `regression.checks`; a session with the layer asks what one
+  without it asks (tested); a check adds one look for a marker it disagrees on.
+- **Outputs.** `get_gate` (`classifier_run`, `session_run` with `compare` and
+  `stale`), `get_all_gates` (`classifier_runs`), status (`classifier`),
+  `gating_report` (a cells column: removed/added), `gating_qc`
+  (`stale_classifier`: the gate moved since), the classifier's binary, score
+  and overrides CSVs, the annotations JSON and the source file's
+  `layers["plexora_binary"|"plexora_scores"]` with `uns["plexora_classifier"]`.
+
+Across runs: `server/experience.py` keeps a decision row per marker of every
+finished session and correction rows after it (adopted, reverted,
+discarded, gate moved, status set, rolled back); `plexora ai bench
+experience` reads them with each project's state now (a gate moved by hand,
+labels clicked) into ledger lines. Nothing reads them into a decision: a
+finding becomes a `[cal]` constant by hand, with a VERSION bump and a bench
+on the frozen label sets. Never tuned on the LSP images alone: their signal
+is better than most (the user, 2026-10-19).
+
 ## 3. Where things live
 
 ```
@@ -212,6 +329,12 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     report.py        HTML + reportlab PDF; CSV export
     tableops.py      the column work as table operations (runs on a data node)
     partners.py      the expected / not-expected partners a multi-view look shows
+    cellcalls.py     the classifier beside the gates: layer, read-ahead job, check
+plexora/plugins/gating/server/classifier/          the Single Cell Classifier (Free)
+    rules.py         gate unless confident; signal grades
+    signal.py        separation, the bands either side of a gate
+plexora/plugins/gating/server/experience.py        decision and correction rows
+plexora/ai/bench_experience.py                     `plexora ai bench experience`
 plexora/plugins/gating/capabilities_autogate.py   analytical tools
 plexora/plugins/gating/capabilities_session.py    the session tools
 plexora/ai/knowledge/markers.yaml, vocabulary.py  shipped marker vocabulary
@@ -221,6 +344,15 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 ```
 
 ## 4. Invariants
+
+- **A session never decides a marker with the classifier.** Its layer sits in
+  the session slot beside the threshold; only a person's adopt flips
+  `active`. Automatic gating imports the classifier, never the reverse
+  (`test_licensing_hardening`).
+- **An agent's word about a cell is not a person's.** Agent labels and picks
+  weigh 0.5 and never count toward calibration; skills never label for the
+  user.
+- **Nothing tunes itself.** The experience record is read by people.
 
 - **Nothing in the agent layer imports `data_model`** (the autogate folder is in
   `tests/test_agent_architecture.py`'s scan). Column work is a table operation

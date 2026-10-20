@@ -152,3 +152,158 @@ def test_the_wand_needs_no_examples_and_the_scores_are_served(client, made):
     assert np.isfinite(scores).all() and agreement.max() <= 100
     assert response.headers["X-Classifier-Run"] == state["run"]["run_id"]
     assert response.headers["X-Classifier-Score-Name"] == "score"
+
+
+# -- a gating session's layer, as the panel drives it ------------------------------
+
+
+def _session_layer(made, *, c_add=0.4, c_clean=0.4, session_id="gs_x"):
+    """A session's layer on CD8 at the median, kept in its slot. Margins wide
+    enough that the synthetic project has cells both ways."""
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.classifier import runs
+    from tests.agent_fixtures import local_handles
+
+    ds = local_handles(made["name"])
+    values = np.asarray(ds.table.columns(["CD8"])["CD8"], dtype=np.float64)
+    gate = float(np.nanmedian(values))
+    model.set_gate(ds, "CD8", gate, float(np.nanmax(values)) + 1.0)
+    result = runs.session_run(ds, "CD8", low=gate, session_id=session_id, c_add=c_add,
+                              c_clean=c_clean)
+    assert result["record"]["status"] == "ready"
+    return ds, gate, result
+
+
+def _codes(response):
+    return np.frombuffer(gzip.decompress(response.data), dtype=np.uint8)
+
+
+def test_the_panel_state_names_the_session_layer_and_what_is_shown(client, made):
+    _ds, gate, result = _session_layer(made)
+    state = get(client, "state", marker="CD8").get_json()
+    assert state["runs"]["CD8"]["session_run"] == result["record"]["run_id"]
+    assert state["runs"]["CD8"]["active"] == "threshold"
+    assert state["runs"]["CD8"]["session_id"] == "gs_x"
+    assert state["classified"] == []
+    marker = state["marker"]
+    assert marker["shown"] == "session_run" and marker["source"] == "threshold"
+    assert marker["run"] is None
+    layer = marker["session_run"]
+    assert layer["session_id"] == "gs_x" and layer["origin"] == "session"
+    assert layer["gate_used"][0] == pytest.approx(gate)
+    assert layer["call_rule"] == "gate_unless_confident"
+    assert layer["stale"] is None
+    assert {"n_added", "n_removed", "n_raw_added", "stale"} <= set(layer["compare"])
+    # Nothing shown without a run or a layer.
+    assert get(client, "state", marker="DNA").get_json()["marker"]["shown"] is None
+
+
+def test_the_calls_draw_a_layers_disagreements_in_either_view(client, made):
+    _ds, _gate, result = _session_layer(made)
+    arrays = result["arrays"]
+    response = get(client, "calls", marker="CD8")
+    assert response.headers["X-Classifier-State"] == "ready"
+    assert response.headers["X-Classifier-Which"] == "session_run"
+    assert response.headers["X-Classifier-View"] == "integrated"
+    assert response.headers["X-Classifier-Run"] == result["record"]["run_id"]
+    codes = _codes(response)
+    added = (arrays["calls"] == 1) & (arrays["gate_calls"] == 0)
+    removed = (arrays["calls"] == 0) & (arrays["gate_calls"] == 1)
+    assert int(response.headers["X-Classifier-Added"]) == int(added.sum()) == int((codes == 4).sum())
+    assert int(response.headers["X-Classifier-Removed"]) == int(removed.sum()) \
+        == int((codes == 5).sum())
+    assert int((codes == 4).sum()) + int((codes == 5).sum()) > 0
+
+    raw = get(client, "calls", marker="CD8", view="raw")
+    assert raw.headers["X-Classifier-View"] == "raw"
+    raw_codes = _codes(raw)
+    raw_added = (arrays["raw_calls"] == 1) & (arrays["gate_calls"] == 0)
+    raw_removed = (arrays["raw_calls"] == 0) & (arrays["gate_calls"] == 1)
+    assert int(raw.headers["X-Classifier-Added"]) == int(raw_added.sum()) \
+        == int((raw_codes == 4).sum())
+    assert int(raw.headers["X-Classifier-Removed"]) == int(raw_removed.sum()) \
+        == int((raw_codes == 5).sum())
+    assert get(client, "calls", marker="CD8", view="opinion").status_code == 400
+
+
+def test_the_hover_reads_a_layers_scores_and_its_gate(client, made):
+    _ds, _gate, result = _session_layer(made)
+    response = get(client, "scores", marker="CD8")
+    assert response.headers["X-Classifier-Which"] == "session_run"
+    assert response.headers["X-Classifier-Gate-Calls"] == "1"
+    body = gzip.decompress(response.data)
+    n = len(made["cells"])
+    assert len(body) == 6 * n
+    gate = np.frombuffer(body[5 * n:], dtype=np.int8)
+    assert np.array_equal(gate, result["arrays"]["gate_calls"])
+    # The review queue is the layer's, too.
+    queue = get(client, "review", marker="CD8", count=3).get_json()
+    assert queue["which"] == "session_run" and queue["run_id"] == result["record"]["run_id"]
+
+
+def test_adopt_then_the_eraser_keeps_the_layer_and_discard_forgets_it(client, made):
+    _ds, _gate, result = _session_layer(made)
+    run_id = result["record"]["run_id"]
+    adopted = post(client, "adopt", marker="CD8").get_json()
+    assert adopted["ok"] and adopted["adopted"] is True and adopted["active"] == "classifier"
+    assert adopted["run_id"] == run_id and adopted["session_id"] == "gs_x"
+    state = get(client, "state", marker="CD8").get_json()
+    assert state["classified"] == ["CD8"] and state["runs"]["CD8"]["active"] == "classifier"
+    assert state["marker"]["shown"] == "run" and state["marker"]["run"]["origin"] == "session"
+    assert get(client, "calls", marker="CD8").headers["X-Classifier-Which"] == "run"
+
+    # The eraser: back to Thresholding, the layer still drawn.
+    erased = post(client, "revert", marker="CD8").get_json()
+    assert erased["reverted"] is True and erased["discarded"] is False
+    state = get(client, "state", marker="CD8").get_json()["marker"]
+    assert state["source"] == "threshold" and state["shown"] == "session_run"
+    assert state["session_run"]["run_id"] == run_id
+
+    # Adopted again, the eraser with discard takes both.
+    post(client, "adopt", marker="CD8")
+    gone = post(client, "revert", marker="CD8", discard=True).get_json()
+    assert gone["reverted"] is True and gone["discarded"] is True
+    state = get(client, "state", marker="CD8").get_json()
+    assert state["marker"]["session_run"] is None and state["marker"]["shown"] is None
+    assert "CD8" not in state["runs"]
+    assert get(client, "calls", marker="CD8").headers["X-Classifier-State"] == "not_run"
+
+
+def test_discard_drops_only_the_layer(client, made):
+    _session_layer(made)
+    dropped = post(client, "discard", marker="CD8").get_json()
+    assert dropped["ok"] and dropped["discarded"] is True
+    assert get(client, "state", marker="CD8").get_json()["marker"]["session_run"] is None
+    # Nothing left to discard or adopt, said in the panel's words.
+    assert post(client, "discard", marker="CD8").get_json()["discarded"] is False
+    refused = post(client, "adopt", marker="CD8")
+    assert refused.status_code == 400 and "CD8" in refused.get_json()["error"]["message"]
+    assert post(client, "adopt", marker="nope").status_code == 400
+    assert post(client, "discard", marker="nope").status_code == 400
+
+
+def test_the_downloads_carry_a_session_layer_on_request_and_the_overrides(client, made):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.classifier import runs
+    from tests.agent_fixtures import local_handles
+
+    ds = local_handles("synth")
+    values = np.asarray(ds.table.columns(["CD8"])["CD8"], dtype=np.float64)
+    low = float(np.nanmedian(values))
+    model.set_gate(ds, "CD8", low, float(np.nanmax(values)) + 1.0)
+    runs.session_run(ds, "CD8", low=low, session_id="gs_x")
+    # The threshold decides CD8: no classifier column unless asked for.
+    assert get(client, "export/binary.csv").status_code == 409
+    every = get(client, "export/binary.csv", markers="all")
+    assert every.status_code == 200
+    text = b"".join(every.response).decode() if not every.data else every.data.decode()
+    assert text.splitlines()[0] == "image_id,cell_id,CD8"
+    overrides = get(client, "export/overrides.csv")
+    assert overrides.status_code == 200
+    body = overrides.data.decode() if overrides.data else b"".join(overrides.response).decode()
+    assert body.splitlines()[0] == "image_id,cell_id,CD8"
+    assert {line.split(",")[2] for line in body.splitlines()[1:]} <= {"1", "-1", "0", ""}
+    assert get(client, "export/long.csv").status_code == 404
+    document = get(client, "export/annotations.json").get_json()
+    assert document["schema_version"] == 2
+    assert document["markers"]["CD8"]["runs"]["session_run"]["session_id"] == "gs_x"

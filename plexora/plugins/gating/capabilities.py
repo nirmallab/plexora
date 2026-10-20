@@ -63,6 +63,20 @@ def get_gate(call, inp):
     classified = classifier_calls.summary(call.data, inp.marker)
     if classified is not None:
         out["classifier_summary"] = classified
+    # Every classifier run the marker has, deciding or not: a gating
+    # session's layer is kept beside the threshold, with where the two part
+    # ways (`compare`), until the user adopts it.
+    from plexora.plugins.gating.server.classifier import runs as classifier_runs
+    from plexora.plugins.gating.server.classifier import store as classifier_store
+
+    for key, record, which in (
+            ("classifier_run", classifier_store.run_record(call.data.name, inp.marker), "run"),
+            ("session_run", classifier_store.session_run_record(call.data.name, inp.marker),
+             "session_run")):
+        if record:
+            out[key] = {**classifier_calls.public_run(record),
+                        "stale": classifier_runs.stale_reason(call.data, record),
+                        "compare": classifier_calls.compare(call.data, inp.marker, which)}
     return out
 
 
@@ -76,6 +90,7 @@ def get_all(call, inp):
     return {"gates": gates[:MAX_LIST], "truncated": len(gates) > MAX_LIST,
             "thresholded": sorted(active), "revision": model.revision(call.data),
             "classified": classifier_calls.classified_markers(call.data),
+            "classifier_runs": classifier_calls.markers_with_runs(call.data),
             "provenance": provenance.summary(call.data.name, gates),
             "provenance_revision": provenance.revision(call.data.name),
             "log_transformed": call.data.table.log_transformed}
@@ -282,6 +297,12 @@ def set_gate(call, inp):
             empty=inp.empty)
     except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
+    from plexora.plugins.gating.server import experience
+
+    # Before the provenance row is replaced: it names the session whose gate
+    # this was.
+    experience.after_gate_write(ds.name, inp.marker, [before.get("low"), before.get("high")],
+                                [after.get("low"), after.get("high")], by="agent")
     _record_agent_write(call, ds, inp.marker, after, call.operation_id)
     receipt = make_receipt(
         call, changed=before != after, before=before, after=after,
@@ -480,10 +501,7 @@ def write_source(call, inp):
             for row in report.provenance_long(call, [ds.name])]
     from plexora.plugins.gating.server.classifier import source_write
 
-    classifier = source_write.payload_for(ds)
-    if classifier is not None:
-        payload["classifier"] = classifier
-    result = ds.table.run("gating.save_gates", payload)
+    result = source_write.save_all(ds, payload)
     if not result.get("ok"):
         raise AgentError("invalid_input", result.get("message") or "the write was refused",
                          detail=result)
@@ -491,7 +509,7 @@ def write_source(call, inp):
     receipt = make_receipt(
         call, changed=True, before=None,
         after={"gates": gates, "table_name": inp.table_name,
-               "classified_markers": sorted((classifier or {}).get("markers") or {})},
+               "classified_markers": result.get("classifier_markers") or []},
         persistent_state="source_file", source_file_modified=True,
         source_path=source.path if source else None, reversible=False)
     return {"receipt": receipt.model_dump(mode="json"),

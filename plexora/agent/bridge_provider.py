@@ -270,6 +270,14 @@ class PlexoraProvider(Adapter):
                 "runs": {m: (r or {}).get("run_id") for m, r in runs.items()},
                 "written_to_source": "only after write_gates_to_source",
             }
+        layered = sorted(m for m, e in classifier_calls.markers_with_runs(ds).items()
+                         if e["session_run"] and m not in classified)
+        if layered:
+            # A gating session's layer is written into the same layers for a
+            # marker the threshold still decides: its gate above is what a
+            # reader applies; `uns[...]["images"][...]["active"]` says so.
+            params.setdefault("classifier", {"uns": source_write.UNS_KEY})
+            params["classifier"]["layers_only"] = layered
         try:
             record = cell_exclusions.call_record(ds)
         except Exception:  # an annotation; the gates stand without it

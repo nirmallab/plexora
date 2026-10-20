@@ -154,6 +154,10 @@ def build(call, session_id) -> dict:
            "counts": counts, "units": units, "questions": record.get("questions") or [],
            "receipts": record.get("receipts") or [],
            "replayed": len(record.get("replayed") or [])}
+    from plexora.plugins.gating.server.autogate import cellcalls
+
+    out["classifier"] = {"mode": (record.get("options") or {}).get("classifier", "off"),
+                         "markers": cellcalls.status_block(record)}
     if record.get("scope") == "dataset":
         spread = {}
         for marker in record["order"]:
@@ -192,6 +196,53 @@ def _why(unit):
     if unit.get("replayed"):
         notes.append("an earlier answer to identical evidence was reused")
     return "; ".join(n for n in notes if n)
+
+
+def _classifier_cell(unit):
+    """The table's per-cell column: what the classifier's layer changed."""
+    layer = unit.get("classifier") or {}
+    status = layer.get("status")
+    if not status:
+        return "-"
+    if status != "ready":
+        return {"pending": "pending", "withheld": f"none ({layer.get('why') or 'withheld'})",
+                "failed": "failed"}.get(status, status)
+    compare = layer.get("compare") or {}
+    text = f"&minus;{compare.get('n_removed', 0)} / +{compare.get('n_added', 0)}"
+    if (layer.get("snr") or {}).get("grade") == "low":
+        text += " <span class='muted'>low signal</span>"
+    return text
+
+
+def _classifier_line(unit):
+    """A sentence on the layer and the check, for the marker's section."""
+    layer = unit.get("classifier") or {}
+    parts = []
+    if layer.get("status") == "ready":
+        compare = layer.get("compare") or {}
+        gate = (layer.get("gate_used") or [None])[0]
+        parts.append(
+            f"Classifier at gate {_n(gate)}: {compare.get('n_removed', 0)} cells above the "
+            f"gate called negative, {compare.get('n_added', 0)} below it called positive "
+            f"(on its own it would have taken away {compare.get('n_raw_removed', 0)} and "
+            f"added {compare.get('n_raw_added', 0)}); signal "
+            f"{(layer.get('snr') or {}).get('grade', '-')}. The threshold decides until the "
+            "layer is adopted in the Thresholding panel.")
+    elif layer.get("status") == "withheld":
+        parts.append(f"No classifier layer ({layer.get('why') or 'withheld'}).")
+    elif layer.get("status") in ("pending", "failed"):
+        parts.append(f"Classifier layer {layer['status']}.")
+    checked = unit.get("classifier_check")
+    if checked:
+        confirmed = checked.get("confirmed")
+        said = ("" if confirmed is None else
+                f" The look confirmed {confirmed} of {len(checked.get('rows') or [])} rows.")
+        parts.append(f"The classifier at gate {_n(checked['at'])} called "
+                     f"{checked.get('n_flagged')} of {checked.get('n_cells')} cells in the next "
+                     f"row {'below' if checked['direction'] == 'down' else 'above'} it the other "
+                     f"way, so those cells were shown beside ones it agreed on.{said} Final "
+                     f"gate {_n(unit.get('final'))}.")
+    return " ".join(parts)
 
 
 def _clip(text, limit):
@@ -234,7 +285,8 @@ def to_html(call, report) -> str:
             f"<tr><td>{esc(STATE_LABELS.get(k, k))}</td><td>{v}</td></tr>"
             for k, v in sorted(report["counts"].items())) + "</table>",
         "<table><tr><th>image</th><th>marker</th><th>outcome</th><th>confidence</th>"
-        "<th>final gate</th><th>GMM</th><th>tier</th><th>flags</th><th>why</th></tr>",
+        "<th>final gate</th><th>GMM</th><th>tier</th><th>cells</th><th>flags</th>"
+        "<th>why</th></tr>",
     ]
     for unit in report["units"]:
         colour = CONFIDENCE_COLOURS.get(unit.get("confidence"), "#868e96")
@@ -245,6 +297,7 @@ def to_html(call, report) -> str:
             f"{esc(str(unit.get('confidence') or '-'))}</span></td>"
             f"<td>{_final_cell(unit)}</td><td>{_n(unit.get('gmm'))}</td>"
             f"<td>{esc(str(unit.get('tier') or '-'))}</td>"
+            f"<td>{_classifier_cell(unit)}</td>"
             f"<td>{esc(', '.join((unit.get('flags') or [])[:4]))}</td>"
             f"<td class='muted'>{esc(_clip(_why(unit), 200))}</td></tr>")
     parts.append("</table>")
@@ -276,6 +329,9 @@ def to_html(call, report) -> str:
                      f"{_n(unit.get('final'))}, GMM {_n(unit.get('gmm'))}"
                      f"{', class ' + esc(str(unit.get('class'))) if unit.get('class') else ''}"
                      f". {esc(str(unit.get('reason') or ''))}</p>")
+        line = _classifier_line(unit)
+        if line:
+            parts.append(f"<p class='muted'>{esc(line)}</p>")
         if embedded < 40:
             for png in (_safe_render(_histogram_png, call, unit),
                         _safe_render(_cells_png, call, unit)):
@@ -288,6 +344,11 @@ def to_html(call, report) -> str:
                 f"{' — ' + esc(str((d.get('outcome') or {}).get('state') or d.get('reason') or '')) if d.get('outcome') or d.get('reason') else ''}"
                 "</li>" for d in unit["trail"]) + "</ul></details>")
         parts.append("</section>")
+    if any((u.get("classifier") or {}).get("status") for u in report["units"]):
+        parts.append("<p class='muted'>Cells: the Single Cell Classifier's layer at each "
+                     "gate -- positives above the gate it calls negative (&minus;) and "
+                     "negatives below it it calls positive (+). Kept beside the threshold, "
+                     "which decides the marker until the layer is adopted.</p>")
     parts.append("<p class='muted'>Gates are lower bounds on each table's own scale "
                  "(low &lt; value &le; high, compared in float32). Every write is in the "
                  "audit log with an undo hint.</p></body></html>")
@@ -447,9 +508,25 @@ def _gate_rows(call, project):
         qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
     except Exception:  # no QC to read: the gates export as they are
         qc_fp = ""
+    # Which source decides each marker, and the classifier run whose calls
+    # stand beside its threshold (the deciding run, else a gating session's
+    # layer): the threshold and the cell calls are two things, and a reader
+    # of the export must be able to tell which one a marker's positives are.
+    from plexora.plugins.gating.server.classifier import calls as classifier_calls
+    from plexora.plugins.gating.server.classifier import export as classifier_export
+
+    try:
+        with_runs = classifier_calls.markers_with_runs(ds)
+    except Exception:  # no classifier state: every marker is its threshold's
+        with_runs = {}
     out = []
     for gate in model.all_gates(ds):
         prov = rows.get(gate["marker"]) or {}
+        try:
+            classifier = classifier_export.gate_columns(ds, gate["marker"],
+                                                        with_runs.get(gate["marker"]) or {})
+        except Exception:  # an annotation; the gate exports without it
+            classifier = classifier_export.gate_columns(ds, gate["marker"], {})
         counts = {}
         if gate["thresholded"] and gate["low"] is not None:
             try:
@@ -466,8 +543,14 @@ def _gate_rows(call, project):
                     "session_id": prov.get("session_id"),
                     "operation_id": prov.get("operation_id"),
                     "timestamp": prov.get("timestamp"), **counts,
-                    "qc_fingerprint": qc_fp})
+                    "qc_fingerprint": qc_fp, **classifier})
     return out
+
+
+#: The classifier's columns of the provenance exports (`classifier.export.
+#: gate_columns`): which source decides the marker, and the run beside it.
+CLASSIFIER_COLUMNS = ("source", "classifier_run", "classifier_origin", "classifier_session",
+                      "call_rule", "n_added", "n_removed", "classifier_stale")
 
 
 def _write_csv(path, rows, fields):
@@ -511,16 +594,22 @@ def export_gates(call, *, project=None, dataset=None, include_provenance=True) -
             _write_csv(path, rows, ["channel", "gate_start", "gate_end", "method", "status",
                                     "confidence", "state", "gmm_proposal", "session_id",
                                     "operation_id", "timestamp", "n_positive",
-                                    "n_not_called", "call_mode", "qc_fingerprint"])
+                                    "n_not_called", "call_mode", "qc_fingerprint",
+                                    *CLASSIFIER_COLUMNS])
             written.append(str(path))
     if dataset:
         path = folder / "dataset_gates_long.csv"
         _write_csv(path, long_rows, ["image", "channel", "gate_start", "gate_end",
-                                     "thresholded", "method", "status", "confidence"])
+                                     "thresholded", "method", "status", "confidence",
+                                     *CLASSIFIER_COLUMNS])
         written.append(str(path))
     return {"folder": str(folder), "files": written, "images": len(projects),
             "note": "gate_start is the lower bound: cells with gate_start < value <= "
-                    "gate_end are positive"}
+                    "gate_end are positive -- unless source is classifier: then the "
+                    "Single Cell Classifier's calls decide the marker (classifier_export, "
+                    "binary CSV), and n_positive counts them. n_added / n_removed: where "
+                    "the classifier run beside the gate calls cells positive below the "
+                    "gate it was made at, or negative above it"}
 
 
 def provenance_long(call, projects) -> list:
@@ -534,6 +623,7 @@ def provenance_long(call, projects) -> list:
                              "status": row["status"] or "", "confidence":
                                  row["confidence"] or "", "session_id": row["session_id"] or "",
                              "timestamp": row["timestamp"] or "",
-                             "operation_id": row["operation_id"] or ""})
+                             "operation_id": row["operation_id"] or "",
+                             **{k: row.get(k, "") for k in CLASSIFIER_COLUMNS}})
     return rows
 

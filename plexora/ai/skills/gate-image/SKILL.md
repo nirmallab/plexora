@@ -205,6 +205,7 @@ packet's `mirror` says whether the open viewer shows the same thing.
 - Locked and approved gates are never written; hand-set gates are kept unless
   `overwrite_manual: true`; a gate the user changes during the session wins.
 - The source file is touched only by `write_gates_to_source` on request.
+- A classifier layer decides once adopted.
 
 ## Provenance
 

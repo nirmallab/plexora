@@ -67,7 +67,8 @@ def save_gates(dataset, payload):
                 imageid_column=payload.get("imageid_column"),
             ))
         if payload.get("classifier"):
-            # The Single Cell Classifier's calls and scores, beside the gates
+            # The Single Cell Classifier's calls and scores in one request, as
+            # a primary from before `gating.save_classifier_marker` sends them
             # (classifier/source_write.py): layers or obsm, and uns.
             from plexora.plugins.gating.server.classifier import source_write
 
@@ -77,6 +78,40 @@ def save_gates(dataset, payload):
                 payload["classifier"],
                 payload.get("imageid_column"),
             ))
+    except ValueError as exc:
+        return _refused(INVALID, message=str(exc))
+    return _done(result)
+
+
+@table_operation("gating.save_classifier_marker")
+def save_classifier_marker(dataset, payload):
+    """One batch of the Single Cell Classifier's markers into the source file:
+    their columns of `layers["plexora_binary"|"plexora_scores"]` (or obsm),
+    created full size the first time, and their records in
+    `uns["plexora_classifier"]` (classifier/source_write.py). A save sends as
+    many of these as its base64 needs (`source_write.BATCH_BYTES` each), then
+    `gating.save_classifier_done`."""
+    from plexora.plugins.gating.server.classifier import source_write
+
+    try:
+        result = source_write.save_markers(
+            dataset.table.source, payload.get("image_id") or dataset.name, payload,
+            payload.get("imageid_column"))
+    except ValueError as exc:
+        return _refused(INVALID, message=str(exc))
+    return _done(result)
+
+
+@table_operation("gating.save_classifier_done")
+def save_classifier_done(dataset, payload):
+    """The end of a classifier save: this image's `uns` record made whole, and
+    what an earlier save wrote for markers no longer classified cleared."""
+    from plexora.plugins.gating.server.classifier import source_write
+
+    try:
+        result = source_write.save_done(
+            dataset.table.source, payload.get("image_id") or dataset.name, payload,
+            payload.get("imageid_column"))
     except ValueError as exc:
         return _refused(INVALID, message=str(exc))
     return _done(result)

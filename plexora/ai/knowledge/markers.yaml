@@ -16,12 +16,17 @@
 #            is no valley, but there is background, so the gate marks where real
 #            expression rises out of it (autogate/scoring.py, the `onset`
 #            candidate) -- such a marker is gated, never skipped as "not binary"
+# morphology cell (the default) | fibrous: fibres, processes or vessel walls run
+#            between cells and across their masks, so stain beside a nucleus is
+#            weak evidence of its own; a classifier check moves such a gate only
+#            on rows read as the cells' own stain, never on `mixed`
+#            (autogate/cellcalls.reading_for)
 #
 # A channel whose name plainly says nuclear stain (DAPI3, Hoechst_2, Nucleus2,
 # DNA_1) or autofluorescence / blank (AF1, Blank_3) resolves to DNA or
 # Autofluorescence by pattern even when its spelling is not a synonym below
 # (vocabulary.structural); both are role context and never gated.
-version: "2"
+version: "3"
 markers:
   - canonical: DNA
     synonyms: [DAPI, Hoechst, Hoechst33342, H3342, Ir191, Ir193, Iridium, Nuclear, Nuclei,
@@ -344,6 +349,7 @@ markers:
       - {marker: CD45, relation: exclusive, confidence: moderate}
       - {marker: PanCK, relation: exclusive, confidence: moderate}
     caveats: [fibres between cells are assigned to whichever mask they cross]
+    morphology: fibrous
 
   - canonical: CD31
     synonyms: [PECAM1, PECAM-1]
@@ -351,6 +357,8 @@ markers:
     compartment: membrane
     lineage: endothelial cells
     binary: true
+    morphology: fibrous
+    caveats: [thin vessel walls wrap the nuclei beside them]
     partners:
       - {marker: PanCK, relation: exclusive, confidence: high}
       - {marker: CD45, relation: exclusive, confidence: low}
@@ -362,6 +370,7 @@ markers:
     lineage: mesenchymal cells (and many others)
     binary: false
     caveats: [broadly and gradedly expressed]
+    morphology: fibrous
 
   - canonical: pERK
     synonyms: [p-ERK, pERK1/2, phospho-ERK, pMAPK]
@@ -416,8 +425,12 @@ markers:
     binary: false
     partners:
       - {marker: Ki67, relation: coexpressed, confidence: moderate}
-    caveats: [graded through the cell cycle, brightest in S phase; a dim nuclear floor in
-              most cells is background, not proliferation]
+    caveats: ["a high dynamic range, dim to bright: graded through the cell cycle and brightest
+               in S phase",
+              "a dim even nuclear fill above the unstained nuclei is PCNA too (G1, repair, a
+               long-lived protein), not background: the gate calls the stain, not the S phase",
+              "evenly dim nuclei across a whole nest or layer are PCNA (G1), not haze: haze lies
+               between the nuclei too, PCNA fills them"]
 
   - canonical: TIM3
     synonyms: [TIM-3, HAVCR2, CD366]

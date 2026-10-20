@@ -5,9 +5,12 @@
   put it there.
 - **State** -- one JSON document (`classifier/state.json`): the panel's mode,
   and per marker which source is active, the baseline captured at its first
-  run, and the current run's record.
+  run, the current run's record, and the layer a gating session made at its
+  gate (`session_run`: drawn and exported, never deciding until adopted).
 - **Arrays** -- one `.npz` per run (`classifier/<marker>/run_<id>.npz`), row
-  aligned to the table: calls (1/0/-1), scores, the uncertain band.
+  aligned to the table: calls (1/0/-1), scores, the uncertain band; a
+  session's run adds the classifier's own 0.5 call (`raw_calls`) and the
+  gate's (`gate_calls`), so where the two part ways stays on record.
 
 Every write is atomic -- a `.part` file replaced into place -- and made under
 a per-project lock, so a run finishing while the eraser is pressed leaves one
@@ -107,11 +110,23 @@ def marker_state(document, marker) -> dict:
     entry.setdefault("active", "threshold")
     entry.setdefault("baseline", None)
     entry.setdefault("run", None)
+    entry.setdefault("session_run", None)
     return entry
 
 
 def run_record(project, marker) -> dict | None:
     return (read_state(project)["markers"].get(marker) or {}).get("run")
+
+
+def session_run_record(project, marker) -> dict | None:
+    """The layer a gating session made for the marker at its gate, or None."""
+    return (read_state(project)["markers"].get(marker) or {}).get("session_run")
+
+
+def kept_run_ids(entry) -> set:
+    """The run files a marker's state still points at."""
+    return {r["run_id"] for r in (entry.get("run"), entry.get("session_run"))
+            if isinstance(r, dict) and r.get("run_id")}
 
 
 def active(project, marker) -> str:
@@ -246,9 +261,11 @@ def run_path(project, marker, run_id) -> Path:
     return folder(project) / safe_name(marker) / f"run_{run_id}.npz"
 
 
-def write_arrays(project, marker, run_id, *, calls, scores, uncertain, agreement=None) -> Path:
+def write_arrays(project, marker, run_id, *, calls, scores, uncertain, agreement=None,
+                 raw_calls=None, gate_calls=None) -> Path:
     """`agreement`: the share of resampled models agreeing with each call,
-    kept as a whole percent (learner.py)."""
+    kept as a whole percent (learner.py). `raw_calls`, `gate_calls`: a
+    session run's classifier-alone and gate calls (1/0/-1)."""
     import io
 
     buffer = io.BytesIO()
@@ -256,6 +273,9 @@ def write_arrays(project, marker, run_id, *, calls, scores, uncertain, agreement
     if agreement is not None:
         extra["agreement"] = np.round(np.nan_to_num(np.asarray(agreement, dtype=np.float32),
                                                     nan=0.0) * 100).astype(np.uint8)
+    for name, values in (("raw_calls", raw_calls), ("gate_calls", gate_calls)):
+        if values is not None:
+            extra[name] = np.asarray(values, dtype=np.int8)
     np.savez_compressed(buffer, calls=np.asarray(calls, dtype=np.int8),
                         scores=np.asarray(scores, dtype=np.float32),
                         uncertain=np.asarray(uncertain, dtype=bool), **extra)
@@ -269,18 +289,21 @@ def read_arrays(project, marker, run_id) -> dict | None:
     try:
         with np.load(path, allow_pickle=False) as held:
             out = {name: np.asarray(held[name]) for name in ("calls", "scores", "uncertain")}
-            out["agreement"] = (np.asarray(held["agreement"]) if "agreement" in held.files
-                                else None)
+            for name in ("agreement", "raw_calls", "gate_calls"):
+                out[name] = np.asarray(held[name]) if name in held.files else None
             return out
     except (OSError, KeyError, ValueError):
         return None
 
 
 def remove_runs(project, marker, keep=None) -> None:
-    """Delete a marker's run files, all but `keep`'s."""
+    """Delete a marker's run files, all but `keep`'s (a run id or a set of
+    them)."""
     directory = folder(project) / safe_name(marker)
     if not directory.is_dir():
         return
+    keep = set() if keep is None else ({keep} if isinstance(keep, str) else set(keep))
+    names = {f"run_{k}.npz" for k in keep}
     for path in directory.glob("run_*.npz"):
-        if keep is None or path.name != f"run_{keep}.npz":
+        if path.name not in names:
             path.unlink(missing_ok=True)

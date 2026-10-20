@@ -308,14 +308,12 @@ def save_gates_to_anndata():
         "table_name": table_name,
         "imageid_column": imageid_column,
     }
-    # Markers the Single Cell Classifier decides travel with the gates:
-    # their calls and scores as layers (or obsm), their examples in uns.
+    # Markers the Single Cell Classifier decides, and those with a gating
+    # session's layer, travel with the gates: their calls and scores as
+    # layers (or obsm), one marker batch per request, their records in uns.
     from plexora.plugins.gating.server.classifier import source_write
 
-    classifier = source_write.payload_for(dataset)
-    if classifier is not None:
-        payload["classifier"] = classifier
-    result = dataset.table.run("gating.save_gates", payload)
+    result = source_write.save_all(dataset, payload)
     if not result.get("ok"):
         return jsonify(success=False, error=result.get("message", "")), 400
 
@@ -567,13 +565,43 @@ def classifier_run():
 
 @gating_bp.route('/classifier/revert', methods=['POST'])
 def classifier_revert():
+    """The eraser. A gating session's layer stays drawn unless `discard`."""
     from plexora.plugins.gating.server.classifier import panel, runs
 
     body = _body()
     ds = _classifier_ds(body.get('datasource'))
     marker = body.get('marker')
-    return _classifier_answer(lambda: (panel.marker_of(ds, marker), runs.revert(ds, marker))[1],
-                              ds.name, marker)
+    discard = body.get('discard') is True
+    return _classifier_answer(
+        lambda: (panel.marker_of(ds, marker), runs.revert(ds, marker, discard=discard))[1],
+        ds.name, marker)
+
+
+@gating_bp.route('/classifier/adopt', methods=['POST'])
+def classifier_adopt():
+    """A gating session's layer decides the marker from now on."""
+    from plexora.plugins.gating.server.classifier import panel, runs
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    marker = body.get('marker')
+    return _classifier_answer(
+        lambda: (panel.marker_of(ds, marker), runs.adopt_session(ds, marker))[1],
+        ds.name, marker)
+
+
+@gating_bp.route('/classifier/discard', methods=['POST'])
+def classifier_discard():
+    """Forget a gating session's layer for one marker (an adopted run that
+    decides the marker is left as it is)."""
+    from plexora.plugins.gating.server.classifier import panel, runs
+
+    body = _body()
+    ds = _classifier_ds(body.get('datasource'))
+    marker = body.get('marker')
+    return _classifier_answer(
+        lambda: (panel.marker_of(ds, marker), runs.drop_session_run(ds, marker))[1],
+        ds.name, marker)
 
 
 @gating_bp.route('/classifier/reset', methods=['POST'])
@@ -588,8 +616,11 @@ def classifier_reset():
 @gating_bp.route('/classifier/calls', methods=['GET'])
 def classifier_calls():
     """One byte per table row (the order /get_all_cells sends ids in): 0
-    negative, 1 positive, 2 not classified, 3 uncertain. Headers carry the
-    state (ready, stale, not_run) and the counts."""
+    negative, 1 positive, 2 not classified, 3 uncertain, and for a run made
+    at a gate 4 positive below it, 5 negative above it. `view=raw` draws the
+    classifier's own 0.5 call where the run kept one. Headers carry the
+    state (ready, stale, not_run), which run is drawn (run, session_run),
+    the view and the counts."""
     import gzip
 
     from plexora.plugins.gating.server.classifier import calls
@@ -598,7 +629,10 @@ def classifier_calls():
     marker = request.args.get('marker')
     if marker not in ds.table.markers:
         abort(404)
-    codes, info = calls.viewer_codes(ds, marker)
+    view = request.args.get('view') or 'integrated'
+    if view not in calls.VIEWS:
+        abort(400)
+    codes, info = calls.viewer_codes(ds, marker, view=view)
     content = gzip.compress(codes.tobytes('C'))
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
@@ -611,32 +645,36 @@ def classifier_calls():
     response.headers['X-Classifier-Eligible'] = info["eligible"]
     response.headers['X-Classifier-Uncertain'] = info["uncertain"]
     response.headers['X-Classifier-Not-Classified'] = info["not_classified"]
+    response.headers['X-Classifier-Which'] = info["which"]
+    response.headers['X-Classifier-View'] = info["view"]
+    response.headers['X-Classifier-Added'] = info["added"]
+    response.headers['X-Classifier-Removed'] = info["removed"]
     return response
 
 
 @gating_bp.route('/classifier/scores', methods=['GET'])
 def classifier_scores():
-    """What the hover card reads: the run's score per table row (float32,
-    NaN where not classified), then each row's agreement as a whole percent
-    (uint8) -- one block of 5 bytes a row, gzipped. Empty without a run."""
+    """What the hover card reads, for the run the canvas draws: its score per
+    table row (float32, NaN where not classified), then each row's agreement
+    as a whole percent (uint8) -- 5 bytes a row -- and, for a run made at a
+    gate, the gate's call per row (int8 1/0/-1) after them: 6 bytes a row,
+    with `X-Classifier-Gate-Calls: 1`. Gzipped; empty without a run."""
     import gzip
 
     import numpy as np
 
-    from plexora.plugins.gating.server.classifier import calls
+    from plexora.plugins.gating.server.classifier import panel
 
     ds = _classifier_ds(request.args.get('datasource'))
     marker = request.args.get('marker')
     if marker not in ds.table.markers:
         abort(404)
-    record, arrays = calls.run_arrays(ds, marker)
+    record, scores, agreement, gate, which = panel.hover_arrays(ds, marker)
     body = b""
-    if arrays is not None:
-        scores = np.where(arrays["calls"] >= 0, arrays["scores"], np.nan).astype(np.float32)
-        agreement = arrays.get("agreement")
-        if agreement is None:
-            agreement = np.zeros(scores.shape[0], dtype=np.uint8)
-        body = scores.tobytes() + np.asarray(agreement, dtype=np.uint8).tobytes()
+    if scores is not None:
+        body = scores.tobytes() + agreement.tobytes()
+        if gate is not None:
+            body += np.asarray(gate, dtype=np.int8).tobytes()
     content = gzip.compress(body)
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
@@ -645,6 +683,9 @@ def classifier_scores():
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Classifier-Run'] = record["run_id"] if record else ""
     response.headers['X-Classifier-Score-Name'] = (record or {}).get("score_name") or "score"
+    response.headers['X-Classifier-Which'] = which or ""
+    response.headers['X-Classifier-Gate-Calls'] = "1" if scores is not None and gate is not None \
+        else "0"
     return response
 
 
@@ -670,10 +711,10 @@ def _download(chunks, filename, mimetype):
 def classifier_export_csv(kind):
     from plexora.plugins.gating.server.classifier import export, store
 
-    if kind not in ('binary', 'scores'):
+    if kind not in export.CSV_KINDS:
         abort(404)
     ds = _classifier_ds(request.args.get('datasource'))
-    markers, chunks = export.stream_csv(ds, kind)
+    markers, chunks = export.stream_csv(ds, kind, request.args.get('markers') == 'all')
     if not markers:
         return api.json_response({"ok": False, "error": {
             "message": "No marker has a classifier run to download"}}), 409

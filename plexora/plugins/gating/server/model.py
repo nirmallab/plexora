@@ -669,7 +669,31 @@ def put_rows(ds, rows, *, expected_revision=None):
 
 
 def gated_summary(ds, marker, low=None, high=None) -> dict:
-    """How many cells a range calls positive: the stored gate, or the one given."""
+    """How many cells a range calls positive: the stored gate, or the one given.
+
+    For the stored gate (no `low`, no `high`) of a marker the Single Cell
+    Classifier decides, the counts are the classifier's calls
+    (`classifier.calls.marker_calls`, the seam every consumer reads through),
+    `source` says so, and `threshold` keeps what the stored gate alone would
+    call -- the two stay distinct, so the gap between them is never lost. A
+    range that is given is always counted by the range (`source`
+    "threshold"): it is a question about that range."""
+    out = _range_summary(ds, marker, low, high)
+    if low is not None or high is not None:
+        return out
+    from plexora.plugins.gating.server.classifier import calls as classifier_calls
+
+    classified = classifier_calls.summary(ds, marker)
+    if classified is None:
+        return out
+    out["threshold"] = {k: out[k] for k in ("n_positive", "n_negative", "fraction")}
+    for key in ("source", "n_positive", "n_negative", "n_not_classified", "n_uncertain",
+                "fraction", "classifier", "stale"):
+        out[key] = classified.get(key)
+    return out
+
+
+def _range_summary(ds, marker, low=None, high=None) -> dict:
     gate = get_gate(ds, marker)
     if gate is None:
         raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
@@ -701,6 +725,7 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
     n_not_called = int(skip.sum()) if skip is not None else 0
     out = {
         "marker": marker,
+        "source": "threshold",
         "low": low,
         "high": high,
         "n_cells": int(values.size),
