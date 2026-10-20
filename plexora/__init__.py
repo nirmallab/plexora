@@ -327,11 +327,16 @@ _DATA_ARGUMENTS = frozenset({
 })
 
 
-def view(datasource, **kwargs):
+def view(datasource=None, **kwargs):
     """Open a notebook-displayable viewer on `datasource`.
 
     In a Jupyter cell, making this the last expression starts a server and
     displays the viewer in an iframe.
+
+    `datasource` may be left out when data is given: the project is named
+    after the image file, as the Import dialog would name it, and calling
+    again with the same data refreshes that project. Only opening an
+    existing project needs its name.
 
     Called with a name alone, it opens a project that already exists.
     Called with data as well -- an image, a table, an AnnData, a
@@ -391,6 +396,13 @@ def view(datasource, **kwargs):
     telemetry.ensure_library()
     telemetry.count("function.summary", "n", source="python", fn="view")
     data = {key: kwargs.pop(key) for key in list(kwargs) if key in _DATA_ARGUMENTS}
+    if datasource is None:
+        if not data:
+            raise TypeError("view() needs a project name, or data (image=, adata=, ...) "
+                            "to register one from")
+        from plexora.memory import infer_project_name
+
+        datasource = infer_project_name(data.get("image"), kwargs.get("data_dir"))
     if kwargs.pop("to_disk", False):
         return PlexoraViewer.from_anndata(
             datasource, data.pop("image", None), to_disk=True, **data, **kwargs)

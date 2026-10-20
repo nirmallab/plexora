@@ -779,6 +779,34 @@ def _refuse_foreign(project, ids):
                 f"{kind} points somewhere else. Choose another name.")
 
 
+def infer_project_name(image, data_dir=None) -> str:
+    """A project name for a notebook call that did not give one.
+
+    The image's file name without its image extension, as the Import dialog
+    suggests it; `"notebook"` when the image is an array and has no name. A
+    name this kernel already owns is returned as is, so calling again after
+    an edit refreshes the same project rather than starting `<name>_2`. A name
+    held by a project this kernel did not make gets `_2`, `_3`, ... -- the
+    same rule `_refuse_foreign` would otherwise turn into an error.
+    """
+    from plexora import datasource as datasource_api
+    from plexora import paths
+    from plexora.server.models.project import Project
+
+    base = (datasource_api._derive_dataset_name_from_path(image)
+            if _is_path(image) else "") or "notebook"
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    candidate, n = base, 1
+    while True:
+        existing = Project.find(candidate, data_root)
+        try:
+            _refuse_foreign(existing, _resource_ids(candidate))
+            return candidate
+        except MemoryDataError:
+            n += 1
+            candidate = f"{base}_{n}"
+
+
 def _is_path(value) -> bool:
     return isinstance(value, (str, os.PathLike))
 
