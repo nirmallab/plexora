@@ -77,11 +77,16 @@ def pack_array(array, **meta) -> bytes:
         }, contiguous.tobytes())
     # Strings, objects, datetimes: JSON, because the alternative is numpy's
     # object dtype, which only survives a round trip through pickle.
-    return pack({
-        **meta,
-        "kind": "json",
-        "values": [None if value is None else str(value) for value in array.tolist()],
-    })
+    values = [None if value is None else str(value) for value in array.tolist()]
+    framed = pack({**meta, "kind": "json", "values": values})
+    if len(framed) - _HEADER_STRUCT.size <= MAX_HEADER_BYTES:
+        return framed
+    # One string per cell is megabytes on a whole-slide table, past the header
+    # cap, so the values move to the body. A new kind rather than "json"
+    # without "values": a reader that predates it fails on the missing dtype
+    # instead of returning an empty column.
+    return pack({**meta, "kind": "json-body"},
+                json.dumps(values, separators=(",", ":")).encode("utf-8"))
 
 
 def unpack_array(data: bytes) -> tuple[np.ndarray, dict]:
@@ -89,6 +94,8 @@ def unpack_array(data: bytes) -> tuple[np.ndarray, dict]:
     meta, payload = unpack(data)
     if meta.get("kind") == "json":
         return np.array(meta.get("values") or [], dtype=object), meta
+    if meta.get("kind") == "json-body":
+        return np.array(json.loads(payload.decode("utf-8")), dtype=object), meta
     array = np.frombuffer(payload, dtype=np.dtype(meta["dtype"]))
     shape = tuple(meta.get("shape") or (array.size,))
     if int(np.prod(shape)) != array.size:
