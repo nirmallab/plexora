@@ -107,11 +107,10 @@ size makes the tissue's feather a size in microns.
 
 ## Tools
 
-`inspect_project`, `render_artifact_overview`, `inspect_artifact_channels`,
-`segment_qc_roi`, `render_region` (a plain look at a place in channels of
-your choice), `get_artifact` (a picture again), `get_qc_results`,
-`list_rois`, `refresh_qc`, `undo_operation`, `qc_answer` (the session's
-packet).
+{{tools}}
+
+`render_region` is a plain look at a place in channels of your choice,
+`get_artifact` a picture again, `qc_answer` the session's packet.
 
 ## Evidence
 

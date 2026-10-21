@@ -3059,9 +3059,15 @@ deliberately left out and what should be built next.
   cells plus negative sentinels, shuffled and numbered, no value, call or
   gate anywhere; sampled through the `gating.autogate.panel_cells` table op,
   so it runs on data nodes), `evidence.py` (each candidate scored by the
-  cells it would get wrong; a leader beats a rival on a Wilson interval),
-  `controller.py` (survey, refine, extend; stop by rule), `__init__.py`
-  (`PARAMS`, `start`/`settle`, provenance). The unit waits in
+  cells it would get wrong; a leader beats a rival on a Wilson interval
+  weighed by cells per interval and post-stratified by the classifier's
+  call), `controller.py` (survey, refine, extend, and `tail` for a rare
+  marker, whose leader must have its own cells read stained or the unit ends
+  `positives_not_confirmed`; stop by rule), `classifier_check.py` (reads
+  `classifier_trust.json` beside it, written by
+  `tools/bench_gates/classifier_trust.py`; absent, the check is exploratory),
+  `__init__.py` (`PARAMS`, `start`/`settle`, provenance; `_steps` gives a
+  one-point lattice a step either side). The unit waits in
   `awaiting_panel`; `cell_panel` is a `LOOK_KINDS` member and in
   `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader,
   and a resolved leader passes `run_regression`, a failed check capping its
@@ -3864,6 +3870,13 @@ deliberately left out and what should be built next.
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
   `--variants candidates` runs the `candidates` engine.
+  `tools/bench_gates/run_arms.py` (dev only) is the live campaign driver:
+  it records under `docs/internal/bench/campaigns/<campaign>/` (tracked) and
+  refuses the live data root; `docs/internal/bench/runs/` stays gitignored
+  (the user's labelled cell sets). `tools/bench_gates/classifier_trust.py`
+  writes the classifier trust table from `tools/bench_classifier_wand`
+  results. Tests: `tests/test_gating_panel_replay.py`,
+  `tests/test_bench_run_arms.py`.
   `tools/bench_gates/score_gap.py` (dev only) scores stored sessions against
   a person's gates (`--truth`, one `NAME=GLOB` arm each, `--oracle` for how
   close each unit's lattice came); it refuses a truth file whose `kind` is
@@ -4009,14 +4022,17 @@ deliberately left out and what should be built next.
   role (`_install_agents`, `delegation.agent_file`) next to the skills
   directory, Claude Code only. `skills.py`/`skill_manifest.yaml`/`skills/`
   (the runtime scientific skills `dataset-triage`, `visual-inspection`,
-  `marker-qc`, `visual-gating` (rewritten for the session tools), the
-  `gate-image` coordinator skill (plans, starts, hands out and finishes; ~10k
-  characters, half its previous size now that the packet-answering half
-  moved out), `gate-packets` (the `gating_worker` role's skill, ~5k
-  characters: read the guide once, judge each packet, stop at the quota,
-  return one line per marker), `qc-packets` (the `qc_worker` role's skill),
-  `gate-dataset`, `review-gating`,
-  `diagnose-marker` skills, and `qc-image`, `review-qc`,
+  `marker-qc`, three gating skills -- `gate-image` (the coordinator: set up,
+  start, hand out, finish; capped at 4k characters), `gate-packets` (the
+  `gating_worker` role's skill, capped at 2k: read the session's guide once,
+  judge each packet by it, stop at the quota, one line per marker) and
+  `gate-review` (review + diagnose a hard marker) -- with the references
+  `skills/gating/*.md` (setup, decisions, qc-cells, dataset,
+  visual-gating) served as `read_skill("gating/<ref>")`; the manifest's
+  `aliases` keep the old names `visual-gating`, `gate-dataset`,
+  `review-gating`, `diagnose-marker` readable (and the `gate_dataset` and
+  `diagnose_marker` prompts), `qc-packets` (the `qc_worker` role's skill),
+  and `qc-image`, `review-qc`,
   `qc-checks` (the three free image checks, prompt `qc_checks`) and
   `qc-visual-artifacts` (the visual pass — the overview, the channel sheet
   and magic select, standalone or on a session's `visual_scan` packet;
@@ -4037,8 +4053,11 @@ deliberately left out and what should be built next.
   (`vocabulary()` harvests dict keys, `Literal`s, CLI flags, capability and
   tool names and the shipped marker vocabulary from the actual source tree),
   a digit loose in its prose rather than in a placeholder or a code span, or a
-  placeholder that does not render; `plexora ai setup` installs the rendered
-  copy, not the template. `ai/audit.py` — `plexora ai audit [--since --project --limit
+  placeholder that does not render; `validate()` also fails a `## Tools`
+  section that is not `{{tools}}` (the manifest's list, rendered on read) and
+  a skill or reference that repeats a clause of the gating reading guide
+  (`guide_repeats`, six words or more); `plexora ai setup` installs the
+  rendered copy, not the template. `ai/audit.py` — `plexora ai audit [--since --project --limit
   --report PATH --format --json]`, reading `agent/audit.py`'s log back for a
   person, optionally through `agent/report.py` for a written report.
 - CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b

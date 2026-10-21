@@ -16,7 +16,7 @@ support.
 - A QC question about focus, registration or the segmentation: qc-checks
   samples those checks' places for you.
 - Counting or statistics: use the table tools; an image is evidence, not a measurement.
-- Checking a gate: use the visual-gating skill, which picks fields for you.
+- Checking a gate: read_skill gating/visual-gating, which picks fields for you.
 
 ## Required features
 
@@ -41,7 +41,7 @@ highlights and cell ids need a cell table.
 
 ## Tools
 
-`inspect_project`, `list_channels`, `render_region`, `list_rois`, `get_artifact`.
+{{tools}}
 
 ## Evidence
 

@@ -1,11 +1,13 @@
 # Gate a dataset automatically
 
-Gate every marker of every image in a dataset in one session. The reference
-image is gated in full first; each other image's markers are then aligned to
-the reference's intensities and the settled gate carried across -- accepted
-where the image matches, checked with one comparison where it has shifted,
-re-gated on its own where its distribution changed or its staining failed.
-Nothing is copied blindly, and every carried gate says so in its provenance.
+A reference of skill gate-image, which holds the session loop a dataset
+follows: read it first. This adds what differs when every image of a dataset
+is gated in one session. The reference image is gated in full first; each
+other image's markers are then aligned to the reference's intensities and the
+settled gate carried across -- accepted where the image matches, checked with
+one comparison where it has shifted, re-gated on its own where its
+distribution changed or its staining failed. Nothing is copied blindly, and
+every carried gate says so in its provenance.
 
 ## When to use
 
@@ -14,72 +16,63 @@ Nothing is copied blindly, and every carried gate says so in its provenance.
 
 ## When not to use
 
-- One image: gate-image.
+- One image: gate-image alone.
 - The user insists on one identical threshold everywhere: `apply_gate_to_dataset`
   (and say what `compare_gates_across_images` shows about whether that is wise).
 
 ## Required features
 
-A dataset (`list_datasets`, `get_dataset`) whose images have cell tables with
-the same markers (a marker missing from an image is skipped there), and image
-channels for the looks.
+A dataset (`get_dataset`) whose images have cell tables with the same markers
+(a marker missing from an image is skipped there), and image channels for the
+looks.
 
 ## Decision logic
 
 1. `get_dataset`, then `inspect_project` on one image and `get_panel_context`;
-   fill `unresolved` markers as in gate-image (`set_panel_context`, only what
-   you know -- lineage-specific partners most of all: they are what a hard
-   marker's starting gate stands on). Nuclear counterstains and
-   autofluorescence channels are never gated, and continuous markers always
-   are (gate-image, "Which channels are gated").
+   set up as gate-image says (gating/setup): lineage-specific partners most of
+   all, since they are what a hard marker's start stands on. Structural
+   channels are never gated and continuous markers always are
+   (gating/decisions).
 2. Optionally `compare_gates_across_images` first (a job; `job_wait`): per
    marker, each image's drift class and the strategy it implies. It tells the
    user up front whether one gate can serve the cohort.
-3. `gating_session_start` with `scope: "dataset"`, the dataset, and
+3. `gating_session_start` with `scope: "dataset"`, the dataset,
    `reference_image` if the user named one (default: the image with most
-   cells), and `biology` when the user named the samples' tissue or disease
-   (gate-image, "The sample's biology and the evidence graph"): one context
-   for the whole dataset, so say so if the images come from different
-   tissues. `get_marker_hierarchy` on the reference image shows the order the
-   panel will be gated in and, under that context, which references each
-   marker leans on. Then the gate-image loop: hand the packets to workers from
-   the session's `delegate` block (or answer them yourself: `gating_next`,
-   `gating_answer`, skill gate-packets) until `decided`. The packets are the
-   gate-image ones (judged the same way, answered from each packet's
-   `allowed`, read with the session's `reading_guide`) plus:
+   cells), and `biology` when the user named the samples' tissue or disease:
+   one context for the whole dataset, so say so if the images come from
+   different tissues. `get_marker_hierarchy` on the reference image shows the
+   order the panel will be gated in and which references each marker leans
+   on. Then the gate-image loop until `decided`. Its packets are the
+   gate-image ones plus:
    - `pixel_setup`, once, when images of the dataset state no pixel size: the
      snapshots are of the first such image, and the answer sizes the pictures
      of every image still waiting (`evidence.applies_to`) -- one scanner is
      the usual case. Say so if the user mentions images from another scanner.
-   - `display_setup`, once per image: how bright each marker is drawn there
-     (staining differs between images), answered as in gate-packets.
+   - `display_setup`, once per image: staining differs between images.
    - `transfer_check`: the reference image's cells either side of its gate
      (top) and this image's cells either side of the carried gate (bottom).
      `holds` if this image splits as cleanly; `too_low` / `too_high` if its
      split is off in that direction; `cannot_tell` sends the marker to a full
      look on this image.
-4. Start a fresh conversation per image when the panel is large; continue with
-   `gating_next(session_id)`.
+4. Without workers, start a fresh conversation per image when the panel is
+   large; continue with `gating_next` and the `session_id`.
 5. `gating_session_status` shows each marker's `strategy` under `dataset`
-   (the same classes `compare_gates_across_images` gives: one aligned gate
+   (the classes `compare_gates_across_images` gives: one aligned gate
    `global_aligned`, a gate `per_batch`, `globally_informed_per_image`, or each
    image `per_image`). Report it per marker, with the image as the unit.
-6. `gating_session_finish`, `gating_report` (includes the spread of each
-   marker's gate across images), `export_gates` with `dataset` for a long CSV.
+6. `gating_session_finish`, `gating_report` (with the spread of each marker's
+   gate across images), `export_gates` with `dataset` for a long CSV.
 
 ## Tools
 
-`get_dataset`, `inspect_project`, `get_panel_context`, `set_panel_context`,
-`compare_gates_across_images`, `job_wait`, `gating_session_start`,
-`gating_next`, `gating_answer`, `gating_session_status`,
-`gating_session_finish`, `gating_report`, `export_gates`, `set_pixel_size`.
+{{tools}}
 
 ## Evidence
 
 Transfer packets carry the alignment (shift in background sds, scale, fit
 residual), the positive fraction at the carried gate beside the reference's,
-and the image's own GMM gate. Cite the reference image and the drift class with
-every carried gate.
+and the image's own GMM gate. Cite the reference image and the drift class
+with every carried gate.
 
 ## Uncertainty
 
@@ -89,10 +82,7 @@ every carried gate.
   cells, a failed marker) is said so, and the user can name another.
 - A marker that failed technically on one image is excluded there and listed;
   it does not block the others.
-- Each image is estimated on its own QC-passed cells (gate-image, "QC-passed
-  cells only"): the start's `qc_exclusion` has a block per image. Report each
-  image's left-out count with its gates, and name an image QC was never run on
-  -- its gates stand on every cell, the others' do not.
+- Each image is estimated on its own QC-passed cells (gating/qc-cells).
 
 ## Mutation policy
 

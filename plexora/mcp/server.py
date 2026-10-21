@@ -519,13 +519,17 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     def list_skills() -> str:
         """The scientific skills: how to combine Plexora's tools for a kind of work.
         Read the one that fits with `read_skill` before starting. Each names the
-        model `tier` it needs (`tiers`): routine work can go to a cheaper model."""
+        model `tier` it needs (`tiers`): routine work can go to a cheaper model.
+        A skill's `references` are read the same way when it says so; its
+        `aliases` are old skill names that now read it or one of them."""
         from plexora.ai import delegation
 
         return serialize.bound({"skills": skills.list_skills(), "tiers": delegation.describe()})
 
     def read_skill(name: str) -> str:
-        """One skill's full instructions (markdown)."""
+        """One skill's full instructions (markdown), or one of its references
+        (`gating/setup`, say; `list_skills` names them). An old skill name reads
+        what replaced it."""
         try:
             return skills.read_skill(name)
         except KeyError as exc:

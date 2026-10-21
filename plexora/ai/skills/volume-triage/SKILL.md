@@ -70,10 +70,7 @@ depth-analysis tools need a licence with `volume`, and over MCP also `mcp`. A
 
 ## Tools
 
-`inspect_volume`, `set_z_spacing`, `sample_z_planes`, `axis_profile`, `check_volume_quality`,
-`render_region`, `render_projection`, `render_sections`, `render_object_views`,
-`object_z_profile`, `measure_objects`, `track_objects`, `segment_3d`, `pin_projection`, `viewer_set_view`,
-`viewer_set_z`, `viewer_set_slab`.
+{{tools}}
 
 ## Evidence
 

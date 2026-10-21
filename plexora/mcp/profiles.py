@@ -34,8 +34,8 @@ _COMMON = (
 PROFILES: dict[str, tuple | None] = {
     "full": None,
     # Gate an image or a dataset: the session loop, the gate readers and the
-    # pictures that check a gate (skills gate-image, gate-packets, gate-dataset,
-    # review-gating, diagnose-marker).
+    # pictures that check a gate (skills gate-image, gate-packets, gate-review,
+    # and their gating/... references).
     "gating": _COMMON + (
         "gating_session_start", "gating_next", "gating_answer", "gating_session_status",
         "gating_session_bulk", "gating_session_finish", "gating_report", "gating_qc",
@@ -49,7 +49,7 @@ PROFILES: dict[str, tuple | None] = {
         "render_region", "render_gate_validation", "render_gating_collage", "render_cell_gallery",
         "sample_gating_cells", "sample_gate_validation_regions", "explain_cell", "get_qc_exclusions",
         "object_z_profile",
-        # The classifier layer a session leaves beside each gate (review-gating).
+        # The classifier layer a session leaves beside each gate (gate-review).
         "gating_session_classifier", "classifier_state", "classifier_review",
         "classifier_adopt", "classifier_revert", "classifier_export",
     ),

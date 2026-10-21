@@ -58,9 +58,7 @@ path and roles). The analysis side reads the same file; nothing is copied.
 
 ## Tools
 
-`validate_scope`, `bridge_route`, `bridge_capabilities`, `inspect_project`,
-`find_project_for_table`, `bind_project`, `bridge_handoff`, `bridge_status`,
-`job_wait`, `viewer_set_color_by`, `viewer_highlight_cells`, `set_selection`.
+{{tools}}
 
 ## Evidence
 
