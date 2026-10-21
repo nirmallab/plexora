@@ -511,6 +511,7 @@ class _TiffPlane:
         self._page = level.pages[0]
         self._fetch = tiff_region._fetcher(tiff)
         self._read_region = tiff_region.read_region
+        self._region_bytes = tiff_region.region_bytes
         self.shape = tuple(int(size) for size in level.shape)
         self.ndim = len(self.shape)
         self.dtype = np.dtype(level.dtype)
@@ -520,6 +521,17 @@ class _TiffPlane:
         y0, y1, _ = rows.indices(height)
         x0, x1, _ = cols.indices(width)
         return self._read_region(self._page, y0, y1, x0, x1, fetch=self._fetch)
+
+    def fetch_bytes(self, windows) -> int:
+        """What reading every `(rows, cols)` window would fetch, together --
+        found from the header, before any of it is fetched."""
+        height, width = self.shape[-2], self.shape[-1]
+        regions = []
+        for rows, cols in windows:
+            y0, y1, _ = rows.indices(height)
+            x0, x1, _ = cols.indices(width)
+            regions.append((y0, y1, x0, x1))
+        return self._region_bytes(self._page, regions)
 
     def __getitem__(self, index):
         rows, cols = index if isinstance(index, tuple) else (index, slice(None))

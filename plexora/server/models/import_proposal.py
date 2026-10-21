@@ -1976,11 +1976,12 @@ def _detect_remote(url, answers, declared=None):
 def _remote_image_layer(url, answers=None, declared=None):
     """A TIFF-family file or a picture at a web address, as one layer.
 
-    `_detect_image` with the mask question settled without reading pixels --
-    that would be fetching a slide's tiles to classify it. A file is a mask
-    when the mask-or-image question was answered so, or when it was added as
-    one or is named like one AND its header says it is one plane of integers.
-    Otherwise it is the image it names itself as.
+    `_detect_image` over the network. A file is a mask when the mask-or-image
+    question was answered so, when it was added as one and its header says it
+    is one plane of integers, or when `_remote_label_verdict` finds ids in it
+    -- a few windows' tiles, never a whole slide. When that cannot say, the
+    question is asked, as it is of a local file. Either way a single plane
+    keeps the row's image/mask switch, so a wrong reading costs a click.
     """
     from plexora.datasource import _sniff_quick_view_kind
     from plexora.server.providers import local
@@ -1989,12 +1990,13 @@ def _remote_image_layer(url, answers=None, declared=None):
 
     name = remote_store.url_name(url)
     answer = _said(answers or {}, "mask-or-image:", url)
-    warnings = []
+    question_id = f"mask-or-image:{str(url).strip()}"
+    questions, warnings = [], []
     if answer:
         is_mask = answer == "mask"
-    elif declared == "mask" or _name_says_mask(name):
+    elif declared == "mask":
         is_mask = _remote_label_plane(url)
-        if declared == "mask" and not is_mask:
+        if not is_mask:
             refusal = segmentation_pyramid.mask_format_refusal(url)
             warnings.append(
                 f"{refusal} It was added as a segmentation mask, so it is "
@@ -2002,13 +2004,22 @@ def _remote_image_layer(url, answers=None, declared=None):
                 f"{name} was added as a segmentation mask, but it is not one "
                 "plane of integer labels -- proposed as an image instead.")
     else:
-        is_mask = False
+        verdict = _remote_label_verdict(url)
+        if verdict is None:
+            questions.append(Question(
+                id=question_id,
+                label=f"Is {name} a segmentation mask or an image?",
+                options=({"value": "image", "label": "An image"},
+                         {"value": "mask", "label": "A segmentation mask"}),
+                default="image"))
+        is_mask = bool(verdict)
     if is_mask:
         layer = LayerProposal(
             id=_layer_id(url), kind="labels", role="mask", modality="mask",
             label="Segmentation mask", src=str(url), geometry=_geometry_of(url))
+        layer.switch = _role_switch(question_id, "mask")
         layer.detail = describe(layer)
-        return [layer], [], None, warnings
+        return [layer], questions, None, warnings
     try:
         kind = _sniff_quick_view_kind(url)
     except RemoteUnreachable as error:
@@ -2034,10 +2045,14 @@ def _remote_image_layer(url, answers=None, declared=None):
         layer.geometry = _geometry_of(url, rgb=rgb)
         layer.channels = _channel_stubs(url, layer.geometry)
         layer.pixel_size = _pixel_size_of(url)
+        if (not rgb and _single_plane(layer.geometry)
+                and segmentation_pyramid.mask_format_refusal(url) is None):
+            layer.switch = _role_switch(question_id, "image")
     if rgb:
         layer.render = {"rgb": True}
+    layer.needs = tuple(q.id for q in questions)
     layer.detail = describe(layer)
-    return [layer], [], None, warnings
+    return [layer], questions, None, warnings
 
 
 def _remote_label_plane(url) -> bool:
@@ -2057,6 +2072,56 @@ def _remote_label_plane(url) -> bool:
         return False
     try:
         return len(plane.shape) == 2 and np.dtype(plane.dtype).kind in "ui"
+    finally:
+        close()
+
+
+#: What the label test may fetch to judge a file at a web address: every tile
+#: or strip its windows touch, together. A tiled mask's windows are a few
+#: tiles; a plane written as one strip would come down whole to be judged, and
+#: is asked about instead (`_remote_label_verdict`).
+REMOTE_LABEL_BUDGET = 16 * 1024 ** 2
+
+
+def _remote_label_verdict(url):
+    """`looks_like_label_image` for a file at a web address: True, False or None.
+
+    Judged by the same windows a local file is, so a mask named like anything
+    at all -- MCMICRO's `cell.ome.tif` -- is found the way it is on this
+    computer. The header goes first: anything but one plane of integers is an
+    image, with nothing fetched. The pixels are read only when their windows
+    cost at most `REMOTE_LABEL_BUDGET`; a plane that would have to come down
+    whole is left to its name, and then to the user (None).
+    """
+    import numpy as np
+
+    from plexora.server.utils import remote_store, segmentation_pyramid
+
+    if not _remote_label_plane(url):
+        return False
+    name = remote_store.url_name(url)
+    try:
+        if segmentation_pyramid.is_png(url):
+            # No tiles: the whole file is the one window there is.
+            if remote_store.open_file(url).size() > REMOTE_LABEL_BUDGET:
+                return True if _name_says_mask(name) else None
+            plane = segmentation_pyramid.read_png_labels(url)
+            return _plane_verdict(name, plane.dtype, plane.shape[-2:],
+                                  lambda rows, cols: plane[rows, cols])
+        plane, close = segmentation_pyramid._open_level_zero(url)
+    except Exception:  # noqa: BLE001 -- unreadable says nothing either way
+        return None
+    try:
+        height, width = (int(size) for size in plane.shape[-2:])
+        windows = [(slice(top, top + LABEL_WINDOW), slice(left, left + LABEL_WINDOW))
+                   for top, left in _window_origins(height, width)]
+        cost = getattr(plane, "fetch_bytes", None)
+        if cost is None or cost(windows) > REMOTE_LABEL_BUDGET:
+            return True if _name_says_mask(name) else None
+        return _plane_verdict(name, np.dtype(plane.dtype), (height, width),
+                              lambda rows, cols: np.asarray(plane[rows, cols]))
+    except Exception:  # noqa: BLE001
+        return None
     finally:
         close()
 

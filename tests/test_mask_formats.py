@@ -312,6 +312,52 @@ def test_a_remote_image_named_like_a_mask_stays_an_image(tmp_path, http_store):
     assert [layer.role for layer in layers] == ["image"]
 
 
+def test_a_remote_mask_named_like_anything_is_found_by_its_pixels(tmp_path, http_store):
+    """MCMICRO calls its mask `cell.ome.tif`: no hint in the name, so it was
+    proposed as an image and added as a layer. A few tiles of it say ids, as
+    they do for the same file on this computer."""
+    tifffile.imwrite(tmp_path / "served" / "cell.ome.tif", _labels(), tile=(32, 32))
+    url = http_store().url("cell.ome.tif")
+
+    [layer], questions, _bundle, _warnings = import_proposal._detect_remote(url, {})
+
+    assert layer.role == "mask" and not questions
+    assert layer.switch["value"] == "mask"
+
+
+def test_one_remote_plane_of_intensities_stays_an_image_that_can_be_switched(
+        tmp_path, http_store):
+    rng = np.random.default_rng(0)
+    plane = rng.integers(200, 4000, size=(96, 128), dtype=np.uint16)
+    tifffile.imwrite(tmp_path / "served" / "dapi.tif", plane, tile=(32, 32))
+    url = http_store().url("dapi.tif")
+
+    [layer], questions, _bundle, _warnings = import_proposal._detect_remote(url, {})
+
+    assert layer.role == "image" and not questions and not layer.needs
+    assert layer.switch == {"question": f"mask-or-image:{url}", "value": "image",
+                            "options": [dict(o) for o in import_proposal.ROLE_OPTIONS]}
+    [layer], _q, _b, _w = import_proposal._detect_remote(url, {layer.switch["question"]: "mask"})
+    assert layer.role == "mask"
+
+
+def test_a_remote_plane_too_costly_to_judge_is_asked_about(tmp_path, http_store, monkeypatch):
+    """Written as one strip, any window of it is the whole plane: past the
+    budget nothing is fetched to judge it, and the user says."""
+    tifffile.imwrite(tmp_path / "served" / "plane.tif", _labels(dtype=np.uint32))
+    url = http_store().url("plane.tif")
+    monkeypatch.setattr(import_proposal, "REMOTE_LABEL_BUDGET", 1024)
+
+    [layer], questions, _bundle, _warnings = import_proposal._detect_remote(url, {})
+
+    assert layer.role == "image"
+    assert [q.id for q in questions] == [f"mask-or-image:{url}"]
+    assert layer.needs == (f"mask-or-image:{url}",)
+    [layer], questions, _b, _w = import_proposal._detect_remote(
+        url, {f"mask-or-image:{url}": "mask"})
+    assert layer.role == "mask" and not questions
+
+
 def test_a_remote_png_mask_converts_into_the_project(tmp_path, http_store):
     from plexora import import_sample
 

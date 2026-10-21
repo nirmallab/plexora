@@ -215,6 +215,32 @@ def test_cached_tiles_still_draw_after_a_disconnect(sftp_host):
     assert "Not connected" in str(caught.value)
 
 
+def test_a_mask_picked_beside_its_image_becomes_the_segmentation(sftp_host):
+    """An MCMICRO run's mask is `cell.ome.tif`. Picked with its image off a
+    files-only server, it is the sample's segmentation, not a second image
+    layer -- found by its pixels, as on this computer."""
+    import plexora
+    from plexora.server.models.project import Project
+
+    host = sftp_host()
+    write_planar_fluorescence(host.root / "slide.ome.tif")
+    labels = np.zeros((512, 640), np.uint32)
+    labels[40:120, 50:200] = 7
+    labels[300:420, 260:480] = 12
+    tf.imwrite(host.root / "cell.ome.tif", labels, tile=(256, 256), ome=True)
+    image, mask = host.url("slide.ome.tif"), host.url("cell.ome.tif")
+    client = plexora.app.test_client()
+
+    proposal = client.post("/import/inspect", json={"paths": [image, mask]}).get_json()
+    [sample] = proposal["samples"]
+    assert [(layer["src"], layer["role"]) for layer in sample["layers"]] == [
+        (image, "image"), (mask, "mask")]
+
+    answer = client.post("/import/sample", json={"paths": [image, mask], "name": "mcmicro"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
+    assert Project.load("mcmicro").segmentation.source == mask
+
+
 # -- browsing --------------------------------------------------------------------
 
 

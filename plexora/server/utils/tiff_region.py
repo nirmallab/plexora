@@ -117,6 +117,48 @@ def _clip(start, stop, extent) -> tuple[int, int]:
     return start, stop
 
 
+def _grid(key) -> tuple[int, int, int]:
+    """`(tile_h, tile_w, columns)` of a page's segments: its tiles, or its
+    strips, each a full row of the page."""
+    height, width = int(key.imagelength), int(key.imagewidth)
+    if key.is_tiled:
+        tile_h, tile_w = int(key.tilelength), int(key.tilewidth)
+    else:
+        tile_h = min(int(key.rowsperstrip or height), height) or height
+        tile_w = width
+    return tile_h, tile_w, math.ceil(width / tile_w)
+
+
+def _segments(key, y0, y1, x0, x1) -> list[int]:
+    """The indices of the segments `[y0:y1, x0:x1]` touches, in the first
+    sample's plane."""
+    tile_h, tile_w, ncol = _grid(key)
+    return [r * ncol + c
+            for r in range(y0 // tile_h, (y1 - 1) // tile_h + 1)
+            for c in range(x0 // tile_w, (x1 - 1) // tile_w + 1)]
+
+
+def region_bytes(page, regions) -> int:
+    """What `read_region` would fetch for every `(y0, y1, x0, x1)` in
+    `regions` together, in stored bytes, with nothing fetched to find out.
+
+    A segment two regions share is counted once, as it is fetched once. A
+    strip is a whole row of the page, so a window over a plane written as one
+    strip costs the whole plane: the number a caller needs before reading a
+    window off a slow link.
+    """
+    key = page.keyframe
+    height, width = int(key.imagelength), int(key.imagewidth)
+    counts = page.databytecounts
+    touched = set()
+    for y0, y1, x0, x1 in regions:
+        y0, y1 = _clip(y0, y1, height)
+        x0, x1 = _clip(x0, x1, width)
+        if y1 > y0 and x1 > x0:
+            touched.update(_segments(key, y0, y1, x0, x1))
+    return sum(int(counts[i]) for i in touched if i < len(counts))
+
+
 def read_region(page, y0: int, y1: int, x0: int, x1: int, *, sample=None,
                 fetch=None) -> np.ndarray:
     """Pixels `[y0:y1, x0:x1]` of one TIFF page, touching only its tiles.
@@ -145,18 +187,9 @@ def read_region(page, y0: int, y1: int, x0: int, x1: int, *, sample=None,
     if int(getattr(key, "imagedepth", 1) or 1) > 1:
         raise ValueError("volumetric TIFF tiles are not supported at a web address")
 
-    if key.is_tiled:
-        tile_h, tile_w = int(key.tilelength), int(key.tilewidth)
-    else:
-        tile_h = min(int(key.rowsperstrip or height), height) or height
-        tile_w = width
-    ncol = math.ceil(width / tile_w)
-    nrow = math.ceil(height / tile_h)
-    plane = int(sample) if planar else 0
-    first = plane * nrow * ncol
-    indices = [first + r * ncol + c
-               for r in range(y0 // tile_h, (y1 - 1) // tile_h + 1)
-               for c in range(x0 // tile_w, (x1 - 1) // tile_w + 1)]
+    tile_h, tile_w, ncol = _grid(key)
+    first = (int(sample) if planar else 0) * math.ceil(height / tile_h) * ncol
+    indices = [first + index for index in _segments(key, y0, y1, x0, x1)]
 
     offsets = page.dataoffsets
     counts = page.databytecounts

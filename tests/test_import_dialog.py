@@ -313,12 +313,14 @@ def test_a_card_pick_that_fails_keeps_its_path_and_says_why(dialog):
 
 def test_the_next_dialog_opens_on_the_machine_the_last_pick_came_from(dialog):
     """A slide on hpc has its mask on hpc. Remembered only once a pick has
-    actually read, and offered only while that machine is still up."""
+    actually read, and offered only while that machine is still up -- a
+    files-only server counting as up while it is connected."""
     assert "restoreWhere();" in dialog[dialog.index("function mountLocation()"):]
     inspect = dialog[dialog.index("async function inspect()"):dialog.index("function landFlight()")]
     assert "rememberWhere();" in inspect
     restore = dialog[dialog.index("function restoreWhere()"):]
-    assert 'if (!place || !(place.kind === "server" || place.node)) return;' in restore
+    assert ('if (!place || !(place.kind === "server" || place.node || place.files)) return;'
+            in restore)
     assert "if (state !== owner || !state.location.isLocal()) return;" in restore
 
 
