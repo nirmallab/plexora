@@ -35,6 +35,7 @@ CHECKS = (
     'an unclaimed drop opens the Import dialog with the paths',
     'a drop a view claims goes nowhere else',
     'dragging a file over the window marks the page',
+    'the over phase carries the paths the enter phase brought',
     'and leaving unmarks it',
     'Ctrl+N opens a window from the page on Windows',
     'Ctrl+W closes this window',

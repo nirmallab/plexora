@@ -695,6 +695,13 @@ html.is-native-dragging body::after {
     z-index: 2147483000;
 }
 
+/* Over a box or a card that will take the file (has-drop-target, set by
+   browsePicker.js): that box is lit, and the window's frame -- "this drop opens
+   the Import dialog" -- would be saying something else. The tint stays. */
+html.is-native-dragging.has-drop-target body::after {
+    border-color: transparent;
+}
+
 
 /* ---------------------------------------------------------------------------
    App-wide status indicator (appStatus.js). Pinned to the far right of the
@@ -2530,6 +2537,23 @@ dialog .file-source .data-location-place {
     display: inline-flex;
     align-items: center;
     padding: 0 var(--space-4);
+}
+
+/* A file from Explorer or Finder over the row, in the desktop app
+   (browsePicker.js attachDropTarget): the box takes the focus look it would
+   have if it were being typed in, and the danger colour when the file is one
+   it does not take. Nothing else about the field changes -- no hint, no drop
+   area: the box IS the target. Three classes deep, so it beats Bootstrap's
+   `.form-control:focus`, which is injected after this sheet (see the note on
+   `.requirements-modal .form-control:focus`). */
+.import-field-row.is-drop-over > .form-control {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.import-field-row.is-drop-refused > .form-control {
+    border-color: var(--accent-danger);
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
 }
 
 /* One control, two halves — not two buttons that happen to be adjacent.   */
@@ -6324,14 +6348,22 @@ dialog .file-source .data-location-place {
     height: 40px;
 }
 
-.plx-import-inline-pick.is-over .plx-import-field {
+/* `is-drop-over` / `is-drop-refused`: the same row with a file from Explorer
+   or Finder over it in the desktop app (browsePicker.js attachDropTarget). */
+.plx-import-inline-pick.is-over .plx-import-field,
+.plx-import-inline-pick.is-drop-over .plx-import-field {
     background: rgba(5, 7, 10, 0.75);
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
 }
 
-.plx-import-inline-pick.is-refused .plx-import-field {
+.plx-import-inline-pick.is-refused .plx-import-field,
+.plx-import-inline-pick.is-drop-refused .plx-import-field {
     border-color: var(--accent-danger);
+}
+
+.plx-import-inline-pick.is-drop-refused .plx-import-field {
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
 }
 
 .plx-import-inline-pick.is-refused .plx-import-field:focus-within {

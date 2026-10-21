@@ -71,6 +71,12 @@ window.PlexoraDataLocation = (function () {
     //: case where the answer differs.
     let lastPlace = null;
 
+    //: Each attached field's handle, by its input. For code that is handed
+    //: only the box -- browsePicker.js's drop target, which has to move a
+    //: field set to Remote back to This computer before a file dropped from
+    //: this computer's own Explorer or Finder can mean anything in it.
+    const HANDLES = new WeakMap();
+
     function clientNode() {
         return (window.flaskVariables && window.flaskVariables.client_node) || "";
     }
@@ -778,7 +784,7 @@ window.PlexoraDataLocation = (function () {
         // leaving lying around for the sake of an event that says nothing.
         if (hidden) hidden.value = state.locator || "";
 
-        return {
+        const handle = {
             where: () => state.where,
             isLocal: () => state.where === LOCAL,
             /**
@@ -830,7 +836,14 @@ window.PlexoraDataLocation = (function () {
             //: sits in the field's row and the status line under the field.
             statusElement: status,
         };
+        HANDLES.set(input, handle);
+        return handle;
     }
 
-    return { attach, available, clientNode, serverIsRemote };
+    /** The handle `attach` returned for this input, or null. */
+    function handleOf(input) {
+        return (input && HANDLES.get(input)) || null;
+    }
+
+    return { attach, available, clientNode, serverIsRemote, handleOf };
 })();

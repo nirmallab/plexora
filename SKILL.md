@@ -4881,9 +4881,56 @@ deliberately left out and what should be built next.
   "unsupported"` rather than pretending to check. Native file drops arrive as a
   cancelable `plexora:native-drop` `CustomEvent` carrying paths, not bytes; a
   handler that does not cancel it falls through to
-  `PlexoraImportSample.dropPaths`. `tests/js/desktop_bridge_probe.mjs`
+  `PlexoraImportSample.dropPaths`. The handlers that cancel it are the figure
+  canvas and every path field, through `browsePicker.js`'s drop-target
+  registry (below), so a drop over a box fills that box and only a drop over
+  nothing opens the Import dialog. `plexora:native-drag`'s `over` phase
+  carries the paths its `enter` phase brought (held in `dragPaths`, cleared on
+  `leave` and on the drop), because the shell names them on enter and never
+  again, and a field deciding whether to light under the pointer needs to know
+  what is over it. `tests/js/desktop_bridge_probe.mjs`
   (`tests/test_desktop_bridge.py` runs it) is what exercises it without Tauri
   actually present.
+
+  **The drop-target registry (`services/browsePicker.js`), desktop app only.**
+  `attachDropTarget(zoneEl, {filter, mode, accept, count, enabled, accepts,
+  onOver, onDrop})` makes an element a place a dropped file goes, and is a
+  no-op without `window.PlexoraDesktop`, so a browser tab is unchanged.
+  `fillPathInput(inputEl, path)` sets the value and fires `input`, `keyup` and
+  a bubbling `change` -- what Browse's `onPicked` now calls too, so a drop and
+  a pick look the same to every field's listeners. One pair of document
+  listeners serves every zone; zones live in a `WeakMap` keyed by element and
+  marked `data-plx-drop`, so a view that re-renders or a page the router swaps
+  out has nothing to detach. The innermost zone under `elementFromPoint` wins,
+  and with a modal `<dialog>` open only zones inside it count, because a drop
+  must not fill a field the dialog is covering. Each zone's verdict is take,
+  refuse or pass: a `count: "one"` zone passes on a multi-path drag (it falls
+  through to `dropPaths`, which adds them all); a suffix the explorer knows
+  (`explorerTypes.js`'s `EXTENSIONS`, or a store) that the zone's
+  `normalizeAccept` rejects is refused with the reason in a `PlexoraToast`
+  (tone `warning`) and an `is-drop-refused` flash; a name with an unknown
+  suffix or none is taken, because the explorer cannot tell what it is either.
+  The lit zone gets `is-drop-over` or `is-drop-refused`, and
+  `html.has-drop-target` hides the window overlay's dashed frame (main.css
+  `html.is-native-dragging.has-drop-target body::after`), since that frame
+  says "this opens the Import dialog". The class is **not** `is-drop-target`,
+  which is Figure Builder's Sortable ghost class. `attachBrowseButton`
+  registers the field's `.import-field-row` (or its `parentElement`) by
+  itself, so every field that uses it takes drops with no call-site edit; a
+  field whose `dataLocation.js` handle (`handleOf`) is set to Remote is moved
+  to Local before filling, because a file from this computer's Explorer or
+  Finder means nothing on another machine, and a field with its own Remote
+  toggle (`fileSourceRow.js`, channel names) has no handle to move, so while
+  it points at another machine it refuses with a reason instead.
+  The Import dialog's inline mask/data/layer row (`renderInlinePick`)
+  registers its wrap as a zone that calls `submitSlot(path, "drop", adding)`;
+  the home page registers the whole landing (see the home page below). Styles:
+  main.css `.import-field-row.is-drop-over > .form-control` /
+  `.is-drop-refused` plus the inline-pick aliases, quickView.css
+  `.quick-view-card.is-drop-over`, settings.css
+  `.settings-input-row.is-drop-over > .settings-input`. Covered by
+  `tests/js/path_drop_probe.mjs`, run and pinned line by line by
+  `tests/test_path_drop.py`.
 - `services/pointerDrag.js` — pointer-driven intra-page drags (`cardList.js`'s
   reordering, anything SortableJS would otherwise own), used only inside the
   desktop app's window: its native file-drop handling swallows the HTML5 drag
@@ -5262,6 +5309,11 @@ deliberately left out and what should be built next.
   try/catched per field, so one field could never again cost another; anything
   that still mounts `attach()` in a loop over several fields needs the same
   guard.
+
+  **`handleOf(input)` returns the handle `attach()` returned for that input**
+  (a `WeakMap`), or null. It exists for code that is handed only the box --
+  `browsePicker.js`'s drop target, which has to move a field set to Remote
+  back to This computer before a dropped local file can mean anything in it.
 - `services/remoteState.js` — `window.PlexoraRemotes`, the one owner of "what
   are the remote connections doing?". Four surfaces used to ask that
   independently, with their own timer, their own copy of the state list and
@@ -6507,7 +6559,17 @@ and the multi-layer result are decided once, in `import_proposal` and
 `import_sample`. It can therefore do things the old landing refused: a Xenium
 run or a folder of matching files arrives as one sample with its mask, table
 and transcript layers, and the viewer fills them in from `/import/status` while
-they build. `tests/test_home_landing.py` holds both halves — that the page is
+they build. In the desktop app the whole `#quick_view_landing` is a
+`count: "many"` drop zone (`browsePicker.js`'s `attachDropTarget`), not only
+the card, because the space around the card is the biggest target on the
+screen and the page has exactly one thing to do with a file: one path goes
+through `take()`, the same as a Browse pick, and several go to
+`PlexoraImportSample.open({paths})`, since several files are a decision about
+several samples. It is disabled while `busy()`, so that drop falls through to
+the bridge's Import dialog rather than starting a second load over the first;
+while a drag is over it the `dropping` state paints
+`.quick-view-card.is-drop-over` and the line "Drop to open it.".
+`tests/test_home_landing.py` holds both halves — that the page is
 its own controls, and that the engine under it is the shared one. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
 with a `Proposal`; the dialog draws whatever comes back and decides nothing
 about what a file IS, so a new vendor format is a row in this list with no

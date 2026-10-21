@@ -295,24 +295,38 @@
     // The shell takes file drops natively, which is what yields PATHS rather
     // than bytes -- a 40 GB slide is opened where it lies, never uploaded.
     // Re-dispatched as DOM events so any view can claim a drop over itself
-    // (the figure canvas does): `plexora:native-drop` is cancelable, and one
-    // nobody cancels opens the Import dialog with the paths already in it.
+    // (the figure canvas does, and so does every path field, through
+    // browsePicker.js's attachDropTarget): `plexora:native-drop` is
+    // cancelable, and one nobody cancels opens the Import dialog with the
+    // paths already in it.
 
     function cssPoint(position) {
         const ratio = window.devicePixelRatio || 1;
         return {x: (position?.x || 0) / ratio, y: (position?.y || 0) / ratio};
     }
 
+    //: What the drag in progress carries. The shell names the paths when the
+    //: drag ENTERS the window and never again -- every `over` arrives with
+    //: none -- yet a field deciding whether to light up under the pointer
+    //: needs to know what is over it. Held here so every phase says.
+    let dragPaths = [];
+
     function onNativeDrag(phase, payload) {
         const point = cssPoint(payload?.position);
+        if (phase === "leave") {
+            dragPaths = [];
+        } else if (payload?.paths?.length) {
+            dragPaths = payload.paths.slice();
+        }
         document.documentElement.classList.toggle("is-native-dragging",
                                                    phase === "enter" || phase === "over");
         document.dispatchEvent(new CustomEvent("plexora:native-drag", {
-            detail: {phase, paths: payload?.paths || [], x: point.x, y: point.y},
+            detail: {phase, paths: dragPaths.slice(), x: point.x, y: point.y},
         }));
     }
 
     function onNativeDrop(payload) {
+        dragPaths = [];
         document.documentElement.classList.remove("is-native-dragging");
         const paths = payload?.paths || [];
         if (!paths.length) return;

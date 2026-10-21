@@ -84,6 +84,9 @@ PlexoraPage.register(function () {
     //: and sharing starts when the box commits. Load (or a pick in the file
     //: browser) sets this, and the share finishing is what submits it.
     let loadWhenShared = false;
+    //: A file from Explorer or Finder is being dragged over the page, in the
+    //: desktop app. The card lights and its line says what letting go does.
+    let dropping = false;
 
     // Which machine this image is on. `bare`: the chip and its menu below are
     // this page's switch, and they move the service's state with setWhere().
@@ -177,6 +180,7 @@ PlexoraPage.register(function () {
         card.classList.toggle("is-local", !remote);
         card.classList.toggle("is-directory", kind === "directory");
         card.classList.toggle("is-working", busy() || shareIs("is-busy"));
+        card.classList.toggle("is-drop-over", dropping);
         card.dataset.face = busy() ? "busy" : (typed ? "load" : "browse");
         card.dataset.check = check;
 
@@ -229,7 +233,9 @@ PlexoraPage.register(function () {
      */
     function paintLine(typed, check) {
         let line = null;
-        if (phase === "choosing") {
+        if (dropping) {
+            line = { tone: "info", icon: "arrow-down", text: "Drop to open it." };
+        } else if (phase === "choosing") {
             line = { tone: "busy", text: isRemote()
                 ? `Choose a ${kind === "directory" ? "folder" : "file"} on ${placeLabel()}.`
                 : "Choose in the file browser. It can open behind this window." };
@@ -876,6 +882,43 @@ PlexoraPage.register(function () {
         "click", (event) => {
             window.PlexoraImportHelp?.open({returnTo: event.currentTarget});
         });
+
+    // -- a file dropped on the page -----------------------------------------
+    //
+    // In the desktop app the whole page takes a drop, not only the card: the
+    // space around it is the biggest target on the screen, and this page has
+    // exactly one thing to do with a file. One file opens as if Browse had
+    // picked it -- the same `take`, so a run folder or a slide with anything
+    // to decide still goes to the import dialog. Several are a decision about
+    // several samples, which is the dialog's from the start.
+    //
+    // Not while the card is busy: that drop falls through to the bridge's own
+    // answer, the import dialog, rather than starting a second load over the
+    // first. Nothing to undo when the router swaps the page out --
+    // browsePicker.js keys its zones by element (attachDropTarget).
+    const landing = document.getElementById("quick_view_landing");
+    if (landing && typeof attachDropTarget === "function") {
+        attachDropTarget(landing, {
+            filter: "any", mode: "any", count: "many",
+            enabled: () => !busy(),
+            onOver: (lit) => {
+                dropping = lit;
+                paint();
+            },
+            onDrop: (paths) => {
+                problem = "";
+                if (menuOpen()) closeMenu(false);
+                if (paths.length > 1) {
+                    window.PlexoraImportSample?.open({paths});
+                    return;
+                }
+                // Dragged out of this computer's own Explorer or Finder, so
+                // it is on this computer whatever the chip said.
+                if (isRemote()) location.setWhere(LOCAL, null);
+                take(paths[0]);
+            },
+        });
+    }
 
     paint();
 });

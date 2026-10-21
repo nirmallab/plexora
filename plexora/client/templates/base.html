@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261020_file_explorer">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_native_drop">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -32,7 +32,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20260926_help_menu" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261021_native_drop" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -131,7 +131,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261021_explorer_waiting" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_explorer_system" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -169,7 +169,7 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
@@ -240,7 +240,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261020_scoped_add_label" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

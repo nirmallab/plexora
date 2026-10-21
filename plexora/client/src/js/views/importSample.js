@@ -1972,6 +1972,24 @@ window.PlexoraImportSample = (function () {
         });
         wrap.addEventListener("drop", onDrop);
 
+        // In the desktop app the same row takes a file from Explorer or Finder
+        // as a PATH -- a mask of any size, read where it lies -- and sends it
+        // the way Browse does. The HTML5 handlers above never fire there.
+        // Several files over the row are left to `dropPaths`, which adds them
+        // all to the dialog.
+        if (typeof attachDropTarget === "function") {
+            attachDropTarget(wrap, {
+                filter: "any", mode: "any", count: "one",
+                enabled: () => Boolean(state) && !state.addFlight,
+                onDrop: (path) => {
+                    if (state.location && !state.location.isLocal()) {
+                        state.location.setWhere("local", null);
+                    }
+                    submitSlot(path, "drop", adding);
+                },
+            });
+        }
+
         //: Held so a second press while the system's file browser is opening
         //: cannot open a second one.
         state.pickControls = [browse];

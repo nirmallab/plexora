@@ -228,6 +228,18 @@
     outline: none;
 }
 
+/* A folder from Explorer or Finder over the row, in the desktop app
+   (browsePicker.js attachDropTarget); a file is refused. */
+.settings-input-row.is-drop-over > .settings-input {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.settings-input-row.is-drop-refused > .settings-input {
+    border-color: var(--accent-danger);
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
+}
+
 /* -- the review step -------------------------------------------------- */
 
 .settings-review {

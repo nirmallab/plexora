@@ -476,10 +476,267 @@ function serverDialogs() {
     return capabilityCache.get("@server");
 }
 
+// -- a file dropped on a field ------------------------------------------------
+//
+// In the desktop app a file dragged in from Explorer or Finder arrives as a
+// PATH (desktopBridge.js re-dispatches the shell's drag as `plexora:native-drag`
+// and a cancelable `plexora:native-drop`). That makes every path box a place a
+// file can be dropped, with nothing added to it: the box lights while a file it
+// would take is over it, and the drop fills it exactly as a Browse pick does.
+// A drop nobody claims still opens the Import dialog, which is what dropping a
+// file anywhere else in the window has always done.
+//
+// A browser tab gets nothing here. An HTML5 drop hands a page the BYTES of a
+// file and never where it lives, and a box that wants a path to a 40 GB slide
+// has no use for its bytes -- so in a browser a path box is exactly what it was.
+//
+// One registry and one pair of document listeners for every zone on every
+// page. Zones are keyed by element in a WeakMap, so a view that re-renders, or
+// a page the router swaps out, leaves nothing to clean up: an element that is
+// gone can no longer be under the pointer, and its entry goes with it.
+
+//: zone element -> {filter, mode, accept, count, enabled, accepts, onOver, onDrop}
+const DROP_ZONES = new WeakMap();
+let dropListening = false;
+//: The zone lit right now, and how: {zone, state: "over" | "refused"}.
+let dropLit = null;
+//: What the drag in progress carries, for a bridge that names it only once.
+let dropPaths = [];
+//: Every file suffix the explorer knows, stores aside, built on first use.
+let knownSuffixes = null;
+
+/**
+ * Put a path in a box the way every Browse does: the value, then `input` and
+ * `keyup` for the live validation fields already run, and a bubbling `change`
+ * -- the one the Local/Remote switch shares a file on, since sharing is not
+ * something to do per keystroke. A programmatic assignment fires none of them.
+ */
+function fillPathInput(inputEl, path) {
+    if (!inputEl) return;
+    inputEl.value = path;
+    if (typeof inputEl.scrollWidth === "number") inputEl.scrollLeft = inputEl.scrollWidth;
+    inputEl.dispatchEvent(new Event("input"));
+    inputEl.dispatchEvent(new Event("keyup"));
+    inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/**
+ * @function attachDropTarget - make an element a place a dropped file goes.
+ * Desktop app only; anywhere else it does nothing and says so by returning a
+ * no-op.
+ *
+ * @param zoneEl the element the pointer has to be over: a field's row, a card,
+ *   a whole page. The innermost zone under the pointer wins.
+ * @param filter / mode / accept what the box takes, in the explorer's own
+ *   terms (`PlexoraExplorerTypes.normalizeAccept`): a file whose suffix is one
+ *   the explorer knows and the box does not take is refused with the reason,
+ *   and a folder box refuses a file. A name the explorer cannot place -- a
+ *   Xenium run folder, a suffix it has never heard of -- is the box's own
+ *   validation's business, and goes in.
+ * @param count "one" (one path; a drag of several lights nothing and falls
+ *   through to the Import dialog, which takes several) or "many".
+ * @param enabled () => boolean; false and the zone is not there, for a field
+ *   that is busy reading what it was last given.
+ * @param accepts (path, name) => true | string, a veto of the caller's own; a
+ *   string is the reason given.
+ * @param onOver (lit, state) for a zone that says more than its class does.
+ * @param onDrop (path, {zone, x, y}), or the array of paths for "many".
+ * @returns a function that unregisters the zone.
+ */
+function attachDropTarget(zoneEl, {filter = "any", mode = "file", accept = null,
+                                   count = "one", enabled = null, accepts = null,
+                                   onOver = null, onDrop = null} = {}) {
+    if (!zoneEl || typeof onDrop !== "function" || !window.PlexoraDesktop) {
+        return () => {};
+    }
+    DROP_ZONES.set(zoneEl, {filter, mode, accept, count, enabled, accepts, onOver, onDrop});
+    zoneEl.setAttribute("data-plx-drop", "");
+    listenForDrops();
+    return () => {
+        if (dropLit && dropLit.zone === zoneEl) lightZone(null, null);
+        DROP_ZONES.delete(zoneEl);
+        zoneEl.removeAttribute("data-plx-drop");
+    };
+}
+
+function listenForDrops() {
+    if (dropListening) return;
+    dropListening = true;
+    document.addEventListener("plexora:native-drag", onNativeDragOverField);
+    document.addEventListener("plexora:native-drop", onNativeDropOnField);
+}
+
+/** The last part of a path, a trailing separator ignored. */
+function dropName(path) {
+    return String(path || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+}
+
+function isKnownFileName(lowered) {
+    const types = window.PlexoraExplorerTypes;
+    if (!types || !types.EXTENSIONS) return false;
+    if (!knownSuffixes) {
+        const stores = new Set(types.STORE_SUFFIXES || []);
+        const all = new Set();
+        Object.values(types.EXTENSIONS).forEach((list) => {
+            (list || []).forEach((suffix) => { if (!stores.has(suffix)) all.add(suffix); });
+        });
+        knownSuffixes = Array.from(all);
+    }
+    return knownSuffixes.some((suffix) => lowered.endsWith(suffix));
+}
+
+/** Why this box will not take that name, or "" when it will. */
+function suffixRefusal(name, spec) {
+    const types = window.PlexoraExplorerTypes;
+    const lowered = name.toLowerCase();
+    if (!types || typeof types.normalizeAccept !== "function" || !isKnownFileName(lowered)) {
+        return "";
+    }
+    const rule = types.normalizeAccept({accept: spec.accept, mode: spec.mode, filter: spec.filter});
+    if (rule.files === null) return "";
+    if (Array.isArray(rule.files) && rule.files.some((suffix) => lowered.endsWith(suffix))) {
+        return "";
+    }
+    if (rule.files === false) return "This box takes a folder, not a file.";
+    return rule.words ? `This box takes ${rule.words}.` : "This box takes a different kind of file.";
+}
+
+/**
+ * What a zone does with these paths: "take" them, "refuse" them with a reason
+ * (the drop is aimed at this box and wrong for it), or "pass" (the zone is not
+ * a target for this drag at all, so it lights nothing and claims nothing).
+ * No paths yet -- a shell that names them only at the drop -- is a take,
+ * decided again when they arrive.
+ */
+function dropVerdict(paths, spec) {
+    if (spec.enabled && !spec.enabled()) return {state: "pass"};
+    if (!paths.length) return {state: "take"};
+    if (spec.count !== "many" && paths.length !== 1) return {state: "pass"};
+    for (const path of paths) {
+        const name = dropName(path);
+        if (spec.accepts) {
+            const said = spec.accepts(path, name);
+            if (typeof said === "string" && said) return {state: "refuse", reason: said};
+        }
+        const reason = suffixRefusal(name, spec);
+        if (reason) return {state: "refuse", reason};
+    }
+    return {state: "take"};
+}
+
+/** The open modal dialog a drop has to land inside, if any. */
+function openModal() {
+    const open = Array.from(document.querySelectorAll("dialog[open]"));
+    const modal = open.filter((dialog) => {
+        try {
+            return dialog.matches(":modal");
+        } catch (error) {
+            return true;
+        }
+    });
+    return modal.length ? modal[modal.length - 1] : null;
+}
+
+/** The innermost registered zone under a point, or null. While a modal is
+ *  open only a zone inside it counts: the page under the backdrop is not
+ *  there to the pointer, and must not be there to a drop either. */
+function zoneAt(x, y) {
+    const hit = typeof document.elementFromPoint === "function"
+        ? document.elementFromPoint(x, y) : null;
+    let zone = hit && typeof hit.closest === "function" ? hit.closest("[data-plx-drop]") : null;
+    while (zone && !DROP_ZONES.has(zone)) {
+        const up = zone.parentElement;
+        zone = up && typeof up.closest === "function" ? up.closest("[data-plx-drop]") : null;
+    }
+    if (!zone) return null;
+    const modal = openModal();
+    if (modal && !modal.contains(zone)) return null;
+    return zone;
+}
+
+function tellZone(zone, lit, state) {
+    const spec = DROP_ZONES.get(zone);
+    if (!spec || typeof spec.onOver !== "function") return;
+    try {
+        spec.onOver(lit, state);
+    } catch (error) {
+        console.error("browsePicker: a drop zone's onOver failed.", error);
+    }
+}
+
+/** Light one zone (or none) and put out the last. */
+function lightZone(zone, state) {
+    const before = dropLit;
+    if (before && before.zone === zone && before.state === state) return;
+    if (before) before.zone.classList.remove("is-drop-over", "is-drop-refused");
+    dropLit = zone && state ? {zone, state} : null;
+    if (dropLit) zone.classList.add(state === "refused" ? "is-drop-refused" : "is-drop-over");
+    document.documentElement.classList.toggle("has-drop-target", Boolean(dropLit));
+    if (before && before.zone !== zone) tellZone(before.zone, false, null);
+    if (dropLit) tellZone(zone, true, state);
+}
+
+function onNativeDragOverField(event) {
+    const detail = event.detail || {};
+    if (detail.phase === "leave") {
+        dropPaths = [];
+        lightZone(null, null);
+        return;
+    }
+    if (Array.isArray(detail.paths) && detail.paths.length) dropPaths = detail.paths.slice();
+    const zone = zoneAt(detail.x, detail.y);
+    const spec = zone ? DROP_ZONES.get(zone) : null;
+    const verdict = spec ? dropVerdict(dropPaths, spec) : {state: "pass"};
+    if (verdict.state === "take") lightZone(zone, "over");
+    else if (verdict.state === "refuse") lightZone(zone, "refused");
+    else lightZone(null, null);
+}
+
+function onNativeDropOnField(event) {
+    const detail = event.detail || {};
+    const paths = Array.isArray(detail.paths) && detail.paths.length
+        ? detail.paths.slice() : dropPaths.slice();
+    // The shell sends no `leave` after a drop, so whatever was lit goes out
+    // here, claimed or not.
+    dropPaths = [];
+    lightZone(null, null);
+    if (event.defaultPrevented || !paths.length) return;
+    const zone = zoneAt(detail.x, detail.y);
+    const spec = zone ? DROP_ZONES.get(zone) : null;
+    if (!spec) return;
+    const verdict = dropVerdict(paths, spec);
+    if (verdict.state === "pass") return;
+    event.preventDefault();
+    if (verdict.state === "refuse") {
+        refuseDrop(zone, verdict.reason);
+        return;
+    }
+    try {
+        spec.onDrop(spec.count === "many" ? paths : paths[0],
+                    {zone, x: detail.x, y: detail.y});
+    } catch (error) {
+        console.error("browsePicker: a drop zone's onDrop failed.", error);
+    }
+}
+
+/** A drop aimed at a box that cannot take it: the box says so where it is,
+ *  and a notice says why. Not the navbar's status, which would keep an error
+ *  standing for a drop nobody needs to hear about twice. */
+function refuseDrop(zone, reason) {
+    zone.classList.add("is-drop-refused");
+    window.setTimeout(() => {
+        if (!(dropLit && dropLit.zone === zone)) zone.classList.remove("is-drop-refused");
+    }, 900);
+    window.PlexoraToast?.show?.({title: "Not dropped", note: reason, tone: "warning"});
+}
+
 /**
  * @function attachBrowseButton - wires a "Browse..." button to fill a text
  * input with the picked path, dispatching an `input` event afterward so any
  * existing onkeyup/oninput live-validation on that field runs unchanged.
+ *
+ * In the desktop app the field's row also takes a file dropped on it
+ * (attachDropTarget): the same box, filled the same way.
  *
  * One button whatever the machine: the explorer takes a file or a folder in
  * mode "any" (see the file header), so there is no File | Folder pair to swap
@@ -509,20 +766,13 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
             // the box may have been typed into since this was wired.
             node: nodeNow(),
             start: inputEl.value.trim(),
-            onPicked: (path) => {
-                inputEl.value = path;
-                inputEl.dispatchEvent(new Event("input"));
-                inputEl.dispatchEvent(new Event("keyup"));
-                // And `change`, which a programmatic assignment does not fire
-                // on its own. It is the one the Local/Remote switch listens
-                // for -- sharing a file with another machine is not something
-                // to do per keystroke, so it waits for the value to settle.
-                // Without this, browsing to a file on a cluster filled the box
-                // and shared nothing: the form then posted an empty locator
-                // and the import answered "provide a valid path to the image
-                // file", about a path that was plainly right there.
-                inputEl.dispatchEvent(new Event("change", { bubbles: true }));
-            },
+            // `change` matters most of the three fillPathInput fires: it is
+            // the one the Local/Remote switch shares on. Without it, browsing
+            // to a file on a cluster filled the box and shared nothing: the
+            // form then posted an empty locator and the import answered
+            // "provide a valid path to the image file", about a path that was
+            // plainly right there.
+            onPicked: (path) => fillPathInput(inputEl, path),
             // A dialog that cannot be shown must say so. This used to swallow
             // the error, which turned a rejected filter name into a button
             // that looked ordinary and did nothing when clicked -- with the
@@ -537,4 +787,30 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
     }
 
     buttonEl.addEventListener("click", () => go(mode));
+
+    // The row is the target, not the input alone: the switch and the button
+    // beside the box are part of what the pointer is aiming at.
+    attachDropTarget(inputEl.closest?.(".import-field-row") || inputEl.parentElement, {
+        filter, mode, accept, count: "one",
+        enabled: () => !inputEl.disabled && !inputEl.readOnly,
+        accepts: () => {
+            // A field that draws its own Remote switch (fileSourceRow,
+            // channel names) has no handle to move back to This computer, so
+            // it says what to do rather than filling a box that means a path
+            // on another machine with one from this one.
+            const handle = window.PlexoraDataLocation?.handleOf?.(inputEl);
+            if (!handle && nodeNow()) {
+                return "This box is set to another machine. Switch it to This computer to drop a file from here.";
+            }
+            return true;
+        },
+        onDrop: (path) => {
+            // A file dragged out of this computer's Explorer or Finder is on
+            // this computer, whatever the switch said. Moving it clears the
+            // box, which is filled straight after.
+            const handle = window.PlexoraDataLocation?.handleOf?.(inputEl);
+            if (handle && !handle.isLocal()) handle.setWhere("local", null);
+            fillPathInput(inputEl, path);
+        },
+    });
 }

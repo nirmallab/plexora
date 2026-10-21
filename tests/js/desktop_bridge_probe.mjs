@@ -190,8 +190,13 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     world.emit("tauri://drag-drop", { paths: ["C:\\data\\figure.png"], position: { x: 10, y: 10 } });
     check("a drop a view claims goes nowhere else", world.drops.length === 1);
 
+    const phases = [];
+    world.document.addEventListener("plexora:native-drag", (event) => phases.push(event.detail));
     world.emit("tauri://drag-enter", { paths: ["x"], position: { x: 0, y: 0 } });
     check("dragging a file over the window marks the page", world.classes.has("is-native-dragging"));
+    world.emit("tauri://drag-over", { position: { x: 4, y: 4 } });
+    check("the over phase carries the paths the enter phase brought",
+          phases.length === 2 && phases[1].phase === "over" && phases[1].paths[0] === "x");
     world.emit("tauri://drag-leave", null);
     check("and leaving unmarks it", !world.classes.has("is-native-dragging"));
 

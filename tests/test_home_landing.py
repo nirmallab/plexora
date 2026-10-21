@@ -149,6 +149,19 @@ def test_the_landing_brings_its_own_stylesheet_and_controller(landing):
     assert re.search(r'quickViewLanding\.js\?v=[^"]+', landing)
 
 
+def test_the_whole_page_takes_a_dropped_file_in_the_desktop_app():
+    """In the desktop app a file dragged in from Explorer or Finder opens from
+    anywhere on the page, not only over the card: the zone is the landing
+    itself, one file goes through `take` -- what a Browse pick goes through --
+    and several go to the Import dialog. The card is what lights."""
+    text = source("src", "js", "views", "quickViewLanding.js")
+    assert 'document.getElementById("quick_view_landing")' in text
+    assert "attachDropTarget(landing" in text
+    assert "take(paths[0])" in text
+    assert "PlexoraImportSample?.open({paths})" in text
+    assert ".quick-view-card.is-drop-over" in source("src", "css", "quickView.css")
+
+
 def test_nothing_still_points_at_the_import_page_that_was_deleted(landing):
     """The footer used to end in a link to `/upload_page`, and that page is
     gone -- deliberately, with the three-field form it rendered. A reverted

@@ -243,6 +243,30 @@
     opacity: 0.25;
 }
 
+/* A file from Explorer or Finder anywhere over the page, in the desktop app
+   (quickViewLanding.js, browsePicker.js attachDropTarget). The whole page is
+   the target; the card is what lights, because the card is what the file goes
+   into: raised as under the pointer, the quick beam running, and the box with
+   the look it has while being typed in. */
+.quick-view-card.is-drop-over {
+    border-color: rgba(255, 255, 255, 0.12);
+    translate: 0 -2px;
+}
+
+.quick-view-card.is-drop-over .quick-view-beam {
+    opacity: 1;
+}
+
+.quick-view-card.is-drop-over::before {
+    opacity: 0.25;
+}
+
+.quick-view-card.is-drop-over .quick-view-field {
+    background: rgba(5, 7, 10, 0.75);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
 @keyframes quick-view-beam {
     to {
         --quick-view-beam: 360deg;
