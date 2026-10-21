@@ -301,9 +301,13 @@
         <div id="save_anndata_status"></div>
     </div>
     {# The panel's two keys, where the hand on the mouse finds them: the
-       same key caps the canvas's own hint uses (core's `.plx-kbd`). #}
-    <footer class="gate-panel-footer" aria-label="Keyboard shortcuts">
-        <span class="gate-panel-shortcut"><kbd class="plx-kbd">Z</kbd> Previous marker</span>
-        <span class="gate-panel-shortcut"><kbd class="plx-kbd">X</kbd> Next marker</span>
+       same key caps the canvas's own hint uses (core's `.plx-kbd`). Each is
+       a button as well, for the hand that stayed on the mouse: a click steps
+       the marker exactly as its key does (stepMarker). #}
+    <footer class="gate-panel-footer" id="gate_panel_footer" aria-label="Previous and next marker">
+        <button type="button" class="gate-panel-shortcut" data-marker-step="-1"
+                title="Previous marker (Z)"><kbd class="plx-kbd">Z</kbd> Previous marker</button>
+        <button type="button" class="gate-panel-shortcut" data-marker-step="1"
+                title="Next marker (X)"><kbd class="plx-kbd">X</kbd> Next marker</button>
     </footer>
 </section>

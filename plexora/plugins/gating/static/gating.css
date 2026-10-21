@@ -534,9 +534,19 @@
     flex-direction: column;
     font-size: 10px;
     gap: 0;
+    /* The glass (below) is the stacking context its pane's -1 counts in, so
+       the pane is behind these lines and over the image. */
+    isolation: isolate;
+    /* Room over the name for the glass: its top edge stands about as far
+       below the sample name's line as its sides stand from the control.
+       At 4px it ran along the descenders and the corner read as crowded;
+       much past 10px the control comes away from the caption at rest.
+       Moved, the free layer's `margin: 0` (viewer.css) takes it back. */
+    margin-top: 10px;
     min-width: 0;
     /* The caption lets clicks through to the image; this one takes them. */
     pointer-events: auto;
+    position: relative;
     /* Wide enough for ~180px of track once the two numbers are paid for: the
        window is logarithmic, and a short log track moves a 16-bit channel's
        ceiling by hundreds per pixel. */
@@ -571,7 +581,11 @@
     white-space: nowrap;
 }
 
+/* Its cursor is the slider's own (pointer on a thumb, text on a number), not
+   the grab the rest of the control shows: the rail between is not a place
+   to pick the control up. */
 .gate-contrast-slider {
+    cursor: default;
     min-width: 0;
     opacity: 0.8;
     transition: opacity var(--duration-fast) var(--ease-standard);
@@ -588,6 +602,65 @@
 #gate_contrast_control:hover .gate-contrast-slider,
 #gate_contrast_control:focus-within .gate-contrast-slider {
     opacity: 1;
+}
+
+/* THE GLASS. Under the pointer, and while it is carried, the control stands
+   on a pane of the magic bar's liquid glass (viewer.css .plx-magic-bar): the
+   tissue blurred through it, a light edge along its top, and a dark tint, so
+   the caption's light text reads over bright stain as well as over black.
+   The pane is what says "this can be picked up", and all of it can be but
+   the slider: the whole control is the handle, and core leaves a press on
+   the slider to the slider.
+
+   Drawn round the control rather than inside it, so at rest the control is
+   text on the image exactly as before and the pane appearing moves nothing.
+   As far out on every side, and no further than the 12px the caption and
+   the free layer keep from the canvas's edge: at home or dragged into a
+   corner, it never runs off the image. That is also why core's grip is not
+   drawn here -- six dots need a gutter the pane cannot have without
+   crossing that edge, and the pane says what they said. It takes the pointer
+   only once shown: at rest a click beside the text is still a click on the
+   image, and shown it keeps the hover from flickering at the edge. */
+#gate_contrast_control::before {
+    content: none;
+}
+
+#gate_contrast_control::after {
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    backdrop-filter: blur(16px) saturate(160%);
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.62), rgba(12, 16, 22, 0.58) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    content: "";
+    inset: -5px -9px;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+    z-index: -1;
+}
+
+#gate_contrast_control:hover::after,
+#gate_contrast_control.is-moving::after {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Carried, it is a little further off the image. */
+#gate_contrast_control.is-moving::after {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--shadow-md);
+}
+
+/* Over brightfield the caption's text is dark (viewer.css), so the pane is
+   frosted white rather than smoked. */
+#openseadragon.brightfield-ground ~ .plx-canvas-safe #gate_contrast_control::after {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 245, 249, 0.68) 70%);
+    border-color: rgba(18, 24, 32, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7),
+                0 8px 24px rgba(18, 24, 32, 0.18);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1069,11 +1142,14 @@
     flex-wrap: wrap;
     /* The canvas's "T  Toggle selected cells" hint, size for size. */
     font-size: 10px;
-    gap: var(--space-1) var(--space-4);
+    /* The keys' own 2px 6px is taken back out of the gap and the padding,
+       so at rest the band and the two lines sit where they did before the
+       keys were buttons. */
+    gap: 0 var(--space-1);
     justify-content: center;
     letter-spacing: 0.02em;
     margin-top: var(--space-3);
-    padding: 6px 8px;
+    padding: 4px 2px;
 }
 
 /* In a tool card the band runs edge to edge and down to the card's foot,
@@ -1082,11 +1158,56 @@
     margin: var(--space-3) -8px -8px;
 }
 
+/* Each key is also a button (stepMarker), and at rest still reads as the
+   quiet line it was: no ground, no edge, the band's own muted text. Under
+   the pointer it takes a faint ground and its cap lights, as the canvas
+   hint's cap does when it is on; pressed, the cap goes down a pixel. */
 .gate-panel-shortcut {
     align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    cursor: pointer;
     display: inline-flex;
+    font: inherit;
     gap: 5px;
+    letter-spacing: inherit;
+    padding: 2px 6px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
     white-space: nowrap;
+}
+
+.gate-panel-shortcut .plx-kbd {
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                translate var(--duration-fast) var(--ease-standard);
+}
+
+.gate-panel-shortcut:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.gate-panel-shortcut:hover:not(:disabled) .plx-kbd {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.gate-panel-shortcut:active:not(:disabled) .plx-kbd {
+    translate: 0 1px;
+}
+
+.gate-panel-shortcut:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 0;
+}
+
+/* At either end of the list: the key does nothing there, nor does this. */
+.gate-panel-shortcut:disabled {
+    cursor: default;
+    opacity: 0.4;
 }
 
 /* The canvas hint's cap (viewer.css .viewer-overlay-hint-key), not the

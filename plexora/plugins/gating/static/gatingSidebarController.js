@@ -203,6 +203,14 @@ class GatingSidebarController {
         plot?.addEventListener("click", (event) => this.onNudgeClick(event));
         plot?.addEventListener("keydown", (event) => this.onNudgeKey(event));
 
+        // The footer's Z and X are buttons too (gating/panel.html): a click
+        // steps the marker as the key does, and the button for a step off
+        // either end of the list is greyed out (paintMarkerSteps).
+        document.getElementById("gate_panel_footer")?.addEventListener("click", (event) => {
+            const button = event.target.closest?.("[data-marker-step]");
+            if (button && !button.disabled) this.stepMarker(Number(button.dataset.markerStep));
+        });
+
         // The note under the gate says how many cells QC left uncalled, which
         // the viewer knows once it has evaluated the gate (paintQcNote).
         window.addEventListener("plexora:cell-gate-changed", this._onCellGate);
@@ -296,6 +304,18 @@ class GatingSidebarController {
         window.clearTimeout(this.gateMarkerChangeTimer);
         this.setGateMarker(next);
         return true;
+    }
+
+    /** The footer's Previous / Next, each disabled where stepMarker would
+     *  not move: at the first marker, at the last, and Previous with none
+     *  selected. */
+    paintMarkerSteps() {
+        const names = this.getGateMarkerNames();
+        const at = names.indexOf(this.gateMarker);
+        for (const button of document.querySelectorAll("#gate_panel_footer [data-marker-step]")) {
+            const to = at + Number(button.dataset.markerStep);
+            button.disabled = to < 0 || to >= names.length;
+        }
     }
 
     onMarkerKey(event) {
@@ -534,6 +554,7 @@ class GatingSidebarController {
         } else {
             this.gateMarkerSelect.setOptions(names);
         }
+        this.paintMarkerSteps();
     }
 
     getGateMarkerNames() {
@@ -554,6 +575,7 @@ class GatingSidebarController {
         if (this.gateMarkerSelect) {
             this.gateMarkerSelect.setValue(name);
         }
+        this.paintMarkerSteps();
         this.ensureGateSelection(name);
         this.syncGateSlider();
         // The pending revert is the previous marker's, not this one's -- see
@@ -1730,9 +1752,10 @@ class GatingSidebarController {
  * actually on screen: a window for a channel nobody is looking at would be a
  * slider that changes nothing visible.
  *
- * The user may drag it off the caption by its name line, to sit beside the
- * cells being judged (core's `ctx.view.movable`; the x beside the name puts
- * it back). It is the same element wherever it is, so hiding it with the
+ * The user may drag it off the caption, by anything but the slider, to sit
+ * beside the cells being judged (core's `ctx.view.movable`; the x beside the
+ * name puts it back). Under the pointer it stands on a pane of glass, which
+ * is what says it can be picked up. It is the same element wherever it is, so hiding it with the
  * panel, a change of marker or of view leaves it where it was left; and the
  * place is kept for the tab, so the next sample opens with it there.
  */
@@ -1797,8 +1820,8 @@ class GateContrastControl {
         root.hidden = true;
         // Two lines on the caption's own ground: the marker, then its window
         // with a number at each end. The name alone on its line, so it can be
-        // read in full rather than squeezed beside the track; the line is
-        // also what it is moved by, and holds the x that puts it back.
+        // read in full rather than squeezed beside the track; the line also
+        // holds the x that puts it back.
         const head = document.createElement("div");
         head.className = "gate-contrast-head";
         this.nameNode = document.createElement("div");
@@ -1808,8 +1831,15 @@ class GateContrastControl {
         mount.className = "gate-contrast-slider";
         root.append(head, mount);
         caption.appendChild(root);
+        // Moved by the whole control, not the name's line alone: under the
+        // pointer it stands on a pane of glass (gating.css), and the glass is
+        // what the hand reaches for. Core leaves a press on the slider to the
+        // slider. The x that puts it back goes where it always was, at the
+        // end of the name's line -- core adds it to the end of the handle,
+        // which here would be a third line of its own.
         this.movable = this.controller.ctx?.view?.movable?.(root, {
-            id: "contrast", handle: head, back: "Move back under the sample's name" }) || null;
+            id: "contrast", back: "Move back under the sample's name" }) || null;
+        if (this.movable?.reset) head.appendChild(this.movable.reset);
         // The Image Channels window's own options (viewerSidebar's
         // syncChannelSlider): logarithmic, whole numbers, the same domain.
         // Bounds are placeholders until `sync` reads the slot's.

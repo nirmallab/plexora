@@ -163,16 +163,19 @@ def test_the_viewer_contrast_is_the_image_channels_window():
 
 
 def test_the_viewer_contrast_can_be_moved_off_the_caption():
-    """Dragged by its name line, the contrast control goes anywhere over the
-    image and back (core's `ctx.view.movable`, tests/js/canvas_layout_probe.mjs
-    for the behaviour). The name line is the handle, never the slider; it
-    keeps the caption's ground when it leaves the caption; and it is the same
-    element hidden or shown, so it stays where it was left."""
+    """Dragged by anything but its slider, the contrast control goes anywhere
+    over the image and back (core's `ctx.view.movable`,
+    tests/js/canvas_layout_probe.mjs for the behaviour, including a press on
+    the slider staying the slider's). The whole control is the handle, and
+    the x that puts it back stays on the name's line; it keeps the caption's
+    ground when it leaves the caption; and it is the same element hidden or
+    shown, so it stays where it was left."""
     controller = _code(CONTROLLER)
     contrast = controller[controller.index("class GateContrastControl {"):]
     contrast = contrast[:contrast.index("\nfunction describeGateProvenance")]
     assert "this.controller.ctx?.view?.movable?.(root, {" in contrast
-    assert 'id: "contrast", handle: head' in contrast
+    assert 'id: "contrast", back: ' in contrast and "handle:" not in contrast
+    assert "head.appendChild(this.movable.reset)" in contrast
     assert 'head.className = "gate-contrast-head"' in contrast
     assert 'root.className = "gate-contrast viewer-caption-line"' in contrast
     dispose = contrast[contrast.index("    dispose() {"):]
@@ -182,6 +185,38 @@ def test_the_viewer_contrast_can_be_moved_off_the_caption():
     main = (CORE / "js" / "main.js").read_text(encoding="utf-8")
     assert "movable(element, { id, handle = null, back } = {}) {" in main
     assert "record.cleanups.push(() => movable.dispose())" in main
+    layout = (CORE / "js" / "services" / "canvasLayout.js").read_text(encoding="utf-8")
+    assert "[role='slider'], .plx-slider\"" in layout
+
+
+def test_the_viewer_contrast_stands_on_glass_under_the_pointer():
+    """Under the pointer, and while carried, the contrast control stands on a
+    pane of glass that says it can be picked up. The pane is drawn round the
+    control, so nothing moves when it appears, and never further out than the
+    12px the caption and the free layer keep from the canvas's edge; it is
+    behind the control's lines, takes the pointer only once shown, and is
+    frosted white over brightfield, where the caption's text is dark."""
+    styles = _code(STYLES)
+    rule = styles[styles.index("#gate_contrast_control {"):]
+    rule = rule[:rule.index("}")]
+    assert "isolation: isolate;" in rule and "position: relative;" in rule
+    assert "margin-top: 10px;" in rule
+    glass = styles[styles.index("#gate_contrast_control::after {"):]
+    glass = glass[:glass.index("}")]
+    assert "backdrop-filter: blur(" in glass and "z-index: -1;" in glass
+    assert "inset: -5px -9px;" in glass
+    assert "opacity: 0;" in glass and "pointer-events: none;" in glass
+    shown = styles[styles.index("#gate_contrast_control:hover::after,\n"
+                                "#gate_contrast_control.is-moving::after {"):]
+    shown = shown[:shown.index("}")]
+    assert "opacity: 1;" in shown and "pointer-events: auto;" in shown
+    # No grip: the pane is the affordance, and six dots need a gutter it lacks.
+    assert "#gate_contrast_control::before {\n    content: none;" in styles
+    assert ("#openseadragon.brightfield-ground ~ .plx-canvas-safe "
+            "#gate_contrast_control::after {") in styles
+    # The rail is not a place to grab it.
+    track = styles[styles.index(".gate-contrast-slider {"):]
+    assert "cursor: default;" in track[:track.index("}")]
 
 
 def test_the_two_numbers_are_the_sliders_own_drawn_as_text():
@@ -483,6 +518,36 @@ def test_the_footer_names_the_two_marker_keys_as_key_caps():
     assert "font-size: 9px" in cap[:cap.index("}")]
     # The last thing in the section.
     assert panel.index("</footer>") > panel.index('id="gating_save_anndata_panel"')
+
+
+def test_the_footer_keys_are_buttons_that_step_the_marker():
+    """A click on Z or X in the footer does what the key does (stepMarker),
+    and the one that would step off either end of the list is disabled. At
+    rest the keys still read as the quiet line they were: no ground, and
+    their padding taken back out of the band's."""
+    panel, styles, controller = _code(PANEL), _code(STYLES), _code(CONTROLLER)
+    footer = panel[panel.index('<footer class="gate-panel-footer"'):panel.index("</footer>")]
+    assert 'id="gate_panel_footer"' in footer
+    assert footer.count('<button type="button" class="gate-panel-shortcut"') == 2
+    assert 'data-marker-step="-1"' in footer and 'data-marker-step="1"' in footer
+    setup = controller[controller.index("    setup() {"):controller.index("    onShow() {")]
+    assert 'document.getElementById("gate_panel_footer")' in setup
+    assert "this.stepMarker(Number(button.dataset.markerStep))" in setup
+    paint = controller[controller.index("    paintMarkerSteps() {"):]
+    paint = paint[:paint.index("\n    }\n")]
+    assert "button.disabled = to < 0 || to >= names.length;" in paint
+    for owner in ("    setGateMarker(name, options = {}) {", "    populateGateSelect() {"):
+        body = controller[controller.index(owner):]
+        assert "this.paintMarkerSteps();" in body[:body.index("\n    }\n")]
+    band = styles[styles.index(".gate-panel-footer {"):]
+    band = band[:band.index("}")]
+    assert "gap: 0 var(--space-1);" in band and "padding: 4px 2px;" in band
+    key = styles[styles.index(".gate-panel-shortcut {"):]
+    key = key[:key.index("}")]
+    assert "background: none;" in key and "border: 0;" in key and "padding: 2px 6px;" in key
+    assert ".gate-panel-shortcut:hover:not(:disabled) {" in styles
+    assert ".gate-panel-shortcut:focus-visible {" in styles
+    assert ".gate-panel-shortcut:disabled {" in styles
 
 
 def test_the_cells_are_drawn_before_a_run_and_none_is_offered():
