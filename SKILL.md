@@ -111,7 +111,7 @@ Entry points:
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated`/`total`/`partial`/`dataset`/`platform` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the explorer can never learn to draw something this function was not also taught to pass through), `stat_entries_on_node`/`fs_places_on_node`/`search_on_node` (the explorer's newer routes, through `_optional`: they are additive with no `API_VERSION` bump, so the only sign a node predates one is a bare 404, consumed as `None` -- which the route answers as `unsupported` -- before `http._check` turns it into the "upgrade it there" error that is right for a route a caller cannot do without; a 404 that carries a sentence is the node's own refusal and still raises, and a 429 arrives as `dir_search.SearchBusy`), `known_platform(node)` (the platform that node last reported to this process, from any answer carrying it -- never a probe, since it is asked when the node is down and labels only a sidebar icon), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
 | `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)`, `failed_conversions(names)` and `conversion_warnings(names)` are the CLI's courtesy lines for a mask still converting, one that failed, and one with something worth knowing but nothing wrong, all sharing `_described_on_nodes` (one `node_api.node_resources` call per node these projects read, narrowed to their own resource ids); all three swallow an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
@@ -337,7 +337,10 @@ Entry points:
   read sizes. A registry keyed by the canonical ssh target (`register`/
   `client_for`/`require_client`); `SFTPNotConnected` carries
   `not_connected=True` so callers can tell "reconnect" from a real error.
-  `listing()` answers `/list_dir` with whole `sftp://` paths.
+  `listing()` answers `/list_dir` with whole `sftp://` paths, each row's
+  `mtime`/`kind`/`store` from the readdir's own attributes, so it is never
+  `partial`; `platform` is `""`, because it is not knowable without running
+  something there and a files-only server runs nothing of ours.
   `SFTPFileSystem` is an async fsspec filesystem under `FsspecStore`; it is
   **deliberately not registered under `"sftp"`**, because fsspec's own `sftp`
   is paramiko and registering over it would break anyone who uses that. Its
@@ -1415,20 +1418,42 @@ Entry points:
   or, with a `node` field, relayed to that node's, a 400+`fallback` for either
   a bad node name or one that answered "no" rather than a real relay failure,
   and a 502 reserved for a node that could not be reached at all; `POST
-  /list_dir` -- one directory's names/sizes/is_dir/path, the picker that
-  stands in when no dialog is possible, also taking `node` to walk that
-  machine's filesystem instead, and `show_hidden`; a `node` starting `sftp://`
-  is a files-only place: `/browse_path` answers fallback `list`,
+  /list_dir` -- one directory as `dir_listing.listing` answers it, for the
+  file explorer every Browse opens, answered through `data_routes`'
+  `serialize_and_submit_json` so a 50,000-entry folder (~8 MB of JSON) crosses
+  as ~1 MB of gzip, also taking `node` to walk that machine's filesystem
+  instead, and `show_hidden`; `POST /stat_entries` -- sizes, dates and kinds
+  for up to 500 bare names in one folder, what a `partial` listing owes;
+  `GET /fs_places` -- the sidebar's places for one machine
+  (`fs_places.describe()`) plus what the user keeps for it, ALWAYS a 200: the
+  remembered half comes back in every branch so the pins still draw while a
+  node is down, with `unavailable` (the sentence) or `unsupported` (a node too
+  old for the route) beside empty machine lists; `POST /search_dir` --
+  `dir_search.search` with `limit`/`budget_ms`/`max_depth` clamped to the
+  module's caps rather than refused, a 429 when both search slots are taken.
+  Every one takes `node` and goes through `_relay`, which keeps "that folder
+  does not exist" (400) apart from "the node is not answering" (503/502), and
+  a node too old to have a route answers the same shape with `unsupported`,
+  never an error -- the explorer draws what it has. A `node` starting
+  `sftp://` is a files-only place: `/browse_path` answers fallback `list`,
   `/browse_capability` answers `none`, `/list_dir` lists over SFTP
-  (`sftp.listing`) and is a 503 when that connection is not up; `GET`/`POST /picker_prefs`
-  -- the picker's last directory, recents (`RECENT_LIMIT=8`) and pins
+  (`sftp.listing`) and is a 503 when that connection is not up, and
+  `/stat_entries`, `/search_dir` and `/fs_places` answer `unsupported`;
+  `GET`/`POST /picker_prefs`
+  -- the explorer's last directory, recents (`RECENT_LIMIT=8`) and pins
   (`PINNED_LIMIT=30`), one record per machine under `path_picker.places.
   <node-or-"">` in settings.json, keyed by node name because "" is this
   server's own filesystem and `/n/scratch/aj` means nothing on the laptop;
-  the GET also answers `drives` -- `os.listdrives()` on a Windows server,
-  `[]` off Windows and always `[]` for a `node`, since the listing is that
-  machine's Browse and a home folder on `C:\` has no other way to `D:\`. It
-  only NAMES the drives, so a dead mapped drive is not touched until opened),
+  the POST also takes `pinned_order` (the pins as dragged: the named ones
+  first in that order, any pin it does not name kept after them, so a stale
+  sidebar can neither drop a pin nor bring back an unpinned one) and `view`,
+  which is NOT per machine -- one record at `path_picker.view` (sort, column
+  widths, layout, hidden files, collapsed sidebar sections), because a sort
+  order is about the person reading the list, not the disk; read leniently (a
+  damaged key is its default), written strictly (a wrong type is a 400 naming
+  the key). The GET answers `view` too, and `drives` -- `os.listdrives()` on
+  a Windows server, `[]` off Windows and always `[]` for a `node`. It only
+  NAMES the drives, so a dead mapped drive is not touched until opened),
   `tool_routes` (opening a tool and collecting what it needs),
   `data_routes` also owns `GET /resource_status` (what could not be read and
   why, plus `profiles` -- which saved connection THIS server could open, which
@@ -1505,21 +1530,70 @@ Entry points:
   by the same rules.
 - `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
   show_hidden=False)`, one directory as `{path, parent, crumbs, entries,
-  truncated}`. Shared, because both machines answer the same question now: the
-  viewer about its own filesystem (`/list_dir`) and a node about the far
-  side's (`/node/v1/list_dir`). Never opens a file. A path naming a FILE opens
-  the folder that holds it, so a field's current value can be handed straight
-  back as a place to open at; dotfiles are skipped unless `show_hidden`; a
+  truncated, total, partial, dataset, platform}`. Shared, because both
+  machines answer the same question now: the viewer about its own filesystem
+  (`/list_dir`) and a node about the far side's (`/node/v1/list_dir`). Never
+  opens a file (`dataset_marks` may read the OPEN folder's own metadata, never
+  a child's). A path naming a FILE opens the folder that holds it
+  (`directory_of`), so a field's current value can be handed straight back as
+  a place to open at; dotfiles are skipped unless `show_hidden`; a
   `PermissionError` becomes `ListingError("Permission denied: …")` rather than
   a bare crash, because on a cluster that is a fact about the account, not a
-  bug. **Sorts the whole directory before cutting at `limit`** -- cutting
-  first made the 2000 shown an arbitrary slice of scandir order, which on a
-  scratch mount is no order at all -- and stats only the entries kept after
-  the cut, since a stat per entry across a hundred thousand of them is a
-  listing that takes a minute on NFS. Every entry carries its own `path`, and
-  `crumbs` is the breadcrumb trail up to the root: **every path the picker
-  navigates to is built server-side**, which is the only correct behaviour
-  when the node is a Windows box and the browser is on a Mac.
+  bug. **Bounded, and honest about where it stopped**: names up to
+  `LIST_DIR_LIMIT` (50,000 -- large, because the explorer draws only the rows
+  on screen and sorts in the browser, and a cut is a folder the user cannot
+  see the end of), reading stops at `SCAN_HARD_CAP` (250,000, `total` then a
+  lower bound), and sizes/dates come inline only for a folder of at most
+  `INLINE_STAT_LIMIT` (5,000) inside `LISTING_BUDGET_S` (2 s); past either,
+  `partial` is set and the explorer asks `stat_entries(raw, names)` (at most
+  `STAT_ENTRIES_LIMIT` 500 bare names -- no separator, no `.`/`..` -- so it
+  can stat nothing the listing did not already name) for the rows on screen,
+  because a stat per entry across a hundred thousand of them is a listing
+  that takes a minute on NFS. **Sorts the whole directory before cutting** --
+  cutting first made the rows shown an arbitrary slice of scandir order,
+  which on a scratch mount is no order at all. Each entry carries `kind`
+  (`dir`, `file`, `link`, `broken`, `denied`) and `store` (a dataset folder,
+  from `dataset_marks`; child folders are looked inside only when there are
+  at most `CHILD_MARKER_LIMIT` 200 of them). Every entry carries its own
+  `path`, and `crumbs` is the breadcrumb trail up to the root: **every path
+  the explorer navigates to is built server-side**, which is the only correct
+  behaviour when the node is a Windows box and the browser is on a Mac.
+- `utils/dataset_marks.py` — which folders in a listing are ONE thing to
+  import (a zarr, SpatialData, Xenium, Visium/Visium HD run or DICOM slide)
+  rather than a place to walk into, so the explorer can select them on one
+  click. Names first and never a walk, in three tiers each cheaper than the
+  next: `store_by_name` (`*.zarr`/`*.n5`, free), `store_by_names` (one
+  bounded `scandir` of the child), `dataset_of` (the OPEN folder, by its names
+  and then the importer's own detectors). The order mirrors
+  `import_proposal._detect_directory`, so a row marked here is what the
+  importer will make of it; DICOM is matched by names at most one level down,
+  because `dicom_wsi.is_dicom_path`'s unbounded breadth-first walk is the
+  right question for an import and the wrong one for every row on screen.
+  `ENTITLEMENTS` marks a Xenium/Visium run `licensed: False` without the
+  transcriptomics entitlement, so the explorer says so rather than offering a
+  run the importer will refuse.
+- `utils/fs_places.py` — `describe()` -> `{platform, hostname, home, known,
+  volumes, project}`: the explorer sidebar's places on Windows (drive letters
+  with type and label), macOS (`/Volumes`, from `mount`) and Linux/HPC (the
+  mount table with `/proc`, cgroups, snaps and container layers dropped, so
+  `/n/scratch` and `/n/groups` appear because they are mounted, not because
+  anything knows the cluster), plus Desktop/Documents/Downloads, the data
+  folder and `$SCRATCH`/`$WORK`-style roots. **Nothing here may hang the
+  explorer**: free space is the only question that touches a mount, asked on
+  daemon threads with a short deadline, and a mount that does not answer gets
+  no caption and is not asked again for five minutes; environment roots are
+  named, never stat'ed; each part is guarded on its own. Every OS hook is a
+  module-level seam (`_platform`, `_home`, `_read_mountinfo`, `_volumes_root`,
+  `_mount_output`, `_kernel32`, `_usage_many`) so every branch is tested on
+  whichever machine runs the suite.
+- `utils/dir_search.py` — `search(raw, query, ...)`, names matching a query
+  anywhere under one folder, breadth-first so the nearest come first, and
+  **budgeted, not cancellable**: `SEARCH_LIMIT` 500 matches, `SEARCH_BUDGET_MS`
+  3000, `SEARCH_MAX_DEPTH` 8, and two walks at once per process (one for the
+  search being typed, one for the search it replaced running out its budget)
+  -- a third raises `SearchBusy`. `stopped` says which bound ended it, so
+  "nothing in three seconds" is not read as "nothing". Names only, like the
+  listing; a store directory is a match but is never entered.
 - `utils/file_transfer.py` — the sibling that answers with bytes instead of
   names: `open_read(raw)` (`(path, size, mimetype, name)` for a file that can
   be sent), `safe_name(name)` (a bare filename or a refusal -- no separator of
@@ -1538,8 +1612,10 @@ Entry points:
   CSV/TSV/TXT or `.xlsx`/`.xlsm` into a rectangle of stripped strings, plus
   `autodetect()` (does the file say which names it holds?) and `describe()`
   (what the column picker draws). Openpyxl is imported lazily inside it.
-- `utils/native_dialog.py` — the server-side native file/folder picker behind
-  every "Browse…" button. `FILTER_NAMES` is the allowlist `browse_routes`
+- `utils/native_dialog.py` — the server-side native file/folder picker, one
+  step behind every "Browse…" button: the file explorer opens first, and this
+  is what its overflow's "Use Finder…"/"Use File Explorer…"/"Use system
+  dialog…" reaches. `FILTER_NAMES` is the allowlist `browse_routes`
   validates against; there are TWO filter tables (tkinter and AppleScript) and
   a new filter needs an entry in both. Mode `"any"` ("a file OR a folder") is
   answered by `hybrid_available()`/`_browse_for_path_macos_hybrid()`: on macOS
@@ -1552,20 +1628,24 @@ Entry points:
   mode `"any"` with `fallback: "kinds"` where there is a desktop whose
   dialogs take one kind at a time (Windows, Linux), and with the ordinary
   `fallback: "list"` where there is no desktop or the node is too old to know
-  mode `"any"`; for mode `"any"` the client opens `pathPicker.js` on EITHER
-  answer, because a File | Folder question in front of every Browse made the
-  user answer a fact about the format. A field asking for exactly one kind
-  still gets the machine's own single-kind dialog.
+  mode `"any"`. The client no longer routes on these: `browsePicker.js`'s
+  `browseForPath` opens the explorer FIRST on every machine, a tab and the
+  desktop app alike, because a Browse that opened Finder on one machine and a
+  listing on another kept neither's Recent list, pins or window size. The
+  answer only decides what the overflow offers -- `systemDialogFor()` names
+  it ("Use File Explorer…" on Windows, "Use Finder…" on a Mac or a `hybrid`
+  machine, else "Use system dialog…") and offers nothing on a `list` machine;
+  on a `kinds` machine asked for either, `chooseKind` asks which first.
   Runs `sys.executable -c ...` as a subprocess (`popen_kwargs()` from
   `plexora/_subprocess.py`, so a console-less Windows process does not flash
   one for it) -- fine under the desktop app too, which ships a real
-  interpreter rather than a frozen one; there the Browse buttons reach
-  `desktopBridge.js`'s own native dialog first (`browsePicker.js`'s
-  `browseCapability`), and this route only answers for an "Open in Browser"
-  tab of the same server -- except mode `"any"`: the shell's dialogs are
-  single-kind on every platform, so `browseInShell` asks `serverDialogs()`
-  (the server's own `/browse_capability`, skipping the desktop shortcut) and
-  on a Mac posts here for the hybrid panel, else opens the listing.
+  interpreter rather than a frozen one; there `openSystemDialog()` uses
+  `desktopBridge.js`'s own `pickPaths()` (single-kind on every platform), and
+  this route answers only an "Open in Browser" tab of the same server --
+  except mode `"any"`: `serverDialogs()` asks the server's own
+  `/browse_capability` (skipping the desktop shortcut `browseCapability`
+  takes) and on a Mac posts here for the hybrid panel, else falls to a file
+  dialog. `browseInShell` is gone.
 - `models/data_migration.py` — moving one data root's contents into another,
   as a background job. Nothing is ever merged (any name collision refuses the
   whole migration), a failure stops rather than carrying on, and progress is
@@ -1819,12 +1899,17 @@ One authoritative database; nodes are data services with no project state.
   the one caller that cannot name a kind; see the Import Sample section),
   `POST /node/v1/browse` (open a native dialog on the node's machine), `POST
   /node/v1/list_dir` (one directory on the node's machine, via
-  `dir_listing.listing`, with `show_hidden` passed through), and `POST
+  `dir_listing.listing`, with `show_hidden` passed through, gzipped past
+  256 KB for a caller that takes it, since the link it crosses is very often a
+  tunnel to a laptop), the explorer's `POST /node/v1/stat_entries`, `GET
+  /node/v1/fs_places` and `POST /node/v1/search_dir` (a third concurrent
+  search is a 429 rather than the usual 409, so the primary can tell "busy,
+  try again" from "that folder is wrong"), and `POST
   /node/v1/read_file`/`write_file` (`file_transfer.open_read`/`write_file`
   against THIS machine's disk; a write's directory and name arrive as query
   parameters, because the body is the payload and parsing a multipart envelope
   would mean buffering the file first). Without
-  `--dynamic` all nine 403 by name, because the token holder gains arbitrary
+  `--dynamic` all twelve 403 by name, because the token holder gains arbitrary
   file reads AND WRITES on that account the moment they work. A node's
   quantization windows persist across jobs: `node/api._quantization` consults
   `<data_root>/node-quantization/<resource id>.json` (fingerprint
@@ -4756,7 +4841,8 @@ deliberately left out and what should be built next.
   runs them; see Sharp Edges), and exposes `saveBlob()` (a native Save dialog,
   what `roiApi.js`'s and the gating CSV's offline path calls instead of an
   anchor download in the app's window), `pickPaths()` (`browsePicker.js`'s
-  `browseInShell`, the app's own Browse dialog), `quit()` (Quit is the app's
+  `openSystemDialog`, the app's own file dialog, reached from the file
+  explorer's overflow menu), `quit()` (Quit is the app's
   own affordance there -- it closes the window and the shell stops the server
   it started, so `navbarControls.js`/`settingsPage.js` skip the confirm
   dialog and the `/shutdown` fetch entirely and call this instead), and
@@ -5440,46 +5526,95 @@ deliberately left out and what should be built next.
   surfaces left that render a prompt inline. Resolves `{id, kind, label,
   node}`; `node` is the only part a field uses. This is the whole of "choose
   where the data lives when you add it" — nothing is configured in advance.
-- `services/pathPicker.js` — `window.PlexoraPathPicker`, a directory-listing
-  modal (`POST /list_dir`, optionally `{node}`) that stands in for a native
-  dialog on a machine with no desktop (a compute node), and is the Browse of
-  every mode `"any"` field wherever the native dialog takes one kind at a
-  time (Windows, Linux, the desktop app's shell) -- see `browsePicker.js`'s
-  header. Not a file manager —
-  no rename, delete or upload — and not a replacement for typing a path.
-  `pick({mode, filter, start, title, node, multiple})`; `multiple: true`
-  answers `string[]` but no caller wires it yet. DOM is built node-by-node, no
-  `innerHTML`, so `tests/js/path_picker_probe.mjs` can run it. Back/Up/Refresh,
-  an address bar, an in-folder name filter, a hidden-files toggle, a Type
-  column, keyboard nav with listbox ARIA, and a places sidebar
-  (Home/Pinned/Recent, plus Drives when `/picker_prefs` lists a Windows
-  machine's `drives`) backed by `/picker_prefs`. The address bar
-  (`.path-picker-address`) is one wide strip holding the crumbs: clicking a
-  crumb navigates (its handler `stopPropagation`s), and clicking anywhere else
-  in the strip turns the whole thing into a path box with its contents
-  selected. It was a pencil glyph at the end of the trail, which nobody found.
-  For mode `"any"`, a folder whose name ends in `.zarr`/`.ome.zarr`
-  (`STORE_SUFFIXES`/`isStore()`) SELECTS on a single click instead of
-  navigating, double-click chooses it, a "›" button (`.path-picker-enter`) on
-  the row is the way into it, and a "Use this folder" footer button answers
-  with whichever folder is open — the escape hatch for a store not named
-  `*.zarr`. `last_dir` is written on the dialog's `close` — not on a successful pick —
-  because Esc and the backdrop close without going through `finish()`, and
-  because browsing is the part that costs the effort: cancelling is not an
-  instruction to forget. `add_recent` still rides only on a real pick, and a
-  close that never moved writes nothing at all. Three rules the rest of the
-  file follows: **the client does
-  no path arithmetic** -- every path it navigates to came from the server
-  (`entry.path`, `crumbs[i].path`, `parent`); **`state.here` is assigned in
-  exactly ONE place, from a server answer**, so a failed listing changes
-  nothing; and **nothing about remembering places may block browsing** -- a
-  failed `/picker_prefs` means no Recent list, not a picker that will not
-  open. Esc inside the filter or path box must `preventDefault`+
+- `services/explorer/` — **the file explorer every Browse opens**, on this
+  machine or a node, in a tab and in the desktop app: a floating window that
+  lists one directory at a time (`POST /list_dir`, optionally `{node}`), never
+  bytes. It replaced `pathPicker.js`, a fixed modal that showed 2,000 entries
+  and appeared only where no OS dialog could. Not a file manager -- no rename,
+  delete or upload, and the routes have no code for any of them -- and not a
+  replacement for typing a path. Six modules, loaded from `base.html` in this
+  order (dependencies first, all deferred, all before `browsePicker.js`), with
+  `css/explorer.css` linked in `base.html` beside `main.css` rather than in a
+  page block, because the explorer opens from every page and
+  `appRouter.adoptStyles` turns page stylesheets off on navigation:
+  - `explorerTypes.js` (`window.PlexoraExplorerTypes`) — what the explorer
+    knows about a name without asking: `EXTENSIONS` per legacy filter (kept in
+    step with `native_dialog.py`'s `_TK_FILTERS` by hand; a filter missing
+    here greys nothing), `normalizeAccept` (legacy `mode`/`filter`/`multiple`
+    -> `{files, directories, datasets}` + `select`), `usable`, `typeLabel`,
+    `iconFor`, and the shared `icon`/`setIcon`/`el`/`button` builders. The
+    server is the authority on what a directory IS: `entry.store` wins, and
+    the `.zarr` suffix rule is only the fallback for a node too old to say.
+  - `floatingWindow.js` (`window.PlexoraFloatingWindow`) — a modal `<dialog>`
+    that drags by its title bar, resizes from all eight edges and corners,
+    maximizes, rolls up to its title bar, and keeps its rect for the browser
+    session in `sessionStorage` `plexora:explorer-window:<id>`. Still a modal
+    on purpose: `showModal()` is what stacks it above the import dialog that
+    opened it and keeps focus inside it.
+  - `explorerListing.js` (`window.PlexoraExplorerListing`) — the entries as a
+    virtualized list (or a grid of tiles): only the rows in view plus a few
+    either side exist, a spacer gives the scrollbar its true length, focus
+    stays on the container with `aria-activedescendant`, and clicks are
+    delegated, because a scratch folder of fifty thousand files as one element
+    each is a page that cannot scroll. Sorting is client-side, natural (`f10`
+    after `f9`), with resizable Date Modified/Type/Size columns; a `partial`
+    listing asked to sort by size or date sorts by name until the stats land
+    rather than reshuffling under the pointer. Applies the selection rules the
+    field asked for.
+  - `explorerCrumbs.js` (`window.PlexoraExplorerCrumbs`) — Back, Forward, Up,
+    Reload, Home, the server's `crumbs` as one line that folds the folders
+    nearest the root into a "…" menu when it is too wide, and the pin star.
+    A click on the bar off a crumb, or Cmd/Ctrl+L, turns it into the path box
+    with its contents selected.
+  - `explorerSidebar.js` (`window.PlexoraExplorerSidebar`) — Favorites (Home,
+    Desktop/Documents/Downloads, the pins, reordered by dragging their grip
+    with SortableJS and posted back as `pinned_order`), Locations (`GET
+    /fs_places`: the machine's drives and volumes by their own names, with
+    free space, then project storage) and Recent. Nothing is hardcoded: a
+    cluster's mounts appear because they are mounted.
+  - `fileExplorer.js` (`window.PlexoraFileExplorer`, and
+    `window.PlexoraPathPicker` as an alias of the same object, so every caller
+    written for the old picker -- `pick({mode, filter, start, title, node,
+    multiple})` -- is unchanged) — the controller. `pick({accept, select,
+    primary, description, start, node, systemDialog, windowId, ...})`
+    resolves a path, an array (`select: "many"`), or null. Sizes and dates for
+    a `partial` listing come from `POST /stat_entries` in chunks of 500, the
+    rows on screen first; a search below the open folder is `POST
+    /search_dir` after a 300 ms pause, a stale answer dropped by epoch and
+    its fetch aborted. A dataset folder (`entry.store`) SELECTS on one click
+    and still opens with "›"; inside one, a banner offers it whole; a "Use
+    this folder" footer button answers with the open folder in mode `"any"`.
+    `last_dir` is written on the dialog's `close`, not on a pick, because Esc
+    and the backdrop close too and browsing is the part that cost the effort;
+    `add_recent` rides only on a real pick, a close that never moved writes
+    nothing, and view changes (a sort, a column width) batch into one write.
+  Rules the rest of the explorer follows (`tests/test_file_explorer.py` pins
+  them): **the client does no path arithmetic** -- every path it navigates to
+  came from the server (`entry.path`, `crumbs[i].path`, `parent`, a place's
+  `path`); **`state.here = payload.path` is the single assignment**, in
+  `show()`, so a failed listing changes nothing and history moves only on
+  success; **nothing about remembering places may block browsing** -- a failed
+  `/picker_prefs` or `/fs_places` means no Recent list and no volumes, not an
+  explorer that will not open. **`explorer.css` never puts `transform`,
+  `filter`, `contain` or `will-change` on the window or its chrome** (only the
+  spinner's keyframes rotate): each makes the window the containing block of
+  every `position: fixed` descendant, and the menus `PopoverPortal` hosts
+  inside an open modal are exactly that, so they would open offset by the
+  window's position. **`PopoverPortal` is a top-level `const`** (in
+  `views/popoverPortal.js`) exposing only `attach`/`reseat`/`detach`/`root`
+  -- never `window.PopoverPortal`, never `.relocate`, which is internal and
+  runs by itself on every dialog `close`. Calling it from the close handler
+  threw before `resolve()`, so every pick closed the window and answered
+  nothing; **the close handler now resolves in a `finally`**, and the
+  explorer never attaches itself to the portal (it is the top-layer dialog
+  menus are portaled INTO). DOM is built node by node, no `innerHTML`, so
+  `tests/js/file_explorer_probe.mjs` (a DOM stub with bubbling events, a
+  selector matcher and a `PopoverPortal` stand-in with the real methods only)
+  can run it. Esc inside the filter or path box must `preventDefault`+
   `stopPropagation`, or the `<dialog>` reads it first and cancels itself.
   `browsePicker.js` passes `start` (the field's current value, read at click
-  time) through as where the listing fallback should open, and relays `node`
-  so the fallback lists the SAME machine the native dialog would have opened
-  on -- the only branch a cluster field ever takes, since it has no desktop.
+  time) and relays `node` so the explorer lists the SAME machine the native
+  dialog would have opened on.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -6939,8 +7074,10 @@ Until that list is in, gating matches markers to channels **by name** and so
 matches nothing — which is what the sidebar's `#channels_upload_icon` is for.
 
 **A path, and Upload only where it earns its place.** The dialog's main
-control is a path box plus a `Browse…` that opens a native picker **on the
-server**, filtered by `native_dialog.py`'s `"channels"` entry. On a desktop
+control is a path box plus a `Browse…` that opens the file explorer **on the
+server's filesystem**, filtered by the `"channels"` entry (`explorerTypes.js`'s
+`EXTENSIONS`, and `native_dialog.py`'s for the system dialog one step
+behind it). On a desktop
 launch Browse and a browser upload do the same thing — both write a path on
 the machine running the server — so offering both there is a choice between
 two spellings of one act before the user has done anything, and Upload stays
@@ -9239,6 +9376,13 @@ the `pathPicker.js` rebuild) added `tests/js/path_picker_probe.mjs` (73
 checks, run with `node tests/js/path_picker_probe.mjs`) and
 `tests/test_path_picker.py` (the pytest wrapper plus wiring assertions), and
 extended `tests/test_browse_routes.py` and `tests/test_node_dynamic.py`.
+The file explorer that replaced `pathPicker.js` renamed both: the probe is
+now `tests/js/file_explorer_probe.mjs` (`node tests/js/file_explorer_probe.mjs`)
+and its wrapper `tests/test_file_explorer.py`. It added
+`tests/test_dir_listing.py`, `tests/test_fs_places.py` and
+`tests/test_dir_search.py`, and extended `tests/test_browse_routes.py` and
+`tests/test_node_dynamic.py` again. No full-suite count was reported with it,
+so the baseline below is unchanged.
 
 Current healthy state on Windows/conda: **1921 passed, 1 failed, 0 skipped**
 (2026-08-27, after the multi-source data-node work and the move of derived
@@ -12283,7 +12427,19 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   including the ones that would have matched. Mode `"any"`'s hybrid macOS
   dialog (`_browse_for_path_macos_hybrid`) hits the identical trap and so sets
   NO filter at all, on purpose — there is no UTI for `.zarr` either, and this
-  is the same rule, not a new one.
+  is the same rule, not a new one. Since every Browse opens the file explorer
+  first, the filter the user actually sees is a third table,
+  `services/explorer/explorerTypes.js`'s `EXTENSIONS`, kept in step with
+  `_TK_FILTERS` by hand: a filter missing there greys nothing, so the field
+  silently accepts every file.
+- **Testing a modal opened from inside another modal** (the explorer over
+  Import Sample, say): open it with a real input event
+  (`Input.dispatchMouseEvent` over CDP), never `btn.click()` from
+  `Runtime.evaluate`. Chrome groups a modal opened without user activation
+  with the one under it (the close-watcher anti-abuse rule), so one Esc closes
+  both. That looks like an Esc bug in the app and is not one: opened by a real
+  click, Esc closes only the explorer and focus returns to the button inside
+  the modal under it. Seen and checked 2026-10-20.
 - Scrollbar chrome is defined **once**, in `viewer.css`, as one selector list
   covering `.viewer-sidebar *`, the two portaled popups and
   `.channel-names-modal *`. Anything new that scrolls goes in that list rather
@@ -12995,15 +13151,19 @@ picture did not need.
 **One Browse takes either kind, with no toggle.** A File | Folder pair made the
 user answer a fact about the format (an OME-Zarr store is a folder). On a
 machine whose native dialog is single-kind (`"kinds"`: Windows, Linux, the
-desktop app's shell dialogs), mode `"any"` now opens `pathPicker.js`'s
-listing, which selects a file, a `.zarr` store in one click, or "Use this
-folder"; macOS keeps its native hybrid panel, and the desktop app on a Mac
-reaches the server's panel through `serverDialogs()`. `applyCapability`
-(which swapped Browse for File|Folder halves on kinds machines) is deleted;
-`chooseKind` survives only for a page with no pathPicker, which no page in the
-app is. A field asking for exactly one kind still gets the native dialog. The
-listing's Places gained Drives (`/picker_prefs` `drives`, `os.listdrives()`,
-local Windows only). The home page (`quickViewLanding.js`) keeps its
+desktop app's shell dialogs), mode `"any"` opened `pathPicker.js`'s listing,
+which selected a file, a `.zarr` store in one click, or "Use this folder";
+macOS kept its native hybrid panel. `applyCapability` (which swapped Browse
+for File|Folder halves on kinds machines) is deleted. **Superseded on branch
+`feature/file-explorer`:** `pathPicker.js` is deleted and EVERY Browse, on
+every machine and for every mode, now opens the file explorer
+(`services/explorer/`, see the Repository Map); the native dialog -- the Mac's
+hybrid panel included -- moved behind the explorer's overflow menu
+(`systemDialogFor()` → `openSystemDialog()`), and `chooseKind` is reached
+from there on a `kinds` machine, or on a page with no explorer, which no page
+in the app is. The listing's Places gained Drives (`/picker_prefs` `drives`,
+`os.listdrives()`, local Windows only), since folded into the explorer's
+Locations (`/fs_places`). The home page (`quickViewLanding.js`) keeps its
 File/Folder tabs -- it asks up front on purpose, and the dialog does not ask
 at all.
 
@@ -13115,9 +13275,12 @@ through `tableProgress.js`'s "Continue in background".
 Asset tag `?v=20261014_import_progressive` on every touched client file; all
 ten `tests/golden/boundary_*.json` regenerated. Tests: new
 `tests/test_import_roles.py` (detection by pixels, the role switch, OME-Zarr
-labels, `/import/reclassify`); in `tests/test_path_picker.py` the split-control
-cases became `test_browse_is_one_button_on_every_machine`,
-`test_either_kind_opens_the_listing_where_the_dialog_takes_one_kind` and
+labels, `/import/reclassify`); in `tests/test_path_picker.py` (now
+`tests/test_file_explorer.py`) the split-control cases became
+`test_browse_is_one_button_on_every_machine`,
+`test_either_kind_opens_the_listing_where_the_dialog_takes_one_kind` (since
+replaced by `test_every_browse_opens_the_explorer_first` and
+`test_a_single_kind_desktop_reaches_a_native_dialog_from_the_explorer`) and
 `test_the_home_page_asks_up_front_and_the_dialog_does_not_ask_at_all`; in
 `tests/test_cell_mode_control.py`,
 `test_the_cta_opens_the_import_dialog_on_this_sample` and
