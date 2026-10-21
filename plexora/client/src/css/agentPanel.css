@@ -512,9 +512,7 @@
 }
 
 .plx-agent-panel.is-docked .plx-agent-button-quiet {
-    margin-left: -6px;
-    padding-left: 6px;
-    padding-right: 6px;
+    margin-left: 0;
 }
 
 .plx-agent-bar .plx-agent-button {

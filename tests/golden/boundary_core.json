@@ -448,7 +448,7 @@
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261020_movable_control",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
-        "/client/src/css/agentPanel.css?v=20261011_fold",
+        "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold"
       ],
       "tool_mounts": [
@@ -719,7 +719,7 @@
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261020_movable_control",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
-        "/client/src/css/agentPanel.css?v=20261011_fold",
+        "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold"
       ],
       "tool_mounts": [
