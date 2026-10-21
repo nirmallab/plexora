@@ -39,6 +39,14 @@ def test_an_image_on_a_data_node_starts_in_hd():
     assert image_streamed(bound_remote) is False
 
 
+def test_an_image_on_a_files_only_server_starts_in_hd():
+    """The user's rule for HMS O2's transfer node: the tiles are built here
+    either way, and HD only changes what this server hands the browser."""
+    src = "sftp://ajn16@transfer.rc.hms.harvard.edu/n/data1/lab/slide.ome.tif"
+    assert image_streamed(_project(channelFile=src)) is False
+    assert image_streamed(_project(channelFile="SFTP://me@host/a.ome.zarr")) is False
+
+
 def test_only_the_image_binding_counts():
     # A mask on a node does not move the image's tiles anywhere.
     mask_remote = _project(channelFile="/data/image.ome.tiff",
