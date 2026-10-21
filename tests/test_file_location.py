@@ -146,7 +146,7 @@ def test_the_last_machine_is_offered_first(probe):
 def test_it_is_loaded_on_every_page_before_anything_with_a_file_button():
     base = source("templates", "base.html")
     assert "services/fileLocation.js" in base
-    for earlier in ("services/remoteState.js", "services/pathPicker.js",
+    for earlier in ("services/remoteState.js", "services/explorer/fileExplorer.js",
                     "services/placePicker.js", "services/connectionModal.js"):
         assert base.index(earlier) < base.index("services/fileLocation.js"), (
             f"{earlier} is what fileLocation.js opens"

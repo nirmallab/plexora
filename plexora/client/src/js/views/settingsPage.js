@@ -593,7 +593,7 @@
     // -- web data ----------------------------------------------------------
 
     /** Bytes as something a person reads at a glance. Its own copy rather
-     *  than a shared util -- pathPicker.js's `readableSize` does the same
+     *  than a shared util -- explorerTypes.js's `readableSize` does the same
      *  thing for the same reason in a different dialog. */
     function humanBytes(value) {
         const units = ["B", "KB", "MB", "GB", "TB"];

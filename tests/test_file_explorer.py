@@ -1,19 +1,24 @@
-"""Browsing a machine that has no desktop.
+"""The file explorer: what every Browse opens, on this machine or a node.
 
-The behaviour is in tests/js/path_picker_probe.mjs, run in node below, because
-nothing in the Python suite executes client JS. What is left here is the wiring
--- the facts spread across several files that all have to agree before any of
-that behaviour is reachable at all:
+The behaviour is in tests/js/file_explorer_probe.mjs, run in node below,
+because nothing in the Python suite executes client JS. What is left here is
+the wiring -- the facts spread across several files that all have to agree
+before any of that behaviour is reachable at all:
 
-  base.html          loads the picker, before the button that falls back to it
-  browsePicker.js    hands it the field's current value and the node to list
+  base.html          loads the six explorer modules, in order, before the
+                     button that opens them, and explorer.css on every page
+  browsePicker.js    opens the explorer first, with the field's current value,
+                     the node to list, and the machine's own dialog as a hook
   dataLocation.js    listens for the event browsePicker fires afterwards
-  pathPicker.js      does no path arithmetic of its own
+  services/explorer  does no path arithmetic of its own
 
-The server halves are tests/test_browse_routes.py (/list_dir and
-/picker_prefs) and tests/test_node_dynamic.py (the same listing, relayed).
+The server halves are tests/test_browse_routes.py (/list_dir, /stat_entries,
+/fs_places, /search_dir, /picker_prefs), tests/test_dir_listing.py,
+tests/test_fs_places.py, tests/test_dir_search.py and
+tests/test_node_dynamic.py (the same routes, relayed).
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,12 +26,20 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROBE = REPO_ROOT / "tests" / "js" / "path_picker_probe.mjs"
+PROBE = REPO_ROOT / "tests" / "js" / "file_explorer_probe.mjs"
 CLIENT = REPO_ROOT / "plexora" / "client"
+EXPLORER = CLIENT / "src" / "js" / "services" / "explorer"
+#: base.html's order, which is also the order the probe loads them in.
+MODULES = ("explorerTypes.js", "floatingWindow.js", "explorerListing.js",
+           "explorerCrumbs.js", "explorerSidebar.js", "fileExplorer.js")
 
 
 def source(*parts):
     return CLIENT.joinpath(*parts).read_text(encoding="utf-8")
+
+
+def module(name):
+    return (EXPLORER / name).read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -60,12 +73,22 @@ def test_the_client_never_builds_a_path_of_its_own(probe):
     assert "...and at the top of the tree Up is not offered" in probe, probe
 
 
-def test_the_picker_does_no_path_surgery():
+@pytest.mark.parametrize("name", ("fileExplorer.js", "explorerCrumbs.js",
+                                  "explorerListing.js", "explorerSidebar.js"))
+def test_the_picker_does_no_path_surgery(name):
     """A regression guard with teeth: the two expressions that were wrong are
-    gone from the file, rather than merely unused."""
-    picker = source("src", "js", "services", "pathPicker.js")
+    absent from every module that handles a path, rather than merely unused."""
+    picker = module(name)
     assert "replace(/\\/+$/" not in picker
     assert "replace(/\\/[^/]*$/" not in picker
+
+
+def test_the_folder_on_screen_is_assigned_in_one_place():
+    """`state.here` changes only from a server answer, in show(). A second
+    assignment is how a failed listing would start moving the user."""
+    controller = module("fileExplorer.js")
+    assert controller.count("state.here = ") == 1
+    assert "state.here = payload.path;" in controller
 
 
 # -- getting somewhere -------------------------------------------------------
@@ -94,6 +117,8 @@ def test_back_and_refresh_move_through_server_answers_only(probe):
     assert "Back is dead until there is somewhere to go back to" in probe, probe
     assert "Back returns to the previous directory" in probe, probe
     assert "Refresh re-reads where you are without adding a step back" in probe, probe
+    assert "Forward is live after Back" in probe, probe
+    assert "going somewhere new forgets the way forward" in probe, probe
 
 
 def test_a_listing_that_fails_changes_nothing(probe):
@@ -227,9 +252,34 @@ def test_browsing_a_node_lists_that_node(probe):
 # -- the wiring around it ----------------------------------------------------
 
 
-def test_the_picker_is_loaded_before_the_button_that_falls_back_to_it():
+def test_the_explorer_is_loaded_in_order_before_the_button_that_opens_it():
     base = source("templates", "base.html")
-    assert base.index("services/pathPicker.js") < base.index("services/browsePicker.js")
+    order = [base.index(f"services/explorer/{name}") for name in MODULES]
+    assert order == sorted(order), "the explorer modules are out of order in base.html"
+    assert order[-1] < base.index("services/browsePicker.js")
+    for name in MODULES:
+        assert f'services/explorer/{name}?v=' in base and "defer" in base.split(
+            f"services/explorer/{name}")[1].split("\n")[0], name
+
+
+def test_the_explorer_s_stylesheet_is_on_every_page():
+    """In base.html beside main.css, not in a page block: the explorer opens
+    from every page, and appRouter.adoptStyles disables page stylesheets on
+    navigation."""
+    base = source("templates", "base.html")
+    head = base.split("{% block style %}")[0]
+    assert "css/explorer.css?v=" in head
+    assert head.index("css/main.css") < head.index("css/explorer.css")
+
+
+def test_the_old_picker_is_gone():
+    """One explorer, not two: the old file, its stylesheet block and its
+    global as anything but an alias."""
+    assert not (CLIENT / "src" / "js" / "services" / "pathPicker.js").exists()
+    assert ".path-picker" not in source("src", "css", "main.css")
+    assert "services/pathPicker.js" not in source("templates", "base.html")
+    controller = module("fileExplorer.js")
+    assert "window.PlexoraPathPicker = window.PlexoraFileExplorer;" in controller
 
 
 def test_browse_hands_the_picker_the_field_it_is_filling():
@@ -272,21 +322,34 @@ def test_browse_is_one_button_on_every_machine():
     assert 'buttonEl.addEventListener("click", () => go(mode));' in browse
 
 
-def test_either_kind_opens_the_listing_where_the_dialog_takes_one_kind():
-    """"kinds" -- a desktop whose dialogs take one kind at a time -- is
-    answered with the listing for mode "any", which selects a file, a .zarr
-    store in one click, or the folder that is open. The popup that asked
-    "file or folder?" is left for a page with no listing."""
+def _function(text, name):
+    """One top-level function's text, up to the next top-level declaration."""
+    start = text.index(f"function {name}(")
+    rest = text[start:]
+    end = re.search(r"\n(?:async )?function |\n/\*\*", rest[1:])
+    return rest[: end.start() + 1] if end else rest
+
+
+def test_every_browse_opens_the_explorer_first():
+    """On every machine, in a tab and in the desktop app: the explorer is the
+    answer, and the machine's own dialog is a hook it offers in its overflow
+    menu. A Browse that opened Finder on one machine and a listing on another
+    kept no pins, no Recent and no window size between the two."""
     browse = source("src", "js", "services", "browsePicker.js")
-    assert ('if (result.fallback === "kinds" && anchorEl\n'
-            '                    && !(mode === "any" && window.PlexoraPathPicker)) {') in browse
-    assert ('(result.fallback === "list" || result.fallback === "kinds")'
-            in browse)
-    # The desktop app's own dialogs are single-kind on every platform: "any"
-    # goes to the Mac's file-or-folder panel through the server, else the
-    # listing.
+    body = _function(browse, "browseForPath")
+    assert "window.PlexoraFileExplorer" in body
+    assert body.index("window.PlexoraFileExplorer") < body.index("openSystemDialog(")
+    assert "systemDialog: systemDialogFor(" in body
+    # The explorer branch asks nothing first: no anchor, no capability.
+    explorer_branch = body.split("if (explorer) {")[1].split("return;")[0]
+    assert "anchorEl" not in explorer_branch.replace("anchorEl, examples", "")
+    assert "browseCapability" not in explorer_branch
+    # Only the system dialog posts /browse_path.
+    for name in ("browseForPath", "systemDialogFor", "attachBrowseButton"):
+        assert 'plexoraUrl("browse_path")' not in _function(browse, name), name
+    assert 'plexoraUrl("browse_path")' in _function(browse, "openSystemDialog")
+    # The desktop app on a Mac still reaches the panel that takes either kind.
     assert 'if (await serverDialogs() === "hybrid") {' in browse
-    assert 'mode: "any", filter, start,' in browse
 
 
 def test_a_capability_failure_is_not_remembered():
@@ -296,17 +359,19 @@ def test_a_capability_failure_is_not_remembered():
     assert "capabilityCache.delete(key)" in browse
 
 
-def test_a_single_kind_desktop_reaches_a_native_dialog_rather_than_the_listing():
-    """For a field that asks for ONE kind, a Windows or Linux desktop still
-    opens its own system dialog -- the listing answers "kinds" only for mode
-    "any", where no system dialog can take both. And the chooser that asks
-    which kind, kept for a page with no listing, re-posts its answer as an
-    ordinary single-kind request."""
+def test_a_single_kind_desktop_reaches_a_native_dialog_from_the_explorer():
+    """"Use system dialog…" on a Windows or Linux desktop asked for either
+    kind asks which first -- the chooser hung under the explorer's own menu
+    button -- and then opens that single-kind dialog on the right machine."""
     browse = source("src", "js", "services", "browsePicker.js")
-    assert 'result.fallback === "kinds" && anchorEl' in browse
-    # ...and what the menu picks is re-posted as an ordinary single-kind
-    # request, which is the whole point: that one opens the real dialog.
-    assert "return browseForPath({mode: kind" in browse
+    hook = _function(browse, "systemDialogFor")
+    assert "kind = await chooseKind(anchor || anchorEl, examples || filter);" in hook
+    assert "if (!kind) return null;" in hook
+    assert "return openSystemDialog({kind, filter, node, start, multiple});" in hook
+    # The capability is the machine's, asked when the explorer opens.
+    assert "await browseCapability(node)" in hook
+    # The request names the machine whose dialog to open.
+    assert "body: JSON.stringify({mode: kind, filter: filter, node: node})" in browse
 
 
 def test_every_browse_button_is_somewhere_for_the_menu_to_hang():
@@ -449,11 +514,10 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     assert ".browse-kind-half:disabled {" in css
 
 def test_a_caller_with_no_anchor_still_gets_a_picker():
-    """`browseForPath` is callable without a button, and "kinds" must not be a
-    dead end for one: the listing answers, exactly as it did before."""
+    """`browseForPath` is callable without a button, and on a page without
+    the explorer "kinds" must not be a dead end for one: a file dialog opens."""
     browse = source("src", "js", "services", "browsePicker.js")
-    assert ('(result.fallback === "list" || result.fallback === "kinds")'
-            in browse)
+    assert 'kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";' in browse
 
 
 def test_the_chooser_says_which_formats_are_which():
@@ -547,3 +611,103 @@ def test_dismissing_the_menu_is_a_cancel_rather_than_a_failure():
     browser" in front of somebody who just changed their mind."""
     browse = source("src", "js", "services", "browsePicker.js")
     assert "if (!kind) return;" in browse
+
+
+# -- the explorer's own rules --------------------------------------------------
+
+
+node = shutil.which("node")
+
+
+@pytest.mark.skipif(node is None, reason="node is not installed")
+@pytest.mark.parametrize("path", [*(EXPLORER / name for name in MODULES),
+                                  CLIENT / "src" / "js" / "services" / "browsePicker.js",
+                                  PROBE],
+                         ids=lambda path: path.name)
+def test_the_scripts_parse(path):
+    done = subprocess.run([node, "--check", str(path)], capture_output=True, text=True,
+                          timeout=60)
+    assert done.returncode == 0, done.stderr[-3000:]
+
+
+@pytest.mark.parametrize("name", MODULES)
+def test_the_explorer_builds_its_dom_node_by_node(name):
+    """No HTML strings: every label in the explorer is a file name or a path
+    from a machine somebody else may control."""
+    assert "innerHTML" not in module(name)
+    assert "insertAdjacentHTML" not in module(name)
+
+
+def test_the_window_never_becomes_a_containing_block():
+    """transform, filter, contain or will-change on the window would make it
+    the containing block for the `position: fixed` menus PopoverPortal hosts
+    inside it, and every menu would open offset by the window's position. The
+    spinner's keyframes are the one transform allowed."""
+    css = source("src", "css", "explorer.css")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = re.sub(r"@keyframes plx-explorer-spin \{.*?\n\}", "", css, flags=re.S)
+    css = css.replace("text-transform:", "")
+    for banned in ("transform:", "filter:", "contain:", "will-change"):
+        assert banned not in css, banned
+
+
+def test_the_explorer_never_attaches_itself_to_the_portal():
+    """It is a top-layer dialog: menus are portaled INTO it while it is open.
+    Attached to the portal itself, it would be moved into whatever modal is
+    on top -- itself."""
+    for name in MODULES:
+        assert "PopoverPortal.attach" not in module(name), name
+
+
+def test_every_variable_the_stylesheet_reads_is_declared():
+    """The picker this replaced read variables nothing declared and drew its
+    hard-coded fallbacks without anyone noticing."""
+    css = source("src", "css", "explorer.css")
+    tokens = source("src", "css", "tokens.css")
+    declared = set(re.findall(r"(--[\w-]+)\s*:", tokens + css))
+    used = set(re.findall(r"var\((--[\w-]+)", css))
+    assert used <= declared, sorted(used - declared)
+
+
+def test_the_new_checks_are_there(probe):
+    """The explorer's own behaviour, beyond what the old picker did."""
+    for label in (
+        "Cmd/Ctrl+L opens the path box from anywhere",
+        "a long trail keeps the root and the open folder and folds the rest",
+        "Cmd/Ctrl+Shift+. toggles them too",
+        "drives are listed by their own names, with how full they are",
+        "End goes to the last row, Home to the first",
+        "Cmd/Ctrl+F goes to the filter box",
+        "...but says why, in the footer",
+        "a locked folder and a broken link are drawn, and say so",
+        "a run folder the server recognised selects in one click",
+        "inside one, a banner says what it is and offers it whole",
+        "a caller's own suffixes grey the rest",
+        "a column sorts on a click, largest first, folders still first",
+        "the view is remembered in one write, not one per click",
+        "ten thousand entries draw a window of rows, not ten thousand",
+        "scrolling moves the window",
+        "a partial listing asks for sizes and dates in chunks of 500",
+        "...the rows on screen first",
+        "a size sort on a partial listing keeps names in order until the sizes are in",
+        "leaving a folder stops asking about it, and a late answer is dropped",
+        "Enter in the box searches below the open folder, within a budget",
+        "typing while searching waits for a pause before asking again",
+        "going somewhere else leaves the search behind",
+        "a node too old to search says so and keeps the filter",
+        "dragging the title bar moves the window",
+        "...but a press on its buttons does not",
+        "the right edge widens the window",
+        "maximize fills the viewport bar a 12px margin",
+        "minimize rolls the window up to its title bar",
+        "the window's place is kept for the session",
+        "a viewport narrower than the window gets the viewport, minus the margin",
+        "Esc while a menu is open is kept from closing the window",
+        "...and focus goes back to what opened it",
+        "the overflow offers the system dialog where there is one",
+        "cancelling the system dialog leaves the explorer open",
+        "a file's menu chooses it or copies its path",
+        "a pin's menu unpins it",
+        "...and its document listeners",
+    ):
+        assert f"ok  {label}" in probe, label

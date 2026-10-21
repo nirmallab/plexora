@@ -8,7 +8,10 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261014_import_progressive">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261020_file_explorer">
+    {# Here and not in a page block: the explorer opens from every page, and
+       appRouter.adoptStyles turns page stylesheets off on navigation. #}
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261020_file_explorer">
     {% block style %}{% endblock %}
 
 
@@ -117,12 +120,18 @@
        ordered against anything. #}
     <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260924_shortcuts_clipboard" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260925_desktop_app" defer></script>
-    {# Before browsePicker, which falls back to it when the machine running the
-       server has no desktop for a native dialog to appear on -- the ordinary
-       state of a compute node. Both are deferred, so both are parsed before
-       either runs; the order is for readers. #}
-    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20261014_import_progressive" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261014_import_progressive" defer></script>
+    {# The file explorer, which every Browse opens (browsePicker.js) on this
+       machine or a node. Its modules in dependency order -- the types and
+       drawing helpers first, the controller (PlexoraFileExplorer, alias
+       PlexoraPathPicker) last -- and all before browsePicker. All deferred,
+       so all are parsed before any runs; the order is for readers. #}
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerTypes.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/floatingWindow.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerListing.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -159,7 +168,7 @@
        connectionModal.js, which it opens, and before toolLoader.js — a plugin's
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
-    <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260925_desktop_app" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261020_sftp_files" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs

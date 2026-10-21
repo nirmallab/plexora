@@ -1,0 +1,1330 @@
+/* explorer.css -- the file explorer (services/explorer/*.js).
+
+   Loaded from base.html beside main.css, not from a page block: the explorer
+   opens from every page, and appRouter.adoptStyles turns page stylesheets off
+   on navigation.
+
+   Tokens only, from tokens.css, plus the few file-local values declared on
+   .plx-explorer-window below. tests/test_file_explorer.py checks that every
+   var(--...) used here is declared in one of the two -- the picker this
+   replaces read variables nothing defined and drew its hard-coded fallbacks.
+
+   NEVER put transform, filter, contain or will-change on the window or its
+   chrome: each makes the window the containing block for `position: fixed`
+   descendants, and the menus PopoverPortal hosts inside an open modal are
+   exactly that. The only transform in this file is the spinner's keyframes. */
+
+/* -- the window --------------------------------------------------------- */
+
+.plx-explorer-window {
+    --plx-explorer-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --plx-explorer-row: 28px;
+    --plx-explorer-sidebar: 200px;
+    --plx-explorer-hover: rgba(255, 255, 255, 0.05);
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    font-size: 12px;
+    inset: auto;
+    line-height: 1.45;
+    margin: 0;
+    max-height: none;
+    max-width: none;
+    overflow: visible;
+    padding: 0;
+    position: fixed;
+}
+
+.plx-explorer-window::backdrop {
+    background: rgba(0, 0, 0, 0.62);
+}
+
+/* Rolled up to its title bar: still modal, but the page behind it is there
+   to be read. */
+.plx-explorer-window.is-rolled::backdrop {
+    background: transparent;
+}
+
+.plx-explorer-window *,
+.plx-explorer-window *::before,
+.plx-explorer-window *::after {
+    box-sizing: border-box;
+}
+
+.plx-explorer-chrome {
+    border-radius: calc(var(--radius-lg) - 1px);
+    display: grid;
+    grid-template-rows: 36px minmax(0, 1fr) auto;
+    height: 100%;
+    overflow: hidden;
+}
+
+.plx-explorer-window.is-rolled .plx-explorer-window-body,
+.plx-explorer-window.is-rolled .plx-explorer-window-footer {
+    display: none;
+}
+
+/* -- title bar ---------------------------------------------------------- */
+
+.plx-explorer-titlebar {
+    align-items: center;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: grab;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: 0 var(--space-1) 0 var(--space-3);
+    user-select: none;
+}
+
+.plx-explorer-window.is-maximized .plx-explorer-titlebar {
+    cursor: default;
+}
+
+.plx-explorer-window.is-rolled .plx-explorer-titlebar {
+    border-bottom: none;
+    cursor: pointer;
+}
+
+.plx-explorer-titlebar:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-explorer-titleicon {
+    color: var(--accent-channel);
+    display: inline-flex;
+    font-size: 13px;
+}
+
+.plx-explorer-titletext {
+    align-items: baseline;
+    display: flex;
+    flex: 1 1 auto;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.plx-explorer-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.plx-explorer-subtitle {
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-wincontrols {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+.plx-explorer-winbutton {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    height: 24px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-explorer-winbutton:hover {
+    background: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.plx-explorer-winbutton.is-close:hover {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+/* -- resize handles ------------------------------------------------------ */
+
+.plx-explorer-resize {
+    position: absolute;
+    z-index: 2;
+}
+
+.plx-explorer-resize.is-n,
+.plx-explorer-resize.is-s {
+    cursor: ns-resize;
+    height: 6px;
+    left: 12px;
+    right: 12px;
+}
+
+.plx-explorer-resize.is-n { top: -3px; }
+.plx-explorer-resize.is-s { bottom: -3px; }
+
+.plx-explorer-resize.is-e,
+.plx-explorer-resize.is-w {
+    bottom: 12px;
+    cursor: ew-resize;
+    top: 12px;
+    width: 6px;
+}
+
+.plx-explorer-resize.is-e { right: -3px; }
+.plx-explorer-resize.is-w { left: -3px; }
+
+.plx-explorer-resize.is-ne,
+.plx-explorer-resize.is-nw,
+.plx-explorer-resize.is-se,
+.plx-explorer-resize.is-sw {
+    height: 12px;
+    width: 12px;
+}
+
+.plx-explorer-resize.is-ne { cursor: nesw-resize; right: -4px; top: -4px; }
+.plx-explorer-resize.is-sw { bottom: -4px; cursor: nesw-resize; left: -4px; }
+.plx-explorer-resize.is-nw { cursor: nwse-resize; left: -4px; top: -4px; }
+.plx-explorer-resize.is-se { bottom: -4px; cursor: nwse-resize; right: -4px; }
+
+.plx-explorer-window.is-maximized .plx-explorer-resize,
+.plx-explorer-window.is-rolled .plx-explorer-resize {
+    display: none;
+}
+
+/* While a drag is under way the cursor belongs to the gesture, wherever the
+   pointer has wandered, and nothing underneath may start a text selection. */
+html.plx-explorer-dragging,
+html.plx-explorer-dragging * {
+    cursor: grabbing !important;
+    user-select: none !important;
+}
+
+html.plx-explorer-resizing-n *, html.plx-explorer-resizing-s * { cursor: ns-resize !important; }
+html.plx-explorer-resizing-e *, html.plx-explorer-resizing-w * { cursor: ew-resize !important; }
+html.plx-explorer-resizing-ne *, html.plx-explorer-resizing-sw * { cursor: nesw-resize !important; }
+html.plx-explorer-resizing-nw *, html.plx-explorer-resizing-se * { cursor: nwse-resize !important; }
+
+html[class*="plx-explorer-resizing-"] * {
+    user-select: none !important;
+}
+
+/* -- body ---------------------------------------------------------------- */
+
+.plx-explorer-window-body {
+    container-name: plx-explorer;
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+.plx-explorer-description {
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow: hidden;
+    padding: 6px var(--space-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* -- toolbar ------------------------------------------------------------- */
+
+.plx-explorer-toolbar {
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--space-2);
+    height: 40px;
+    min-width: 0;
+    padding: 0 var(--space-2);
+}
+
+.plx-explorer-navrow {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.plx-explorer-tools,
+.plx-explorer-actions,
+.plx-explorer-segment {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+.plx-explorer-actions {
+    gap: var(--space-1);
+}
+
+.plx-explorer-segment {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    gap: 0;
+    padding: 1px;
+}
+
+.plx-explorer-segment .plx-explorer-tool {
+    border-radius: 5px;
+    height: 24px;
+    width: 26px;
+}
+
+.plx-explorer-tool,
+.plx-explorer-pin {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 28px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-explorer-tool:hover:not(:disabled),
+.plx-explorer-pin:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.plx-explorer-tool:disabled,
+.plx-explorer-pin:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.plx-explorer-tool[aria-pressed="true"],
+.plx-explorer-tool[aria-expanded="true"] {
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+}
+
+.plx-explorer-pin.is-on {
+    color: var(--accent-channel);
+}
+
+.plx-explorer-tool:focus-visible,
+.plx-explorer-pin:focus-visible,
+.plx-explorer-winbutton:focus-visible,
+.plx-explorer-place:focus-visible,
+.plx-explorer-section-head:focus-visible,
+.plx-explorer-col:focus-visible,
+.plx-explorer-crumb:focus-visible,
+.plx-explorer-crumb-more:focus-visible,
+.plx-explorer-crumb-open:focus-visible,
+.plx-explorer-enter:focus-visible,
+.plx-explorer-search-deep:focus-visible,
+.plx-explorer-banner-use:focus-visible,
+.plx-explorer-searchbar-action:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* -- address bar ----------------------------------------------------------- */
+
+.plx-explorer-address {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: text;
+    display: flex;
+    flex: 1 1 auto;
+    height: 28px;
+    min-width: 120px;
+    overflow: hidden;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.plx-explorer-address:hover {
+    border-color: var(--border-strong);
+}
+
+.plx-explorer-address:focus-within {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.plx-explorer-address.is-invalid {
+    border-color: var(--accent-danger);
+}
+
+.plx-explorer-crumbs {
+    align-items: center;
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 0 2px;
+    scrollbar-width: none;
+    white-space: nowrap;
+}
+
+.plx-explorer-crumbs::-webkit-scrollbar {
+    display: none;
+}
+
+.plx-explorer-crumbs[hidden],
+.plx-explorer-crumb[hidden],
+.plx-explorer-crumb-sep[hidden],
+.plx-explorer-crumb-more[hidden],
+.plx-explorer-crumb-open[hidden],
+.plx-explorer-crumb-edit[hidden] {
+    display: none;
+}
+
+.plx-explorer-crumb,
+.plx-explorer-crumb-more {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-family: var(--plx-explorer-mono);
+    font-size: 12px;
+    height: 22px;
+    line-height: 20px;
+    max-width: 240px;
+    overflow: hidden;
+    padding: 0 5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-crumb:hover,
+.plx-explorer-crumb-more:hover {
+    background: var(--plx-explorer-hover);
+    color: var(--text-primary);
+}
+
+.plx-explorer-crumb[aria-current="location"] {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.plx-explorer-crumb-more {
+    align-items: center;
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 11px;
+}
+
+.plx-explorer-crumb-sep {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 8px;
+    opacity: 0.7;
+    padding: 0 1px;
+}
+
+.plx-explorer-crumb-open {
+    align-self: stretch;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    cursor: text;
+    display: flex;
+    flex: 1 1 auto;
+    font-size: 10px;
+    justify-content: flex-end;
+    min-width: 24px;
+    opacity: 0;
+    padding: 0 var(--space-2);
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.plx-explorer-address:hover .plx-explorer-crumb-open,
+.plx-explorer-crumb-open:focus-visible {
+    opacity: 1;
+}
+
+.plx-explorer-crumb-edit {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-family: var(--plx-explorer-mono);
+    font-size: 12px;
+    height: 100%;
+    min-width: 0;
+    outline: none;
+    padding: 0 var(--space-2);
+}
+
+.plx-explorer-crumb-edit::placeholder,
+.plx-explorer-search-input::placeholder {
+    color: var(--text-muted);
+}
+
+.plx-explorer-messages {
+    flex: 0 0 auto;
+}
+
+.plx-explorer-address-error,
+.plx-explorer-note {
+    font-size: 11px;
+    padding: 5px var(--space-3);
+}
+
+.plx-explorer-address-error {
+    background: var(--accent-danger-soft);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--accent-danger);
+}
+
+.plx-explorer-note {
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+}
+
+.plx-explorer-address-error:empty,
+.plx-explorer-note:empty,
+.plx-explorer-address-error[hidden],
+.plx-explorer-note[hidden] {
+    display: none;
+}
+
+/* -- search ---------------------------------------------------------------- */
+
+.plx-explorer-search {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    height: 28px;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
+    width: 220px;
+}
+
+.plx-explorer-search:hover {
+    border-color: var(--border-strong);
+}
+
+.plx-explorer-search:focus-within {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.plx-explorer-search-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 11px;
+    padding: 0 6px 0 var(--space-2);
+}
+
+.plx-explorer-search-input {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 12px;
+    height: 100%;
+    min-width: 0;
+    outline: none;
+    padding: 0 var(--space-1) 0 0;
+}
+
+.plx-explorer-search-deep {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    margin-right: 2px;
+    width: 24px;
+}
+
+.plx-explorer-search-deep:hover {
+    background: var(--plx-explorer-hover);
+    color: var(--text-primary);
+}
+
+.plx-explorer-search-deep[aria-pressed="true"] {
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+}
+
+.plx-explorer-search-deep[hidden] {
+    display: none;
+}
+
+/* -- main: sidebar and content -------------------------------------------- */
+
+.plx-explorer-main {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: var(--plx-explorer-sidebar) minmax(0, 1fr);
+    min-height: 0;
+}
+
+.plx-explorer-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+/* -- sidebar ----------------------------------------------------------------- */
+
+.plx-explorer-sidebar {
+    background: var(--surface-1);
+    border-right: 1px solid var(--border-subtle);
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--space-2) 6px var(--space-3);
+}
+
+.plx-explorer-machine {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 6px var(--space-2);
+}
+
+.plx-explorer-machine-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.plx-explorer-machine-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-section + .plx-explorer-section {
+    margin-top: var(--space-2);
+}
+
+.plx-explorer-section[hidden] {
+    display: none;
+}
+
+.plx-explorer-section-head {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    font-weight: 700;
+    gap: 6px;
+    letter-spacing: 0.04em;
+    padding: 3px 6px;
+    text-align: left;
+    text-transform: uppercase;
+    width: 100%;
+}
+
+.plx-explorer-section-head:hover {
+    color: var(--text-secondary);
+}
+
+.plx-explorer-section-chevron {
+    display: inline-flex;
+    font-size: 8px;
+    justify-content: center;
+    width: 10px;
+}
+
+.plx-explorer-section-body[hidden] {
+    display: none;
+}
+
+.plx-explorer-place {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    min-height: 28px;
+    min-width: 0;
+    padding: 3px var(--space-2);
+    position: relative;
+    text-align: left;
+    transition: background var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.plx-explorer-place:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+/* The folder that is open, when it is one of these: the Three-Pixel Edge. */
+.plx-explorer-place.is-current {
+    background: var(--accent-channel-tint);
+    box-shadow: inset 3px 0 0 var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-explorer-place-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: 0 0 16px;
+    font-size: 12px;
+    justify-content: center;
+}
+
+.plx-explorer-place.is-current .plx-explorer-place-icon {
+    color: var(--accent-channel);
+}
+
+.plx-explorer-place-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.plx-explorer-place-label,
+.plx-explorer-place-caption {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-place-caption {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+}
+
+.plx-explorer-place-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 4px var(--space-2);
+}
+
+.plx-explorer-pinrow {
+    position: relative;
+}
+
+.plx-explorer-pinrow .plx-explorer-place {
+    padding-right: 22px;
+}
+
+.plx-explorer-grip {
+    color: var(--text-muted);
+    cursor: grab;
+    display: inline-flex;
+    font-size: 10px;
+    opacity: 0;
+    padding: 4px;
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    margin-top: -10px;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.plx-explorer-pinrow:hover .plx-explorer-grip {
+    opacity: 1;
+}
+
+.plx-explorer-pinrow.sortable-ghost {
+    opacity: 0.4;
+}
+
+/* -- dataset banner, search strip ------------------------------------------ */
+
+.plx-explorer-banner,
+.plx-explorer-searchbar {
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    gap: var(--space-2);
+    min-height: 32px;
+    padding: 4px var(--space-3);
+}
+
+.plx-explorer-banner {
+    background: var(--accent-warning-soft);
+    color: var(--text-primary);
+}
+
+.plx-explorer-banner-icon {
+    color: var(--accent-warning);
+    display: inline-flex;
+}
+
+.plx-explorer-searchbar {
+    background: var(--surface-2);
+    color: var(--text-secondary);
+}
+
+.plx-explorer-searchbar-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+}
+
+.plx-explorer-banner-text,
+.plx-explorer-searchbar-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-banner-use,
+.plx-explorer-searchbar-action {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 24px;
+    padding: 0 var(--space-2);
+}
+
+.plx-explorer-banner-use:hover,
+.plx-explorer-searchbar-action:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.plx-explorer-banner[hidden],
+.plx-explorer-searchbar[hidden] {
+    display: none;
+}
+
+/* -- the listing ------------------------------------------------------------ */
+
+.plx-explorer-listing {
+    --plx-col-mtime: 150px;
+    --plx-col-kind: 120px;
+    --plx-col-size: 80px;
+    --plx-explorer-grid: minmax(0, 1fr) var(--plx-col-mtime) var(--plx-col-kind) var(--plx-col-size);
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+}
+
+.plx-explorer-listing.is-search {
+    --plx-explorer-grid: minmax(0, 1.2fr) minmax(0, 1fr) var(--plx-col-kind);
+}
+
+.plx-explorer-head {
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: var(--plx-explorer-grid);
+    height: 26px;
+    padding-right: 8px;
+}
+
+.plx-explorer-listing.is-grid .plx-explorer-head {
+    display: none;
+}
+
+.plx-explorer-headcell {
+    align-items: stretch;
+    display: flex;
+    min-width: 0;
+    position: relative;
+}
+
+.plx-explorer-col {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    flex: 1 1 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    gap: 4px;
+    letter-spacing: 0.04em;
+    min-width: 0;
+    padding: 0 var(--space-3);
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.plx-explorer-col.is-static {
+    cursor: default;
+}
+
+.plx-explorer-col:not(.is-static):hover {
+    color: var(--text-secondary);
+}
+
+.plx-explorer-headcell[aria-sort="ascending"] .plx-explorer-col,
+.plx-explorer-headcell[aria-sort="descending"] .plx-explorer-col {
+    color: var(--text-primary);
+}
+
+.plx-explorer-headcell.is-size .plx-explorer-col {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+}
+
+.plx-explorer-col-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-explorer-caret {
+    color: var(--accent-channel);
+    display: inline-flex;
+    font-size: 10px;
+}
+
+.plx-explorer-divider {
+    bottom: 4px;
+    cursor: col-resize;
+    left: -4px;
+    position: absolute;
+    top: 4px;
+    width: 7px;
+    z-index: 1;
+}
+
+.plx-explorer-divider::after {
+    background: var(--border-subtle);
+    bottom: 0;
+    content: "";
+    left: 3px;
+    position: absolute;
+    top: 0;
+    width: 1px;
+}
+
+.plx-explorer-divider:hover::after,
+.plx-explorer-listing.is-resizing .plx-explorer-divider::after {
+    background: var(--accent-channel);
+}
+
+.plx-explorer-listing.is-resizing,
+.plx-explorer-listing.is-resizing * {
+    cursor: col-resize !important;
+    user-select: none;
+}
+
+.plx-explorer-scroller {
+    flex: 1 1 auto;
+    min-height: 0;
+    outline: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    position: relative;
+}
+
+.plx-explorer-scroller:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
+}
+
+.plx-explorer-listing.is-busy .plx-explorer-scroller {
+    opacity: 0.55;
+    transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.plx-explorer-spacer {
+    position: relative;
+    width: 100%;
+}
+
+.plx-explorer-rows {
+    left: 0;
+    position: absolute;
+    right: 0;
+}
+
+.plx-explorer-row {
+    align-items: center;
+    border-bottom: 1px solid transparent;
+    color: var(--text-secondary);
+    cursor: default;
+    display: grid;
+    grid-template-columns: var(--plx-explorer-grid);
+    height: var(--plx-explorer-row);
+    user-select: none;
+}
+
+.plx-explorer-row:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.plx-explorer-row.is-selected {
+    background: var(--accent-channel-tint);
+    box-shadow: inset 3px 0 0 var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-explorer-scroller:focus .plx-explorer-row.is-cursor {
+    outline: 1px solid var(--accent-channel);
+    outline-offset: -1px;
+}
+
+.plx-explorer-row.is-muted {
+    opacity: 0.58;
+}
+
+.plx-explorer-row.is-denied,
+.plx-explorer-row.is-broken {
+    color: var(--text-muted);
+}
+
+.plx-explorer-cell {
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 var(--space-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-cell.is-mtime,
+.plx-explorer-cell.is-kind,
+.plx-explorer-cell.is-where {
+    color: var(--text-muted);
+}
+
+.plx-explorer-cell.is-mtime,
+.plx-explorer-cell.is-size {
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-explorer-cell.is-size {
+    color: var(--text-muted);
+    text-align: right;
+}
+
+.plx-explorer-row.is-selected .plx-explorer-cell {
+    color: var(--text-secondary);
+}
+
+.plx-explorer-cell.is-name {
+    align-items: center;
+    color: inherit;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-explorer-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: 0 0 16px;
+    font-size: 13px;
+    justify-content: center;
+}
+
+.plx-explorer-row.is-folder .plx-explorer-icon {
+    color: var(--accent-channel);
+}
+
+.plx-explorer-row.is-store .plx-explorer-icon {
+    color: var(--accent-warning);
+}
+
+.plx-explorer-row.is-denied .plx-explorer-icon,
+.plx-explorer-row.is-broken .plx-explorer-icon {
+    color: var(--text-muted);
+}
+
+.plx-explorer-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-badge {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 9px;
+}
+
+.plx-explorer-enter {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 22px;
+    justify-content: center;
+    margin-left: auto;
+    width: 22px;
+}
+
+.plx-explorer-enter:hover {
+    background: var(--plx-explorer-hover);
+    color: var(--text-primary);
+}
+
+/* Grid: tiles in rows of --plx-explorer-cols, set by the listing. */
+.plx-explorer-rows {
+    /* Tiles per row in grid view; the listing sets it from the width. */
+    --plx-explorer-cols: 6;
+}
+
+.plx-explorer-listing.is-grid .plx-explorer-rows {
+    display: grid;
+    grid-template-columns: repeat(var(--plx-explorer-cols), 112px);
+    padding: 0 var(--space-1);
+}
+
+.plx-explorer-tile {
+    align-content: start;
+    border-radius: var(--radius-sm);
+    display: grid;
+    gap: 6px;
+    grid-template-columns: 1fr;
+    height: 96px;
+    justify-items: center;
+    padding: var(--space-3) 6px 6px;
+    position: relative;
+    text-align: center;
+}
+
+.plx-explorer-tile.is-selected {
+    box-shadow: inset 0 0 0 1px var(--accent-channel);
+}
+
+.plx-explorer-tile .plx-explorer-icon {
+    flex: none;
+    font-size: 28px;
+    height: 32px;
+}
+
+.plx-explorer-tile .plx-explorer-name {
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    display: -webkit-box;
+    font-size: 11px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.plx-explorer-tile .plx-explorer-enter {
+    position: absolute;
+    right: 4px;
+    top: 4px;
+}
+
+.plx-explorer-overlay {
+    color: var(--text-muted);
+    font-size: 12px;
+    left: 0;
+    padding: var(--space-6) var(--space-4);
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    text-align: center;
+    top: 26px;
+}
+
+.plx-explorer-listing.is-grid .plx-explorer-overlay {
+    top: 0;
+}
+
+.plx-explorer-overlay[hidden] {
+    display: none;
+}
+
+/* -- footer ------------------------------------------------------------------ */
+
+.plx-explorer-window-footer {
+    align-items: center;
+    background: var(--surface-1);
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-3);
+    height: 52px;
+    padding: 0 var(--space-3);
+}
+
+.plx-explorer-summary {
+    color: var(--text-muted);
+    flex: 1 1 auto;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-explorer-summary.is-explaining {
+    color: var(--accent-danger);
+}
+
+.plx-explorer-footer-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--space-2);
+}
+
+.plx-explorer-footer-actions .plx-button {
+    font-weight: 600;
+    height: 32px;
+    padding: 0 var(--space-4);
+}
+
+.plx-explorer-footer-actions .plx-button:not(.plx-button-primary) {
+    color: var(--text-secondary);
+}
+
+.plx-explorer-footer-actions .plx-button:not(.plx-button-primary):hover:not(:disabled) {
+    color: var(--text-primary);
+}
+
+.plx-explorer-footer-actions .plx-button:disabled:not(.plx-button-primary) {
+    color: var(--text-muted);
+    cursor: default;
+    opacity: 0.6;
+}
+
+.plx-explorer-footer-actions .plx-button-primary:hover:not(:disabled) {
+    background: #5cc9fb;
+    border-color: #5cc9fb;
+}
+
+.plx-explorer-footer-actions .plx-button:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* -- scrollbars, as in every .plx-dialog ------------------------------------ */
+
+.plx-explorer-window,
+.plx-explorer-window * {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.plx-explorer-window ::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.plx-explorer-window ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.plx-explorer-window ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+}
+
+.plx-explorer-window ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: padding-box;
+}
+
+/* -- the spinner ----------------------------------------------------------- */
+
+.plx-explorer-window .is-spinning {
+    animation: plx-explorer-spin 0.9s linear infinite;
+    display: inline-flex;
+}
+
+@keyframes plx-explorer-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-explorer-window .is-spinning {
+        animation: none;
+    }
+}
+
+/* -- a narrow window ---------------------------------------------------------- */
+
+/* Queried on the body, not the window: a query container is a containing
+   block for fixed-position descendants, and the menus live on the window
+   itself, outside this element. */
+@container plx-explorer (max-width: 760px) {
+    .plx-explorer-main {
+        grid-template-columns: 160px minmax(0, 1fr);
+    }
+
+    .plx-explorer-search {
+        width: 140px;
+    }
+
+    .plx-explorer-tool[data-action="forward"],
+    .plx-explorer-tool[data-action="refresh"] {
+        display: none;
+    }
+
+    .plx-explorer-listing {
+        --plx-col-kind: 96px;
+    }
+}

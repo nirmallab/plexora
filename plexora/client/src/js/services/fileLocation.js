@@ -53,7 +53,7 @@ window.PlexoraFileLocation = (function () {
     //: the machine the DOM is on, which no `/data_places` entry describes.
     const LOCAL = "local";
 
-    //: The filters pathPicker knows, tried in order of how specific they are.
+    //: The filters the file explorer knows, tried in order of how specific they are.
     //: Only used to translate an `accept` attribute into one of them -- see
     //: `filterFor`, which falls back to "any" the moment it is unsure.
     const FILTERS = ["csv", "h5ad", "channels", "image", "data"];
@@ -264,8 +264,8 @@ window.PlexoraFileLocation = (function () {
      * The name to save under, asked after the folder.
      *
      * Two screens rather than one because they are two different widgets: the
-     * folder is a filesystem to walk (pathPicker, which already knows how to do
-     * that on a machine with no desktop) and the name is a text box. `error`
+     * folder is a filesystem to walk (the file explorer, which already knows
+     * how to do that on any machine) and the name is a text box. `error`
      * with `offerReplace` is how a refused overwrite comes back -- the same
      * dialog, redrawn, with the button that says what would happen.
      */
@@ -458,7 +458,7 @@ window.PlexoraFileLocation = (function () {
     // -- the two things a click can be --------------------------------------
 
     /**
-     * Which of pathPicker's filters matches this input's `accept`, if any.
+     * Which of the file explorer's filters matches this input's `accept`, if any.
      *
      * Conservative on purpose. Greying out a file the form would have taken is
      * a dead end with no way past it inside the picker, while offering one it

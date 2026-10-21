@@ -1,35 +1,29 @@
 /**
- * browsePicker.js -- shared client for POST /browse_path (see
- * server/utils/native_dialog.py), which pops a native OS file/folder dialog
- * on the machine the server runs on and hands back the chosen path. Used by
- * both the Import Sample dialog's Select File / Select Folder pair and the
- * per-field "Browse..."
- * buttons; only works when there's a real desktop session for the dialog to
- * appear on, so every caller needs an `onUnavailable` fallback (e.g. a manual
- * text input) for the headless/remote-server case.
+ * browsePicker.js -- what every Browse button opens.
  *
- * Three answers come back from that route:
+ * **The file explorer first, on every machine** (services/explorer/): a
+ * floating window over the page that lists this server's filesystem or a
+ * node's, with drives, pins, search and the selection rules the field asked
+ * for. It is the same window in a browser tab, in the desktop app and on a
+ * cluster, which is the point -- the Recent list, the pins and the window's
+ * size are the explorer's, and a Browse that opened Finder on one machine and
+ * a listing on another kept none of them.
  *
- *   a path      the dialog opened and somebody chose something (or cancelled,
- *               which is a null path and not a failure)
- *   "kinds"     there IS a desktop here, but no single dialog takes a file AND
- *               a folder -- every OS but macOS.
- *   "list"      there is no desktop at all -- a compute node, a container,
- *               notebook mode.
+ * **The machine's own dialog is one step away**, in the explorer's overflow
+ * menu ("Use Finder…", "Use File Explorer…", "Use system dialog…"), wherever
+ * one exists. POST /browse_path (server/utils/native_dialog.py) opens it on
+ * the machine the server runs on, or on a node's; the desktop app opens its
+ * own. /browse_capability says which of three answers a machine gives:
  *
- * **One Browse takes either kind, on every machine.** A field asking for
- * "your image" or "your mask" does not ask whether it is a file or a folder:
- * that is a fact about the format (an OME-Zarr store is a folder, an OME-TIFF
- * a file), and a File | Folder pair in front of every Browse made the user
- * answer it. So mode "any" opens the one panel that takes both -- macOS's own
- * (`native_dialog._JXA_HYBRID_SCRIPT`), and everywhere else pathPicker.js's
- * listing, which selects a file, a `.zarr` store in one click, or the folder
- * that is open ("Use this folder"). "kinds" and "list" therefore both end in
- * the listing for mode "any"; a field asking for exactly one kind still gets
- * that machine's own single-kind dialog.
+ *   "hybrid"    one panel takes a file OR a folder -- macOS.
+ *   "kinds"     a desktop, but one kind at a time -- Windows, Linux.
+ *   "list"      no desktop at all -- a compute node, a container, notebook
+ *               mode; the overflow offers nothing.
  *
- * `chooseKind` survives only for a page that loads this file without the
- * listing -- no page in the app does -- so a Browse there is never a dead end.
+ * `chooseKind` asks "file or folder?" only where it must: a "kinds" machine
+ * asked for either from the overflow, and a page that loads this file
+ * without the explorer -- no page in the app does -- so a Browse there is
+ * never a dead end.
  */
 
 /**
@@ -56,7 +50,8 @@
  * treat the two identically.
  *
  * The road not taken: one Browse takes either kind (see the file header),
- * so this is reached only on a page that has no pathPicker.js.
+ * so this is reached only from the explorer's "Use system dialog…" on a
+ * single-kind desktop, or on a page that has no explorer.
  *
  * Nothing is cached between clicks. The capability is a fact about the machine
  * on the other end of `node`, which the Local/Remote switch can change under a
@@ -321,134 +316,107 @@ function chooseKind(anchorEl, examples) {
 }
 
 /**
- * @function browseForPath - opens a native dialog and calls back with the
- * chosen path.
+ * @function browseForPath - opens the file explorer and calls back with what
+ * was chosen.
  * @param mode - "any" (a file OR a folder, which is what every path field
  *   wants: an image is an .ome.tif or a .zarr *directory*, and which one it is
  *   is a fact about the format rather than a question to put to the user),
- *   "file", or "directory". Only macOS has an OS dialog that can do "any". On
- *   a Windows or Linux desktop the server answers `fallback: "kinds"` and this
- *   asks which one -- two native dialogs behind one button, rather than the
- *   in-app listing, which is for machines with no desktop to open a dialog on
- *   (`fallback: "list"`) and is a substitute for a system file browser rather
- *   than an improvement on one.
- * @param anchorEl - the button this was launched from, for the "kinds" menu to
- *   hang under. Without one there is nowhere to draw the question, so the
- *   listing picker answers instead -- which still works, and is why a caller
- *   that has no button is not a broken caller.
- * @param filter - narrows the file-type dropdown for mode="file": one of
- *   "image", "csv", "h5ad", or "any" (default -- just "All files"). Ignored
- *   for mode="directory", and by the hybrid panel, which is unfiltered on
- *   purpose (see native_dialog.py). Still read by the listing picker in every
- *   mode, where it greys out files the field cannot take. Must match one of
- *   native_dialog.py's FILTERS keys.
- * @param start - where the listing fallback should open, when it is the one
- *   that runs. Whatever the field already holds, so re-picking a file starts
- *   in the folder it came from rather than back at home. Ignored by the native
- *   dialog, which remembers its own last directory.
- * @param onPicked - called with the chosen path string; not called if the
- *   user cancels the dialog (result.path === null)
- * @param onUnavailable - called (with the error) if the dialog itself
- *   couldn't be shown at all -- no desktop session, tkinter missing, etc.
+ *   "file", or "directory". Read by the explorer as its selection rule.
+ * @param filter - one of native_dialog.py's FILTERS keys ("image", "csv",
+ *   "h5ad", "data", "channels", "any"). The explorer greys out the files the
+ *   field cannot take; the system dialog narrows its file-type dropdown.
+ * @param node - whose filesystem: absent for the machine running the server,
+ *   a node's name for that machine. Passed through to the explorer and to the
+ *   system dialog alike -- a listing of the wrong machine would be worse than
+ *   none.
+ * @param start - where to open: whatever the field already holds, so
+ *   re-picking a file starts in the folder it came from. The server turns a
+ *   file's path into the folder holding it.
+ * @param anchorEl - the button this was launched from; the "file or folder?"
+ *   chooser hangs under it on a page with no explorer.
+ * @param examples - which KIND_EXAMPLES entry labels that chooser.
+ * @param accept, select, primary, title - passed to the explorer as they are
+ *   (PlexoraFileExplorer.pick).
+ * @param onPicked - called with the chosen path (an array of them when
+ *   `select` is "many"); not called on a cancel.
+ * @param onUnavailable - called with the error if nothing could be shown at
+ *   all.
  */
 async function browseForPath({mode = "file", filter = "any", node = null,
                               start = "", anchorEl = null, examples = null,
-                              onPicked, onUnavailable} = {}) {
-    if (!node && window.PlexoraDesktop) {
-        return browseInShell({mode, filter, start, anchorEl, examples,
-                              onPicked, onUnavailable});
-    }
+                              onPicked, onUnavailable,
+                              accept = null, select = null, primary = "",
+                              title = ""} = {}) {
     try {
-        const response = await fetch(plexoraUrl("browse_path"), {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            // `node` says WHICH machine's dialog to open. Absent means the one
-            // running the server; a name means that node's, which for the node
-            // `plexora connect` starts is the user's own computer -- the only
-            // machine in the arrangement that reliably has a screen.
-            body: JSON.stringify({mode: mode, filter: filter, node: node}),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-            // A desktop with single-kind dialogs only -- Windows, Linux. The
-            // machine can open a real system file browser, it just cannot ask
-            // both questions in one panel, so this asks which and then opens
-            // the genuine article. Falls through to the listing when there is
-            // no button to hang the menu under.
-            //
-            // Mode "any" goes to the listing instead, which takes either kind
-            // with no question first -- see the file header. The menu is left
-            // for a page with no listing to offer.
-            if (result.fallback === "kinds" && anchorEl
-                    && !(mode === "any" && window.PlexoraPathPicker)) {
-                const kind = await chooseKind(anchorEl, examples || filter);
-                // Dismissed. The same answer as cancelling the dialog this
-                // would have opened, and it gets the same silence -- an
-                // onUnavailable here would report a failure at somebody who
-                // simply changed their mind.
-                if (!kind) return;
-                return browseForPath({mode: kind, filter, node, start,
-                                      anchorEl, examples,
-                                      onPicked, onUnavailable});
-            }
-            // "There is no desktop here" is not a failure to report at
-            // somebody: it is the ordinary state of a compute node, and the
-            // listing picker is the answer. The server says so in a field
-            // rather than in prose so this can act on it.
-            if ((result.fallback === "list" || result.fallback === "kinds")
-                    && window.PlexoraPathPicker) {
-                // Listed on the same machine the dialog would have opened on.
-                // Passing `node` through is what makes Browse work at all for
-                // a field pointed at a cluster: that host has no desktop, so
-                // this branch is the ONLY one it ever takes, and a listing of
-                // the wrong machine's filesystem would be worse than none.
-                const picked = await window.PlexoraPathPicker.pick({
-                    mode,
-                    filter,
-                    node,
-                    // Opens where the field is already pointing. The server
-                    // turns a file's path into the folder that holds it, so
-                    // correcting a mistyped filename does not start over at
-                    // home -- which on a cluster is nowhere near the data.
-                    start,
-                    // "On the server" only where that is somewhere else: a
-                    // desktop answering "kinds" IS the machine in front of
-                    // the user, and the listing stands in for its dialog.
-                    title: ({
-                        directory: "Choose a folder",
-                        any: "Choose a file or folder",
-                    }[mode] || "Choose a file") + ((node || result.fallback !== "kinds")
-                        ? ` on ${node || "the server"}` : ""),
-                });
-                if (picked && onPicked) onPicked(picked);
-                return;
-            }
-            throw new Error(result.error);
+        const explorer = window.PlexoraFileExplorer;
+        if (explorer) {
+            const picked = await explorer.pick({
+                mode, filter, node: node || "", start,
+                accept, select, primary, title,
+                systemDialog: systemDialogFor({node, filter, start, anchorEl, examples}),
+            });
+            if (picked && onPicked) onPicked(picked);
+            return;
         }
-        if (result.path && onPicked) {
-            onPicked(result.path);
+        // A page without the explorer: the machine's own dialog, asking which
+        // kind first where its dialogs take one at a time.
+        let kind = mode;
+        if (kind === "any" && await browseCapability(node) !== "hybrid") {
+            kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
+            // Dismissed. The same answer as cancelling the dialog this would
+            // have opened, and it gets the same silence -- an onUnavailable
+            // here would report a failure at somebody who changed their mind.
+            if (!kind) return;
         }
-        // result.path === null just means the user cancelled the dialog.
+        const picked = await openSystemDialog({kind, filter, node, start});
+        if (picked && onPicked) onPicked(picked);
     } catch (error) {
-        if (onUnavailable) {
-            onUnavailable(error);
-        }
+        if (onUnavailable) onUnavailable(error instanceof Error ? error : new Error(String(error)));
     }
 }
 
 /**
- * The desktop app's native dialog, parented to its window. Same contract as
- * the server's: one path to `onPicked`, silence for a cancel.
- *
- * The shell's dialogs take one kind at a time on every platform, so mode
- * "any" -- a file OR a folder, no question first -- goes where the browser
- * tab's Browse goes: on a Mac, the server's own file-or-folder panel (the
- * server runs on this same machine); everywhere else, the listing.
+ * The hook the explorer's overflow menu calls: the machine's own file dialog,
+ * named for what it is, offered only where `available()` says one exists.
  */
-async function browseInShell({mode, filter, start, anchorEl, examples,
-                              onPicked, onUnavailable}) {
-    try {
-        let kind = mode;
+function systemDialogFor({node = null, filter = "any", start = "", anchorEl = null,
+                          examples = null} = {}) {
+    const desktop = !node && Boolean(window.PlexoraDesktop);
+    const platform = desktop ? window.PlexoraDesktop.platform : "";
+    let capability = null;
+    return {
+        get label() {
+            if (platform === "windows") return "Use File Explorer…";
+            if (platform === "macos" || capability === "hybrid") return "Use Finder…";
+            return "Use system dialog…";
+        },
+        async available() {
+            // The desktop app's own dialogs take one kind at a time; the Mac
+            // under it has a panel that takes either, through the server.
+            capability = desktop
+                ? (await serverDialogs() === "hybrid" ? "hybrid" : "kinds")
+                : await browseCapability(node);
+            return capability;
+        },
+        async open(kind, {multiple = false, anchor = null} = {}) {
+            if (!kind) {
+                kind = await chooseKind(anchor || anchorEl, examples || filter);
+                if (!kind) return null;
+            }
+            return openSystemDialog({kind, filter, node, start, multiple});
+        },
+    };
+}
+
+/**
+ * One native dialog, of one kind ("file", "directory", or "any" where the
+ * machine has a panel for both). Resolves the chosen path, an array when
+ * `multiple` and the dialog takes several, or null for a cancel; throws when
+ * no dialog could be shown.
+ */
+async function openSystemDialog({kind, filter = "any", node = null, start = "",
+                                 multiple = false}) {
+    if (!node && window.PlexoraDesktop) {
         if (kind === "any") {
             if (await serverDialogs() === "hybrid") {
                 const response = await fetch(plexoraUrl("browse_path"), {
@@ -457,28 +425,30 @@ async function browseInShell({mode, filter, start, anchorEl, examples,
                     body: JSON.stringify({mode: "any", filter}),
                 });
                 const result = await response.json();
-                if (response.ok) {
-                    if (result.path && onPicked) onPicked(result.path);
-                    return;
-                }
+                if (!response.ok) throw new Error(result.error || "The file dialog could not be opened.");
+                return result.path || null;
             }
-            if (window.PlexoraPathPicker) {
-                const picked = await window.PlexoraPathPicker.pick({
-                    mode: "any", filter, start,
-                    title: "Choose a file or folder"});
-                if (picked && onPicked) onPicked(picked);
-                return;
-            }
-            kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
-            if (!kind) return;
+            kind = "file";
         }
         const paths = await window.PlexoraDesktop.pickPaths({
-            mode: kind, filter, defaultPath: start || null,
+            mode: kind, filter, defaultPath: start || null, multiple,
         });
-        if (paths && paths.length && onPicked) onPicked(paths[0]);
-    } catch (error) {
-        if (onUnavailable) onUnavailable(error instanceof Error ? error : new Error(String(error)));
+        if (!paths || !paths.length) return null;
+        return multiple ? paths : paths[0];
     }
+    const response = await fetch(plexoraUrl("browse_path"), {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        // `node` says WHICH machine's dialog to open. Absent means the one
+        // running the server; a name means that node's, which for the node
+        // `plexora connect` starts is the user's own computer -- the only
+        // machine in the arrangement that reliably has a screen.
+        body: JSON.stringify({mode: kind, filter: filter, node: node}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "The file dialog could not be opened.");
+    // result.path === null just means the user cancelled the dialog.
+    return result.path || null;
 }
 
 /**
@@ -504,13 +474,16 @@ function serverDialogs() {
  * input with the picked path, dispatching an `input` event afterward so any
  * existing onkeyup/oninput live-validation on that field runs unchanged.
  *
- * One button whatever the machine: mode "any" opens a panel that takes a file
- * or a folder (see the file header), so there is no File | Folder pair to
- * swap in for it.
+ * One button whatever the machine: the explorer takes a file or a folder in
+ * mode "any" (see the file header), so there is no File | Folder pair to swap
+ * in for it. `accept`, `primary` and `title` go to the explorer; one box
+ * takes one path, so it never asks for several.
  */
 function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
                                                 node = null,
-                                                examples = null} = {}) {
+                                                examples = null,
+                                                accept = null, primary = "",
+                                                title = ""} = {}) {
     if (!buttonEl || !inputEl) return;
     const nodeNow = () => (typeof node === "function" ? node() : node);
 
@@ -518,8 +491,10 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
         browseForPath({
             mode: kind,
             filter,
-            // What the chooser hangs under, for the callers that still open it
-            // as a popup rather than having been replaced by it.
+            accept,
+            primary,
+            title,
+            // What the chooser hangs under, on a page with no explorer.
             anchorEl: buttonEl,
             examples: examples || filter,
             // Read at click time: the Local/Remote toggle switches which
@@ -547,7 +522,7 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
             // path input right next to it, there was no way to tell the
             // difference between "no dialog here" and "this button is broken".
             onUnavailable: (error) => {
-                console.error("browsePicker: could not open the file dialog.", error);
+                console.error("browsePicker: could not open the file browser.", error);
                 window.PlexoraStatus?.begin?.("Browse")?.fail?.(
                     error?.message || "Could not open the file browser — type the path instead.");
             },
