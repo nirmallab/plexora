@@ -221,6 +221,24 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     check("and says where the file went", saved === "C:\\out\\view.png"
           && world.toasts.some((t) => /Saved café view\.png/.test(t.title)));
 
+    const row = (action) => ({
+        disabled: false,
+        getAttribute: (name) => (name === "data-desktop-action" ? action : null),
+    });
+    const click = (action) => world.document.dispatchEvent({
+        type: "click", defaultPrevented: false, target: { closest: () => row(action) },
+    });
+    click("show_logs");
+    await tick();
+    check("a navbar window row the page cannot run asks the shell",
+          world.invoked.some((c) => c.command === "shell_action" && c.args.id === "show_logs"));
+    const before = world.invoked.filter((c) => c.command === "new_window").length;
+    click("new_window");
+    await tick();
+    check("the New Window row opens a window",
+          world.invoked.filter((c) => c.command === "new_window").length === before + 1);
+    check("the Full Screen row prints F11 off macOS", api._internal.keyHint("fullscreen") === "F11");
+
     world.pending.push({ kind: "project", name: "tonsil 2" });
     world.emit("plexora://opens-pending", null);
     await tick(); await tick();
@@ -236,6 +254,8 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     await tick();
     check("on macOS the menu owns Cmd+N and the page leaves it alone",
           !event.defaultPrevented && !world.invoked.some((c) => c.command === "new_window"));
+    check("and the Full Screen row prints the Mac's chord",
+          world.window.PlexoraDesktop._internal.keyHint("fullscreen") === "⌃⌘F");
 }
 
 if (failures) {

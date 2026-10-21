@@ -97,7 +97,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261021_native_drop",
+        "/client/src/js/services/desktopBridge.js?v=20261021_single_menubar",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -305,7 +305,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261021_native_drop",
+        "/client/src/js/services/desktopBridge.js?v=20261021_single_menubar",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -576,7 +576,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261021_native_drop",
+        "/client/src/js/services/desktopBridge.js?v=20261021_single_menubar",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",

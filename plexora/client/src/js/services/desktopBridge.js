@@ -133,6 +133,10 @@
         takePendingOpens: () => invoke("take_pending_opens"),
         toggleFullscreen: () => invoke("toggle_fullscreen"),
         isFullscreen: () => invoke("is_fullscreen"),
+        /** A navbar row only the shell can carry out: "show_data",
+         *  "show_logs", "zoom_in", "zoom_out", "zoom_reset" (commands.rs
+         *  SHELL_ACTIONS). */
+        shellAction: (id) => invoke("shell_action", {id}),
         notify: (title, body) => invoke("notify", {title, body: body || null}),
         /** Help > Check for Updates, from the signed release manifest the
          *  shell's updater reads: {current, latest, available, notes, date,
@@ -205,12 +209,13 @@
 
     // -- the shell's own keys ----------------------------------------------------
     //
-    // Windows and WebKitGTK never fire a menu accelerator while the WebView
-    // has keyboard focus -- which is nearly always -- so the chords the
-    // shell's menu owns are run from here instead. macOS hands key
-    // equivalents to the menu before the page sees them, so there this stays
-    // out of the way. None of these chords is one a page or plugin can bind
-    // (plexora/api/plugin.py refuses mod+Q/W/N), so nothing else is displaced.
+    // Off macOS the shell draws no menu bar (menu.rs: it would sit inside the
+    // window, above the navbar), and a native accelerator would never fire
+    // there anyway while the WebView has focus -- so these chords are run
+    // from here. macOS hands key equivalents to its menu before the page sees
+    // them, so there this stays out of the way. None of these chords is one a
+    // page or plugin can bind (plexora/api/plugin.py refuses mod+Q/W/N), so
+    // nothing else is displaced.
 
     const SHELL_CHORDS = [
         {key: "n", mod: true, run: () => api.newWindow()},
@@ -235,6 +240,47 @@
             if (!chord) return;
             event.preventDefault();
             Promise.resolve(chord.run()).catch(() => {});
+        });
+    }
+
+    // -- the navbar's window rows ------------------------------------------------
+    //
+    // What the native menu carried that the page could not do itself: New
+    // Window, Full Screen, Interface Size, Show Data Folder, Show Logs
+    // (base.html, `data-desktop-action`). Off macOS the navbar is the app's
+    // only menu bar, so these are the only rows for them. Delegated from the
+    // document, so a row is live however the navbar came to be on the page.
+
+    const ROW_ACTIONS = {
+        new_window: () => api.newWindow(),
+        fullscreen: () => api.toggleFullscreen(),
+    };
+
+    function runRow(id) {
+        const run = ROW_ACTIONS[id] || (() => api.shellAction(id));
+        return Promise.resolve(run()).catch(() => {});
+    }
+
+    document.addEventListener("click", (event) => {
+        const row = event.target && typeof event.target.closest === "function"
+            ? event.target.closest("[data-desktop-action]") : null;
+        if (!row || row.disabled) return;
+        runRow(row.getAttribute("data-desktop-action"));
+    });
+
+    /** The chord beside a window row, as this platform writes it. Printed and
+     *  not bound: SHELL_CHORDS (or the Mac's own menu) already runs it, and a
+     *  second binding would run it twice. */
+    function keyHint(spec) {
+        if (spec === "fullscreen") return shell.platform === "macos" ? "⌃⌘F" : "F11";
+        const shortcuts = window.PlexoraShortcuts;
+        return shortcuts && typeof shortcuts.format === "function" ? shortcuts.format(spec) : "";
+    }
+
+    function paintKeyHints() {
+        if (typeof document.querySelectorAll !== "function") return;
+        document.querySelectorAll("[data-key-hint]").forEach((key) => {
+            key.textContent = keyHint(key.getAttribute("data-key-hint"));
         });
     }
 
@@ -387,13 +433,14 @@
     document.addEventListener("DOMContentLoaded", () => {
         collectOpens();
         reportCapabilities();
+        paintKeyHints();
         document.getElementById("nav_open_in_browser")?.addEventListener("click", () => {
             openInBrowser();
         });
     });
 
     // Exposed for the probe in tests/js; not part of the page API.
-    api._internal = {runMenu, menuTarget, cssPoint, openPaths, onNativeDrop, shellChord};
+    api._internal = {runMenu, menuTarget, cssPoint, openPaths, onNativeDrop, shellChord, runRow, keyHint};
 
     window.PlexoraDesktop = Object.freeze(api);
 })();

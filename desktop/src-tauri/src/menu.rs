@@ -1,23 +1,34 @@
-//! The native menu bar.
+//! The native menu bar -- on macOS only.
 //!
-//! One rule keeps a key from firing twice: the page stays the only thing
-//! that runs a chord it already binds (mod+I, mod+O, mod+, and every tool's
-//! shortcut). The native items for those carry no accelerator -- only a hint
-//! in the label -- and send `plexora://menu` to the page, which clicks the
-//! same element its own shortcut would. Accelerators here are only keys the
-//! page provably never binds: Plexora's plugin API refuses mod+Q/W/N/T/H/M.
+//! On macOS the menu bar is the system's, along the top of the screen, and an
+//! app without one has no Quit, no Hide and no Edit menu for text fields to
+//! cut and paste through. So it is built there, as below.
 //!
-//! On Windows (and WebKitGTK) a menu accelerator never fires while the
-//! WebView has keyboard focus, which is nearly always, so the bridge runs
-//! the shell's own chords there as well (desktopBridge.js, SHELL_CHORDS).
-//! Only one of the two can ever see a given key press.
+//! On Windows and Linux a native menu is drawn INSIDE the window, as a strip
+//! above the page -- and the page's own navbar (base.html) is already a menu
+//! bar with the same File / View / Help, styled as the rest of Plexora is.
+//! Two menu bars, one above the other, saying the same things in two looks,
+//! is what the window showed. So there the page's navbar is the only one:
+//! `install` sets no menu, and the few rows only the shell can carry out
+//! (New Window, Full Screen, Interface Size, Show Data Folder, Show Logs) are
+//! desktop-only rows in the navbar that reach the shell through commands
+//! (`new_window`, `toggle_fullscreen`, `shell_action`). Their chords were
+//! already run by the page there (desktopBridge.js, SHELL_CHORDS): a menu
+//! accelerator never fires on Windows or WebKitGTK while the WebView has
+//! focus, which is nearly always.
+//!
+//! On macOS, one rule keeps a key from firing twice: the page stays the only
+//! thing that runs a chord it already binds (mod+I, mod+O, mod+, and every
+//! tool's shortcut). The native items for those carry no accelerator and send
+//! `plexora://menu` to the page, which clicks the same element its own
+//! shortcut would. Accelerators here are only keys the page provably never
+//! binds: Plexora's plugin API refuses mod+Q/W/N/T/H/M.
 
 use tauri::menu::{
     AboutMetadataBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, PredefinedMenuItem,
     SubmenuBuilder,
 };
-use tauri::{AppHandle, Emitter, Manager, Wry};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Wry};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{windows, ServerState};
@@ -26,42 +37,20 @@ use crate::{windows, ServerState};
 /// tests/test_docs_links.py checks, so the app and the browser UI agree.
 const DOCS_URL: &str = "https://nirmallab.github.io/plexora/";
 
-/// `mod+shift+e` as this platform writes it, for a label hint.
-fn chord_hint(spec: &str) -> String {
-    let mac = cfg!(target_os = "macos");
-    spec.split('+')
-        .map(|part| match part {
-            "mod" => if mac { "⌘".to_string() } else { "Ctrl".to_string() },
-            "shift" => if mac { "⇧".to_string() } else { "Shift".to_string() },
-            "alt" => if mac { "⌥".to_string() } else { "Alt".to_string() },
-            key => key.to_uppercase(),
-        })
-        .collect::<Vec<_>>()
-        .join(if mac { "" } else { "+" })
-}
-
-/// A label with the page's chord shown beside it. Windows draws the text
-/// after a tab in the accelerator column; elsewhere it would be literal, so
-/// the hint is left off rather than drawn badly.
-fn hinted(label: &str, chord: Option<&str>) -> String {
-    match chord {
-        Some(chord) if cfg!(windows) => format!("{label}\t{}", chord_hint(chord)),
-        _ => label.to_string(),
-    }
-}
+/// Whether this platform gets a native menu bar at all. See the module notes.
+pub const NATIVE_MENU_BAR: bool = cfg!(target_os = "macos");
 
 pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wry>> {
     let item = |id: &str, label: &str| MenuItemBuilder::with_id(id, label).build(app);
     let keyed = |id: &str, label: &str, accel: &str| {
         MenuItemBuilder::with_id(id, label).accelerator(accel).build(app)
     };
-    let mac = cfg!(target_os = "macos");
 
-    let mut file = SubmenuBuilder::new(app, "File")
+    let file = SubmenuBuilder::new(app, "File")
         .item(&keyed("new_window", "New Window", "CmdOrCtrl+N")?)
         .separator()
-        .item(&item("page:import", &hinted("Import Sample…", Some("mod+i")))?)
-        .item(&item("page:open", &hinted("Samples…", Some("mod+o")))?)
+        .item(&item("page:import", "Import Sample…")?)
+        .item(&item("page:open", "Samples…")?)
         .separator()
         .item(
             &SubmenuBuilder::new(app, "Export Image")
@@ -71,14 +60,11 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         )
         .separator()
         .item(&keyed("open_in_browser", "Open in Browser", "CmdOrCtrl+Shift+B")?)
-        .item(&item("page:settings", &hinted("Settings…", Some("mod+,")))?)
+        .item(&item("page:settings", "Settings…")?)
         .separator()
         .item(&keyed("close_window", "Close Window", "CmdOrCtrl+W")?);
-    if !mac {
-        file = file.separator().item(&keyed("quit", "Exit", "CmdOrCtrl+Q")?);
-    }
 
-    let tools: Vec<(String, String, Option<String>, String)> = info
+    let tools: Vec<(String, String, String)> = info
         .get("tools")
         .and_then(|tools| tools.as_array())
         .map(|tools| {
@@ -88,7 +74,6 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
                     Some((
                         tool.get("name")?.as_str()?.to_string(),
                         tool.get("label")?.as_str()?.to_string(),
-                        tool.get("shortcut").and_then(|s| s.as_str()).map(str::to_string),
                         tool.get("menu").and_then(|s| s.as_str()).unwrap_or("tools").to_string(),
                     ))
                 })
@@ -97,11 +82,11 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         .unwrap_or_default();
 
     let mut view = SubmenuBuilder::new(app, "View").item(&keyed("reload", "Reload", "CmdOrCtrl+R")?);
-    let view_tools: Vec<_> = tools.iter().filter(|t| t.3 == "view").collect();
+    let view_tools: Vec<_> = tools.iter().filter(|t| t.2 == "view").collect();
     if !view_tools.is_empty() {
         view = view.separator();
-        for (name, label, shortcut, _) in &view_tools {
-            view = view.item(&item(&format!("page:tool:{name}"), &hinted(label, shortcut.as_deref()))?);
+        for (name, label, _) in &view_tools {
+            view = view.item(&item(&format!("page:tool:{name}"), label)?);
         }
     }
     view = view
@@ -112,47 +97,38 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         .item(&item("zoom_out", "Zoom Out")?)
         .item(&item("zoom_reset", "Actual Size")?)
         .separator()
-        .item(&keyed("fullscreen", "Toggle Full Screen", if mac { "Ctrl+Cmd+F" } else { "F11" })?);
+        .item(&keyed("fullscreen", "Toggle Full Screen", "Ctrl+Cmd+F")?);
     if cfg!(debug_assertions) {
         view = view.separator().item(&item("devtools", "Developer Tools")?);
     }
 
     let mut tools_menu = SubmenuBuilder::new(app, "Tools");
-    let tool_rows: Vec<_> = tools.iter().filter(|t| t.3 != "view").collect();
+    let tool_rows: Vec<_> = tools.iter().filter(|t| t.2 != "view").collect();
     if tool_rows.is_empty() {
         tools_menu = tools_menu.item(&MenuItemBuilder::new("No tools installed").enabled(false).build(app)?);
     }
-    for (name, label, shortcut, _) in tool_rows {
-        tools_menu = tools_menu.item(&item(&format!("page:tool:{name}"), &hinted(label, shortcut.as_deref()))?);
+    for (name, label, _) in tool_rows {
+        tools_menu = tools_menu.item(&item(&format!("page:tool:{name}"), label)?);
     }
 
-    // Check for Updates, the shortcut sheet and Report an Issue are the
-    // page's own Help rows (updateDialog.js, helpMenu.js), reached the same way
-    // as every other `page:` item. On a Mac, Check for Updates also sits under
-    // About in the app menu, where Mac users look for it.
-    let mut help = SubmenuBuilder::new(app, "Help");
-    if !mac {
-        help = help.item(&item("page:check_updates", "Check for Updates…")?).separator();
-    }
-    help = help
-        .item(&item("page:shortcuts", &hinted("Keyboard Shortcuts", Some("mod+/")))?)
+    // The shortcut sheet and Report an Issue are the page's own Help rows
+    // (helpMenu.js), reached the same way as every other `page:` item. Check
+    // for Updates sits under About in the app menu, where Mac users look.
+    let help = SubmenuBuilder::new(app, "Help")
+        .item(&item("page:shortcuts", "Keyboard Shortcuts")?)
         .item(&item("docs", "Plexora Documentation")?)
         .item(&item("page:report_issue", "Report an Issue…")?)
         .separator()
         .item(&item("show_data", "Show Data Folder")?)
         .item(&item("show_logs", "Show Logs")?);
-    if !mac {
-        help = help.separator().item(&item("about", "About Plexora")?);
-    }
 
-    let mut menu = MenuBuilder::new(app);
-    if mac {
-        let about = AboutMetadataBuilder::new()
-            .name(Some("Plexora"))
-            .version(Some(app.package_info().version.to_string()))
-            .website(Some(DOCS_URL))
-            .build();
-        menu = menu.item(
+    let about = AboutMetadataBuilder::new()
+        .name(Some("Plexora"))
+        .version(Some(app.package_info().version.to_string()))
+        .website(Some(DOCS_URL))
+        .build();
+    MenuBuilder::new(app)
+        .item(
             &SubmenuBuilder::new(app, "Plexora")
                 .item(&PredefinedMenuItem::about(app, Some("About Plexora"), Some(about))?)
                 .item(&item("page:check_updates", "Check for Updates…")?)
@@ -165,36 +141,37 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
                 .separator()
                 .item(&PredefinedMenuItem::quit(app, None)?)
                 .build()?,
-        );
-    }
-    menu = menu.item(&file.build()?);
-    if mac {
+        )
+        .item(&file.build()?)
         // WKWebView needs these for text fields to cut, copy and paste at
         // all. No Undo/Redo: ⌘Z belongs to ROI and Figure Builder.
-        menu = menu.item(
+        .item(
             &SubmenuBuilder::new(app, "Edit")
                 .item(&PredefinedMenuItem::cut(app, None)?)
                 .item(&PredefinedMenuItem::copy(app, None)?)
                 .item(&PredefinedMenuItem::paste(app, None)?)
                 .item(&PredefinedMenuItem::select_all(app, None)?)
                 .build()?,
-        );
-    }
-    menu = menu.item(&view.build()?).item(&tools_menu.build()?);
-    if mac {
-        menu = menu.item(
+        )
+        .item(&view.build()?)
+        .item(&tools_menu.build()?)
+        .item(
             &SubmenuBuilder::new(app, "Window")
                 .item(&PredefinedMenuItem::minimize(app, None)?)
                 .item(&PredefinedMenuItem::maximize(app, Some("Zoom"))?)
                 .separator()
                 .item(&PredefinedMenuItem::close_window(app, None)?)
                 .build()?,
-        );
-    }
-    menu.item(&help.build()?).build()
+        )
+        .item(&help.build()?)
+        .build()
 }
 
+/// The menu bar where the platform has one outside the window; nowhere else.
 pub fn install(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<()> {
+    if !NATIVE_MENU_BAR {
+        return Ok(());
+    }
     let menu = build(app, info)?;
     app.set_menu(menu)?;
     Ok(())
@@ -208,7 +185,15 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
         }
         return;
     }
-    match id.as_str() {
+    run(app, &id, None);
+}
+
+/// One native action, for a menu item or for the page's own navbar row
+/// (`shell_action`). `window` is the window that asked; a menu item acts on
+/// the focused one.
+pub fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
+    let target = || window.clone().or_else(|| windows::focused_window(app));
+    match id {
         "new_window" => {
             // Off the main thread, where building a WebView would wait on the
             // very event loop this handler is running in.
@@ -223,27 +208,30 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
             }
         }
         "close_window" => {
-            if let Some(window) = windows::focused_window(app) {
+            if let Some(window) = target() {
                 let _ = window.close();
             }
         }
-        "quit" => app.exit(0),
         "reload" => {
-            if let Some(window) = windows::focused_window(app) {
+            if let Some(window) = target() {
                 let _ = window.eval("window.location.reload()");
             }
         }
         "fullscreen" => {
-            if let Some(window) = windows::focused_window(app) {
+            if let Some(window) = target() {
                 let now = window.is_fullscreen().unwrap_or(false);
                 let _ = window.set_fullscreen(!now);
             }
         }
-        "zoom_in" | "zoom_out" | "zoom_reset" => zoom(app, &id),
+        "zoom_in" | "zoom_out" | "zoom_reset" => {
+            if let Some(window) = target() {
+                zoom(app, &window, id);
+            }
+        }
         "devtools" =>
         {
             #[cfg(debug_assertions)]
-            if let Some(window) = windows::focused_window(app) {
+            if let Some(window) = target() {
                 window.open_devtools();
             }
         }
@@ -261,13 +249,13 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
                 let _ = app.opener().open_path(dir.to_string_lossy(), None::<&str>);
             }
         }
-        "about" => about(app),
         _ => {}
     }
 }
 
-fn zoom(app: &AppHandle, id: &str) {
-    let Some(window) = windows::focused_window(app) else { return };
+/// The page's zoom, per window, in tenths: the whole interface larger or
+/// smaller, which is not the image's zoom.
+fn zoom(app: &AppHandle, window: &WebviewWindow, id: &str) {
     let state = app.state::<windows::WindowState>();
     let mut zooms = state.zoom.lock().unwrap();
     let current = *zooms.get(window.label()).unwrap_or(&1.0);
@@ -279,21 +267,4 @@ fn zoom(app: &AppHandle, id: &str) {
     if window.set_zoom(next).is_ok() {
         zooms.insert(window.label().to_string(), next);
     }
-}
-
-fn about(app: &AppHandle) {
-    let shared = app.state::<ServerState>().0.clone();
-    let mut lines = vec![format!("Plexora {}", app.package_info().version)];
-    if let Some(ready) = shared.ready() {
-        lines.push(format!("Server {} on {}", ready.version, ready.origin));
-        lines.push(format!("Data folder: {}", ready.data_root));
-    }
-    if let Ok(dir) = app.path().app_log_dir() {
-        lines.push(format!("Logs: {}", dir.display()));
-    }
-    app.dialog()
-        .message(lines.join("\n"))
-        .title("About Plexora")
-        .kind(MessageDialogKind::Info)
-        .show(|_| {});
 }
