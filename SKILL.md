@@ -2976,10 +2976,13 @@ deliberately left out and what should be built next.
   `hierarchy.select`, so the vocabulary and the session's biology together
   outrank a plain partner list; `SOURCES` is user > metadata > vocabulary >
   learned > ai; `learn_from(context, markers, source, about)` teaches the
-  vocabulary's learned layer what an agent or the user said about a marker it
-  did not know, called from `transitions.apply_panel` (outcome `learned`) and
-  `set_panel_context` (result `learned`), and never raises, because a panel
-  answer applies whether or not the file could be written; `panel_hash` uses
+  vocabulary's learned layer what the user said about a marker it did not
+  know (`source="user"` only: a reader's account returns [] and is never
+  learned), called from `set_panel_context` (result `learned`);
+  `transitions.apply_panel` learns nothing -- it lists the reader's markers in
+  the record's `unconfirmed_context` (outcome `unconfirmed`, surfaced by
+  `gating_session_status`) until a person confirms them; it never raises,
+  because a panel answer applies whether or not the file could be written; `panel_hash` uses
   the shipped layer only, because a marker learned later must not move a
   panel's stored context to a new file and leave the user's entries behind),
   `provenance.py` (the sidecar table: method, status, confidence, locks),
@@ -3044,6 +3047,25 @@ deliberately left out and what should be built next.
   dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
   are never read. Which steps earned their place is
   `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
+  `hypotheses/` is the experimental `candidates` engine
+  (`SessionOptions.engine`, `schemas.ENGINES`, default `classic`;
+  `docs/internal/bench/CANDIDATES_PLAN.md`, which pre-registers its live
+  bars): a marker that needs a look is decided by blind panels of single
+  cells choosing among the frozen lattice's points, instead of rows below,
+  at and above a moving gate, because the gate written must be one of the
+  candidates and a reader shown values or calls is no longer blind.
+  `hypotheses/candidates.py` (the candidates and the surveyed range; not the
+  top-level `candidates.py`), `panel.py` (the `cell_panel` packet: disputed
+  cells plus negative sentinels, shuffled and numbered, no value, call or
+  gate anywhere; sampled through the `gating.autogate.panel_cells` table op,
+  so it runs on data nodes), `evidence.py` (each candidate scored by the
+  cells it would get wrong; a leader beats a rival on a Wilson interval),
+  `controller.py` (survey, refine, extend; stop by rule), `__init__.py`
+  (`PARAMS`, `start`/`settle`, provenance). The unit waits in
+  `awaiting_panel`; `cell_panel` is a `LOOK_KINDS` member and in
+  `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader,
+  and a resolved leader passes `run_regression`, a failed check capping its
+  confidence and never moving it.
   `replan.py` re-plans when a marker fails (`docs/internal/GATING_REPLAN_PLAN.md`):
   every close that fails runs `after_close` (reorder the unstarted markers
   without the failed one, rescore dependents, close an accepted gate only the
@@ -3796,7 +3818,8 @@ deliberately left out and what should be built next.
   -- a file or a folder, so a lab share learns for every install on it),
   written by `learn(entries, source="ai"|"user", about=)` and read back by
   `learned()`/`forget()` (`plexora ai vocabulary [list|path|forget MARKER]`),
-  so a marker a model or the user described once is not asked about again.
+  so a marker the user described once is not asked about again (a model's
+  account is learned only once the user confirms it, `context.learn_from`).
   The shipped layer always wins a name both know, the first account stands and
   only the user's word replaces a model's (`LEARNED_SOURCES`); a malformed
   learned entry is skipped, not fatal. `load()` re-reads the learned file when
@@ -3840,6 +3863,12 @@ deliberately left out and what should be built next.
   `status["sent_to_agent"]` (packets/chars/images/pixels actually sent,
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
+  `--variants candidates` runs the `candidates` engine.
+  `tools/bench_gates/score_gap.py` (dev only) scores stored sessions against
+  a person's gates (`--truth`, one `NAME=GLOB` arm each, `--oracle` for how
+  close each unit's lattice came); it refuses a truth file whose `kind` is
+  `model_gates`, because the lsp11385 reference is a model's run, not a
+  person's.
   `tools/transcript_cost.py` (dev only) turns a Claude Code transcript into a
   token/cost table per model, worker, tool and context band
   (`tests/test_transcript_cost.py`).
