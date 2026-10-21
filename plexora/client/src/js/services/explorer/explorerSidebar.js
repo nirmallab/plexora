@@ -1,7 +1,7 @@
 /**
  * explorerSidebar.js -- the explorer's places: Favorites (Home, the standard
- * folders, the user's pins), Locations (this machine's drives and volumes,
- * then project storage) and Recent.
+ * folders, the user's pins), Locations (this machine's drives, volumes and
+ * file servers, its synced cloud folders, then project storage) and Recent.
  *
  * Every place is a button carrying the whole path the server gave it; the
  * label is display only. What the volumes are called comes from the server
@@ -38,6 +38,18 @@ window.PlexoraExplorerSidebar = (function () {
         remote: "fas fa-cloud",
     };
 
+    //: A synced cloud folder by provider. Dropbox and Google Drive have marks
+    //: of their own in Font Awesome's free brands; OneDrive's and iCloud's
+    //: are a cloud anyway.
+    const CLOUD_ICONS = {
+        dropbox: "fab fa-dropbox",
+        google_drive: "fab fa-google-drive",
+        onedrive: "fas fa-cloud",
+        icloud: "fas fa-cloud",
+        box: "fas fa-cloud",
+        other: "fas fa-cloud",
+    };
+
     function create({ onGo = () => {}, onReorderPins = () => {}, onContextMenu = () => {},
                       onCollapse = () => {} } = {}) {
         const { el, button, glyph, setIcon, readableSize, shortName } = T();
@@ -46,6 +58,7 @@ window.PlexoraExplorerSidebar = (function () {
             home: "",
             known: [],
             volumes: [],
+            cloud: [],
             project: [],
             unavailable: "",
             pinned: [],
@@ -189,6 +202,18 @@ window.PlexoraExplorerSidebar = (function () {
                     kind: "volume",
                 }));
             });
+            // Synced folders (Dropbox, OneDrive, Google Drive, iCloud Drive,
+            // Box) after the disks they live on. No free-space caption: the
+            // disk's would read as the account's.
+            state.cloud.forEach((entry) => {
+                body.append(place({
+                    label: entry.label || shortName(entry.path),
+                    path: entry.path,
+                    icon: CLOUD_ICONS[entry.provider] || CLOUD_ICONS.other,
+                    title: entry.account ? `${entry.path} (${entry.account})` : entry.path,
+                    kind: "cloud",
+                }));
+            });
             state.project.forEach((entry) => {
                 body.append(place({
                     label: entry.label,
@@ -200,8 +225,8 @@ window.PlexoraExplorerSidebar = (function () {
             if (state.unavailable) {
                 body.append(el("div", "plx-explorer-place-note", state.unavailable));
             }
-            heads.locations.section.hidden = !state.volumes.length && !state.project.length
-                && !state.unavailable;
+            heads.locations.section.hidden = !state.volumes.length && !state.cloud.length
+                && !state.project.length && !state.unavailable;
         }
 
         function renderRecent() {
@@ -250,10 +275,12 @@ window.PlexoraExplorerSidebar = (function () {
                 machine.setAttribute("title", title || label);
                 setIcon(machineGlyph, icon);
             },
-            setPlaces({ home = "", known = [], volumes = [], project = [], unavailable = "" } = {}) {
+            setPlaces({ home = "", known = [], volumes = [], cloud = [], project = [],
+                        unavailable = "" } = {}) {
                 state.home = home || "";
                 state.known = Array.isArray(known) ? known : [];
                 state.volumes = Array.isArray(volumes) ? volumes : [];
+                state.cloud = Array.isArray(cloud) ? cloud : [];
                 state.project = Array.isArray(project) ? project : [];
                 state.unavailable = unavailable || "";
                 renderAll();

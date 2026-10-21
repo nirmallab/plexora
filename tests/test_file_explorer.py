@@ -360,13 +360,16 @@ def test_a_capability_failure_is_not_remembered():
 
 
 def test_a_single_kind_desktop_reaches_a_native_dialog_from_the_explorer():
-    """"Use system dialog…" on a Windows or Linux desktop asked for either
-    kind asks which first -- the chooser hung under the explorer's own menu
-    button -- and then opens that single-kind dialog on the right machine."""
+    """"System file browser" on a Windows or Linux desktop asked for either
+    kind asks which first -- the chooser hung under the button itself, inside
+    the explorer -- and only then closes the explorer and opens that
+    single-kind dialog on the right machine."""
     browse = source("src", "js", "services", "browsePicker.js")
     hook = _function(browse, "systemDialogFor")
     assert "kind = await chooseKind(anchor || anchorEl, examples || filter);" in hook
     assert "if (!kind) return null;" in hook
+    # The explorer closes after the question, never before it.
+    assert hook.index("if (!kind) return null;") < hook.index("if (onChosen) onChosen();")
     assert "return openSystemDialog({kind, filter, node, start, multiple});" in hook
     # The capability is the machine's, asked when the explorer opens.
     assert "await browseCapability(node)" in hook
@@ -713,8 +716,21 @@ def test_the_new_checks_are_there(probe):
         "a viewport narrower than the window gets the viewport, minus the margin",
         "Esc while a menu is open is kept from closing the window",
         "...and focus goes back to what opened it",
-        "the overflow offers the system dialog where there is one",
-        "cancelling the system dialog leaves the explorer open",
+        "synced cloud folders are listed after the disks, before project storage",
+        "...each with its provider's mark and no free-space caption",
+        "the title bar offers the system file browser where there is one",
+        "...and the overflow no longer does",
+        "while the system file browser starts, the explorer stays up and says so",
+        "...and closes once that browser has the focus",
+        "dismissing the file-or-folder question leaves the explorer open",
+        "cancelling the system file browser answers nothing",
+        "an answer that comes before the focus moves is taken all the same",
+        "a cancel before it took the focus leaves the explorer as it was",
+        "a system file browser that fails to start says why, in the explorer",
+        "one that fails after the explorer closed answers nothing and says why",
+        "Esc while it starts stops waiting rather than closing the explorer",
+        "...and a pick made there later still counts",
+        "several files chosen there come back as a list",
         "a file's menu chooses it or copies its path",
         "a pin's menu unpins it",
         "...and its document listeners",

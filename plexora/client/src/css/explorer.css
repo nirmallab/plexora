@@ -104,10 +104,68 @@
 .plx-explorer-titletext {
     align-items: baseline;
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     gap: var(--space-2);
     min-width: 0;
     overflow: hidden;
+}
+
+/* Beside the title, taking the slack so the window buttons keep the right
+   edge. */
+.plx-explorer-titleactions {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    padding-left: var(--space-2);
+}
+
+/* The machine's own file dialog: a quiet outlined chip, not a tool. It only
+   exists where that machine has a screen to show the dialog on. */
+.plx-explorer-system {
+    align-items: center;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    gap: 6px;
+    height: 22px;
+    padding: 0 var(--space-2);
+    transition: background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-explorer-system:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+.plx-explorer-system:hover:not(:disabled) {
+    background: var(--surface-1);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.plx-explorer-system:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-explorer-system[hidden] {
+    display: none;
+}
+
+.plx-explorer-system-icon {
+    display: inline-flex;
+    font-size: 10px;
 }
 
 .plx-explorer-title {
@@ -233,6 +291,59 @@ html[class*="plx-explorer-resizing-"] * {
     flex-direction: column;
     min-height: 0;
     min-width: 0;
+    position: relative;
+}
+
+/* While the machine's own dialog is starting: the explorer stays up, dimmed,
+   with one small card saying what is happening. */
+.plx-explorer-waiting {
+    align-items: center;
+    background: color-mix(in srgb, var(--surface-1) 82%, transparent);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    position: absolute;
+    z-index: 3;
+}
+
+.plx-explorer-waiting[hidden] {
+    display: none;
+}
+
+.plx-explorer-waiting-card {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 300px;
+    padding: var(--space-4) var(--space-5);
+    text-align: center;
+}
+
+.plx-explorer-waiting-spinner {
+    color: var(--accent-channel);
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+
+.plx-explorer-waiting-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.plx-explorer-waiting-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.plx-explorer-waiting-back {
+    margin-top: var(--space-2);
 }
 
 .plx-explorer-description {
@@ -382,14 +493,18 @@ html[class*="plx-explorer-resizing-"] * {
     border-color: var(--accent-danger);
 }
 
+/* A <nav>: main.css gives every nav a 10px bottom margin, which pushed the
+   crumbs 5px above the bar's centre. Its scrollbar-width lives with the
+   window's scrollbar rules below, which would otherwise win the cascade. */
 .plx-explorer-crumbs {
     align-items: center;
     display: flex;
     flex: 0 1 auto;
+    margin: 0;
     min-width: 0;
     overflow-x: auto;
+    overflow-y: hidden;
     padding: 0 2px;
-    scrollbar-width: none;
     white-space: nowrap;
 }
 
@@ -1264,6 +1379,12 @@ html[class*="plx-explorer-resizing-"] * {
 .plx-explorer-window * {
     scrollbar-color: var(--border-strong) transparent;
     scrollbar-width: thin;
+}
+
+/* The crumb strip scrolls to its end when one name is too long, but never
+   shows a bar inside the 28px address box. */
+.plx-explorer-window .plx-explorer-crumbs {
+    scrollbar-width: none;
 }
 
 .plx-explorer-window ::-webkit-scrollbar {

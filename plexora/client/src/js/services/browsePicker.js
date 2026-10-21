@@ -9,9 +9,9 @@
  * size are the explorer's, and a Browse that opened Finder on one machine and
  * a listing on another kept none of them.
  *
- * **The machine's own dialog is one step away**, in the explorer's overflow
- * menu ("Use Finder…", "Use File Explorer…", "Use system dialog…"), wherever
- * one exists. POST /browse_path (server/utils/native_dialog.py) opens it on
+ * **The machine's own dialog is one step away**: the explorer's "System file
+ * browser" button beside its title, wherever one exists. The explorer closes
+ * as that dialog opens, and what is chosen there is the answer. POST /browse_path (server/utils/native_dialog.py) opens it on
  * the machine the server runs on, or on a node's; the desktop app opens its
  * own. /browse_capability says which of three answers a machine gives:
  *
@@ -50,7 +50,7 @@
  * treat the two identically.
  *
  * The road not taken: one Browse takes either kind (see the file header),
- * so this is reached only from the explorer's "Use system dialog…" on a
+ * so this is reached only from the explorer's "System file browser" on a
  * single-kind desktop, or on a page that has no explorer.
  *
  * Nothing is cached between clicks. The capability is a fact about the machine
@@ -376,8 +376,9 @@ async function browseForPath({mode = "file", filter = "any", node = null,
 }
 
 /**
- * The hook the explorer's overflow menu calls: the machine's own file dialog,
- * named for what it is, offered only where `available()` says one exists.
+ * The hook behind the explorer's "System file browser" button: the machine's
+ * own file dialog, offered only where `available()` says one exists, and
+ * named in its tooltip for what it is.
  */
 function systemDialogFor({node = null, filter = "any", start = "", anchorEl = null,
                           examples = null} = {}) {
@@ -385,10 +386,12 @@ function systemDialogFor({node = null, filter = "any", start = "", anchorEl = nu
     const platform = desktop ? window.PlexoraDesktop.platform : "";
     let capability = null;
     return {
-        get label() {
-            if (platform === "windows") return "Use File Explorer…";
-            if (platform === "macos" || capability === "hybrid") return "Use Finder…";
-            return "Use system dialog…";
+        //: What the machine's dialog is called, for the explorer's tooltip:
+        //: "Finder", "File Explorer", or "" where it has no common name.
+        get app() {
+            if (platform === "windows") return "File Explorer";
+            if (platform === "macos" || capability === "hybrid") return "Finder";
+            return "";
         },
         async available() {
             // The desktop app's own dialogs take one kind at a time; the Mac
@@ -398,11 +401,15 @@ function systemDialogFor({node = null, filter = "any", start = "", anchorEl = nu
                 : await browseCapability(node);
             return capability;
         },
-        async open(kind, {multiple = false, anchor = null} = {}) {
+        // `onChosen` runs once the kind is settled and just before the dialog
+        // shows: the explorer closes then, so a dismissed "file or folder?"
+        // menu leaves it open.
+        async open(kind, {multiple = false, anchor = null, onChosen = null} = {}) {
             if (!kind) {
                 kind = await chooseKind(anchor || anchorEl, examples || filter);
                 if (!kind) return null;
             }
+            if (onChosen) onChosen();
             return openSystemDialog({kind, filter, node, start, multiple});
         },
     };

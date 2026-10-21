@@ -50,6 +50,9 @@ window.PlexoraFileExplorer = (function () {
     //: View changes (a sort, a column width) are batched into one write.
     const VIEW_SAVE_DELAY = 400;
     const TYPEAHEAD_MS = 700;
+    //: How long the machine's dialog may take to appear before the waiting
+    //: note says where else it might be.
+    const WAITING_SLOW_MS = 8000;
 
     const VIEW_DEFAULTS = {
         sort_by: "name",
@@ -136,10 +139,11 @@ window.PlexoraFileExplorer = (function () {
      *   (the server does that). Absent: wherever this machine was left last
      *   time, and failing that the user's home.
      * @param node - whose filesystem to list. Absent means this server's.
-     * @param systemDialog - `{label, available() -> Promise<"hybrid"|"kinds"|
-     *   "none">, open(kind) -> Promise<answer|null>}`, from browsePicker.js:
-     *   the machine's own file dialog, offered in the overflow menu where one
-     *   exists.
+     * @param systemDialog - `{app, available() -> Promise<"hybrid"|"kinds"|
+     *   "none">, open(kind, {onChosen}) -> Promise<answer|null>}`, from
+     *   browsePicker.js: the machine's own file dialog, offered as "System
+     *   file browser" beside the title where one exists. `open` calls
+     *   `onChosen` just before the dialog shows, and the explorer closes then.
      * @param windowId - names the remembered window size and position.
      * @returns Promise<string | string[] | null>
      */
@@ -191,6 +195,10 @@ window.PlexoraFileExplorer = (function () {
             pendingView: null,
             typeahead: "",
             typeaheadTimer: null,
+            //: True from the moment the machine's dialog is asked for until it
+            //: takes the focus (or answers, or the user stops waiting).
+            waiting: false,
+            waitingTimer: null,
         };
 
         //: What `pick` resolves with. Held here rather than passed to
@@ -200,6 +208,12 @@ window.PlexoraFileExplorer = (function () {
         //: Set the moment the window closes, so an answer that lands later is
         //: not painted into a detached window.
         let closed = false;
+        //: Set when the choice was handed to the machine's own dialog: the
+        //: window closes once that dialog is on screen, and `pick` answers
+        //: with what was chosen there instead of with `answer`.
+        let handoff = null;
+        //: Resolves `handoff` with the dialog's answer.
+        let handoffSettle = null;
 
         // -- the window --------------------------------------------------------
 
@@ -211,6 +225,15 @@ window.PlexoraFileExplorer = (function () {
         });
         const dialog = win.dialog;
         dialog.setAttribute("data-explorer", domId);
+
+        //: The machine's own file dialog, beside the title. Hidden until the
+        //: machine says it has a screen to show one on -- a cluster node never
+        //: does, so there it never appears.
+        const systemButton = button("plx-explorer-system", "", "System file browser");
+        systemButton.append(glyph("fas fa-arrow-up-right-from-square", "plx-explorer-system-icon"),
+                            el("span", "plx-explorer-system-label", "System file browser"));
+        systemButton.hidden = true;
+        win.titleActions.append(systemButton);
 
         function entryPath(entry) {
             if (entry && typeof entry.path === "string" && entry.path) return entry.path;
@@ -317,6 +340,20 @@ window.PlexoraFileExplorer = (function () {
         const main = el("div", "plx-explorer-main");
         main.append(sidebar.element, content);
         win.body.append(main);
+
+        //: Over the body while the machine's dialog is starting.
+        const waitingNote = el("div", "plx-explorer-waiting");
+        waitingNote.setAttribute("role", "status");
+        waitingNote.hidden = true;
+        const waitingCard = el("div", "plx-explorer-waiting-card");
+        const waitingSpinner = glyph("fas fa-circle-notch", "plx-explorer-waiting-spinner");
+        waitingSpinner.classList.add("is-spinning");
+        const waitingTitle = el("div", "plx-explorer-waiting-title");
+        const waitingHint = el("div", "plx-explorer-waiting-hint");
+        const keepBrowsing = button("plx-button plx-explorer-waiting-back", "Keep browsing here");
+        waitingCard.append(waitingSpinner, waitingTitle, waitingHint, keepBrowsing);
+        waitingNote.append(waitingCard);
+        win.body.append(waitingNote);
 
         // -- the footer --------------------------------------------------------
 
@@ -972,6 +1009,8 @@ window.PlexoraFileExplorer = (function () {
                 home: typeof record.home === "string" ? record.home : "",
                 known: Array.isArray(record.known) ? record.known : [],
                 volumes: Array.isArray(record.volumes) ? record.volumes : [],
+                // A node older than the cloud list sends none: nothing drawn.
+                cloud: Array.isArray(record.cloud) ? record.cloud : [],
                 project: Array.isArray(record.project) ? record.project : [],
                 unavailable: record.unavailable || (record.unsupported
                     ? "This machine does not list its drives." : ""),
@@ -1053,18 +1092,98 @@ window.PlexoraFileExplorer = (function () {
             return state.systemDialog === "hybrid" ? "any" : null;
         }
 
+        function paintSystemButton() {
+            systemButton.hidden = !state.systemDialog;
+            const app = systemDialog && systemDialog.app;
+            systemButton.setAttribute("title", app
+                ? `Close this and choose in ${app}`
+                : "Close this and choose in this computer's own file dialog");
+        }
+
+        /** Close the window now; `pick` answers with what `handoffSettle` is given. */
+        function handOff() {
+            handoff = new Promise((resolveHandoff) => { handoffSettle = resolveHandoff; });
+            win.close();
+        }
+
+        // Starting the machine's dialog takes a few seconds (a process, then
+        // the panel), so the explorer stays up and says so until the dialog
+        // is actually on screen -- which it shows by taking the focus: the
+        // Mac's panel activates itself, Tk's is topmost. A dialog that opens
+        // somewhere this page cannot see (another machine's screen) never
+        // takes it; the note then says so after a while, and its answer still
+        // lands when it comes.
+        function beginWaiting() {
+            const app = (systemDialog && systemDialog.app) || "";
+            waitingTitle.textContent = app ? `Opening ${app}…` : "Opening the system file browser…";
+            waitingHint.textContent = "This window closes once it is open.";
+            waitingNote.hidden = false;
+            systemButton.disabled = true;
+            state.waiting = true;
+            window.addEventListener("blur", onDialogShown);
+            document.addEventListener("visibilitychange", onDialogShown);
+            clearTimeout(state.waitingTimer);
+            state.waitingTimer = setTimeout(() => {
+                if (!state.waiting) return;
+                waitingHint.textContent = `Still opening. If ${app || "it"} does not appear, `
+                    + "it may be behind this window.";
+            }, WAITING_SLOW_MS);
+        }
+
+        function endWaiting() {
+            state.waiting = false;
+            waitingNote.hidden = true;
+            systemButton.disabled = false;
+            clearTimeout(state.waitingTimer);
+            window.removeEventListener("blur", onDialogShown);
+            document.removeEventListener("visibilitychange", onDialogShown);
+        }
+
+        function onDialogShown(event) {
+            if (!state.waiting || closed) return;
+            if (event && event.type === "visibilitychange"
+                    && document.visibilityState !== "hidden") return;
+            endWaiting();
+            handOff();
+        }
+
+        /**
+         * Hand the choice to the machine's own dialog. One file browser at a
+         * time: the explorer waits, with a spinner, until that dialog is on
+         * screen and then closes, and a cancel there answers nothing, as
+         * Cancel here would. Where a kind has to be asked first ("a file or a
+         * folder?"), that menu opens over this window, and dismissing it
+         * leaves the explorer as it was. An answer that arrives while the
+         * explorer is still up -- the focus never moved, or the user went
+         * back to browsing here -- is taken all the same.
+         */
         async function openSystemDialog() {
-            if (!systemDialog || !state.systemDialog) return;
+            if (!systemDialog || !state.systemDialog || closed || state.waiting) return;
             try {
-                const result = await systemDialog.open(systemKind(), { multiple: want.many,
-                                                                       anchor: moreButton });
-                if (closed || result === null || result === undefined) return;
-                const list = Array.isArray(result) ? result : [result];
-                if (!list.length) return;
-                finish(want.many ? list : list[0]);
+                const result = await systemDialog.open(systemKind(), {
+                    multiple: want.many,
+                    anchor: systemButton,
+                    onChosen: () => beginWaiting(),
+                });
+                if (state.waiting) endWaiting();
+                const list = result === null || result === undefined ? []
+                    : (Array.isArray(result) ? result : [result]);
+                const value = list.length ? (want.many ? list : list[0]) : null;
+                if (handoffSettle) handoffSettle(value);
+                else if (!closed && value !== null) finish(value);
             } catch (error) {
-                if (!closed) crumbs.setError(error && error.message
-                    ? error.message : "The system file dialog could not be opened.");
+                if (state.waiting) endWaiting();
+                const message = error && error.message
+                    ? error.message : "The system file dialog could not be opened.";
+                if (handoffSettle) {
+                    handoffSettle(null);
+                    if (window.PlexoraToast) {
+                        window.PlexoraToast.show({ title: "The system file dialog could not be opened.",
+                                                   note: message, tone: "warning" });
+                    }
+                } else if (!closed) {
+                    crumbs.setError(message);
+                }
             }
         }
 
@@ -1185,11 +1304,6 @@ window.PlexoraFileExplorer = (function () {
 
         function moreMenu() {
             const items = [];
-            if (systemDialog && state.systemDialog) {
-                items.push({ label: systemDialog.label || "Use system dialog…",
-                             onSelect: () => openSystemDialog() });
-                items.push({ separator: true });
-            }
             items.push({ label: "Show hidden files", checked: state.view.show_hidden, checkbox: true,
                          onSelect: () => toggleHidden() });
             items.push({ label: "Copy path of this folder", onSelect: () => copyPath(state.here),
@@ -1336,6 +1450,14 @@ window.PlexoraFileExplorer = (function () {
          */
         function onEscapeCapture(event) {
             if (event.key !== "Escape" || closed) return;
+            // Esc while the machine's dialog is starting stops waiting for it
+            // rather than closing the explorer under the user.
+            if (state.waiting) {
+                if (event.preventDefault) event.preventDefault();
+                if (event.stopPropagation) event.stopPropagation();
+                endWaiting();
+                return;
+            }
             const menuOpen = window.PlexoraMenu && window.PlexoraMenu.isOpen
                 && window.PlexoraMenu.isOpen();
             if (menuOpen || win.isDragging()) {
@@ -1356,6 +1478,12 @@ window.PlexoraFileExplorer = (function () {
         gridButton.addEventListener("click", () => setLayout("grid"));
         sortButton.addEventListener("click", () => sortMenu());
         moreButton.addEventListener("click", () => moreMenu());
+        systemButton.addEventListener("click", () => openSystemDialog());
+        // Back to this window; the dialog's answer is still taken if it comes.
+        keepBrowsing.addEventListener("click", () => {
+            endWaiting();
+            listing.focus();
+        });
         dialog.addEventListener("keydown", onKeydown);
         dialog.addEventListener("cancel", (event) => {
             const menuOpen = window.PlexoraMenu && window.PlexoraMenu.isOpen
@@ -1378,6 +1506,7 @@ window.PlexoraFileExplorer = (function () {
                     remember();
                     closed = true;
                     document.removeEventListener("keydown", onEscapeCapture, true);
+                    if (state.waiting) endWaiting();
                     abort("listAbort");
                     abort("metaAbort");
                     abort("searchAbort");
@@ -1395,7 +1524,8 @@ window.PlexoraFileExplorer = (function () {
                     // pick that never resolves leaves the field waiting for a
                     // window that is already gone.
                     closed = true;
-                    resolve(answer);
+                    if (handoff) handoff.then(resolve, () => resolve(null));
+                    else resolve(answer);
                 }
             });
         });
@@ -1422,6 +1552,7 @@ window.PlexoraFileExplorer = (function () {
                     if (closed) return;
                     state.systemDialog = capability === "hybrid" || capability === "kinds"
                         ? capability : null;
+                    paintSystemButton();
                 })
                 .catch(() => { state.systemDialog = null; });
         }

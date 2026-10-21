@@ -1127,6 +1127,43 @@ async function main() {
         await cancel(dialog);
     }
 
+    {
+        // Synced cloud folders sit after the disks they live on, with no
+        // free-space caption; a node too old to send the list draws none.
+        const fsPlaces = {
+            ...defaultPlaces(),
+            platform: "macos",
+            volumes: [{ label: "Macintosh HD", path: "/", kind: "local", fstype: "apfs",
+                        total: 1099511627776, free: 442381631488 }],
+            cloud: [
+                { label: "Dropbox (Personal)", path: `${HOME}/Dropbox (Personal)`, provider: "dropbox" },
+                { label: "Google Drive", path: `${HOME}/Library/CloudStorage/GoogleDrive-a@b.org`,
+                  provider: "google_drive", account: "a@b.org" },
+                { label: "iCloud Drive", path: `${HOME}/Library/Mobile Documents/com~apple~CloudDocs`,
+                  provider: "icloud" },
+            ],
+            project: [{ label: "Plexora data", path: `${HOME}/plexora` }],
+        };
+        const { dialog } = await open({}, { fsPlaces });
+        const placesNow = allByClass(dialog, "plx-explorer-place");
+        const iconOf = (node) => byClass(node, "plx-explorer-place-icon").getAttribute("data-icon-classes");
+        check("synced cloud folders are listed after the disks, before project storage",
+              placeLabels(dialog).join("|")
+                  === "Home|Macintosh HD|Dropbox (Personal)|Google Drive|iCloud Drive|Plexora data");
+        check("...each with its provider's mark and no free-space caption",
+              iconOf(placesNow[2]) === "fab fa-dropbox" && iconOf(placesNow[3]) === "fab fa-google-drive"
+              && iconOf(placesNow[4]) === "fas fa-cloud"
+              && byClass(placesNow[2], "plx-explorer-place-caption") === null
+              && placesNow[3].getAttribute("title")
+                  === `${HOME}/Library/CloudStorage/GoogleDrive-a@b.org (a@b.org)`);
+        const before = listCalls().length;
+        click(placesNow[2]);
+        await settled(2);
+        check("...and one opens at the path the server gave it",
+              listCalls()[before].body.path === `${HOME}/Dropbox (Personal)`);
+        await cancel(dialog);
+    }
+
     // -- 8. keyboard, and what a listing is to a screen reader --------------
 
     {
@@ -1823,50 +1860,186 @@ async function main() {
 
     // -- 18. the machine's own dialog ----------------------------------------------
 
-    {
-        let asked = null;
-        const systemDialog = {
-            label: "Use Finder…",
-            available: () => Promise.resolve("hybrid"),
-            open: (kind) => { asked = kind; return Promise.resolve(`${HOME}/from-finder.tif`); },
+    // What the browser does when the machine's dialog comes up and takes the
+    // focus from this page.
+    const fireWindow = (type) => (windowListeners.get(type) || []).slice()
+        .forEach((handler) => handler({ type }));
+    // A dialog that answers when told to, so each step can be looked at.
+    function slowDialog(app, capability = "hybrid") {
+        const hook = {
+            asked: null,
+            answer: null,
+            app,
+            available: () => Promise.resolve(capability),
+            open: (kind, { onChosen } = {}) => {
+                hook.asked = kind;
+                if (!kind) return Promise.resolve(null);
+                onChosen();
+                return new Promise((resolve, reject) => { hook.answer = resolve; hook.fail = reject; });
+            },
         };
+        return hook;
+    }
+
+    {
+        const systemDialog = slowDialog("Finder");
         const { dialog, promise } = await open({ mode: "any", systemDialog });
+        const system = byClass(dialog, "plx-explorer-system");
+        check("the title bar offers the system file browser where there is one",
+              system !== null && system.hidden === false
+              && byClass(system, "plx-explorer-system-label").textContent === "System file browser"
+              && system.getAttribute("title") === "Close this and choose in Finder");
         click(action(dialog, "more"));
-        const menu = menus[menus.length - 1];
-        check("the overflow offers the system dialog where there is one",
-              menu.items[0].label === "Use Finder…");
-        menu.items[0].onSelect();
+        check("...and the overflow no longer does",
+              !menus[menus.length - 1].items.some((item) => /system|finder/i.test(item.label || "")));
+        let answered = false;
+        promise.then(() => { answered = true; });
+        click(system);
+        await settled(3);
+        check("while the system file browser starts, the explorer stays up and says so",
+              isOpen(dialog) && byClass(dialog, "plx-explorer-waiting").hidden === false
+              && byClass(dialog, "plx-explorer-waiting-title").textContent === "Opening Finder…"
+              && system.disabled === true && systemDialog.asked === "any");
+        fireWindow("blur");
+        await settled(3);
+        check("...and closes once that browser has the focus",
+              !isOpen(dialog) && answered === false
+              && !(windowListeners.get("blur") || []).length);
+        systemDialog.answer(`${HOME}/from-finder.tif`);
         check("...and its answer is the explorer's answer",
-              await promise === `${HOME}/from-finder.tif` && asked === "any");
+              await promise === `${HOME}/from-finder.tif`);
         await settle();
     }
 
     {
         const systemDialog = {
-            label: "Use system dialog…",
+            app: "",
             available: () => Promise.resolve("none"),
             open: () => Promise.resolve(null),
         };
         const { dialog } = await open({ mode: "file", systemDialog });
-        click(action(dialog, "more"));
-        const menu = menus[menus.length - 1];
         check("...and not where there is none",
-              !menu.items.some((item) => item.label === "Use system dialog…"));
+              byClass(dialog, "plx-explorer-system").hidden === true);
         await cancel(dialog);
     }
 
     {
-        const systemDialog = {
-            label: "Use system dialog…",
-            available: () => Promise.resolve("kinds"),
-            open: () => Promise.resolve(null),
-        };
-        const { dialog } = await open({ mode: "file", systemDialog });
-        click(action(dialog, "more"));
-        menus[menus.length - 1].items[0].onSelect();
+        // A single-kind desktop asks "a file or a folder?" first, over the
+        // explorer; dismissing that question changes nothing.
+        const systemDialog = slowDialog("File Explorer", "kinds");
+        const { dialog } = await open({ mode: "any", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
         await settled(2);
-        check("cancelling the system dialog leaves the explorer open", isOpen(dialog));
+        check("dismissing the file-or-folder question leaves the explorer open",
+              isOpen(dialog) && systemDialog.answer === null
+              && byClass(dialog, "plx-explorer-waiting").hidden === true);
         await cancel(dialog);
+    }
+
+    {
+        const systemDialog = slowDialog("Finder");
+        const { dialog, promise } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        fireWindow("blur");
+        systemDialog.answer(null);
+        check("cancelling the system file browser answers nothing",
+              await promise === null && !isOpen(dialog));
+        await settle();
+    }
+
+    {
+        // The focus never moved (a dialog on another screen, a browser that
+        // does not say): the answer still closes the explorer with it.
+        const systemDialog = slowDialog("Finder");
+        const { dialog, promise } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        systemDialog.answer(`${HOME}/picked.csv`);
+        check("an answer that comes before the focus moves is taken all the same",
+              await promise === `${HOME}/picked.csv` && !isOpen(dialog));
+        await settle();
+    }
+
+    {
+        const systemDialog = slowDialog("Finder");
+        const { dialog } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        systemDialog.answer(null);
+        await settled(2);
+        check("a cancel before it took the focus leaves the explorer as it was",
+              isOpen(dialog) && byClass(dialog, "plx-explorer-waiting").hidden === true
+              && byClass(dialog, "plx-explorer-system").disabled === false);
+        await cancel(dialog);
+    }
+
+    {
+        const systemDialog = slowDialog("Finder");
+        const { dialog } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        systemDialog.fail(new Error("No display to show a dialog on."));
+        await settled(2);
+        check("a system file browser that fails to start says why, in the explorer",
+              isOpen(dialog) && byClass(dialog, "plx-explorer-waiting").hidden === true
+              && byClass(dialog, "plx-explorer-address-error").textContent
+                  === "No display to show a dialog on.");
+        await cancel(dialog);
+    }
+
+    {
+        const toasts = [];
+        context.PlexoraToast = { show: (options) => toasts.push(options) };
+        const systemDialog = slowDialog("Finder");
+        const { dialog, promise } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        fireWindow("blur");
+        systemDialog.fail(new Error("The dialog went away."));
+        check("one that fails after the explorer closed answers nothing and says why",
+              await promise === null && toasts.length === 1
+              && toasts[0].note === "The dialog went away.");
+        delete context.PlexoraToast;
+        await settle();
+    }
+
+    {
+        const systemDialog = slowDialog("Finder");
+        const { dialog, promise } = await open({ mode: "file", systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        const escape = { type: "keydown", key: "Escape" };
+        byClass(dialog, "plx-explorer-scroller").dispatchEvent(escape);
+        await settled(2);
+        check("Esc while it starts stops waiting rather than closing the explorer",
+              escape.defaultPrevented === true && isOpen(dialog)
+              && byClass(dialog, "plx-explorer-waiting").hidden === true);
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        click(byText(dialog, "Keep browsing here"));
+        await settled(2);
+        fireWindow("blur");
+        await settled(2);
+        check("\"Keep browsing here\" goes back to the explorer, which a later blur leaves alone",
+              isOpen(dialog) && byClass(dialog, "plx-explorer-waiting").hidden === true);
+        systemDialog.answer(`${HOME}/late.csv`);
+        check("...and a pick made there later still counts",
+              await promise === `${HOME}/late.csv` && !isOpen(dialog));
+        await settle();
+    }
+
+    {
+        const systemDialog = slowDialog("Finder", "kinds");
+        const { dialog, promise } = await open({ mode: "file", multiple: true, systemDialog });
+        click(byClass(dialog, "plx-explorer-system"));
+        await settled(2);
+        fireWindow("blur");
+        systemDialog.answer([`${HOME}/a.csv`, `${HOME}/b.csv`]);
+        const many = await promise;
+        check("several files chosen there come back as a list",
+              Array.isArray(many) && many.join("|") === `${HOME}/a.csv|${HOME}/b.csv`);
+        await settle();
     }
 
     // -- 19. menus ------------------------------------------------------------------

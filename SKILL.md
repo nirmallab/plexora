@@ -1573,18 +1573,27 @@ Entry points:
   transcriptomics entitlement, so the explorer says so rather than offering a
   run the importer will refuse.
 - `utils/fs_places.py` — `describe()` -> `{platform, hostname, home, known,
-  volumes, project}`: the explorer sidebar's places on Windows (drive letters
-  with type and label), macOS (`/Volumes`, from `mount`) and Linux/HPC (the
+  volumes, cloud, project}`: the explorer sidebar's places on Windows (drive
+  letters with type and label; a mapped drive labelled as Explorer does,
+  "projects (\\fileserver) (Z:)", from `WNetGetConnectionW`, which reads the
+  local mapping and never the server), macOS (`/Volumes`, from `mount`, plus
+  network mounts outside it) and Linux/HPC (the
   mount table with `/proc`, cgroups, snaps and container layers dropped, so
   `/n/scratch` and `/n/groups` appear because they are mounted, not because
   anything knows the cluster), plus Desktop/Documents/Downloads, the data
-  folder and `$SCRATCH`/`$WORK`-style roots. **Nothing here may hang the
-  explorer**: free space is the only question that touches a mount, asked on
+  folder and `$SCRATCH`/`$WORK`-style roots. `cloud_folders()` adds the synced
+  folders (`{label, path, provider, account?}`: Dropbox from its own
+  `info.json`, a team space as its parent folder; `~/Library/CloudStorage/*`
+  labelled by the home symlink that points there, else by provider; iCloud
+  Drive; OneDrive's env vars; legacy `~/Box`, `~/Google Drive`), de-duplicated
+  by realpath. They are listed in Locations with no free-space caption, since
+  the disk's would read as the account's. A node older than the list sends
+  none, and the relay answers `[]`. **Nothing here may hang the explorer**: free space is the only question that touches a mount, asked on
   daemon threads with a short deadline, and a mount that does not answer gets
   no caption and is not asked again for five minutes; environment roots are
   named, never stat'ed; each part is guarded on its own. Every OS hook is a
   module-level seam (`_platform`, `_home`, `_read_mountinfo`, `_volumes_root`,
-  `_mount_output`, `_kernel32`, `_usage_many`) so every branch is tested on
+  `_mount_output`, `_kernel32`, `_mpr`, `_usage_many`) so every branch is tested on
   whichever machine runs the suite.
 - `utils/dir_search.py` — `search(raw, query, ...)`, names matching a query
   anywhere under one folder, breadth-first so the nearest come first, and
@@ -1614,8 +1623,19 @@ Entry points:
   (what the column picker draws). Openpyxl is imported lazily inside it.
 - `utils/native_dialog.py` — the server-side native file/folder picker, one
   step behind every "Browse…" button: the file explorer opens first, and this
-  is what its overflow's "Use Finder…"/"Use File Explorer…"/"Use system
-  dialog…" reaches. `FILTER_NAMES` is the allowlist `browse_routes`
+  is what its "System file browser" button (beside the title, hidden where
+  `available()` finds no screen -- every cluster node) reaches. Starting that
+  dialog takes seconds (a process, then the panel), so `systemDialog.open`
+  calls `onChosen` once any "file or folder?" question is settled, and the
+  explorer then shows an "Opening Finder…" spinner card and stays up until the
+  dialog is ON SCREEN -- which it learns from the page losing focus (`window`
+  `blur`, or `visibilitychange` to hidden): the Mac's JXA panel calls
+  `activateIgnoringOtherApps`, Tk's is `-topmost`. Only then does it close,
+  and `pick` resolves with the dialog's answer through `handoff` (null on its
+  cancel, a toast on its failure). An answer that lands before any blur (a
+  dialog on another machine's screen) is taken with the explorer still up; a
+  cancel or a failure then leaves the explorer as it was, the failure as its
+  inline error. Esc or "Keep browsing here" stops waiting without closing. `FILTER_NAMES` is the allowlist `browse_routes`
   validates against; there are TWO filter tables (tkinter and AppleScript) and
   a new filter needs an entry in both. Mode `"any"` ("a file OR a folder") is
   answered by `hybrid_available()`/`_browse_for_path_macos_hybrid()`: on macOS
@@ -1632,10 +1652,12 @@ Entry points:
   `browseForPath` opens the explorer FIRST on every machine, a tab and the
   desktop app alike, because a Browse that opened Finder on one machine and a
   listing on another kept neither's Recent list, pins or window size. The
-  answer only decides what the overflow offers -- `systemDialogFor()` names
-  it ("Use File Explorer…" on Windows, "Use Finder…" on a Mac or a `hybrid`
-  machine, else "Use system dialog…") and offers nothing on a `list` machine;
-  on a `kinds` machine asked for either, `chooseKind` asks which first.
+  answer only decides whether the "System file browser" button shows --
+  `systemDialogFor()`'s `app` names the dialog in its tooltip ("File
+  Explorer" on Windows, "Finder" on a Mac or a `hybrid` machine, else none)
+  and it stays hidden on a `list` machine; on a `kinds` machine asked for
+  either, `chooseKind` asks which first, hung under that button inside the
+  explorer, and dismissing it leaves the explorer open.
   Runs `sys.executable -c ...` as a subprocess (`popen_kwargs()` from
   `plexora/_subprocess.py`, so a console-less Windows process does not flash
   one for it) -- fine under the desktop app too, which ships a real
@@ -4842,7 +4864,7 @@ deliberately left out and what should be built next.
   what `roiApi.js`'s and the gating CSV's offline path calls instead of an
   anchor download in the app's window), `pickPaths()` (`browsePicker.js`'s
   `openSystemDialog`, the app's own file dialog, reached from the file
-  explorer's overflow menu), `quit()` (Quit is the app's
+  explorer's "System file browser" button), `quit()` (Quit is the app's
   own affordance there -- it closes the window and the shell stops the server
   it started, so `navbarControls.js`/`settingsPage.js` skip the confirm
   dialog and the `/shutdown` fetch entirely and call this instead), and
@@ -12440,6 +12462,15 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
   both. That looks like an Esc bug in the app and is not one: opened by a real
   click, Esc closes only the explorer and focus returns to the button inside
   the modal under it. Seen and checked 2026-10-20.
+- **`main.css` styles bare `nav`** (`margin-bottom: 10px`), so any `<nav>` a
+  component builds inherits a margin it never asked for. In a flex row that
+  margin counts toward the item's height, and the item drifts above centre:
+  the explorer's crumb strip sat 5px high in its 28px path bar until
+  `.plx-explorer-crumbs` reset `margin: 0` (2026-10-21). The same strip shows
+  a second cascade trap: a window-wide `.plx-explorer-window *
+  { scrollbar-width: thin }` beat the strip's own `scrollbar-width: none` at
+  equal specificity because it came later, so the override lives after it,
+  as `.plx-explorer-window .plx-explorer-crumbs`.
 - Scrollbar chrome is defined **once**, in `viewer.css`, as one selector list
   covering `.viewer-sidebar *`, the two portaled popups and
   `.channel-names-modal *`. Anything new that scrolls goes in that list rather
@@ -13158,8 +13189,8 @@ for File|Folder halves on kinds machines) is deleted. **Superseded on branch
 `feature/file-explorer`:** `pathPicker.js` is deleted and EVERY Browse, on
 every machine and for every mode, now opens the file explorer
 (`services/explorer/`, see the Repository Map); the native dialog -- the Mac's
-hybrid panel included -- moved behind the explorer's overflow menu
-(`systemDialogFor()` → `openSystemDialog()`), and `chooseKind` is reached
+hybrid panel included -- moved behind the explorer's "System file browser"
+button (`systemDialogFor()` → `openSystemDialog()`), and `chooseKind` is reached
 from there on a `kinds` machine, or on a page with no explorer, which no page
 in the app is. The listing's Places gained Drives (`/picker_prefs` `drives`,
 `os.listdrives()`, local Windows only), since folded into the explorer's

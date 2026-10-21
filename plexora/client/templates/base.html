@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261020_file_explorer">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261020_file_explorer">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
     {% block style %}{% endblock %}
 
 
@@ -126,12 +126,12 @@
        PlexoraPathPicker) last -- and all before browsePicker. All deferred,
        so all are parsed before any runs; the order is for readers. #}
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerTypes.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/floatingWindow.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/floatingWindow.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerListing.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261021_explorer_waiting" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch

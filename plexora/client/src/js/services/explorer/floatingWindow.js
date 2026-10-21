@@ -83,6 +83,10 @@ window.PlexoraFloatingWindow = (function () {
         const sub = el("span", "plx-explorer-subtitle", subtitle);
         const text = el("div", "plx-explorer-titletext");
         text.append(heading, sub);
+        //: Where a window's owner puts a quiet action beside its title (the
+        //: explorer's "System file browser"). Takes the slack, so the window
+        //: buttons stay at the right edge.
+        const titleActions = el("div", "plx-explorer-titleactions");
 
         const controls = el("div", "plx-explorer-wincontrols");
         const rollButton = button("plx-explorer-winbutton", "", "Minimize");
@@ -98,7 +102,7 @@ window.PlexoraFloatingWindow = (function () {
         closeButton.append(glyph("fas fa-xmark"));
         controls.append(rollButton, maxButton, closeButton);
 
-        titleBar.append(glyph(icon, "plx-explorer-titleicon"), text, controls);
+        titleBar.append(glyph(icon, "plx-explorer-titleicon"), text, titleActions, controls);
 
         const body = el("div", "plx-explorer-window-body");
         const footer = el("div", "plx-explorer-window-footer");
@@ -545,6 +549,7 @@ window.PlexoraFloatingWindow = (function () {
             dialog,
             chrome,
             titleBar,
+            titleActions,
             body,
             footer,
             setTitle(value) { heading.textContent = value || ""; },
