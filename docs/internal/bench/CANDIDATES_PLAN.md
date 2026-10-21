@@ -108,13 +108,21 @@ user's gates (`~/gatevision/gates_vs_human.csv`) and the classic engine's
 | CD3e | 6.6 | 6.62 | 6.61 | 6.61 |
 | CD8a | 6.1 (6.17) | 5.80 | 6.12 | 6.07 |
 | FOXP3 | 6.0 (6.42) | 5.82 | 6.23 | 6.18 |
-| CD4 | 6.6 | 6.86 | 7.00 | 6.89 |
-| SMA | 6.0 | 5.72 | 6.36 | 5.72 |
-| MAE | | 0.208 | 0.204 | 0.158 |
+| CD4 | 7.0-7.1 (table: 6.6) | 6.86 | 7.00 | 6.89 |
+| SMA | 6.2 (table: 6.0) | 5.72 | 6.36 | 5.72 |
+| MAE, table gates | | 0.208 | 0.204 | 0.158 |
+| MAE, rechecked | | 0.234 | 0.094 | 0.172 |
+| within 0.2, rechecked | | 3/5 | 4/5 | 4/5 |
 
-Not better than classic on these five (one run: within noise). Every marker
-spent 3 panels and closed for review. What the records showed, and the
-Phase 2 change each led to:
+The user rechecked CD4 and SMA after seeing this table (2026-10-20): CD4 is
+"definitely not 6.6, around 7 or 7.1", SMA "around 6.2". The rechecked rows
+score CD4 at 7.05 (7.0 to 7.1 moves each MAE by 0.01); the CSV still holds
+the table values. Against them the candidates engine is ahead of classic on
+these five (0.094 vs 0.172), but this is one run, one LSP image (high SNR,
+not a tuning image), the pre-Phase-2 engine, and the developing session as
+reader: no claim beyond "not worse". Every marker spent 3 panels and closed
+for review although four of five were within 0.2 -- the accept rule was too
+strict. What the records showed, and the Phase 2 change each led to:
 
 - The survey spent a third of its cells on lattice slivers a few hundredths
   apart in the background: candidates nearer than 0.1 are merged
@@ -132,8 +140,9 @@ Phase 2 change each led to:
   not, where the user counts them; a `panel_fibrous` reading names the
   spindle cell inside or along a band as own stain (untested).
 - CD4: the reader called the cells at 6.8 to 7.0 unstained, as the classic
-  reader did; the user gates them positive. Reader convention, not fixable
-  from one image without tuning on LSP.
+  reader did. Against the table's 6.6 this looked like a stricter reader
+  convention; the user's recheck (7.0 to 7.1) says the reader was right.
+  Nothing was changed for it.
 - The answer to each panel told the reader the leading gate: removed; while
   a marker is still in panels the outcome carries its state and look count
   only.
