@@ -73,7 +73,7 @@
     /** The pose that frames `target`: `{camera3d}` in 3-D, `{viewport}` in 2-D. */
     function framing(env, facts, target, aspect) {
         const volume = env.vs?.get?.().mode === "volume";
-        const resolved = resolve(facts, target, env.renderer?.box || null);
+        const resolved = resolve(facts, target, env.vs?.get?.().volume?.area || null);
         if (volume && env.renderer) {
             const live = global.PlexoraVideoCamera3d.fromRenderer(env.renderer.camera);
             return { camera3d: global.PlexoraVideoCamera3d.lookAt(live.q, resolved.model, resolved.radius * MARGIN),

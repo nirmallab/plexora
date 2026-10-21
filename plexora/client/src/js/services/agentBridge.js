@@ -930,13 +930,17 @@ window.PlexoraAgentBridge = (function () {
             derived: vs.isDerived(), window_class: vs.windowClass(),
             spacing: (vs.info && vs.info.spacing) || null,
             // The 3-D view: how it is cut (image units; services/inspectGeometry.js),
-            // the same in words, its camera, what it draws and the area of the
-            // plane it draws.
+            // the same in words, its camera, what it draws, the area of the
+            // image it draws (null: the whole stack; the Area tool's) and the
+            // areas saved to come back to. `box` is `area` under its old name,
+            // kept for one release.
             inspect: state.inspect || null,
             cut: typeof vs.cutLabel === "function" ? vs.cutLabel() : "",
             camera: renderer ? renderer.cameraState() : ((state.volume && state.volume.camera) || null),
             show: (state.volume && state.volume.show) || null,
-            box: renderer ? (renderer.box || null) : null,
+            area: (state.volume && state.volume.area) || null,
+            box: (state.volume && state.volume.area) || null,
+            saved: ((state.volume && state.volume.saved) || []).map((entry) => ({ id: entry.id, name: entry.name })),
         };
     }
 
@@ -2209,6 +2213,13 @@ window.PlexoraAgentBridge = (function () {
             const volume = { ...(vs.get().volume || {}) };
             if (args.show) volume.show = { ...(volume.show || {}), ...args.show };
             if (args.composite) volume.composite = args.composite;
+            if (args.area !== undefined) {
+                const area = args.area && window.PlexoraInspectGeometry
+                    ? window.PlexoraInspectGeometry.cleanArea(args.area, window.PlexoraInspectGeometry.dims(vs.info, vs.depth))
+                    : null;
+                if (args.area && !area) throw new Error("that area is outside the image");
+                volume.area = area;
+            }
             return applyVolumePatch({ mode: args.mode === "plane" ? "plane" : "volume", volume }, call);
         },
 
@@ -2232,6 +2243,11 @@ window.PlexoraAgentBridge = (function () {
             if (args.crop && typeof args.crop === "object") inspect.crop = args.crop;
             if (args.cutaway && typeof args.cutaway === "object") inspect.cutaway = args.cutaway;
             if (typeof args.face === "boolean") inspect.face = args.face;
+            const now = vs.get().inspect || {};
+            const tool = inspect.mode || (now.mode === "full" ? now.tool : now.mode);
+            if (tool === "cutaway" && Array.isArray(args.axes) && new Set(args.axes).size > 1) {
+                throw new Error("a cutaway is along one axis: name one of x, y or z");
+            }
             if (vs.get().mode !== "volume") vs.set({ mode: "volume" });
             if (Object.keys(inspect).length) cutter.set({ inspect });
             await untilDrawn(vs.settled(), call);

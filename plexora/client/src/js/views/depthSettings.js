@@ -273,6 +273,30 @@
                 update() { choice.set(vs.get().volume?.composite === "additive" ? "additive" : "mip"); },
             };
         },
+        // The Area tool's square (views/areaTool.js): its side in microns
+        // where the image states its spacing, in pixels where it does not.
+        "area.size"(ctx, config, popover) {
+            const prefs = ctx.prefs;
+            const microns = config.unit === "µm";
+            const input = number("depth_settings_area", {
+                min: microns ? 1 : 16, max: microns ? 100000 : 65536,
+                label: `Area side, ${microns ? "microns" : "pixels"}` });
+            input.addEventListener("change", () => {
+                const value = Number(input.value);
+                if (!(value > 0)) return;
+                prefs.set({ area: microns ? { um: value } : { px: Math.round(value) } });
+            });
+            const unit = el("span", "plx-popover-unit", { text: microns ? "µm" : "px" });
+            return {
+                node: field("Area", [input, unit], { id: input.id }),
+                update() {
+                    if (editing(input)) return;
+                    const area = prefs.area?.() || { um: 300, px: 1024 };
+                    input.value = String(microns ? area.um : area.px);
+                    input.title = "The side of the Area tool's square (V places it)";
+                },
+            };
+        },
         "view.motion"(ctx, config, popover) {
             const prefs = ctx.prefs;
             const input = switchInput("depth_settings_motion", "Motion",

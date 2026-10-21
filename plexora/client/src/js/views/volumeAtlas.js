@@ -217,7 +217,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
     }
 }`,
             sample: Array.from({ length: count }, (_, c) =>
-                `        v[${c}] = cState == 1 ? texture(u_atlas${c}, a).r : texture(u_volume${c}, p).r;`)
+                `        v[${c}] = cState == 1 ? texture(u_atlas${c}, a).r : baseRead(u_volume${c}, p);`)
                 .join("\n"),
         };
     }

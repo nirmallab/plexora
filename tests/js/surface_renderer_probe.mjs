@@ -258,6 +258,15 @@ const back = surfaces.unproject((ndc[0] + 1) * 100, (ndc[1] + 1) * 50, (ndc[2] +
 check("a buffer pixel and its depth unproject to the voxel they came from",
       back && back.every((v, a) => Math.abs(v - voxel[a]) < 1e-3), JSON.stringify(back));
 
+// The box is the area the view frames (the Area tool's), not whatever the
+// textures drawn this frame happen to cover.
+const framed = volume.frameCovered;
+volume.frameCovered = () => [16, 16, 48, 48];
+const placedOn = surfaces.placement();
+check("the surfaces are placed on the area the view frames", JSON.stringify(placedOn.origin) === "[16,16,0]"
+      && Math.abs(placedOn.scale[0] - placedOn.extent[0] / 32) < 1e-9, JSON.stringify(placedOn));
+volume.frameCovered = framed;
+
 // Unloading frees what was uploaded.
 mark = calls.length;
 surfaces.unload("surf-c");

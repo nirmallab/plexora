@@ -204,6 +204,20 @@ const shownIds = () => Object.entries(strip.nodes).filter(([, node]) => !node.hi
 check("one plane: the plane rail, its thumb and hover mark, Sections",
       ["rail", "thumb", "hover", "sections", "play", "cog"].every((id) => shownIds().includes(id))
       && !shownIds().includes("band"), shownIds().join());
+let areaArmed = false;
+const areaToggles = [];
+box.PlexoraAreaTool = { armed: () => areaArmed, toggle: () => { areaToggles.push(1); areaArmed = !areaArmed; return areaArmed; } };
+check("the Area tool on a plane, under the mode buttons, saying its key",
+      shownIds().includes("tool.area") && /Area: .*\(V\)/.test(strip.areaButton.getAttribute("title"))
+      && strip.root.children.indexOf(strip.areaButton) === strip.root.children.indexOf(strip.modes) + 1,
+      strip.areaButton.getAttribute("title"));
+strip.areaButton.fire("click");
+strip.paint();
+check("a press arms it, and it is lit", areaToggles.length === 1
+      && strip.areaButton.getAttribute("aria-pressed") === "true" && strip.areaButton.classList.contains("is-active"));
+strip.areaButton.fire("click");
+strip.paint();
+check("again disarms it", strip.areaButton.getAttribute("aria-pressed") === "false");
 
 // Stepping planes, then 3-D: the stepper stops, and nobody's plane is saved.
 strip.play();
@@ -214,8 +228,8 @@ const afterEnter = asked.length;
 check("entering 3-D while stepping planes stops the stepper without touching the view state",
       stepping === 1 && intervals.size === 0 && afterEnter === 1 && !asked.some((p) => p.persist),
       JSON.stringify(asked));
-check("in 3-D: no rail, no thumb, band or hover mark, no Sections; the strip only as tall as its buttons",
-      !["rail", "thumb", "band", "hover", "sections"].some((id) => shownIds().includes(id))
+check("in 3-D: no rail, no thumb, band or hover mark, no Sections, no Area tool; the strip only as tall as its buttons",
+      !["rail", "thumb", "band", "hover", "sections", "tool.area"].some((id) => shownIds().includes(id))
       && ["play", "cog"].every((id) => shownIds().includes(id)) && strip.root.classList.contains("is-volume"),
       shownIds().join());
 check("...and Cut and Crop under the mode buttons, neither lit on the whole stack",

@@ -33,7 +33,7 @@ def test_the_view_state_probe_passes_and_checks_something():
     out = _run("view_state_probe.mjs")
     assert "view state probe OK" in out
     checks = int(out.split("(")[1].split(" ")[0])
-    assert checks >= 25
+    assert checks >= 70
 
 
 def test_the_plane_swap_probe_passes():
@@ -68,7 +68,7 @@ def test_the_depth_strip_probe_passes():
     (tests/js/depth_strip_probe.mjs)."""
     out = _run("depth_strip_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 36
+    assert out.count("ok - ") >= 39
 
 
 def test_the_inspect_geometry_probe_passes():
@@ -78,7 +78,7 @@ def test_the_inspect_geometry_probe_passes():
     (tests/js/inspect_geometry_probe.mjs)."""
     out = _run("inspect_geometry_probe.mjs")
     assert "checks passed" in out
-    assert out.count("ok - ") >= 50
+    assert out.count("ok - ") >= 73
 
 
 def test_the_volume_dock_probe_passes():
@@ -87,7 +87,7 @@ def test_the_volume_dock_probe_passes():
     image's units, undoes (tests/js/volume_dock_probe.mjs)."""
     out = _run("volume_dock_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 25
+    assert out.count("ok - ") >= 67
 
 
 def test_the_volume_handles_probe_passes():
@@ -96,7 +96,17 @@ def test_the_volume_handles_probe_passes():
     drawn (tests/js/volume_handles_probe.mjs)."""
     out = _run("volume_handles_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 18
+    assert out.count("ok - ") >= 22
+
+
+def test_the_area_tool_probe_passes():
+    """The Area tool's square -- microns over a stated spacing, kept inside
+    the image -- placed by a click or V in one change of the view state, V to
+    3-D and back, yielding to the ROI tool, typing and dialogs
+    (tests/js/area_tool_probe.mjs)."""
+    out = _run("area_tool_probe.mjs")
+    assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 22
 
 
 def test_the_viewer_page_loads_the_cut_scripts_in_order():
@@ -107,7 +117,8 @@ def test_the_viewer_page_loads_the_cut_scripts_in_order():
     order = [page.index(name) for name in (
         "js/services/inspectGeometry.js?v=", "js/services/viewState.js?v=",
         "js/services/inspectState.js?v=", "js/views/volumeRenderer.js?v=",
-        "js/views/volumeDock.js?v=", "js/views/volumeHandles.js?v=", "js/main.js?v=")]
+        "js/views/volumeDock.js?v=", "js/views/volumeHandles.js?v=", "js/views/areaTool.js?v=",
+        "js/services/savedAreas.js?v=", "js/main.js?v=")]
     assert order == sorted(order)
 
 
@@ -116,7 +127,7 @@ def test_the_cut_scripts_parse():
     if node is None:
         pytest.skip("node is not installed")
     for path in ("services/inspectGeometry.js", "services/inspectState.js", "views/volumeDock.js",
-                 "views/volumeHandles.js"):
+                 "views/volumeHandles.js", "views/areaTool.js", "services/savedAreas.js"):
         proc = subprocess.run([node, "--check", str(CLIENT / "src" / "js" / path)],
                               capture_output=True, text=True, timeout=30)
         assert proc.returncode == 0, path + proc.stderr

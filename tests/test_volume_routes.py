@@ -252,20 +252,21 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
 
     turn = {"speed": 30.0, "axis": "screen", "direction": 1}
     handles = {"visible": True, "opacity": 0.55}
+    area = {"um": 300.0, "px": 1024}
     paths.write_settings({"data_dir": "/somewhere"})
     grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {
         "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn,
-        "handles": handles}
+        "handles": handles, "area": area}
     client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
     stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid,
-                      "rotate": turn, "handles": handles}
+                      "rotate": turn, "handles": handles, "area": area}
     # Out of bounds is clamped; nonsense reads as the default.
     stored = client.put("/viewer_prefs", json={
         "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "grid": grid,
-                      "rotate": turn, "handles": handles}
+                      "rotate": turn, "handles": handles, "area": area}
     client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
     assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
     # The rest of the settings file is left alone.
@@ -373,6 +374,69 @@ def test_the_3d_cut_is_kept_and_repaired(tmp_path, client):
     nothing = client.put("/view_state/vol", json={"mode": "volume", "inspect": {"axes": {}}}).get_json()["state"]
     assert nothing["inspect"]["mode"] == "full" and nothing["inspect"]["tool"] == "cutaway"
     assert nothing["inspect"]["axes"] == {"x": True, "y": False, "z": False}
+
+
+def test_the_area_preference_is_merged_and_clamped(client):
+    """The Area tool's square: its side in microns and in pixels, the
+    user's, for every image, merged field by field and kept in bounds."""
+    from plexora import paths
+
+    paths.write_settings({})
+    assert client.get("/viewer_prefs").get_json()["area"] == {"um": 300.0, "px": 1024}
+    stored = client.put("/viewer_prefs", json={"area": {"um": 150}}).get_json()["prefs"]
+    assert stored["area"] == {"um": 150.0, "px": 1024}
+    stored = client.put("/viewer_prefs", json={"area": {"px": 2.5}}).get_json()["prefs"]
+    assert stored["area"] == {"um": 150.0, "px": 16}
+    stored = client.put("/viewer_prefs", json={"area": {"um": "lots", "px": True}}).get_json()["prefs"]
+    assert stored["area"] == {"um": 300.0, "px": 1024}
+    stored = client.put("/viewer_prefs", json={"area": {"um": 1e9}}).get_json()["prefs"]
+    assert stored["area"]["um"] == 1e5
+
+
+def test_the_3d_area_and_the_saved_areas_are_kept(tmp_path, client):
+    """`volume.area` -- the part of the image the 3-D view draws -- round-trips,
+    its corner never negative and its sides more than nothing (the browser cuts
+    it to the image); `volume.saved` keeps each id once, drops an entry with no
+    area, and repairs each one's cut and camera."""
+    _register_volume(tmp_path)
+    plain = client.put("/view_state/vol", json={"mode": "volume"}).get_json()["state"]
+    assert plain["volume"]["area"] is None and plain["volume"]["saved"] == []
+    stored = client.put("/view_state/vol", json={"mode": "volume", "volume": {
+        "area": {"x": -5, "y": 10.5, "width": 300, "height": 200}}}).get_json()["state"]
+    assert stored["volume"]["area"] == {"x": 0.0, "y": 10.5, "width": 300.0, "height": 200.0}
+    assert client.get("/view_state/vol").get_json()["volume"]["area"] == stored["volume"]["area"]
+    for bad in ({"x": 0, "y": 0, "width": 0, "height": 5}, {"x": "a", "y": 0, "width": 5, "height": 5},
+                {"x": 0, "y": 0, "width": float("nan"), "height": 5}, [1, 2, 3, 4], "everything"):
+        state = client.put("/view_state/vol", json={"mode": "volume", "volume": {"area": bad}}).get_json()
+        assert state["state"]["volume"]["area"] is None, bad
+    saved = client.put("/view_state/vol", json={"mode": "volume", "volume": {"saved": [
+        {"id": "a", "name": "first", "area": {"x": 0, "y": 0, "width": 10, "height": 10},
+         "inspect": {"mode": "cutaway", "axes": {"x": True, "y": True}},
+         "camera": {"q": [0, 0, 0, 1], "dist": 2, "pan": [0.1, 0]}},
+        {"id": "a", "area": {"x": 0, "y": 0, "width": 5, "height": 5}},
+        {"id": "b", "area": None},
+        {"id": "c" * 40, "name": "n" * 100, "area": {"x": 1, "y": 1, "width": 2, "height": 2},
+         "camera": {"q": [1, 2]}},
+    ]}}).get_json()["state"]["volume"]["saved"]
+    assert [entry["id"] for entry in saved] == ["a", "c" * 32]
+    assert saved[0]["inspect"]["axes"] == {"x": True, "y": False, "z": False}
+    assert saved[0]["camera"] == {"q": [0.0, 0.0, 0.0, 1.0], "dist": 2.0, "pan": [0.1, 0.0]}
+    assert saved[1]["name"] == "n" * 64 and saved[1]["camera"] is None
+    many = client.put("/view_state/vol", json={"mode": "volume", "volume": {"saved": [
+        {"id": f"s{i}", "area": {"x": 0, "y": 0, "width": 5, "height": 5}} for i in range(60)]}}).get_json()
+    assert len(many["state"]["volume"]["saved"]) == 50
+
+
+def test_a_cutaway_is_along_one_axis(tmp_path, client):
+    """A cut saved over two or three axes (the corner, removed 2026-10-21)
+    opens on its first, x before y before z; a crop keeps every axis."""
+    _register_volume(tmp_path)
+    cut = client.put("/view_state/vol", json={"mode": "volume", "inspect": {
+        "mode": "cutaway", "axes": {"x": False, "y": True, "z": True},
+        "axesBy": {"cutaway": {"x": True, "z": True}, "crop": {"x": True, "y": True}}}}).get_json()["state"]["inspect"]
+    assert cut["axes"] == {"x": False, "y": True, "z": False}
+    assert cut["axesBy"]["cutaway"] == {"x": True, "y": False, "z": False}
+    assert cut["axesBy"]["crop"] == {"x": True, "y": True, "z": False}
 
 
 def test_each_cut_tool_keeps_its_own_axes(tmp_path, client):

@@ -72,6 +72,12 @@ function fakeElement(tag) {
         append(...nodes) { for (const child of nodes) node.appendChild(child); },
         insertBefore(child) { return node.appendChild(child); },
         replaceChildren(...nodes) { node.children = []; for (const child of nodes) node.appendChild(child); },
+        replaceWith(other) {
+            const parent = node.parentElement;
+            if (!parent) return;
+            parent.children[parent.children.indexOf(node)] = other;
+            other.parentElement = parent;
+        },
         remove() { node.isConnected = false; },
         contains(other) { for (let at = other; at; at = at.parentElement) if (at === node) return true; return false; },
         matches(selector) { return matches(node, selector); },
@@ -115,7 +121,7 @@ box.window = box;
 box.globalThis = box;
 const context = createContext(box);
 for (const file of ["views/slider.js", "services/inspectGeometry.js", "services/inspectState.js",
-                    "services/viewControls.js", "views/volumeDock.js"]) {
+                    "services/viewControls.js", "views/volumeDock.js", "services/savedAreas.js"]) {
     runInContext(readFileSync(join(JS, file), "utf8"), context);
 }
 const G = box.PlexoraInspectGeometry;
@@ -137,9 +143,10 @@ const vs = {
     get: () => JSON.parse(JSON.stringify(state)),
     set(patch) {
         asked.push(patch);
-        state = { ...state, ...patch, slab: { ...state.slab, ...(patch.slab || {}) },
-                  volume: { ...state.volume, ...(patch.volume || {}) },
-                  inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), DIMS) };
+        const volume = { ...state.volume, ...(patch.volume || {}) };
+        volume.area = G.cleanArea(volume.area, DIMS);
+        state = { ...state, ...patch, slab: { ...state.slab, ...(patch.slab || {}) }, volume,
+                  inspect: G.clean(G.merge(state.inspect, patch.inspect || {}), { ...DIMS, area: volume.area }) };
         for (const fn of subscribers) fn(state);
         return state;
     },
@@ -191,8 +198,9 @@ check("every control of a Cut", JSON.stringify(shown()) === JSON.stringify(PANEL
 const axes = dock.controls.get("cut.axes").node;
 const chip = (axis) => axes.querySelectorAll(".volume-dock-chip")[["x", "y", "z"].indexOf(axis)];
 const flip = (axis) => axes.querySelectorAll(".volume-dock-flip")[["x", "y", "z"].indexOf(axis)];
-check("X lit, Y and Z not", chip("x").getAttribute("aria-pressed") === "true"
-      && chip("y").getAttribute("aria-pressed") === "false");
+check("a Cut's axes are a radio: X checked, Y and Z not", axes.getAttribute("role") === "radiogroup"
+      && chip("x").getAttribute("role") === "radio" && chip("x").getAttribute("aria-checked") === "true"
+      && chip("y").getAttribute("aria-checked") === "false" && chip("x").getAttribute("aria-pressed") === null);
 check("a flip beside the axis cut; beside the others its place is held, idle",
       axes.classList.contains("has-flip") && !flip("x").hidden && !flip("x").disabled
       && flip("y").classList.contains("is-idle") && flip("y").disabled);
@@ -202,13 +210,17 @@ asked.length = 0;
 flip("x").fire("click");
 check("a flip is one change: the near side kept", asked.length === 1 && state.inspect.cutaway.x.keep === "lo"
       && !flip("x").classList.contains("is-flipped") && /keeping the near side/.test(flip("x").title));
+asked.length = 0;
 chip("y").fire("click");
-check("Y added: cut along X and Y, Y's flip live", state.inspect.axes.y === true && !flip("y").disabled);
-chip("x").fire("click");
+check("Y chosen: one change, the cut along Y alone, its flip live, X's idle", asked.length === 1
+      && JSON.stringify(state.inspect.axes) === JSON.stringify({ x: false, y: true, z: false })
+      && !flip("y").disabled && flip("x").disabled && /Cut along Y/.test(chip("y").title), chip("y").title);
+asked.length = 0;
 chip("y").fire("click");
-check("the last axis stays on", state.inspect.axes.y === true && !state.inspect.axes.x
-      && /one axis stays on/.test(chip("y").title), chip("y").title);
+check("the axis cut again is no change: a Cut is always along one", asked.length === 0
+      && state.inspect.axes.y === true);
 chip("x").fire("click");
+check("back on X", JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: false, z: false }));
 
 const action = (id) => dock.controls.get(id).node;
 action("cut.face").fire("click");
@@ -223,7 +235,7 @@ asked.length = 0;
 action("cut.reset").fire("click");
 check("Reset puts the cut back where it starts, the axes and the tool kept",
       asked.length === 1 && state.inspect.cutaway.x.at === 1000 && state.inspect.cutaway.x.keep === "hi"
-      && state.inspect.axes.x && state.inspect.axes.y && state.inspect.mode === "cutaway",
+      && state.inspect.axes.x && !state.inspect.axes.y && state.inspect.mode === "cutaway",
       JSON.stringify(state.inspect.cutaway.x));
 check("Undo is live and says its keys", !action("cut.history").disabled
       && /Undo the last change to the cut \(Ctrl\+Z; Shift\+Ctrl\+Z redoes\)/.test(action("cut.history").title),
@@ -245,12 +257,14 @@ check("Crop pressed: the tool switches in one change, on X, Y and Z", asked.leng
 check("...in place: the same panel, its title, no flips", isOpen() && dock.title.textContent === "Crop"
       && JSON.stringify(shown()) === JSON.stringify(PANEL) && !axes.classList.contains("has-flip")
       && flip("x").hidden);
-check("the Cut's axes are kept for it", JSON.stringify(state.inspect.axesBy.cutaway)
-      === JSON.stringify({ x: true, y: true, z: false }), JSON.stringify(state.inspect.axesBy));
+check("the Cut's axis is kept for it", JSON.stringify(state.inspect.axesBy.cutaway)
+      === JSON.stringify({ x: true, y: false, z: false }), JSON.stringify(state.inspect.axesBy));
+check("a Crop's axes are toggles", axes.getAttribute("role") === "group" && chip("x").getAttribute("role") === null
+      && chip("x").getAttribute("aria-pressed") === "true");
 chip("y").fire("click");
 box.PlexoraVolumeDock.pick("cutaway");
-check("back to Cut: its own axes and its flip, as it was left",
-      JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: true, z: false })
+check("back to Cut: its own axis and its flip, as it was left",
+      JSON.stringify(state.inspect.axes) === JSON.stringify({ x: true, y: false, z: false })
       && state.inspect.cutaway.x.keep === "lo" && state.inspect.face === true);
 box.PlexoraVolumeDock.pick("crop");
 check("and Crop's: X and Z, as it was left", JSON.stringify(state.inspect.axes)
@@ -365,6 +379,78 @@ engaged = false;
 chordKey(false);
 check("not while the user works elsewhere", state.inspect.axes.y === !before);
 
+// -- Crop to area, and the area undone with the cut -----------------------------------
+box.PlexoraVolumeDock.pick("crop");
+box.PlexoraVolumeDock.open();
+vs.set({ inspect: { mode: "crop", axes: { x: true, y: true, z: true }, crop: { x: [200, 600], y: [100, 300] } } });
+dock.paint();
+check("a crop narrower than the image offers Crop to area", shown().includes("cut.toArea"), shown().join());
+asked.length = 0;
+dock.controls.get("cut.toArea").node.fire("click");
+check("Crop to area: one change, the area the crop's x and y, the crop the area",
+      asked.length === 1 && JSON.stringify(state.volume.area) === JSON.stringify({ x: 200, y: 100, width: 400, height: 200 })
+      && JSON.stringify(state.inspect.crop.x) === JSON.stringify([200, 600])
+      && JSON.stringify(state.inspect.crop.y) === JSON.stringify([100, 300]), JSON.stringify(asked));
+dock.paint();
+check("...and then it is not narrower: the button goes", !shown().includes("cut.toArea"));
+cutter.undo();
+check("one undo puts back the area and the crop", state.volume.area === null
+      && JSON.stringify(state.inspect.crop.x) === JSON.stringify([200, 600]));
+cutter.slideArea({ x: 0, y: 0, width: 500, height: 500 }, { final: false });
+cutter.slideArea({ x: 100, y: 0, width: 500, height: 500 }, { final: false });
+cutter.slideArea({ x: 150, y: 0, width: 500, height: 500 }, { final: true });
+cutter.undo();
+check("a slide is one undo entry, however many moves", state.volume.area === null, JSON.stringify(state.volume.area));
+cutter.redo();
+cutter.slideArea({ x: 300, y: 0, width: 500, height: 500 }, { final: true });
+cutter.undo();
+check("a slide after the last one ended is its own entry",
+      JSON.stringify(state.volume.area) === JSON.stringify({ x: 150, y: 0, width: 500, height: 500 }),
+      JSON.stringify(state.volume.area));
+
+// -- saved areas ------------------------------------------------------------------------
+check("no Save area on a page that keeps none", !shown().includes("area.save"));
+volume.renderer.cameraState = () => ({ q: [0, 0, 0, 1], dist: 2, pan: [0.1, 0] });
+volume.renderer.snapshot = () => ({ toDataURL: () => "data:image/jpeg;base64,AAAA" });
+let restoredCamera = null;
+volume.renderer.restoreCamera = (camera) => { restoredCamera = camera; return true; };
+const savedAreas = box.PlexoraSavedAreas.attach({ viewState: vs, volume, cutter });
+vs.set({ volume: { area: { x: 100, y: 100, width: 500, height: 500 } },
+         inspect: { mode: "crop", axes: { x: true, y: false, z: false }, crop: { x: [200, 300] } } });
+dock.paint();
+check("Save area on a page that keeps them; no list before one is saved",
+      shown().includes("area.save") && !shown().includes("area.list"), shown().join());
+asked.length = 0;
+dock.controls.get("area.save").node.fire("click");
+const kept = state.volume.saved || [];
+check("Save area: one change, the area, the cut and the camera under a name",
+      asked.length === 1 && kept.length === 1 && kept[0].name === "Area 1"
+      && JSON.stringify(kept[0].area) === JSON.stringify({ x: 100, y: 100, width: 500, height: 500 })
+      && JSON.stringify(kept[0].inspect.crop.x) === "[200,300]" && kept[0].camera?.dist === 2, JSON.stringify(kept));
+dock.paint();
+const list = dock.controls.get("area.list").node;
+const items = () => list.querySelectorAll(".volume-dock-area");
+check("the list shows it, its thumbnail this page's only", shown().includes("area.list") && items().length === 1
+      && items()[0].querySelector(".volume-dock-area-thumb").getAttribute("src") === "data:image/jpeg;base64,AAAA"
+      && !JSON.stringify(state).includes("base64"));
+vs.set({ volume: { area: { x: 0, y: 0, width: 200, height: 200 } }, inspect: { mode: "full" } });
+asked.length = 0;
+items()[0].querySelector(".volume-dock-area-open").fire("click");
+check("a click goes back: area, cut and camera in one change",
+      asked.length === 1 && JSON.stringify(state.volume.area) === JSON.stringify({ x: 100, y: 100, width: 500, height: 500 })
+      && state.inspect.mode === "crop" && JSON.stringify(state.inspect.crop.x) === "[200,300]"
+      && restoredCamera?.dist === 2, JSON.stringify(asked));
+items()[0].querySelector(".volume-dock-area-open").fire("dblclick");
+const renaming = list.querySelector(".volume-dock-area-rename");
+renaming.value = "Germinal centre";
+renaming.fire("keydown", { key: "Enter" });
+check("a double-click renames it", state.volume.saved[0].name === "Germinal centre");
+dock.paint();
+items()[0].querySelector(".volume-dock-area-remove").fire("click");
+dock.paint();
+check("× forgets it, and the list goes", (state.volume.saved || []).length === 0 && !shown().includes("area.list")
+      && savedAreas.thumb(kept[0].id) === null);
+
 vs.set({ mode: "plane" });
 check("back in 2-D the panel goes", !isOpen() && dock.root.inert === true);
 
@@ -373,4 +459,5 @@ if (failures.length) {
     for (const failure of failures) console.log(`  - ${failure}`);
     process.exit(1);
 }
+
 console.log(`\nall ${checks} checks passed`);

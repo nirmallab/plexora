@@ -9,15 +9,24 @@ floating 3-D dock became a compact panel beside the strip. Sections and slabs we
 completely, with "Panes follow the sections", the pinned pane crosshair, the panes' cut guides
 and the view state's `section` position.
 
+On 2026-10-21 (branch `feature/area-tool`, modelled on milume's Inspect) the 3-D view gained an
+AREA, a Cut became one axis (the corner it took out over several axes, `hole`, is gone), "Crop
+to area" and saved areas came in. See "The area" below.
+
 ## What it does
 
-The 3-D view can be cut with one tool at a time, along any combination of X, Y and Z:
+The 3-D view draws an area of the stack (the whole stack, or the Area tool's square) and can be
+cut inside it with one tool at a time:
 
-| Tool (`inspect.mode`) | What is drawn | Several axes | Starts on |
+| Tool (`inspect.mode`) | What is drawn | Axes | Starts on |
 |---|---|---|---|
-| none (`full`) | the whole stack | – | – |
-| Cut (`cutaway`) | a side taken off along each axis (keep the near or the far side) | one corner removed: where every active axis is on its removed side. The rest is kept, so the inside shows. | X |
-| Crop (`crop`) | a range kept along each axis | the intersection: a box | X, Y and Z |
+| none (`full`) | the whole area | – | – |
+| Cut (`cutaway`) | a side taken off (keep the near or the far side) | ONE of X, Y or Z: the panel's chips are a radio | X |
+| Crop (`crop`) | a range kept along each axis: a box | any of X, Y and Z | X, Y and Z |
+
+A Cut saved over two or three axes (before 2026-10-21) opens on its first, x before y before z
+(`inspectGeometry.cleanAxes(..., {single})`, the server's `axes_of(..., single=True)`); the agent
+refuses a cutaway named with more than one axis.
 
 Either tool can draw its cut faces solid ("Solid cut faces"), so the voxels on the cut show
 rather than the projection through them.
@@ -37,14 +46,19 @@ The cut is the view state's `inspect` (services/viewState.js), saved per image a
 inspect: {
   mode: "full" | "cutaway" | "crop",       // the tool on, or the whole stack
   tool: "cutaway" | "crop",                // the tool last chosen, kept while it is off
-  axes:   {x, y, z},                       // the current tool's: booleans, one at least
+  axes:   {x, y, z},                       // the current tool's: one at least, exactly one for a Cut
   axesBy: {cutaway: {x, y, z}, crop: {x, y, z}},   // each tool's, as last left
   crop:    {x: [x0, x1], y: [y0, y1], z: [z0, z1]},   // x/y px boundaries, z inclusive planes
   cutaway: {x: {at, keep: "lo"|"hi"}, y: {...}, z: {...}},
   face,
 }
 volume.interpolation: "linear" | "nearest"
+volume.area:  {x, y, width, height} | null      // full-res px; null = the whole stack
+volume.saved: [{id, name, area, inspect, camera}]   // at most 50 (inspectGeometry.SAVED_MAX)
 ```
+
+Every position the cut holds lies inside the area (`clean` clamps to `whole(dims)`, the area or
+the stack), and moving the area moves the cut with it (see "The area").
 
 All values are in IMAGE units: full-resolution pixels across x and y, plane indices along z.
 Microns are shown only where the image or its user states the spacing (`metadata` or `manual`).
@@ -61,9 +75,9 @@ with a narrowed range (before Slice & Clip) opens as a Z crop of those planes
 ## How a change reaches the picture
 
 - `services/inspectGeometry.js` is pure maths. `resolve(inspect, dims)` turns the state into a
-  box and a cutaway corner (`hole`), in continuous image coordinates (plane k spans [k, k+1)).
-  `toTexture()` turns those into the renderer's [0,1] numbers, relative to the area the
-  textures cover (`covered`). Every consumer asks this one module.
+  box, in continuous image coordinates (plane k spans [k, k+1)), inside `dims.area`.
+  `toTexture()` turns it into the renderer's [0,1] numbers, relative to the area the view
+  FRAMES (`renderer.frameCovered()`). Every consumer asks this one module.
 - `services/inspectState.js` (`window.PlexoraInspect`) is the only way the controls change the cut:
   - `preview(patch)` while a hand is on a control: redrawn from uniforms in the next frame, with
     nothing saved and no revision. It announces `plexora:inspect-preview`.
@@ -83,10 +97,12 @@ No program variants of its own. Every cut is uniforms on the one shader per chan
 
 - `u_box_lo/hi` (the box test clamps each ray, so a crop costs nothing per sample). Video
   Studio's `setClip` still narrows it (it never widens it).
-- `u_hole_*`: the cutaway corner, which the march skips.
+- `u_tex_lo/span`: where the frame's [0,1] lies in the base textures (`baseRead`): identity for
+  a level-0 texture of the area, a few voxels' shift at a coarser level, and the old area's
+  texture while a new area loads (nothing is read outside it).
 - `u_cut == 1`: the cut faces. The voxel where the ray first meets kept voxels across a cropped
-  side or the corner's face, sampled there (`sampleAt`, which reads the same textures as the
-  march, bricks and details included) and drawn solid.
+  or cut side, sampled there (`sampleAt`, which reads the same textures as the march, bricks and
+  details included) and drawn solid.
 
 `surfaceRenderer.volumeFragment` still patches this source at its anchors, every original anchor
 byte-identical. One swap puts a cut face in front of or behind the nearest translucent surface,
@@ -94,7 +110,7 @@ by depth.
 
 ## Surfaces (views/surfaceRenderer.js)
 
-Meshes are cut with the voxels, by the box and the corner. A closed surface cut open shows its
+Meshes are cut with the voxels, by the box. A closed surface cut open shows its
 inside as a CAP: back faces (`!gl_FrontFacing`), one flat unlit tone of the object's colour, so
 a cut face never passes for its biology. Caps are on only while something is cut. Server-made
 surfaces are wound outward; an imported mesh wound inward would show caps everywhere while cut.
@@ -206,3 +222,33 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
   without surfaces) was compiled on the GPU through ANGLE/Metal in headless Chrome on
   2026-10-12. After the 2026-10-13 removal, the base and surface variants were compiled and
   drawn through SwiftShader in headless Chromium (the live app, a Cut over X and Y).
+
+## The area (2026-10-21)
+
+The view state's `volume.area` is what the 3-D view loads and frames; the cut decides what is
+drawn inside it. Moving the area downloads; changing a cut never does.
+
+- **Placing it.** The Area tool (`views/areaTool.js`, the strip's Area button, plane and
+  projection only): a dashed square of the viewer pref `area` (`{um: 300, px: 1024}`; microns
+  where `inspectGeometry.spacing` trusts the spacing) follows the pointer; a click, or V with the
+  pointer on the image, is ONE `viewState.enterVolume({area})`. From a fixed projection the cut
+  becomes a Z crop of its planes (`viewState._bandCrop`); a following one never does. The strip's
+  3-D button with no area draws the whole stack (`areaOnScreen()` is gone).
+- **V** toggles 2-D and 3-D on any z-stack (`viewState.toggleVolume`: back to the projection when
+  it was entered from one). It yields to the ROI tool, typing and open dialogs.
+- **The cut moves with it.** `viewState.set` with a new `volume.area` and no `inspect` shifts the
+  cut by the area's move (`inspectGeometry.shift`); a patch that says where the cut is (a restore,
+  a Video Studio frame, Crop to area, an undo) is never shifted.
+- **Sliding it.** In 3-D, Shift+drag slides the area under a fixed frame (the tissue follows the
+  hand); Alt+drag or the middle button pans the camera (Shift+drag pans when there is no area).
+  `onSlide` at most every `SLIDE_MS` (40 ms), the last on release; a slide is one undo entry with
+  the cut it carried (`inspectState.slideArea`). Under the hand, a fetch waits while two loads a
+  channel are in flight (`setArea`), so a fast slide asks for where it is.
+- **Never a blank frame.** `entryFor` stands the last-drawn texture in for any area;
+  `frameCovered()` is the area's, and `baseRead` reads the old texture where the new area
+  overlaps it. A same-size slide keeps the level (`sameSize`), so the atlas made for it stays and
+  its bricks (absolute) keep drawing. The area's own texture dissolves in at the same camera.
+- **Crop to area** (`cut.toArea`, while the crop is narrower than the area in x or y): one change,
+  the area the crop's x and y, the crop the area — fetched at the finest level that box allows.
+- **Saved areas** (`services/savedAreas.js`, the panel's Save area): the area, the cut and the
+  camera by name, restored in one change; thumbnails are this page's only.

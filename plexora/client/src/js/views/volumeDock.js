@@ -7,14 +7,18 @@
  * ground, border and type -- sliding out from under it:
  *
  *     Cut                 ›  ×      the tool; collapse; close
- *     [X][◐]   [faces] [eye]        the axes down the left (a Cut flips the
- *     [Y][◐]   [reset] [undo]       side each keeps), the actions beside
- *     [Z]
+ *     (X)[◐]   [faces] [eye]        the axes down the left: a Cut is along
+ *     (Y)      [reset] [undo]       ONE (a radio), and flips the side it
+ *     (Z)                           keeps; the actions beside
  *     [ Smooth  |  Blocks ]         how voxels are read
  *     ✋ ─────●──────               how strongly the handles are drawn
  *     [O] Show/Hide                 the cut shown or hidden
+ *     [+] Save area                 the area, cut and camera kept by name,
+ *     [▣ Area 1 ×] ...              each a thumbnail that restores it
  *
- * Crop is the same panel, its axis chips filling the flip column. The cut
+ * Crop is the same panel, its axis chips toggles (any of X, Y and Z) filling
+ * the flip column, and "Crop to area" among the actions while the crop is
+ * narrower than the area: the area becomes the crop, fetched finer. The cut
  * itself is made in the view, with the handles (views/volumeHandles.js); the
  * panel has no position sliders.
  *
@@ -148,6 +152,7 @@
                 zStep: () => vs.zStep?.() } : vs;
             return controls.context(source, () => ({
                 cutSupported: Boolean(this.cutter),
+                savedAreasSupported: Boolean(this.saved()),
                 volumeSupported: Boolean(this.volume),
                 prefs: global.PlexoraViewerPrefs || null,
                 ...(this.extras ? this.extras() : {}),
@@ -183,20 +188,23 @@
                 "cut.face": this.faceControl(),
                 "cut.handles": this.handlesControl(),
                 "cut.reset": this.resetControl(),
+                "cut.toArea": this.toAreaControl(),
                 "cut.history": this.undoControl(),
                 "cut.interpolation": this.interpolationControl(),
                 "cut.handleOpacity": this.handleOpacityControl(),
                 "cut.toggle": this.toggleControl(),
+                "area.save": this.saveAreaControl(),
+                "area.list": this.areaListControl(),
             };
             for (const [id, control] of Object.entries(made)) {
                 control.node.setAttribute("data-control", id);
                 this.controls.set(id, control);
             }
-            actions.append(...["cut.face", "cut.handles", "cut.reset", "cut.history"]
+            actions.append(...["cut.face", "cut.handles", "cut.reset", "cut.toArea", "cut.history"]
                 .map((id) => made[id].node));
             grid.append(axes.node, actions);
             root.append(head, grid, made["cut.interpolation"].node, made["cut.handleOpacity"].node,
-                        made["cut.toggle"].node);
+                        made["area.save"].node, made["area.list"].node, made["cut.toggle"].node);
             root.addEventListener("keydown", (event) => {
                 if (event.key !== "Escape") return;
                 event.preventDefault();
@@ -209,7 +217,7 @@
             this._off.push(this.viewState.subscribe(repaint));
             for (const name of ["plexora:inspect-preview", "plexora:inspect-changed", "plexora:viewer-prefs-changed",
                                 "plexora:view-controls-changed", "plexora:volume-mounted", "plexora:surface-loaded",
-                                "plexora:volume-progress"]) {
+                                "plexora:volume-progress", "plexora:saved-areas"]) {
                 global.addEventListener(name, repaint);
                 this._off.push(() => global.removeEventListener(name, repaint));
             }
@@ -228,9 +236,9 @@
             this.root = null;
         }
 
-        /** X, Y and Z down the left, each a chip that turns its axis on or
-         *  off (the last one stays on); in a Cut, a flip beside each axis cut
-         *  for the side it keeps. */
+        /** X, Y and Z down the left: in a Crop each a chip that turns its
+         *  axis on or off (the last one stays on); in a Cut a radio, one axis
+         *  at a time, with a flip beside it for the side it keeps. */
         axesControl() {
             const node = el("div", "volume-dock-axes", { role: "group", "aria-label": "Axes" });
             const rows = {};
@@ -251,16 +259,27 @@
                 update: (ctx, state, config) => {
                     const inspect = state.inspect;
                     const [verb, verbing] = ctx.cutTool === "crop" ? ["Crop", "cropping"] : ["Cut", "cutting"];
+                    const single = Boolean(config.single);
                     node.classList.toggle("has-flip", Boolean(config.flip));
+                    node.setAttribute("role", single ? "radiogroup" : "group");
                     for (const axis of AXES) {
                         const { chip, flip } = rows[axis];
                         const on = Boolean(ctx.cutAxes[axis]);
                         chip.classList.toggle("is-active", on);
-                        chip.setAttribute("aria-pressed", on ? "true" : "false");
-                        const last = on && AXES.filter((a) => ctx.cutAxes[a]).length === 1;
-                        say(chip, !on ? `${verb} along ${AXIS_HINT[axis]} too`
-                            : (last ? `${verb} along ${AXIS_HINT[axis]}: one axis stays on`
-                                : `Stop ${verbing} along ${AXIS_HINT[axis]}`));
+                        if (single) {
+                            chip.setAttribute("role", "radio");
+                            chip.setAttribute("aria-checked", on ? "true" : "false");
+                            chip.removeAttribute("aria-pressed");
+                            say(chip, on ? `${verb} along ${AXIS_HINT[axis]}` : `${verb} along ${AXIS_HINT[axis]} instead`);
+                        } else {
+                            chip.removeAttribute("role");
+                            chip.removeAttribute("aria-checked");
+                            chip.setAttribute("aria-pressed", on ? "true" : "false");
+                            const last = on && AXES.filter((a) => ctx.cutAxes[a]).length === 1;
+                            say(chip, !on ? `${verb} along ${AXIS_HINT[axis]} too`
+                                : (last ? `${verb} along ${AXIS_HINT[axis]}: one axis stays on`
+                                    : `Stop ${verbing} along ${AXIS_HINT[axis]}`));
+                        }
                         // A flip only beside an axis a Cut cuts; its place is
                         // kept, so the chips never shift.
                         flip.hidden = !config.flip;
@@ -279,9 +298,17 @@
             };
         }
 
-        /** An axis on or off; the last one stays on. */
+        /** A Cut: along `axis` alone. A Crop: `axis` on or off; the last
+         *  one stays on. */
         toggleAxis(axis) {
-            const axes = { ...this.viewState.get().inspect.axes };
+            const inspect = this.viewState.get().inspect;
+            const tool = inspect.mode === "full" ? inspect.tool : inspect.mode;
+            if (tool === "cutaway") {
+                if (inspect.axes[axis] && inspect.mode !== "full") return;
+                this.change({ axes: Object.fromEntries(AXES.map((a) => [a, a === axis])) });
+                return;
+            }
+            const axes = { ...inspect.axes };
             const on = !axes[axis];
             if (!on && AXES.filter((a) => axes[a]).length <= 1) return;
             axes[axis] = on;
@@ -349,6 +376,94 @@
                 update: (ctx) => {
                     say(node, `Reset: put the ${ctx.cutTool === "crop" ? "crop" : "cut"} back where it starts`
                         + " (the axes stay)");
+                },
+            };
+        }
+
+        /** "Crop to area": the area becomes the crop's x and y, fetched at
+         *  the finest level it allows and framed (inspectState.cropToArea). */
+        toAreaControl() {
+            const node = button("volume-dock-action", { title: "Crop to area", glyph: "expand" });
+            node.addEventListener("click", () => this.cutter.cropToArea?.());
+            return {
+                node,
+                update: () => {
+                    say(node, "Crop to area: draw only the crop, fetched finer, filling the view");
+                },
+            };
+        }
+
+        /** The saved areas (services/savedAreas.js), when the page has them. */
+        saved() {
+            const api = global.PlexoraSavedAreas;
+            const saved = api?.instance;
+            return saved && saved.viewState === this.viewState ? saved : null;
+        }
+
+        /** "Save area": the area, the cut and the camera, kept by name. */
+        saveAreaControl() {
+            const node = button("volume-dock-save", { title: "Save area", glyph: "bookmark", text: "Save area" });
+            node.addEventListener("click", () => this.saved()?.save());
+            return {
+                node,
+                update: () => say(node, "Save area: keep the area, the cut and the camera, to come back to"),
+            };
+        }
+
+        /** The saved areas: a thumbnail and a name each; a click restores,
+         *  × forgets, a double-click on the name renames. */
+        areaListControl() {
+            const node = el("ul", "volume-dock-areas", { "aria-label": "Saved areas" });
+            const rename = (entry, label) => {
+                const input = el("input", "volume-dock-area-rename", { type: "text", value: entry.name,
+                                                                        "aria-label": "Name" });
+                input.maxLength = 64;
+                let done = false;
+                const finish = (keep) => {
+                    if (done) return;
+                    done = true;
+                    if (keep) this.saved()?.rename(entry.id, input.value);
+                    this.paint();
+                };
+                input.addEventListener("keydown", (event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") finish(true);
+                    else if (event.key === "Escape") finish(false);
+                });
+                input.addEventListener("blur", () => finish(true));
+                label.replaceWith(input);
+                input.focus();
+                input.select?.();
+            };
+            return {
+                node,
+                update: () => {
+                    const saved = this.saved();
+                    const list = saved ? saved.list() : [];
+                    const key = JSON.stringify(list.map((entry) => [entry.id, entry.name, Boolean(saved.thumb(entry.id))]));
+                    if (node._key === key) return;
+                    node._key = key;
+                    node.replaceChildren();
+                    for (const entry of list.slice().reverse()) {
+                        const item = el("li", "volume-dock-area");
+                        const open = el("button", "volume-dock-area-open", { type: "button" });
+                        say(open, `Go back to ${entry.name}`);
+                        const url = saved.thumb(entry.id);
+                        const picture = url ? el("img", "volume-dock-area-thumb", { src: url, alt: "" })
+                            : el("span", "volume-dock-area-thumb is-empty", { "aria-hidden": "true" });
+                        const label = el("span", "volume-dock-area-name", { text: entry.name });
+                        open.append(picture, label);
+                        open.addEventListener("click", () => saved.restore(entry.id));
+                        open.addEventListener("dblclick", (event) => {
+                            event.preventDefault();
+                            rename(entry, label);
+                        });
+                        const remove = button("volume-dock-area-remove", { title: `Forget ${entry.name}`,
+                                                                            glyph: "xmark" });
+                        remove.addEventListener("click", () => saved.remove(entry.id));
+                        item.append(open, remove);
+                        node.appendChild(item);
+                    }
                 },
             };
         }

@@ -534,10 +534,18 @@
                     + "or press 0, for the three-quarter view. With the pointer over the 3-D "
                     + "view, X, Y or Z turns the stack about that axis of the image only; the "
                     + "same key or Esc lets go.",
+                    "The strip's Area button arms a square of a fixed size (300 µm by "
+                    + "default, under the gear): a click on the image, or V, opens that part "
+                    + "of the stack in 3-D at the finest level it allows. In 3-D, Shift+drag "
+                    + "slides it across the tissue and any cut moves with it; Alt+drag or the "
+                    + "middle button pans. V goes back to the plane, the area outlined there.",
                 ],
                 shortcuts: [
                     { keys: ["]", "["], label: "Next / previous plane (with Shift, ten)" },
                     { keys: ["Shift", "Wheel"], label: "Scrub through the planes, over the image" },
+                    { keys: ["V"], label: "To 3-D and back (Area armed: the square under the pointer)" },
+                    { keys: ["Shift", "Drag"], label: "3-D: slide the area; the cut moves with it" },
+                    { keys: ["Alt", "Drag"], label: "3-D: pan the camera (or the middle button)" },
                     { keys: ["X", "Y", "Z"], label: "3-D, pointer over it: turn about that image axis only; again to let go" },
                     { keys: ["Esc"], label: "3-D: stop a turn, or let go of the axis" },
                     { keys: ["S"], label: "3-D, pointer over it: Surface Studio" },

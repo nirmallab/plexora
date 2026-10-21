@@ -315,8 +315,8 @@ const source = box.PlexoraVolumeRenderer.fragmentSource(2, false, true);
 check("the atlas program marches by its own t and leaves empty bricks",
       /float t = t0 \+ jitter \* stepLength;/.test(source) && /t \+= stepLength;/.test(source)
       && /hitBox\(A, B, cLo, cHi\)/.test(source) && /locate\(full,/.test(source));
-check("and samples the atlas where the walk found a brick",
-      /cState == 1 \? texture\(u_atlas1, a\)\.r : texture\(u_volume1, p\)\.r/.test(source));
+check("and samples the atlas where the walk found a brick, the base (through the frame) elsewhere",
+      /cState == 1 \? texture\(u_atlas1, a\)\.r : baseRead\(u_volume1, p\)/.test(source));
 const plain = box.PlexoraVolumeRenderer.fragmentSource(2, false, false);
 check("the plain program is unchanged by it", !/u_pages/.test(plain) && /for \(int i = 0; i < 4096; i\+\+\)/.test(plain));
 

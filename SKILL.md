@@ -6053,11 +6053,11 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   volume mode), and `/volume/<ds>/info`'s `table_z`.
   The fade has `tests/js/channel_fade_probe.mjs` wrapped by
   `test_channel_fade_client.py`; `section_panes_probe.mjs` and
-  `volume_renderer_probe.mjs` carry its hook checks (floors 48 and 70 in the
+  `volume_renderer_probe.mjs` carry its hook checks (floors 48 and 104 in the
   `test_viewer_3d_client.py` wrapper).
   The depth controls have `tests/js/view_controls_probe.mjs` and
   `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`,
-  whose floors are plane_swap 40, viewer_motion 111, depth_strip 36. On
+  whose floors are plane_swap 40, viewer_motion 111, depth_strip 39. On
   Windows two of `nav_revision_probe.mjs`'s 35 checks fail on timer
   resolution ("but only up to its hold", "a scrub of thirty steps is a few
   revisions"), so `test_every_surface_draws_one_navigation_revision` fails
@@ -6084,16 +6084,25 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
 **Slice & Clip** (branch `feature/slice-clip`; the design, the controls and
 the testing notes are `docs/internal/3d/SLICE_CLIP.md`, the controls matrix
 `docs/internal/3d/VIEW_CONTROLS.md`). The 3-D view is cut open with one of
-two tools — Cut (`inspect.mode` `"cutaway"`) or Crop (`"crop"`); `"full"` is
-the whole stack — along any of X, Y and Z. The section and slab cut modes
+two tools — Cut (`inspect.mode` `"cutaway"`, along ONE of X, Y or Z) or Crop
+(`"crop"`, along any of them); `"full"` is the whole area. The section and slab cut modes
 were removed on 2026-10-13, with "Panes follow the sections", the panes'
 pinned crosshair and cut guides, and the view state's `section` position; a
-cut saved as a section or slab opens as the whole stack.
+cut saved as a section or slab opens as the whole stack. On 2026-10-21
+(branch `feature/area-tool`, SLICE_CLIP.md "The area") the 3-D view gained an
+**area** — the part of the stack it loads and frames, the cut deciding what is
+drawn inside it, so moving the area downloads and changing a cut never does —
+and a Cut became one axis: the corner a Cut over several axes took out
+(`hole`, `u_hole_*`) is gone everywhere, and a Cut saved over two or three
+axes opens on its first, x before y before z.
 
 - Client: `services/inspectGeometry.js` (`PlexoraInspectGeometry`, pure
   maths: `resolve(inspect, dims)`/`toTexture`/`clean`/`describe(inspect,
   dims, space)`, in image units, plane k spanning [k, k+1); `TOOLS`,
-  `TOOL_AXES`, `CUT` `{none: 0, faces: 1}`); every consumer asks this one
+  `TOOL_AXES`, `CUT` `{none: 0, faces: 1}`; for the area `dims(info, depth,
+  area)`, `cleanArea`, `areaCovered`, `squareAt`, `inside`, `whole` (the area
+  or the stack, which `clean` clamps every cut position to), `shift` (the cut
+  moved by the area's move), `cleanSaved`, `SAVED_MAX` 50); every consumer asks this one
   module. `services/inspectState.js` (`PlexoraInspectState`;
   `window.PlexoraInspect` built by `main.js` on a z-stack) is the only way a
   control changes the cut: `preview` (redrawn from uniforms, nothing saved,
@@ -6112,51 +6121,96 @@ cut saved as a section or slab opens as the whole stack.
   dimmed) and only › / Esc / × put it away; a panel edit while hidden shows
   the cut again (`change()`)) and `views/volumeHandles.js` (`PlexoraVolumeHandles`, SVG
   grips on a crop's faces and body or a cutaway's cut, which never turn the
-  camera). `index.html` loads inspectGeometry before `viewState.js` (which
-  repairs `inspect` with it), inspectState after it, and the panel and
-  handles after `volumeRenderer.js`. `sectionPanes.js` draws nothing of the
+  camera). `views/areaTool.js` (`window.PlexoraAreaTool`, attached by
+  `main.js` on a z-stack the 3-D view can draw): the strip's Area button
+  (`tool.area`, plane and projection only) arms a dashed square of the viewer
+  pref `area` that follows the pointer; a click, or V with the pointer on the
+  image, places it as ONE `viewState.enterVolume({area})`.
+  `services/savedAreas.js` (`window.PlexoraSavedAreas`): the area, the cut and
+  the camera under a name, restored in one change; thumbnails are this page's
+  only, never saved. Keys: V toggles 2-D and 3-D on any z-stack
+  (`depthStrip.onKey` → `toggleVolume`), yielding to the ROI tool (whose V is
+  its own), typing and open dialogs; in 3-D Shift+drag slides the area under a
+  fixed frame and Alt+drag or the middle button pans (Shift+drag pans when
+  there is no area). `index.html` loads inspectGeometry before `viewState.js` (which
+  repairs `inspect` with it), inspectState after it, the panel and
+  handles after `volumeRenderer.js`, and areaTool then savedAreas after them,
+  before `main.js`. `sectionPanes.js` draws nothing of the
   3-D cut (the 2-D panes and the Sections button stay).
 - View state: `inspect` (`mode` full/cutaway/crop; `tool`, the tool last
   chosen, kept while off; `axes`, the current tool's; `axesBy`, each tool's
-  own, Cut starting on X and Crop on X/Y/Z; `crop`, `cutaway`, `face`) and
-  `volume.interpolation`; there is no `section` any more.
+  own, Cut starting on X and Crop on X/Y/Z, a Cut's exactly one; `crop`, `cutaway`, `face`),
+  `volume.interpolation`, `volume.area` (`{x, y, width, height}` in
+  full-resolution pixels, or null for the whole stack) and `volume.saved`
+  (`[{id, name, area, inspect, camera}]`, at most 50); there is no `section` any more.
   `viewState._migrate` opens a 3-D view saved with a narrowed projection
-  range as a Z crop. Server: `routes/volume_routes.py` `normalize_inspect`
-  (with `tool`/`axesBy`), `INSPECT_MODES`, `INSPECT_TOOLS`,
-  `INSPECT_TOOL_AXES`, `INTERPOLATIONS`, and the viewer pref `handles`
-  (`normalize_handles`).
+  range as a Z crop. `enterVolume(volume)` (from a fixed projection the cut
+  becomes a Z crop of its planes, `_bandCrop`), `toggleVolume()` (back to the
+  projection when entered from one), and `_areaShift`: a `set` with a new
+  `volume.area` and no `inspect` shifts the cut with it, while a patch that
+  says where the cut is (a restore, a Video Studio frame, Crop to area, an
+  undo) is never shifted. Server: `routes/volume_routes.py` `normalize_inspect`
+  (with `tool`/`axesBy`; `axes_of(..., single=True)` for a cutaway keeps the
+  first axis on), `_area`/`_saved_areas` (`SAVED_AREAS_MAX` 50) in
+  `normalize_view_state`, `INSPECT_MODES`, `INSPECT_TOOLS`,
+  `INSPECT_TOOL_AXES`, `INTERPOLATIONS`, and the viewer prefs `handles`
+  (`normalize_handles`) and `area` (`normalize_area`, `AREA_DEFAULTS`
+  `{um: 300, px: 1024}`: the square's side in microns where the image states
+  its spacing, in pixels where it does not).
 - Renderer: `volumeRenderer.js`'s `u_clip_z`/`u_clip_xy` are gone; the box is
-  `u_box_lo/hi`, plus the cutaway-corner `u_hole_*` and `u_cut` (1: cut faces
+  `u_box_lo/hi` and `u_cut` (1: cut faces
   solid; `cutSource`, `sampleAt`, `cutFace`), set by `cutUniforms()`/
   `bindCut(uniform, cut)` from `inspectNow()`; `resolved()` and
-  `addDrawListener()` are new. `surfaceRenderer.js`'s `volumeFragment` gained
+  `addDrawListener()` are new. The area: `setArea`, `areaCovered()`,
+  `frameCovered()` (the area the view frames, which `toTexture` is relative
+  to), `texTransform` → `u_tex_lo`/`u_tex_span` (GLSL `baseRead`: where the
+  frame's [0,1] lies in the base textures — identity for the area's own
+  level-0 texture, the old area's texture while a new one loads), `sameSize`
+  (a same-size slide keeps the level, so its atlas and bricks stay), and
+  `entryFor` standing the last-drawn texture in for any area, because a slide
+  must never show a blank frame; `areaOnScreen()` is gone (3-D with no area
+  draws the whole stack). Shift+drag calls `onSlide` at most every
+  `SLIDE_MS` (40 ms), the last on release, into `inspectState.slideArea`, one
+  undo entry with the cut it carried. `surfaceRenderer.js`'s `volumeFragment` gained
   one swap (a cut face in front of or behind the nearest translucent
-  surface), and its mesh shader is cut by the same box and corner, with flat
+  surface), and its mesh shader is cut by the same box, with flat
   caps on back faces. `volumeAtlas.js` plans only the bricks the cut keeps
   (`view.box`).
-- Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`; FLAGS
-  `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`; the strip's
-  `tool.cutaway`/`tool.crop` (group `cut`) and the panel's `dock` entries
-  `cut.axes` (config `{flip}`), `cut.face`, `cut.handles`, `cut.reset`,
+- Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`, `savedAreas`; FLAGS
+  `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`, `crop.narrower`,
+  `areas.saved`; the strip's `tool.area` (plane and slab) and
+  `tool.cutaway`/`tool.crop` (group `cut`), the popover's `area.size`, and the panel's `dock` entries
+  `cut.axes` (config `{flip, single}`: a Cut's chips are a radio), `cut.toArea`
+  ("Crop to area", while `crop.narrower`), `area.save`/`area.list` (group
+  `areas`, placed at 235), `cut.face`, `cut.handles`, `cut.reset`,
   `cut.history`, `cut.interpolation`, `cut.handleOpacity`, `cut.toggle`
   (group `toggle`), shown in 3-D whether the cut is on or hidden (no `when`;
   they follow `ctx.cutTool`, the live tool or else the one last chosen). The
   rail, band, thumb and hover are plane/slab only. `transition()` no longer rewrites the slab on entering
   3-D.
 - Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`: `mode`
-  full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only;
-  `agentBridge.js` `set_inspect`); `viewer_set_z` takes `mode: "keep"`;
-  `describeVolumeView` reports inspect/cut/camera/show/box. Figure
+  full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only; a cutaway named
+  with more than one axis is refused, here and in
+  `agentBridge.js` `set_inspect`); `viewer_set_volume_mode` takes `area`
+  (`{x, y, width, height}`, full-resolution pixels) or `clear_area`, not both;
+  `viewer_set_z` takes `mode: "keep"`;
+  `describeVolumeView` reports inspect/cut/camera/show/area/saved, with `box`
+  kept as `area`'s old name for one release. Figure
   Builder: `export.volume_cut(panel)` and `cut` in a 3-D panel's report.
   Video Studio frames carry `view.inspect` (bounded by the schema); a frame
-  cut as a section or slab plays the whole stack.
-- Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles}_probe.mjs`
+  cut as a section or slab plays the whole stack. A scene's `box` is the view
+  state's `volume.area`, applied in the same patch as the frame's `inspect`,
+  so the cut is not moved with the area a second time.
+- Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles,area_tool}_probe.mjs`
   (wrapped in `tests/test_view_state_client.py`, with the script-order and
-  `node --check` tests), cut checks in the view_state, volume_renderer,
+  `node --check` tests; floors view_state 70, inspect_geometry 73,
+  volume_dock 67, volume_handles 22, area_tool 22), cut and area checks in the view_state, volume_renderer,
   view_controls, depth_strip, section_panes (nothing of the 3-D cut left in
-  the panes) and video_studio_scene probes;
+  the panes) and video_studio_scene probes (`surface_renderer`'s floor is 29 in
+  `test_viewer_3d_client.py`);
   `test_volume_routes`, `test_agent_viewer_api`, `test_figure_builder_volume`,
-  `test_video_schema`. Bench scenario `clip` in `tools/bench3d`.
+  `test_video_schema`. Bench scenarios `clip` and `area_slide` (an area slid
+  as Shift+drag does; black and flash frames, landing time, GPU bytes) in `tools/bench3d`.
 
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
 licence split, renderer passes, measurements, merge notes — is
@@ -9251,6 +9305,16 @@ in **5.6 s**.
   3-D view and entering 3-D no longer rewrites it; the 3-D view's planes are
   `inspect`'s (a Z crop or a Z cutaway), and `]`/`[` or Shift+wheel in 3-D
   move that cut along Z (`viewState.step`).
+- **The area is what the 3-D view loads; the cut is what it draws inside
+  it.** Moving `volume.area` downloads and changing a cut never does, and
+  every cut position lies inside the area (`inspectGeometry.whole`). A new
+  area with no `inspect` in the same patch moves the cut with it
+  (`viewState._areaShift`); a patch that names the cut is never shifted,
+  because a restore, a Video Studio frame or an undo already says where the
+  cut is and shifting it again would move it twice. A Cut is one axis — the
+  multi-axis corner (`hole`) is gone from the renderers, the handles and the
+  geometry, the server's `normalize_inspect` keeps a cutaway's first axis,
+  and the agent refuses a cutaway over more than one.
 - **The plane fade's ghost is opaque.** OSD's canvas is transparent wherever
   a channel is dim (the ground is CSS), so a ghost copied from it alone let
   the next plane show through and the sum overshot both — the brightness

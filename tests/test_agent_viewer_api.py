@@ -418,12 +418,11 @@ def test_the_3d_view_is_cut_in_image_units(served):
         assert whole["ok"], whole
         assert [c for c in tab.seen if c["type"] == "set_inspect"][-1]["arguments"] == {"mode": "full"}
         opened = invoke(session, "viewer_set_inspect",
-                        {"mode": "cutaway", "axes": ["x", "y"],
-                         "cutaway": {"x": {"at": 800}, "y": {"at": 300, "keep": "lo"}}},
+                        {"mode": "cutaway", "axes": ["y"], "cutaway": {"y": {"at": 300, "keep": "lo"}}},
                         link=served)
         assert opened["ok"], opened
         sent = [c for c in tab.seen if c["type"] == "set_inspect"][-1]["arguments"]
-        assert sent["cutaway"] == {"x": {"at": 800.0, "keep": "hi"}, "y": {"at": 300.0, "keep": "lo"}}
+        assert sent["axes"] == ["y"] and sent["cutaway"] == {"y": {"at": 300.0, "keep": "lo"}}
 
 
 def test_a_cut_that_cannot_be_is_refused_before_the_tab(served):
@@ -442,7 +441,36 @@ def test_a_cut_that_cannot_be_is_refused_before_the_tab(served):
                          {"context": 0.2}, {"z": 3}, {"section_x": 10}, {"section_y": 10}):
             refused = invoke(session, "viewer_set_inspect", {"mode": "crop", **argument}, link=served)
             assert refused["error"]["code"] == "invalid_input", argument
+        # A cutaway is along one axis; a crop along any.
+        corner = invoke(session, "viewer_set_inspect", {"mode": "cutaway", "axes": ["x", "y"]}, link=served)
+        assert corner["error"]["code"] == "invalid_input"
+        assert "one axis" in corner["error"]["message"]
         assert not any(c["type"] == "set_inspect" for c in tab.seen)
+
+
+def test_the_3d_view_can_draw_one_area(served):
+    """`viewer_set_volume_mode` with an area draws that part of the image
+    (the Area tool's square): forwarded as image pixels; `clear_area` goes back
+    to the whole stack; an area of nothing is refused before the tab."""
+    session = AgentSession()
+    with FakeTab() as tab:
+        placed = invoke(session, "viewer_set_volume_mode",
+                        {"mode": "volume", "area": {"x": 100, "y": 50, "width": 300, "height": 300}},
+                        link=served)
+        assert placed["ok"], placed
+        sent = [c for c in tab.seen if c["type"] == "set_volume_mode"][-1]["arguments"]
+        assert sent["area"] == {"x": 100.0, "y": 50.0, "width": 300.0, "height": 300.0}
+        cleared = invoke(session, "viewer_set_volume_mode", {"mode": "volume", "clear_area": True}, link=served)
+        assert cleared["ok"], cleared
+        assert [c for c in tab.seen if c["type"] == "set_volume_mode"][-1]["arguments"]["area"] is None
+        seen = len(tab.seen)
+        flat = invoke(session, "viewer_set_volume_mode",
+                      {"area": {"x": 0, "y": 0, "width": 0, "height": 10}}, link=served)
+        assert flat["error"]["code"] == "invalid_input"
+        both = invoke(session, "viewer_set_volume_mode",
+                      {"area": {"x": 0, "y": 0, "width": 5, "height": 5}, "clear_area": True}, link=served)
+        assert both["error"]["code"] == "invalid_input"
+        assert len(tab.seen) == seen
 
 
 def test_a_z_step_can_stay_in_the_3d_view(served):

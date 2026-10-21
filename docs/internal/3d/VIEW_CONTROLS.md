@@ -52,8 +52,8 @@ PlexoraViewControls.register({
 - **`config(ctx)`** says what a control *does* in a mode, beside whether it shows. Play's
   `kind` is `planes`, `band` (slide a fixed projection's range), `frames` or `rotate`. The
   rail's `{plane, band, bandMove}` says whether a press picks a plane, whether the band
-  ends resize and whether the band moves. The cut panel's `cut.axes` says `{flip}`: true
-  for a Cut, whose axes each flip the side they keep.
+  ends resize and whether the band moves. The cut panel's `cut.axes` says `{flip, single}`: both
+  true for a Cut, which is along one axis (a radio) and flips the side it keeps.
 
 ## Resolving
 
@@ -80,6 +80,7 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Control | P | S | F | V | Needs |
 |---|---|---|---|---|---|
 | Mode buttons plane / projection / 3-D | ✓ | ✓ | ✓ | ✓ | depth, not colour; 3-D also WebGL2 |
+| Area (`tool.area`: a square to place, opened in 3-D; V) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2 |
 | Sections | ✓ | ✓ | ✓ | – | the panes exist, not colour |
 | Cut, Crop (open the cut panel) | – | – | – | ✓ | depth, cut |
 | Play | planes | slides the range | planes | **turns the stack** | depth or frames (single plane: frames) |
@@ -93,6 +94,7 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Popover: Percentile | – | when pct | when pct | – | |
 | Popover: Planes z0–z1, Follow | – | ✓ | ✓ | – | |
 | Popover: Render (MIP / Additive) | – | – | – | ✓ | WebGL2 |
+| Popover: Area (`area.size`: the square's side, µm or px) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2, prefs |
 | Popover: Motion | ✓ | ✓ | ✓ | ✓ | depth or frames, prefs |
 | Popover: Turn (axis and direction), Speed | – | – | – | ✓ | prefs |
 | Popover: Grid (on, where, labels); Lines (spacing, strength) while on | – | – | – | ✓ | the 3-D view's grid |
@@ -121,13 +123,15 @@ tool's (`cutTool`: the tool cutting, or else the one last chosen):
 
 | Control | Cut | Crop | Needs |
 |---|---|---|---|
-| Axes X / Y / Z (the last stays on) | ✓, X at first | ✓, X Y Z at first | cut |
-| Flip, beside each axis cut | ✓ | – | |
+| Axes X / Y / Z | ONE (a radio), X at first | any (toggles; the last stays on), X Y Z at first | cut |
+| Flip, beside the axis cut | ✓ | – | |
 | Solid cut faces | ✓ | ✓ | volumeDrawn |
 | Handles shown (eye) | ✓ | ✓ | prefs |
 | Reset, Undo (Cmd/Ctrl+Z; Shift redoes) | ✓ | ✓ | |
+| Crop to area (`cut.toArea`: the area becomes the crop) | – | while narrower than the area (`crop.narrower`) | |
 | Voxels: smooth or blocks | ✓ | ✓ | volumeDrawn |
 | Handles' strength | ✓ | ✓ | prefs |
+| Save area; the saved areas once there is one (`area.save`, `area.list`) | ✓ | ✓ | `savedAreas` |
 | `O` Show/Hide (the cut hidden or shown, the panel left out) | ✓ | ✓ | |
 
 While the cut is hidden the panel's axes and actions are dimmed (`is-off`) and the `O` key cap

@@ -91,7 +91,7 @@ def test_the_3d_view_keeps_its_textures():
     picture fades in, at once with motion off or for a capture; the reference
     grid's steps, units, numbers on screen, preference and uniforms
     (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 70)
+    _passed(_run("volume_renderer_probe.mjs"), 104)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
@@ -113,7 +113,7 @@ def test_surfaces_upload_once_and_composite_with_the_volume():
     uniforms, order-independent glass with one blend state (sorted without
     float targets), the ray caster's surface variant in every variant,
     picking and unprojection (tests/js/surface_renderer_probe.mjs)."""
-    _passed(_run("surface_renderer_probe.mjs"), 28)
+    _passed(_run("surface_renderer_probe.mjs"), 29)
 
 
 def test_quick_surface_previews_debounced_and_posts_raw_units():

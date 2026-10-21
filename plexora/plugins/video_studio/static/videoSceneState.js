@@ -161,7 +161,9 @@
             view,
             viewport: captureViewport(env),
             camera3d: captureCamera(env),
-            box: renderer?.box ? { ...renderer.box } : null,
+            // The area the 3-D view draws (the view state's `volume.area`;
+            // null for the whole stack), under the scene's old name.
+            box: vs?.get?.()?.volume?.area ? { ...vs.get().volume.area } : null,
             channels,
             hd_mode: Boolean(env.sidebar?.isHdMode?.()),
             cell_layers: cellLayers,
@@ -208,8 +210,13 @@
 
     // -- apply ------------------------------------------------------------------
 
-    /** The viewState patch for a frame's view, or null when nothing differs. */
-    function viewPatch(env, view) {
+    /**
+     * The viewState patch for a frame's view (and, in 3-D, its area `box`),
+     * or null when nothing differs. A new area goes with the frame's cut in
+     * the same patch: the cut then says where it is, rather than being moved
+     * with the area a second time (viewState.set).
+     */
+    function viewPatch(env, view, box = undefined) {
         const vs = env.vs;
         if (!vs) return null;
         const current = vs.get();
@@ -235,24 +242,26 @@
         if (view.inspect && JSON.stringify(current.inspect || null) !== JSON.stringify(view.inspect)) {
             patch.inspect = view.inspect;
         }
+        if (mode === "volume" && box !== undefined
+                && JSON.stringify(current.volume?.area || null) !== JSON.stringify(box || null)) {
+            patch.volume = { ...(patch.volume || {}), area: box ? { ...box } : null };
+            if (view.inspect) patch.inspect = view.inspect;
+        }
         return Object.keys(patch).length ? patch : null;
     }
 
-    function applyView(env, view) {
-        const patch = viewPatch(env, view);
+    function applyView(env, view, box = undefined) {
+        const patch = viewPatch(env, view, box);
         if (!patch) return false;
         env.vs.set(patch, { save: false });
         return true;
     }
 
-    /** The 3-D camera onto the renderer. True when anything changed. */
-    function applyCamera(env, camera, box) {
+    /** The 3-D camera onto the renderer. True when anything changed. (The
+     *  area is the view state's, set with the view: applyView.) */
+    function applyCamera(env, camera) {
         const renderer = env.renderer;
         if (!renderer || !camera) return false;
-        if (box !== undefined && JSON.stringify(renderer.box || null) !== JSON.stringify(box || null)) {
-            renderer.box = box ? { ...box } : null;
-            renderer.refresh?.();
-        }
         const c = renderer.camera;
         const same = c.dist === camera.dist && c.panX === camera.pan[0] && c.panY === camera.pan[1]
             && c.q.every((v, i) => v === camera.q[i]);
@@ -390,11 +399,11 @@
     }
 
     async function apply(env, state, { aspect = 16 / 9, settle = true } = {}) {
-        applyView(env, state.view);
+        applyView(env, state.view, state.box);
         if (settle && env.vs) await env.vs.settled();
         const volume = state.view.mode === "volume";
         if (volume) {
-            applyCamera(env, state.camera3d, state.box === undefined ? undefined : state.box);
+            applyCamera(env, state.camera3d);
             applyClip(env, state.view.clip, state.view);
         } else if (state.viewport) applyViewport(env, state.viewport, aspect);
         const missingChannels = applyChannels(env, state.channels);
@@ -406,7 +415,7 @@
      *  applied when the renderer already exists (it is built by the view's
      *  revision the first time volume mode is entered). */
     function applyNow(env, state, { aspect = 16 / 9 } = {}) {
-        applyView(env, state.view);
+        applyView(env, state.view, state.box);
         if (state.view.mode === "volume") {
             applyCamera(env, state.camera3d);
             applyClip(env, state.view.clip, state.view);

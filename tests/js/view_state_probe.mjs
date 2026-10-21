@@ -5,7 +5,10 @@
  * cause of: a planar image must get no view at all (every 2-D tile address
  * unchanged); a scrub must not queue one tile rebuild per plane; a slab that
  * follows z must keep its thickness at the ends of the stack; the URL wins
- * over what was saved; and the badge must say "MIP" for a projection.
+ * over what was saved; and the badge must say "MIP" for a projection. The
+ * 3-D view's area: cleaned to the image, the cut kept inside it and moved
+ * with it (unless the change says where the cut is), V's way into 3-D and
+ * back, and the areas saved to come back to.
  */
 
 import { readFileSync } from "node:fs";
@@ -256,6 +259,70 @@ function check(condition, message) {
     check(slab.t === 2 && slab.slab.z0 === 4 && slab.slab.z1 === 19, "a slab token, reordered");
     check(parse("z3-8p95").slab.op === "pct" && parse("z3-8p95").slab.q === 95, "a percentile");
     check(parse("nonsense") === null && parse("") === null, "anything else is not a view");
+}
+
+// -- the 3-D view's area ---------------------------------------------------------
+{
+    const puts = [];
+    const vs = new ViewState("vol", { saveDelay: 5, fetchImpl: fakeFetch({
+        "volume/vol/info": VOLUME, "view_state/vol": {} }, puts) });
+    await vs.load({ search: "" });
+    check(vs.get().volume.area === null, "no area: the 3-D view draws the whole stack");
+    const key = vs.revisionKey();
+    vs.set({ volume: { area: { x: 1900.4, y: -10, width: 300, height: 200 } } });
+    check(JSON.stringify(vs.get().volume.area) === JSON.stringify({ x: 1900, y: 0, width: 100, height: 190 }),
+          `an area is cut to the image and rounded out (${JSON.stringify(vs.get().volume.area)})`);
+    check(vs.revisionKey() === key, "the area is no revision of the tiles");
+    vs.set({ volume: { area: { x: 0, y: 0, width: 0, height: 10 } } });
+    check(vs.get().volume.area === null, "an area of nothing is no area");
+
+    vs.set({ volume: { area: { x: 100, y: 100, width: 400, height: 400 } },
+             inspect: { mode: "crop", axes: { x: true, y: true, z: false }, crop: { x: [200, 300], y: [150, 250] },
+                        cutaway: { x: { at: 250 } } } });
+    check(JSON.stringify(vs.get().inspect.crop.x) === "[200,300]", "a crop inside the area is kept as it is");
+    vs.set({ volume: { area: { x: 600, y: 50, width: 400, height: 400 } } });
+    const moved = vs.get().inspect;
+    check(JSON.stringify(moved.crop.x) === "[700,800]" && JSON.stringify(moved.crop.y) === "[100,200]"
+          && moved.cutaway.x.at === 750, `the cut moves with the area (${JSON.stringify(moved.crop)})`);
+    vs.set({ volume: { area: { x: 0, y: 0, width: 400, height: 400 } },
+             inspect: { crop: { x: [10, 20], y: [10, 20] } } });
+    check(JSON.stringify(vs.get().inspect.crop.x) === "[10,20]",
+          "a change that says where the cut is is not moved with the area");
+    vs.set({ volume: { area: null } });
+    check(vs.get().volume.area === null && JSON.stringify(vs.get().inspect.crop.x) === "[10,20]",
+          "back to the whole stack the cut stays where it was");
+    vs.set({ volume: { saved: [{ id: "a", name: "here", area: { x: 0, y: 0, width: 10, height: 10 } },
+                                { id: "b", area: null }] } });
+    check(vs.get().volume.saved.length === 1 && vs.get().volume.saved[0].inspect?.mode === "full",
+          "saved areas are cleaned: one without an area is dropped, its cut repaired");
+    await settle(60);
+    const body = puts.at(-1)?.body;
+    check(body && "area" in body.volume && Array.isArray(body.volume.saved), "the area and the saved areas are saved");
+}
+
+// -- V: to 3-D and back to what it was entered from ------------------------------------
+{
+    const vs = new ViewState("vol", { fetchImpl: fakeFetch({
+        "volume/vol/info": VOLUME, "view_state/vol": {} }) });
+    await vs.load({ search: "" });
+    vs.set({ mode: "slab", slab: { z0: 4, z1: 9, follow: false } });
+    vs.toggleVolume();
+    check(vs.get().mode === "volume", "V enters 3-D");
+    const cut = vs.get().inspect;
+    check(cut.mode === "crop" && cut.axes.z && JSON.stringify(cut.crop.z) === "[4,9]",
+          `from a fixed projection, 3-D is cut to its planes (${JSON.stringify(cut.crop.z)})`);
+    vs.toggleVolume();
+    check(vs.get().mode === "slab", "V again goes back to the projection it came from");
+    vs.set({ mode: "slab", slab: { follow: true } });
+    vs.set({ inspect: { mode: "full" } });
+    vs.toggleVolume();
+    check(vs.get().mode === "volume" && vs.get().inspect.mode === "full", "a following projection is never cut");
+    vs.set({ mode: "plane" });
+    vs.toggleVolume();
+    vs.toggleVolume();
+    check(vs.get().mode === "plane", "from a plane, back to the plane");
+    vs.enterVolume({ area: { x: 10, y: 10, width: 100, height: 100 } });
+    check(vs.get().mode === "volume" && vs.get().volume.area?.width === 100, "the Area tool enters 3-D on its area");
 }
 
 console.log(`view state probe OK (${checks} checks)`);

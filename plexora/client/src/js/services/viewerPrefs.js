@@ -18,6 +18,8 @@
  *               it is turning is never stored: a page never opens mid-motion.
  *     handles   the 3-D view's plane handles (views/volumeHandles.js):
  *               {visible, opacity of their outlines}
+ *     area      the Area tool's square (views/areaTool.js): {um: its side
+ *               where the image states its spacing, px: where it does not}
  *
  * `smoothMotion()` is what every animation asks. It is false when either the
  * user turned motion off here or the system asks for reduced motion
@@ -41,8 +43,26 @@
     //: The 3-D view's plane handles (server/routes/volume_routes.py HANDLES_DEFAULTS).
     const HANDLES = { visible: true, opacity: 0.55 };
     const HANDLE_OPACITY = [0.15, 1];
+    //: The Area tool's square (server/routes/volume_routes.py AREA_DEFAULTS).
+    const AREA = { um: 300, px: 1024 };
+    const AREA_UM = [1, 1e5];
+    const AREA_PX = [16, 65536];
     const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID,
-                       rotate: ROTATE, handles: HANDLES };
+                       rotate: ROTATE, handles: HANDLES, area: AREA };
+
+    /** The Area tool's square, repaired over `base` (the server's
+     *  `normalize_area` keeps the same bounds). */
+    function mergeArea(base, patch) {
+        const out = { ...base };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.um === "number" && Number.isFinite(patch.um)) {
+            out.um = Math.min(AREA_UM[1], Math.max(AREA_UM[0], patch.um));
+        }
+        if (typeof patch.px === "number" && Number.isFinite(patch.px)) {
+            out.px = Math.min(AREA_PX[1], Math.max(AREA_PX[0], Math.round(patch.px)));
+        }
+        return out;
+    }
 
     /** A handles preference, repaired over `base` (the server's
      *  `normalize_handles` keeps the same bounds). */
@@ -158,6 +178,11 @@
             return { ...this.prefs.handles };
         }
 
+        /** The Area tool's square: `{um, px}`. */
+        area() {
+            return { ...(this.prefs.area || AREA) };
+        }
+
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
             if (this._holds > 0) return false;
@@ -193,7 +218,7 @@
          * Change some preferences: `{sections: {xz: 0.3}}`, `{motion: "off"}`,
          * `{grid: {on: true}}` (merged over the grid as it is),
          * `{rotate: {speed: 45}}` (merged over the rotation as it is),
-         * `{handles: {visible: false}}`.
+         * `{handles: {visible: false}}`, `{area: {um: 200}}`.
          * `save: false` while a drag is still moving; the drag's end saves.
          */
         set(patch, { save = true } = {}) {
@@ -205,12 +230,15 @@
                 ? { rotate: { ...(this._pending.rotate || {}), ...(patch.rotate || {}) } } : {};
             const handles = patch.handles || this._pending.handles
                 ? { handles: { ...(this._pending.handles || {}), ...(patch.handles || {}) } } : {};
+            const area = patch.area || this._pending.area
+                ? { area: { ...(this._pending.area || {}), ...(patch.area || {}) } } : {};
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
                 ...grid,
                 ...rotate,
                 ...handles,
+                ...area,
             };
             this._paintRoot();
             this._announce();
@@ -232,6 +260,7 @@
                 grid: mergeGrid(this.prefs.grid || GRID, patch?.grid),
                 rotate: mergeRotate(this.prefs.rotate || ROTATE, patch?.rotate),
                 handles: mergeHandles(this.prefs.handles || HANDLES, patch?.handles),
+                area: mergeArea(this.prefs.area || AREA, patch?.area),
             };
         }
 

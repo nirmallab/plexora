@@ -4570,7 +4570,10 @@ html.plx-moving-control * {
 .volume-dock-head-button,
 .volume-dock-chip,
 .volume-dock-flip,
-.volume-dock-action {
+.volume-dock-action,
+.volume-dock-save,
+.volume-dock-area-open,
+.volume-dock-area-remove {
     align-items: center;
     background: transparent;
     border: 1px solid transparent;
@@ -4594,7 +4597,10 @@ html.plx-moving-control * {
 
 .volume-dock-head-button:hover,
 .volume-dock-flip:hover:not(:disabled),
-.volume-dock-action:hover:not(:disabled) {
+.volume-dock-action:hover:not(:disabled),
+.volume-dock-save:hover,
+.volume-dock-area-open:hover,
+.volume-dock-area-remove:hover {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
@@ -4686,6 +4692,11 @@ html.plx-moving-control * {
     grid-template-columns: repeat(2, 1fr);
 }
 
+/* "Crop to area" makes five: three across, still two rows beside the axes. */
+.volume-dock-actions:has(> [data-control="cut.toArea"]:not([hidden])) {
+    grid-template-columns: repeat(3, 1fr);
+}
+
 .volume-dock-action {
     font-size: 13px;
     height: 100%;
@@ -4730,6 +4741,83 @@ html.plx-moving-control * {
 
 .volume-dock-slider {
     flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Save area, and the areas saved above Show/Hide: a thumbnail and a name
+   each, the newest first (services/savedAreas.js). */
+.volume-dock-save {
+    align-items: center;
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    display: flex;
+    font-size: 11px;
+    gap: 6px;
+    height: 26px;
+    justify-content: center;
+    width: 100%;
+}
+
+.volume-dock-areas {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    list-style: none;
+    margin: 0;
+    max-height: 168px;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.volume-dock-area {
+    align-items: center;
+    display: flex;
+    gap: 2px;
+}
+
+.volume-dock-area-open {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    justify-content: flex-start;
+    min-width: 0;
+    padding: 2px;
+    text-align: left;
+}
+
+.volume-dock-area-thumb {
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    flex: 0 0 auto;
+    height: 36px;
+    object-fit: cover;
+    width: 48px;
+}
+
+.volume-dock-area-name {
+    font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.volume-dock-area-remove {
+    flex: 0 0 20px;
+    font-size: 10px;
+    height: 20px;
+}
+
+.volume-dock-area-rename {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-family: inherit;
+    font-size: 11px;
+    height: 22px;
     min-width: 0;
 }
 

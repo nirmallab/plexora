@@ -56,7 +56,7 @@
             camera: renderer?.camera ? { q: Array.from(renderer.camera.q), dist: renderer.camera.dist,
                                          panX: renderer.camera.panX, panY: renderer.camera.panY } : null,
             clip: renderer ? (renderer.clipXY ? JSON.parse(JSON.stringify(renderer.clipXY)) : null) : undefined,
-            box: renderer ? (renderer.box ? { ...renderer.box } : null) : undefined,
+            // The 3-D view's area rides in `view` (its `volume.area`).
             lock: renderer?.lock ?? null,
             hd: Boolean(sidebar?.isHdMode?.()),
             slots,
@@ -109,8 +109,11 @@
         await step("view", async () => {
             if (env.vs && saved.view) {
                 const s = saved.view;
+                // The cut with the area: put back where it was, not moved
+                // with the area (viewState.set).
                 env.vs.set({ t: s.t, z: s.z, mode: s.mode, layout: s.layout, slab: s.slab,
-                             volume: s.volume }, { save: false });
+                             volume: s.volume, ...(s.inspect ? { inspect: s.inspect } : {}) },
+                           { save: false });
                 await env.vs.settled();
             }
         });
@@ -144,11 +147,6 @@
             renderer.zoomTarget = null;
             Object.assign(renderer.camera, { q: saved.camera.q.slice(), dist: saved.camera.dist,
                                              panX: saved.camera.panX, panY: saved.camera.panY });
-            if (saved.box !== undefined
-                    && JSON.stringify(renderer.box || null) !== JSON.stringify(saved.box || null)) {
-                renderer.box = saved.box;
-                renderer.refresh?.();
-            }
             if (saved.clip !== undefined) renderer.setClip?.(saved.clip);
             renderer.invalidate?.();
         });

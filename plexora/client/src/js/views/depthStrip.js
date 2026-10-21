@@ -6,6 +6,7 @@
  * why). On a z-stack it is a narrow column on the right edge of the canvas:
  *
  *     [plane] [projection] [3-D]   what the picture is
+ *     [area]                       a square to place, opened in 3-D
  *     [sections]                   XZ and YZ beside the plane
  *     [cut] [crop]                 in 3-D: cut the stack open
  *     [play]                       step through the planes; in 3-D, turn it
@@ -32,8 +33,10 @@
  * Keys, only on a volume and never while typing: `]` / `[` one plane (in 3-D
  * and in a fixed projection, the range one plane), Shift ten, Alt to the last
  * / first; `.` / `,` one frame. Shift+wheel over the image does what `]` / `[`
- * do. No bare letter of the strip's own: the cut panel's `O` turns a cut
- * on and off (views/volumeDock.js).
+ * do. One bare letter: `V` goes to 3-D and back (with the Area tool armed
+ * and the pointer on the image, it places the square there first;
+ * views/areaTool.js) -- except while the ROI tool, whose V is its own, is
+ * open. The cut panel's `O` turns a cut on and off (views/volumeDock.js).
  */
 (function (global) {
     "use strict";
@@ -217,6 +220,17 @@
                 this.nodes[`mode.${mode}`] = button;
             }
 
+            // On a plane or a projection, the Area tool: a square that opens
+            // as 3-D where it is placed (views/areaTool.js).
+            const areaWords = "Area: place a square and see it in 3-D (V)";
+            this.areaButton = el("button", "depth-strip-button", {
+                type: "button", title: areaWords, "aria-label": areaWords, "aria-pressed": "false",
+                "data-area-tool": "",
+            });
+            this.areaButton.appendChild(icon("object-group"));
+            this.areaButton.addEventListener("click", () => global.PlexoraAreaTool?.toggle?.());
+            this.nodes["tool.area"] = this.areaButton;
+
             // In 3-D, the two ways to cut the stack open; each opens the cut
             // panel beside the strip (views/volumeDock.js), which also owns
             // their key.
@@ -273,7 +287,8 @@
             });
             this.nodes.cog = this.cog;
 
-            root.append(this.modes, this.cutTools, this.sectionsButton, this.playButton, this.rail, this.cog);
+            root.append(this.modes, this.areaButton, this.cutTools, this.sectionsButton, this.playButton,
+                        this.rail, this.cog);
             // A time series: which frame, and a step either way. Below the
             // rail because z is what the rail moves; `.` and `,` do the same
             // from the keyboard.
@@ -424,6 +439,9 @@
                 node.classList.toggle("is-active", on);
                 node.setAttribute("aria-pressed", on ? "true" : "false");
             }
+            const areaOn = Boolean(global.PlexoraAreaTool?.armed?.());
+            this.areaButton?.classList.toggle("is-active", areaOn);
+            this.areaButton?.setAttribute("aria-pressed", areaOn ? "true" : "false");
             const sectionsOn = state.layout === "sections" && state.mode !== "volume";
             this.sectionsButton?.classList.toggle("is-active", sectionsOn);
             this.sectionsButton?.setAttribute("aria-pressed", sectionsOn ? "true" : "false");
@@ -709,7 +727,28 @@
                 event.preventDefault();
                 this.stepKey = event.code;
                 vs.stepTime(event.code === "Period" ? 1 : -1);
+            } else if (event.code === "KeyV" && !event.altKey && !event.shiftKey && !event.repeat) {
+                this.toggleVolume(event);
             }
+        }
+
+        /** V: to 3-D and back. With the Area tool armed and the pointer on
+         *  the image, the square is placed there first. Not while the ROI
+         *  tool is open (its V picks its select tool). */
+        toggleVolume(event = null) {
+            const vs = this.viewState;
+            if (vs.depth < 2 || !this.volumeSupported || vs.color) return false;
+            if (global.PlexoraToolLoader?.activeTool?.() === "roi") return false;
+            event?.preventDefault?.();
+            const area = global.PlexoraAreaTool;
+            const state = vs.get();
+            if (state.mode !== "volume" && area?.armed?.() && area.hover?.()) {
+                area.place(area.hover());
+                return true;
+            }
+            if (typeof vs.toggleVolume === "function") vs.toggleVolume();
+            else vs.set({ mode: state.mode === "volume" ? "plane" : "volume" });
+            return true;
         }
 
         /** A step key let go (`]`, `[`, `.`, `,`, or the rail's arrows and
@@ -741,7 +780,8 @@
     //: Events after which the strip's controls are resolved again.
     const REPAINT_ON = ["plexora:viewer-prefs-changed", "plexora:view-controls-changed",
                         "plexora:volume-rotate", "plexora:volume-mounted",
-                        "plexora:surface-loaded", "plexora:inspect-preview", "plexora:inspect-changed"];
+                        "plexora:surface-loaded", "plexora:inspect-preview", "plexora:inspect-changed",
+                        "plexora:area-tool"];
 
     DepthStrip.PLAY_WORDS = PLAY_WORDS;
     global.PlexoraDepthStrip = DepthStrip;

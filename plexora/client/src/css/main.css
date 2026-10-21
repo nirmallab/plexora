@@ -1616,6 +1616,13 @@ html.is-native-dragging body::after {
     width: 52px;
 }
 
+/* The unit after a number (the Area tool's side: µm or px). */
+.plx-popover-unit {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-left: 4px;
+}
+
 .plx-popover-select:focus-visible,
 .plx-popover-number:focus-visible {
     border-color: var(--accent-channel);

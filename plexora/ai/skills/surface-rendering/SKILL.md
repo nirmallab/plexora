@@ -44,8 +44,10 @@ licence with `volume` (`volume:surfaces`); over MCP also `mcp`. A refusal's
    whether they are building or shown. Use that to show the mask; use `surface_create` for
    a selection of cells or your own recipe.
 4. Look before you conclude: `viewer_set_volume_mode`, `viewer_set_camera`, then
-   `viewer_capture`. `viewer_set_inspect` cuts the stack open to see inside -- a cutaway
-   takes a side or a corner off, a crop keeps a box -- and the surfaces are cut with it. For
+   `viewer_capture`. `viewer_set_volume_mode` with an `area` (image pixels) draws just that
+   part of the image, finer. `viewer_set_inspect` cuts the stack open to see inside -- a
+   cutaway takes a side off along one axis, a crop keeps a box -- and the surfaces are cut
+   with it. For
    an object in its real intensities, look at a plane through it (`viewer_set_z`,
    `render_sections`). `viewer_set_surface` isolates or highlights objects in this tab only;
    `surface_update` saves a look.

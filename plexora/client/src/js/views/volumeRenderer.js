@@ -189,6 +189,27 @@
     const ROTATE_MAX_DPS = 90;
     const ROTATE_AXES = ["screen", "x", "y", "z"];
 
+    //: The fewest milliseconds between two moves of a slid area (a fetch each).
+    const SLIDE_MS = 40;
+
+    /** Image units moved along each axis for a pointer travel `(dx, dy)`:
+     *  along one axis its projection, along two the pair whose screen steps
+     *  add up to the travel (views/volumeHandles.js measures a grip's the
+     *  same way). */
+    function travel(axes, dx, dy) {
+        if (axes.length === 1) {
+            const { step } = axes[0];
+            const length = step.x * step.x + step.y * step.y;
+            return { [axes[0].axis]: length > 1e-9 ? (dx * step.x + dy * step.y) / length : 0 };
+        }
+        if (!axes.length) return {};
+        const [a, b] = axes;
+        const det = a.step.x * b.step.y - a.step.y * b.step.x;
+        if (Math.abs(det) < 1e-6) return travel([a], dx, dy);
+        return { [a.axis]: (dx * b.step.y - dy * b.step.x) / det,
+                 [b.axis]: (a.step.x * dy - a.step.y * dx) / det };
+    }
+
     function now() {
         return global.performance?.now?.() ?? Date.now();
     }
@@ -281,9 +302,9 @@ void main() {
                 // The detail sub-volume where the sample falls in it, the
                 // whole level everywhere else (see `detail` in the renderer).
                 samplers.push(`uniform sampler3D u_detail${c};`);
-                sample.push(`        v[${c}] = inDetail ? texture(u_detail${c}, q).r : texture(u_volume${c}, p).r;`);
+                sample.push(`        v[${c}] = inDetail ? texture(u_detail${c}, q).r : baseRead(u_volume${c}, p);`);
             } else {
-                sample.push(`        v[${c}] = texture(u_volume${c}, p).r;`);
+                sample.push(`        v[${c}] = baseRead(u_volume${c}, p);`);
             }
         }
         const locate = detail ? `
@@ -299,9 +320,8 @@ uniform mat4 u_inverse;        // clip -> model (box in [0,1]^3, then scaled)
 uniform vec3 u_extent;         // physical box, longest side 1
 uniform vec3 u_box_lo;         // the box kept, texture space [0,1] (the cut, setClip)
 uniform vec3 u_box_hi;
-uniform int u_hole_on;         // a cutaway's corner taken out of the box
-uniform vec3 u_hole_lo;
-uniform vec3 u_hole_hi;
+uniform vec3 u_tex_lo;         // where the box's [0,1] lies in the base textures
+uniform vec3 u_tex_span;       // (the area framed, against what they cover)
 uniform int u_cut;             // 0 nothing more, 1 the cut faces drawn solid
 uniform vec3 u_color[NCH];
 uniform vec2 u_window[NCH];    // [lo, hi] in 0..1 texture units
@@ -336,6 +356,15 @@ float level(float value, vec2 window, float c) {
         return clamp(asinh((value - window.x) / c) / asinh(span / c), 0.0, 1.0);
     }
     return clamp((value - window.x) / span, 0.0, 1.0);
+}
+
+// A base texture at box point p. The box is the area framed; the texture may
+// cover a little more (its level's grid) or, while the area's own loads,
+// another area (entryFor): read where p lies in it, nothing outside it.
+float baseRead(sampler3D tex, vec3 p) {
+    vec3 s = u_tex_lo + p * u_tex_span;
+    float inside = step(0.0, s.x) * step(s.x, 1.0) * step(0.0, s.y) * step(s.y, 1.0);
+    return texture(tex, s).r * inside;
 }
 ${cut}
 
@@ -405,11 +434,6 @@ ${atlas ? ATLAS_MARCH(chunk.sample) : `    for (int i = 0; i < 4096; i++) {
         vec3 world = origin + dir * t;
         vec3 p = world / u_extent + 0.5;${locate}
 ${sample.join("\n")}`}
-        // [inspect] What a cut leaves out is not part of the march: a
-        // cutaway's corner.
-        if (u_hole_on == 1 && inHole(p)) {
-            for (int c = 0; c < NCH; c++) v[c] = 0.0;
-        }
         if (u_mode == 0) {
             for (int c = 0; c < NCH; c++) peak[c] = max(peak[c], v[c]);
         } else {
@@ -484,19 +508,14 @@ void sampleAt(vec3 p, inout Brick b, out float v[NCH]) {
 ${body}
 }
 
-bool inHole(vec3 p) {
-    return all(greaterThan(p, u_hole_lo)) && all(lessThan(p, u_hole_hi));
-}
-
 vec3 cutColour(float v[NCH]) {
     vec3 c = vec3(0.0);
     for (int i = 0; i < NCH; i++) c += u_color[i] * level(v[i], u_window[i], u_cofactor[i]);
     return c;
 }
 
-// Where the ray first meets kept voxels across a cut -- a cropped side of
-// the box, not the stack's own, or the face of a cutaway's corner -- the
-// voxel there, drawn solid.
+// Where the ray first meets kept voxels across a cut -- a cropped or cut
+// side of the box, not the area's own -- the voxel there, drawn solid.
 vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, out float tFirst) {
     tFirst = 1e20;
     float tFace = -1.0;
@@ -507,11 +526,6 @@ vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, o
         int a = entry == tmin.x ? 0 : (entry == tmin.y ? 1 : 2);
         bool fromLow = dir[a] > 0.0;
         if (fromLow ? u_box_lo[a] > 0.0005 : u_box_hi[a] < 0.9995) tFace = entry;
-    }
-    if (u_hole_on == 1) {
-        vec2 h = hitBox(origin, dir, u_hole_lo * u_extent - 0.5 * u_extent,
-                        u_hole_hi * u_extent - 0.5 * u_extent);
-        if (h.x <= h.y && h.x <= tNear + 1e-5 && h.y > tNear && h.y < tFar) tFace = h.y;
     }
     if (tFace < 0.0 || tFace > tFar) return vec4(0.0);
     tFirst = tFace;
@@ -1210,12 +1224,14 @@ ${sample}`;
 
         /**
          * The texture `channel` is DRAWN from: its own when held, else --
-         * while that loads -- the one it was drawn from last, when that is of
-         * the same area. A window turning exact, a frame step, HD on or off:
-         * the picture keeps the channel until its new texture can replace it,
-         * never a channel gone black and faded back in. A different area is a
-         * different picture, and is never stood in for. Drawing only:
-         * `settled()`, `refine()` and the loads ask for the exact texture.
+         * while that loads -- the one it was drawn from last. A window turning
+         * exact, a frame step, HD on or off, the area slid: the picture keeps
+         * the channel until its new texture can replace it, never a channel
+         * gone black and faded back in. Another area's texture is read where
+         * the new area overlaps it (the frame is the area's, `frameCovered`;
+         * `baseRead` in the shader), so a slide never shows a blank frame.
+         * Drawing only: `settled()`, `refine()` and the loads ask for the
+         * exact texture.
          */
         entryFor(channel) {
             const key = this.textureKey(channel.name, undefined, undefined, undefined, channel.stamp || "");
@@ -1226,7 +1242,7 @@ ${sample}`;
                 return exact;
             }
             const shown = this.textures.get(this._shownKey.get(channel.name));
-            if (!shown || shown.box !== this.boxKey()) return null;
+            if (!shown) return null;
             if (this._missed.get(channel.name) !== key) {
                 this._missed.set(channel.name, key);
                 global.PlexoraViewPerf?.mark?.("volume", "texmiss", null, channel.name);
@@ -1297,10 +1313,13 @@ ${sample}`;
             // The level already drawn, when every visible channel at it still
             // fits what they share (eight channels at the default budget).
             // A channel being replaced (entryFor) counts as drawn at the level
-            // it is drawn from, when its bytes are the same kind.
+            // it is drawn from, when its bytes are the same kind and it is of
+            // this area -- or of one the same size (a slide): same size, same
+            // level, so the atlas made for it stays.
             const held = channels.map((channel) => this.textureOf(channel)
                 || this.textures.get(this._shownKey.get(channel.name))).find((entry) => entry
-                    && entry.format === this.format() && entry.box === this.boxKey());
+                    && entry.format === this.format()
+                    && (entry.box === this.boxKey() || this.sameSize(entry)));
             const level = held && held.bytes * channels.length <= 8 * this.budget
                 ? held.level : null;
             await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget,
@@ -1325,6 +1344,85 @@ ${sample}`;
                 this.textures.delete(key);
                 this.textureBytes -= entry.bytes;
             }
+        }
+
+        /** Whether texture `entry` covers an area the size of the one drawn
+         *  now (to within one of its own voxels): another place, same level. */
+        sameSize(entry) {
+            const area = this.areaCovered();
+            const c = entry?.covered;
+            const shape = entry?.shape;
+            if (!area || !c || !shape) return false;
+            const vx = (c[2] - c[0]) / Math.max(1, shape[2]);
+            const vy = (c[3] - c[1]) / Math.max(1, shape[1]);
+            return Math.abs((c[2] - c[0]) - (area[2] - area[0])) <= vx + 1e-6
+                && Math.abs((c[3] - c[1]) - (area[3] - area[1])) <= vy + 1e-6;
+        }
+
+        /** The stack's own extent (inspectGeometry.dims), with no area. */
+        plainDims() {
+            const G = global.PlexoraInspectGeometry;
+            const vs = this.viewState;
+            if (G) return G.dims(vs?.info || {}, vs?.depth);
+            return { width: Number(vs?.info?.width) || 1, height: Number(vs?.info?.height) || 1,
+                     depth: Math.max(1, vs?.depth || 1), area: null };
+        }
+
+        /**
+         * Draw `area` (`{x, y, width, height}` full-resolution pixels, the
+         * view state's `volume.area`) or, with null, the whole stack. Its
+         * textures are fetched (`refresh`, unless `refresh: false`); until
+         * they land the last ones stand in (entryFor). Under a hand, while
+         * two loads a channel are still in flight, the fetch waits for the
+         * next move or the release: a fast slide asks for where it is, not
+         * for every place it passed. True when it changed.
+         */
+        setArea(area, { refresh = true } = {}) {
+            const G = global.PlexoraInspectGeometry;
+            const next = G ? G.cleanArea(area, this.plainDims()) : (area || null);
+            const before = this.boxKey();
+            this.box = next;
+            const changed = this.boxKey() !== before;
+            if (changed) this.invalidate();
+            if (!refresh || (!changed && !this._areaStale)) return changed;
+            const busy = this._loads.size >= 2 * Math.max(1, this.channels().length);
+            if (this.interacting && busy) {
+                this._areaStale = true;
+            } else {
+                this._areaStale = false;
+                this.refresh();
+            }
+            return changed;
+        }
+
+        /** `[x0, y0, x1, y1]` the area covers, as the server rounds it, or
+         *  null for the whole stack (inspectGeometry.areaCovered). */
+        areaCovered() {
+            const G = global.PlexoraInspectGeometry;
+            if (!this.box || !G) return null;
+            return G.areaCovered(this.box, this.plainDims());
+        }
+
+        /**
+         * `[x0, y0, x1, y1]` the view FRAMES: the area, else what the drawn
+         * textures cover (`lead`'s, else the last drawn). The box, the cut,
+         * the grid, the handles and the surfaces are all measured on it.
+         */
+        frameCovered(lead = null) {
+            return this.areaCovered() || lead?.covered || this.covered || null;
+        }
+
+        /** Where the frame's [0,1] lies in texture `lead`'s: `{lo, span}`
+         *  vec3s for `u_tex_lo` / `u_tex_span` (identity when it covers the
+         *  frame exactly, as a level-0 texture of the area does). */
+        texTransform(lead) {
+            const frame = this.frameCovered(lead);
+            const c = lead?.covered;
+            if (!frame || !c) return { lo: [0, 0, 0], span: [1, 1, 1] };
+            const sx = Math.max(1e-9, c[2] - c[0]);
+            const sy = Math.max(1e-9, c[3] - c[1]);
+            return { lo: [(frame[0] - c[0]) / sx, (frame[1] - c[1]) / sy, 0],
+                     span: [(frame[2] - frame[0]) / sx, (frame[3] - frame[1]) / sy, 1] };
         }
 
         /** The area the view draws: `{x, y, width, height}` in full-resolution
@@ -1445,21 +1543,22 @@ ${sample}`;
             const G = global.PlexoraInspectGeometry;
             const state = this.viewState?.get?.();
             if (!G || !state?.inspect) return null;
-            return G.resolve(state.inspect, G.dims(this.viewState.info, this.viewState.depth));
+            return G.resolve(state.inspect, G.dims(this.viewState.info, this.viewState.depth,
+                                                   state.volume?.area || null));
         }
 
         /**
-         * The cut in texture space for textures covering `covered`, narrowed
-         * by `setClip` (Video Studio's reveals): `{lo, hi, hole, cut, face}`.
+         * The cut in the frame's space (`covered`, frameCovered), narrowed
+         * by `setClip` (Video Studio's reveals): `{lo, hi, cut, face}`.
          */
-        cutUniforms(covered = this.covered) {
+        cutUniforms(covered = this.frameCovered()) {
             const G = global.PlexoraInspectGeometry;
             const info = this.viewState?.info || {};
             const area = covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
             const depth = Math.max(1, this.viewState?.depth || 1);
             const resolved = G ? this.inspectNow() : null;
             const out = resolved ? G.toTexture(resolved, area, depth)
-                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, cut: 0, face: 0 };
+                : { lo: [0, 0, 0], hi: [1, 1, 1], cut: 0, face: 0 };
             const clip = this.clipXY;
             if (clip) {
                 ["x", "y", "z"].forEach((axis, i) => {
@@ -1477,9 +1576,6 @@ ${sample}`;
             const gl = this.gl;
             gl.uniform3fv(uniform("u_box_lo"), cut.lo);
             gl.uniform3fv(uniform("u_box_hi"), cut.hi);
-            gl.uniform1i(uniform("u_hole_on"), cut.hole ? 1 : 0);
-            gl.uniform3fv(uniform("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
-            gl.uniform3fv(uniform("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
             gl.uniform1i(uniform("u_cut"), cut.cut);
         }
 
@@ -1792,8 +1888,9 @@ ${sample}`;
             // (`X-Plexora-ZPool`), which changes its depth and not the stack's.
             const planes = Math.max(depth, Number(vs?.depth) || 0);
             // An area: its own size, not the plane's.
-            const across = this.covered
-                ? [this.covered[2] - this.covered[0], this.covered[3] - this.covered[1]]
+            const frame = this.frameCovered();
+            const across = frame
+                ? [frame[2] - frame[0], frame[3] - frame[1]]
                 : [width * scale, height * scale];
             const physical = [across[0] * sx, across[1] * sy, planes * sz];
             const longest = Math.max(...physical) || 1;
@@ -1824,7 +1921,9 @@ ${sample}`;
         /** What the atlas draws and plans with, for base texture `lead`. */
         atlasView(lead) {
             const info = this.viewState?.info || {};
-            const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const frame = this.frameCovered(lead);
+            const covered = frame || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const own = lead.covered || covered;
             const depth = Math.max(1, this.viewState?.depth || 1);
             const extent = this.extent();
             const shape = lead.shape;                       // (z, y, x)
@@ -1845,8 +1944,9 @@ ${sample}`;
                 // A screen pixel's size at distance 1; a base voxel in
                 // full-resolution pixels, pixels and planes.
                 pixel: (2 * Math.tan(FOV_Y / 2)) / Math.max(1, this.canvas?.height || 1),
-                baseVox: [(covered[2] - covered[0]) / Math.max(1, shape[2]),
-                          (covered[3] - covered[1]) / Math.max(1, shape[1]),
+                // (by what the base texture covers, which may be another area's)
+                baseVox: [(own[2] - own[0]) / Math.max(1, shape[2]),
+                          (own[3] - own[1]) / Math.max(1, shape[1]),
                           depth / Math.max(1, shape[0])],
             };
         }
@@ -1928,7 +2028,7 @@ ${sample}`;
                 finest = withAtlas && !fast ? this.atlas.finestVox() : null;
                 if (finest) {
                     const info = this.viewState?.info || {};
-                    const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+                    const covered = this.frameCovered(lead) || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
                     const fullSpan = [covered[2] - covered[0], covered[3] - covered[1],
                                       Math.max(1, this.viewState?.depth || 1)];
                     longest = Math.max(longest, ...fullSpan.map((side, i) => side / finest[i]));
@@ -2056,8 +2156,12 @@ ${sample}`;
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
-            // [inspect] The cut: the box, the corner, the cut faces.
-            const cut = this.cutUniforms(lead.covered);
+            // [inspect] The cut: the box and the cut faces, in the frame.
+            const frame = this.frameCovered(lead);
+            const cut = this.cutUniforms(frame);
+            const tex = this.texTransform(lead);
+            gl.uniform3fv(uniform("u_tex_lo"), tex.lo);
+            gl.uniform3fv(uniform("u_tex_span"), tex.span);
             gl.uniform3fv(uniform("u_color"), channels.flatMap(
                 (channel, index) => channel.colour.map((value) => value * presence[index])));
             // Each channel in the window of the texture it is drawn from.
@@ -2119,9 +2223,9 @@ ${sample}`;
             const vs = this.viewState;
             const info = vs?.info || {};
             const full = info.levels?.[0] || info;
-            // The box extent() draws: the area the textures cover, by every
-            // plane of the stack.
-            const covered = this.covered
+            // The box extent() draws: the area framed, by every plane of the
+            // stack.
+            const covered = this.frameCovered()
                 || [0, 0, Number(full.width || info.width) || 1, Number(full.height || info.height) || 1];
             const planes = Math.max(this.shape?.[0] || 1, Number(vs?.depth) || 0);
             return gridAxes({ spacing: info.spacing, covered, planes, extent: this.extent(), step });
@@ -2295,8 +2399,77 @@ ${sample}`;
             this.turnTo({ q: views[name] || views.iso, panX: 0, panY: 0 });
         }
 
+        /** An image point (x, y pixels, z planes, continuous) on screen,
+         *  `{x, y, w}` CSS pixels, or null behind the camera. */
+        projectImage(point, camera = this.cameraMatrices(), extent = this.extent()) {
+            const canvas = this.canvas;
+            const vs = this.viewState;
+            const c = this.frameCovered() || [0, 0, Number(vs?.info?.width) || 1, Number(vs?.info?.height) || 1];
+            const D = Math.max(1, vs?.depth || 1);
+            const x = ((point[0] - c[0]) / Math.max(1e-9, c[2] - c[0]) - 0.5) * extent[0];
+            const y = ((point[1] - c[1]) / Math.max(1e-9, c[3] - c[1]) - 0.5) * extent[1];
+            const z = (point[2] / D - 0.5) * extent[2];
+            const m = camera.forward;
+            const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+            if (!(w > 1e-6)) return null;
+            const nx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
+            const ny = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
+            return { x: (nx * 0.5 + 0.5) * canvas.clientWidth, y: (0.5 - ny * 0.5) * canvas.clientHeight, w };
+        }
+
+        /** The screen's measure of one image pixel along x and y at the
+         *  area's centre, mid-stack: `[{axis, step: {x, y}}]` CSS pixels,
+         *  those that show on screen at all. */
+        slideSteps() {
+            const area = this.areaCovered();
+            if (!area || !this.canvas) return [];
+            const camera = this.cameraMatrices();
+            const extent = this.extent();
+            const centre = [(area[0] + area[2]) / 2, (area[1] + area[3]) / 2,
+                            Math.max(1, this.viewState?.depth || 1) / 2];
+            const at = this.projectImage(centre, camera, extent);
+            if (!at) return [];
+            const out = [];
+            ["x", "y"].forEach((axis, i) => {
+                const span = Math.max(1, area[i + 2] - area[i]) / 50;
+                const ahead = centre.slice();
+                ahead[i] += span;
+                const b = this.projectImage(ahead, camera, extent);
+                if (!b) return;
+                const step = { x: (b.x - at.x) / span, y: (b.y - at.y) / span };
+                if (Math.hypot(step.x, step.y) > 1e-4) out.push({ axis, step });
+            });
+            return out;
+        }
+
+        /**
+         * The area slid by a pointer travel of (`dx`, `dy`) CSS pixels from
+         * `start` (`{x, y, width, height}`): the tissue follows the hand, so
+         * the area moves the other way. Kept inside the image, never shrunk.
+         */
+        slidTo(start, steps, dx, dy) {
+            const moved = travel(steps, dx, dy);
+            const G = global.PlexoraInspectGeometry;
+            const next = { ...start, x: start.x - (moved.x || 0), y: start.y - (moved.y || 0) };
+            return G ? G.inside(next, this.plainDims()) : next;
+        }
+
         bindPointer(canvas) {
             let drag = null;
+            //: A slide of the area under way: {start, steps, x0, y0, last,
+            //: sent, timer}; `onSlide(area, {final})` hears it.
+            let slide = null;
+            const sendSlide = (final) => {
+                if (!slide) return;
+                clearTimeout(slide.timer);
+                slide.timer = 0;
+                slide.sent = now();
+                const area = slide.last;
+                if (area && (final || slide.lastSent !== JSON.stringify(area))) {
+                    slide.lastSent = JSON.stringify(area);
+                    this.onSlide?.(area, { final });
+                }
+            };
             //: The hand's turn so far and when, for the release's speed:
             //: {t, a, b} -- about the screen's x and y for a free drag, the
             //: locked axis's angle in `a` for a locked one.
@@ -2306,7 +2479,19 @@ ${sample}`;
                 // A press stops a spin or a turn where it is.
                 this.stopMotion();
                 clearTimeout(this._settleTimer);
-                const pan = event.shiftKey || event.button === 1;
+                // Shift slides the area where there is one (the tissue under
+                // a fixed frame); Alt, or the middle button, pans the camera
+                // (Shift too, with no area to slide).
+                const area = this.box;
+                const sliding = event.button === 0 && event.shiftKey && Boolean(area)
+                    && typeof this.onSlide === "function";
+                const steps = sliding ? this.slideSteps() : [];
+                if (sliding && steps.length) {
+                    slide = { start: { ...area }, steps, x0: event.clientX, y0: event.clientY,
+                              last: null, lastSent: JSON.stringify(area), sent: 0, timer: 0 };
+                }
+                const pan = !slide && (event.button === 1 || (event.button === 0 && event.altKey)
+                    || (event.button === 0 && event.shiftKey && !area));
                 const box = canvas.getBoundingClientRect();
                 drag = { x: event.clientX, y: event.clientY, a: 0, b: 0, pan, box,
                          x0: event.clientX, y0: event.clientY,
@@ -2327,6 +2512,15 @@ ${sample}`;
                 drag.x = event.clientX;
                 drag.y = event.clientY;
                 if (!dx && !dy) return;
+                if (slide) {
+                    slide.last = this.slidTo(slide.start, slide.steps, event.clientX - slide.x0,
+                                             event.clientY - slide.y0);
+                    // At most one move every SLIDE_MS: each is a fetch.
+                    const wait = SLIDE_MS - (now() - slide.sent);
+                    if (wait <= 0) sendSlide(false);
+                    else if (!slide.timer) slide.timer = setTimeout(() => sendSlide(false), wait);
+                    return;
+                }
                 const C = Camera();
                 if (drag.pan) {
                     const scale = this.camera.dist / Math.max(1, canvas.clientHeight);
@@ -2361,6 +2555,17 @@ ${sample}`;
                     global.dispatchEvent?.(new CustomEvent("plexora:surface-pick", {
                         detail: { hit, clientX: event.clientX, clientY: event.clientY,
                                   additive: Boolean(event.shiftKey || event.metaKey) } }));
+                }
+                if (slide) {
+                    // At rest before the last move is heard: it fetches.
+                    this.interacting = false;
+                    if (slide.last) sendSlide(true);
+                    else clearTimeout(slide.timer);
+                    slide = null;
+                    drag = null;
+                    samples = [];
+                    this.invalidate();
+                    return;
                 }
                 const turning = !drag.pan && event?.type === "pointerup";
                 const locked = drag.locked ? this.lock : null;
@@ -2641,9 +2846,9 @@ ${sample}`;
             const channels = this.channels();
             const lead = channels.length ? this.textureOf(channels[0]) : null;
             if (!lead) return;
-            // Texture space -> full-resolution pixels and planes.
+            // The frame's space -> full-resolution pixels and planes.
             const info = this.viewState?.info || {};
-            const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const covered = this.frameCovered(lead) || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
             const depth = Math.max(1, this.viewState?.depth || 1);
             const spanX = covered[2] - covered[0];
             const spanY = covered[3] - covered[1];
@@ -2695,8 +2900,8 @@ ${sample}`;
                 return;
             }
             this._noFiner = null;
-            // Where the detail sits in the whole level's texture space, by
-            // what the server actually covered (aligned to its level's grid).
+            // Where the detail sits in the frame, by what the server actually
+            // covered (aligned to its level's grid).
             const box = arrived.covered || [pixels.x0, pixels.y0, pixels.x1, pixels.y1];
             const z = arrived.z || [pixels.z0, pixels.z1];
             request.lo = [(box[0] - covered[0]) / spanX, (box[1] - covered[1]) / spanY, z[0] / depth];
@@ -2870,21 +3075,16 @@ ${sample}`;
                 viewState.set({ volume: { ...(viewState.get().volume || {}), camera } });
             }, 800);
         };
-        /** The area on screen, when the plane is zoomed in on part of the image:
-         *  the 3-D view draws that, finer, rather than the whole stack coarsely. */
-        const areaOnScreen = () => {
-            const viewer = global.__plexora?.seaDragonViewer?.viewer;
-            const item = viewer?.world?.getItemAt?.(0);
-            const info = viewState.info || {};
-            if (!item || !info.width || !info.height) return null;
-            const rect = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
-            const x0 = Math.max(0, rect.x);
-            const y0 = Math.max(0, rect.y);
-            const x1 = Math.min(info.width, rect.x + rect.width);
-            const y1 = Math.min(info.height, rect.y + rect.height);
-            if (x1 - x0 < 1 || y1 - y0 < 1) return null;
-            if (x1 - x0 > 0.7 * info.width && y1 - y0 > 0.7 * info.height) return null;
-            return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+        /** A slid area, into the view state: through the cut's controller
+         *  (services/inspectState.js), so a slide and the cut it carries
+         *  undo together. */
+        const slideArea = (area, { final = false } = {}) => {
+            const cutter = global.PlexoraInspect;
+            if (cutter?.viewState === viewState && typeof cutter.slideArea === "function") {
+                cutter.slideArea(area, { final });
+            } else {
+                viewState.set({ volume: { area } }, { save: final });
+            }
         };
         const controller = {
             get renderer() { return renderer; },
@@ -2918,6 +3118,7 @@ ${sample}`;
                         savedCamera = JSON.stringify(renderer.cameraState());
                     }
                     renderer.onRest = rememberCamera;
+                    renderer.onSlide = slideArea;
                     global.dispatchEvent?.(new CustomEvent("plexora:volume-mounted",
                         { detail: { renderer } }));
                 }
@@ -2925,10 +3126,12 @@ ${sample}`;
                 document.getElementById("openseadragon_wrapper")?.classList.add("is-volume-mode");
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
-                if (entering) renderer.box = areaOnScreen();
+                // The area the view state says (`volume.area`), or the whole
+                // stack: the Area tool's (views/areaTool.js).
+                const moved = renderer.setArea(state.volume?.area || null, { refresh: false });
                 // Only what is missing is fetched (ensureTextures): entering
                 // again over the same area, with the same channels, is a draw.
-                if (entering || lastT !== state.t) {
+                if (entering || lastT !== state.t || moved) {
                     lastT = state.t;
                     renderer.refresh();
                 } else {
@@ -2947,6 +3150,12 @@ ${sample}`;
                 lastCut = key;
                 renderer.invalidate();
                 renderer.scheduleDetail();
+            },
+            /** The area moved (a slide, the Area tool, a restore, Video
+             *  Studio): its textures fetched, the last drawn standing in. */
+            areaChanged(state = viewState.get()) {
+                if (!renderer || !viewState.isVolume(state)) return;
+                renderer.setArea(state.volume?.area || null);
             },
             channelsChanged() {
                 if (renderer && viewState.isVolume()) renderer.refresh();
@@ -3029,7 +3238,10 @@ ${sample}`;
         // crossfade, a finer detail only once it rests), and the commit or
         // the cancel that ends it is the rest.
         let cutting = false;
-        viewState.subscribe(() => controller.cutChanged());
+        viewState.subscribe((state) => {
+            controller.areaChanged(state);
+            controller.cutChanged();
+        });
         global.addEventListener?.("plexora:inspect-preview", () => {
             if (renderer && !renderer.interacting) {
                 renderer.interacting = true;
@@ -3051,6 +3263,8 @@ ${sample}`;
 
     VolumeRenderer.attach = attach;
     VolumeRenderer.releaseSpeed = releaseSpeed;
+    VolumeRenderer.travel = travel;
+    VolumeRenderer.SLIDE_MS = SLIDE_MS;
     VolumeRenderer.MOTION = { SPIN_TAU_MS, RELEASE_MIN, SPIN_STOP, SPIN_MAX, ZOOM_TAU_MS,
                               TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS,
                               ROTATE_DEFAULT_DPS, ROTATE_MIN_DPS, ROTATE_MAX_DPS };

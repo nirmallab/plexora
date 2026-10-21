@@ -1,0 +1,159 @@
+{
+ "label": "area",
+ "sha": "e5c3a1a33aa6",
+ "dirty": true,
+ "headed": false,
+ "date": "2026-10-21T14:25:12",
+ "reps": 3,
+ "machine": {
+  "platform": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+  "python": "3.13.15"
+ },
+ "results": {
+  "small": {
+   "area_slide": {
+    "scenario": "area_slide",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-21T18:25:18.366Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "area_slide_frameP95": [
+      16.800000000000182,
+      16.799999999999272,
+      16.80000000000109
+     ],
+     "area_slide_dropped": [
+      0,
+      0,
+      0
+     ],
+     "area_slide_levelFetches": [
+      36,
+      36,
+      30
+     ],
+     "area_slide_flashFrames": [
+      0,
+      0,
+      0
+     ],
+     "area_slide_landMs": [
+      142,
+      74.09999990463257,
+      57.700000047683716
+     ],
+     "area_slide_ghosts": [
+      2,
+      1,
+      0
+     ],
+     "area_slide_gpuBytes": [
+      503316480
+     ],
+     "area_slide_gpuOverBudget": [
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "extra": {
+     "area": {
+      "x": 256,
+      "y": 384,
+      "width": 256,
+      "height": 256
+     }
+    },
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 19.3
+   },
+   "clip": {
+    "scenario": "clip",
+    "dataset": "small",
+    "reps": 3,
+    "headed": false,
+    "started": "2026-10-21T18:25:38.742Z",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "metrics": {
+     "clip_drag_fps": [
+      60,
+      60.00144581797151,
+      59.997108573080794
+     ],
+     "clip_drag_frameP95": [
+      16.800000000000182,
+      16.800000000000182,
+      16.80000000000109
+     ],
+     "clip_drag_frameP99": [
+      17.099999999999454,
+      16.900000000000546,
+      16.899999999999636
+     ],
+     "clip_drag_dropped": [
+      0,
+      0,
+      0
+     ],
+     "clip_drag_fetches": [
+      0,
+      0,
+      0
+     ],
+     "clip_drag_turned": [
+      0,
+      0,
+      0
+     ],
+     "clip_one_frameP95": [
+      16.80000000000109
+     ],
+     "clip_one_dropped": [
+      0
+     ],
+     "clip_two_frameP95": [
+      16.799999999999272
+     ],
+     "clip_two_dropped": [
+      0
+     ],
+     "clip_sectionResolved": [
+      55.200000047683716,
+      56.90000009536743,
+      51
+     ],
+     "clip_sectionLevelFetches": [
+      0,
+      0,
+      0
+     ]
+    },
+    "F": 16.699999999999818,
+    "log": [],
+    "console": [
+     "[warning] PlexoraShortcuts: Ctrl+I is already bound to \"Import Sample\u2026\"; ignoring \"ROI\""
+    ],
+    "wall_s": 17.4
+   }
+  },
+  "medium": {
+   "disk": {
+    "metrics": {
+     "bricks_diskMB": [
+      21.9
+     ]
+    }
+   }
+  }
+ },
+ "server_env": [],
+ "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+ "F": {
+  "small": 16.699999999999818
+ }
+}

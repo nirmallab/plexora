@@ -1539,6 +1539,126 @@ async function clip(ctx) {
     return { metrics, F };
 }
 
+// -- The area (docs/internal/3d/SLICE_CLIP.md "The area") ---------------------------
+
+/**
+ * The Area tool's slide: an area a quarter of the image across placed in 3-D,
+ * then slid across the tissue for 1.5 s as Shift+drag does (the renderer's
+ * `onSlide`, every SLIDE_MS) and released. Per rep: frame times while sliding,
+ * level fetches, black and flashing frames (the stand-in texture should leave
+ * none), how long the last area takes to land, crossfades. Then 30 slides in a
+ * row: the GPU bytes held against the budget. A build without the area is
+ * skipped.
+ */
+async function areaSlide(ctx) {
+    const metrics = {};
+    await boot(ctx);
+    if (ctx.info.depth < 2) return { metrics, skipped: "no depth" };
+    await reset(ctx);
+    const F = await period(ctx);
+    const can = await ctx.browser.eval(() => Boolean(window.PlexoraInspectGeometry?.cleanArea
+        && typeof __bench.k.vs().enterVolume === "function"));
+    if (!can) return { metrics, F, skipped: "no area in this build" };
+    const placed = await ctx.browser.eval(async () => {
+        const k = __bench.k;
+        const vs = k.vs();
+        const info = vs.info || {};
+        const side = Math.max(64, Math.round(Math.min(info.width || 1024, info.height || 1024) / 4));
+        const area = { x: Math.round((info.width || 1024) / 4), y: Math.round((info.height || 1024) / 2 - side / 2),
+                       width: side, height: side };
+        vs.set({ mode: "volume", layout: "single", volume: { area } });
+        const end = performance.now() + 180000;
+        while (performance.now() < end) {
+            __bench.hookApp();
+            const r = k.P().volumeView?.renderer;
+            if (r && r.status === "ready" && r.settled?.()) return { area, side };
+            if (r && ["unavailable", "error"].includes(r.status)) return { ended: r.status };
+            await k.sleep(10);
+        }
+        return { ended: "timeout" };
+    });
+    if (placed.ended) {
+        await leaveVolume(ctx);
+        return { metrics, F, skipped: `3-D ${placed.ended}` };
+    }
+    for (let rep = 0; rep < Math.min(ctx.reps, 3); rep += 1) {
+        await ctx.browser.eval(async (lum) => {
+            const k = __bench.k;
+            await k.volumeRest(300, 30000);
+            __bench.reset({ counters: false });
+            __bench.hookApp();
+            __bench.start(lum);
+            __bench.v3dFrom = { counters: k.counters(), at: performance.now() };
+            await k.sleep(200);
+            return true;
+        }, V3D_LUM);
+        const r = await ctx.browser.eval(async (F) => {
+            const k = __bench.k;
+            const vs = k.vs();
+            const renderer = k.P().volumeView.renderer;
+            const slide = renderer.onSlide;
+            const step = window.PlexoraVolumeRenderer.SLIDE_MS || 40;
+            const start = vs.get().volume.area;
+            const t0 = performance.now();
+            let last = start;
+            renderer.interacting = true;
+            while (performance.now() - t0 < 1500) {
+                const f = (performance.now() - t0) / 1500;
+                last = { ...start, x: Math.round(start.x + start.width * 0.6 * f) };
+                slide(last, { final: false });
+                await k.sleep(step);
+            }
+            renderer.interacting = false;
+            slide(last, { final: true });
+            const tRel = performance.now();
+            const end = tRel + 30000;
+            while (performance.now() < end && !renderer.settled()) await k.sleep(10);
+            const land = performance.now() - tRel;
+            await k.sleep(700);
+            __bench.stop();
+            const trace = k.lumTrace(t0, tRel + land + 600, tRel + land + 400);
+            const counts = k.delta(__bench.v3dFrom.counters, k.counters());
+            const out = { fs: k.frameStats(t0, tRel, F), land, black: trace.black, flash: trace.flash,
+                          fetches: counts["fetch:level"] || 0, captures: counts.vghostCaptures || 0 };
+            window.PlexoraInspect?.undo?.();
+            const back = performance.now() + 30000;
+            while (performance.now() < back && !renderer.settled()) await k.sleep(10);
+            return out;
+        }, F);
+        put(metrics, "area_slide_frameP95", r.fs.p95);
+        put(metrics, "area_slide_dropped", r.fs.dropped);
+        put(metrics, "area_slide_levelFetches", r.fetches);
+        put(metrics, "area_slide_blackFrames", r.black);
+        put(metrics, "area_slide_flashFrames", r.flash);
+        put(metrics, "area_slide_landMs", r.land);
+        put(metrics, "area_slide_ghosts", r.captures);
+    }
+    const held = await ctx.browser.eval(async () => {
+        const k = __bench.k;
+        const vs = k.vs();
+        const renderer = k.P().volumeView.renderer;
+        const start = vs.get().volume.area;
+        const info = vs.info || {};
+        for (let i = 0; i < 30; i += 1) {
+            const x = Math.round(((i * 0.37) % 1) * Math.max(1, (info.width || 1024) - start.width));
+            renderer.onSlide({ ...start, x }, { final: true });
+            await k.sleep(100);
+        }
+        const end = performance.now() + 60000;
+        while (performance.now() < end && !renderer.settled()) await k.sleep(20);
+        return { bytes: renderer.textureBytes, budget: renderer.gpuBudget };
+    });
+    put(metrics, "area_slide_gpuBytes", held.bytes);
+    put(metrics, "area_slide_gpuOverBudget", held.bytes > held.budget ? 1 : 0);
+    await ctx.browser.eval(async () => {
+        __bench.k.vs().set({ volume: { area: null } }, { save: false });
+        await __bench.k.sleep(100);
+        return true;
+    });
+    await leaveVolume(ctx);
+    return { metrics, F, extra: { area: placed.area } };
+}
+
 // -- 7. Z navigation as seen: preview first, never black, three panes in step ----------
 //
 // zreveal, raildrag and panesync (README). Luminance always through the bitmap
@@ -1988,6 +2108,7 @@ export const SCENARIOS = {
     volume_flash: { run: volumeFlash },
     panes_resize: { run: panesResize },
     clip: { run: clip },
+    area_slide: { run: areaSlide },
     zreveal: { run: zreveal },
     raildrag: { run: raildrag },
     panesync: { run: panesync },

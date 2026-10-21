@@ -436,6 +436,26 @@ Both were measured again the same evening, panesync alone, 3 reps, same server f
   are level with or faster than pre. The coarse read-ahead is off in that scenario, so it is
   something the client asks for around its first page -- not found yet.
 
+## The area: sliding it never blanks the view (2026-10-21, branch feature/area-tool, Windows)
+
+`area_slide` (tools/bench3d README): an area a quarter of the image across placed in 3-D,
+slid for 1.5 s as Shift+drag does (`onSlide` every 40 ms), released. `small`, real GPU
+(RTX 3080, D3D11), 3 reps, record `perf/e5c3a1a33aa6-dirty-area.json`.
+
+| Metric | Value |
+|---|---|
+| frame P95 while sliding | 16.8 / 16.8 / 16.8 ms, 0 dropped |
+| flash frames (slide and landing) | 0 / 0 / 0 |
+| level fetches per slide (2 channels) | 36 / 36 / 30 |
+| last area in after release | 142 / 74 / 58 ms |
+| crossfades | 2 / 1 / 0 |
+| GPU bytes after 30 slides | 503 MB, under the budget |
+| `clip` in the same run | drag 60 fps, P95 16.8 ms, 0 fetches, camera never turned |
+
+Live (headless Chrome on the GPU, whole-canvas luminance read after every draw): 51 frames
+through a Shift+drag and its landing, luminance 4.0-6.4, none below 20 % of the brightest.
+The `u_tex_lo/span` read costs no measurable frame time here, so it shipped (plan step 6).
+
 ## Beyond 2 TB: what is left
 
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;

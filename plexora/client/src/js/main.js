@@ -715,6 +715,17 @@ async function init(config, savedViewTransform = null) {
             });
             strip.mount();
             __plexora.depthStrip = strip;
+            // The Area tool: a square on the image that opens as 3-D
+            // (views/areaTool.js), where a 3-D view can be drawn.
+            if (volume) {
+                try {
+                    __plexora.areaTool = window.PlexoraAreaTool?.attach?.({
+                        viewState, imageViewer: seaDragonViewer,
+                    }) || null;
+                } catch (error) {
+                    console.error("main: the Area tool could not be set up", error);
+                }
+            }
             // A small pill on the plane and on each section while it loads,
             // from `plexora:surface-status` (views/paneStatus.js). Mounts
             // resolve on the first status, so the panes may come later.
@@ -743,6 +754,9 @@ async function init(config, savedViewTransform = null) {
                         viewState, volume, cutter: window.PlexoraInspect, extras: depthControlExtras, strip,
                     }) || null;
                     __plexora.volumeHandles = window.PlexoraVolumeHandles?.attach?.({
+                        viewState, volume, cutter: window.PlexoraInspect,
+                    }) || null;
+                    __plexora.savedAreas = window.PlexoraSavedAreas?.attach?.({
                         viewState, volume, cutter: window.PlexoraInspect,
                     }) || null;
                 } catch (error) {

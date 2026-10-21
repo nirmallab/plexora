@@ -307,15 +307,19 @@
                         op: "max", thickness, follow: true },
                 layout: "single",
                 aux: null,
-                volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto" },
+                // `area`: the part of the image the 3-D view draws, or null
+                // for the whole stack (inspectGeometry.cleanArea); `saved`:
+                // areas kept to come back to (services/savedAreas.js).
+                volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto", area: null, saved: [] },
                 // [inspect] How the 3-D view is cut (inspectGeometry.js).
                 ...(Geometry() ? { inspect: Geometry().defaults(this._dims()) } : {}),
             };
         }
 
-        /** `{width, height, depth}` (inspectGeometry.dims). */
-        _dims() {
-            return Geometry() ? Geometry().dims(this.info, this.depth)
+        /** `{width, height, depth, area}` (inspectGeometry.dims), inside
+         *  `area` (the state's by default). */
+        _dims(area = this.state?.volume?.area ?? null) {
+            return Geometry() ? Geometry().dims(this.info, this.depth, area)
                 : { width: Math.max(1, int(this.info?.width, 1)), height: Math.max(1, int(this.info?.height, 1)),
                     depth: this.depth };
         }
@@ -364,8 +368,83 @@
             slab.z1 = z1;
             out.slab = slab;
             delete out.__recentre;
-            if (Geometry()) out.inspect = Geometry().clean(raw.inspect, this._dims());
+            out.volume = { ...defaults.volume, ...(raw.volume || {}) };
+            if (Geometry()) {
+                // The area first: the cut is kept inside it.
+                const G = Geometry();
+                const plain = this._dims(null);
+                out.volume.area = G.cleanArea(out.volume.area, plain);
+                out.volume.saved = G.cleanSaved(out.volume.saved, plain);
+                out.inspect = G.clean(raw.inspect, this._dims(out.volume.area));
+            }
             return out;
+        }
+
+        /**
+         * [inspect] The patch that moves the cut with the area, from `before`
+         * to `next` (both areas, or null): every position the cut holds moves
+         * by the area's move, so it keeps its place in what is drawn. Null
+         * when either is the whole stack or nothing moved.
+         */
+        _areaShift(inspect, before, next) {
+            const G = Geometry();
+            if (!G || !inspect) return null;
+            const plain = this._dims(null);
+            const a = G.cleanArea(before, plain);
+            const b = G.cleanArea(next, plain);
+            if (!a || !b) return null;
+            return G.shift(inspect, { dx: b.x - a.x, dy: b.y - a.y });
+        }
+
+        /**
+         * [inspect] Entering 3-D from a fixed projection keeps its range: the
+         * patch that crops Z to it, or null (a following range, or every
+         * plane). A following range is never cropped: it follows a plane the
+         * 3-D view does not have.
+         */
+        _bandCrop(state = this.state) {
+            if (!Geometry() || state?.mode !== "slab" || state.slab?.follow !== false) return null;
+            const { z0, z1 } = state.slab;
+            if (z0 <= 0 && z1 >= this.depth - 1) return null;
+            const inspect = state.inspect || {};
+            const tool = inspect.tool === "crop" ? "crop" : "cutaway";
+            const cropAxes = tool === "crop" ? inspect.axes : inspect.axesBy?.crop;
+            const patch = { mode: "crop", tool: "crop", axes: { ...(cropAxes || {}), z: true },
+                            crop: { z: [z0, z1] } };
+            if (tool === "cutaway") patch.axesBy = { cutaway: { ...(inspect.axes || {}) } };
+            return patch;
+        }
+
+        /**
+         * Into 3-D, with `volume` merged into the state's (an `area` to
+         * draw); from a fixed projection, cut to its range along Z.
+         */
+        enterVolume(volume = null, options = {}) {
+            if (!this.enabled()) return this.get();
+            const patch = { mode: "volume" };
+            if (volume) patch.volume = volume;
+            const band = this._bandCrop();
+            if (band) {
+                // An explicit cut is never shifted (set), so the area's move
+                // goes into it here.
+                const moved = volume && "area" in volume
+                    ? this._areaShift(this.state.inspect, this.state.volume?.area, volume.area) : null;
+                patch.inspect = moved ? Geometry().merge(moved, band) : band;
+            }
+            return this.set(patch, options);
+        }
+
+        /**
+         * 3-D, or back to what it was entered from: the projection when it
+         * was a projection, the plane otherwise (after a reload, the plane:
+         * `load`).
+         */
+        toggleVolume(options = {}) {
+            if (!this.enabled()) return this.get();
+            if (this.state.mode === "volume") {
+                return this.set({ mode: this._frozen?.mode === "slab" ? "slab" : "plane" }, options);
+            }
+            return this.enterVolume(null, options);
         }
 
         /**
@@ -530,6 +609,12 @@
                 volume: { ...before.volume, ...(patch.volume || {}) },
             };
             if (patch.inspect && Geometry()) merged.inspect = Geometry().merge(before.inspect, patch.inspect);
+            // [inspect] A new area moves the cut with it, unless the patch
+            // says where the cut is (a restore, a frame, Crop to area).
+            if (!patch.inspect && patch.volume && "area" in patch.volume) {
+                const moved = this._areaShift(before.inspect, before.volume?.area, patch.volume.area);
+                if (moved) merged.inspect = Geometry().merge(before.inspect, moved);
+            }
             const zMoved = patch.z !== undefined && patch.slab === undefined;
             if (zMoved && merged.mode === "slab" && merged.slab.follow) merged.__recentre = true;
             if (patch.slab && patch.slab.thickness !== undefined

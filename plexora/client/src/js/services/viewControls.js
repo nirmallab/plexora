@@ -34,9 +34,12 @@
  * surfaces, the prefs, whether rotation is running). Resolving never changes
  * the view state. No DOM, no text, no icons: those belong to the views.
  *
- * The 3-D view's cut (the view state's `inspect`, services/inspectGeometry.js)
- * is part of the context too: `cut` (full, cutaway, crop), the tool last
- * chosen (`cutTool`) and its axes. The strip offers the two tools in 3-D, and
+ * The 3-D view's area (`volume.area`, placed with the Area tool,
+ * views/areaTool.js) and its cut (the view state's `inspect`,
+ * services/inspectGeometry.js) are part of the context too: `area`, `cut`
+ * (full, cutaway, crop), the tool last chosen (`cutTool`) and its axes, and
+ * whether a crop is narrower than the area (`cropNarrower`). The strip offers
+ * the Area tool on a plane or a projection and the two cut tools in 3-D, and
  * the panel they open beside it (views/volumeDock.js) is the "dock" surface
  * -- its rows are the tool last chosen's, whether its cut is shown or hidden,
  * each for the representation (volume, surfaces or both) it applies to.
@@ -71,6 +74,8 @@
         grid: (ctx) => Boolean(ctx.grid),
         // The 3-D view can be cut (services/inspectState.js on the page).
         cut: (ctx) => Boolean(ctx.cutSupported),
+        // Areas can be saved and restored (services/savedAreas.js on the page).
+        savedAreas: (ctx) => Boolean(ctx.savedAreasSupported),
         // The volume is drawn: not "surfaces only". A row about voxels --
         // the cut faces, how voxels are read -- needs it.
         volumeDrawn: (ctx) => ctx.showVolume !== false,
@@ -96,6 +101,10 @@
         "axis.x": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.x),
         "axis.y": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.y),
         "axis.z": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.z),
+        // A crop narrower than the area in x or y: "Crop to area" tightens it.
+        "crop.narrower": (ctx) => ctx.mode === "volume" && ctx.cut === "crop" && Boolean(ctx.cropNarrower),
+        // At least one area saved (services/savedAreas.js).
+        "areas.saved": (ctx) => ctx.savedCount > 0,
     };
 
     /** Where each group sits, strip top to bottom, popover top to bottom. */
@@ -104,7 +113,7 @@
         projection: 100, volume: 110, rotate: 130, grid: 140, surfaces: 150,
         // The cut panel beside the strip, top to bottom (views/volumeDock.js):
         // the axes, the actions to their right, then a row each.
-        axes: 200, actions: 210, voxels: 220, handles: 230, toggle: 240,
+        axes: 200, actions: 210, voxels: 220, handles: 230, areas: 235, toggle: 240,
         plugins: 800,
     };
 
@@ -188,6 +197,12 @@
         // The planes the 3-D view keeps (a Z crop's or cutaway's), for the
         // popover's planes row.
         const kept = keptPlanes(inspect, state, depth);
+        const info = viewState?.info || {};
+        const width = Math.max(1, Number(info.width) || 1);
+        const height = Math.max(1, Number(info.height) || 1);
+        const area = state.volume?.area || null;
+        // Lengths in microns only where the image states its spacing.
+        const space = global.PlexoraInspectGeometry?.spacing?.(info) || {};
         return {
             mode: MODES.includes(state.mode) ? state.mode : "plane",
             layout: state.layout || "single",
@@ -205,6 +220,13 @@
                        z: inspect.axes?.z === true },
             keptZ0: kept[0],
             keptZ1: kept[1],
+            area,
+            width,
+            height,
+            areaUnit: space.x ? "µm" : "px",
+            cropNarrower: cropNarrower(inspect, area, width, height),
+            savedCount: Array.isArray(state.volume?.saved) ? state.volume.saved.length : 0,
+            savedAreasSupported: false,
             showVolume: state.volume?.show?.volume !== false,
             cutSupported: false,
             t: Number.isFinite(state.t) ? state.t : 0,
@@ -227,6 +249,18 @@
     }
 
     const CUTS = ["full", "cutaway", "crop"];
+
+    /** Whether a crop keeps less than `area` (or the image) across x or y. */
+    function cropNarrower(inspect, area, width, height) {
+        if (inspect.mode !== "crop" || !inspect.crop) return false;
+        const whole = area ? { x: [area.x, area.x + area.width], y: [area.y, area.y + area.height] }
+            : { x: [0, width], y: [0, height] };
+        return ["x", "y"].some((axis) => {
+            const range = inspect.crop[axis];
+            if (!inspect.axes?.[axis] || !Array.isArray(range)) return false;
+            return range[0] > whole[axis][0] + 0.5 || range[1] < whole[axis][1] - 0.5;
+        });
+    }
 
     /** `[z0, z1]`: the planes a Z crop or cutaway keeps, every plane else. */
     function keptPlanes(inspect, state, depth) {
@@ -333,6 +367,11 @@
           doc: "Show a projection of a range of planes." },
         { id: "mode.volume", surfaces: ["strip"], needs: ["depth", "colourless", "webgl2"], group: "mode",
           order: 30, doc: "Show the stack in 3-D." },
+        // On a plane or a projection, a square to place: the 3-D view of that
+        // area (views/areaTool.js). V opens it under the pointer.
+        { id: "tool.area", surfaces: ["strip"], modes: ["plane", "slab"],
+          needs: ["depth", "colourless", "webgl2"], group: "mode", order: 40,
+          doc: "Area: place a square on the image and see that part of the stack in 3-D (V)." },
         // In 3-D, the two ways to cut the stack open; each opens the panel
         // beside the strip (views/volumeDock.js).
         { id: "tool.cutaway", surfaces: ["strip"], modes: ["volume"], needs: ["depth", "cut"], group: "cut",
@@ -379,6 +418,10 @@
           group: "projection", order: 40, doc: "Keep the range centred on the plane as it moves." },
         { id: "volume.composite", surfaces: ["popover"], modes: ["volume"], needs: ["webgl2"],
           group: "volume", order: 10, doc: "Render: maximum intensity or additive." },
+        { id: "area.size", surfaces: ["popover"], modes: ["plane", "slab"],
+          needs: ["depth", "colourless", "webgl2", "prefs"], group: "volume", order: 15,
+          config: (ctx) => ({ unit: ctx.areaUnit }),
+          doc: "The Area tool's square: its side, in microns where the image states its spacing." },
         // How the viewer moves, for every image: in every mode, as it is
         // the plane fades' and the 3-D view's coasting alike.
         { id: "view.motion", surfaces: ["popover"], needs: ["depthOrFrames", "prefs"],
@@ -405,14 +448,18 @@
         // whether its cut is shown or hidden (O): the panel stays out until
         // its ×. Its tools' own handles cut in the view (views/volumeHandles.js).
         { id: "cut.axes", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
-          group: "axes", config: (ctx) => ({ flip: ctx.cutTool === "cutaway" }),
-          doc: "Which of X, Y and Z are cut; a Cut also flips the side each keeps." },
+          group: "axes",
+          config: (ctx) => ({ flip: ctx.cutTool === "cutaway", single: ctx.cutTool === "cutaway" }),
+          doc: "Which axes are cut: a Cut along one of X, Y or Z, and the side it keeps; a Crop along any." },
         { id: "cut.face", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
           group: "actions", order: 10, doc: "Draw the voxels on the cut faces solid." },
         { id: "cut.handles", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "prefs"],
           group: "actions", order: 20, doc: "Show or hide the handles that drag the cut in the view." },
         { id: "cut.reset", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
           group: "actions", order: 30, doc: "Put the tool's cut back where it starts." },
+        { id: "cut.toArea", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
+          when: ["crop.narrower"], group: "actions", order: 35,
+          doc: "Crop to area: the area becomes the crop, fetched finer and framed." },
         { id: "cut.history", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
           group: "actions", order: 40, doc: "Undo the last change to the cut." },
         { id: "cut.interpolation", surfaces: ["dock"], modes: ["volume"], needs: ["cut", "volumeDrawn"],
@@ -421,6 +468,13 @@
           group: "handles", doc: "How strongly the handles are drawn." },
         { id: "cut.toggle", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
           group: "toggle", doc: "Show or hide the cut (O), the panel left out." },
+        // Areas kept to come back to (services/savedAreas.js): the area, the
+        // cut and the camera, under a name, with a thumbnail.
+        { id: "area.save", surfaces: ["dock"], modes: ["volume"], needs: ["savedAreas"],
+          group: "areas", order: 10, doc: "Save what is shown: the area, the cut and the camera." },
+        { id: "area.list", surfaces: ["dock"], modes: ["volume"], needs: ["savedAreas"],
+          when: ["areas.saved"], group: "areas", order: 20,
+          doc: "The areas saved: a click goes back to one, × forgets it, a double-click renames it." },
     ];
     for (const entry of CORE) register(entry, { announce: false });
 

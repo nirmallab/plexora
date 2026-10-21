@@ -2,9 +2,11 @@
  * What part of a stack the 3-D view keeps (services/inspectGeometry.js).
  *
  * Every mode over every axis combination on an anisotropic stack: the box,
- * the cut-away corner, the planes, the texture numbers relative to the area
- * the textures cover, the repairs `clean` makes, and the words -- microns
- * only where the image states a spacing, never an assumed one.
+ * a cutaway along one axis only, the planes, the texture numbers relative to
+ * the area the textures cover, the repairs `clean` makes, the area (cleaned,
+ * framed, the cut kept inside it and moved with it), saved areas, and the
+ * words -- microns only where the image states a spacing, never an assumed
+ * one.
  *
  * Run directly:  node tests/js/inspect_geometry_probe.mjs
  */
@@ -43,7 +45,7 @@ const info = {
 };
 const d = G.dims(info, 40);
 const space = G.spacing(info);
-check("dims read the stack", same(d, { width: 2000, height: 1000, depth: 40 }), JSON.stringify(d));
+check("dims read the stack", same(d, { width: 2000, height: 1000, depth: 40, area: null }), JSON.stringify(d));
 check("a stated spacing is a length", space.x?.value === 0.5 && space.z?.value === 2);
 const assumed = G.spacing({ spacing: { x: { value: 0.5, unit: "µm", source: "metadata" },
                                        z: { value: 1, unit: "µm", source: "assumed" } } });
@@ -92,7 +94,7 @@ check("merge leaves the base alone", same(def.crop.x, [0, 2000]) && def.axesBy.c
 // -- resolve -----------------------------------------------------------------
 const covered = [0, 0, 2000, 1000];
 const full = G.resolve(def, d);
-check("full keeps the whole box", same(full.box, { x: [0, 2000], y: [0, 1000], z: [0, 40] }) && !full.hole
+check("full keeps the whole box", same(full.box, { x: [0, 2000], y: [0, 1000], z: [0, 40] }) && !("hole" in full)
       && full.cut === G.CUT.none && full.axes.length === 0);
 
 const crop = (axes, extra = {}) => G.resolve(G.clean({ mode: "crop", axes,
@@ -115,17 +117,26 @@ check("a crop's faces drawn solid when asked", cface.cut === G.CUT.faces && cfac
 
 const cut = (axes, cutaway, extra = {}) => G.resolve(G.clean({ mode: "cutaway", axes, cutaway, ...extra }, d), d);
 const kx = cut({ x: true, z: false }, { x: { at: 800, keep: "hi" } });
-check("cutaway X keeps the high side", same(kx.box.x, [800, 2000]) && !kx.hole);
+check("cutaway X keeps the high side", same(kx.box.x, [800, 2000]) && !("hole" in kx));
 const kxl = cut({ x: true, z: false }, { x: { at: 800, keep: "lo" } });
 check("cutaway X keeps the low side", same(kxl.box.x, [0, 800]));
 const kz = cut({ x: false, z: true }, { z: { at: 10, keep: "lo" } });
 check("cutaway Z keeps plane 10 and before", same(kz.box.z, [0, 11]));
+// A cutaway is along ONE axis: one saved over two or three (before the
+// corner was removed) opens on its first, x before y before z.
 const kxy = cut({ x: true, y: true, z: false }, { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "lo" } });
-check("cutaway X+Y takes out one corner", kxy.hole && same(kxy.hole.x, [0, 800]) && same(kxy.hole.y, [300, 1000])
-      && same(kxy.hole.z, [0, 40]) && same(kxy.box, full.box), JSON.stringify(kxy.hole));
-const kxyz = cut({ x: true, y: true, z: true },
-                 { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "hi" }, z: { at: 20, keep: "hi" } });
-check("cutaway X+Y+Z takes out one octant", kxyz.hole && same(kxyz.hole.z, [0, 20]) && same(kxyz.hole.y, [0, 300]));
+check("a cutaway over X and Y opens on X alone", same(kxy.axes, ["x"]) && same(kxy.box.x, [800, 2000])
+      && same(kxy.box.y, [0, 1000]) && !("hole" in kxy), JSON.stringify(kxy));
+const kyz = G.clean({ mode: "cutaway", axes: { x: false, y: true, z: true } }, d);
+check("a cutaway's axes keep the first on", same(kyz.axes, { x: false, y: true, z: false }), JSON.stringify(kyz.axes));
+check("a hidden cutaway's axes are one too",
+      same(G.clean({ mode: "full", axesBy: { cutaway: { x: false, y: true, z: true } } }, d).axesBy.cutaway,
+           { x: false, y: true, z: false }));
+check("a crop keeps every axis it names",
+      same(G.clean({ mode: "crop", axes: { x: true, y: true, z: true } }, d).axes, { x: true, y: true, z: true }));
+const kraw = G.resolve({ mode: "cutaway", axes: { x: true, y: true, z: false },
+                         cutaway: { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "lo" } } }, d);
+check("resolve cuts along the first axis even unclean", same(kraw.axes, ["x"]) && same(kraw.box.y, [0, 1000]));
 const kface = cut({ x: true }, { x: { at: 800 } }, { face: true });
 check("a cutaway's faces drawn solid when asked", kface.cut === G.CUT.faces);
 check("the whole stack draws no faces, asked or not",
@@ -134,17 +145,16 @@ check("the whole stack draws no faces, asked or not",
 // -- texture space -----------------------------------------------------------
 const tex = G.toTexture(cxz, covered, 40);
 check("texture box", nearAll(tex.lo, [0.1, 0, 0.1]) && nearAll(tex.hi, [0.6, 1, 0.25]), JSON.stringify(tex));
-check("the texture numbers carry nothing of sections or slabs",
-      same(Object.keys(tex).sort(), ["cut", "face", "hi", "hole", "lo"]), Object.keys(tex).join());
+check("the texture numbers carry nothing of sections, slabs or corners",
+      same(Object.keys(tex).sort(), ["cut", "face", "hi", "lo"]), Object.keys(tex).join());
 const area = [500, 200, 1500, 700];          // the 3-D view drew part of the plane
 const texArea = G.toTexture(cxy, area, 40);
 check("x and y relative to the area drawn", nearAll(texArea.lo, [0, 0, 0]) && nearAll(texArea.hi, [0.7, 0.8, 1]),
       JSON.stringify(texArea));
-const texHole = G.toTexture(kxy, covered, 40);
-check("the corner in texture space", texHole.hole && nearAll(texHole.hole.lo, [0, 0.3, 0])
-      && nearAll(texHole.hole.hi, [0.4, 1, 1]));
+const texKept = G.toTexture(kxy, covered, 40);
+check("a cutaway in texture space", nearAll(texKept.lo, [0.4, 0, 0]) && nearAll(texKept.hi, [1, 1, 1]));
 check("the same cut is the same uniforms", G.sameTexture(G.toTexture(cxz, covered, 40), tex)
-      && !G.sameTexture(tex, texHole));
+      && !G.sameTexture(tex, texKept));
 check("kept planes of a crop", same(G.keptPlanes(cz, d), [4, 9]) && same(G.keptPlanes(full, d), [0, 39]));
 
 // -- words -------------------------------------------------------------------
@@ -161,6 +171,56 @@ check("a crop in words", cropWords === "crop X 100–600 µm, Z planes 4–9 · 
 const cutWords = G.describe(G.clean({ mode: "cutaway", axes: { x: true },
                                       cutaway: { x: { at: 800, keep: "lo" } } }, d), d, space);
 check("a cut in words", cutWords === "cutaway X to 400 µm", cutWords);
+
+
+// -- the area -----------------------------------------------------------------
+check("an area is rounded out as the server rounds a box",
+      same(G.cleanArea({ x: 10.4, y: 0, width: 16.2, height: 16 }, d), { x: 10, y: 0, width: 17, height: 16 }));
+check("areaCovered is what X-Plexora-Box says",
+      same(G.areaCovered({ x: 10.4, y: 0, width: 16.2, height: 16 }, d), [10, 0, 27, 16]));
+check("an area is cut to the image", same(G.cleanArea({ x: 1900, y: -50, width: 300, height: 100 }, d),
+                                          { x: 1900, y: 0, width: 100, height: 50 }));
+check("no area: zero wide, outside, or not numbers",
+      G.cleanArea({ x: 0, y: 0, width: 0, height: 10 }, d) === null
+      && G.cleanArea({ x: 5000, y: 0, width: 10, height: 10 }, d) === null
+      && G.cleanArea({ x: "a", y: 0, width: 10, height: 10 }, d) === null && G.cleanArea(null, d) === null);
+check("a square at an edge keeps its size, moved inside",
+      same(G.squareAt(1990, 5, 300, d), { x: 1700, y: 0, width: 300, height: 300 }));
+check("a square larger than the image is the image", same(G.squareAt(10, 10, 5000, d),
+                                                          { x: 0, y: 0, width: 2000, height: 1000 }));
+check("inside never shrinks an area", same(G.inside({ x: -40, y: 900, width: 300, height: 300 }, d),
+                                           { x: 0, y: 700, width: 300, height: 300 }));
+const da = G.dims(info, 40, { x: 500, y: 200, width: 1000, height: 500 });
+check("dims carry the area", same(da.area, { x: 500, y: 200, width: 1000, height: 500 }));
+const defA = G.defaults(da);
+check("the defaults are the area's", same(defA.crop.x, [500, 1500]) && same(defA.crop.y, [200, 700])
+      && defA.cutaway.x.at === 1000 && defA.cutaway.y.at === 450, JSON.stringify(defA));
+const inA = G.clean({ mode: "crop", axes: { x: true, y: true, z: false }, crop: { x: [0, 2000], y: [300, 400] },
+                      cutaway: { x: { at: 10 } } }, da);
+check("a crop is kept inside the area", same(inA.crop.x, [500, 1500]) && same(inA.crop.y, [300, 400]),
+      JSON.stringify(inA.crop));
+check("a cut is kept inside the area", inA.cutaway.x.at === 500);
+check("the whole box is the area", same(G.resolve(G.clean({ mode: "full" }, da), da).box,
+                                         { x: [500, 1500], y: [200, 700], z: [0, 40] }));
+const moved = G.shift(inA, { dx: 100, dy: -50 });
+check("shift moves the crop and the cut by the area's move",
+      same(moved.crop.x, [600, 1600]) && same(moved.crop.y, [250, 350]) && moved.cutaway.x.at === 600
+      && moved.cutaway.y.at === inA.cutaway.y.at - 50, JSON.stringify(moved));
+check("no move, no shift", G.shift(inA, { dx: 0, dy: 0 }) === null);
+const saved = G.cleanSaved([
+    { id: "a", name: "first", area: { x: 0, y: 0, width: 100, height: 100 },
+      inspect: { mode: "crop", crop: { x: [0, 5000] } }, camera: { q: [0, 0, 0, 1], dist: 2, pan: [0, 0] } },
+    { id: "a", name: "again", area: { x: 0, y: 0, width: 10, height: 10 } },
+    { id: "b", name: "x".repeat(99), area: null },
+    { id: "c", name: "no camera", area: { x: 10, y: 10, width: 20, height: 20 }, camera: { q: [1, 2] } },
+], d);
+check("saved areas: ids once, an area each, names cut",
+      same(saved.map((s) => s.id), ["a", "c"]) && saved[0].name === "first", JSON.stringify(saved));
+check("a saved cut is kept inside its area", same(saved[0].inspect.crop.x, [0, 100]));
+check("a saved camera is a pose or null", same(saved[0].camera, { q: [0, 0, 0, 1], dist: 2, pan: [0, 0] })
+      && saved[1].camera === null);
+check("at most SAVED_MAX saved", G.cleanSaved(Array.from({ length: 60 }, (_, i) => ({
+    id: `s${i}`, area: { x: 0, y: 0, width: 5, height: 5 } })), d).length === G.SAVED_MAX);
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);
 if (failures.length) {

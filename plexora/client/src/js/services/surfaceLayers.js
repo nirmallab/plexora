@@ -621,7 +621,8 @@ window.PlexoraSurfaceLayers = (function () {
         const state = vs?.get?.() || {};
         return { mode: state.mode, composite: state.volume?.composite || "mip",
                  show: shown(), camera: volume?.cameraState?.() || null,
-                 box: volume?.box || null, slab: state.slab || null, t: state.t || 0,
+                 // The area drawn (`volume.area`; null: the whole stack).
+                 box: state.volume?.area || null, slab: state.slab || null, t: state.t || 0,
                  // [inspect] How the stack was cut, and the same in words for
                  // the panel's report.
                  inspect: state.inspect || null, z: state.z,
@@ -641,6 +642,7 @@ window.PlexoraSurfaceLayers = (function () {
                  volume: { ...volume, composite: scene.composite || volume.composite,
                            show: scene.show || volume.show,
                            ...(scene.interpolation ? { interpolation: scene.interpolation } : {}),
+                           ...(scene.box !== undefined ? { area: scene.box || null } : {}),
                            ...(scene.camera ? { camera: scene.camera } : {}) } }, { save: false });
         const restore = () => {
             const renderer = volumeView()?.renderer;

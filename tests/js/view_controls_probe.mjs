@@ -44,12 +44,14 @@ const R = box.PlexoraViewControls;
 
 let sets = 0;
 function stack({ mode = "plane", follow = true, op = "max", z0 = 3, z1 = 9, depth = 40, frames = 1,
-                 color = false, layout = "single", inspect = null, show = null } = {}) {
+                 color = false, layout = "single", inspect = null, show = null, area = null,
+                 saved = null } = {}) {
     return {
-        depth, frames, color,
+        depth, frames, color, info: { width: 2000, height: 1000 },
         zStep: () => ({ value: 2, unit: "µm" }),
         get: () => ({ mode, z: 6, t: 0, layout, slab: { z0, z1, op, follow, q: 95 },
-                      volume: show ? { show } : {},
+                      volume: { ...(show ? { show } : {}), ...(area ? { area } : {}),
+                                ...(saved ? { saved } : {}) },
                       inspect: { mode: "full", tool: "cutaway", axes: { x: true, y: false, z: false },
                                  axesBy: { cutaway: { x: true, y: false, z: false }, crop: { x: true, y: true, z: true } },
                                  crop: { z: [0, depth - 1] }, cutaway: { z: { at: 20, keep: "hi" } },
@@ -65,12 +67,16 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // -- the strip ------------------------------------------------------------------
 
-check("one plane: modes, sections, play, the rail with its thumb and hover mark, cog",
-      same(strip(stack()), ["mode.plane", "mode.slab", "mode.volume", "sections", "play", "rail",
+check("one plane: modes, the Area tool, sections, play, the rail with its thumb and hover mark, cog",
+      same(strip(stack()), ["mode.plane", "mode.slab", "mode.volume", "tool.area", "sections", "play", "rail",
                             "thumb", "hover", "cog"]), strip(stack()).join());
 check("a projection adds its band",
-      same(strip(stack({ mode: "slab" })), ["mode.plane", "mode.slab", "mode.volume", "sections", "play",
-                                            "rail", "band", "thumb", "hover", "cog"]));
+      same(strip(stack({ mode: "slab" })), ["mode.plane", "mode.slab", "mode.volume", "tool.area", "sections",
+                                            "play", "rail", "band", "thumb", "hover", "cog"]));
+check("the Area tool: not in 3-D, not on a colour stack, not without a 3-D view",
+      !strip(stack({ mode: "volume" })).includes("tool.area")
+      && !strip(stack({ color: true })).includes("tool.area")
+      && !strip(stack(), { ...page, volumeSupported: false }).includes("tool.area"));
 const volume = strip(stack({ mode: "volume", follow: false }));
 check("3-D: no sections, no rail -- the plane is frozen there; Cut and Crop instead",
       same(volume, ["mode.plane", "mode.slab", "mode.volume", "tool.cutaway", "tool.crop", "play", "cog"]),
@@ -105,11 +111,13 @@ check("a following projection's band is resized, not moved; a fixed one's is mov
 
 // -- the popover --------------------------------------------------------------------
 
-check("one plane: the operation (to make a projection) and Motion",
-      same(popover(stack()), ["projection.op", "view.motion"]), popover(stack()).join());
-check("a projection: the operation, the planes, Follow; Motion",
+check("one plane: the operation (to make a projection), the Area tool's size and Motion",
+      same(popover(stack()), ["projection.op", "area.size", "view.motion"]), popover(stack()).join());
+check("a projection: the operation, the planes, Follow; the Area's size; Motion",
       same(popover(stack({ mode: "slab" })), ["projection.op", "projection.range", "projection.follow",
-                                              "view.motion"]));
+                                              "area.size", "view.motion"]));
+check("the Area's size is in pixels where the image states no spacing",
+      R.configOf("area.size", R.context(stack(), page)).unit === "px");
 check("...and the percentile only when it is one",
       popover(stack({ mode: "slab", op: "pct" })).includes("projection.percentile")
       && !popover(stack({ mode: "slab", op: "mean" })).includes("projection.percentile"));
@@ -162,10 +170,10 @@ const CUTS = [{}, { mode: "crop" }, { mode: "cutaway" }, { mode: "cutaway", axes
 check("3-D, whatever the cut: Cut and Crop on the strip, no rail",
       CUTS.every((inspect) => same(strip(cutIn(inspect)), STRIP3D)),
       CUTS.map((inspect) => strip(cutIn(inspect)).join()).join(" | "));
+const cuts = (ids) => ids.filter((id) => id === "tool.cutaway" || id === "tool.crop");
 check("no Cut or Crop where the page cannot cut, nor outside 3-D",
-      !strip(cutIn({}), { ...page, cutSupported: false }).some((id) => id.startsWith("tool."))
-      && !strip(stack()).some((id) => id.startsWith("tool."))
-      && !strip(stack({ mode: "slab" })).some((id) => id.startsWith("tool.")));
+      !cuts(strip(cutIn({}), { ...page, cutSupported: false })).length
+      && !cuts(strip(stack())).length && !cuts(strip(stack({ mode: "slab" }))).length);
 check("the popover's planes row is the planes the cut keeps",
       R.context(cutIn({ mode: "crop", axes: { x: false, z: true }, crop: { z: [4, 9] } }), page).keptZ0 === 4
       && R.context(cutIn({ mode: "crop", axes: { x: false, z: true }, crop: { z: [4, 9] } }), page).allPlanes === false
@@ -191,6 +199,23 @@ check("a Crop: exactly the same panel", same(dock(cutIn({ mode: "crop", axes: { 
 check("only a Cut flips the side each axis keeps",
       R.configOf("cut.axes", R.context(cutIn({ mode: "cutaway" }), page)).flip === true
       && R.configOf("cut.axes", R.context(cutIn({ mode: "crop" }), page)).flip === false);
+check("a Cut's axes are one at a time (a radio), a Crop's any",
+      R.configOf("cut.axes", R.context(cutIn({ mode: "cutaway" }), page)).single === true
+      && R.configOf("cut.axes", R.context(cutIn({ mode: "crop" }), page)).single === false);
+const narrow = { mode: "crop", axes: { x: true, y: true, z: true }, crop: { x: [200, 600], y: [0, 1000], z: [0, 39] } };
+check("a crop narrower than the image: Crop to area among the actions",
+      same(dock(cutIn(narrow)), ["cut.axes", "cut.face", "cut.handles", "cut.reset", "cut.toArea", "cut.history",
+                                 "cut.interpolation", "cut.handleOpacity", "cut.toggle"]), dock(cutIn(narrow)).join());
+check("...not when it keeps the area, nor along Z only, nor in a Cut",
+      !dock(cutIn(narrow, { area: { x: 200, y: 0, width: 400, height: 1000 } })).includes("cut.toArea")
+      && !dock(cutIn({ ...narrow, crop: { x: [0, 2000], y: [0, 1000], z: [4, 9] } })).includes("cut.toArea")
+      && !dock(cutIn({ ...narrow, mode: "cutaway" })).includes("cut.toArea"));
+const keeps = { ...page, savedAreasSupported: true };
+check("saved areas: Save area on a page that keeps them, the list once one is saved",
+      same(dock(cutIn({}), keeps).slice(-3), ["cut.handleOpacity", "area.save", "cut.toggle"])
+      && dock(cutIn({}, { saved: [{ id: "a", name: "A", area: { x: 0, y: 0, width: 5, height: 5 } }] }), keeps)
+          .includes("area.list")
+      && !dock(cutIn({})).includes("area.save"), dock(cutIn({}), keeps).join());
 const surfacesOnly = { volume: false, surfaces: true };
 check("surfaces only: nothing about voxels -- no faces, no Voxels",
       !dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).some((id) => ["cut.face", "cut.interpolation"].includes(id))

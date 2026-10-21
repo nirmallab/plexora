@@ -281,11 +281,68 @@ def normalize_view_state(value, depth=None, frames=None):
     interpolation = volume.get("interpolation")
     if interpolation in INTERPOLATIONS:
         out["volume"]["interpolation"] = interpolation
+    # The part of the image the 3-D view draws, or None for the whole stack
+    # (client inspectGeometry.cleanArea, which also clamps it to the image:
+    # the server knows only the depth and the frames).
+    out["volume"]["area"] = _area(volume.get("area"))
+    out["volume"]["saved"] = _saved_areas(volume.get("saved"), depth)
     # How the 3-D view is cut (client services/inspectGeometry.js). Kept only
     # when one was saved: a state without it opens whole, or -- saved before
     # the view could be cut -- cut to its old clip range (viewState._migrate).
     if isinstance(value.get("inspect"), dict):
         out["inspect"] = normalize_inspect(value["inspect"], depth)
+    return out
+
+
+def _area(value):
+    """`{x, y, width, height}` in full-resolution pixels, or None: the
+    corner not negative, both sides more than nothing, every number finite."""
+    if not isinstance(value, dict):
+        return None
+    numbers = _numbers([value.get(key) for key in ("x", "y", "width", "height")], 4)
+    if numbers is None:
+        return None
+    x, y, width, height = numbers
+    if width <= 0 or height <= 0:
+        return None
+    return {"x": max(0.0, x), "y": max(0.0, y), "width": width, "height": height}
+
+
+#: How many saved areas a stack keeps (client inspectGeometry.SAVED_MAX).
+SAVED_AREAS_MAX = 50
+
+
+def _saved_areas(value, depth=None):
+    """Areas kept to come back to (client inspectGeometry.cleanSaved): at
+    most SAVED_AREAS_MAX `{id, name, area, inspect, camera}`, each id met
+    once, an entry without an area dropped."""
+    if not isinstance(value, list):
+        return []
+    out, seen = [], set()
+    for entry in value:
+        if len(out) >= SAVED_AREAS_MAX:
+            break
+        if not isinstance(entry, dict):
+            continue
+        ident = str(entry.get("id") or "")[:32]
+        area = _area(entry.get("area"))
+        if not ident or ident in seen or area is None:
+            continue
+        seen.add(ident)
+        camera = entry.get("camera") if isinstance(entry.get("camera"), dict) else {}
+        q = _numbers(camera.get("q"), 4)
+        pan = _numbers(camera.get("pan"), 2)
+        dist = _float(camera.get("dist"), 0.0)
+        pose = None
+        if q is not None and dist > 0:
+            pose = {"q": q, "dist": dist, "pan": pan if pan is not None else [0.0, 0.0]}
+        out.append({
+            "id": ident,
+            "name": str(entry.get("name") or "")[:64],
+            "area": area,
+            "inspect": normalize_inspect(entry.get("inspect"), depth),
+            "camera": pose,
+        })
     return out
 
 
@@ -312,7 +369,8 @@ def normalize_inspect(value, depth=None):
     "full" so it can be turned back on; while a tool is on it is that tool.
     Each tool keeps its own axes: `axes` are the current tool's, `axesBy`
     what each tool had when it was last left, every set with at least one
-    axis on (the tool's starting axes where none is). A cut saved as a
+    axis on (the tool's starting axes where none is), and a cutaway's
+    exactly one (the first, x before y before z). A cut saved as a
     section or a slab, modes since removed, reads as the whole stack.
 
     The same rules as the client's `inspectGeometry.clean`, as far as the
@@ -328,14 +386,22 @@ def normalize_inspect(value, depth=None):
     else:
         out["tool"] = value.get("tool") if value.get("tool") in INSPECT_TOOLS else "cutaway"
 
-    def axes_of(raw, fallback):
+    def axes_of(raw, fallback, single=False):
         raw = raw if isinstance(raw, dict) else {}
         kept = {axis: raw.get(axis) is True for axis in ("x", "y", "z")}
-        return kept if any(kept.values()) else dict(fallback)
+        if not any(kept.values()):
+            return dict(fallback)
+        if single:
+            # A cutaway is along one axis: the first on, x before y before z.
+            first = next(axis for axis in ("x", "y", "z") if kept[axis])
+            kept = {axis: axis == first for axis in ("x", "y", "z")}
+        return kept
 
-    out["axes"] = axes_of(value.get("axes"), INSPECT_TOOL_AXES[out["tool"]])
+    out["axes"] = axes_of(value.get("axes"), INSPECT_TOOL_AXES[out["tool"]],
+                          single=out["tool"] == "cutaway")
     axes_by = value.get("axesBy") if isinstance(value.get("axesBy"), dict) else {}
-    out["axesBy"] = {tool: axes_of(axes_by.get(tool), INSPECT_TOOL_AXES[tool])
+    out["axesBy"] = {tool: axes_of(axes_by.get(tool), INSPECT_TOOL_AXES[tool],
+                                   single=tool == "cutaway")
                      for tool in INSPECT_TOOLS}
 
     def pair(raw, integer, high):
@@ -520,6 +586,35 @@ def normalize_handles(value):
     }
 
 
+#: The Area tool's square (views/areaTool.js): its side in microns where the
+#: image states its spacing, in pixels where it does not.
+AREA_DEFAULTS = {"um": 300.0, "px": 1024}
+AREA_UM = (1.0, 1e5)
+AREA_PX = (16, 65536)
+
+
+def normalize_area(value):
+    """The Area tool's square, repaired field by field (viewerPrefs.js's
+    `mergeArea` keeps the same bounds)."""
+    area = value if isinstance(value, dict) else {}
+    um = area.get("um")
+    px = area.get("px")
+    try:
+        um = None if isinstance(um, bool) or um is None else float(um)
+    except (TypeError, ValueError):
+        um = None
+    if um is not None and not math.isfinite(um):
+        um = None
+    try:
+        px = None if isinstance(px, bool) or px is None else int(round(float(px)))
+    except (TypeError, ValueError, OverflowError):
+        px = None
+    return {
+        "um": min(AREA_UM[1], max(AREA_UM[0], um)) if um is not None else AREA_DEFAULTS["um"],
+        "px": min(AREA_PX[1], max(AREA_PX[0], px)) if px is not None else AREA_DEFAULTS["px"],
+    }
+
+
 def normalize_viewer_prefs(value):
     """The viewer's preferences, repaired: a share outside its bounds is
     clamped, and anything that does not parse reads as its default."""
@@ -539,7 +634,8 @@ def normalize_viewer_prefs(value):
     return {"sections": out_sections, "motion": motion if motion in MOTION else "on",
             "grid": normalize_grid(value.get("grid")),
             "rotate": normalize_rotate(value.get("rotate")),
-            "handles": normalize_handles(value.get("handles"))}
+            "handles": normalize_handles(value.get("handles")),
+            "area": normalize_area(value.get("area"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
@@ -574,8 +670,11 @@ def put_viewer_prefs():
     handles = current.get("handles") if isinstance(current.get("handles"), dict) else {}
     if isinstance(payload.get("handles"), dict):
         handles = {**handles, **payload["handles"]}
+    area = current.get("area") if isinstance(current.get("area"), dict) else {}
+    if isinstance(payload.get("area"), dict):
+        area = {**area, **payload["area"]}
     stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
-                                     "rotate": rotate, "handles": handles})
+                                     "rotate": rotate, "handles": handles, "area": area})
     settings["viewer"] = stored
     paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)

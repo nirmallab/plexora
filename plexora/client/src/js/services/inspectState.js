@@ -25,6 +25,10 @@
  *   laid over it, `resolved()` its resolution (inspectGeometry.resolve). The
  *   volume renderer reads it every frame (volumeRenderer.inspectNow).
  *
+ *   THE AREA GOES WITH THE CUT: an undo entry holds both (`snapshot`), so a
+ *   slide of the area (`slideArea`, the renderer's Shift+drag) undoes in one
+ *   step with the cut it carried, and "Crop to area" (`cropToArea`) is one.
+ *
  * Classic script, `window.PlexoraInspectState` (the class) and, once the
  * viewer has a z-stack, `window.PlexoraInspect` (main.js).
  */
@@ -65,23 +69,25 @@
             return Boolean(this.viewState?.enabled?.() && this.G && this.viewState.get()?.inspect);
         }
 
-        dims() {
-            return this.G.dims(this.viewState.info, this.viewState.depth);
+        /** The stack's extent, inside `area` (the state's by default). */
+        dims(area = this.viewState.get()?.volume?.area ?? null) {
+            return this.G.dims(this.viewState.info, this.viewState.depth, area);
         }
 
         spacing() {
             return this.G.spacing(this.viewState.info);
         }
 
-        /** What the cut is made of now: `{inspect}`. */
+        /** What the cut is made of now: `{inspect, area}`. */
         snapshot(state = this.viewState.get()) {
-            return { inspect: copy(state?.inspect) };
+            return { inspect: copy(state?.inspect), area: copy(state?.volume?.area ?? null) };
         }
 
         /** The state with a patch laid over it, as `viewState.set` would. */
         _over(state, patch) {
             if (!patch?.inspect) return state;
-            return { ...state, inspect: this.G.clean(this.G.merge(state.inspect, patch.inspect), this.dims()) };
+            return { ...state, inspect: this.G.clean(this.G.merge(state.inspect, patch.inspect),
+                                                     this.dims(state.volume?.area ?? null)) };
         }
 
         /**
@@ -160,14 +166,17 @@
          * Change the cut: `patch` = `{inspect}`. `save: false` for a change
          * nobody chose (a capture put back, an agent's replay);
          * `history: false` to leave the history alone; `gesture` to fold
-         * repeated edits of one control into one undo entry.
+         * repeated edits of one control into one undo entry; `extra`, more
+         * of the view state changed in the same step (`{volume: {area}}`:
+         * the cut then says where it is, and is not moved with the area).
          */
-        set(patch, { save = true, history = true, gesture = null } = {}) {
+        set(patch, { save = true, history = true, gesture = null, extra = null } = {}) {
             if (!this.enabled || !patch?.inspect) return this.viewState.get();
             const applied = this.withTool(patch, this.viewState.get());
             this.previewPatch = null;
             if (history) this._remember(gesture);
-            const out = this.viewState.set({ inspect: applied.inspect }, { save });
+            this._sliding = false;
+            const out = this.viewState.set({ ...(extra || {}), inspect: applied.inspect }, { save });
             this._changed(false);
             return out;
         }
@@ -197,6 +206,63 @@
             if (!this.previewPatch) return;
             this.previewPatch = null;
             this._changed(false);
+        }
+
+        /**
+         * Move the area the 3-D view draws to `area` (`{x, y, width,
+         * height}`), the cut moving with it (viewState.set). A slide is one
+         * undo entry from its first move to its `final` one, saved once, at
+         * the end.
+         */
+        slideArea(area, { final = true } = {}) {
+            if (!this.viewState?.enabled?.()) return this.viewState?.get?.() || null;
+            if (!this._sliding) {
+                this._last = null;
+                this._remember(null);
+            }
+            this._sliding = !final;
+            this.previewPatch = null;
+            const out = this.viewState.set({ volume: { area } }, { save: final });
+            this._changed(false);
+            return out;
+        }
+
+        /** The crop's x and y ranges (whichever tool is on: a crop is kept
+         *  while hidden), each the area's own where the crop is not along
+         *  that axis: `{x: [lo, hi], y: [lo, hi]}`. */
+        cropXY(state = this.viewState.get()) {
+            const inspect = state?.inspect;
+            if (!inspect) return null;
+            const whole = this.G.whole(this.dims(state.volume?.area ?? null));
+            const axes = inspect.tool === "crop" ? inspect.axes : inspect.axesBy?.crop;
+            return { x: axes?.x ? inspect.crop.x.slice() : whole.x, y: axes?.y ? inspect.crop.y.slice() : whole.y };
+        }
+
+        /** Whether the crop is narrower than the area (or the image) in x
+         *  or y: what "Crop to area" would tighten. */
+        cropNarrower(state = this.viewState.get()) {
+            const inspect = state?.inspect;
+            if (!inspect || inspect.mode !== "crop") return false;
+            const xy = this.cropXY(state);
+            const whole = this.G.whole(this.dims(state.volume?.area ?? null));
+            const narrower = (axis) => xy[axis][0] > whole[axis][0] + 0.5 || xy[axis][1] < whole[axis][1] - 0.5;
+            return narrower("x") || narrower("y");
+        }
+
+        /**
+         * The area becomes the crop's x and y: the stack is fetched again at
+         * the finest level that box allows, and the camera frames it (the
+         * box's longest side is always 1). One undo entry, area and crop.
+         */
+        cropToArea() {
+            if (!this.enabled) return this.viewState.get();
+            const xy = this.cropXY();
+            if (!xy) return this.viewState.get();
+            const area = this.G.cleanArea({ x: xy.x[0], y: xy.y[0], width: xy.x[1] - xy.x[0],
+                                             height: xy.y[1] - xy.y[0] }, this.dims(null));
+            if (!area) return this.viewState.get();
+            const crop = { x: [area.x, area.x + area.width], y: [area.y, area.y + area.height] };
+            return this.set({ inspect: { crop } }, { extra: { volume: { area } } });
         }
 
         /** Cut with `tool` ("cutaway" or "crop"), as it was last left. */
@@ -263,7 +329,11 @@
 
         _apply(entry) {
             this.previewPatch = null;
-            this.viewState.set({ inspect: entry.inspect });
+            this._sliding = false;
+            // The area and the cut in one step: the cut says where it is, so
+            // it is not moved with the area (viewState.set).
+            const area = entry.area === undefined ? {} : { volume: { area: entry.area } };
+            this.viewState.set({ ...area, inspect: entry.inspect });
             this._changed(false);
         }
     }

@@ -7,7 +7,7 @@
  *
  *     crop      both faces along each axis cut, and a grip in the box's
  *               middle that moves the box whole
- *     cutaway   the cut along each axis
+ *     cutaway   the cut, along its one axis
  *
  * DRAGGING A GRIP NEVER TURNS THE STACK. A press on a grip is taken before
  * the canvas sees it (stopped and captured, as the gizmo's are), so the
@@ -112,7 +112,8 @@
         }
 
         dims() {
-            return this.G.dims(this.viewState.info, this.viewState.depth);
+            return this.G.dims(this.viewState.info, this.viewState.depth,
+                               this.state()?.volume?.area || null);
         }
 
         /** The state drawn now: a preview under a hand included. */
@@ -122,10 +123,14 @@
 
         // -- geometry ---------------------------------------------------------
 
-        /** `[x0, y0, x1, y1]` full-resolution pixels the textures cover. */
+        /** `[x0, y0, x1, y1]` full-resolution pixels the view frames (the
+         *  area, else what the textures cover). */
         covered() {
             const d = this.dims();
-            return this.renderer?.covered || [0, 0, d.width, d.height];
+            const renderer = this.renderer;
+            const framed = typeof renderer?.frameCovered === "function" ? renderer.frameCovered()
+                : renderer?.covered;
+            return framed || [0, 0, d.width, d.height];
         }
 
         /** An image point (x, y pixels, z planes, continuous) on screen,
@@ -173,12 +178,11 @@
                                  at: null, centre: AXES.map((a) => (box[a][0] + box[a][1]) / 2) });
                 }
             } else if (resolved.mode === "cutaway") {
-                const region = resolved.hole || null;
                 for (const axis of resolved.axes) {
                     const { at, keep } = inspect.cutaway[axis];
                     // Along z the cut is between planes (inspectGeometry).
                     const where = axis === "z" ? (keep === "hi" ? at : at + 1) : at;
-                    const span = other(axis, region || box);
+                    const span = other(axis, box);
                     faces.push({ key: `${axis}:cut`, axis, at: where, span });
                     grips.push({ key: `${axis}:cut`, axis, kind: "cut", at: where, span });
                 }

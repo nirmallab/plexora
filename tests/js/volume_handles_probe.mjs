@@ -126,9 +126,9 @@ check("a crop's Z faces sit at its first plane and after its last", laid.grips[2
 state.inspect = G.clean({ mode: "cutaway", axes: { x: true, y: true, z: false },
                           cutaway: { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "lo" } } }, DIMS);
 laid = handles.layout(vs.get());
-check("a cutaway over X and Y: one face per cut, across the corner taken out",
-      laid.grips.map((g) => g.key).join() === "x:cut,y:cut"
-      && JSON.stringify(laid.faces[0].span) === JSON.stringify([["y", [300, 1000]], ["z", [0, 40]]]),
+check("a cutaway saved over X and Y: one face, along X, across the whole box",
+      laid.grips.map((g) => g.key).join() === "x:cut" && laid.faces.length === 1
+      && JSON.stringify(laid.faces[0].span) === JSON.stringify([["y", [0, 1000]], ["z", [0, 40]]]),
       JSON.stringify(laid.faces[0]));
 state.inspect = G.clean({ mode: "crop", axes: { x: true, y: true, z: true } }, DIMS);
 laid = handles.layout(vs.get());

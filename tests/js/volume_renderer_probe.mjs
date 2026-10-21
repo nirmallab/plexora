@@ -23,6 +23,11 @@
  * - a texture being replaced (a window turning exact) is drawn from until the
  *   new one lands, in its own window, never evicted meanwhile; the new one
  *   dissolves in at a still camera, never across a camera move or a capture;
+ * - the area (`setArea`): another area fetches; while it loads the last
+ *   texture stands in, read where the new area overlaps it, so a slide never
+ *   draws a blank frame; an area the same size keeps the level; Shift+drag
+ *   slides it (at most one move per SLIDE_MS, the camera untouched), Alt or
+ *   the middle button pans;
  * - MIP keeps its samples while moving; the jitter is on a fixed grid.
  *
  * Run directly:  node tests/js/volume_renderer_probe.mjs
@@ -97,8 +102,12 @@ function fetchImpl(url) {
     const shape = query.get("box") ? [4, 8, 8] : [4, 16, 16];
     const half = query.get("format") === "f16";
     const buffer = new ArrayBuffer(bytesOf(shape) * (half ? 2 : 1));
+    // The box the server covers: what was asked, rounded out (serve.py).
+    const asked = query.get("box") ? query.get("box").split(",").map(Number) : null;
+    const covered = asked ? [Math.floor(asked[0]), Math.floor(asked[1]), Math.ceil(asked[0] + asked[2]),
+                             Math.ceil(asked[1] + asked[3])].join(",") : "0,0,32,32";
     const headers = { "X-Plexora-Shape": shape.join(","), "X-Plexora-Format": half ? "f16" : "u8",
-                      "X-Plexora-Level": "1", "X-Plexora-Box": "0,0,32,32" };
+                      "X-Plexora-Level": "1", "X-Plexora-Box": covered };
     return Promise.resolve({ ok: true, status: 200, arrayBuffer: async () => buffer,
                              headers: { get: (name) => headers[name] ?? null } });
 }
@@ -136,10 +145,15 @@ hd = false;
 await settle();
 check("and back to fast tiles is the textures already held", requests.length === 6);
 
-renderer.box = { x: 0, y: 0, width: 16, height: 16 };
+check("setArea says whether the area changed", renderer.setArea({ x: 0, y: 0, width: 16, height: 16 },
+                                                                 { refresh: false }) === true
+      && renderer.setArea({ x: 0, y: 0, width: 16, height: 16 }, { refresh: false }) === false);
 await settle();
 check("another area is fetched", requests.length === 9 && requests.slice(6).every((url) => url.includes("box=")));
-renderer.box = null;
+check("the area covered is the server's rounding", JSON.stringify(
+    (renderer.setArea({ x: 10.4, y: 0, width: 16.2, height: 16 }, { refresh: false }), renderer.areaCovered()))
+    === JSON.stringify([10, 0, 27, 16]));
+renderer.setArea(null, { refresh: false });
 await settle();
 check("and the whole plane again is not", requests.length === 9);
 
@@ -275,17 +289,25 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     cutter.bindCut(uniform, cutter.cutUniforms());
     check("a crop binds its box and nothing beyond it",
           near(calls.u_box_lo[0][0], 0.1) && near(calls.u_box_hi[0][2], 0.25) && calls.u_cut[0] === 0
-          && calls.u_hole_on[0] === 0, JSON.stringify(calls));
+          && !("u_hole_on" in calls), JSON.stringify(calls));
     check("no section or slab uniform is bound any more",
           !Object.keys(calls).some((name) => /u_plane|u_slab|u_context|u_vox|u_cut_alpha|u_cut_color/.test(name)),
           Object.keys(calls).join());
     set({ mode: "cutaway", axes: { x: true, y: true, z: false }, face: true,
           cutaway: { x: { at: 800, keep: "hi" }, y: { at: 300, keep: "lo" } } });
     cutter.bindCut(uniform, cutter.cutUniforms());
-    check("a cutaway over two axes binds its corner, faces solid",
-          calls.u_hole_on[0] === 1 && near(calls.u_hole_hi[0][0], 0.4) && near(calls.u_hole_lo[0][1], 0.3)
-          && same(calls.u_box_lo[0], [0, 0, 0]) && calls.u_cut[0] === G.CUT.faces,
-          JSON.stringify(calls));
+    check("a cutaway saved over two axes is cut along its first, faces solid, no corner",
+          near(calls.u_box_lo[0][0], 0.4) && near(calls.u_box_lo[0][1], 0) && near(calls.u_box_hi[0][1], 1)
+          && calls.u_cut[0] === G.CUT.faces && !("u_hole_on" in calls), JSON.stringify(calls));
+    state = { ...state, volume: { area: { x: 500, y: 0, width: 1000, height: 1000 } } };
+    cutter.box = state.volume.area;
+    set({ mode: "crop", axes: { x: true, z: false }, crop: { x: [200, 1200] } });
+    u = cutter.cutUniforms();
+    check("with an area, the frame is the area and the crop is kept inside it",
+          same(cutter.frameCovered(), [500, 0, 1500, 1000]) && near(u.lo[0], 0) && near(u.hi[0], 0.7),
+          JSON.stringify(u));
+    cutter.box = null;
+    state = { ...state, volume: {} };
     const before = cutter.cameraKey();
     set({ mode: "full" });
     check("a cut is a camera move: it never dissolves", cutter.cameraKey() !== before);
@@ -300,9 +322,16 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     const text = VolumeRenderer.fragmentSource(2, false, false);
     check("the box is uniforms; the old z and xy clip are gone",
           text.includes("uniform vec3 u_box_lo;") && !text.includes("u_clip_z") && !text.includes("u_clip_xy"));
-    for (const name of ["sampleAt", "inHole", "cutFace"]) {
+    for (const name of ["sampleAt", "cutFace", "baseRead"]) {
         check(`the shader has ${name}`, text.includes(`${name}(`));
     }
+    check("no cut-away corner is left anywhere: one axis a Cut",
+          !["inHole", "u_hole"].some((name) => text.includes(name) || VolumeRenderer.fragmentSource(2, true, false).includes(name)
+              || readFileSync(join(JS, "views/volumeRenderer.js"), "utf8").includes(name)
+              || readFileSync(join(JS, "views/surfaceRenderer.js"), "utf8").includes(name)));
+    check("a base texture is read through the frame's transform, nothing outside it",
+          /float baseRead\(sampler3D tex, vec3 p\)[\s\S]*u_tex_lo \+ p \* u_tex_span/.test(text)
+          && text.includes("baseRead(u_volume0, p)"));
     for (const name of ["inSlab", "cutPlanes", "cutSlabs", "skipMarch", "u_plane", "u_slab", "u_context",
                         "u_vox", "u_cut_alpha", "u_cut_color"]) {
         check(`the shader has no ${name} left`, !text.includes(name)
@@ -687,11 +716,102 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     check("the sampling jitter is on the full-quality grid, whatever the resolution",
           set.u_jitter_res && set.u_jitter_res[0][0] === 800 && set.u_jitter_res[0][1] === 600,
           JSON.stringify(set.u_jitter_res));
-    view.box = { x: 0, y: 0, width: 16, height: 16 };
-    check("another area is never stood in for by the last one",
-          view.entryFor(view.channels()[0]) === null);
+    // The area slid: the last texture stands in while the new area's loads,
+    // read where the new area overlaps it; the frame is the new area's.
+    view.composite = "mip";
+    view.draw(3400);
+    const standIn = view.entryFor(view.channels()[0]);
+    let landArea = null;
+    view.fetch = (url) => new Promise((resolve) => { landArea = () => resolve(fetchImpl(url)); });
+    const ghostsBefore = ghost.captures;
+    view.setArea({ x: 8, y: 8, width: 16, height: 16 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.draw(4000);
+    const nearAll = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+    check("a new area is drawn at once from the last texture: never a blank frame",
+          view.entryFor(view.channels()[0]) === standIn && Boolean(standIn) && set.u_opacity?.[0]?.[0] > 0,
+          JSON.stringify(set.u_opacity));
+    check("...framed as the new area, read where it lies in the old texture",
+          nearAll(view.frameCovered(standIn), [8, 8, 24, 24]) && nearAll([...set.u_tex_lo[0]], [0.25, 0.25, 0])
+          && nearAll([...set.u_tex_span[0]], [0.5, 0.5, 1]) && nearAll(view.extent(), [1, 1, 0.25]),
+          JSON.stringify({ lo: set.u_tex_lo, span: set.u_tex_span, extent: view.extent() }));
+    check("...with no dissolve on the way in (the area is a camera move)", ghost.captures === ghostsBefore);
+    landArea();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.draw(4100);
+    check("its own texture, landed, is drawn exactly (no transform) and dissolves in once",
+          view.entryFor(view.channels()[0]) !== standIn && nearAll([...set.u_tex_lo[0]], [0, 0, 0])
+          && nearAll([...set.u_tex_span[0]], [1, 1, 1]) && ghost.captures === ghostsBefore + 1,
+          JSON.stringify({ lo: set.u_tex_lo, captures: ghost.captures - ghostsBefore }));
+    view.fetch = fetchImpl;
+    const asked = requests.length;
+    view.setArea({ x: 12, y: 8, width: 16, height: 16 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const slid = requests.slice(asked).find((url) => url.includes("box="));
+    check("an area the same size, elsewhere, is fetched at the level already drawn",
+          Boolean(slid) && new URLSearchParams(slid.split("?")[1]).get("level") === "1", slid);
     delete box.__plexora.volumeWindows;
     delete box.PlexoraViewPerf;
+}
+
+
+// -- Shift+drag slides the area; Alt or the middle button pans ------------------------
+{
+    const listeners = {};
+    const canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false,
+                     addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); },
+                     setPointerCapture() {},
+                     getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) };
+    const fire = (name, event) => (listeners[name] || []).forEach((fn) => fn({
+        type: name, button: 0, pointerId: 1, preventDefault() {}, ...event }));
+    const vs = { depth: 4, info: { width: 1000, height: 1000 }, get: () => ({ t: 0 }) };
+    const view = new VolumeRenderer({ viewState: vs, datasource: "vol", fetchImpl });
+    view.canvas = canvas;
+    view.box = { x: 400, y: 400, width: 100, height: 100 };
+    const slides = [];
+    view.onSlide = (area, { final }) => slides.push({ area, final });
+    view.bindPointer(canvas);
+    const q = view.camera.q.slice();
+    const pan = [view.camera.panX, view.camera.panY];
+    fire("pointerdown", { shiftKey: true, clientX: 400, clientY: 300 });
+    fire("pointermove", { shiftKey: true, clientX: 420, clientY: 300 });
+    fire("pointermove", { shiftKey: true, clientX: 440, clientY: 310 });
+    check("Shift+drag slides the area: at most one move per SLIDE_MS", slides.length === 1
+          && slides[0].final === false && VolumeRenderer.SLIDE_MS === 40, JSON.stringify(slides));
+    fire("pointerup", { shiftKey: true, clientX: 440, clientY: 310 });
+    const last = slides.at(-1);
+    check("...the release is the final move, the size kept, inside the image",
+          slides.length === 2 && last.final === true && last.area.width === 100 && last.area.height === 100
+          && (last.area.x !== 400 || last.area.y !== 400) && last.area.x >= 0 && last.area.x <= 900,
+          JSON.stringify(slides));
+    check("...and never turns or pans the camera", JSON.stringify(view.camera.q) === JSON.stringify(q)
+          && view.camera.panX === pan[0] && view.camera.panY === pan[1] && !view.spin);
+    slides.length = 0;
+    fire("pointerdown", { shiftKey: true, clientX: 400, clientY: 300 });
+    fire("pointermove", { shiftKey: true, clientX: 5000, clientY: 300 });
+    fire("pointerup", { shiftKey: true, clientX: 5000, clientY: 300 });
+    const far = slides.at(-1).area;
+    check("a slide stops at the image's edge, never shrinking", far.width === 100
+          && far.x >= 0 && far.x + far.width <= 1000 && far.y >= 0 && far.y + far.height <= 1000, JSON.stringify(far));
+    slides.length = 0;
+    fire("pointerdown", { altKey: true, clientX: 400, clientY: 300 });
+    fire("pointermove", { altKey: true, clientX: 450, clientY: 300 });
+    fire("pointerup", { altKey: true, clientX: 450, clientY: 300 });
+    check("Alt+drag pans the camera, the area untouched", view.camera.panX !== pan[0] && slides.length === 0
+          && JSON.stringify(view.camera.q) === JSON.stringify(q));
+    const panned = view.camera.panX;
+    fire("pointerdown", { button: 1, clientX: 400, clientY: 300 });
+    fire("pointermove", { button: 1, clientX: 450, clientY: 300 });
+    fire("pointerup", { button: 1, clientX: 450, clientY: 300 });
+    check("the middle button pans too", view.camera.panX !== panned && slides.length === 0);
+    view.box = null;
+    const before = view.camera.panX;
+    fire("pointerdown", { shiftKey: true, clientX: 400, clientY: 300 });
+    fire("pointermove", { shiftKey: true, clientX: 450, clientY: 300 });
+    fire("pointerup", { shiftKey: true, clientX: 450, clientY: 300 });
+    check("with no area to slide, Shift+drag pans as it did", view.camera.panX !== before && slides.length === 0);
 }
 
 if (failures.length) {

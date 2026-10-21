@@ -33,8 +33,9 @@
  * compared with its unsmoothed self.
  *
  * COORDINATES. Vertices are level-0 voxels, (x, y, z), a voxel's centre on
- * whole numbers. The volume's box is the area its textures cover (`covered`,
- * full-resolution pixels) by every plane, scaled to the stack's physical
+ * whole numbers. The volume's box is the area it frames (`frameCovered()`:
+ * the Area tool's area, else what its textures cover; full-resolution
+ * pixels) by every plane, scaled to the stack's physical
  * proportions (`extent()`): a vertex goes to the box as
  * `(p + 0.5 - origin) * scale - extent / 2`, normals by the inverse transpose of
  * that scale, so an anisotropic stack shades as the tissue would. Fragments
@@ -182,9 +183,6 @@ flat in uint v_object;
 uniform vec3 u_extent;
 uniform vec3 u_box_lo;         // the volume's cut, texture space [0,1] (cutUniforms)
 uniform vec3 u_box_hi;
-uniform int u_hole_on;
-uniform vec3 u_hole_lo;
-uniform vec3 u_hole_hi;
 uniform bool u_caps;           // a cut is on: an inside seen through it is a cap
 uniform vec4 u_clip_plane;
 uniform bool u_use_clip_plane;
@@ -207,7 +205,6 @@ ${outputs}
 void main() {
     vec3 p = v_world / u_extent + 0.5;
     if (any(lessThan(p, u_box_lo - 0.001)) || any(greaterThan(p, u_box_hi + 0.001))) discard;
-    if (u_hole_on == 1 && all(greaterThan(p, u_hole_lo)) && all(lessThan(p, u_hole_hi))) discard;
     if (u_use_clip_plane && dot(vec4(v_world, 1.0), u_clip_plane) < 0.0) discard;
     if (u_useLut && v_lut.a < 0.002) discard;
 #ifdef PASS_PICK
@@ -849,11 +846,12 @@ void main() {`],
             const vs = volume.viewState;
             const info = vs?.info || {};
             const depth = Math.max(1, vs?.depth || 1);
-            const covered = volume.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const framed = typeof volume.frameCovered === "function" ? volume.frameCovered() : volume.covered;
+            const covered = framed || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
             const extent = volume.extent();
             const span = [covered[2] - covered[0], covered[3] - covered[1], depth];
             const cut = typeof volume.cutUniforms === "function" ? volume.cutUniforms(covered)
-                : { lo: [0, 0, 0], hi: [1, 1, 1], hole: null, cut: 0 };
+                : { lo: [0, 0, 0], hi: [1, 1, 1], cut: 0 };
             return { origin: [covered[0], covered[1], 0], extent, cut,
                      scale: extent.map((side, i) => side / Math.max(1e-9, span[i])) };
         }
@@ -886,11 +884,7 @@ void main() {`],
             const cut = frame.placement.cut;
             gl.uniform3fv(u("u_box_lo"), cut.lo);
             gl.uniform3fv(u("u_box_hi"), cut.hi);
-            gl.uniform1i(u("u_hole_on"), cut.hole ? 1 : 0);
-            gl.uniform3fv(u("u_hole_lo"), cut.hole ? cut.hole.lo : [0, 0, 0]);
-            gl.uniform3fv(u("u_hole_hi"), cut.hole ? cut.hole.hi : [0, 0, 0]);
-            const opened = Boolean(cut.hole)
-                || cut.lo.some((v) => v > 0.0005) || cut.hi.some((v) => v < 0.9995);
+            const opened = cut.lo.some((v) => v > 0.0005) || cut.hi.some((v) => v < 0.9995);
             gl.uniform1i(u("u_caps"), opened ? 1 : 0);
             gl.uniform1i(u("u_use_clip_plane"), this.clipPlane ? 1 : 0);
             gl.uniform4fv(u("u_clip_plane"), this.clipPlane || [0, 0, 1, 0]);

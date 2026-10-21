@@ -268,6 +268,7 @@ main. Design and the full list: `SLICE_CLIP.md`. Plan:
 | Panes pinned to the X/Y sections (`linkPanes`), draggable crosshair | done |
 | Figure Builder round trip and `cut` in the report; Video Studio frames carry the cut, slab narrows z via the clip; `viewer_set_inspect`, `viewer_set_z mode=keep`, lease restore | done |
 | 2026-10-13: sections and slabs removed (with `linkPanes`, the pinned crosshair, the panes' cut guides and `state.section`); the dock became the cut panel beside the strip's new Cut and Crop; each tool keeps its own axes (`inspect.tool`, `axesBy`); `O` (and the panel's Show/Hide) hides and shows the cut with the panel left out, × alone closes it | done |
+| 2026-10-21 (`feature/area-tool`, after milume's Inspect): the AREA (`volume.area`; the Area tool on the strip, V, a slide by Shift+drag, Alt / middle-drag pans), never a blank frame (stand-in texture through `u_tex_lo/span`), the cut moved with the area, Cut along ONE axis (`hole` removed everywhere), Crop to area, saved areas (`services/savedAreas.js`) | done (SLICE_CLIP.md "The area"); bench `area_slide` in PERF.md |
 | Oblique planes | not done (seams kept) |
 | A 3-D mask in 3-D: the Cells control's Outlines/Filled as cell surfaces (`services/maskSurfaces.js`, preview → standard, Paid `volume:surfaces`, hidden without it); one-pass surface nets (`surface/nets.py`) | done 2026-10-13 (SURFACES.md §4) |
 

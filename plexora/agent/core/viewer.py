@@ -351,12 +351,24 @@ def set_slab(call, inp):
     return _receipted(call, view, ack)
 
 
+class VolumeArea(AgentModel):
+    x: float = Field(ge=0, description="Left edge, full-resolution pixels.")
+    y: float = Field(ge=0, description="Top edge, full-resolution pixels.")
+    width: float = Field(gt=0, description="Full-resolution pixels across.")
+    height: float = Field(gt=0, description="Full-resolution pixels down.")
+
+
 class VolumeModeInput(ViewInput):
     mode: Literal["volume", "plane"] = Field(
         "volume", description="volume: the 3-D view; plane: back to one plane.")
     show_volume: bool | None = Field(None, description="Draw the voxels (MIP / additive).")
     show_surfaces: bool | None = Field(None, description="Draw the surfaces.")
     composite: Literal["mip", "additive"] | None = None
+    area: VolumeArea | None = Field(
+        None, description="The part of the image the 3-D view draws (the Area tool's square), "
+                          "full-resolution pixels; fetched at the finest level it allows. "
+                          "Cut to the image. Any cut moves with it.")
+    clear_area: bool = Field(False, description="Draw the whole stack again (no area).")
 
 
 def set_volume_mode(call, inp):
@@ -367,6 +379,12 @@ def set_volume_mode(call, inp):
         arguments["show"] = show
     if inp.composite:
         arguments["composite"] = inp.composite
+    if inp.area is not None and inp.clear_area:
+        raise AgentError("invalid_input", "give an area or clear_area, not both")
+    if inp.area is not None:
+        arguments["area"] = inp.area.model_dump()
+    elif inp.clear_area:
+        arguments["area"] = None
     _c, view, ack = _send(call, inp, "set_volume_mode", arguments, timeout=60)
     return _receipted(call, view, ack)
 
@@ -408,10 +426,11 @@ class InspectInput(ViewInput):
 
     mode: Literal["full", "cutaway", "crop"] | None = Field(
         None, description="full: the whole stack. cutaway (shown as Cut): a side taken off "
-                          "along each axis (two or three axes: one corner taken out). crop: "
-                          "a range kept along each axis, the box they make.")
+                          "along ONE axis. crop: a range kept along each axis, the box "
+                          "they make.")
     axes: list[Axis] | None = Field(None, min_length=1, max_length=3,
-                                    description="Which axes are cut, e.g. ['x', 'z'].")
+                                    description="Which axes are cut: one for a cutaway "
+                                                "(['y']), any for a crop (['x', 'z']).")
     crop: dict[Axis, list[float]] | None = Field(
         None, description="crop: the range kept per axis, {x: [x0, x1], z: [z0, z1]} "
                           "(z inclusive planes).")
@@ -422,6 +441,9 @@ class InspectInput(ViewInput):
 def set_inspect(call, inp):
     """Cut the 3-D view (entering it). Checked for form here; the browser
     clamps to the image and answers with exactly what it drew."""
+    if inp.mode == "cutaway" and inp.axes is not None and len(set(inp.axes)) > 1:
+        raise AgentError("invalid_input", "a cutaway is along one axis: name one of x, y or z "
+                                          "(a crop keeps a box along several)")
     arguments = {}
     for key in ("mode", "axes", "face"):
         value = getattr(inp, key)
@@ -672,16 +694,17 @@ def capabilities():
             input_model=SetSlabInput, handler=set_slab),
         cap(name="viewer.set_volume_mode", tool_name="viewer_set_volume_mode",
             purpose="Show a z-stack in 3-D (or back on one plane), with the voxels, the "
-                    "surfaces, or both, as MIP or additive. This tab only.",
+                    "surfaces, or both, as MIP or additive; optionally of one area of the "
+                    "image only (finer). This tab only.",
             input_model=VolumeModeInput, handler=set_volume_mode),
         cap(name="viewer.set_camera", tool_name="viewer_set_camera",
             purpose="Turn the 3-D view: a named view (xy, xz, yz, iso) or an exact camera. "
                     "This tab only.",
             input_model=CameraInput, handler=set_camera),
         cap(name="viewer.set_inspect", tool_name="viewer_set_inspect",
-            purpose="Cut the 3-D view open: a cutaway (a side or a corner taken off) or a "
-                    "crop (a box kept), along any of X, Y and Z, in image units. Enters 3-D; "
-                    "answers with the cut drawn, in words. This tab only.",
+            purpose="Cut the 3-D view open: a cutaway (a side taken off, along one of X, Y "
+                    "or Z) or a crop (a box kept, along any of them), in image units. Enters "
+                    "3-D; answers with the cut drawn, in words. This tab only.",
             input_model=InspectInput, handler=set_inspect),
         cap(name="viewer.set_surface", tool_name="viewer_set_surface",
             purpose="Show, hide, fade, recolour or restyle a surface in this tab, isolate "

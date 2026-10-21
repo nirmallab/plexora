@@ -89,6 +89,12 @@ OSD's in-memory tiles never carry one pass into the next; the server's caches st
   crops of one and of two axes previewed every frame (`clip_one_*`, `clip_two_*`); a Z section
   drawn alone moved through the stack, until its exact planes are in (`clip_sectionResolved`,
   `clip_sectionLevelFetches`). Skipped on a build without the cut.
+- `area_slide` (the area, SLICE_CLIP.md "The area"): an area a quarter of the image across
+  placed in 3-D and slid for 1.5 s as Shift+drag does, then released (`area_slide_frameP95`,
+  `_dropped`, `_levelFetches`, `_blackFrames` and `_flashFrames` -- the stand-in texture should
+  leave no black frame -- `_landMs` until the last area is in, `_ghosts`); then 30 slides in a
+  row and the GPU bytes held (`area_slide_gpuBytes`, `_gpuOverBudget`). Skipped on a build
+  without the area.
 
 Scenarios for Z navigation as the screen shows it (no black frames, preview first, the
 three panes in step). Luminance is always the bitmap path (`createImageBitmap`, never a

@@ -43,7 +43,8 @@ function viewer() {
     const calls = { set: [], slot: [], transform: [], fit: [], saves: 0 };
     const state = { t: 0, z: 3, mode: "plane", layout: "single",
                     slab: { z0: 2, z1: 4, op: "max", follow: true, thickness: 3 },
-                    volume: { composite: "mip", opacity: {} },
+                    // `area`: what the 3-D view draws (null: the whole stack).
+                    volume: { composite: "mip", opacity: {}, area: null },
                     // As core's view state always has one (inspectGeometry.clean).
                     inspect: { mode: "full", tool: "cutaway", axes: { x: true, y: false, z: false },
                                crop: { x: [0, 1000], y: [0, 800], z: [0, 9] } } };
@@ -205,6 +206,22 @@ check("capture records the cut", JSON.stringify(Scene.capture(env).view.inspect)
 calls.set.length = 0;
 await Scene.apply(env, cutFrame, { aspect: 16 / 9 });
 check("the same cut again is no revision", calls.set.length === 0, calls.set);
+// The area the frame drew (`box`, the view state's `volume.area`) goes in the
+// same patch as its cut: the cut says where it is, and is not moved with it.
+const areaFrame = JSON.parse(JSON.stringify(cutFrame));
+areaFrame.box = { x: 100, y: 100, width: 300, height: 300 };
+calls.set.length = 0;
+await Scene.apply(env, areaFrame, { aspect: 16 / 9 });
+check("a frame's area reaches the view state in one patch with its cut",
+      calls.set.length === 1 && JSON.stringify(calls.set[0].patch.volume?.area) === JSON.stringify(areaFrame.box)
+      && JSON.stringify(calls.set[0].patch.inspect) === JSON.stringify(cut), calls.set);
+check("...never the renderer's box behind the state's back", env.renderer.box === null);
+check("capture records the area from the view state",
+      JSON.stringify(Scene.capture(env).box) === JSON.stringify(areaFrame.box), Scene.capture(env).box);
+calls.set.length = 0;
+await Scene.apply(env, { ...areaFrame, box: null }, { aspect: 16 / 9 });
+check("a frame of the whole stack clears the area", calls.set.length === 1
+      && calls.set[0].patch.volume && calls.set[0].patch.volume.area === null, calls.set);
 // A video's slab in 3-D still narrows z, now through the clip.
 const slabbed = JSON.parse(JSON.stringify(volume));
 slabbed.view.slab = { z0: 2, z1: 4, op: "max" };
