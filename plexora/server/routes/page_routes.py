@@ -150,13 +150,21 @@ def image_streamed(project):
     HD PNG is many times the bytes of a fast WebP one. A data node builds its
     tiles where the image is (the user's rule, 2026-10-19: a node does not
     count; through an ssh tunnel to HMS O2 a 2.1 MB HD tile took ~35 ms).
+
+    Nor does a files-only server's `sftp://` image (the user's rule,
+    2026-10-20, for HMS O2's transfer node). The source reads behind a tile
+    are the same in HD and fast; only the encoding for the browser beside
+    this server differs, so HD costs that link nothing.
     """
     from plexora.server.providers.base import is_remote_locator
 
     binding = project.resources.get("image") if project.resources else None
     if binding is not None and binding.is_node:
         return False
-    return bool(is_remote_locator(project.image.src))
+    src = str(project.image.src or "")
+    if src[:7].lower() == "sftp://":
+        return False
+    return bool(is_remote_locator(src))
 
 
 def template_data(**values):
