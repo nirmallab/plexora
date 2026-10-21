@@ -387,7 +387,10 @@ window.PlexoraImportSample = (function () {
             : state.intent === "table" ? `Add data to ${state.sample}`
             : state.intent === "cells" ? `Add a mask or cell data to ${state.sample}`
             : `Add a layer to ${state.sample}`;
-        part("go").textContent = scoped() ? "Add layers" : "Import sample";
+        part("go").textContent = !scoped() ? "Import sample"
+            : state.intent === "mask" ? scopedGoLabel(["mask"])
+            : state.intent === "table" ? scopedGoLabel(["table"])
+            : state.intent === "cells" ? "Add" : "Add layers";
         // "Add more samples" is a promise the scoped dialog cannot keep: it
         // adds layers to one sample that already exists.
         part("add-text").textContent = scoped()
@@ -1560,11 +1563,24 @@ window.PlexoraImportSample = (function () {
      * dialog could mislead somebody into a second press.
      */
     function goLabel(samples) {
-        const layers = samples.reduce(
-            (total, sample) => total + (sample.layers || []).length, 0);
-        if (scoped()) return layers === 1 ? "Add layer" : `Add ${layers} layers`;
+        const rows = samples.flatMap((sample) => sample.layers || []);
+        if (scoped()) return scopedGoLabel(rows.map((row) => row.role));
         return samples.length > 1
             ? `Import ${samples.length} samples` : "Import sample";
+    }
+
+    /**
+     * A scoped dialog's button, named by what its rows become. A mask goes
+     * onto the image as its segmentation and a table becomes its cell data;
+     * "Add layer" over a mask read as a second image beside the first.
+     */
+    function scopedGoLabel(roles) {
+        const kinds = new Set(roles);
+        if (kinds.size && [...kinds].every((role) => role === "mask" || role === "table")) {
+            if (kinds.size === 2) return "Add mask and cell data";
+            return kinds.has("mask") ? "Add mask" : "Add cell data";
+        }
+        return roles.length === 1 ? "Add layer" : `Add ${roles.length} layers`;
     }
 
     /**

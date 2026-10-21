@@ -503,3 +503,24 @@ def test_the_first_read_is_the_card_in_outline_and_an_orb_the_size_of_its_line(d
     base = _read(CLIENT / "templates" / "base.html")
     assert base.index("/orbDriver.js?v=") < base.index("/importSample.js?v=")
     assert "/orbDriver.js?v=" not in _read(CLIENT / "templates" / "index.html")
+
+
+def test_a_scoped_add_names_what_its_rows_become(dialog):
+    """"Add layer" over a lone mask row read as a second image beside the
+    first, when what it does is give the image its segmentation."""
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    body = dialog[dialog.index("    function scopedGoLabel(roles) {"):]
+    body = body[:body.index("\n    }\n") + 6]
+    cases = [["mask"], ["table"], ["mask", "table"], ["image"], ["mask", "image"],
+             ["layer", "layer"]]
+    code = f"{body}\nconsole.log(JSON.stringify({json.dumps(cases)}.map(scopedGoLabel)));"
+    out = subprocess.run([node, "-e", code], capture_output=True, text=True,
+                         timeout=30, check=True)
+    assert json.loads(out.stdout) == ["Add mask", "Add cell data", "Add mask and cell data",
+                                      "Add layer", "Add 2 layers", "Add 2 layers"]
