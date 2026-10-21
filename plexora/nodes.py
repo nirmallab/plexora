@@ -509,17 +509,23 @@ def stat_entries_on_node(node, path, names):
 def fs_places_on_node(node):
     """The NODE's own places for the explorer's sidebar, or None if too old.
 
-    `{platform, hostname, home, known, volumes, project}`; what the user
-    remembers for that machine is the primary's to add. Fifteen seconds, which
-    the node's own deadlines keep it well inside.
+    `{platform, hostname, home, known, volumes, cloud, project}`; what the
+    user remembers for that machine is the primary's to add. Fifteen seconds,
+    which the node's own deadlines keep it well inside. A node from before
+    cloud folders were listed has none to say: `cloud` is then `[]`, never a
+    null for the sidebar to trip on.
     """
     entry = node_registry.get(str(node))
     answer = _optional(entry, "GET", "/node/v1/fs_places", timeout=15.0)
     if answer is None:
         return None
     _remember_platform(entry.name, answer.get("platform"))
-    return {key: answer.get(key) for key in
-            ("platform", "hostname", "home", "known", "volumes", "project")}
+    found = {key: answer.get(key) for key in
+             ("platform", "hostname", "home", "known", "volumes", "cloud",
+              "project")}
+    if not isinstance(found["cloud"], list):
+        found["cloud"] = []
+    return found
 
 
 def search_on_node(node, path, query, show_hidden=False, limit=500,

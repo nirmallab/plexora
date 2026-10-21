@@ -649,9 +649,10 @@ def fs_places():
     """THIS machine's places for the explorer's sidebar.
 
     Home, Desktop/Documents/Downloads, the volumes with their labels and free
-    space, the data folder and a cluster's `$SCRATCH`-style roots -- see
-    `fs_places.describe`, which never waits long on any mount. Behind
-    `--dynamic`: it names this account's filesystem.
+    space, the cloud folders, the data folder and a cluster's `$SCRATCH`-style
+    roots -- see `fs_places.describe`, which never waits long on any mount and
+    never lists a cloud folder. Behind `--dynamic`: it names this account's
+    filesystem.
     """
     refusal = _dynamic_or_403()
     if refusal is not None:

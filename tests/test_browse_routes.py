@@ -867,24 +867,29 @@ def test_a_files_only_server_answers_the_new_routes_as_unsupported(client):
     assert places.status_code == 200
     assert places.get_json()["unsupported"] is True
     assert places.get_json()["hostname"] == "nobody@nowhere.example"
+    assert places.get_json()["cloud"] == []
 
 
 # -- the explorer: places ---------------------------------------------------------
 
 
-_PLACE_KEYS = {"platform", "hostname", "home", "known", "volumes", "project",
-               "last_dir", "recent", "pinned", "view"}
+_PLACE_KEYS = {"platform", "hostname", "home", "known", "volumes", "cloud",
+               "project", "last_dir", "recent", "pinned", "view"}
 
 
 def test_places_for_this_machine_come_with_what_is_remembered(client, monkeypatch):
     from plexora.server.utils import fs_places
 
+    dropbox = {"label": "Dropbox (Personal)", "path": "/Users/jane/Dropbox (Personal)",
+               "provider": "dropbox"}
     monkeypatch.setattr(fs_places, "_usage_many", lambda paths: {})
+    monkeypatch.setattr(fs_places, "cloud_folders", lambda *args: [dropbox])
     client.post("/picker_prefs", json={"pin": "/data/study"})
 
     answer = client.get("/fs_places").get_json()
 
     assert set(answer) == _PLACE_KEYS
+    assert answer["cloud"] == [dropbox]
     assert answer["pinned"] == ["/data/study"]
     assert answer["view"] == browse_routes.DEFAULT_VIEW
     assert answer["home"] == str(Path.home())
@@ -900,6 +905,8 @@ def test_places_relayed_from_a_node_carry_that_machines_record(client, monkeypat
         "known": [], "volumes": [{"label": "scratch", "path": "/n/scratch",
                                   "kind": "network", "fstype": "lustre",
                                   "total": None, "free": None}],
+        "cloud": [{"label": "OneDrive", "path": "/home/aj/OneDrive",
+                   "provider": "onedrive"}],
         "project": [{"label": "$SCRATCH", "path": "/n/scratch/users/a/aj"}]})
     client.post("/picker_prefs", json={"node": "hpc", "pin": "/n/groups/lab"})
 
@@ -908,6 +915,7 @@ def test_places_relayed_from_a_node_carry_that_machines_record(client, monkeypat
     assert set(answer) == _PLACE_KEYS
     assert answer["hostname"] == "login01"
     assert answer["volumes"][0]["path"] == "/n/scratch"
+    assert answer["cloud"][0]["path"] == "/home/aj/OneDrive"
     assert answer["pinned"] == ["/n/groups/lab"]
     # The laptop's own pins are not the cluster's.
     assert client.get("/fs_places").get_json()["pinned"] == []
@@ -941,6 +949,7 @@ def test_places_of_a_machine_that_is_down_still_draw_its_pins(
     assert found["pinned"] == ["/n/groups/lab"]
     assert found["hostname"] == "hpc" and found["platform"] == "linux"
     assert found["volumes"] == [] and found["known"] == []
+    assert found["cloud"] == []
     assert "unsupported" not in found
 
 
@@ -954,6 +963,7 @@ def test_places_of_a_node_too_old_to_say_are_unsupported(client, monkeypatch):
     assert found["unsupported"] is True
     assert found["platform"] == ""
     assert found["home"] == "" and found["volumes"] == []
+    assert found["cloud"] == []
     assert "unavailable" not in found
 
 

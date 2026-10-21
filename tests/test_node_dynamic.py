@@ -871,8 +871,9 @@ def test_a_node_answers_the_explorer_s_new_questions(tmp_path, node_process):
     assert stats["entries"]["cells.csv"]["kind"] == "file"
 
     places = node.get("/node/v1/fs_places")
-    assert {"platform", "hostname", "home", "known", "volumes",
+    assert {"platform", "hostname", "home", "known", "volumes", "cloud",
             "project"} <= set(places)
+    assert isinstance(places["cloud"], list)
     assert places["platform"] in ("macos", "linux", "windows")
     assert places["volumes"] and places["home"]
 
@@ -916,6 +917,7 @@ def test_the_viewer_relays_the_explorer_s_routes_to_a_node(
     assert places.status_code == 200, places.get_json()
     answer = places.get_json()
     assert answer["volumes"] and "unavailable" not in answer
+    assert isinstance(answer["cloud"], list)
     assert answer["pinned"] == [str(study)]
 
     found = client.post("/search_dir", json={"node": "hpc", "path": str(study),
@@ -1049,15 +1051,24 @@ def test_the_relays_copy_out_only_the_fields_the_explorer_draws(old_node):
     """A node running a newer build cannot inject fields nobody asked for."""
     from plexora import nodes as node_api
 
+    cloud = [{"label": "OneDrive", "path": "/home/aj/OneDrive",
+              "provider": "onedrive"}]
     old_node["answer"] = _Answer(200, json.dumps({
         "success": True, "platform": "linux", "hostname": "login01",
-        "home": "/home/aj", "known": [], "volumes": [], "project": [],
-        "injected": "nope"}).encode())
+        "home": "/home/aj", "known": [], "volumes": [], "cloud": cloud,
+        "project": [], "injected": "nope"}).encode())
     assert node_api.fs_places_on_node("old") == {
         "platform": "linux", "hostname": "login01", "home": "/home/aj",
-        "known": [], "volumes": [], "project": []}
+        "known": [], "volumes": [], "cloud": cloud, "project": []}
     # Remembered, so a sidebar for this node knows its platform while it is down.
     assert node_api.known_platform("old") == "linux"
+
+    # A node from before cloud folders has none: a list, not a null.
+    old_node["answer"] = _Answer(200, json.dumps({
+        "success": True, "platform": "linux", "hostname": "login01",
+        "home": "/home/aj", "known": [], "volumes": [],
+        "project": []}).encode())
+    assert node_api.fs_places_on_node("old")["cloud"] == []
 
     old_node["answer"] = _Answer(200, json.dumps({
         "success": True, "path": "/x", "entries": {}, "injected": 1}).encode())

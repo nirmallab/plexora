@@ -368,7 +368,8 @@ def fs_places_route():
     """Everything the explorer's sidebar shows for one machine, in one GET.
 
     The machine's own places -- home, Desktop/Documents/Downloads, its volumes
-    with labels and free space, the Plexora data folder and a cluster's
+    with labels and free space, its cloud folders (Dropbox, OneDrive, Google
+    Drive, iCloud Drive, Box), the Plexora data folder and a cluster's
     scratch and project roots -- and what the user keeps for it (`last_dir`,
     `recent`, `pinned`) with the global `view`.
 
@@ -393,7 +394,7 @@ def fs_places_route():
 def _no_places(hostname, platform=""):
     """The machine half of `/fs_places` when there is nothing to say."""
     return {"platform": platform or "", "hostname": hostname, "home": "",
-            "known": [], "volumes": [], "project": []}
+            "known": [], "volumes": [], "cloud": [], "project": []}
 
 
 def _files_place_host(base):
