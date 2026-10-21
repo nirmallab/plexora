@@ -825,8 +825,13 @@ def _agreement(stored, replayed):
     return None
 
 
-def _rerender_image(session, image):
-    """{artifact_id, rerendered, identical} for one of a packet's pictures."""
+def _rerender_image(session, image, panel=None):
+    """{artifact_id, rerendered, identical} for one of a packet's pictures.
+
+    With `panel` (a `cell_panel` packet's `_panel`, which the reader never
+    sees), also `numbers_match`: whether each number captioned in the
+    picture is the cell code holds under that number -- the labels a reader
+    gives are scored by it."""
     from plexora.agent import artifacts
     from plexora.agent.evidence import collage
 
@@ -839,7 +844,13 @@ def _rerender_image(session, image):
     if manifest.get("kind") != collage.MANIFEST_KIND:
         return {"artifact_id": art, "rerendered": False, "why": manifest.get("kind")}
     drawn = collage.rerender(session, session.data(manifest["project"]), manifest)
-    return {"artifact_id": art, "rerendered": True, "identical": drawn["png"] == png}
+    out = {"artifact_id": art, "rerendered": True, "identical": drawn["png"] == png}
+    if panel is not None:
+        captioned = {cell.get("caption"): int(cell["cell_id"])
+                     for row in manifest.get("rows") or [] for cell in row.get("cells") or []}
+        held = {c["number"]: int(c["cell_id"]) for c in panel.get("cells") or []}
+        out["numbers_match"] = captioned == held
+    return out
 
 
 def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
@@ -847,9 +858,11 @@ def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
 
     Rows of {packet_id, kind, marker, stored (the answer the session got),
     replayed (the agent's), agreement}; with `rerender`, also `images`: each
-    collage drawn again from its manifest, and whether its bytes match the
-    stored picture. `agent` is anything with `answer(packet)`: `TruthAgent`
-    answering from an expert's gates, or a model behind a client."""
+    collage drawn again from its manifest -- a look's rows or a blind cell
+    panel -- and whether its bytes match the stored picture (a panel's also
+    whether its numbers are the cells code scored, `_rerender_image`).
+    `agent` is anything with `answer(packet)`: `TruthAgent` answering from an
+    expert's gates, or a model behind a client."""
     from plexora.agent import AgentSession, registry
     from plexora.plugins.gating.server.autogate import engine
     from plexora.plugins.gating.server.autogate import packets as packet_views
@@ -872,7 +885,7 @@ def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
                    "marker": units[0]["marker"] if units else None,
                    "stored": answers.get(packet["packet_id"])}
             if rerender:
-                row["images"] = [_rerender_image(session, image)
+                row["images"] = [_rerender_image(session, image, packet.get("_panel"))
                                  for image in packet.get("images") or []]
             row["replayed"] = agent.answer(packet)
             row["agreement"] = _agreement(row["stored"], row["replayed"])
@@ -921,22 +934,35 @@ def run_replay(session_id, agent_style, *, truth_table=TRUTH_TABLE, rerender=Fal
 
 
 def replay_markdown(rows, *, title) -> str:
+    redrawn = any("images" in r for r in rows)
     lines = [f"# {title}", "",
              "Per packet kind: how often the stored answer agreed with the replayed one "
-             "(direction for a look, rows for a look at candidates).", "",
-             "| kind | packets | compared | agreement |", "|---|---|---|---|"]
+             "(direction for a look, rows for a look at candidates, cells for a panel)"
+             + ("; and how many of the kind's collages, drawn again from their "
+                "manifests, came out byte-identical." if redrawn else "."), "",
+             "| kind | packets | compared | agreement |"
+             + (" redrawn | identical |" if redrawn else ""),
+             "|---|---|---|---|" + ("---|---|" if redrawn else "")]
     kinds = {}
     for row in rows:
         kinds.setdefault(row["kind"], []).append(row)
     for kind, members in kinds.items():
         scored = [r["agreement"] for r in members if r.get("agreement") is not None]
-        lines.append(f"| {kind} | {len(members)} | {len(scored)} | "
-                     f"{(f'{np.mean(scored):.3f}' if scored else '-')} |")
-    drawn = [i for r in rows for i in r.get("images") or [] if i.get("rerendered")]
-    if any("images" in r for r in rows):
+        line = (f"| {kind} | {len(members)} | {len(scored)} | "
+                f"{(f'{np.mean(scored):.3f}' if scored else '-')} |")
+        if redrawn:
+            drawn = [i for r in members for i in r.get("images") or [] if i.get("rerendered")]
+            line += f" {len(drawn)} | {sum(1 for i in drawn if i.get('identical'))} |"
+        lines.append(line)
+    if redrawn:
+        drawn = [i for r in rows for i in r.get("images") or [] if i.get("rerendered")]
         same = sum(1 for i in drawn if i.get("identical"))
         lines += ["", f"Collages drawn again from their manifests: {len(drawn)}; "
                       f"byte-identical: {same}."]
+        panels = [i for i in drawn if "numbers_match" in i]
+        if panels:
+            lines.append(f"Cell panels whose numbers are the cells code scored: "
+                         f"{sum(1 for i in panels if i['numbers_match'])} of {len(panels)}.")
     return "\n".join(lines) + "\n"
 
 
