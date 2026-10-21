@@ -42,6 +42,19 @@ most cells could not be read. Running out of looks never counts as resolved.
 
 The first look gives every interval between candidates an equal share of
 its cells; later looks spread theirs in proportion to the cells in dispute.
+
+Under the `posterior` decision (VERSION 6, `evidence.support`) the later
+looks are allocated by what they could change (`sampling="voi"`,
+`voi_plan`): per interval, the expected rise of the best P(within the
+tolerance) after reading more of its cells, with a cell for every interval
+never shown and a cap per interval. When a whole look could not raise it
+by `voi_epsilon`, the marker closes for review (`looks_uninformative`)
+instead of spending its last look. A point a step or a split added may lead
+only once read on both sides (`eligible`). Cells read where a brighter
+neighbour crowds them are weighed apart from isolated ones by the cells
+each kind holds (`crowding`), and a marker most of whose crowded cells
+could not be read may still resolve on its isolated cells alone
+(`isolated`), flagged so.
 """
 
 from __future__ import annotations
@@ -53,12 +66,15 @@ from plexora.plugins.gating.server.autogate.hypotheses import evidence
 #: Terminal statuses; all but `resolved` close the marker for review at the
 #: leader (or the start, when the reader failed the sentinels).
 STATUSES = ("resolved", "budget_exhausted", "unresolved_evidence", "readers_unreliable",
-            "unreadable", "no_identifiable_boundary", "positives_not_confirmed")
+            "unreadable", "no_identifiable_boundary", "positives_not_confirmed",
+            "looks_uninformative")
 
 REASONS = {
     "budget_exhausted": "the looks allowed were spent before the leading gate beat every "
                         "rival",
     "unresolved_evidence": "no cell left unshown could separate the leading gate from a rival",
+    "looks_uninformative": "another look could not make any candidate gate clearly surer: "
+                           "the reads so far leave several gates about as likely",
     "readers_unreliable": "the reader called clearly negative cells stained, twice",
     "unreadable": "most cells could not be read (uncertain or artifact)",
     "no_identifiable_boundary": "the stain rises with the value without a boundary the "
@@ -125,8 +141,68 @@ def allocate(weights, available, total) -> list:
     return picks
 
 
+def _valid(state) -> list:
+    return [o for o in state["observations"] if o.get("valid", True)]
+
+
+def eligible(state, params) -> list | None:
+    """Per bound of the range: whether that candidate may lead. A point a
+    step or a split added (`added_points`) may lead only once each side of
+    it inside the range has `added_min_reads` cells read either way, or has
+    had every cell shown; until then it is a hypothesis the next look reads.
+    lsp11385_2, three runs (2026-10-21): the six leaders on added points,
+    decided by two to six reads, carried the worst spreads (CD163 7.19 /
+    7.69 / 7.94 against the person's 7.31). None when every candidate may."""
+    least = int(params.get("added_min_reads") or 0)
+    added = set(state.get("added_points") or ())
+    if not least or not added:
+        return None
+    bounds, n_cells = window(state)
+    lo = state["window"][0]
+    table = evidence.counts(bounds, _valid(state))
+    seen = shown(state)
+    out = []
+    for j in range(len(bounds)):
+        if state["points"][lo + j]["id"] not in added:
+            out.append(True)
+            continue
+        sides = [k for k in (j - 1, j) if 0 <= k < len(n_cells) and n_cells[k] > 0]
+        out.append(all(table[k]["own"] + table[k]["not"] >= least or seen[k] >= n_cells[k]
+                       for k in sides))
+    return out if any(out) else None
+
+
+def crowding(state, params) -> tuple:
+    """(cell field, cells per interval by it) to weigh the reads by -- a
+    brighter neighbour crowding the cell (1) or not (0), recorded by the
+    look that showed it (`panel.panel_cells`) -- or (None, None): not asked
+    for, counted over another range, or either kind read fewer than
+    `strata_min_reads` times. Uncertain reads gather on crowded cells
+    (lsp11385_2, 2026-10-21: about 40 % uncertain in crowded fields), so
+    pooled reads speak for the isolated cells; weighed by kind, each
+    speaks for the cells it stands for."""
+    info = state.get("crowding")
+    if params.get("strata") != "crowding" or not info:
+        return None, None
+    bounds, _ = window(state)
+    if [round(float(b), 6) for b in info.get("bounds") or ()] != \
+            [round(float(b), 6) for b in bounds]:
+        return None, None
+    reads = {"0": 0, "1": 0}
+    for obs in _valid(state):
+        for cell in obs.get("cells") or ():
+            if cell.get("sentinel") or cell.get("crowded") is None or \
+                    cell.get("label") not in (evidence.OWN, evidence.NOT_OWN) or \
+                    evidence.interval_of(float(cell["value"]), bounds) is None:
+                continue
+            reads[str(int(cell["crowded"]))] += 1
+    if min(reads.values()) < int(params.get("strata_min_reads") or 0):
+        return None, None
+    return "crowded", info["sizes"]
+
+
 def support(state, to_fit, params) -> dict | None:
-    valid = [o for o in state["observations"] if o.get("valid", True)]
+    valid = _valid(state)
     if not valid:
         return None
     bounds, n_cells = window(state)
@@ -136,14 +212,144 @@ def support(state, to_fit, params) -> dict | None:
     # A classifier check's picks are read per classifier call
     # (`classifier_check`), over the range its strata were counted on.
     stratified = check.get("strata") is not None and check.get("window") == state["window"]
-    return evidence.support(bounds, n_cells, valid, prior=prior, to_fit=to_fit,
-                            tolerance=params["tolerance"],
-                            resolve_within=params.get("resolve_within"),
-                            min_between=int(params.get("min_between") or 0),
-                            min_between_share=float(params.get("min_between_share") or 0.0),
-                            n_above=above(state),
-                            calls=check.get("calls") if stratified else None,
-                            strata=check.get("strata") if stratified else None)
+    calls, strata = (check.get("calls"), check.get("strata")) if stratified else (None, None)
+    rule = params.get("decision") or "wilson"
+    opts = None
+    if rule == "posterior":
+        key = None
+        if not stratified:
+            key, strata = crowding(state, params)
+        opts = {"tau": float(params.get("plateau", 0.1)),
+                "rho": float(params.get("resolve_p", 0.8)),
+                "draws": int(params.get("draws") or evidence.DRAWS),
+                "seed": int(state.get("seed") or 0), "eligible": eligible(state, params),
+                "key": key}
+    s = evidence.support(bounds, n_cells, valid, prior=prior, to_fit=to_fit,
+                         tolerance=params["tolerance"],
+                         resolve_within=params.get("resolve_within"),
+                         min_between=int(params.get("min_between") or 0),
+                         min_between_share=float(params.get("min_between_share") or 0.0),
+                         n_above=above(state), calls=calls, strata=strata, rule=rule,
+                         posterior_opts=opts)
+    if rule == "posterior" and s["resolved"]:
+        thin = thin_sides(state, s, params)
+        if thin:
+            s["resolved"] = False
+            s["thin"] = thin
+    return s
+
+
+def thin_sides(state, s, params) -> list:
+    """The intervals beside the leader read fewer than `added_min_reads`
+    times either way while cells there are still unshown. The posterior
+    takes two reads at face value: with every interval read once or twice
+    and pooled monotone, P(within) can pass `resolve_p` on reads that decide
+    nothing (bench, dense_spill CD3 under a reader wrong a third of the
+    time, 2026-10-21: two reads below the top point, resolved 1.9 off). A
+    leader resolves only once the cells it calls differently from its
+    neighbours have been read; until then the looks go there."""
+    least = int(params.get("added_min_reads") or 0)
+    if not least:
+        return []
+    _bounds, n_cells = window(state)
+    seen = shown(state)
+    lead = s["leader"]
+    return [k for k in (lead - 1, lead)
+            if 0 <= k < len(n_cells) and n_cells[k] > 0
+            and s["table"][k]["own"] + s["table"][k]["not"] < least and seen[k] < n_cells[k]]
+
+
+def _same(state, to_fit, params):
+    """Which candidates of the range are one gate in effect
+    (`evidence.equivalence`)."""
+    bounds, n_cells = window(state)
+    n_up = above(state)
+    positives = [int(sum(n_cells[j:])) + n_up for j in range(len(bounds))]
+    return evidence.equivalence([float(to_fit(b)) for b in bounds], n_cells, positives,
+                                float(params["tolerance"]), int(params.get("min_between") or 0),
+                                float(params.get("min_between_share") or 0.0))
+
+
+def voi_plan(state, to_fit, params, s=None) -> dict | None:
+    """{picks, gains, best, look_gain} for the next look: first the reads a
+    leader still needs beside it (`thin_sides`, of the support `s`), then
+    at least `voi_floor` for an interval never shown, then cells by what
+    reading them could change (`evidence.look_gains`), at most `voi_cap`
+    from one interval for those, the panel's cells in all; and the expected
+    rise of the best P(within the tolerance) from that whole look
+    (`evidence.look_gain`). The reads are pooled here (no strata): where to
+    look, not what was seen. None when no cell is left unshown."""
+    bounds, n_cells = window(state)
+    seen = shown(state)
+    available = [max(0, n - s) for n, s in zip(n_cells, seen)]
+    if not any(available):
+        return None
+    total = int(params["panel_cells"])
+    table = evidence.counts(bounds, _valid(state))
+    labelled = sum(c["own"] + c["not"] + c["other"] for c in table)
+    definite = (sum(c["own"] + c["not"] for c in table) / labelled) if labelled else 1.0
+    same = _same(state, to_fit, params)
+    elig = eligible(state, params)
+    seed = int(state.get("seed") or 0)
+    draws = int(params.get("draws") or evidence.DRAWS)
+    best, gains = evidence.look_gains(table, n_cells, available, eligible=elig, same=same,
+                                      seed=seed, draws=draws,
+                                      batch=int(params.get("voi_batch") or 8),
+                                      definite=max(definite, 0.2))
+    cap = int(params.get("voi_cap") or total)
+    room = [min(a, cap) for a in available]
+    picks = [0] * len(n_cells)
+    least = int(params.get("added_min_reads") or 0)
+    for k in (s or {}).get("thin") or ():
+        # Enough cells that, at the share read either way so far, the side
+        # reaches `added_min_reads`.
+        need = least - (table[k]["own"] + table[k]["not"])
+        want = math.ceil(need / max(definite, 0.2))
+        picks[k] = min(available[k], max(want, 0), total - sum(picks))
+        room[k] = max(room[k], picks[k])
+    floor = int(params.get("voi_floor") or 0)
+    for k in range(len(n_cells)):
+        if seen[k] == 0 and room[k] > 0 and not picks[k] and sum(picks) + floor <= total:
+            picks[k] = min(floor, room[k])
+    left = total - sum(picks)
+    if left > 0 and any(g > 0 for g in gains):
+        extra = allocate(gains, [r - p for r, p in zip(room, picks)], left)
+        picks = [p + e for p, e in zip(picks, extra)]
+    gain = evidence.look_gain(table, n_cells, picks, eligible=elig, same=same, seed=seed,
+                              draws=draws,
+                              simulations=int(params.get("voi_simulations") or 200),
+                              definite=max(definite, 0.2)) if any(picks) else 0.0
+    return {"picks": picks, "gains": [round(g, 4) for g in gains], "best": round(best, 4),
+            "look_gain": round(gain, 4)}
+
+
+def isolated(state, to_fit, params) -> dict | None:
+    """The support of the isolated cells' reads alone, when the crowded
+    cells hold most of the reads nobody could make (`uncertain`, `artifact`)
+    and those reads resolve a leader that needs no more growth; else None.
+    The gate it gives is the isolated cells' boundary, flagged
+    `isolated_only` (its confidence capped)."""
+    bounds, _ = window(state)
+    other = {"0": 0, "1": 0}
+    for obs in _valid(state):
+        for cell in obs.get("cells") or ():
+            if cell.get("sentinel") or cell.get("crowded") is None or \
+                    cell.get("label") in (evidence.OWN, evidence.NOT_OWN) or \
+                    evidence.interval_of(float(cell["value"]), bounds) is None:
+                continue
+            other[str(int(cell["crowded"]))] += 1
+    if other["1"] <= other["0"]:
+        return None
+    alone = dict(state, observations=[
+        dict(o, cells=[c for c in o.get("cells") or ()
+                       if c.get("sentinel") or (c.get("crowded") is not None
+                                                and not int(c["crowded"]))])
+        for o in state["observations"]])
+    s = support(alone, to_fit, dict(params, strata=None))
+    if s is None or not s["resolved"] or growth(alone, s, to_fit, params) is not None:
+        return None
+    s["isolated_only"] = True
+    return s
 
 
 def tail(state, s) -> dict:
@@ -232,6 +438,13 @@ def next_action(state, to_fit, params) -> dict | None:
     change = growth(state, s, to_fit, params)
     if change is not None:
         return change
+    if params.get("sampling") == "voi" and not s["resolved"]:
+        v = voi_plan(state, to_fit, params, s)
+        if v is not None:
+            plan = _plan(state, list(range(len(n_cells))), v["picks"], "voi",
+                         look_gain=v["look_gain"])
+            if plan is not None:
+                return plan
     # Only a rival that keeps the marker from resolving is worth a look; the
     # cells between it and the leader are drawn in proportion to how many
     # each interval holds, so their pooled share estimates the cells the
@@ -389,7 +602,23 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
     if s["labelled"] >= params["min_labelled"] \
             and valid >= int(params.get("unreadable_looks") or 1) \
             and (s["other_share"] or 0) > params["max_other_share"]:
+        if params.get("uncertain_state") and not state.get("rare"):
+            alone = isolated(state, to_fit, params)
+            if alone is not None:
+                return "resolved", alone
         return "unreadable", s
     if len(state["observations"]) >= int(params["looks_max"]):
         return ("no_identifiable_boundary" if continuous else "budget_exhausted"), s
+    if params.get("sampling") == "voi" and not s["resolved"] \
+            and float(params.get("voi_epsilon") or 0) > 0 \
+            and growth(state, s, to_fit, params) is None:
+        # Not before a look has been read either way: one valid look at
+        # least (`s` exists), so a first panel of crowds never ends it.
+        v = voi_plan(state, to_fit, params, s)
+        if v is not None:
+            s["voi"] = {k: v[k] for k in ("best", "look_gain")}
+            # A leader short of reads beside it is never given up on: the
+            # next look reads them, whatever the posterior expects of them.
+            if not s.get("thin") and v["look_gain"] < float(params["voi_epsilon"]):
+                return "looks_uninformative", s
     return None, s

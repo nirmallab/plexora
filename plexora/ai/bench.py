@@ -145,10 +145,33 @@ def rows_for(direction, evidence) -> dict:
     return {"rows": {k: words[k] for k in keys if k in words}, "pattern": patterns[0]}
 
 
+def reader_style(style) -> tuple:
+    """(kind, P, U, L) of an agent style: `noisy` alone turns words with
+    probability 0.2; `noisy:P` with P and nothing else; `noisy:P:U` also
+    calls a panel cell `uncertain` with probability U; `noisy:P:U:L` also
+    gives the reader a standard of its own per marker (`TruthAgent`). Until
+    2026-10-21 a bare `noisy:P` set U to 0.2 by accident."""
+    if not style.startswith("noisy"):
+        return style, 0.0, 0.0, 0.0
+    parts = style.split(":")
+    p = float(parts[1]) if len(parts) > 1 else 0.2
+    u = float(parts[2]) if len(parts) > 2 else 0.0
+    lenient = float(parts[3]) if len(parts) > 3 else 0.0
+    return parts[0], p, u, lenient
+
+
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring);
     `noisy:P` turns a word with probability P; `noisy:P:U` also calls a
-    panel cell (not a sentinel) `uncertain` with probability U."""
+    panel cell (not a sentinel) `uncertain` with probability U, twice that
+    on a cell a brighter neighbour crowds (`crowded`, when the panel
+    recorded it); `noisy:P:U:L` also reads each marker by a standard of its
+    own: a shift of the cut drawn once per marker from N(0, L) in log1p
+    units -- positive, a stricter reader calls the dimmest stained cells
+    unstained; negative, a lenient one calls the brightest unstained cells
+    stained. Live readers' leniency is per marker and stable across methods
+    (2026-10-21, lsp11385_2: Ecad +0.56, CD3e -0.52 survived pooling three
+    runs), which slips cell by cell do not model."""
 
     def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, ids=None):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
@@ -156,11 +179,21 @@ class TruthAgent:
         # own truth, not by the truth's best single cut.
         self.rows = None if ids is None else {int(i): r for r, i in enumerate(ids)}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
-        self.style, self.p, self.u = (style.split(":") + ["0.2", "0"])[:3] \
-            if style.startswith("noisy") else (style, "0", "0")
-        self.p, self.u = float(self.p), float(self.u)
+        self.style, self.p, self.u, self.lenient = reader_style(style)
         self.rng = np.random.default_rng(seed)
+        # The standard's shift per marker: its own stream, so a reader
+        # without one reads exactly as before.
+        self._shift_rng = np.random.default_rng([int(seed), 104_729])
+        self._shift = {}
         self._best = {}
+
+    def shift(self, marker) -> float:
+        """This reader's cut for `marker` minus the truth's (log1p units)."""
+        if not self.lenient:
+            return 0.0
+        if marker not in self._shift:
+            self._shift[marker] = float(self._shift_rng.normal(0.0, self.lenient))
+        return self._shift[marker]
 
     def _errors(self, marker, low):
         called = self.values[marker] > np.float32(low)
@@ -194,14 +227,25 @@ class TruthAgent:
         if self.style == "lazy":
             return {c["number"]: "uncertain" for c in cells}
         cut, _errors = self.best(marker)
+        shift = self.shift(marker)
+        fit_cut = float(np.log1p(max(cut, 0.0)))
         out = {}
         for c in cells:
             row = None if self.rows is None else self.rows.get(int(c["cell_id"]))
             own = bool(self.truth[marker][row]) if row is not None \
                 else float(c["value"]) > cut
+            if shift:
+                fit = float(np.log1p(max(float(c["value"]), 0.0)))
+                # Between the truth's cut and the reader's own, the reader
+                # calls by its standard.
+                if shift > 0 and own and fit <= fit_cut + shift:
+                    own = False
+                elif shift < 0 and not own and fit > fit_cut + shift:
+                    own = True
             if self.style == "noisy" and self.rng.random() < self.p:
                 own = not own
-            if self.u and not c.get("sentinel") and self.rng.random() < self.u:
+            rate = self.u * (2.0 if c.get("crowded") else 1.0)
+            if self.u and not c.get("sentinel") and self.rng.random() < min(rate, 1.0):
                 out[c["number"]] = "uncertain"
                 continue
             out[c["number"]] = "own_stain" if own else "not_own_stain"

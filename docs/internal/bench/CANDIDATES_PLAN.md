@@ -473,6 +473,131 @@ What it says:
   split on 4 (CD45 twice, CD163, SMA), the split at close once (CD8a run
   1, 6.79 to 6.45, user 6.32).
 
+## VERSION 6 (2026-10-21): Phases 0 and 1 of the unified plan
+
+The plan that answers the two outside reviews of `HANDOFF.md` (kept outside the
+repository; its findings are summarised here). What it changed and why, in the
+order of its causes:
+
+- **The decision** (`evidence.support(rule="posterior")`). Per read interval a
+  share drawn from Beta(own + 1/2, not + 1/2), 400 seeded draws (common random
+  numbers: the uniforms are fixed by unit seed, interval and stratum), PAV per
+  draw (`evidence.isotonic`, the max-min formula, equal to `monotone` to
+  1e-15), the candidate with the fewest cells wrong counted (ties shared).
+  Plateau = candidates with P >= 0.1 plus the most probable; leader = the
+  plateau member nearest the scored start by value; resolved when P(the best
+  gate lies within 0.2 of it, or changes fewer than `material` cells) >= 0.8.
+  `plateau` and `resolve_p` are set by principle ("one chance in ten"; the
+  moderate/high boundary), not chosen on lsp11385_2, where they were explored.
+  Why: on the stored v5 reads the leader is an argmin over losses a few dozen
+  cells apart, so two or three reads moved it 0.3 or more; symmetric shrinkage
+  cannot help (a Beta(a, a) mean never crosses one half) and a global
+  asymmetric cost only trades markers (kappa 2: CD4 +0.44 to +0.11, CD45 +0.19
+  to -0.28; MAE flat).
+- **Never on a few reads** (`controller.thin_sides`, `eligible`): a leader does
+  not resolve while an interval beside it has fewer than 5 reads either way and
+  unshown cells; a point a step or a split added may not lead before the same.
+  Found on the bench: one dense_spill CD3 resolved 1.9 off on two reads below
+  the top point. Review records the plateau, and the review note names it
+  ("the reads leave 7.69 (P 0.55) and 7.31 (P 0.35)").
+- **Looks by value of information** (`sampling="voi"`, `controller.voi_plan`):
+  first the reads a thin side needs, one cell for an interval never shown, then
+  cells by the expected rise of the best P(within) from 8 more reads per
+  interval (P(within) of a fixed leader is a martingale: a look's worth is
+  that it can make some candidate surer), at most 8 an interval. A whole look
+  that could not raise it by 0.02 (200 simulated looks) closes the marker
+  `looks_uninformative`, never while a side is thin.
+- **`split_at_close` off.**
+- **Crowded and isolated cells** (`panel.crowded`, `controller.crowding`): a cell
+  is crowded when its brightest of six nearest neighbours is brighter by more
+  than the tolerance (table features, no pixels; every look records it). With
+  at least 5 definite reads of each kind, the shares are weighed by the cells
+  each kind holds. A marker whose crowded cells hold most of the unreadable
+  reads may resolve on its isolated cells alone, flagged `isolated_only`,
+  confidence capped at moderate.
+- **Sentinels** (`sentinel_check`, `reader`): clear positives can take their
+  share of the four (`positive_sentinels`, 0 until the reader audit E0.5);
+  each look records the reader's miss rates, a calibration feature, never
+  evidence.
+- **Presentation**: the 2x2 panel's partner tiles are context, never a decider
+  (`packets.collage_panel_m`; principle 4; the old sentence was the CD4
+  mechanism). The classic engine's identical sentence (`collage_m`) is
+  unchanged, to keep the classic arm fixed.
+- **Confidence**: P(within) by `calibration.LEVELS` until a table exists;
+  calibration VERSION 2 (posterior features; `calibrate.py` fits review units
+  too). The Wilson rule's margin now needs the rival's interval past one half
+  on the leader's side (it took the distance to the nearer end: [0.35, 0.68]
+  counted as a clear 0.15).
+- **Bench reader** (`bench.reader_style`): `noisy:P` no longer sets 20 %
+  uncertain by accident; `noisy:P:U:L` adds a per-marker standard (a cut shift
+  from N(0, L), log1p) and twice U on crowded cells. Scenes `dim_lineage`,
+  `rare_small`, `edge_high`.
+- **Tools**: `replay_v6.py` (the decision on stored records, either rule),
+  `bench_v6.py` (paired arms with replicates), `score_gap.py` (one gate,
+  uncertain share, sentinel rates, count deviation, risk-coverage,
+  `--baseline` worst marker), `run_arms.py` (positive counts at the gate and at
+  the person's), `ablate.py ABL=v5|novoi|noelig|nostrata|noearly`.
+
+`hypotheses.V5_RULES` gives VERSION 5's behaviour back for an arm or a replay.
+
+### E0.3: the decision replayed on the stored v5 reads (lsp11385_2, a sanity check)
+
+`replay_v6.py`, three runs, 16 markers; the looks are v5's, so this replays
+the decision, not the session.
+
+| rule | MAE | spread | 0.4 or more off | one gate | accepted (MAE) | review (MAE) |
+|---|---|---|---|---|---|---|
+| v5 (recomputed exactly) | 0.247 | 0.344 | 23 % | 0 | 17 (0.176) | 31 (0.285) |
+| v6 without the thin-sides guard | 0.214 | 0.232 | 15 % | 3 | 21 (0.204) | 27 (0.221) |
+| v6 | 0.214 | 0.232 | 15 % | 3 | 6 (0.168) | 42 (0.220) |
+
+A common prior for the three runs: spread 0.221. The guard leaves 6 accepted
+because v5's looks spread two to four reads an interval; under v6 the next
+look reads the thin sides (only a live run says how many then resolve). CD163
+run 2 (+0.38) and Ecad (+0.56) still resolve: a reader confidently off the
+person's standard passes any controller.
+
+### Offline bench, VERSION 5 against 6 (`bench_v6.py`, 2026-10-21)
+
+14 scenes (the 11 plain ones and dense_spill, low_snr, dim_positive,
+heterogeneous), 5 repeats, the same reader seeds per arm, 18 markers decided by
+panels; gaps to the truth's best cut in log1p units.
+
+| reader | arm | MAE | within 0.2 | >= 0.4 off | spread | accepted (MAE) | review (MAE) | looks |
+|---|---|---|---|---|---|---|---|---|
+| `noisy:0.32` | v5 | 0.393 | 0.449 | 0.326 | 0.774 | 8 (0.344) | 81 (0.398) | 2.70 |
+| | v6 | 0.328 | 0.528 | 0.337 | 0.591 | 22 (0.297) | 67 (0.338) | 2.45 |
+| `noisy:0.1:0.3:0.15` | v5 | 0.207 | 0.652 | 0.146 | 0.358 | 22 (0.214) | 67 (0.205) | 2.18 |
+| | v6 | 0.189 | 0.719 | 0.169 | 0.325 | 27 (0.273) | 62 (0.153) | 2.14 |
+
+No marker more than 0.30 worse than v5 (worst +0.19, heterogeneous CD8; +0.18,
+overlap CD4). Under the reader with a standard of its own, accepted gates are
+farther off than review gates in v6 (v5: no separation either): a per-marker
+leniency reads consistently, so the posterior is sure of a shifted gate. That
+is the ceiling the plan names (R4); only the reader audit (E0.5) and the
+person's gates can move it. The standard bench, v5 rules, `noisy:0.32`:
+code agreement 0.944 (the 0.940 on record was read with 20 % uncertain).
+
+### E0.6: the classifier trust table (wand bench, `hard` arm, 2026-10-21)
+
+All four labelled images (lsp11385_2 near + far, IMC, CODEX lymph node, CRC
+fc078201, now in `bench_wand.SETS`): 47 records, the classifier ahead of the
+gate by 0.02 on 26, trusted on none: every record holds 19 to 31 labelled
+cells, under `TRUST_MIN_CELLS` (50). Several sets hold one class or nearly
+(CODEX CD3e all negative, CRC CD4 all positive). No table is committed: the
+check stays exploratory until larger label sets exist.
+
+### What waits on the person or on live runs
+
+- Questions 1 to 4 of the plan: re-showing an `uncertain` cell; the classifier
+  check on unresolved markers; a blind re-gate of 8 markers (sets the spread
+  bar); hand gates on IMC, CODEX-LN and CRC (the external bar).
+- E0.5, the reader audit on the labelled cells (the partner text, positive
+  sentinels, window, panel size, Opus vs Sonnet): the S3 renders and scorer
+  exist (`runs/2026-10-1x-hybrid`), the reads are model calls.
+- E2, the dev campaign (lsp11385_2, LSP11321, LSP11761, LSP11361, p193; 3 runs;
+  classic / v5 from 283fbb92 / v6), then calibration and E3 once.
+
 ## Not done in this branch
 
 - Robustness to a reader that reads the same cells differently run to

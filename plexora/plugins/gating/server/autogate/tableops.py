@@ -157,7 +157,11 @@ def _panel_cells(ds, payload):
         ds, payload["marker"], payload["intervals"], exclude=payload.get("exclude") or (),
         n_sentinels=int(payload.get("n_sentinels", 4)),
         sentinel_below=payload.get("sentinel_below"), seed=int(payload.get("seed") or 0),
-        ids=payload.get("ids") or ())
+        ids=payload.get("ids") or (),
+        n_positive_sentinels=int(payload.get("n_positive_sentinels") or 0),
+        sentinel_above=payload.get("sentinel_above"),
+        strata_bounds=payload.get("strata_bounds"),
+        crowding_margin=payload.get("crowding_margin"))
 
 
 OPERATIONS = {

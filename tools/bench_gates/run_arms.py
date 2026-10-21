@@ -364,6 +364,41 @@ def score_command(campaign_dir, arms, truth) -> str:
 # -- running -------------------------------------------------------------------------------
 
 
+def load_truth(path) -> dict:
+    import score_gap
+
+    return score_gap.load_truth(path)
+
+
+def positive_counts(session, record, truth) -> int:
+    """Each unit with a person's gate gets `positives_at`: the cells its gate
+    calls positive, the cells the person's would, and the cells with a value
+    -- counted on the image's own column while the data root is at hand
+    (`score_gap.py` reports the deviation). The number of units counted."""
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    counted = 0
+    for unit in (record.get("units") or {}).values():
+        ref = (truth.get(unit.get("project")) or {}).get(unit.get("marker"))
+        if ref is None or unit.get("final") is None:
+            continue
+        col = profmod.column(session.data(unit["project"]), unit["marker"])
+        high = unit.get("high")
+        unit["positives_at"] = {"final": int(col.n_positive(float(unit["final"]), high)),
+                                "user": int(col.n_positive(float(ref), high)),
+                                "cells": int(col.n_finite)}
+        counted += 1
+    return counted
+
+
+def positives_at(session, path, truth) -> int:
+    """`positive_counts` written into a stored record copy."""
+    record = json.loads(Path(path).read_text(encoding="utf-8"))
+    counted = positive_counts(session, record, truth)
+    Path(path).write_text(json.dumps(record), encoding="utf-8")
+    return counted
+
+
 def run_one(entry, args, *, session, gateway, trace, campaign_dir, emit) -> dict:
     """One planned session, start to finish; returns its manifest entry."""
     from plexora.agent import jobs
@@ -404,6 +439,9 @@ def run_one(entry, args, *, session, gateway, trace, campaign_dir, emit) -> dict
             f"incomplete/{entry['record'][:-5]}.{int(time.time())}.json"
         out["record"] = where
         out.update(store_record(source, Path(campaign_dir) / where))
+        if args.truth:
+            out["positives_at"] = positives_at(session, Path(campaign_dir) / where,
+                                               load_truth(args.truth))
         if out.get("trimmed"):
             emit(f"  record trimmed: {out['source_bytes']} -> {out['bytes']} bytes"
                  + (" (STILL OVER THE LIMIT)" if out.get("over_limit") else ""))

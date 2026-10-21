@@ -43,9 +43,15 @@ With `engine: "candidates"` the candidate gates are competing hypotheses. Each
 look is a `cell_panel`: numbered cells from the disputed intervals, shuffled,
 no value, call or gate shown; the reader labels every cell (`own_stain`,
 `not_own_stain`, `uncertain`, `artifact`), never a gate or a direction. Code
-scores each candidate by the cells it would get wrong and resolves when the
-leader beats its rivals; else another panel, up to `panel_looks`, then review
-with a stated reason. The gate written is always one of the candidates and
+scores each candidate by the cells it would get wrong, as a probability that
+it is the best gate given the reads; the leader is the likeliest candidate
+nearest the scored start, and it resolves when the best gate is very likely
+within the tolerance of it. Else another panel, aimed at the cells that
+could change that, up to `panel_looks`; or review with a stated reason, which
+names the gates the reads still leave and how likely each is -- including
+when another look could not settle it (`looks_uninformative`). `uncertain`
+is never a vote: a marker whose crowded cells cannot be read may resolve on
+its isolated cells alone, and says so. The gate written is always one of the candidates and
 passes the same whole-image checks; a failed check caps its confidence, it
 never moves the gate. A conditional gate (a classic look's `within` answer)
 or a marker with no candidates gets the classic looks, whose reading comes

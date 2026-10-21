@@ -26,6 +26,7 @@ SETS = {
     "lsp11385_2": [("near", "2026-10-09-labels"), ("far", "2026-10-10-labels-far")],
     "imc-immucan-example": [("near", "2026-10-09-labels-imc")],
     "codex-hubmap-lymphnode": [("near", "2026-10-09-labels-codex-ln")],
+    "fc078201-b5c5-47d1-92da-3c81dd8cc2c5": [("near", "2026-10-09-labels-crc")],
 }
 SEEDS = (0, 1, 2)
 

@@ -341,7 +341,9 @@ def test_a_calibration_fits_and_predicts_within_zero_and_one():
                      "labelled": float(rng.integers(10, 60)),
                      "other_share": float(rng.uniform(0, 0.4)), "looks": float(rng.integers(1, 4))})
         outcomes.append(int(rng.random() < 0.2 + 0.7 * (margin > 0.1)))
-    table = calibration.fit(rows, outcomes)
+    table = calibration.fit(rows, outcomes,
+                            features=("margin", "spread", "labelled", "other_share", "looks"))
+    assert table["features"][0] == "margin"
     clear = calibration.predict(table, {**rows[0], "margin": 0.45})
     blocked = calibration.predict(table, {**rows[0], "margin": -0.25})
     assert 0.0 < blocked < clear < 1.0
@@ -412,6 +414,9 @@ def test_a_classifier_check_shows_both_sides_and_at_most_half_the_panel(monkeypa
         {"project": "another", "marker": "m", "n": 80, "classifier": 0.80, "gate": 0.70}])
     plan = classifier_check.plan(_check_engine(ds), unit, state, [])
     assert plan is not None and state["classifier"]["trusted_on"]["project"] == "another"
+    # Its additions below the leader are flagged for the note, nothing more.
+    assert state["classifier"]["low_trust"]["side"] == "below"
+    assert state["classifier"]["low_trust"]["picked"] >= 1
     chosen = np.isin(np.arange(1, values.size + 1), plan["ids"])
     assert (log_v[chosen] <= 2.0).any() and (log_v[chosen] > 2.0).any()
     picked = int((chosen & outer).sum())
@@ -756,3 +761,339 @@ def test_a_marker_out_of_looks_splits_on_ordered_reads_and_still_closes_at_the_f
     s = controller.support(state, col.to_fit, params)
     assert hypotheses._split_at_close(ds, "M", col, state, s) is s
     assert "split_at_close" not in state and state["split"] == []
+
+
+# -- VERSION 6: the posterior over candidates ------------------------------------------------
+
+
+V6 = dict(PARAMS, decision="posterior", plateau=0.1, resolve_p=0.8, draws=400,
+          added_min_reads=5, sampling="voi", voi_cap=8, voi_floor=1, voi_batch=8,
+          voi_simulations=200, voi_epsilon=0.02, strata="crowding", strata_min_reads=5,
+          uncertain_state=True, min_between=20, min_between_share=0.25)
+
+
+def _posterior(bounds, n_cells, obs, prior, **kw):
+    opts = {"tau": 0.1, "rho": 0.8, "seed": 1, **kw.pop("opts", {})}
+    return evidence.support(bounds, n_cells, obs, prior=prior, to_fit=IDENTITY, tolerance=0.2,
+                            min_between=kw.pop("min_between", 20),
+                            min_between_share=kw.pop("min_between_share", 0.25),
+                            rule="posterior", posterior_opts=opts, **kw)
+
+
+def test_the_isotonic_fit_of_every_draw_is_the_pooled_fit():
+    rng = np.random.default_rng(4)
+    for _ in range(100):
+        k = int(rng.integers(1, 10))
+        shares, weights = rng.random((3, k)), rng.integers(1, 30, k).astype(float)
+        fitted = evidence.isotonic(shares, weights)
+        for row, fit in zip(shares, fitted):
+            assert fit == pytest.approx(evidence.monotone(list(row), list(weights)), abs=1e-12)
+
+
+def test_decisive_reads_put_the_posterior_on_one_candidate_and_resolve_it():
+    bounds, n_cells = [1.0, 2.0, 3.0, 4.0, 5.0], [500, 300, 300, 200]
+    obs = _obs([1.5] * 10 + [2.5] * 10 + [3.5] * 10 + [4.5] * 10,
+               ["not_own_stain"] * 20 + ["own_stain"] * 20)
+    s = _posterior(bounds, n_cells, [obs], prior=0)
+    assert s["low"] == 3.0 and s["resolved"] and not s["blocking"]
+    assert s["posterior"]["within"] >= 0.8 and sum(s["posterior"]["p"]) == pytest.approx(1.0)
+    # Seeded: the same reads give the same P, every time.
+    assert _posterior(bounds, n_cells, [obs], prior=0)["posterior"] == s["posterior"]
+
+
+def test_flat_reads_keep_the_start_and_leave_the_marker_unresolved():
+    # Two candidates a whole unit apart get the same cells wrong: the reads
+    # cannot choose, so the start does, and nothing is accepted.
+    bounds, n_cells = [1.0, 2.0, 3.0, 4.0], [300, 300, 300]
+    obs = _obs([1.5] * 8 + [2.5] * 8 + [3.5] * 8,
+               ["not_own_stain"] * 8 + ["own_stain", "not_own_stain"] * 4 + ["own_stain"] * 8)
+    for prior in (1, 2):
+        s = _posterior(bounds, n_cells, [obs], prior=prior)
+        assert s["leader"] == prior and not s["resolved"]
+        assert {m["index"] for m in s["posterior"]["plateau"]} >= {1, 2}
+        assert [r["index"] for r in s["blocking"]] == [3 - prior]
+
+
+def test_the_plateau_leader_is_nearest_the_start_by_value_ties_to_the_lower():
+    leader, plateau = evidence.plateau_leader([0.4, 0.0, 0.4], [1.0, 2.0, 3.0], 1, None, 0.1)
+    assert plateau == [0, 2] and leader == 0
+    leader, plateau = evidence.plateau_leader([0.05, 0.55, 0.4], [1.0, 2.0, 2.2], 0, None, 0.1)
+    assert plateau == [1, 2] and leader == 1
+    # The most probable candidate is always on the plateau, eligible only.
+    leader, plateau = evidence.plateau_leader([0.6, 0.3, 0.1], [1.0, 2.0, 3.0], 2,
+                                              [False, True, True], 0.5)
+    assert plateau == [1] and leader == 1
+
+
+def test_candidates_that_change_almost_no_cell_count_as_one_gate_in_the_posterior():
+    bounds = [1.0, 1.5, 3.0]
+    s = _posterior(bounds, [5, 300], [_obs([1.8] * 12, ["own_stain"] * 12)], prior=0)
+    assert s["low"] in (1.0, 1.5)
+    assert s["posterior"]["within"] >= 0.8 and s["resolved"]
+
+
+def _added_state(own_above, not_below):
+    state = _state(lows=(1.0, 2.0, 2.5, 3.0), n_positive=(1000, 600, 400, 200), window=(0, 3),
+                   prior=1)
+    state["points"][2]["id"] = "split:2.5"
+    state["added_points"] = ["split:2.5"]
+    state["observations"].append(_obs([1.5] * 10 + [2.2] * not_below + [2.7] * own_above,
+                                      ["not_own_stain"] * (10 + not_below)
+                                      + ["own_stain"] * own_above))
+    return state
+
+
+def test_an_added_point_leads_only_once_read_on_both_sides():
+    params = dict(V6, sampling="survey_refine")
+    few = _added_state(own_above=2, not_below=2)
+    assert controller.eligible(few, params) == [True, True, False, True]
+    s = controller.support(few, IDENTITY, params)
+    assert s["low"] != 2.5 and s["posterior"]["ineligible"] == [2.5]
+    # The Wilson rule (VERSION 5) took the added point on four reads.
+    assert controller.support(few, IDENTITY, PARAMS)["low"] == 2.5
+    read = _added_state(own_above=6, not_below=6)
+    assert controller.eligible(read, params) is None or all(controller.eligible(read, params))
+    assert controller.support(read, IDENTITY, params)["low"] == 2.5
+
+
+def _voi_state():
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+                   n_positive=(5000, 4000, 3000, 2000, 1000, 500), window=(0, 5), prior=2)
+    state["observations"].append(_obs(
+        [1.5] * 10 + [2.5] * 10 + [3.5] * 6 + [5.5] * 10,
+        ["not_own_stain"] * 20 + ["own_stain", "not_own_stain"] * 3 + ["own_stain"] * 10))
+    return state
+
+
+def test_a_look_goes_where_it_could_change_the_choice():
+    state = _voi_state()
+    v = controller.voi_plan(state, IDENTITY, V6)
+    picks = v["picks"]
+    assert sum(picks) <= V6["panel_cells"] and max(picks) <= V6["voi_cap"]
+    # The interval never shown gets a cell at least; the mixed one the most;
+    # the settled background almost none.
+    assert picks[3] >= 1 and picks[2] == max(picks) and picks[0] <= 1
+    assert v == controller.voi_plan(state, IDENTITY, V6)
+    plan = controller.next_action(state, IDENTITY, V6)
+    assert plan["kind"] == "voi"
+    assert [iv["interval"] for iv in plan["intervals"]] == [k for k, n in enumerate(picks) if n]
+
+
+def test_a_marker_no_look_could_settle_closes_for_review_before_its_last_look():
+    # The only cells that separate 2.0 from 3.0 were all shown and read half
+    # and half; the rest read plainly: a third look could not change it.
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 600, 590, 200), window=(0, 3),
+                   prior=1)
+    state["observations"].append(_obs(
+        [1.5] * 20 + [2.5] * 10 + [3.5] * 20,
+        ["not_own_stain"] * 20 + ["own_stain", "not_own_stain"] * 5 + ["own_stain"] * 20))
+    params = dict(V6, min_between=0, min_between_share=0.0)
+    status, s = controller.decide(state, IDENTITY, params)
+    assert status == "looks_uninformative" and s["voi"]["look_gain"] < params["voi_epsilon"]
+    assert status in controller.STATUSES and status in controller.REASONS
+    # Without the early stop it would look again (and find nothing new).
+    assert controller.decide(state, IDENTITY, dict(params, voi_epsilon=0))[0] is None
+
+
+def test_crowded_and_isolated_reads_are_weighed_by_the_cells_each_kind_holds():
+    cells = ([{"value": 1.5, "label": "own_stain", "crowded": 0} for _ in range(10)]
+             + [{"value": 1.5, "label": "own_stain", "crowded": 1}]
+             + [{"value": 1.5, "label": "not_own_stain", "crowded": 1} for _ in range(9)])
+    table = evidence.counts([1.0, 2.0], [{"cells": cells}], key="crowded")
+    plain, _ = evidence.estimate(table[0])
+    share, _ = evidence.estimate(table[0], {"1": 900, "0": 100}, "pooled")
+    assert plain == pytest.approx(0.55) and share == pytest.approx(0.19)
+    # A kind nobody read takes the share of the kind that was read.
+    only = evidence.counts([1.0, 2.0], [{"cells": cells[:10]}], key="crowded")
+    assert evidence.estimate(only[0], {"1": 900, "0": 100}, "pooled")[0] == pytest.approx(1.0)
+    state = _state(lows=(1.0, 2.0, 3.0), n_positive=(1000, 600, 200), window=(0, 2))
+    state["observations"].append({"valid": True, "cells": cells})
+    state["crowding"] = {"bounds": [1.0, 2.0, 3.0], "sizes": [{"1": 900, "0": 100},
+                                                               {"1": 100, "0": 300}]}
+    key, strata = controller.crowding(state, V6)
+    assert key == "crowded" and strata == state["crowding"]["sizes"]
+    assert controller.crowding(dict(state, crowding={**state["crowding"], "bounds": [1, 2]}),
+                               V6) == (None, None)
+    assert controller.crowding(state, dict(V6, strata=None)) == (None, None)
+
+
+def test_a_marker_whose_crowded_cells_could_not_be_read_resolves_on_its_isolated_ones():
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 700, 400, 100), window=(0, 3),
+                   prior=1)
+
+    def look():
+        # Isolated cells read plainly; crowded ones mostly cannot be read,
+        # and those that can are lit by their neighbours.
+        iso = [{"value": v, "label": lab, "crowded": 0} for v, lab in
+               [(1.5, "not_own_stain")] * 4 + [(2.5, "not_own_stain")] * 4
+               + [(3.5, "own_stain")] * 4]
+        lit = [{"value": v, "label": "own_stain", "crowded": 1} for v in [1.5, 2.5] * 3]
+        crowd = [{"value": v, "label": "uncertain", "crowded": 1}
+                 for v in [1.5, 2.5, 3.5, 2.5] * 5]
+        return {"valid": True, "cells": iso + lit + crowd}
+
+    state["observations"] += [look(), look()]
+    params = dict(V6, min_labelled=10, max_other_share=0.5, unreadable_looks=2)
+    assert not controller.support(state, IDENTITY, params)["resolved"]
+    status, s = controller.decide(state, IDENTITY, params)
+    assert status == "resolved" and s.get("isolated_only") and s["low"] == 3.0
+    assert controller.decide(state, IDENTITY, dict(params, uncertain_state=False))[0] == \
+        "unreadable"
+
+
+def test_a_look_is_discarded_when_its_clear_cells_are_misread_on_either_side():
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    def cells(neg, pos):
+        return ([{"sentinel": True, "side": "negative", "label": lab} for lab in neg]
+                + [{"sentinel": True, "side": "positive", "label": lab} for lab in pos]
+                + [{"interval": 0, "label": "own_stain"}])
+
+    assert hypotheses.sentinel_check(cells(["not_own_stain"] * 2, ["own_stain"] * 2), 2)[0]
+    assert not hypotheses.sentinel_check(cells(["own_stain"] * 2, ["own_stain"] * 2), 2)[0]
+    assert not hypotheses.sentinel_check(cells(["not_own_stain"] * 2,
+                                               ["not_own_stain"] * 2), 2)[0]
+    assert hypotheses.sentinel_check(cells(["not_own_stain"] * 2,
+                                           ["not_own_stain", "own_stain"]), 2)[0]
+    # `artifact` is not a miss; four negatives as before VERSION 6.
+    assert hypotheses.sentinel_check(cells(["not_own_stain"] * 2, ["artifact"] * 2), 2)[0]
+    valid, record = hypotheses.sentinel_check(
+        [{"sentinel": True, "label": "own_stain"}] * 2 + [{"sentinel": True,
+                                                         "label": "not_own_stain"}] * 2, 2)
+    assert not valid and record == {"n": 4, "read_stained": 2}
+    state = {"observations": [{"valid": True, "cells": cells(["own_stain", "not_own_stain"],
+                                                             ["not_own_stain", "own_stain"])}]}
+    assert hypotheses.reader(state) == {"negatives": 2, "fpr": 0.5, "positives": 2,
+                                        "fnr": 0.5, "invalid_looks": 0}
+
+
+def test_positive_sentinels_come_from_the_brightest_tenth_above_every_candidate():
+    from plexora.plugins.gating.server.autogate.hypotheses import panel
+
+    rng = np.random.default_rng(2)
+    values = np.expm1(np.concatenate([rng.normal(1.0, 0.2, 4000), rng.normal(3.0, 0.3, 1000)]))
+    ds = FakeData({"M": values})
+    above = float(np.expm1(3.2))
+    out = panel.panel_cells(ds, "M", [{"from": float(np.expm1(1.5)),
+                                       "to": float(np.expm1(2.5)), "n": 6}],
+                            n_sentinels=2, sentinel_below=float(np.expm1(1.5)),
+                            n_positive_sentinels=2, sentinel_above=above, seed=1,
+                            strata_bounds=[float(np.expm1(x)) for x in (1.5, 2.5, 3.5)],
+                            crowding_margin=0.2)
+    sides = [s["side"] for s in out["sentinels"]]
+    assert sides.count("negative") == 2 and sides.count("positive") == 2
+    decile = np.quantile(values, 0.9)
+    assert all(s["value"] > above and s["value"] >= decile - 1e-3
+               for s in out["sentinels"] if s["side"] == "positive")
+    assert all(c.get("crowded") in (0, 1) for c in out["cells"])
+    assert len(out["crowding"]) == 2 and sum(out["crowding"][0].values()) > 0
+    # Fewer than twenty such cells: none.
+    none = panel.panel_cells(ds, "M", [], n_sentinels=0, n_positive_sentinels=2,
+                             sentinel_above=float(values.max()) - 1e-6, seed=1)
+    assert none["sentinels"] == []
+
+
+def test_reads_out_of_order_are_recorded_never_acted_on():
+    ordered = evidence.counts([1, 2, 3, 4], [_obs([1.5] * 10 + [2.5] * 10 + [3.5] * 10,
+                                                  ["not_own_stain"] * 10 + ["own_stain"] * 3
+                                                  + ["not_own_stain"] * 7
+                                                  + ["own_stain"] * 10)])
+    assert evidence.monotone_fit(ordered)["df"] == 0
+    reversed_ = evidence.counts([1, 2, 3], [_obs([1.5] * 20 + [2.5] * 20,
+                                                 ["own_stain"] * 18 + ["not_own_stain"] * 2
+                                                 + ["not_own_stain"] * 18
+                                                 + ["own_stain"] * 2)])
+    assert evidence.monotone_fit(reversed_)["p"] < 0.001
+
+
+def test_confidence_says_what_the_posterior_says_and_an_undecided_rival_is_never_clear(
+        monkeypatch, tmp_path):
+    from plexora.plugins.gating.server.autogate import hypotheses
+    from plexora.plugins.gating.server.autogate.hypotheses import calibration
+
+    monkeypatch.setattr(calibration, "TABLE_PATH", tmp_path / "none.json")
+    # VERSION 5: a rival whose interval straddles one half is undecided.
+    undecided = {"hypotheses": {"status": "resolved", "spread": 0.1, "leader": 2.0,
+                                "params": dict(PARAMS),
+                                "support": {"rivals": [{"ci": [0.35, 0.68], "low": 3.0,
+                                                        "distance": 1.0}]}}}
+    assert hypotheses.confidence(undecided) == "moderate"
+    below = {"hypotheses": {**undecided["hypotheses"],
+                            "support": {"rivals": [{"ci": [0.05, 0.3], "low": 1.0,
+                                                    "distance": 1.0}]}}}
+    assert hypotheses.confidence(below) == "high"
+    # VERSION 6: P(within the tolerance), capped on isolated cells alone.
+    state = {"status": "resolved", "spread": 0.1, "params": dict(V6),
+             "support": {"posterior": {"within": 0.93, "plateau": [], "max_p": 0.9}}}
+    assert hypotheses.confidence({"hypotheses": state}) == "high"
+    assert hypotheses.confidence({"hypotheses": {**state, "isolated_only": True}}) == "moderate"
+    assert hypotheses.confidence({"hypotheses": {**state, "status": "budget_exhausted"}}) == "low"
+
+
+def test_a_review_note_names_the_gates_the_reads_still_leave():
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    state = {"support": {"posterior": {"plateau": [{"low": 7.31, "p": 0.35},
+                                                   {"low": 7.69, "p": 0.55}]}}}
+    assert hypotheses.plateau_note(state) == "; the reads leave 7.69 (P 0.55) and 7.31 (P 0.35)"
+    assert hypotheses.plateau_note({"support": {}}) == ""
+
+
+def test_calibration_features_of_a_posterior_record():
+    from plexora.plugins.gating.server.autogate.hypotheses import calibration
+
+    state = {"observations": [{}, {}], "params": dict(V6), "spread": 0.3,
+             "reader": {"fpr": 0.25, "fnr": None},
+             "support": {"labelled": 40, "other_share": 0.2, "rivals": [],
+                         "posterior": {"within": 0.7, "max_p": 0.5,
+                                       "plateau": [{"low": 5.0, "fit": 1.79, "p": 0.5},
+                                                   {"low": 7.0, "fit": 2.08, "p": 0.3}]}}}
+    row = calibration.features(state)
+    assert row["p_within"] == 0.7 and row["plateau_width"] == pytest.approx(0.29 / 0.2)
+    assert row["looks"] == 2 and row["uncertain_share"] == 0.2 and row["fpr"] == 0.25
+    assert calibration.features({**state, "support": {**state["support"], "posterior": None}}) \
+        is None
+
+
+def test_the_bench_reader_parses_its_style_and_keeps_a_standard_per_marker():
+    from plexora.ai import bench
+
+    assert bench.reader_style("noisy:0.32") == ("noisy", 0.32, 0.0, 0.0)
+    assert bench.reader_style("noisy") == ("noisy", 0.2, 0.0, 0.0)
+    assert bench.reader_style("noisy:0.1:0.3:0.15") == ("noisy", 0.1, 0.3, 0.15)
+    assert bench.reader_style("oracle") == ("oracle", 0.0, 0.0, 0.0)
+    values = {"M": np.expm1(np.linspace(1.0, 3.0, 201))}
+    truth = {"M": np.log1p(values["M"]) > 2.0}
+    strict = bench.TruthAgent(values, truth, "noisy:0:0:0.5", seed=3)
+    shift = strict.shift("M")
+    assert shift == strict.shift("M") and shift != 0.0
+    cells = [{"number": str(i), "cell_id": i, "value": float(np.expm1(f))}
+             for i, f in enumerate((1.5, 2.0 + abs(shift) / 2, 2.9))]
+    words = strict.panel_labels("M", {"_panel": {"cells": cells}})
+    assert words["0"] == "not_own_stain" and words["2"] == "own_stain"
+    assert words["1"] == ("not_own_stain" if shift > 0 else "own_stain")
+    plain = bench.TruthAgent(values, truth, "noisy:0", seed=3)
+    assert plain.shift("M") == 0.0
+
+
+def test_a_leader_never_resolves_on_a_few_reads_beside_it():
+    # One valid survey with a few reads per interval, all "not": pooled
+    # monotone, the posterior puts most of its mass on the top point. The
+    # cells just below it were read three times: not enough to stand on.
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 700, 400, 100), window=(0, 3),
+                   prior=3)
+    state["observations"].append(_obs([1.5] * 6 + [2.5] * 6 + [3.5] * 3,
+                                      ["not_own_stain"] * 15))
+    params = dict(V6, sampling="survey_refine")
+    bare = evidence.support(*controller.window(state), controller._valid(state), prior=3,
+                            to_fit=IDENTITY, tolerance=0.2, min_between=20,
+                            min_between_share=0.25, n_above=100, rule="posterior",
+                            posterior_opts={"tau": 0.1, "rho": 0.8})
+    assert bare["low"] == 4.0 and bare["resolved"]
+    s = controller.support(state, IDENTITY, params)
+    assert s["low"] == 4.0 and not s["resolved"] and s["thin"] == [2]
+    # The next look reads them first, and the marker is not given up on.
+    assert controller.voi_plan(state, IDENTITY, V6, s)["picks"][2] >= 2
+    assert controller.decide(state, IDENTITY, dict(V6, voi_epsilon=1.0))[0] is None
+    state["observations"].append(_obs([3.5] * 2, ["not_own_stain"] * 2))
+    assert controller.support(state, IDENTITY, params)["resolved"]

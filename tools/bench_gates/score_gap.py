@@ -18,6 +18,18 @@ difference of |gap| with a bootstrap interval over images. `--oracle` adds,
 per arm, how close the best point of each unit's frozen lattice came to the
 person's gate -- whether the candidates could have reached it at all.
 
+Also per arm (VERSION 6, CANDIDATES_PLAN.md "Metrics"): markers whose
+replicates all wrote one gate (`one_gate`); the mean share of panel reads
+`uncertain` or `artifact`; the sentinels' miss rates (`fpr`, `fnr`); the
+median relative deviation of the positive count at the gate from the
+count at the person's gate (`count_dev`, where `run_arms.py` recorded
+`positives_at`); and risk-coverage -- the share of units whose
+P(within the tolerance) (`hypotheses.support.posterior.within`) reaches
+0.9 ... 0.5, and their mean |gap|. `--baseline NAME` names an arm every
+other arm is held against marker by marker: per (image, marker), the mean
+|gap| over its runs minus the baseline's, and every marker more than
+`--worse` (0.30) worse -- the campaign's kill rule.
+
 Gaps are in table units. A gate at the top of the range (`high`) counts as
 "no positives": a person's gate above it scores 0, below it the distance to
 the top.
@@ -78,6 +90,8 @@ def rows_for(arm, paths, truth) -> list:
             top = unit.get("high")
             g = gap(unit.get("final"), ref, top)
             start = (unit.get("start") or {}).get("low")
+            h = unit.get("hypotheses") or {}
+            support = h.get("support") or {}
             rows.append({
                 "arm": arm, "run": seen[project], "image": project, "marker": marker,
                 "state": unit.get("state"), "final": unit.get("final"), "user": ref,
@@ -85,8 +99,65 @@ def rows_for(arm, paths, truth) -> list:
                 "packets": len(unit.get("packets") or []),
                 "oracle_gap": (min((abs(gap(p, ref, top)) for p in lattice), default=None)
                                if lattice else None),
-                "hypotheses": (unit.get("hypotheses") or {}).get("status")})
+                "hypotheses": h.get("status"),
+                "within": (support.get("posterior") or {}).get("within"),
+                "uncertain": support.get("other_share"),
+                "fpr": (h.get("reader") or _reader(h)).get("fpr"),
+                "fnr": (h.get("reader") or _reader(h)).get("fnr"),
+                "positives_at": unit.get("positives_at")})
     return rows
+
+
+def _reader(h) -> dict:
+    """The sentinels' miss rates of a record without `reader` (before
+    VERSION 6): clear negatives read stained, clear positives unstained."""
+    neg = pos = fp = fn = 0
+    for obs in h.get("observations") or ():
+        for cell in obs.get("cells") or ():
+            if not cell.get("sentinel"):
+                continue
+            if cell.get("side") == "positive":
+                pos, fn = pos + 1, fn + (cell.get("label") == "not_own_stain")
+            else:
+                neg, fp = neg + 1, fp + (cell.get("label") == "own_stain")
+    return {"fpr": fp / neg if neg else None, "fnr": fn / pos if pos else None}
+
+
+#: Thresholds of P(within the tolerance) the risk-coverage table reports.
+COVERAGE_AT = (0.9, 0.8, 0.7, 0.6, 0.5)
+
+
+def risk_coverage(rows) -> list:
+    """[{at, coverage, n, mae}]: the units whose P(within the tolerance)
+    reaches `at`, as a share of the scored units with one, and their mean
+    |gap|."""
+    scored = [r for r in rows if r["gap"] is not None and r["within"] is not None]
+    out = []
+    for at in COVERAGE_AT:
+        kept = [abs(r["gap"]) for r in scored if r["within"] >= at - 1e-9]
+        out.append({"at": at, "coverage": len(kept) / len(scored) if scored else None,
+                    "n": len(kept), "mae": statistics.fmean(kept) if kept else None})
+    return out
+
+
+def worse_than(rows, base_rows, limit) -> dict:
+    """Per (image, marker) both arms scored: mean |gap| over runs minus the
+    baseline's; the markers worse by more than `limit`, and the worst."""
+    def means(rs):
+        out = defaultdict(list)
+        for r in rs:
+            if r["gap"] is not None:
+                out[(r["image"], r["marker"])].append(abs(r["gap"]))
+        return {k: statistics.fmean(v) for k, v in out.items()}
+
+    a, b = means(rows), means(base_rows)
+    diffs = {k: a[k] - b[k] for k in sorted(set(a) & set(b))}
+    worst = max(diffs.items(), key=lambda kv: kv[1]) if diffs else None
+    return {"pairs": len(diffs),
+            "worse": [{"image": k[0], "marker": k[1], "by": round(d, 3)}
+                      for k, d in diffs.items() if d > limit + 1e-9],
+            "worst": None if worst is None else {"image": worst[0][0], "marker": worst[0][1],
+                                                 "by": round(worst[1], 3)}}
 
 
 def _share(values, test):
@@ -105,6 +176,8 @@ def summary(rows) -> dict:
             finals[(r["image"], r["marker"])].append(float(r["final"]))
     spreads = [max(v) - min(v) for v in finals.values() if len(v) > 1]
     mean = (lambda v: statistics.fmean(v) if v else None)
+    deviations = [abs(r["positives_at"]["final"] - r["positives_at"]["user"])
+                  / max(1, r["positives_at"]["user"]) for r in rows if r.get("positives_at")]
     return {
         "n": len(rows), "scored": len(gaps), "mae": mean(gaps),
         "within_0.2": _share(gaps, lambda v: v <= WITHIN + 1e-9),
@@ -116,6 +189,12 @@ def summary(rows) -> dict:
         "oracle_within_0.2": _share(oracle, lambda v: v <= WITHIN + 1e-9),
         "packets_per_marker": mean([r["packets"] for r in rows]),
         "run_spread": mean(spreads), "n_replicated": len(spreads),
+        "one_gate": sum(1 for v in spreads if v < 1e-9) if spreads else None,
+        "uncertain_share": mean([r["uncertain"] for r in rows if r.get("uncertain") is not None]),
+        "fpr": mean([r["fpr"] for r in rows if r.get("fpr") is not None]),
+        "fnr": mean([r["fnr"] for r in rows if r.get("fnr") is not None]),
+        "count_dev": statistics.median(deviations) if deviations else None,
+        "risk_coverage": risk_coverage(rows),
     }
 
 
@@ -162,6 +241,10 @@ def main(argv=None) -> int:
     parser.add_argument("--truth", required=True, help="{project: {marker: gate}} JSON")
     parser.add_argument("--oracle", action="store_true", help="add the lattice oracle")
     parser.add_argument("--json", help="write the rows and summaries here")
+    parser.add_argument("--baseline", help="the arm every other arm is held against, marker "
+                                           "by marker")
+    parser.add_argument("--worse", type=float, default=0.30,
+                        help="a marker this much worse than the baseline is reported")
     args = parser.parse_args(argv)
     truth = load_truth(args.truth)
     arms = {}
@@ -172,7 +255,8 @@ def main(argv=None) -> int:
             raise SystemExit(f"{spec}: no session records")
         arms[name] = rows_for(name, paths, truth)
     keys = ["scored", "mae", "within_0.2", "far_0.4", "accepted_mae", "review_mae",
-            "start_mae", "packets_per_marker", "run_spread"]
+            "start_mae", "packets_per_marker", "run_spread", "one_gate", "uncertain_share",
+            "fpr", "fnr", "count_dev"]
     if args.oracle:
         keys += ["oracle_mae", "oracle_within_0.2"]
     summaries = {name: summary(rows) for name, rows in arms.items()}
@@ -180,6 +264,26 @@ def main(argv=None) -> int:
     print("|---" * (len(keys) + 1) + "|")
     for name, s in summaries.items():
         print(f"| {name} | " + " | ".join(_fmt(s[k]) for k in keys) + " |")
+    for name, s_ in summaries.items():
+        curve = [c for c in s_["risk_coverage"] if c["n"]]
+        if curve:
+            print(f"\n{name} risk-coverage (P within >= at: coverage, n, MAE): " + "; ".join(
+                f"{c['at']}: {c['coverage']:.0%} {c['n']} {_fmt(c['mae'])}" for c in curve))
+    held = {}
+    if args.baseline:
+        if args.baseline not in arms:
+            raise SystemExit(f"--baseline {args.baseline}: not one of the arms")
+        for name in arms:
+            if name == args.baseline:
+                continue
+            held[name] = worse_than(arms[name], arms[args.baseline], args.worse)
+            h = held[name]
+            print(f"\n{name} vs {args.baseline}, marker by marker ({h['pairs']} pairs): worst "
+                  + (f"{h['worst']['image']} {h['worst']['marker']} {h['worst']['by']:+.3f}"
+                     if h["worst"] else "-")
+                  + f"; worse by more than {args.worse}: "
+                  + (", ".join(f"{w['image']} {w['marker']} {w['by']:+.3f}" for w in h["worse"])
+                     or "none"))
     names = list(arms)
     comparison = None
     if len(names) >= 2:
@@ -191,7 +295,7 @@ def main(argv=None) -> int:
                   f"{comparison['images']} images)")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
-            json.dump({"summaries": summaries, "paired": comparison,
+            json.dump({"summaries": summaries, "paired": comparison, "held": held,
                        "rows": [r for rows in arms.values() for r in rows]}, fh, indent=1)
     return 0
 

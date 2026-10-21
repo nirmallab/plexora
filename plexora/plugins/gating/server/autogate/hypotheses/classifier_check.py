@@ -154,15 +154,22 @@ def _plan(engine, unit, state, shown_ids):
     flagged_total = sum(counts[n]["flagged"] for n in sides) or 1
     rng = np.random.default_rng(int(engine.options["seed"]) * 31 + 7)
     picked_rows = []
+    by_side = {}
     for name, (mask, _all) in sides.items():
         # Both directions whenever both have flagged cells: a check that
         # only ever shows the cells below would only ever lower the gate.
         want = max(1 if counts[name]["flagged"] else 0,
                    round(n_flagged * counts[name]["flagged"] / flagged_total))
         rows = np.flatnonzero(mask)
-        picked_rows.extend(int(r) for r in
-                           sampler._spread_by_value(c, values, rows, min(want, rows.shape[0]),
-                                                    8, rng))
+        chosen = sampler._spread_by_value(c, values, rows, min(want, rows.shape[0]), 8, rng)
+        by_side[name] = int(len(chosen))
+        picked_rows.extend(int(r) for r in chosen)
+    if by_side.get("below"):
+        # Cells it would add below the leader were its own stain 47 % of the
+        # time on the person's labelled cells, cells it would remove above
+        # every time (2026-10-19 wand bench): a record for the review note,
+        # never a weight on the evidence.
+        state["classifier"]["low_trust"] = {"side": "below", "picked": by_side["below"]}
     # The rest from the two intervals beside the leader, chosen blind to the
     # classifier (either call).
     lead = bounds.index(min(bounds, key=lambda b: abs(b - leader)))

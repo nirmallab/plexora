@@ -6,10 +6,12 @@
         --check plexora/plugins/gating/server/autogate/hypotheses/calibration.json
 
 Reads stored session records of `engine: candidates` runs, takes every unit
-that resolved by panels (`unit["hypotheses"]["status"] == "resolved"`) and
-a person's gate in `--truth` (`{project: {marker: gate}}`, table units), and
+decided by panels -- review units too, since a review gate's error is what
+its confidence must say (`--resolved-only`: as before VERSION 6) -- with a
+person's gate in `--truth` (`{project: {marker: gate}}`, table units), and
 fits P(|gate - person's gate| <= 0.2) on the features
-`hypotheses.calibration.features` computes from the stored state. Fit on
+`hypotheses.calibration.features` computes from the stored state
+(`--features`, at most five, from `calibration.CANDIDATE_FEATURES`). Fit on
 dev records only; `--check` reports reliability and coverage on others.
 A fitted table changes confidence the next time the engine runs: commit it
 with the calibration's VERSION and the records it was fitted on named in
@@ -31,7 +33,7 @@ from score_gap import gap, load_truth  # noqa: E402
 from plexora.plugins.gating.server.autogate.hypotheses import calibration  # noqa: E402
 
 
-def records(patterns, truth):
+def records(patterns, truth, *, resolved_only=False, names=None):
     rows, outcomes, units = [], [], []
     for pattern in patterns:
         for path in sorted(glob.glob(os.path.expanduser(pattern))):
@@ -40,9 +42,10 @@ def records(patterns, truth):
             for unit in (record.get("units") or {}).values():
                 state = unit.get("hypotheses") or {}
                 ref = (truth.get(unit.get("project")) or {}).get(unit.get("marker"))
-                if state.get("status") != "resolved" or ref is None:
+                if ref is None or state.get("status") in (None, "no_candidates") or \
+                        (resolved_only and state.get("status") != "resolved"):
                     continue
-                row = calibration.features(state)
+                row = calibration.features(state, names)
                 g = gap(unit.get("final"), ref, unit.get("high"))
                 if row is None or g is None:
                     continue
@@ -59,16 +62,24 @@ def main(argv=None) -> int:
     parser.add_argument("--out", help="write the fitted table here")
     parser.add_argument("--check", help="a fitted table to evaluate on these records")
     parser.add_argument("--l2", type=float, default=1.0)
+    parser.add_argument("--resolved-only", action="store_true")
+    parser.add_argument("--features", default=",".join(calibration.FEATURES),
+                        help="comma-separated, from calibration.CANDIDATE_FEATURES")
     args = parser.parse_args(argv)
-    rows, outcomes, _units = records(args.sessions, load_truth(args.truth))
-    print(f"{len(rows)} resolved units with a person's gate; "
+    names = tuple(n for n in args.features.split(",") if n)
+    unknown = [n for n in names if n not in calibration.CANDIDATE_FEATURES]
+    if unknown or not 0 < len(names) <= 5:
+        raise SystemExit(f"--features: one to five of {calibration.CANDIDATE_FEATURES}")
+    rows, outcomes, _units = records(args.sessions, load_truth(args.truth),
+                                     resolved_only=args.resolved_only, names=names)
+    print(f"{len(rows)} panel units with a person's gate; "
           f"{sum(outcomes)} within {calibration.TOLERANCE}")
     if args.check:
         table = calibration.load(args.check)
         if table is None:
             raise SystemExit(f"{args.check}: no table of version {calibration.VERSION}")
     else:
-        table = calibration.fit(rows, outcomes, l2=args.l2)
+        table = calibration.fit(rows, outcomes, l2=args.l2, features=names)
     print("| predicted | n | mean predicted | observed |")
     print("|---|---|---|---|")
     for b in calibration.reliability(table, rows, outcomes):

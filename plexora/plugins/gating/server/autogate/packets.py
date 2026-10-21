@@ -150,10 +150,12 @@ READING_GUIDE = {
                         "the marker, the judged cell outlined white). Bottom: the expected "
                         "partner (`partner_panels.expected`) and the not-expected one "
                         "(`partner_panels.not_expected`) alone in grey, the judged cell "
-                        "outlined magenta, black when there is none. An expected partner lit "
-                        "inside the outline supports the cell's own stain; a not-expected one "
-                        "says it is another cell type, so marker light on it is likely a "
-                        "neighbour's"),
+                        "outlined magenta, black when there is none. The partners are context: "
+                        "an expected partner lit inside the outline is consistent with the "
+                        "lineage, a not-expected one with another lineage, and neither decides "
+                        "whether the marker's stain is this cell's own -- a marker several cell "
+                        "types carry is own stain on a cell without the expected partner too. "
+                        "Judge the marker tiles"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
