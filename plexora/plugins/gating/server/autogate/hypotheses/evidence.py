@@ -1,0 +1,152 @@
+"""What the labelled cells say about the candidate gates.
+
+A look labels cells blind -- `own_stain`, `not_own_stain`, `uncertain`,
+`artifact` -- with no value, call or gate in the picture. Each labelled cell
+falls in one interval between neighbouring candidates (`candidates.build`).
+Per interval, the own-stain fraction among the cells read either way is the
+evidence; a Wilson interval says how sure it is.
+
+A candidate gate is scored by the cells it would get wrong: below it, the
+interval's own-stain share of its cells is called negative; above it, the
+rest is called positive. Fractions are made non-decreasing in value first
+(pool-adjacent-violators, weighted by the cells read): a reader's noise
+should not make a brighter interval look less stained than a dimmer one. An
+interval with no reading counts one half either way, so it never favours a
+candidate. The leader is the candidate with the fewest cells wrong.
+
+The leader is *decisive* against a rival when the cells read between the
+two, pooled, have a Wilson interval wholly on the leader's side of one half.
+Rivals within `tolerance` (fit units; the user's own retest noise) need not
+be beaten. Nothing here averages candidates: the gate is always one of them.
+"""
+
+from __future__ import annotations
+
+import math
+
+OWN = "own_stain"
+NOT_OWN = "not_own_stain"
+LABELS = (OWN, NOT_OWN, "uncertain", "artifact")
+
+#: [cal] the two-sided normal quantile of the Wilson intervals (95 %).
+Z = 1.96
+
+
+def wilson(k, n, z=Z) -> tuple:
+    """(low, high) of the Wilson score interval of k successes in n."""
+    if n <= 0:
+        return 0.0, 1.0
+    p = k / n
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def interval_of(value, bounds) -> int | None:
+    """Index k with bounds[k] < value <= bounds[k + 1], or None outside."""
+    for k in range(len(bounds) - 1):
+        if bounds[k] < value <= bounds[k + 1]:
+            return k
+    return None
+
+
+def counts(bounds, observations) -> list:
+    """Per interval: own, not_own and other labels of the valid observations'
+    cells (sentinels excluded)."""
+    out = [{"own": 0, "not": 0, "other": 0} for _ in range(max(0, len(bounds) - 1))]
+    for obs in observations:
+        if not obs.get("valid", True):
+            continue
+        for cell in obs.get("cells") or ():
+            if cell.get("sentinel"):
+                continue
+            k = interval_of(float(cell["value"]), bounds)
+            if k is None:
+                continue
+            label = cell.get("label")
+            key = "own" if label == OWN else "not" if label == NOT_OWN else "other"
+            out[k][key] += 1
+    return out
+
+
+def monotone(fractions, weights) -> list:
+    """Pool-adjacent-violators: the non-decreasing sequence closest to
+    `fractions` in weighted squares. Entries with weight 0 are left None."""
+    blocks = []      # [value, weight, [indices]]
+    for i, (f, w) in enumerate(zip(fractions, weights)):
+        if not w:
+            continue
+        blocks.append([float(f), float(w), [i]])
+        while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:
+            v2, w2, i2 = blocks.pop()
+            v1, w1, i1 = blocks.pop()
+            blocks.append([(v1 * w1 + v2 * w2) / (w1 + w2), w1 + w2, i1 + i2])
+    out = [None] * len(fractions)
+    for value, _w, indices in blocks:
+        for i in indices:
+            out[i] = value
+    return out
+
+
+def fractions(table) -> list:
+    """Each interval's own-stain share (None unread), made non-decreasing."""
+    raw = [(c["own"] / (c["own"] + c["not"])) if (c["own"] + c["not"]) else 0.0
+           for c in table]
+    weights = [c["own"] + c["not"] for c in table]
+    return monotone(raw, weights)
+
+
+def losses(n_cells, fitted) -> list:
+    """Cells each candidate gate would get wrong (candidate j sits at the
+    lower bound of interval j; j == len(intervals) is above them all)."""
+    shares = [0.5 if f is None else f for f in fitted]
+    out = []
+    for j in range(len(n_cells) + 1):
+        below = sum(n * s for n, s in zip(n_cells[:j], shares[:j]))
+        above = sum(n * (1.0 - s) for n, s in zip(n_cells[j:], shares[j:]))
+        out.append(below + above)
+    return out
+
+
+def between(table, a, b) -> tuple:
+    """(own, read) pooled over the intervals between candidates a < b."""
+    own = sum(c["own"] for c in table[a:b])
+    read = sum(c["own"] + c["not"] for c in table[a:b])
+    return own, read
+
+
+def support(bounds, n_cells, observations, *, prior, to_fit, tolerance) -> dict:
+    """The leader among the candidates `bounds` (sorted table values) and,
+    for every rival outside `tolerance`, whether the leader beats it.
+
+    `prior` is the candidate index a tie goes to (the scored start)."""
+    table = counts(bounds, observations)
+    fitted = fractions(table)
+    loss = losses(n_cells, fitted)
+    best = min(loss)
+    tied = [j for j, value in enumerate(loss) if value <= best + 1e-9]
+    leader = min(tied, key=lambda j: (abs(j - prior), j))
+    fits = [float(to_fit(b)) for b in bounds]
+    rivals = []
+    for j in range(len(bounds)):
+        if j == leader or abs(fits[j] - fits[leader]) <= tolerance + 1e-9:
+            continue
+        a, b = sorted((leader, j))
+        own, read = between(table, a, b)
+        low, high = wilson(own, read)
+        # The leader calls the cells between them positive when it is the
+        # lower of the two, negative when it is the higher.
+        decisive = low > 0.5 if leader < j else high < 0.5
+        rivals.append({"index": j, "low": float(bounds[j]), "own": own, "read": read,
+                       "ci": [round(low, 4), round(high, 4)], "decisive": bool(decisive),
+                       "n_between": int(sum(n_cells[a:b])),
+                       "distance": round(abs(fits[j] - fits[leader]), 4)})
+    labelled = sum(c["own"] + c["not"] + c["other"] for c in table)
+    other = sum(c["other"] for c in table)
+    return {"leader": leader, "low": float(bounds[leader]), "loss": [round(v, 3) for v in loss],
+            "fractions": [None if f is None else round(f, 4) for f in fitted],
+            "table": table, "rivals": rivals,
+            "undecided": [r for r in rivals if not r["decisive"]],
+            "resolved": all(r["decisive"] for r in rivals),
+            "labelled": labelled, "other_share": (other / labelled) if labelled else None}

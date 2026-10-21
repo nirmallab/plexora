@@ -62,10 +62,11 @@ How to judge (the guide says how to read each picture):
   `pattern` (what the stained cells look like, in the collage or the sheet's
   fields; `none` only when no cell anywhere carries the stain), `within`
   only when the stain is real inside a subset partner's positives and noise
-  outside them (one of `allowed.within`). In a `t3_biological` look the
-  third panel of each cell is the reference channel.
+  outside them (one of `allowed.within`).
 - `t4_candidates`: a word for EVERY row of `intervals`, about the cells
   that change call there. A row of zero cells: `cannot_tell`.
+- `cell_panel`: `cells`, a label for EVERY number in `allowed.cells`; the
+  guide's `panel` entry says how.
 - `qc_confirm`: `real_signal`, `technical_failure`, `no_positive_population`
   or `cannot_tell`. It may repeat a sheet you just judged (`as_in`): answer
   from that look.

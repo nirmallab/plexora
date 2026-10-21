@@ -116,6 +116,30 @@ READING_GUIDE = {
                 "gated from these "
                 "words: a marker no region shows a clear positive for, in this picture and a "
                 "second of other regions, is closed with no positives, as a person would"),
+    "panel": ("one word per numbered cell (its caption), about the cell around the nucleus "
+              "the four magenta ticks mark: `own_stain` -- the marker's stain belongs to it, "
+              "touching that nucleus with no other nucleus inside it (a ring or halo around "
+              "it, a fill inside it, cytoplasm hugging it); `not_own_stain` -- nothing "
+              "touches the nucleus, or the stain is a neighbour's or apart by a dark gap; "
+              "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge "
+              "or a smear across cells. The cells come from across the marker's range in "
+              "random order, so a row means nothing; judge every cell on its own, by shape, "
+              "not brightness. Say `uncertain` rather than guess. Plexora chooses the gate "
+              "from the words"),
+    "collage_panel": ("each cell is two panels side by side, blue nuclei and the marker in "
+                      "yellow. Left, morphology: the marker windowed on this cell's own "
+                      "brightest pixels (a cell with no stain stays dark; a brighter "
+                      "neighbour saturates). Right, context: the marker at one fixed window "
+                      "for the whole marker, outlines thin and grey"),
+    "collage_panel_m": ("each cell is a 2 x 2 block. Top: morphology (the marker windowed on "
+                        "this cell's own brightest pixels) and context (one fixed window for "
+                        "the marker, the judged cell outlined white). Bottom: the expected "
+                        "partner (`partner_panels.expected`) and the not-expected one "
+                        "(`partner_panels.not_expected`) alone in grey, the judged cell "
+                        "outlined magenta, black when there is none. An expected partner lit "
+                        "inside the outline supports the cell's own stain; a not-expected one "
+                        "says it is another cell type, so marker light on it is likely a "
+                        "neighbour's"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -1599,6 +1623,16 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
             "display_setup": display_setup}
+
+
+def cell_panel(engine, units):
+    """A blind panel of single cells (`hypotheses.packet`)."""
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    return hypotheses.packet(engine, units)
+
+
+BUILDERS["cell_panel"] = cell_panel
 
 
 def narrate(packet) -> str:

@@ -287,6 +287,45 @@ finding becomes a `[cal]` constant by hand, with a VERSION bump and a bench
 on the frozen label sets. Never tuned on the LSP images alone: their signal
 is better than most (the user, 2026-10-19).
 
+## 2f. The candidates engine (experimental, 2026-10-20)
+
+`SessionOptions.engine = "candidates"` (default `classic`), in
+`server/autogate/hypotheses/`; plan and bars in
+`docs/internal/bench/CANDIDATES_PLAN.md`. Why: on the held-out images the
+frozen lattice held a point within 0.2 of the user's gate for 93 % of
+markers, while the classic looks ended 0.368 MAE away; the error is in
+choosing among candidates, and the classic look asks the least reliable
+question for it (which way a moving gate should go, with each cell's value
+and current call in its caption).
+
+- **Candidates are hypotheses.** The lattice's points; estimators are
+  clustered to describe disagreement, never averaged. The surveyed range
+  runs one point past the lowest and highest estimator, and widens a point
+  at a time when the leader sits at its edge.
+- **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
+  intervals plus 4 negative sentinels from below every candidate, shuffled
+  and numbered; the 2 x 2 multi-view block when the marker has a partner.
+  No value, call, gate, candidate or ranking anywhere in it. One label a
+  cell: `own_stain`, `not_own_stain`, `uncertain`, `artifact`. No
+  confidence word: code's confidence is not the reader's.
+- **Code chooses.** Each candidate scores the cells it would get wrong
+  (interval own-stain shares, monotone in value, unread intervals neutral);
+  the leader beats a rival when the pooled cells between them have a
+  Wilson 95 % interval wholly on its side of one half. Rivals within 0.2
+  (fit units) need not be beaten.
+- **Stopping is by rule.** Resolved when every rival outside the tolerance
+  is beaten; otherwise review at the leader for a named reason
+  (`controller.STATUSES`). At most 3 looks; a cell is never shown twice; a
+  look whose sentinels are read stained twice is discarded, two such looks
+  mark the reader unreliable (review at the start).
+- **Writes as any other.** A resolved leader passes `run_regression`; a
+  failed check caps confidence, never moves it (no purity push, no
+  whole-image confirm, no classifier check on this path). Provenance
+  `detail.hypotheses` holds the candidates, the looks and the status, with
+  `confidence: uncalibrated` until it is fitted.
+- **Unchanged:** QC routing, the audit sheet for clean splits (now also
+  through the numeric checks), conditional gates, datasets, the memo.
+
 ## 3. Where things live
 
 ```

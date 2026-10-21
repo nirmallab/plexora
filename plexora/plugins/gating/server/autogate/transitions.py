@@ -1072,3 +1072,13 @@ APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": app
          "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "display_setup": apply_display}
+
+
+def apply_cell_panel(engine, packet, answer):
+    """A panel's labels (`hypotheses.apply`)."""
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    return hypotheses.apply(engine, packet, answer)
+
+
+APPLY["cell_panel"] = apply_cell_panel

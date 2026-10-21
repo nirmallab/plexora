@@ -75,7 +75,7 @@ SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 #: A marker waiting on something: the audit sheet, a look, a check.
 #: `awaiting_replan`: a marker held for the planning task's `replan` answer.
 WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_absence", "awaiting_t2",
-                  "awaiting_t3", "awaiting_t4",
+                  "awaiting_t3", "awaiting_t4", "awaiting_panel",
                   "awaiting_regression", "regression_confirm", "transfer_check",
                   "awaiting_replan")
 
@@ -106,7 +106,7 @@ SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "display_setup
 #: Re-planning after failures (`replan`): the planning task's, out alone,
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
-LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
+LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates", "cell_panel")
 CHECK_KINDS = ("qc_confirm", "absence_check", "regression_confirm", "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
@@ -134,6 +134,8 @@ NARRATION = {
                          "at its threshold.",
     "t2_confirm:within": "Gating {marker} only among {partner}-positive cells, and checking "
                          "that threshold in the tissue.",
+    "cell_panel": "Judging {marker} one cell at a time, from cells across its range in "
+                  "random order, to choose among its candidate thresholds.",
     "t3_biological": "Adding {references} as a complementary marker to check where "
                      "{marker}-positive cells sit.",
     "t4_candidates:up": "The {marker} threshold calls too many cells positive; comparing the "
@@ -160,6 +162,7 @@ EVIDENCE_LABELS = {
     "t2_collage": "Cells around the {marker} threshold",
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
+    "panel_collage": "{marker} cells, numbered, in random order",
     "context_sheet": "{marker} across the tissue",
     "absence_regions": "{marker} in six regions, nothing marked",
     "strip": "Markers at their thresholds",
@@ -318,6 +321,15 @@ ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
 #: once per marker, a look at the cells the classifier disagrees with the
 #: gate on, which may move the gate either way.
 CLASSIFIER_MODES = ("off", "layer", "check")
+
+#: How a marker that needs a look is decided (`SessionOptions.engine`).
+#: classic: the look at rows below, at and above the gate, then the
+#: candidates beyond it. candidates: blind panels of single cells choose
+#: among the lattice's candidate gates (`hypotheses`).
+ENGINES = ("classic", "candidates")
+
+#: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
+PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")
 
 #: How a classifier check's pairs are read (`cellcalls.confirms`), each an
 #: arm of the p193 comparison (2026-10-19): `auto` -- `word` for a marker the

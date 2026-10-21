@@ -121,6 +121,17 @@ class T4Answer(_Base):
     confidence: Confidence = Field(description=_CONFIDENCE)
 
 
+class CellPanelAnswer(_Base):
+    kind: Literal["cell_panel"] = "cell_panel"
+    cells: dict[str, Literal[schemas.PANEL_LABELS]] = Field(
+        description="EVERY numbered cell (the caption under it): `own_stain` -- the marker's "
+                    "stain belongs to this cell, touching the nucleus the ticks mark with no "
+                    "other nucleus inside it; `not_own_stain` -- nothing touches that nucleus, "
+                    "or the stain is a neighbour's or apart by a dark gap; `uncertain` -- the "
+                    "picture cannot say; `artifact` -- debris, a fold, an edge or a smear "
+                    "across cells.")
+
+
 class ConfirmAnswer(_Base):
     kind: Literal["regression_confirm"] = "regression_confirm"
     verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"]
@@ -199,7 +210,7 @@ class ReplanAnswer(_Base):
 
 MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          ReplanAnswer, DisplaySetupAnswer)
+          ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

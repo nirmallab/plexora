@@ -150,11 +150,21 @@ def _gates_at(ds, payload):
     return {"lows": lows, "n_positive": counts.tolist(), "n_finite": col.n_finite}
 
 
+def _panel_cells(ds, payload):
+    from plexora.plugins.gating.server.autogate.hypotheses import panel
+
+    return panel.panel_cells(
+        ds, payload["marker"], payload["intervals"], exclude=payload.get("exclude") or (),
+        n_sentinels=int(payload.get("n_sentinels", 4)),
+        sentinel_below=payload.get("sentinel_below"), seed=int(payload.get("seed") or 0))
+
+
 OPERATIONS = {
     "gating.autogate.profile": _profile,
     "gating.autogate.profile_all": _profile_all,
     "gating.autogate.sample": _sample,
     "gating.autogate.delta": _delta,
+    "gating.autogate.panel_cells": _panel_cells,
     "gating.autogate.quadrants": _quadrants,
     "gating.autogate.bivariate": _bivariate,
     "gating.autogate.candidates": _candidates,

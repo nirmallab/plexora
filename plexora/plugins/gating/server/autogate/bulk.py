@@ -202,6 +202,7 @@ def decide_first(engine, unit):
 BULK_WORDS = {
     "accepted_t1": "clean split, written for the audit sheet",
     "awaiting_t2": "waiting for a look",
+    "awaiting_panel": "waiting for a look at single cells",
     "qc_confirm": "the stain gets a look first",
     "awaiting_absence": "waiting for a look at six regions",
     "transfer_pending": "waiting for the reference image",

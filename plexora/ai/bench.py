@@ -180,6 +180,24 @@ class TruthAgent:
             return "about_right"
         return "too_low" if low < best else "too_high"
 
+    def panel_labels(self, marker, packet) -> dict:
+        """A blind panel read against the truth's best single cut (the gate
+        the truth itself implies): own stain above it, not below; `noisy:P`
+        turns each cell's word with probability P, `lazy` cannot tell any.
+        The cells' values are the stored packet's (`_panel`), which the
+        reader never sees."""
+        cells = (packet.get("_panel") or {}).get("cells") or []
+        if self.style == "lazy":
+            return {c["number"]: "uncertain" for c in cells}
+        cut, _errors = self.best(marker)
+        out = {}
+        for c in cells:
+            own = float(c["value"]) > cut
+            if self.style == "noisy" and self.rng.random() < self.p:
+                own = not own
+            out[c["number"]] = "own_stain" if own else "not_own_stain"
+        return out
+
     def answer(self, packet):
         kind = packet["kind"]
         ev = packet.get("evidence") or {}
@@ -208,6 +226,8 @@ class TruthAgent:
                 self.values[marker], self.truth[marker], rows,
                 flip=(lambda _row: self.rng.random() < self.p) if noisy else None)
             return {"kind": kind, "intervals": verdicts, "confidence": "fairly_sure"}
+        if kind == "cell_panel":
+            return {"kind": kind, "cells": self.panel_labels(marker, packet)}
         if kind == "qc_confirm":
             real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
@@ -250,7 +270,8 @@ class TruthAgent:
 #: The ablation's variants: what each sets of a session's options. `tiles`
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
 VARIANTS = {"baseline": {}, "tiles": {"tiles": True}, "absence": {"absence_check": True},
-            "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"}}
+            "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"},
+            "candidates": {"engine": "candidates"}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -338,6 +359,13 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
         sent["pixels"] += sum(int(i.get("width") or 0) * int(i.get("height") or 0)
                               for i in packet.get("images") or [])
         packet = packet_views.resolve_as_in(packet, held)
+        if packet.get("kind") == "cell_panel":
+            # The panel's cells as code holds them (never sent to a reader):
+            # a simulated reader answers from their truth.
+            from plexora.plugins.gating.server.autogate import engine as engines
+
+            stored, _ = engines.store().read_packet(sid, packet["packet_id"])
+            packet = {**packet, "_panel": stored.get("_panel")}
         result = _ok(invoke(session, "gating_answer", {
             "session_id": sid, "packet_id": packet["packet_id"],
             "answer": agent.answer(packet)}))["next"]
@@ -766,7 +794,7 @@ def answer_direction(answer):
 
 #: The fields of an answer that decide what happens next: per-row verdicts
 #: (compared row by row) and single verdicts.
-_DECIDING_ROWS = ("verdicts", "intervals", "per_image")
+_DECIDING_ROWS = ("verdicts", "intervals", "per_image", "cells")
 _DECIDING = ("verdict",)
 
 

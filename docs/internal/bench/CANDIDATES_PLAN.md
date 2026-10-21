@@ -73,6 +73,28 @@ measured per-cell accuracy of the multi-view tiles (0.683). This checks the
 controller's behaviour (looks used, statuses, placement under noise); it is
 not evidence about a real reader.
 
+### Offline result, 2026-10-20 (simulated reader; behaviour only)
+
+8 synthetic scenes (easy, overlap, rare, gradient, dense_spill, low_snr,
+dim_positive, heterogeneous) x 5 markers, one run each, classic
+(`session:baseline`) vs `session:candidates`. The classic arm's noisy reader
+turns a look's direction word, the panel's turns each cell's word: the two
+noises are not the same thing, so only each arm's own behaviour is read.
+
+| reader | arm | mean F1 | min F1 | mean abs fraction error | packets | review share |
+|---|---|---|---|---|---|---|
+| truthful | classic | 0.944 | 0.315 | 0.0107 | 44 | 0 % |
+| truthful | candidates | 0.951 | 0.267 | 0.0059 | 26 | 10 % |
+| P = 0.32 | classic | 0.936 | 0.367 | 0.0148 | 37 | 0 % |
+| P = 0.32 | candidates | 0.947 | 0.380 | 0.0086 | 36 | 17.5 % |
+
+Candidates did better where the classic walk stops short (rare CD4 0.871 to
+0.927 truthful, 0.745 to 0.927 noisy; overlap CD4 0.544 to 0.675; gradient
+CD4 0.835 to 0.918) and slightly worse on the two scenes no single threshold
+separates (heterogeneous CD4, low_snr CD4). Under noise a share of markers
+ends in review instead of accepted: by design, never "resolved" because the
+looks ran out.
+
 ## Not done in this branch
 
 - Sampling control (temperature, seed): the gateway chooses the model and
