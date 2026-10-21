@@ -130,6 +130,24 @@ def test_the_canvas_layout_probe_passes():
     assert out.count("ok - ") >= 10
 
 
+def test_a_moved_control_is_placed_by_fractions_of_its_room():
+    """The CSS half of a movable control (canvasLayout.js Movable): `left`
+    at the fraction of the free layer and `translate` back by the same
+    fraction of the control's own size, so it can never cross an edge however
+    the canvas is resized; the free layer is the safe area's content box."""
+    css = (CLIENT / "src" / "css" / "viewer.css").read_text(encoding="utf-8")
+    rule = css[css.index("#openseadragon_wrapper .plx-canvas-free > .plx-floating {"):]
+    rule = rule[:rule.index("}")]
+    assert "left: calc(var(--plx-x, 0) * 100%);" in rule
+    assert "top: calc(var(--plx-y, 0) * 100%);" in rule
+    assert "translate: calc(var(--plx-x, 0) * -100%) calc(var(--plx-y, 0) * -100%);" in rule
+    free = css[css.index(".plx-canvas-free {"):]
+    free = free[:free.index("}")]
+    assert "pointer-events: none;" in free
+    # The x is hidden with `hidden` -- a display rule alone would beat it.
+    assert ".plx-movable-reset[hidden] {" in css
+
+
 def test_the_canvas_layout_loads_before_anything_it_places():
     """base.html loads the layout before imageViewer.js, which docks the
     caption, the legend and the mini-map as it builds them."""

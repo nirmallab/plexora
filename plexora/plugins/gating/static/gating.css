@@ -548,12 +548,24 @@
     display: none;
 }
 
+/* The name's line is also the handle it is moved by (core's movable:
+   grab cursor, a grip in the gutter on hover) and holds the x that puts it
+   back, at the end, level with the high number below. */
+.gate-contrast-head {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
 .gate-contrast-name {
     color: var(--text-muted);
+    flex: 1 1 auto;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
     line-height: 16px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

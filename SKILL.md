@@ -12392,6 +12392,13 @@ plugin was open.
   > `ViewerSidebar#setSlotWindow` (new: `contrastBounds`/`slotShowing`/
   > `setSlotWindow`) into the same `slot.range` the Image Channels card's own
   > slider draws, and re-reading it on `BRUSH_MOVE` rather than keeping a copy.
+  > The control is movable: the user drags it by its name line
+  > (`.gate-contrast-head`) off the caption into core's free layer
+  > (`ctx.view.movable(element, {id, handle, back})`, id `contrast` ->
+  > `plexora:canvas-position:gating-contrast`, remembered per tab in
+  > sessionStorage and restored before first paint); its root carries
+  > `viewer-caption-line` so a floated copy keeps the caption's text-shadow and
+  > the brightfield token inversion. An x on the handle glides it home.
   > An automated drag on any `PlexoraSlider` range input, this one included,
   > has to aim at the rail's y, not the input box's centre: `.plx-range` zeros
   > out `.plx-slider-input`'s `margin-top`, so the (invisible) hit box sits

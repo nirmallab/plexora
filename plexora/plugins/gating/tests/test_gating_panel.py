@@ -162,6 +162,28 @@ def test_the_viewer_contrast_is_the_image_channels_window():
     assert "#gate_contrast_control:hover .gate-contrast-slider," in styles
 
 
+def test_the_viewer_contrast_can_be_moved_off_the_caption():
+    """Dragged by its name line, the contrast control goes anywhere over the
+    image and back (core's `ctx.view.movable`, tests/js/canvas_layout_probe.mjs
+    for the behaviour). The name line is the handle, never the slider; it
+    keeps the caption's ground when it leaves the caption; and it is the same
+    element hidden or shown, so it stays where it was left."""
+    controller = _code(CONTROLLER)
+    contrast = controller[controller.index("class GateContrastControl {"):]
+    contrast = contrast[:contrast.index("\nfunction describeGateProvenance")]
+    assert "this.controller.ctx?.view?.movable?.(root, {" in contrast
+    assert 'id: "contrast", handle: head' in contrast
+    assert 'head.className = "gate-contrast-head"' in contrast
+    assert 'root.className = "gate-contrast viewer-caption-line"' in contrast
+    dispose = contrast[contrast.index("    dispose() {"):]
+    assert "this.movable?.dispose();" in dispose[:dispose.index("\n    }\n")]
+    styles = _code(STYLES)
+    assert ".gate-contrast-head {" in styles
+    main = (CORE / "js" / "main.js").read_text(encoding="utf-8")
+    assert "movable(element, { id, handle = null, back } = {}) {" in main
+    assert "record.cleanups.push(() => movable.dispose())" in main
+
+
 def test_the_two_numbers_are_the_sliders_own_drawn_as_text():
     """Every slider's numbers are text until clicked, in main.css beside
     `.plx-number` itself -- not a copy of those declarations in this plugin's

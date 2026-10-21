@@ -125,7 +125,7 @@
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261016_display_contrast",
-        "/client/src/js/services/canvasLayout.js?v=20261013_minimap_lens",
+        "/client/src/js/services/canvasLayout.js?v=20261020_movable_control",
         "/client/src/js/views/imageViewer.js?v=20261015_display_contrast",
         "/client/src/js/views/miniMap.js?v=20261015_display_contrast",
         "/client/src/js/views/rgbImageViewer.js?v=20261012_project_title",
@@ -341,7 +341,7 @@
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261016_display_contrast",
-        "/client/src/js/services/canvasLayout.js?v=20261013_minimap_lens",
+        "/client/src/js/services/canvasLayout.js?v=20261020_movable_control",
         "/client/src/js/views/imageViewer.js?v=20261015_display_contrast",
         "/client/src/js/views/miniMap.js?v=20261015_display_contrast",
         "/client/src/js/views/rgbImageViewer.js?v=20261012_project_title",
@@ -445,13 +445,13 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261016_display_contrast3",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261015_display_contrast"
+        "/client/src/js/main.js?v=20261020_movable_control"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261014_import_progressive",
-        "/client/src/css/viewer.css?v=20261016_display_contrast3",
+        "/client/src/css/viewer.css?v=20261020_movable_control",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -757,7 +757,7 @@
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261016_display_contrast",
-        "/client/src/js/services/canvasLayout.js?v=20261013_minimap_lens",
+        "/client/src/js/services/canvasLayout.js?v=20261020_movable_control",
         "/client/src/js/views/imageViewer.js?v=20261015_display_contrast",
         "/client/src/js/views/miniMap.js?v=20261015_display_contrast",
         "/client/src/js/views/rgbImageViewer.js?v=20261012_project_title",
@@ -873,13 +873,13 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261016_display_contrast3",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261015_display_contrast"
+        "/client/src/js/main.js?v=20261020_movable_control"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261014_import_progressive",
-        "/client/src/css/viewer.css?v=20261016_display_contrast3",
+        "/client/src/css/viewer.css?v=20261020_movable_control",
         "/client/src/css/quickView.css?v=20261010_home_redesign",
         "/client/src/css/agentPanel.css?v=20261011_fold",
         "/client/src/css/chatPanel.css?v=20261011_fold",

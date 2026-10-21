@@ -2576,7 +2576,8 @@
    tokens are redefined rather than each rule restyled, so what a plugin adds
    to the caption (the contrast slider's numbers and rail) flips with it. */
 #openseadragon.brightfield-ground ~ .viewer-canvas-caption,
-#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption {
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .plx-canvas-free > .viewer-caption-line {
     --text-primary: rgba(18, 24, 32, 0.92);
     --text-secondary: rgba(18, 24, 32, 0.72);
     --text-muted: rgba(18, 24, 32, 0.56);
@@ -4332,6 +4333,122 @@ body.sidebar-collapsed .viewer-shell,
 /* The caption's measure, against the safe area rather than the column. */
 #openseadragon_wrapper .plx-canvas-dock > .viewer-canvas-caption {
     max-width: 40cqw;
+}
+
+/* ------------------------------------------------------------------------
+   Movable controls (canvasLayout.js, Movable). A control the user dragged
+   out of its place lives in the FREE LAYER -- the safe area's content box,
+   so never under a band or past the padding the docks keep -- at fractions
+   of the room it can travel in. `left` puts its top-left at the fraction of
+   the layer and `translate` takes back the same fraction of its own size,
+   which together are fraction x (layer - control): 0 flush left, 1 flush
+   right, never past either edge, however the canvas is resized.
+   ------------------------------------------------------------------------ */
+.plx-canvas-free {
+    bottom: 12px;
+    left: 12px;
+    pointer-events: none;
+    position: absolute;
+    right: 12px;
+    top: 12px;
+}
+
+#openseadragon_wrapper .plx-canvas-free > .plx-floating {
+    bottom: auto;
+    left: calc(var(--plx-x, 0) * 100%);
+    margin: 0;
+    max-height: 100%;
+    max-width: 100%;
+    pointer-events: auto;
+    position: absolute;
+    right: auto;
+    top: calc(var(--plx-y, 0) * 100%);
+    translate: calc(var(--plx-x, 0) * -100%) calc(var(--plx-y, 0) * -100%);
+    z-index: 220;
+}
+
+/* The handle: grab cursor, and no text selection or touch scrolling to
+   start instead of the drag. */
+.plx-movable-handle {
+    cursor: grab;
+    position: relative;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* The grip: six dots in the gutter left of the handle, shown only while the
+   pointer is on the control -- the cursor and the dots are the affordance,
+   and at rest the control looks exactly as it did before it could move.
+   In the gutter so nothing in the control shifts to make room for it. */
+.plx-movable-handle::before {
+    background: radial-gradient(circle, currentColor 0.9px, transparent 1.3px) 0 0 / 4px 4px;
+    content: "";
+    height: 12px;
+    left: -11px;
+    opacity: 0;
+    pointer-events: auto;
+    position: absolute;
+    top: 50%;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    translate: 0 -50%;
+    width: 8px;
+}
+
+.plx-movable:hover .plx-movable-handle::before,
+.plx-movable.is-moving .plx-movable-handle::before {
+    opacity: 0.75;
+}
+
+.plx-movable.is-moving,
+html.plx-moving-control,
+html.plx-moving-control * {
+    cursor: grabbing !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* The x that puts it back: as small and quiet as the text beside it, and
+   only there while the control is away from home. */
+.plx-movable-reset {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 10px;
+    height: 16px;
+    justify-content: center;
+    margin-left: auto;
+    padding: 0;
+    pointer-events: auto;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+    width: 16px;
+}
+
+.plx-movable-reset:not([hidden]) {
+    display: inline-flex;
+}
+
+.plx-movable-reset[hidden] {
+    display: none;
+}
+
+.plx-movable-reset:hover,
+.plx-movable-reset:focus-visible {
+    background: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+/* A line a plugin added to the caption (the gated marker's contrast) is text
+   on the image; moved out of the caption, it keeps the caption's ground --
+   the soft shadow here, and over brightfield the inverted tokens (the
+   caption's own brightfield rule names it too). */
+#openseadragon_wrapper .plx-canvas-free > .viewer-caption-line {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
 /* The 3-D view (views/volumeRenderer.js): its own canvas over the tiles,

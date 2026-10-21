@@ -45,8 +45,22 @@
  * comes back. Only a change of the room itself does this -- a panel the user
  * opens in a tight spot is never folded back under their hand.
  *
- * The plugin face is `ctx.view.dock(...)` / `ctx.view.reserve(...)`
- * (main.js). Classic script, `window.PlexoraCanvasLayout`.
+ * MOVABLE CONTROLS. `movable(element, {id, handle})` lets the user drag a
+ * control out of its place (a dock, or a line of the caption) to anywhere in
+ * the safe area, by its handle only, so a slider or a field inside it works
+ * as before. While moved it lives in the FREE LAYER, a box the size of the
+ * safe area's content, at FRACTIONS of the room it can travel in (0 at the
+ * left/top, 1 at the right/bottom): a control left in the bottom-right
+ * corner stays in that corner when the canvas narrows, and one in the middle
+ * stays in the middle, and none is ever pushed past an edge -- the CSS turns
+ * the fractions into pixels on every layout, so a resize needs no script.
+ * A small x beside it glides it home; dropped next to home, it goes home.
+ * The fractions are kept per tab (sessionStorage, by `id`), so the next
+ * sample of a dataset -- a full page load -- opens with the control where
+ * the user left it.
+ *
+ * The plugin face is `ctx.view.dock(...)` / `ctx.view.reserve(...)` /
+ * `ctx.view.movable(...)` (main.js). Classic script, `window.PlexoraCanvasLayout`.
  */
 (function (global) {
     "use strict";
@@ -61,6 +75,21 @@
     //: The safe area's padding and the gap between docked things (viewer.css).
     const EDGE = 12;
     const GLIDE_MS = 180;
+    //: A moved control going home travels further than a docked one
+    //: stepping aside, so it takes a little longer over it.
+    const HOME_MS = 260;
+    const EASE = "cubic-bezier(0.2, 0, 0, 1)";
+    //: How far a press travels before it is a drag (px), as pointerDrag.js:
+    //: a click on a handle stays a click.
+    const MOVE_THRESHOLD = 4;
+    //: Dropped this close to home (px), a moved control goes home.
+    const HOME_SNAP = 12;
+    //: sessionStorage, + the movable's id: where the user left it, this tab.
+    const POSITION_KEY = "plexora:canvas-position:";
+    //: Inside a handle, what a press means for itself rather than a drag.
+    const INTERACTIVE = "button, input, textarea, select, a[href], [contenteditable], [role='slider'], .plx-slider";
+
+    const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
     function el(tag, className) {
         const node = document.createElement(tag);
@@ -108,7 +137,12 @@
             make(centre, "bottom-center");
             make(right, "top-right");
             make(right, "bottom-right");
-            safe.append(left, centre, right);
+            // Last, so a control the user moved over a docked one is drawn
+            // over it: it is where they just put it.
+            const free = el("div", "plx-canvas-free");
+            safe.append(left, centre, right, free);
+            this.columns = [left, centre, right];
+            this.free = free;
             this.safe = safe;
             this.wrapper.appendChild(safe);
         }
@@ -188,6 +222,13 @@
                 this.glide();
                 this.announce();
             };
+        }
+
+        /** Let the user move `element` anywhere in the safe area by its
+         *  `handle`, and put it back (MOVABLE CONTROLS, above). `element`
+         *  must already be in its home. Returns its Movable. */
+        movable(element, options = {}) {
+            return element ? new Movable(this, element, options) : null;
         }
 
         /** Dock whatever arrives in the wrapper asking to be docked. */
@@ -284,7 +325,7 @@
          * happens inside one task, so nothing half-folded is ever painted.
          */
         fit() {
-            for (const column of this.safe.children || []) {
+            for (const column of this.columns) {
                 const items = () => [...column.children].flatMap((dock) => [...dock.children]);
                 while (this.crowded(column)) {
                     const open = items().filter((child) => this.foldable(child)
@@ -416,6 +457,332 @@
         }
     }
 
+    /**
+     * One control the user may move (MOVABLE CONTROLS, above).
+     *
+     * HOME is where the element was when it was made movable -- a dock, or a
+     * line of the caption -- held by a comment node, which takes no room: the
+     * slot closes while the control is away and opens again when it comes
+     * back, and what sat under it moves up meanwhile (the dock's glide).
+     *
+     * `at` is null at home, otherwise {x, y}, fractions of the room in the
+     * free layer. A drag is pointer events on the WINDOW, not pointer
+     * capture: the element changes parent when it is lifted, and a capture
+     * ends when its element leaves the document.
+     */
+    class Movable {
+        constructor(layout, element, { id = null, handle = null,
+                                       back = "Move back to the corner" } = {}) {
+            this.layout = layout;
+            this.element = element;
+            this.handle = handle || element;
+            this.key = id ? POSITION_KEY + String(id) : null;
+            this.at = null;
+            this.press = null;
+            this.homing = null;
+            this.disposed = false;
+            const doc = element.ownerDocument || global.document;
+            this.home = doc.createComment(` movable${id ? ` ${id}` : ""} `);
+            element.parentNode?.insertBefore(this.home, element);
+            element.classList.add("plx-movable");
+            this.handle.classList.add("plx-movable-handle");
+            // The x that puts it back, at the end of the handle's line: beside
+            // what the hand moved it by, shown only while it is away.
+            const reset = doc.createElement("button");
+            reset.type = "button";
+            reset.className = "plx-movable-reset";
+            reset.hidden = true;
+            reset.title = back;
+            reset.setAttribute("aria-label", back);
+            const icon = doc.createElement("span");
+            icon.className = "fas fa-xmark";
+            icon.setAttribute("aria-hidden", "true");
+            reset.appendChild(icon);
+            this.handle.appendChild(reset);
+            this.reset = reset;
+            this.onDown = this.onDown.bind(this);
+            this.onMove = this.onMove.bind(this);
+            this.onUp = this.onUp.bind(this);
+            this.onCancel = this.onCancel.bind(this);
+            this.onKey = this.onKey.bind(this);
+            this.onReset = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.goHome(true);
+            };
+            this.handle.addEventListener("pointerdown", this.onDown);
+            reset.addEventListener("click", this.onReset);
+            // Where the user left it, in this tab: before the first paint, so
+            // the next sample opens with it there rather than gliding over.
+            const saved = Movable.read(this.key);
+            if (saved) this.moveTo(saved);
+        }
+
+        /** True while it is somewhere other than home. */
+        get moved() {
+            return Boolean(this.at);
+        }
+
+        // -- where it is ---------------------------------------------------
+
+        /** Fractions of the room for a top-left `left, top` px into `area`,
+         *  for a box of `size`; pinned inside, and 0 on an axis with no room. */
+        static fractions({ left, top }, area, size) {
+            const roomX = area.width - size.width;
+            const roomY = area.height - size.height;
+            return {
+                x: roomX > 0 ? clamp(left / roomX, 0, 1) : 0,
+                y: roomY > 0 ? clamp(top / roomY, 0, 1) : 0,
+            };
+        }
+
+        /** The inverse, px into `area` -- what viewer.css computes from the
+         *  `--plx-x/--plx-y` it is given. */
+        static offset(at, area, size) {
+            return {
+                left: at.x * Math.max(0, area.width - size.width),
+                top: at.y * Math.max(0, area.height - size.height),
+            };
+        }
+
+        /** Put it at `at` in the free layer, at once. */
+        moveTo(at) {
+            if (this.disposed || !at) return;
+            if (!this.at) this.lift();
+            this.place(at);
+        }
+
+        place(at) {
+            this.at = { x: clamp(Number(at.x) || 0, 0, 1), y: clamp(Number(at.y) || 0, 0, 1) };
+            this.element.style.setProperty("--plx-x", String(this.at.x));
+            this.element.style.setProperty("--plx-y", String(this.at.y));
+            this.reset.hidden = false;
+        }
+
+        /** Out of home into the free layer. Whatever was gliding it (a dock's
+         *  FLIP, the way home) would fight the position, so it stops. */
+        lift() {
+            this.stopHoming();
+            for (const animation of this.element.getAnimations?.() || []) animation.cancel();
+            this.layout.free.appendChild(this.element);
+            this.element.classList.add("plx-floating");
+        }
+
+        stopHoming() {
+            this.homing?.cancel?.();
+            this.homing = null;
+        }
+
+        /** Back where it came from; `animate` glides it there from here. */
+        goHome(animate = false) {
+            const parent = this.home.parentNode;
+            if (!this.at || !parent) return;
+            const from = this.element.getBoundingClientRect();
+            this.stopHoming();
+            parent.insertBefore(this.element, this.home.nextSibling);
+            this.element.classList.remove("plx-floating");
+            this.element.style.removeProperty("--plx-x");
+            this.element.style.removeProperty("--plx-y");
+            this.at = null;
+            this.reset.hidden = true;
+            this.forget();
+            if (!animate || reducedMotion() || typeof this.element.animate !== "function"
+                    || !(from.width || from.height)) return;
+            const to = this.element.getBoundingClientRect();
+            const dx = from.left - to.left;
+            const dy = from.top - to.top;
+            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+            this.homing = this.element.animate(
+                [{ translate: `${dx}px ${dy}px` }, { translate: "0px 0px" }],
+                { duration: HOME_MS, easing: EASE });
+        }
+
+        /** Where it would be at home, measured by putting it there and back
+         *  inside one task: a layout is forced, nothing is painted. */
+        homeRect() {
+            const parent = this.home.parentNode;
+            if (!parent) return null;
+            if (!this.at) return this.element.getBoundingClientRect();
+            parent.insertBefore(this.element, this.home.nextSibling);
+            this.element.classList.remove("plx-floating");
+            const rect = this.element.getBoundingClientRect();
+            this.layout.free.appendChild(this.element);
+            this.element.classList.add("plx-floating");
+            return rect;
+        }
+
+        // -- the drag --------------------------------------------------------
+
+        onDown(event) {
+            if (this.disposed || this.press || event.button !== 0 || this.element.hidden) return;
+            if (event.target?.closest?.(INTERACTIVE)) return;
+            this.press = { x: event.clientX, y: event.clientY, pointer: event.pointerId,
+                           dragging: false };
+            global.addEventListener("pointermove", this.onMove, true);
+            global.addEventListener("pointerup", this.onUp, true);
+            global.addEventListener("pointercancel", this.onCancel, true);
+            global.addEventListener("keydown", this.onKey, true);
+            // No text selection, no focus moving, and not a press on the image.
+            event.preventDefault();
+            event.stopPropagation();
+        }
+
+        ours(event) {
+            return this.press && (this.press.pointer == null || event.pointerId == null
+                                  || event.pointerId === this.press.pointer);
+        }
+
+        onMove(event) {
+            if (!this.ours(event)) return;
+            const press = this.press;
+            const dx = event.clientX - press.x;
+            const dy = event.clientY - press.y;
+            if (!press.dragging) {
+                if (Math.hypot(dx, dy) < MOVE_THRESHOLD) return;
+                this.begin();
+            }
+            event.preventDefault();
+            const area = this.layout.free.getBoundingClientRect();
+            const size = this.element.getBoundingClientRect();
+            this.place(Movable.fractions({ left: press.left + dx, top: press.top + dy }, area, size));
+        }
+
+        begin() {
+            const press = this.press;
+            press.dragging = true;
+            press.from = this.at;
+            const rect = this.element.getBoundingClientRect();
+            const area = this.layout.free.getBoundingClientRect();
+            press.left = rect.left - area.left;
+            press.top = rect.top - area.top;
+            if (!this.at) this.lift();
+            this.element.classList.add("is-moving");
+            global.document?.documentElement?.classList.add("plx-moving-control");
+        }
+
+        onUp(event) {
+            if (!this.ours(event)) return;
+            const press = this.press;
+            this.end();
+            if (!press.dragging) return;
+            // The click a drag's pointerup is followed by is not a click; it
+            // comes in the same task, so the swallow goes on the next one.
+            const swallow = (click) => {
+                click.preventDefault();
+                click.stopPropagation();
+            };
+            global.addEventListener("click", swallow, { capture: true, once: true });
+            global.setTimeout(() => global.removeEventListener("click", swallow, true), 0);
+            // Hidden under the hand (its panel closed mid-drag), it measures
+            // as nothing at the origin, as its home does: it stays put.
+            const now = this.element.getBoundingClientRect();
+            const home = now.width || now.height ? this.homeRect() : null;
+            if (home && Math.hypot(now.left - home.left, now.top - home.top) <= HOME_SNAP) {
+                this.goHome(true);
+            } else {
+                this.save();
+            }
+        }
+
+        /** The drag undone: back where it was when it was picked up. */
+        undo(press) {
+            if (!press?.dragging) return;
+            if (press.from) this.place(press.from);
+            else this.goHome(true);
+        }
+
+        onCancel(event) {
+            if (!this.ours(event)) return;
+            const press = this.press;
+            this.end();
+            this.undo(press);
+        }
+
+        onKey(event) {
+            if (event.key !== "Escape" || !this.press?.dragging) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const press = this.press;
+            this.end();
+            this.undo(press);
+        }
+
+        end() {
+            global.removeEventListener("pointermove", this.onMove, true);
+            global.removeEventListener("pointerup", this.onUp, true);
+            global.removeEventListener("pointercancel", this.onCancel, true);
+            global.removeEventListener("keydown", this.onKey, true);
+            this.element.classList.remove("is-moving");
+            global.document?.documentElement?.classList.remove("plx-moving-control");
+            this.press = null;
+        }
+
+        // -- remembered, this tab ----------------------------------------------
+
+        static storage() {
+            // sessionStorage throws rather than returning null with site
+            // data blocked; a control that cannot remember still moves.
+            try {
+                return global.sessionStorage || null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        static read(key) {
+            if (!key) return null;
+            try {
+                const value = JSON.parse(Movable.storage()?.getItem(key) || "null");
+                const fraction = (n) => typeof n === "number" && n >= 0 && n <= 1;
+                return value && fraction(value.x) && fraction(value.y) ? { x: value.x, y: value.y } : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        save() {
+            if (!this.key || !this.at) return;
+            const round = (n) => Math.round(n * 1e4) / 1e4;
+            try {
+                Movable.storage()?.setItem(this.key,
+                    JSON.stringify({ x: round(this.at.x), y: round(this.at.y) }));
+            } catch (error) {
+                // Full or blocked: it stays where it is for this page.
+            }
+        }
+
+        forget() {
+            if (!this.key) return;
+            try {
+                Movable.storage()?.removeItem(this.key);
+            } catch (error) {
+                // As save().
+            }
+        }
+
+        /** Stop listening and give the element back to its home, as it was.
+         *  Where the user left it is kept for the next one made with this id. */
+        dispose() {
+            if (this.disposed) return;
+            if (this.press) this.end();
+            this.stopHoming();
+            this.disposed = true;
+            this.handle.removeEventListener("pointerdown", this.onDown);
+            this.reset.removeEventListener("click", this.onReset);
+            this.reset.remove();
+            this.handle.classList.remove("plx-movable-handle");
+            this.element.classList.remove("plx-movable", "plx-floating");
+            this.element.style.removeProperty("--plx-x");
+            this.element.style.removeProperty("--plx-y");
+            if (this.at) {
+                if (this.home.parentNode) this.home.parentNode.insertBefore(this.element, this.home.nextSibling);
+                else this.element.remove();
+            }
+            this.at = null;
+            this.home.remove();
+        }
+    }
+
     let instance = null;
 
     /** The layout of #openseadragon_wrapper, built on first use; null on a
@@ -428,9 +795,10 @@
     }
 
     global.PlexoraCanvasLayout = {
-        CORNERS, EDGES, CanvasLayout,
+        CORNERS, EDGES, CanvasLayout, Movable,
         get: layout,
         place: (element, options) => layout()?.place(element, options) || null,
+        movable: (element, options) => layout()?.movable(element, options) || null,
         fit: () => layout()?.fit(),
         reserve: (id, options) => layout()?.reserve(id, options) || (() => {}),
         release: (id) => layout()?.release(id),

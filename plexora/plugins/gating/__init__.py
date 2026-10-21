@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261019_session_layer"
+VERSION = "20261020_movable_control"
 
 
 def _blueprint():

@@ -1729,6 +1729,12 @@ class GatingSidebarController {
  * Shown while the Thresholding panel is, and only while the gated marker is
  * actually on screen: a window for a channel nobody is looking at would be a
  * slider that changes nothing visible.
+ *
+ * The user may drag it off the caption by its name line, to sit beside the
+ * cells being judged (core's `ctx.view.movable`; the x beside the name puts
+ * it back). It is the same element wherever it is, so hiding it with the
+ * panel, a change of marker or of view leaves it where it was left; and the
+ * place is kept for the tab, so the next sample opens with it there.
  */
 class GateContrastControl {
     constructor(controller) {
@@ -1737,6 +1743,7 @@ class GateContrastControl {
         this.el = null;
         this.nameNode = null;
         this.slider = null;
+        this.movable = null;
         //: Whether the panel wants it (between onShow and onHide).
         this.wanted = false;
         //: The slot this is a view of, or null while hidden.
@@ -1768,10 +1775,12 @@ class GateContrastControl {
     dispose() {
         this.disposed = true;
         this.slotIndex = null;
+        this.movable?.dispose();
         this.slider?.destroy();
         this.el?.remove();
         this.el = null;
         this.slider = null;
+        this.movable = null;
     }
 
     /** Built into core's canvas caption the first time it is needed. */
@@ -1779,19 +1788,28 @@ class GateContrastControl {
         if (this.el?.isConnected) return true;
         const caption = document.querySelector(".viewer-canvas-caption");
         if (!caption) return false;
+        this.movable?.dispose();
         const root = document.createElement("div");
         root.id = "gate_contrast_control";
-        root.className = "gate-contrast";
+        // `viewer-caption-line`: moved off the caption, it keeps the
+        // caption's ground (viewer.css).
+        root.className = "gate-contrast viewer-caption-line";
         root.hidden = true;
         // Two lines on the caption's own ground: the marker, then its window
         // with a number at each end. The name alone on its line, so it can be
-        // read in full rather than squeezed beside the track.
+        // read in full rather than squeezed beside the track; the line is
+        // also what it is moved by, and holds the x that puts it back.
+        const head = document.createElement("div");
+        head.className = "gate-contrast-head";
         this.nameNode = document.createElement("div");
         this.nameNode.className = "gate-contrast-name";
+        head.appendChild(this.nameNode);
         const mount = document.createElement("div");
         mount.className = "gate-contrast-slider";
-        root.append(this.nameNode, mount);
+        root.append(head, mount);
         caption.appendChild(root);
+        this.movable = this.controller.ctx?.view?.movable?.(root, {
+            id: "contrast", handle: head, back: "Move back under the sample's name" }) || null;
         // The Image Channels window's own options (viewerSidebar's
         // syncChannelSlider): logarithmic, whole numbers, the same domain.
         // Bounds are placeholders until `sync` reads the slot's.

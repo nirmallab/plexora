@@ -2053,6 +2053,8 @@ async function init(config, savedViewTransform = null) {
      *   `order` nearer the corner, core's own at 0 -- stacked with core's
      *   controls and never under the depth strip or a section pane (the same
      *   as appending it to #openseadragon_wrapper with `data-canvas-dock`);
+     *   `movable(element, {id, handle})` lets the user drag a control
+     *   anywhere over the image and put it back, remembered for the tab;
      *   `reserve(id, {edge, size})` takes a band along an edge for a panel of
      *   the plugin's own, and docked controls step clear of it; `insets()`
      *   says what the bands take; `controls` declares a depth control of the
@@ -2220,6 +2222,22 @@ async function init(config, savedViewTransform = null) {
                     };
                     record.cleanups.push(off);
                     return off;
+                },
+                /**
+                 * Let the user drag `element` -- already in its place, docked
+                 * or in a line of the caption -- anywhere over the image by
+                 * `handle` (a part of it with nothing to click), with an x
+                 * beside it that glides it back. Where it was left is kept
+                 * for this tab under `id`, so the next sample of a dataset
+                 * opens with it there. Returns the Movable (`moved`,
+                 * `goHome(animate)`, `dispose()`), or null with no canvas;
+                 * disposed with the plugin.
+                 */
+                movable(element, { id, handle = null, back } = {}) {
+                    const key = `${record.definition?.name || "plugin"}-${id || "control"}`;
+                    const movable = window.PlexoraCanvasLayout?.movable?.(element, { id: key, handle, back });
+                    if (movable) record.cleanups.push(() => movable.dispose());
+                    return movable || null;
                 },
                 /**
                  * Take a band `size` px deep along `edge` ("top", "right",
