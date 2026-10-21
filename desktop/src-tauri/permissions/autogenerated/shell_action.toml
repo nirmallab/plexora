@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shell-action"
+description = "Enables the shell_action command without any pre-configured scope."
+commands.allow = ["shell_action"]
+
+[[permission]]
+identifier = "deny-shell-action"
+description = "Denies the shell_action command without any pre-configured scope."
+commands.deny = ["shell_action"]

@@ -26,6 +26,7 @@
     "allow-copy-image",
     "allow-toggle-fullscreen",
     "allow-is-fullscreen",
+    "allow-shell-action",
     "allow-report-capabilities",
     "allow-check-update",
     "allow-install-update"

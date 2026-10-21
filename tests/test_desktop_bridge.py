@@ -35,6 +35,7 @@ CHECKS = (
     'an unclaimed drop opens the Import dialog with the paths',
     'a drop a view claims goes nowhere else',
     'dragging a file over the window marks the page',
+    'the over phase carries the paths the enter phase brought',
     'and leaving unmarks it',
     'Ctrl+N opens a window from the page on Windows',
     'Ctrl+W closes this window',
@@ -43,8 +44,12 @@ CHECKS = (
     'saveBlob sends raw bytes',
     'with the name percent-encoded in a header',
     'and says where the file went',
+    'a navbar window row the page cannot run asks the shell',
+    'the New Window row opens a window',
+    'the Full Screen row prints F11 off macOS',
     'a project handed over by a second launch is opened',
     'on macOS the menu owns Cmd+N and the page leaves it alone',
+    'and the Full Screen row prints the Mac\'s chord',
 )
 
 

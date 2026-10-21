@@ -271,6 +271,20 @@ pub fn is_fullscreen(window: WebviewWindow) -> bool {
     window.is_fullscreen().unwrap_or(false)
 }
 
+/// The navbar rows only the shell can carry out, by the id the native menu
+/// gives the same action (menu.rs). On Windows and Linux there is no native
+/// menu bar, so these rows in the page's own navbar are the way to them.
+pub const SHELL_ACTIONS: &[&str] = &["show_data", "show_logs", "zoom_in", "zoom_out", "zoom_reset"];
+
+#[tauri::command]
+pub fn shell_action(app: AppHandle, window: WebviewWindow, id: String) -> Result<(), String> {
+    if !SHELL_ACTIONS.contains(&id.as_str()) {
+        return Err(format!("not a shell action: {id}"));
+    }
+    crate::menu::run(&app, &id, Some(window));
+    Ok(())
+}
+
 /// What the WebView turned out to support. The viewer needs WebGL2; a
 /// WebKitGTK without GPU WebGL cannot draw, and the browser can.
 #[tauri::command]
@@ -315,5 +329,19 @@ mod tests {
             assert!(filter_for(name).is_some(), "{name}");
         }
         assert!(filter_for("any").is_none());
+    }
+
+    #[test]
+    fn the_menu_bar_is_native_only_where_it_sits_outside_the_window() {
+        // Windows and Linux draw a native menu inside the window, above the
+        // page's own navbar; that is the duplicate this keeps from returning.
+        assert_eq!(crate::menu::NATIVE_MENU_BAR, cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn shell_actions_are_only_the_ones_the_navbar_cannot_do_itself() {
+        // Anything else the page reaches has its own command; this one must
+        // not grow into a way to run arbitrary menu ids.
+        assert_eq!(SHELL_ACTIONS, &["show_data", "show_logs", "zoom_in", "zoom_out", "zoom_reset"]);
     }
 }

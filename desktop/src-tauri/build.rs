@@ -18,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "copy_image",
     "toggle_fullscreen",
     "is_fullscreen",
+    "shell_action",
     "report_capabilities",
     "check_update",
     "install_update",

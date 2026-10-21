@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_area">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_area_drop">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -32,7 +32,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20260926_help_menu" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261021_single_menubar" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -131,7 +131,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261021_explorer_waiting" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_explorer_system" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -169,7 +169,7 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
@@ -240,7 +240,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261020_scoped_add_label" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261021_native_drop" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
@@ -354,9 +354,21 @@
                        window (`html.is-desktop`, set by desktopBridge.js): in a
                        browser tab of that server, it would open itself. #}
                     {% if data.desktop %}
+                    {# The desktop app's window rows. On Windows and Linux this
+                       navbar is the app's only menu bar -- the shell draws no
+                       native one, which would sit inside the window above this
+                       (desktop/src-tauri/src/menu.rs) -- so what the native
+                       menu used to carry is here. The key is printed, not
+                       bound: desktopBridge.js already runs the chord. #}
+                    <button type="button" id="nav_new_window" class="dropdown-item desktop-only"
+                            data-desktop-action="new_window">
+                        <span class="fas fa-window-restore nav-item-icon"></span>
+                        <span class="nav-item-label">New Window</span>
+                        <span class="nav-item-key" data-key-hint="mod+n"></span></button>
                     <button type="button" id="nav_open_in_browser" class="dropdown-item desktop-only">
                         <span class="fas fa-arrow-up-right-from-square nav-item-icon"></span>
-                        <span class="nav-item-label">Open in Browser</span></button>
+                        <span class="nav-item-label">Open in Browser</span>
+                        <span class="nav-item-key" data-key-hint="mod+shift+b"></span></button>
                     {% endif %}
                     {# Quit ends the server process. In notebook/hosted mode
                        that process belongs to the kernel or the hub, not to the
@@ -370,7 +382,9 @@
                     <div class="dropdown-divider"></div>
                     <button type="button" id="nav_quit" class="dropdown-item text-danger">
                         <span class="fas fa-power-off nav-item-icon"></span>
-                        <span class="nav-item-label">Quit</span></button>
+                        <span class="nav-item-label">Quit</span>
+                        {# Only the desktop app has the chord (desktopBridge.js). #}
+                        <span class="nav-item-key desktop-only" data-key-hint="mod+q"></span></button>
                     {% endif %}
                 </div>
             </li>
@@ -444,6 +458,34 @@
                         <span class="fas fa-ruler-horizontal view-menu-icon" aria-hidden="true"></span>
                         <span class="nav-item-label">Scalebar</span>
                     </label>
+                    {# The window, not the image: full screen, and the size of
+                       the whole interface (the native View menu's Zoom rows,
+                       named for what they change so they are never mistaken
+                       for zooming the slide). #}
+                    {% if data.desktop %}
+                    <div class="dropdown-divider desktop-only"></div>
+                    <button type="button" id="nav_fullscreen" class="dropdown-item desktop-only"
+                            data-desktop-action="fullscreen">
+                        <span class="fas fa-expand nav-item-icon"></span>
+                        <span class="nav-item-label">Full Screen</span>
+                        <span class="nav-item-key" data-key-hint="fullscreen"></span></button>
+                    <div class="dropdown-item nav-submenu-parent desktop-only" id="nav_interface_size" tabindex="0">
+                        <span class="fas fa-text-height nav-item-icon"></span>
+                        <span class="nav-item-label">Interface Size</span>
+                        <span class="fas fa-chevron-right nav-submenu-caret"></span>
+                        <div class="dropdown-menu nav-submenu">
+                            <button type="button" class="dropdown-item" data-desktop-action="zoom_in">
+                                <span class="fas fa-magnifying-glass-plus nav-item-icon"></span>
+                                <span class="nav-item-label">Larger</span></button>
+                            <button type="button" class="dropdown-item" data-desktop-action="zoom_out">
+                                <span class="fas fa-magnifying-glass-minus nav-item-icon"></span>
+                                <span class="nav-item-label">Smaller</span></button>
+                            <button type="button" class="dropdown-item" data-desktop-action="zoom_reset">
+                                <span class="fas fa-rotate-left nav-item-icon"></span>
+                                <span class="nav-item-label">Actual Size</span></button>
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </li>
 
@@ -484,6 +526,20 @@
                         <span class="fas fa-{{ item.icon or 'puzzle-piece' }} nav-item-icon"></span>
                         <span class="nav-item-label">{{ item.label }}</span></a>
                     {% endfor %}
+                    {# Where the app keeps things, for a bug report or a backup.
+                       The documentation names these rows (desktop-app.mdx,
+                       file-locations.mdx). #}
+                    {% if data.desktop %}
+                    <div class="dropdown-divider desktop-only"></div>
+                    <button type="button" class="dropdown-item desktop-only" id="nav_show_data"
+                            data-desktop-action="show_data">
+                        <span class="fas fa-folder-open nav-item-icon"></span>
+                        <span class="nav-item-label">Show Data Folder</span></button>
+                    <button type="button" class="dropdown-item desktop-only" id="nav_show_logs"
+                            data-desktop-action="show_logs">
+                        <span class="fas fa-file-lines nav-item-icon"></span>
+                        <span class="nav-item-label">Show Logs</span></button>
+                    {% endif %}
                     <div class="dropdown-divider"></div>
                     <button type="button" class="dropdown-item" id="nav_about">
                         <span class="fas fa-circle-info nav-item-icon"></span>

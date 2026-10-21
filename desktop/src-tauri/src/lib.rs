@@ -3,7 +3,7 @@
 //! Deliberately thin: every window shows the page the app's own Python
 //! server serves, and everything the app *does* is that server's business.
 //! What lives here is what only a native process can do -- start and stop the
-//! server, own the menu bar, show native dialogs and notifications, accept
+//! server, own the macOS menu bar, show native dialogs and notifications, accept
 //! dropped and opened files -- plus the small bridge the page reaches it
 //! through (`plexora/client/src/js/services/desktopBridge.js`).
 
@@ -78,6 +78,7 @@ pub fn run() {
             commands::copy_image,
             commands::toggle_fullscreen,
             commands::is_fullscreen,
+            commands::shell_action,
             commands::report_capabilities,
             updates::check_update,
             updates::install_update,
