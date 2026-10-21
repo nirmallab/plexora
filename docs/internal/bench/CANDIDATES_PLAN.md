@@ -587,6 +587,31 @@ cells, under `TRUST_MIN_CELLS` (50). Several sets hold one class or nearly
 (CODEX CD3e all negative, CRC CD4 all positive). No table is committed: the
 check stays exploratory until larger label sets exist.
 
+### Live run, VERSION 6, lsp11385_2 seed 1 (2026-10-21)
+
+gs_20261021T230529_42bab1 (dfc4cdda), the options of the v5 replicates (seed 1,
+propose, classifier off, display check off), every packet read by Opus
+workers (the models file sends cell panels to Sonnet; overridden to match).
+
+| run | MAE | within 0.2 | 0.4 or more off | resolved by panels | review (MAE) | packets/marker |
+|---|---|---|---|---|---|---|
+| classic s1-3 (mean) | 0.291 | 47 % | 33 % | | | 2.59 |
+| v5 s1-3 (mean) | 0.237 | 53 % | 22 % | | | 2.69 |
+| v5 s1 | 0.195 | 65 % | 18 % | | 0.241 | 2.41 |
+| **v6 s1** | **0.166** | **71 %** | **12 %** | 4 of 16 | 12 (0.188) | 2.65 |
+
+No marker more than 0.30 worse than v5's mean (worst MART1 +0.07). Better than
+v5 s1: CD4 +0.63 to +0.13, CD45 +0.24 to -0.04, CD68 -0.21 to +0.03; worse:
+PD1 +0.05 to -0.28, CD8a +0.13 to -0.20, MART1 0.00 to +0.22. Still off:
+Ecad +0.56 and CD3e -0.41 (the reader's standard, unchanged). One run: no
+spread yet. Too few gates resolve: 39 % of reads were `uncertain`, and next to
+the leaders 50 to 100 %, so the sides rarely reach five definite reads.
+CD11c, Ecad and PDL1 (P(within) 0.87 to 0.998) then closed `unreadable` after
+two looks. That was against the plan (C7: unreadable only while the plateau is
+wider than the tolerance) and is fixed after this run: such a marker takes its
+third look. The five-read floor stands (set before any run; lsp11385_2 picks
+no constant).
+
 ### What waits on the person or on live runs
 
 - Questions 1 to 4 of the plan: re-showing an `uncertain` cell; the classifier

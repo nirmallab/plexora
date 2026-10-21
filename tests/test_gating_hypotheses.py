@@ -1097,3 +1097,21 @@ def test_a_leader_never_resolves_on_a_few_reads_beside_it():
     assert controller.decide(state, IDENTITY, dict(V6, voi_epsilon=1.0))[0] is None
     state["observations"].append(_obs([3.5] * 2, ["not_own_stain"] * 2))
     assert controller.support(state, IDENTITY, params)["resolved"]
+
+
+def test_a_leader_the_reads_favour_is_not_closed_unreadable_while_its_sides_are_thin():
+    # Most cells unreadable, but the definite reads already favour the top
+    # point (P above `resolve_p`) and only the reads beside it are short:
+    # the third look reads them instead of the marker closing unreadable.
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 700, 400, 100), window=(0, 3),
+                   prior=3)
+    state["observations"].append(_obs([1.5] * 6 + [2.5] * 6 + [3.5] * 3,
+                                      ["not_own_stain"] * 15))
+    state["observations"].append(_obs([2.5] * 10 + [3.5] * 10, ["uncertain"] * 20))
+    params = dict(V6, min_labelled=10, max_other_share=0.5, unreadable_looks=2)
+    status, s = controller.decide(state, IDENTITY, params)
+    assert s["thin"] == [2] and s["posterior"]["within"] >= 0.8 and status is None
+    # The Wilson rule (VERSION 5) closes it unreadable as before.
+    assert controller.decide(state, IDENTITY, dict(params, **{"decision": "wilson",
+                                                             "sampling": "survey_refine"}))[0] \
+        == "unreadable"

@@ -599,9 +599,16 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
         if status == "refuted":
             return "positives_not_confirmed", s
     valid = sum(1 for o in state["observations"] if o.get("valid", True))
+    # Under the posterior, unreadable only while the reads leave several
+    # gates (the plateau wider than the tolerance): a leader the reads
+    # already favour, short only of reads beside it, takes its next look
+    # (lsp11385_2 live, 2026-10-21: CD11c, Ecad and PDL1 closed unreadable
+    # after two looks at P(within) 0.87 to 0.998).
+    undecided = (s.get("posterior") or {}).get("within", 0.0) < \
+        float(params.get("resolve_p", 0.8)) - 1e-12 if s.get("posterior") else True
     if s["labelled"] >= params["min_labelled"] \
             and valid >= int(params.get("unreadable_looks") or 1) \
-            and (s["other_share"] or 0) > params["max_other_share"]:
+            and (s["other_share"] or 0) > params["max_other_share"] and undecided:
         if params.get("uncertain_state") and not state.get("rare"):
             alone = isolated(state, to_fit, params)
             if alone is not None:
