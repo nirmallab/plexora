@@ -66,8 +66,9 @@ READING_GUIDE = {
              "from this one by a dark gap; `unstained` -- nothing touches the nucleus; "
              "`mixed` -- the row holds both kinds about evenly; `cannot_tell`. A row is what "
              "most of its cells are. Judge the shape, not the brightness: the morphology "
-             "panel brightens a dim cell's own stain on purpose. Plexora places the gate "
-             "from the words"),
+             "panel brightens a dim cell's own stain on purpose, and a marker several cell "
+             "types carry can be far dimmer on some (CD4 on monocytes and macrophages): "
+             "their faint own stain is `own_stain`. Plexora places the gate from the words"),
     "collage_t2": ("each cell is two panels side by side, blue nuclei and the marker in "
                    "yellow. Left, morphology: the marker windowed on this cell's own "
                    "brightest pixels (a cell with no stain stays dark; a brighter neighbour "
@@ -124,8 +125,11 @@ READING_GUIDE = {
               "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge "
               "or a smear across cells. The cells come from across the marker's range in "
               "random order, so a row means nothing; judge every cell on its own, by shape, "
-              "not brightness. Say `uncertain` rather than guess. Plexora chooses the gate "
-              "from the words"),
+              "not brightness. A marker several cell types carry can be far dimmer on some "
+              "(`context.lineage`; CD4: bright on helper T cells, dim on monocytes and "
+              "macrophages): a faint stain that is the cell's own is `own_stain`, judged "
+              "against the unstained cells, not the brightest. Say `uncertain` rather than "
+              "guess. Plexora chooses the gate from the words"),
     "panel_fibrous": ("a fibrous stain (smooth muscle, vessel walls, fibroblasts): its "
                       "own cells are spindle-shaped, their long nucleus lying inside a band "
                       "or along it, the band hugging the outline on its long sides; a round "

@@ -237,6 +237,9 @@ def packet(engine, units):
               f"{packets._panel_words(layout, partners) or 'morphology | context'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
     compartment = (unit.get("context") or {}).get("compartment")
+    # Which cells carry the marker, so a dim population of its own is read as
+    # stained; not the caveats, which can speak of gates.
+    lineage = (unit.get("context") or {}).get("lineage")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     numbers = [c["number"] for c in arranged]
     multiview = ({"partner_panels": {"expected": partners["markers"].get("co"),
@@ -253,7 +256,8 @@ def packet(engine, units):
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
-                     "context": {"compartment": compartment},
+                     "context": {"compartment": compartment,
+                                 **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
                      **packets._reading(engine, guide)},
         "allowed": {"cells": numbers, "labels": list(evidence.LABELS)},

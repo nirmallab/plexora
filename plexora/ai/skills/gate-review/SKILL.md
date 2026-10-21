@@ -88,7 +88,10 @@ Diagnose one marker:
    tree and which references its evidence would lean on or avoid; pass the
    sample's `tissue` and `disease` when the user named them, so what the
    marker also marks there (`biology_for_marker`) frames the pictures.
-   `get_panel_context` gives its role, compartment and partners.
+   `get_panel_context` gives its role, compartment and partners. A marker
+   whose `lineage` names more than one cell type (`CD4`: T cells, and dimmer
+   on macrophages) can be gated on its brightest population and miss the
+   rest: look at the dim cells of the other type before calling it right.
 9. From the flags and the candidates, the one question worth a picture:
    - separation / class -> `render_gating_collage` `layout: "strata"` (every
      band, plus spatially inconsistent cells);

@@ -63,7 +63,7 @@ def test_the_gating_skills_stay_short():
     skills became three)."""
     assert len(skills.read_skill("gate-image")) <= 4_000
     assert len(skills.read_skill("gate-packets")) <= 2_000
-    assert len(skills.read_skill("gate-review")) <= 9_500
+    assert len(skills.read_skill("gate-review")) <= 9_800
     gating = {"gate-image", "gate-packets", "gate-review"}
     listed = {s["name"] for s in skills.list_skills()}
     assert gating <= listed and not listed & set(skills.aliases())
