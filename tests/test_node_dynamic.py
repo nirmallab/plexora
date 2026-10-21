@@ -792,15 +792,24 @@ def test_a_node_shows_hidden_files_only_when_asked(tmp_path, node_process):
 def test_a_static_node_will_not_be_walked(tmp_path, node_process):
     """Listing is behind --dynamic for the same reason sharing is: it lets the
     token holder walk the account's filesystem. A node started with a fixed
-    list of files was never offering that."""
+    list of files was never offering that -- and nor does any of the
+    explorer's other routes, which name the same filesystem."""
     import urllib.error
 
     node = node_process(f"table:cells={_table_file(tmp_path)}")
-    with pytest.raises(urllib.error.HTTPError) as raised:
-        node.post("/node/v1/list_dir", {"path": str(tmp_path)})
-
-    assert raised.value.code == 403
-    assert "--dynamic" in raised.value.read().decode("utf-8")
+    asks = [
+        lambda: node.post("/node/v1/list_dir", {"path": str(tmp_path)}),
+        lambda: node.post("/node/v1/stat_entries", {"path": str(tmp_path),
+                                                    "names": ["cells.csv"]}),
+        lambda: node.get("/node/v1/fs_places"),
+        lambda: node.post("/node/v1/search_dir", {"path": str(tmp_path),
+                                                  "query": "cells"}),
+    ]
+    for ask in asks:
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            ask()
+        assert raised.value.code == 403
+        assert "--dynamic" in raised.value.read().decode("utf-8")
 
 
 def test_the_viewer_relays_a_listing_to_the_machine_that_has_the_files(
@@ -840,6 +849,228 @@ def test_the_relay_carries_the_hidden_files_question_across(
     assert asked.status_code == 200, asked.get_json()
     assert [e["name"] for e in asked.get_json()["entries"]] == [".snakemake",
                                                                "cells.csv"]
+
+
+def test_a_node_answers_the_explorer_s_new_questions(tmp_path, node_process):
+    """Node parity: every explorer route the viewer answers about its own disk,
+    a node answers about its own -- or the explorer could browse a laptop
+    properly and a cluster only half."""
+    study = tmp_path / "study"
+    _table_file(study)
+    (study / "runs" / "run1").mkdir(parents=True)
+    (study / "runs" / "run1" / "cells-final.csv").write_text("x\n")
+    node = node_process(dynamic=True)
+
+    listed = node.post("/node/v1/list_dir", {"path": str(study)})
+    assert {"total", "partial", "dataset", "platform"} <= set(listed)
+    assert {"mtime", "kind", "store"} <= set(listed["entries"][0])
+
+    stats = node.post("/node/v1/stat_entries", {"path": str(study),
+                                                "names": ["cells.csv", "gone"]})
+    assert set(stats["entries"]) == {"cells.csv"}
+    assert stats["entries"]["cells.csv"]["kind"] == "file"
+
+    places = node.get("/node/v1/fs_places")
+    assert {"platform", "hostname", "home", "known", "volumes",
+            "project"} <= set(places)
+    assert places["platform"] in ("macos", "linux", "windows")
+    assert places["volumes"] and places["home"]
+
+    found = node.post("/node/v1/search_dir", {"path": str(study),
+                                              "query": "cells", "limit": 9999})
+    assert [match["name"] for match in found["matches"]] == [
+        "cells.csv", "cells-final.csv"]
+    assert found["stopped"] is None
+
+
+def test_a_node_refuses_a_bad_explorer_question_as_a_disagreement(
+        tmp_path, node_process):
+    """409, which the viewer turns into a 400 with the node's own sentence."""
+    import urllib.error
+
+    node = node_process(dynamic=True)
+    for path, body in (("/node/v1/stat_entries", {"path": str(tmp_path),
+                                                  "names": ["../x"]}),
+                       ("/node/v1/search_dir", {"path": str(tmp_path),
+                                                "query": ""})):
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            node.post(path, body)
+        assert raised.value.code == 409
+
+
+def test_the_viewer_relays_the_explorer_s_routes_to_a_node(
+        client, tmp_path, node_process):
+    study = tmp_path / "study"
+    _table_file(study)
+    node = node_process(dynamic=True)
+    _registered_client_node(client, node, name="hpc")
+
+    stats = client.post("/stat_entries", json={
+        "node": "hpc", "path": str(study), "names": ["cells.csv"]})
+    assert stats.status_code == 200, stats.get_json()
+    assert stats.get_json()["entries"]["cells.csv"]["size"] > 0
+    assert "success" not in stats.get_json()
+
+    client.post("/picker_prefs", json={"node": "hpc", "pin": str(study)})
+    places = client.get("/fs_places?node=hpc")
+    assert places.status_code == 200, places.get_json()
+    answer = places.get_json()
+    assert answer["volumes"] and "unavailable" not in answer
+    assert answer["pinned"] == [str(study)]
+
+    found = client.post("/search_dir", json={"node": "hpc", "path": str(study),
+                                             "query": "CELLS"})
+    assert found.status_code == 200, found.get_json()
+    assert [m["name"] for m in found.get_json()["matches"]] == ["cells.csv"]
+
+    missing = client.post("/stat_entries", json={
+        "node": "hpc", "path": str(tmp_path / "gone"), "names": ["x"]})
+    assert missing.status_code == 400
+    assert "Not a folder" in missing.get_json()["error"]
+
+    # And the listing carries the new fields across, which the relay copies
+    # out by name.
+    listed = client.post("/list_dir", json={"node": "hpc", "path": str(study)})
+    assert listed.get_json()["total"] == 1
+    assert listed.get_json()["platform"] == answer["platform"]
+
+    # A listing big enough for the node to gzip arrives whole: the pool asks
+    # for gzip and undoes it, so the relay never sees the compression.
+    big = tmp_path / "big"
+    big.mkdir()
+    for index in range(1500):
+        (big / f"sample-{index:05d}-with-a-long-descriptive-name.ome.tif").write_bytes(b"")
+    listed = client.post("/list_dir", json={"node": "hpc", "path": str(big)})
+    assert listed.status_code == 200, listed.get_json()
+    assert listed.get_json()["total"] == 1500
+    assert len(listed.get_json()["entries"]) == 1500
+
+
+def test_a_node_compresses_a_big_listing_and_answers_busy_as_429(
+        tmp_path, monkeypatch):
+    """In process, because neither needs a socket to prove: a big listing
+    crosses the tunnel gzipped (the primary's pool asks for it and undoes it),
+    and a third search at once is "busy", which the primary passes on as 429
+    rather than reading it as a wrong folder."""
+    import gzip
+    import threading
+
+    from plexora.server.node.api import TOKEN_HEADER
+    from plexora.server.node.app import create_node_app
+    from plexora.server.utils import dir_search
+
+    for index in range(1500):
+        (tmp_path / f"sample-{index:05d}-with-a-long-descriptive-name.ome.tif"
+         ).write_bytes(b"")
+    node = create_node_app([], token="node-secret", dynamic=True,
+                           log=lambda *a, **k: None).test_client()
+    headers = {TOKEN_HEADER: "node-secret"}
+
+    plain = node.post("/node/v1/list_dir", json={"path": str(tmp_path)},
+                      headers=headers)
+    squeezed = node.post("/node/v1/list_dir", json={"path": str(tmp_path)},
+                         headers={**headers, "Accept-Encoding": "gzip"})
+    assert "Content-Encoding" not in plain.headers
+    assert squeezed.headers["Content-Encoding"] == "gzip"
+    assert json.loads(gzip.decompress(squeezed.data)) == plain.get_json()
+
+    slots = threading.BoundedSemaphore(2)
+    slots.acquire()
+    slots.acquire()
+    monkeypatch.setattr(dir_search, "_slots", slots)
+    busy = node.post("/node/v1/search_dir", json={"path": str(tmp_path),
+                                                  "query": "x"}, headers=headers)
+    assert busy.status_code == 429 and busy.get_json()["error"]
+
+
+class _Answer:
+    """What `http.request` hands back, as far as `_optional` reads it."""
+
+    def __init__(self, status, data=b""):
+        self.status = status
+        self.data = data
+        self.headers = {}
+
+
+@pytest.fixture
+def old_node(monkeypatch):
+    """A registered node whose every answer is whatever the test sets."""
+    from plexora import nodes as node_api
+    from plexora.server.providers import http
+
+    node_api.register_node("old", "http://127.0.0.1:9", verify=False)
+    monkeypatch.setattr(node_api, "_platforms", {})
+    replies = {}
+
+    def _request(entry, method, path, **kwargs):
+        replies.setdefault("asked", []).append((method, path, kwargs))
+        return replies["answer"]
+
+    monkeypatch.setattr(http, "request", _request)
+    return replies
+
+
+def test_a_node_too_old_for_the_explorer_s_routes_is_none_not_an_error(old_node):
+    """A bare 404 is a route that is not there -- the node predates it. The
+    explorer degrades to "unknown" rather than showing an upgrade sentence for
+    a sidebar."""
+    from plexora import nodes as node_api
+
+    old_node["answer"] = _Answer(404, b"<!doctype html><title>404 Not Found</title>")
+
+    assert node_api.stat_entries_on_node("old", "/x", ["a"]) is None
+    assert node_api.fs_places_on_node("old") is None
+    assert node_api.search_on_node("old", "/x", "a") is None
+    # Each asked for the 404 to be handed back rather than raised.
+    assert all(404 in kwargs["allow_status"] for _, _, kwargs in old_node["asked"])
+
+
+def test_a_404_with_a_sentence_is_the_node_s_own_refusal(old_node):
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceError
+
+    old_node["answer"] = _Answer(404, b'{"success": false, "error": "no such folder"}')
+
+    with pytest.raises(ResourceError, match="no such folder"):
+        node_api.fs_places_on_node("old")
+
+
+def test_a_busy_node_is_busy_here_too(old_node):
+    from plexora import nodes as node_api
+    from plexora.server.utils.dir_search import SearchBusy
+
+    old_node["answer"] = _Answer(429, b'{"success": false, "error": "two running"}')
+
+    with pytest.raises(SearchBusy, match="two running"):
+        node_api.search_on_node("old", "/x", "a")
+
+
+def test_the_relays_copy_out_only_the_fields_the_explorer_draws(old_node):
+    """A node running a newer build cannot inject fields nobody asked for."""
+    from plexora import nodes as node_api
+
+    old_node["answer"] = _Answer(200, json.dumps({
+        "success": True, "platform": "linux", "hostname": "login01",
+        "home": "/home/aj", "known": [], "volumes": [], "project": [],
+        "injected": "nope"}).encode())
+    assert node_api.fs_places_on_node("old") == {
+        "platform": "linux", "hostname": "login01", "home": "/home/aj",
+        "known": [], "volumes": [], "project": []}
+    # Remembered, so a sidebar for this node knows its platform while it is down.
+    assert node_api.known_platform("old") == "linux"
+
+    old_node["answer"] = _Answer(200, json.dumps({
+        "success": True, "path": "/x", "entries": {}, "injected": 1}).encode())
+    assert node_api.stat_entries_on_node("old", "/x", []) == {"path": "/x",
+                                                              "entries": {}}
+
+    old_node["answer"] = _Answer(200, json.dumps({
+        "success": True, "path": "/x", "query": "a", "matches": [],
+        "visited": 1, "stopped": None, "injected": 1}).encode())
+    assert set(node_api.search_on_node("old", "/x", "a", budget_ms=500)) == {
+        "path", "query", "matches", "visited", "stopped"}
+    # The wait is the search's own budget plus ten seconds for the network.
+    assert old_node["asked"][-1][2]["timeout"] == pytest.approx(10.5)
 
 
 def test_the_relay_names_a_node_it_does_not_know(client):

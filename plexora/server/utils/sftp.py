@@ -791,6 +791,7 @@ def listing(base, raw="", *, limit: int = 2000, show_hidden: bool = False) -> di
     never joins paths, so what it hands back is already what an import takes.
     `raw` empty means the account's home folder; a file means its folder.
     """
+    from plexora.server.utils import dataset_marks
     from plexora.server.utils.dir_listing import ListingError
 
     target = target_of(base)
@@ -820,9 +821,15 @@ def listing(base, raw="", *, limit: int = 2000, show_hidden: bool = False) -> di
              if show_hidden or not name.startswith(".")]
     found.sort(key=lambda item: (not item[1].is_dir, item[0].lower()))
     truncated = len(found) > limit
+    # The readdir's own attributes carry the date, so nothing is `partial`
+    # here; a link `listdir` could not follow is the broken one.
     entries = [{"name": name, "is_dir": attrs.is_dir,
                 "size": None if attrs.is_dir else attrs.size,
-                "path": url_for(target, _join(path, name))}
+                "path": url_for(target, _join(path, name)),
+                "mtime": attrs.mtime,
+                "kind": ("broken" if attrs.is_link
+                         else "dir" if attrs.is_dir else "file"),
+                "store": dataset_marks.store_by_name(name) if attrs.is_dir else None}
                for name, attrs in found[:limit]]
     parent = None
     if path != "/":
@@ -833,8 +840,11 @@ def listing(base, raw="", *, limit: int = 2000, show_hidden: bool = False) -> di
     for index in range(len(parts)):
         trail.append({"label": parts[index],
                       "path": url_for(target, "/" + "/".join(parts[:index + 1]))})
+    # `platform` is not knowable over SFTP without running something there,
+    # and a files-only server runs nothing of ours; "" is "not said".
     return {"path": url_for(target, path), "parent": parent, "crumbs": trail,
-            "entries": entries, "truncated": truncated}
+            "entries": entries, "truncated": truncated, "total": len(found),
+            "partial": False, "dataset": None, "platform": ""}
 
 
 # -- the fsspec filesystem ---------------------------------------------------

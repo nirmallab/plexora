@@ -455,8 +455,110 @@ def list_dir_on_node(node, path="", show_hidden=False):
         entry, "POST", "/node/v1/list_dir",
         body={"path": str(path or ""), "show_hidden": bool(show_hidden)},
         timeout=30.0, expected_api=node_registry.API_VERSION)
+    _remember_platform(entry.name, answer.get("platform"))
     return {key: answer.get(key) for key in
-            ("path", "parent", "crumbs", "entries", "truncated")}
+            ("path", "parent", "crumbs", "entries", "truncated", "total",
+             "partial", "dataset", "platform")}
+
+
+def _optional(entry, method, path, body=None, timeout=30.0):
+    """A call to a route a node may be too old to have: its answer, or None.
+
+    The explorer's newer routes are additive, with no API_VERSION bump, so the
+    only sign a node predates one is a bare 404 -- consumed here as None, before
+    `http._check` would turn it into the "upgrade it there" `ResourceError`
+    that is right for a route the caller cannot do without and wrong for one it
+    can. A 404 that says something is the node's own refusal, and still raises.
+
+    A 429 is the far side saying it is busy (only `/search_dir` says it), and
+    arrives as `dir_search.SearchBusy` so the primary can say 429 in turn.
+    """
+    from plexora.server.providers.base import ResourceError
+
+    response = http.request(
+        entry, method, path, body=body, timeout=timeout,
+        expected_api=node_registry.API_VERSION, allow_status=(404, 429))
+    if response.status == 404:
+        detail = http._sentence(response, False)
+        if detail:
+            raise ResourceError(
+                f"data node {entry.name!r} does not serve that resource: {detail}")
+        return None
+    if response.status == 429:
+        from plexora.server.utils.dir_search import SearchBusy
+
+        raise SearchBusy(http._sentence(response, False)
+                         or f"data node {entry.name!r} is busy; try again shortly")
+    return http.json_of(entry, path, response)
+
+
+def stat_entries_on_node(node, path, names):
+    """Sizes, dates and kinds for some names in one folder on the NODE.
+
+    `{path, entries}`, or None from a node too old to have the route -- which
+    sent its listings whole, so nothing is missing from them anyway.
+    """
+    entry = node_registry.get(str(node))
+    answer = _optional(entry, "POST", "/node/v1/stat_entries",
+                       body={"path": str(path or ""), "names": list(names or [])})
+    if answer is None:
+        return None
+    return {key: answer.get(key) for key in ("path", "entries")}
+
+
+def fs_places_on_node(node):
+    """The NODE's own places for the explorer's sidebar, or None if too old.
+
+    `{platform, hostname, home, known, volumes, project}`; what the user
+    remembers for that machine is the primary's to add. Fifteen seconds, which
+    the node's own deadlines keep it well inside.
+    """
+    entry = node_registry.get(str(node))
+    answer = _optional(entry, "GET", "/node/v1/fs_places", timeout=15.0)
+    if answer is None:
+        return None
+    _remember_platform(entry.name, answer.get("platform"))
+    return {key: answer.get(key) for key in
+            ("platform", "hostname", "home", "known", "volumes", "project")}
+
+
+def search_on_node(node, path, query, show_hidden=False, limit=500,
+                   budget_ms=3000, max_depth=8):
+    """Names matching `query` under one folder on the NODE, or None if too old.
+
+    `{path, query, matches, visited, stopped}`. Waits the search's own budget
+    plus ten seconds for the network, never longer.
+    """
+    entry = node_registry.get(str(node))
+    answer = _optional(entry, "POST", "/node/v1/search_dir", body={
+        "path": str(path or ""), "query": str(query or ""),
+        "show_hidden": bool(show_hidden), "limit": int(limit),
+        "budget_ms": int(budget_ms), "max_depth": int(max_depth),
+    }, timeout=int(budget_ms) / 1000.0 + 10.0)
+    if answer is None:
+        return None
+    return {key: answer.get(key) for key in
+            ("path", "query", "matches", "visited", "stopped")}
+
+
+#: node name -> the `platform` it last reported, from any answer that carried
+#: it. Process memory only: it labels a sidebar while that node is down, and a
+#: stale guess there costs an icon, never a path.
+_platforms = {}
+
+
+def _remember_platform(name, platform):
+    if isinstance(platform, str) and platform:
+        _platforms[str(name)] = platform
+
+
+def known_platform(node):
+    """The platform `node` last reported to this process, or "" if none has.
+
+    Never a probe: asked when the node is not answering, which is exactly when
+    asking it would be a wait for nothing.
+    """
+    return _platforms.get(str(node), "")
 
 
 def open_file_on_node(node, path, timeout=600.0):
@@ -1172,9 +1274,13 @@ def _handshake(entry):
     reason to record less about it, not a reason to refuse to attach.
     """
     try:
-        return http.hello(entry, timeout=10.0) or {}
+        answer = http.hello(entry, timeout=10.0) or {}
     except Exception:
         return {}
+    machine = answer.get("machine")
+    if isinstance(machine, dict):
+        _remember_platform(entry.name, machine.get("platform"))
+    return answer
 
 
 def _capabilities(entry):

@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 import plexora
+from plexora.server.routes import browse_routes
 from plexora.server.utils import native_dialog
 
 TEMPLATES = Path(plexora.__file__).parent / "client" / "templates"
@@ -72,7 +73,7 @@ def test_every_path_field_asks_with_one_button_that_takes_either_kind():
     The import form those fields lived on is gone; the edit page still has
     them, and the Import Sample dialog answers the same question differently --
     its two halves are pressed by the user, so each passes its OWN kind and
-    "any" never arises there (see tests/test_path_picker.py).
+    "any" never arises there (see tests/test_file_explorer.py).
     """
     edit_page = (TEMPLATES / "project_edit.html").read_text(encoding="utf-8")
 
@@ -236,11 +237,12 @@ def test_the_listing_puts_folders_first_and_hands_back_no_bytes(client, tmp_path
     assert [e["name"] for e in answer["entries"]] == ["store.zarr", "zebra.csv"]
     assert answer["entries"][0]["is_dir"] is True
     assert answer["entries"][1]["size"] == len(body)
-    # Names, sizes, kinds -- and the path, which is the picker's whole way of
-    # navigating without doing path arithmetic in a browser that has no idea
-    # whether the far side joins with "/" or "\". Never content: this is a
-    # picker, not a reader.
-    assert set(answer["entries"][0]) == {"name", "is_dir", "size", "path"}
+    # Names, sizes, dates, kinds -- and the path, which is the picker's whole
+    # way of navigating without doing path arithmetic in a browser that has no
+    # idea whether the far side joins with "/" or "\". Never content: this is
+    # a picker, not a reader.
+    assert set(answer["entries"][0]) == {"name", "is_dir", "size", "path",
+                                         "mtime", "kind", "store"}
     assert answer["entries"][0]["path"] == str(tmp_path / "store.zarr")
     # And a way back up, so the picker is navigable rather than a dead end.
     assert answer["parent"] == str(tmp_path.parent)
@@ -596,7 +598,8 @@ def test_a_machine_nobody_has_browsed_yet_remembers_nothing(client):
     # `drives` is a fact about the machine (its drive letters, on Windows),
     # not something remembered.
     answer.pop("drives", None)
-    assert answer == {"last_dir": "", "recent": [], "pinned": []}
+    assert answer == {"last_dir": "", "recent": [], "pinned": [],
+                      "view": browse_routes.DEFAULT_VIEW}
 
 
 def test_the_drives_are_this_machines_and_only_this_machines(client, monkeypatch):
@@ -695,7 +698,8 @@ def test_a_damaged_settings_file_costs_the_recent_list_and_nothing_else(client):
 
     answer = client.get("/picker_prefs").get_json()
     answer.pop("drives", None)
-    assert answer == {"last_dir": "", "recent": [], "pinned": ["/ok"]}
+    assert answer == {"last_dir": "", "recent": [], "pinned": ["/ok"],
+                      "view": browse_routes.DEFAULT_VIEW}
 
 
 def test_remembering_a_place_leaves_the_rest_of_the_settings_alone(client):
@@ -708,3 +712,437 @@ def test_remembering_a_place_leaves_the_rest_of_the_settings_alone(client):
     client.post("/picker_prefs", json={"pin": "/n/scratch/aj"})
 
     assert paths.read_settings()["data_dir"] == "/somewhere/chosen"
+
+
+# -- the explorer: one listing, compressed, with the new fields ----------------
+
+
+def test_a_big_listing_is_compressed_for_a_browser_that_takes_it(client, tmp_path):
+    """50,000 entries are ~8 MB of JSON and ~1 MB gzipped, and the slow link is
+    often the tunnel between this server and the browser."""
+    import gzip
+    import json
+
+    for index in range(1500):
+        (tmp_path / f"sample-{index:05d}-with-a-long-descriptive-name.ome.tif").write_bytes(b"")
+
+    plain = client.post("/list_dir", json={"path": str(tmp_path)})
+    squeezed = client.post("/list_dir", json={"path": str(tmp_path)},
+                           headers={"Accept-Encoding": "gzip, deflate"})
+
+    assert plain.status_code == 200 and "Content-Encoding" not in plain.headers
+    assert squeezed.headers["Content-Encoding"] == "gzip"
+    answer = json.loads(gzip.decompress(squeezed.data))
+    assert answer == plain.get_json()
+    assert answer["total"] == 1500 and answer["partial"] is False
+    # Plain JSON either way, with no envelope: the explorer reads it as is.
+    assert "success" not in answer
+
+
+def test_the_listing_says_what_the_open_folder_is(client, tmp_path):
+    store = tmp_path / "cells.zarr"
+    store.mkdir()
+    (store / ".zgroup").write_text("{}")
+
+    answer = client.post("/list_dir", json={"path": str(store)}).get_json()
+
+    assert answer["dataset"] == {"type": "zarr", "label": "Zarr store",
+                                 "licensed": True}
+    assert answer["platform"] in ("macos", "linux", "windows")
+
+
+def test_a_relayed_listing_keeps_the_new_fields(client, monkeypatch):
+    from plexora import nodes as node_api
+
+    def _fake(node, path="", show_hidden=False):
+        return {"path": "/n/scratch", "parent": "/n", "crumbs": [],
+                "entries": [], "truncated": False, "total": 0, "partial": False,
+                "dataset": None, "platform": "linux"}
+
+    monkeypatch.setattr(node_api, "list_dir_on_node", _fake)
+
+    answer = client.post("/list_dir", json={"node": "hpc", "path": "/n/scratch"})
+
+    assert answer.status_code == 200
+    assert answer.get_json()["platform"] == "linux"
+
+
+# -- the explorer: metadata a partial listing left out ---------------------------
+
+
+def test_stat_entries_fills_in_what_a_partial_listing_left_out(client, tmp_path):
+    (tmp_path / "cells.csv").write_bytes(b"12345")
+
+    answer = client.post("/stat_entries", json={
+        "path": str(tmp_path), "names": ["cells.csv", "gone.csv"]})
+
+    assert answer.status_code == 200
+    found = answer.get_json()
+    assert found["path"] == str(tmp_path)
+    assert set(found["entries"]) == {"cells.csv"}
+    assert found["entries"]["cells.csv"]["size"] == 5
+
+
+@pytest.mark.parametrize("body", [
+    {"names": "cells.csv"},
+    {"names": ["../etc"]},
+    {"names": [f"f{index}" for index in range(501)]},
+])
+def test_stat_entries_refuses_anything_but_a_short_list_of_names(
+        client, tmp_path, body):
+    answer = client.post("/stat_entries", json={"path": str(tmp_path), **body})
+    assert answer.status_code == 400
+    assert answer.get_json()["error"]
+
+
+def test_stat_entries_is_relayed_and_an_old_node_is_unsupported(client, monkeypatch):
+    """A node older than the route sent whole listings, so nothing is missing:
+    `unsupported`, a 200, and no entries -- never an error bar."""
+    from plexora import nodes as node_api
+
+    seen = {}
+
+    def _fake(node, path, names):
+        seen.update(node=node, path=path, names=names)
+        return {"path": path, "entries": {"a.csv": {"size": 1, "mtime": 2,
+                                                    "kind": "file", "is_dir": False}}}
+
+    monkeypatch.setattr(node_api, "stat_entries_on_node", _fake)
+    answer = client.post("/stat_entries", json={
+        "node": "hpc", "path": "/n/scratch", "names": ["a.csv"]}).get_json()
+    assert seen == {"node": "hpc", "path": "/n/scratch", "names": ["a.csv"]}
+    assert answer["entries"]["a.csv"]["size"] == 1
+
+    monkeypatch.setattr(node_api, "stat_entries_on_node", lambda *a, **k: None)
+    answer = client.post("/stat_entries", json={
+        "node": "hpc", "path": "/n/scratch", "names": ["a.csv"]})
+    assert answer.status_code == 200
+    assert answer.get_json() == {"unsupported": True, "path": "/n/scratch",
+                                 "entries": {}}
+
+
+@pytest.mark.parametrize("route, body", [
+    ("/stat_entries", {"names": ["a.csv"]}),
+    ("/search_dir", {"query": "a"}),
+])
+@pytest.mark.parametrize("raised, status", [
+    (lambda: KeyError("no node named 'ghost'; known nodes: hpc"), 400),
+    ("unavailable", 503),
+    ("resource", 400),
+    (lambda: RuntimeError("connection reset"), 502),
+])
+def test_every_explorer_relay_tells_the_failures_apart(
+        client, monkeypatch, route, body, raised, status):
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceError, ResourceUnavailable
+
+    makers = {"unavailable": lambda: ResourceUnavailable("hpc is not answering"),
+              "resource": lambda: ResourceError("Not a folder: /scartch")}
+    make = makers.get(raised, raised)
+
+    def _fake(*args, **kwargs):
+        raise make()
+
+    monkeypatch.setattr(node_api, "stat_entries_on_node", _fake)
+    monkeypatch.setattr(node_api, "search_on_node", _fake)
+
+    answer = client.post(route, json={"node": "hpc", "path": "/x", **body})
+
+    assert answer.status_code == status
+    assert not answer.get_json()["error"].startswith("'")
+
+
+def test_a_files_only_server_answers_the_new_routes_as_unsupported(client):
+    base = "sftp://nobody@nowhere.example"
+
+    stats = client.post("/stat_entries", json={"node": base, "names": ["a"]})
+    assert stats.status_code == 200 and stats.get_json()["unsupported"] is True
+
+    found = client.post("/search_dir", json={"node": base, "query": "a"})
+    assert found.status_code == 200
+    assert found.get_json() == {"unsupported": True, "path": "", "query": "a",
+                                "matches": [], "visited": 0, "stopped": None}
+
+    places = client.get(f"/fs_places?node={base}")
+    assert places.status_code == 200
+    assert places.get_json()["unsupported"] is True
+    assert places.get_json()["hostname"] == "nobody@nowhere.example"
+
+
+# -- the explorer: places ---------------------------------------------------------
+
+
+_PLACE_KEYS = {"platform", "hostname", "home", "known", "volumes", "project",
+               "last_dir", "recent", "pinned", "view"}
+
+
+def test_places_for_this_machine_come_with_what_is_remembered(client, monkeypatch):
+    from plexora.server.utils import fs_places
+
+    monkeypatch.setattr(fs_places, "_usage_many", lambda paths: {})
+    client.post("/picker_prefs", json={"pin": "/data/study"})
+
+    answer = client.get("/fs_places").get_json()
+
+    assert set(answer) == _PLACE_KEYS
+    assert answer["pinned"] == ["/data/study"]
+    assert answer["view"] == browse_routes.DEFAULT_VIEW
+    assert answer["home"] == str(Path.home())
+    assert any(volume["path"] == "/" or volume["path"].endswith("\\")
+               for volume in answer["volumes"])
+
+
+def test_places_relayed_from_a_node_carry_that_machines_record(client, monkeypatch):
+    from plexora import nodes as node_api
+
+    monkeypatch.setattr(node_api, "fs_places_on_node", lambda node: {
+        "platform": "linux", "hostname": "login01", "home": "/home/aj",
+        "known": [], "volumes": [{"label": "scratch", "path": "/n/scratch",
+                                  "kind": "network", "fstype": "lustre",
+                                  "total": None, "free": None}],
+        "project": [{"label": "$SCRATCH", "path": "/n/scratch/users/a/aj"}]})
+    client.post("/picker_prefs", json={"node": "hpc", "pin": "/n/groups/lab"})
+
+    answer = client.get("/fs_places?node=hpc").get_json()
+
+    assert set(answer) == _PLACE_KEYS
+    assert answer["hostname"] == "login01"
+    assert answer["volumes"][0]["path"] == "/n/scratch"
+    assert answer["pinned"] == ["/n/groups/lab"]
+    # The laptop's own pins are not the cluster's.
+    assert client.get("/fs_places").get_json()["pinned"] == []
+
+
+@pytest.mark.parametrize("failure", [
+    lambda: __import__("plexora.server.providers.base", fromlist=["x"]
+                       ).ResourceUnavailable("hpc is not answering"),
+    lambda: __import__("plexora.server.providers.base", fromlist=["x"]
+                       ).ResourceError("this node was started without --dynamic"),
+    lambda: KeyError("no node named 'hpc'"),
+])
+def test_places_of_a_machine_that_is_down_still_draw_its_pins(
+        client, monkeypatch, failure):
+    """Always a 200: the pins and recent folders are this server's to give, and
+    a sidebar that goes blank because a laptop shut its lid is no sidebar."""
+    from plexora import nodes as node_api
+
+    def _down(node):
+        raise failure()
+
+    monkeypatch.setattr(node_api, "fs_places_on_node", _down)
+    monkeypatch.setitem(node_api._platforms, "hpc", "linux")
+    client.post("/picker_prefs", json={"node": "hpc", "pin": "/n/groups/lab"})
+
+    answer = client.get("/fs_places?node=hpc")
+
+    assert answer.status_code == 200
+    found = answer.get_json()
+    assert found["unavailable"] and not found["unavailable"].startswith("'")
+    assert found["pinned"] == ["/n/groups/lab"]
+    assert found["hostname"] == "hpc" and found["platform"] == "linux"
+    assert found["volumes"] == [] and found["known"] == []
+    assert "unsupported" not in found
+
+
+def test_places_of_a_node_too_old_to_say_are_unsupported(client, monkeypatch):
+    from plexora import nodes as node_api
+
+    monkeypatch.setattr(node_api, "fs_places_on_node", lambda node: None)
+
+    found = client.get("/fs_places?node=old").get_json()
+
+    assert found["unsupported"] is True
+    assert found["platform"] == ""
+    assert found["home"] == "" and found["volumes"] == []
+    assert "unavailable" not in found
+
+
+# -- the explorer: search -----------------------------------------------------------
+
+
+def test_search_finds_names_under_a_folder(client, tmp_path):
+    (tmp_path / "study" / "run1").mkdir(parents=True)
+    (tmp_path / "study" / "run1" / "LSP11385.ome.tif").write_bytes(b"")
+    (tmp_path / "LSP11385-notes.txt").write_text("")
+
+    answer = client.post("/search_dir", json={"path": str(tmp_path),
+                                              "query": "lsp11385"})
+
+    assert answer.status_code == 200
+    found = answer.get_json()
+    assert [match["name"] for match in found["matches"]] == [
+        "LSP11385-notes.txt", "LSP11385.ome.tif"]
+    assert found["matches"][1]["depth"] == 3
+    assert found["stopped"] is None and found["visited"] == 3
+
+
+def test_search_bounds_are_clamped_not_refused(client, monkeypatch):
+    from plexora.server.utils import dir_search
+
+    seen = {}
+
+    def _fake(raw, query, **bounds):
+        seen.update(bounds)
+        return {"path": raw, "query": query, "matches": [], "visited": 0,
+                "stopped": None}
+
+    monkeypatch.setattr(dir_search, "search", _fake)
+    client.post("/search_dir", json={"query": "a", "limit": 10_000,
+                                     "budget_ms": 60_000, "max_depth": 0})
+
+    assert seen["limit"] == dir_search.SEARCH_LIMIT
+    assert seen["budget_ms"] == dir_search.SEARCH_BUDGET_MS
+    assert seen["max_depth"] == 1
+
+
+@pytest.mark.parametrize("body", [
+    {"query": ""}, {"query": "   "}, {"query": "x" * 257}, {"query": 7},
+    {"query": "a", "limit": "lots"}, {"query": "a", "budget_ms": True},
+])
+def test_search_refuses_a_query_or_bound_it_cannot_use(client, tmp_path, body):
+    answer = client.post("/search_dir", json={"path": str(tmp_path), **body})
+    assert answer.status_code == 400
+    assert answer.get_json()["error"]
+
+
+def test_a_third_search_at_once_is_told_to_wait(client, tmp_path, monkeypatch):
+    import threading
+
+    from plexora.server.utils import dir_search
+
+    slots = threading.BoundedSemaphore(2)
+    slots.acquire()
+    slots.acquire()
+    monkeypatch.setattr(dir_search, "_slots", slots)
+
+    answer = client.post("/search_dir", json={"path": str(tmp_path), "query": "a"})
+
+    assert answer.status_code == 429
+    assert answer.get_json()["error"]
+
+
+def test_search_is_relayed_clamped_and_an_old_node_is_unsupported(
+        client, monkeypatch):
+    from plexora import nodes as node_api
+    from plexora.server.utils import dir_search
+
+    seen = {}
+
+    def _fake(node, path, query, **bounds):
+        seen.update(node=node, path=path, query=query, **bounds)
+        return {"path": path, "query": query, "matches": [], "visited": 4,
+                "stopped": "budget"}
+
+    monkeypatch.setattr(node_api, "search_on_node", _fake)
+    answer = client.post("/search_dir", json={
+        "node": "hpc", "path": "/n/scratch", "query": " LSP ",
+        "limit": 9999, "show_hidden": True}).get_json()
+    assert answer["stopped"] == "budget"
+    assert seen == {"node": "hpc", "path": "/n/scratch", "query": "LSP",
+                    "show_hidden": True, "limit": dir_search.SEARCH_LIMIT,
+                    "budget_ms": dir_search.SEARCH_BUDGET_MS,
+                    "max_depth": dir_search.SEARCH_MAX_DEPTH}
+
+    def _busy(*args, **kwargs):
+        raise dir_search.SearchBusy("busy over there")
+
+    monkeypatch.setattr(node_api, "search_on_node", _busy)
+    assert client.post("/search_dir", json={
+        "node": "hpc", "query": "a"}).status_code == 429
+
+    monkeypatch.setattr(node_api, "search_on_node", lambda *a, **k: None)
+    answer = client.post("/search_dir", json={"node": "hpc", "path": "/x",
+                                              "query": "a"})
+    assert answer.status_code == 200
+    assert answer.get_json() == {"unsupported": True, "path": "/x", "query": "a",
+                                 "matches": [], "visited": 0, "stopped": None}
+
+
+# -- the explorer: pin order and the view --------------------------------------------
+
+
+def test_pins_can_be_reordered_without_losing_or_reviving_any(client):
+    for path in ("/a", "/b", "/c"):
+        client.post("/picker_prefs", json={"pin": path})
+
+    answer = client.post("/picker_prefs", json={
+        "pinned_order": ["/c", "/gone", "/a", "/c"]}).get_json()
+
+    # Named and pinned first, in the order given and once each; a pin the order
+    # forgot keeps its place after them; a path that is not pinned is ignored.
+    assert answer["pinned"] == ["/c", "/a", "/b"]
+    assert client.get("/picker_prefs").get_json()["pinned"] == ["/c", "/a", "/b"]
+
+
+def test_a_pin_order_that_is_not_a_list_of_paths_is_refused(client):
+    answer = client.post("/picker_prefs", json={"pinned_order": "/a"})
+    assert answer.status_code == 400
+    assert "pinned_order" in answer.get_json()["error"]
+
+
+def test_the_view_is_one_record_for_every_machine(client):
+    """A sort order is about the person reading, not the disk being read."""
+    answer = client.post("/picker_prefs", json={"node": "hpc", "view": {
+        "sort_by": "mtime", "sort_dir": "desc"}}).get_json()
+
+    assert answer["view"]["sort_by"] == "mtime"
+    for query in ("", "?node=hpc", "?node=laptop"):
+        assert client.get(f"/picker_prefs{query}").get_json()["view"] == answer["view"]
+        assert client.get(f"/fs_places{query}").get_json()["view"] == answer["view"]
+
+
+def test_the_view_is_merged_key_by_key_and_column_by_column(client):
+    client.post("/picker_prefs", json={"view": {"layout": "grid",
+                                                "columns": {"size": 120}}})
+    answer = client.post("/picker_prefs", json={"view": {
+        "dirs_first": False, "columns": {"mtime": 200},
+        "sidebar": {"collapsed": ["recent", "nonsense", "favorites"]},
+        "colour": "teal"}}).get_json()
+
+    view = answer["view"]
+    assert view["layout"] == "grid" and view["dirs_first"] is False
+    assert view["columns"] == {"mtime": 200, "kind": 120, "size": 120}
+    # Known sections only, in the order they are drawn.
+    assert view["sidebar"] == {"collapsed": ["favorites", "recent"]}
+    # An unknown key is dropped, not stored.
+    assert "colour" not in view
+    from plexora import paths
+    assert "colour" not in paths.read_settings()["path_picker"]["view"]
+
+
+def test_a_column_width_is_clamped_not_refused(client):
+    view = client.post("/picker_prefs", json={"view": {"columns": {
+        "mtime": 5, "kind": 99999, "size": 81.6}}}).get_json()["view"]
+    assert view["columns"] == {"mtime": 40, "kind": 2000, "size": 82}
+
+
+@pytest.mark.parametrize("view, key", [
+    ("list", "view"),
+    ({"sort_by": "colour"}, "view.sort_by"),
+    ({"sort_dir": "up"}, "view.sort_dir"),
+    ({"layout": "tiles"}, "view.layout"),
+    ({"dirs_first": "yes"}, "view.dirs_first"),
+    ({"show_hidden": 1}, "view.show_hidden"),
+    ({"columns": [100]}, "view.columns"),
+    ({"columns": {"size": "wide"}}, "view.columns.size"),
+    ({"sidebar": {"collapsed": "recent"}}, "view.sidebar.collapsed"),
+])
+def test_a_view_of_the_wrong_type_is_refused_naming_the_key(client, view, key):
+    answer = client.post("/picker_prefs", json={"view": view})
+
+    assert answer.status_code == 400
+    assert answer.get_json()["error"].startswith(key)
+    assert client.get("/picker_prefs").get_json()["view"] == browse_routes.DEFAULT_VIEW
+
+
+def test_a_damaged_stored_view_reads_as_the_default(client):
+    from plexora import paths
+
+    paths.write_settings({"path_picker": {"view": {
+        "sort_by": "colour", "dirs_first": "yes", "columns": {"size": "wide"},
+        "layout": "grid"}}})
+    view = client.get("/picker_prefs").get_json()["view"]
+    assert view == {**browse_routes.DEFAULT_VIEW, "layout": "grid"}
+
+    paths.write_settings({"path_picker": {"view": "not a view"}})
+    assert client.get("/picker_prefs").get_json()["view"] == browse_routes.DEFAULT_VIEW

@@ -584,7 +584,7 @@ def list_dir():
 
     Behind `--dynamic` for the same reason `/browse` is: it lets the token
     holder walk this account's filesystem. What it does not do is read
-    anything -- names, sizes, and which entries are directories.
+    anything -- names, sizes, dates, and which entries are directories.
     """
     refusal = _dynamic_or_403()
     if refusal is not None:
@@ -598,7 +598,110 @@ def list_dir():
             body.get("path") or "", show_hidden=bool(body.get("show_hidden")))
     except dir_listing.ListingError as exc:
         raise ResourceError(str(exc)) from exc
+    return _gzipped_when_large(jsonify(success=True, **found))
+
+
+#: Bytes of JSON past which an answer is gzipped for a caller that takes it --
+#: the same line the viewer's own `serialize_and_submit_json` draws.
+_GZIP_JSON_BYTES = 256 * 1024
+
+
+def _gzipped_when_large(response):
+    """`response`, gzipped when it is big and the caller accepts gzip.
+
+    A 50,000-entry listing is ~8 MB of JSON and ~1 MB compressed, and the link
+    it crosses is very often a tunnel to a laptop. The primary's pool asks for
+    gzip and urllib3 undoes it on arrival, so nothing downstream sees this.
+    """
+    if (response.content_length or 0) <= _GZIP_JSON_BYTES or \
+            "gzip" not in (request.headers.get("Accept-Encoding") or ""):
+        return response
+    response.set_data(gzip.compress(response.get_data(), compresslevel=3))
+    response.headers["Content-Encoding"] = "gzip"
+    response.vary.add("Accept-Encoding")
+    return response
+
+
+@node_bp.route("/stat_entries", methods=["POST"])
+def stat_entries():
+    """Sizes, dates and kinds for up to 500 names in one folder on THIS machine.
+
+    What a `partial` listing left out, asked for a screenful at a time. Bare
+    names only, so this can stat nothing the listing did not already name.
+    Behind `--dynamic` like `/list_dir`, for the same reason.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import dir_listing
+
+    body = request.get_json(silent=True) or {}
+    try:
+        found = dir_listing.stat_entries(body.get("path") or "", body.get("names"))
+    except (dir_listing.ListingError, ValueError) as exc:
+        raise ResourceError(str(exc)) from exc
     return jsonify(success=True, **found)
+
+
+@node_bp.route("/fs_places")
+def fs_places():
+    """THIS machine's places for the explorer's sidebar.
+
+    Home, Desktop/Documents/Downloads, the volumes with their labels and free
+    space, the data folder and a cluster's `$SCRATCH`-style roots -- see
+    `fs_places.describe`, which never waits long on any mount. Behind
+    `--dynamic`: it names this account's filesystem.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import fs_places as places
+
+    return jsonify(success=True, **places.describe())
+
+
+@node_bp.route("/search_dir", methods=["POST"])
+def search_dir():
+    """Names matching a query under one folder on THIS machine, budgeted.
+
+    The bounds are clamped to `dir_search`'s caps whatever is asked. A third
+    search while two run is a 429 rather than the usual 409, so the primary
+    can tell "busy, try again" from "that folder is wrong" and say so.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import dir_listing, dir_search
+
+    body = request.get_json(silent=True) or {}
+    try:
+        found = dir_search.search(
+            body.get("path") or "", body.get("query"),
+            show_hidden=bool(body.get("show_hidden")),
+            limit=_whole(body, "limit", dir_search.SEARCH_LIMIT),
+            budget_ms=_whole(body, "budget_ms", dir_search.SEARCH_BUDGET_MS),
+            max_depth=_whole(body, "max_depth", dir_search.SEARCH_MAX_DEPTH))
+    except dir_search.SearchBusy as exc:
+        return jsonify(success=False, error=str(exc)), 429
+    except (dir_listing.ListingError, ValueError, TypeError) as exc:
+        raise ResourceError(str(exc)) from exc
+    return jsonify(success=True, **found)
+
+
+def _whole(body, field, default):
+    """A whole-number field of a request body, or `default` when absent."""
+    value = body.get(field)
+    if value is None:
+        return default
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError
+        return int(value)
+    except (ValueError, OverflowError):
+        raise ValueError(f"{field} must be a number") from None
 
 
 # -- one file's bytes, in either direction --------------------------------
