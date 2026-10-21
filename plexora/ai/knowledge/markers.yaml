@@ -350,7 +350,9 @@ markers:
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
       - {marker: PanCK, relation: exclusive, confidence: moderate}
-    caveats: [fibres between cells are assigned to whichever mask they cross]
+    caveats: ["fibres between cells are assigned to whichever mask they cross",
+              "pericytes and myofibroblasts beside vessels are often round in section:
+              stain hugging their outline is theirs, as for spindle cells"]
     morphology: fibrous
 
   - canonical: CD31

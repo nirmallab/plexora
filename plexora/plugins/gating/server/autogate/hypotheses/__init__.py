@@ -36,8 +36,10 @@ from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 
 #: Bumped whenever the same answers would choose a different gate ("3": a
 #: rival's cells are material relative to a rare population, rare markers
-#: confirm their own cells, a single candidate gets steps).
-VERSION = "3"
+#: confirm their own cells, a single candidate gets steps; "4": steps past
+#: the lattice's edge, wide mixed intervals split, unreadable takes two
+#: looks).
+VERSION = "4"
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -73,10 +75,26 @@ PARAMS = {
     # or of the `long_tail` class, is rare: its leader must have its own
     # cells read stained (`controller.tail_status`).
     "rare_fraction": 0.02,
-    # Most labels uncertain or artifact (once this many cells were read):
-    # the marker is unreadable this way.
+    # Most labels uncertain or artifact (once this many cells were read, over
+    # at least this many looks): the marker is unreadable this way. One look
+    # is not enough: lsp11385_2 (2026-10-21) closed four markers after one
+    # panel of crowded immune cells.
     "min_labelled": 10,
     "max_other_share": 0.5,
+    "unreadable_looks": 2,
+    # A leader on the lattice's own highest or lowest point: a point this far
+    # beyond it (fit units, past the tolerance), at most this many a side.
+    "edge_step": 0.25,
+    "edge_steps": 2,
+    # An interval beside the leader wider than this (fit units: twice the
+    # tolerance, so the person's gate can lie farther than the tolerance from
+    # both ends) whose cells are mixed -- an own-stain share inside
+    # `split_share` on at least `split_reads` definite reads -- is cut into
+    # parts about the tolerance wide, at most `split_parts`.
+    "split_width": 0.4,
+    "split_share": [0.2, 0.8],
+    "split_reads": 6,
+    "split_parts": 4,
 }
 
 #: Terminal status -> the unit's closed state (a review state writes the
@@ -139,6 +157,7 @@ def start(engine, unit) -> dict:
     unit["hypotheses"] = {
         "version": VERSION, "points": points, "window": list(cands["window"]),
         "prior": int(cands["prior"]), "start": begin, "top": top,
+        "n_finite": int(col.n_finite), "grown": {"up": 0, "down": 0}, "split": [],
         "clusters": cands["clusters"], "spread": candmod.spread(cands, col.to_fit),
         "lattice": lat.get("fingerprint"), "observations": [], "status": None,
         "rare": ({"fraction_at_start": round(at_start, 5), "class": unit.get("class")}
@@ -191,15 +210,13 @@ def packet(engine, units):
     ds, col = _column(engine, unit)
     plan = state.pop("pending", None) or controller.next_action(state, col.to_fit,
                                                                 state["params"])
-    if plan is not None and plan["kind"] == "extend":
-        new = controller.extend(state, plan["side"])
-        bounds, n_cells = controller.window(state)
-        k = new["interval"]
-        plan = {"kind": "extend", "side": plan["side"],
-                "intervals": [{"interval": k, "from": bounds[k], "to": bounds[k + 1],
-                               "n": min(int(state["params"]["panel_cells"]), n_cells[k])}]}
-        if not plan["intervals"][0]["n"]:
-            plan = controller.next_action(state, col.to_fit, state["params"])
+    # A change to the range comes first (each records itself, so none
+    # repeats), then the look at the cells it adds.
+    for _ in range(4):
+        if plan is None or plan["kind"] not in ("extend", "step", "split") \
+                or plan.get("intervals"):
+            break
+        plan = _grow(engine, unit, ds, col, state, plan)
     if plan is None:
         finish(engine, unit, "unresolved_evidence")
         return None
@@ -270,6 +287,126 @@ def packet(engine, units):
     images = packets._images(pkt, ((main, "panel_collage", "numbered cells, random order"),))
     unit["last_manifest"] = main["manifest"]
     return pkt, images
+
+
+def _grow(engine, unit, ds, col, state, plan) -> dict | None:
+    """Make the range change `plan` names and return the look at its new
+    cells, or the next action when it added nothing."""
+    total = int(state["params"]["panel_cells"])
+    if plan["kind"] == "extend":
+        new = controller.extend(state, plan["side"])
+        bounds, n_cells = controller.window(state)
+        k = new["interval"]
+        out = {"kind": "extend", "side": plan["side"],
+               "intervals": [{"interval": k, "from": bounds[k], "to": bounds[k + 1],
+                              "n": min(total, n_cells[k])}]}
+        if out["intervals"][0]["n"]:
+            return out
+    elif plan["kind"] == "step":
+        added = _step(ds, unit["marker"], col, state, plan["side"])
+        if added:
+            bounds, n_cells = controller.window(state)
+            k = 0 if plan["side"] == "down" else len(n_cells) - 1
+            return {"kind": "step", "side": plan["side"],
+                    "intervals": [{"interval": k, "from": bounds[k], "to": bounds[k + 1],
+                                   "n": min(total, n_cells[k])}]}
+    elif plan["kind"] == "split":
+        added = _split(ds, unit["marker"], col, state, plan["from"], plan["to"])
+        if added:
+            bounds, n_cells = controller.window(state)
+            seen = controller.shown(state)
+            ks = [k for k in range(len(n_cells))
+                  if plan["from"] <= bounds[k] and bounds[k + 1] <= plan["to"]]
+            available = [max(0, n_cells[k] - seen[k]) for k in ks]
+            picks = controller.allocate([n_cells[k] for k in ks], available, total)
+            out = controller._plan(state, ks, picks, "split")
+            if out is not None:
+                return out
+    return controller.next_action(state, col.to_fit, state["params"])
+
+
+def _point(ds, marker, col, fit_value, top, family):
+    """A point at `fit_value` (fit units), snapped to the sidebar's grid like
+    a lattice point, with its positive count."""
+    from plexora.plugins.gating.server import model
+
+    desc = model._description(ds).get(marker) or {}
+    value = float(col.from_fit(fit_value))
+    if desc:
+        value = float(model.snap_to_grid(value, top, desc)[0])
+    point_id = f"{family}:{value:g}"
+    return {"id": point_id, "low": value, "sources": [point_id],
+            "n_positive": int(col.n_positive(value, top))}
+
+
+def _insert(state, new, side=None):
+    """Join `new` points to the range, keeping the window's ends (or moving
+    the end on `side` to the new point) and the prior where they were."""
+    points = state["points"]
+    lo, hi = state["window"]
+    keep_lo, keep_hi = points[lo]["low"], points[hi]["low"]
+    keep_prior = points[min(max(int(state["prior"]), 0), len(points) - 1)]["low"]
+    if side == "up":
+        keep_hi = max(p["low"] for p in new)
+    elif side == "down":
+        keep_lo = min(p["low"] for p in new)
+    merged = sorted(points + list(new), key=lambda p: p["low"])
+    where = {p["low"]: i for i, p in enumerate(merged)}
+    state["points"] = merged
+    state["window"] = [where[keep_lo], where[keep_hi]]
+    state["prior"] = where[keep_prior]
+    state.setdefault("added_points", []).extend(p["id"] for p in new)
+
+
+def _distinct(state, col, value, min_gap) -> bool:
+    fit = float(col.to_fit(value))
+    return all(abs(fit - float(col.to_fit(p["low"]))) >= min_gap - 1e-9
+               for p in state["points"])
+
+
+def _step(ds, marker, col, state, side) -> list:
+    """One point `edge_step` beyond the lattice's edge on `side`, if it adds
+    enough cells and is a gate the column can hold; every try is counted."""
+    params = state["params"]
+    grown = state.setdefault("grown", {"up": 0, "down": 0})
+    grown[side] = int(grown.get(side) or 0) + 1
+    lo, hi = state["window"]
+    edge = state["points"][hi if side == "up" else lo]
+    sign = 1.0 if side == "up" else -1.0
+    new = _point(ds, marker, col, float(col.to_fit(edge["low"])) + sign * params["edge_step"],
+                 float(state["top"]), "step")
+    cells = (edge["n_positive"] - new["n_positive"]) if side == "up" \
+        else (new["n_positive"] - edge["n_positive"])
+    if not new["low"] < float(state["top"]) or cells < evidence.MIN_MATERIAL \
+            or not _distinct(state, col, new["low"], params["min_gap"]):
+        grown[side] = int(params["edge_steps"])
+        return []
+    _insert(state, [new], side)
+    return [new]
+
+
+def _split(ds, marker, col, state, a, b) -> list:
+    """Points cutting the interval (a, b] into parts about the tolerance
+    wide (at most `split_parts`), evenly in the fit space; recorded so the
+    interval is never split again."""
+    import math
+
+    params = state["params"]
+    state.setdefault("split", []).append([round(a, 6), round(b, 6)])
+    fa, fb = float(col.to_fit(a)), float(col.to_fit(b))
+    parts = min(int(params["split_parts"]),
+                max(2, math.ceil((fb - fa) / float(params["tolerance"]) - 1e-9)))
+    new = []
+    for k in range(1, parts):
+        point = _point(ds, marker, col, fa + (fb - fa) * k / parts, float(state["top"]),
+                       "split")
+        if a < point["low"] < b and _distinct(state, col, point["low"], params["min_gap"]) \
+                and all(abs(float(col.to_fit(point["low"])) - float(col.to_fit(p["low"])))
+                        >= params["min_gap"] - 1e-9 for p in new):
+            new.append(point)
+    if new:
+        _insert(state, new)
+    return new
 
 
 def _seed(engine, state) -> int:

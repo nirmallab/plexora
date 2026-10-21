@@ -249,6 +249,91 @@ Not built, on the stored classic records (held-out PCA and dev sessions,
 - **The zero-call falsifier (Phase 0.9a).** Superseded: the panels it was
   to justify are built and measured directly.
 
+## Live run 1, 17 markers (2026-10-21)
+
+lsp11385_2 against the user's regate of the same day
+(`~/gatevision/lsp11385_2_user_gates_2026-10-21.json`; CD4 6.58 on purpose,
+myeloid CD4 being dim; CD163 7.31, below which false positives rise
+steeply). Both engines over MCP in propose mode, nothing written: display
+check off, classifier off, no answer reuse, seed 1, `on_limit: extend`;
+every packet answered by an Opus (claude-opus-5-5) gating worker. Classic
+gs_20261021T151220_295e7c, candidates gs_20261021T152452_38f60d. One run
+each on a high-SNR image: a reading of where the engine fails, not a
+score to tune to.
+
+| marker | user | classic | candidates |
+|---|---|---|---|
+| CD45 | 7.37 | 7.25 (-0.12) | 7.61 (+0.24) |
+| CD31 | 5.97 | 5.96 (-0.01) | 6.45 (+0.48) |
+| Ecad | 6.15 | 6.63 (+0.48) | 6.96 (+0.81) |
+| SMA | 6.17 | 6.20 (+0.03) | 7.31 (+1.14) |
+| Ki67 | 6.27 | 6.33 (+0.06) | 6.36 (+0.09) |
+| PDL1 | 6.75 | 6.42 (-0.33) | 6.45 (-0.30) |
+| SOX10 | 6.49 | 6.49 (+0.00) | 6.41 (-0.08) |
+| MART1 | 5.52 | 6.27 (+0.75) | 5.39 (-0.13) |
+| CD3e | 7.02 | 6.72 (-0.30) | 6.72 (-0.30) |
+| CD20L | 6.57 | 6.38 (-0.19) | 6.38 (-0.19) |
+| CD4 | 6.58 | 6.92 (+0.34) | 6.85 (+0.27) |
+| CD8a | 6.32 | 6.12 (-0.20) | 5.98 (-0.34) |
+| CD11c | 6.11 | 6.17 (+0.06) | 6.33 (+0.22) |
+| CD68 | 6.34 | 5.83 (-0.51) | 6.13 (-0.21) |
+| CD163 | 7.31 | 7.27 (-0.04) | 7.69 (+0.38) |
+| FOXP3 | 6.30 | 6.17 (-0.13) | 6.23 (-0.07) |
+| PD1 | 6.97 | 6.53 (-0.44) | 6.98 (+0.01) |
+| **MAE** | | **0.235** | **0.309** |
+| within 0.2 | | 10 / 17 | 6 / 17 |
+| 0.4 or more off | | 4 | 3 |
+| closed for review | | 6 | 13 |
+
+Candidates lost. What its looks show (the session's observations), and
+what was changed for each:
+
+- **Most cells uncertain.** About 40 % of the panel cells in crowded immune
+  fields were labelled `uncertain` (every sentinel was read right), and
+  four markers closed `unreadable` after a single look. Unreadable now
+  takes two valid looks (`unreadable_looks`); the panel guide says how to
+  read a cell whose ring is partial in a crowd (stain on its free sides is
+  its own; light only on the side facing a brighter neighbour is not).
+  CD8a's second look was 14 of 16 uncertain: it would still close
+  unreadable.
+- **Resolved on the lattice's top point, nothing above read.** CD68: every
+  cell shown up to 6.13, the lattice's highest point, read unstained; the
+  user's gate is 6.34. A leader that beats its rivals there now gets a
+  point 0.25 beyond (`step`, at most two a side).
+- **No candidate near the gate.** CD163: nothing between 6.70 and 7.69,
+  whose cells read 4 stained, 5 not, 11 uncertain; the user's gate is 7.31.
+  A wide interval beside the leader that reads mixed is now cut into parts
+  about the tolerance wide, once (`split`).
+- **SMA** (+1.14): the `panel_fibrous` text called a round nucleus beside a
+  band not own stain, and the reader followed it (cells 6.1 to 6.9 read
+  unstained). The user counts round cells next to vessels as well as
+  spindle cells (pericytes, myofibroblasts): rewritten so shape does not
+  decide, the band hugging the cell's outline does; the aSMA caveat says
+  the same.
+- **The reader's own threshold, not changed.** CD31 (cells to 6.2 read
+  unstained or uncertain; user 5.97), Ecad (to 6.5; user 6.15, classic's
+  reader also high at 6.63), CD45 (to 7.5; user 7.37). No rule moves a
+  gate past what the cells were read as; these wait for the reader
+  comparison and the non-LSP images.
+
+The step was first written to fire whenever the leader sat on the
+lattice's edge. Offline, two synthetic CD4s under a noisy reader then
+spent their second look above the lattice while a rival below still
+blocked, and closed farther off (F1 0.63 to 0.42, 0.86 to 0.60); it now
+fires only once the leader beats its rivals. A split stays a refinement
+of the dispute itself and may come first.
+
+Offline (8 synthetic scenes x 5 markers; the three rules on against all
+three off): truthful reader 0.9505 F1 and 32 packets either way; a reader
+turning 32 % of words, 3 seeds, 0.940 F1 / 26.7 % review / 47.7 packets
+against 0.940 / 26.7 % / 47.0; the same reader also calling 40 % of cells
+`uncertain` (`noisy:0.32:0.4`), 0.940 / 25.8 % / 47.3 against 0.940 /
+26.7 % / 46.0. The one marker that changed is a heterogeneous CD8 whose
+first look was 18 of 27 uncertain: closed unreadable before, resolved at
+the truth's F1 1.0 now. A step and a split each fired once in the 280
+markers: the scenes rarely put a leader on the lattice's edge or a wide
+mixed interval beside it, so the live rerun is their test.
+
 ## Not done in this branch
 
 - Sampling control (temperature, seed): the gateway chooses the model and

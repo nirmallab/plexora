@@ -10,6 +10,18 @@ A small closed set of actions, each a look at cells nobody has shown yet:
 - `extend` -- the leader sits at the edge of the surveyed range and the
   lattice has a point beyond it: that interval joins the range and is looked
   at, so a gate past every estimator is reachable, by a lattice point.
+- `step` -- the leader sits on the lattice's own highest or lowest point:
+  a point `edge_step` beyond it (fit units, snapped like a lattice point)
+  joins the range and its cells are looked at, at most `edge_steps` times
+  a side, once the leader beats its rivals; a leader is never resolved on
+  the lattice's edge while a step could still find cells there
+  (lsp11385_2 CD68, 2026-10-21: every cell shown below the top point read
+  unstained, and the person's gate lay above it).
+- `split` -- an interval beside the leader is wider than `split_width`
+  (fit units) and its cells are mixed (an own-stain share inside
+  `split_share`, on `split_reads` definite reads): it is cut into parts
+  of about the tolerance and looked at, once (CD163: no candidate between
+  6.70 and 7.69, the person's gate 7.31).
 - `tail` -- a rare marker (`state["rare"]`) whose leader would resolve:
   cells above the leader, up to the brightest, in proportion to where they
   lie. A rare population is never accepted without its own cells having
@@ -213,11 +225,9 @@ def next_action(state, to_fit, params) -> dict | None:
         ks = list(range(len(n_cells)))
         return _plan(state, ks, allocate([1.0] * len(ks), available, total), "survey")
     leader = s["leader"]
-    lo, hi = state["window"]
-    if leader == 0 and lo > 0:
-        return {"kind": "extend", "side": "down"}
-    if leader == len(bounds) - 1 and hi < len(state["points"]) - 1:
-        return {"kind": "extend", "side": "up"}
+    change = growth(state, s, to_fit, params)
+    if change is not None:
+        return change
     # Only a rival that keeps the marker from resolving is worth a look; the
     # cells between it and the leader are drawn in proportion to how many
     # each interval holds, so their pooled share estimates the cells the
@@ -231,6 +241,66 @@ def next_action(state, to_fit, params) -> dict | None:
             return plan
     if state.get("rare") and not s["blocking"] and tail_status(state, s) == "open":
         return _tail_plan(state, s, total)
+    return None
+
+
+def can_step(state, side, params) -> bool:
+    """Whether a step beyond the lattice's edge on `side` may still be
+    tried: the range already reaches that edge, fewer than `edge_steps`
+    were tried, and some cells lie beyond it."""
+    if int(((state.get("grown") or {}).get(side)) or 0) >= int(params.get("edge_steps") or 0):
+        return False
+    lo, hi = state["window"]
+    points = state["points"]
+    if side == "up":
+        return hi == len(points) - 1 and \
+            int(points[hi]["n_positive"]) >= evidence.MIN_MATERIAL
+    below = int(state.get("n_finite") or 0) - int(points[lo]["n_positive"])
+    return lo == 0 and below >= evidence.MIN_MATERIAL
+
+
+def splittable(state, s, k, to_fit, params) -> bool:
+    """Whether interval k (of the window) is wide, mixed, holds enough cells
+    to matter, and was not split before."""
+    bounds, n_cells = window(state)
+    if not 0 <= k < len(n_cells) or not params.get("split_width"):
+        return False
+    if float(to_fit(bounds[k + 1])) - float(to_fit(bounds[k])) <= float(params["split_width"]):
+        return False
+    if [round(bounds[k], 6), round(bounds[k + 1], 6)] in (state.get("split") or []):
+        return False
+    if n_cells[k] < evidence.material(params.get("min_between") or 0,
+                                      params.get("min_between_share") or 0.0,
+                                      s["positives"]):
+        return False
+    share, n = evidence.estimate(s["table"][k])
+    low, high = params.get("split_share") or (0.2, 0.8)
+    return share is not None and n >= float(params.get("split_reads") or 0) \
+        and low <= share <= high
+
+
+def growth(state, s, to_fit, params) -> dict | None:
+    """The range's next change before the leader can stand: a lattice point
+    beyond its edge (`extend`), a step beyond the lattice (`step`), or a
+    wide mixed interval beside the leader cut finer (`split`); None."""
+    bounds, _ = window(state)
+    leader = s["leader"]
+    lo, hi = state["window"]
+    if leader == 0 and lo > 0:
+        return {"kind": "extend", "side": "down"}
+    if leader == len(bounds) - 1 and hi < len(state["points"]) - 1:
+        return {"kind": "extend", "side": "up"}
+    # A step checks a leader that would otherwise stand; while a rival still
+    # blocks it, the cells between them are the look's business (a step taken
+    # first spent the look a dispute below needed: two synthetic CD4s under
+    # a noisy reader, 2026-10-21).
+    if s["resolved"] and leader == 0 and can_step(state, "down", params):
+        return {"kind": "step", "side": "down"}
+    if s["resolved"] and leader == len(bounds) - 1 and can_step(state, "up", params):
+        return {"kind": "step", "side": "up"}
+    for k in (leader - 1, leader):
+        if splittable(state, s, k, to_fit, params):
+            return {"kind": "split", "interval": k, "from": bounds[k], "to": bounds[k + 1]}
     return None
 
 
@@ -253,12 +323,10 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
         return "readers_unreliable", s
     if s is None:
         return None, s
-    lo, hi = state["window"]
-    at_edge = (s["leader"] == 0 and lo > 0) or \
-        (s["leader"] == hi - lo and hi < len(state["points"]) - 1)
-    if s["resolved"] and not at_edge:
+    if s["resolved"] and growth(state, s, to_fit, params) is None:
         # A leader at the edge of the surveyed range says the gate is there or
-        # beyond it: the next lattice point is looked at first.
+        # beyond it: the next point is looked at first; one beside a wide
+        # mixed interval may belong inside it.
         if not state.get("rare"):
             return "resolved", s
         # A rare marker's leader stands only on its own cells read stained.
@@ -267,7 +335,9 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
             return "resolved", s
         if status == "refuted":
             return "positives_not_confirmed", s
+    valid = sum(1 for o in state["observations"] if o.get("valid", True))
     if s["labelled"] >= params["min_labelled"] \
+            and valid >= int(params.get("unreadable_looks") or 1) \
             and (s["other_share"] or 0) > params["max_other_share"]:
         return "unreadable", s
     if len(state["observations"]) >= int(params["looks_max"]):

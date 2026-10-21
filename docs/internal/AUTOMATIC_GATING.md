@@ -304,13 +304,26 @@ and current call in its caption).
   estimator, and widens a point at a time when the leader sits at its edge
   (never resolved there while points lie beyond). A lattice of one point
   gets steps 0.25 and 0.5 (fit units) either side, so a lone candidate is
-  tested, never accepted unseen.
+  tested, never accepted unseen. Past the lattice: a leader that beats its
+  rivals on the lattice's own highest or lowest point gets a point 0.25
+  beyond it (`step`, at most two a side, while cells lie there); an
+  interval beside the leader wider than 0.4 whose cells read mixed (own
+  share 0.2 to 0.8 on six definite reads or more) is cut into parts about
+  the tolerance wide, once (`split`). Both points are snapped like lattice
+  points, so the gate is still never a number typed by anyone.
 - **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
   intervals plus 4 negative sentinels from below every candidate, shuffled
   and numbered; the 2 x 2 multi-view block when the marker has a partner.
   No value, call, gate, candidate or ranking anywhere in it. One label a
   cell: `own_stain`, `not_own_stain`, `uncertain`, `artifact`. No
-  confidence word: code's confidence is not the reader's.
+  confidence word: code's confidence is not the reader's. The reading
+  follows the user's conventions: a faint stain is own stain when the
+  marker's lineage names several cell types (CD4 on myeloid cells); in a
+  crowded field a ring stained on its free sides is own stain, light only
+  on the side facing a brighter neighbour is not; for a fibrous stain shape
+  does not decide -- a spindle cell in a band and a round cell beside a
+  vessel both count when the band hugs their outline (SMA, as the user
+  gates it).
 - **Code chooses.** Each candidate scores the cells it would get wrong
   (interval own-stain shares, monotone in value, unread intervals neutral);
   the leader beats a rival when the cells between them -- each interval
@@ -329,7 +342,9 @@ and current call in its caption).
   beaten; otherwise review at the leader for a named reason
   (`controller.STATUSES`). At most `panel_looks` looks (3); a cell is never
   shown twice; a look whose sentinels are read stained twice is discarded,
-  two such looks mark the reader unreliable (review at the start). While a
+  two such looks mark the reader unreliable (review at the start). Most
+  labels uncertain closes a marker `unreadable` only after two valid looks:
+  one panel of a crowded immune field is not enough. While a
   marker is in panels, an answer's outcome says nothing about any gate.
 - **Classifier check (`classifier: check`).** Once a leader resolves, the
   classifier trained at it may earn one more panel, the marker's last: its

@@ -563,3 +563,117 @@ def test_a_single_candidate_gets_steps_either_side_on_the_grid(monkeypatch):
     assert fits == pytest.approx(sorted(s * k for s in hypotheses.SINGLE_STEPS
                                         for k in (-1, 1)), abs=1e-6)
     assert all(p["n_positive"] == int(col.n_positive(p["low"], top)) for p in added)
+
+
+# -- the range grows where the evidence points ----------------------------------------------
+
+
+GROW = dict(PARAMS, min_between=20, min_between_share=0.25, resolve_within=0.3,
+            edge_step=0.25, edge_steps=2, split_width=0.4, split_share=[0.2, 0.8],
+            split_reads=6, split_parts=4, unreadable_looks=2)
+
+
+def test_one_look_of_uncertain_cells_does_not_close_a_marker():
+    state = _state()
+    crowded = _obs([2.5] * 6 + [3.5] * 14, ["not_own_stain"] * 6 + ["uncertain"] * 14)
+    state["observations"].append(crowded)
+    assert controller.decide(state, IDENTITY, GROW)[0] is None
+    state["observations"].append(_obs([2.6] * 6 + [3.6] * 14,
+                                      ["not_own_stain"] * 6 + ["uncertain"] * 14))
+    assert controller.decide(state, IDENTITY, GROW)[0] == "unreadable"
+
+
+def test_a_leader_on_the_lattices_top_point_steps_beyond_it():
+    # Every cell shown below the top point read unstained: the gate is there
+    # or above it, and the cells above were never shown.
+    state = _state(lows=(1.0, 2.0, 3.0), n_positive=(1000, 600, 300), window=(0, 2), prior=1)
+    state.update(n_finite=1500, grown={"up": 0, "down": 0})
+    state["observations"].append(_obs([1.5] * 10 + [2.5] * 10, ["not_own_stain"] * 20))
+    status, s = controller.decide(state, IDENTITY, GROW)
+    assert s["leader"] == 2 and s["resolved"] and status is None
+    assert controller.next_action(state, IDENTITY, GROW) == {"kind": "step", "side": "up"}
+    # Once the steps are spent (or found no cells), it stands.
+    state["grown"]["up"] = GROW["edge_steps"]
+    assert controller.decide(state, IDENTITY, GROW)[0] == "resolved"
+    # Without the new parameters the engine behaves as before.
+    assert controller.decide(dict(state, grown={}), IDENTITY, PARAMS)[0] == "resolved"
+
+
+def test_a_leader_on_the_top_point_with_a_rival_still_blocking_is_refined_first():
+    # The cells just below the top point read partly stained: the dispute is
+    # there, and a look above the lattice could not settle it. (The interval
+    # is narrower than `split_width`: a wide one would be split first.)
+    state = _state(lows=(1.0, 2.0, 2.35), n_positive=(1000, 600, 300), window=(0, 2), prior=1)
+    state.update(n_finite=1500, grown={"up": 0, "down": 0})
+    state["observations"].append(_obs([1.5] * 10 + [2.2] * 10,
+                                      ["not_own_stain"] * 10 + ["own_stain"] * 4
+                                      + ["not_own_stain"] * 6))
+    status, s = controller.decide(state, IDENTITY, GROW)
+    assert s["leader"] == 2 and not s["resolved"] and status is None
+    assert controller.next_action(state, IDENTITY, GROW)["kind"] == "refine"
+
+
+def test_a_wide_mixed_interval_beside_the_leader_is_split_once():
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 800, 200, 100), window=(0, 3),
+                   prior=1)
+    state.update(n_finite=1200, grown={"up": 0, "down": 0}, split=[])
+    # Unstained below 2, stained above 3, half and half in the 600 cells
+    # between: the boundary is inside (2, 3].
+    state["observations"].append(_obs([1.5] * 8 + [2.5] * 10 + [3.5] * 8,
+                                      ["not_own_stain"] * 8 + ["own_stain", "not_own_stain"] * 5
+                                      + ["own_stain"] * 8))
+    status, s = controller.decide(state, IDENTITY, GROW)
+    assert status is None
+    plan = controller.next_action(state, IDENTITY, GROW)
+    assert plan == {"kind": "split", "interval": 1, "from": 2.0, "to": 3.0}
+    state["split"].append([2.0, 3.0])
+    assert (controller.next_action(state, IDENTITY, GROW) or {}).get("kind") != "split"
+
+
+def test_a_homogeneous_wide_interval_is_not_split():
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 800, 200, 100), window=(0, 3),
+                   prior=1)
+    state.update(n_finite=1200, grown={"up": 0, "down": 0}, split=[])
+    state["observations"].append(_obs([1.5] * 8 + [2.5] * 10 + [3.5] * 8,
+                                      ["not_own_stain"] * 18 + ["own_stain"] * 8))
+    s = controller.support(state, IDENTITY, GROW)
+    assert not any(controller.splittable(state, s, k, IDENTITY, GROW) for k in range(3))
+
+
+def test_points_joined_to_the_range_keep_its_ends_and_its_prior():
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 800, 200, 100), window=(1, 3),
+                   prior=2)
+    hypotheses._insert(state, [{"id": "split:2.5", "low": 2.5, "n_positive": 500,
+                                "sources": ["split:2.5"]}])
+    assert [p["low"] for p in state["points"]] == [1.0, 2.0, 2.5, 3.0, 4.0]
+    assert state["window"] == [1, 4] and state["points"][state["prior"]]["low"] == 3.0
+    hypotheses._insert(state, [{"id": "step:5", "low": 5.0, "n_positive": 40,
+                                "sources": ["step:5"]}], side="up")
+    assert state["window"] == [1, 5] and state["added_points"] == ["split:2.5", "step:5"]
+
+
+def test_a_step_and_a_split_are_lattice_like_points_on_the_column(monkeypatch):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import hypotheses
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    values = np.expm1(np.random.default_rng(5).normal(2.0, 0.5, 5000).clip(0.1))
+    ds = FakeData({"M": values})
+    monkeypatch.setattr(model, "_description", lambda _ds: {})
+    col = profmod.column(ds, "M")
+    top = float(values.max())
+    lows = [float(np.expm1(x)) for x in (1.6, 2.0, 2.4)]
+    state = {"points": [{"id": f"p{i}", "low": lo, "sources": ["gmm"],
+                         "n_positive": int(col.n_positive(lo, top))} for i, lo in enumerate(lows)],
+             "window": [0, 2], "prior": 1, "top": top, "n_finite": int(col.n_finite),
+             "grown": {"up": 0, "down": 0}, "split": [], "observations": [],
+             "params": dict(GROW, tolerance=0.2, min_gap=0.1)}
+    step = hypotheses._step(ds, "M", col, state, "up")
+    assert len(step) == 1 and float(col.to_fit(step[0]["low"])) == pytest.approx(2.65, abs=1e-6)
+    assert state["window"] == [0, 3] and state["grown"]["up"] == 1
+    added = hypotheses._split(ds, "M", col, state, lows[0], lows[1])
+    assert [round(float(col.to_fit(p["low"])), 6) for p in added] == [1.8]
+    assert state["split"] == [[round(lows[0], 6), round(lows[1], 6)]]
+    assert all(p["n_positive"] == int(col.n_positive(p["low"], top)) for p in step + added)

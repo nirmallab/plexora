@@ -147,7 +147,8 @@ def rows_for(direction, evidence) -> dict:
 
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring);
-    `noisy:P` turns a word with probability P."""
+    `noisy:P` turns a word with probability P; `noisy:P:U` also calls a
+    panel cell (not a sentinel) `uncertain` with probability U."""
 
     def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, ids=None):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
@@ -155,9 +156,9 @@ class TruthAgent:
         # own truth, not by the truth's best single cut.
         self.rows = None if ids is None else {int(i): r for r, i in enumerate(ids)}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
-        self.style, self.p = (style.split(":") + ["0.2"])[:2] if style.startswith("noisy") \
-            else (style, "0")
-        self.p = float(self.p)
+        self.style, self.p, self.u = (style.split(":") + ["0.2", "0"])[:3] \
+            if style.startswith("noisy") else (style, "0", "0")
+        self.p, self.u = float(self.p), float(self.u)
         self.rng = np.random.default_rng(seed)
         self._best = {}
 
@@ -200,6 +201,9 @@ class TruthAgent:
                 else float(c["value"]) > cut
             if self.style == "noisy" and self.rng.random() < self.p:
                 own = not own
+            if self.u and not c.get("sentinel") and self.rng.random() < self.u:
+                out[c["number"]] = "uncertain"
+                continue
             out[c["number"]] = "own_stain" if own else "not_own_stain"
         return out
 
