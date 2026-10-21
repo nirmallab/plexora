@@ -419,6 +419,60 @@ ran out of looks none moved at the close, and the order test never fired
 inside the loop: a reader whose slips are blind to the value gives it
 nothing to find.
 
+### Replicates on lsp11385_2 (VERSION 5, 2026-10-21)
+
+Three runs per engine, seeds 1 to 3, the options of live run 1, every
+packet answered by Opus. Classic gs_20261021T151220_295e7c (run 1),
+gs_20261021T174335_ab0cb8, gs_20261021T175910_9c1d8d; candidates
+gs_20261021T174334_60d67c, gs_20261021T175908_231b7a,
+gs_20261021T181504_fc6fa9.
+
+| run | MAE | median | within 0.2 | 0.4 or more off | review | packets |
+|---|---|---|---|---|---|---|
+| classic 1 | 0.235 | 0.19 | 10 | 4 | 6 | 47 |
+| classic 2 | 0.321 | 0.37 | 7 | 7 | 0 | 45 |
+| classic 3 | 0.317 | 0.27 | 7 | 6 | 1 | 41 |
+| candidates 1 | 0.195 | 0.12 | 11 | 3 | 9 | 41 |
+| candidates 2 | 0.239 | 0.19 | 9 | 3 | 11 | 47 |
+| candidates 3 | 0.277 | 0.22 | 7 | 5 | 12 | 49 |
+
+| | classic | candidates |
+|---|---|---|
+| MAE, mean of runs (sd) | 0.291 (0.049) | 0.237 (0.041) |
+| classic minus candidates, 95 % bootstrap over markers | | 0.054 [-0.046, 0.167] |
+| markers where candidates is nearer (mean of runs) | | 8 of 17 |
+| 0.4 or more off | 17 of 51 | 11 of 51 |
+| per-marker spread over runs, mean (median) | 0.126 (0.07) | 0.334 (0.25) |
+| markers with one gate in all three runs | 6 | 0 |
+| closed for review | 7 of 51 | 32 of 51 |
+| MAE accepted / review | 0.301 / 0.227 | 0.166 / 0.279 |
+| images per run | 80 | 46 |
+
+What it says:
+
+- **Accuracy:** candidates ahead on the mean (0.237 vs 0.291), not
+  separable from noise over 17 markers (the interval spans 0), nearer on
+  8 of 17. Classic's large misses are stable ones (MART1 +0.75 to +0.89,
+  CD68 -0.51 three times, Ecad +0.48 three times, PD1 about -0.45);
+  candidates' are scattered (CD163 -0.12 / +0.38 / +0.63, PD1 +0.05 /
+  -0.45 / +0.20).
+- **Confidence tracks error on candidates and not on classic:** its
+  accepted gates are 0.166 off, its review gates 0.279 -- the held-out
+  bar's direction; classic's accepted are farther off than its review.
+- **Stability fails.** The spread is 2.6 times classic's and no marker
+  landed on one gate three times. Classic is stable because its start
+  decides most markers and the looks seldom move it; candidates' gate is
+  placed by the reads, and 63 % of its markers close for review at
+  whatever the run's reads made the leader -- the first point of the
+  reader-variance list above.
+- **Decision gate 1 (this image only; the PCA dev images not run):** MAE
+  not worse -- met; share 0.4 or more off lower -- met (22 % vs 33 %);
+  spread not larger -- failed; calls per marker at most 2 -- failed
+  (2.7, classic 2.6); no empty gate -- met.
+- New rules fired: steps on 6 markers over the three runs, an in-loop
+  split on 4 (CD45 twice, CD163, SMA), the split at close once (CD8a run
+  1, 6.79 to 6.45, user 6.32).
+
 ## Not done in this branch
 
 - Robustness to a reader that reads the same cells differently run to
