@@ -334,6 +334,56 @@ the truth's F1 1.0 now. A step and a split each fired once in the 280
 markers: the scenes rarely put a leader on the lattice's edge or a wide
 mixed interval beside it, so the live rerun is their test.
 
+### Live run 2, candidates after the fixes (2026-10-21)
+
+gs_20261021T170029_b8c14e: the same image, markers, options and seed as
+run 1, VERSION 4, every packet answered by Opus (48 packets). Gaps to the
+user's gates:
+
+| marker | classic (run 1) | candidates run 1 | candidates run 2 | run 2 looks |
+|---|---|---|---|---|
+| CD45 | -0.12 | +0.24 | +0.08 | survey, refine, refine: resolved |
+| CD31 | -0.01 | +0.48 | +0.05 | survey, refine, refine |
+| Ecad | +0.48 | +0.81 | +0.40 | survey, refine, refine |
+| SMA | +0.03 | +1.14 | +0.19 | survey, refine, refine |
+| Ki67 | +0.06 | +0.09 | +0.09 | survey, refine: resolved |
+| PDL1 | -0.33 | -0.30 | -0.19 | survey, extend, tail: no boundary |
+| SOX10 | +0.00 | -0.08 | +0.08 | deterministic (T1) |
+| MART1 | +0.75 | -0.13 | +0.22 | survey, refine, refine |
+| CD3e | -0.30 | -0.30 | -0.30 | survey, refine, refine: resolved |
+| CD20L | -0.19 | -0.19 | +0.10 | survey, step (6.92), tail |
+| CD4 | +0.34 | +0.27 | +0.63 | survey, refine, refine |
+| CD8a | -0.20 | -0.34 | -0.20 | survey, refine, refine |
+| CD11c | +0.06 | +0.22 | +0.17 | survey, extend: resolved |
+| CD68 | -0.51 | -0.21 | +0.04 | survey, step (6.38), step (6.63): resolved |
+| CD163 | -0.04 | +0.38 | +0.38 | survey, refine, refine |
+| FOXP3 | -0.13 | -0.07 | -0.17 | survey, refine, refine: resolved |
+| PD1 | -0.44 | +0.01 | -0.12 | three looks: unreadable |
+| **MAE** | **0.235** | 0.309 | **0.201** | |
+| within 0.2 | 10 | 6 | 12 | |
+| 0.4 or more off | 4 | 3 | 2 | |
+| review | 6 | 13 | 11 | |
+
+Ahead of classic on this run, by less than one run can separate from
+reader noise (Opus words agreed 0.78 run to run on the classic looks):
+replicates on frozen code come before any claim. The steps did what they
+were for (CD68 -0.21 to +0.04); no split fired; no marker closed
+unreadable before its third look. Two misses the records explain:
+
+- **CD163** (+0.38): the interval 6.87 to 7.69 read 4 stained of 21, under
+  the split's 0.2 share, so it was not cut -- but all four stained reads
+  lie at 7.26 to 7.55 and the unstained mostly below 7.2: the edge is
+  inside the interval, and the share hides it because the dim end holds
+  most of its cells. A trigger on the reads' order by value within the
+  interval would have split it (proposed, not built).
+- **CD4** (+0.63): the reader called the cells at 6.5 to 7.0 unstained
+  although the panel named the lineage (helper T cells; monocytes and
+  macrophages, weaker). Its partner panel showed CD3e as the expected
+  partner, so a dim CD4 myeloid cell -- CD3e-negative -- looks like spill
+  beside it. A multi-lineage marker's expected partner could be the
+  lineages' common one (CD45) instead (proposed, not built: CD4's
+  partners also feed the classic engine's looks and the hierarchy).
+
 ## Not done in this branch
 
 - Sampling control (temperature, seed): the gateway chooses the model and
