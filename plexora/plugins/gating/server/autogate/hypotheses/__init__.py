@@ -31,7 +31,7 @@ from plexora.plugins.gating.server.autogate.hypotheses import controller, eviden
 from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 
 #: Bumped whenever the same answers would choose a different gate.
-VERSION = "1"
+VERSION = "2"
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -47,6 +47,18 @@ PARAMS = {
     # Fit units within which two candidates need not be told apart: the
     # user's own retest noise.
     "tolerance": 0.2,
+    # Resolved once the leader beats every rival farther than this: a rival
+    # nearer may stay undecided (the stain's edge can lie between two close
+    # candidates, whose cells are then mixed by nature). lsp11385_2, one run
+    # (2026-10-21): with every rival past the tolerance required, no marker
+    # resolved, CD3e and CD8a included, ending 0.01 and 0.02 from the user.
+    "resolve_within": 0.3,
+    # Candidates nearer than this (fit units) are one: the lattice packs
+    # points a few hundredths apart in the background.
+    "min_gap": 0.1,
+    # A rival whose call differs from the leader's on fewer cells than this
+    # is the same gate in effect (the lattice merges intervals below it).
+    "min_between": 20,
     # Most labels uncertain or artifact (once this many cells were read):
     # the marker is unreadable this way.
     "min_labelled": 10,
@@ -83,10 +95,12 @@ def start(engine, unit) -> dict:
     lat = engine.lattice_for(unit)
     _ds, col = _column(engine, unit)
     begin = start_low(unit)
-    cands = candmod.build(lat, begin, col.to_fit, PARAMS["tolerance"])
+    cands = candmod.build(lat, begin, col.to_fit, PARAMS["tolerance"],
+                          min_gap=PARAMS["min_gap"])
     points = [{"low": float(p["low"]), "n_positive": int(p["n_positive"]), "id": p["id"],
                "sources": list(p["sources"])}
-              for p in sorted(lat.get("points") or [], key=lambda p: p["low"])]
+              for p in candmod.thin(sorted(lat.get("points") or [], key=lambda p: p["low"]),
+                                    col.to_fit, PARAMS["min_gap"])]
     if cands["window"] is None or len(cands["bounds"]) < 2:
         unit["hypotheses"] = {"version": VERSION, "status": "no_candidates",
                               "reason": "the lattice has fewer than two candidate gates"}
@@ -96,7 +110,7 @@ def start(engine, unit) -> dict:
         "prior": int(cands["prior"]), "start": begin,
         "clusters": cands["clusters"], "spread": candmod.spread(cands, col.to_fit),
         "lattice": lat.get("fingerprint"), "observations": [], "status": None,
-        "params": dict(PARAMS)}
+        "params": {**PARAMS, "looks_max": int(engine.options["panel_looks"])}}
     return unit["hypotheses"]
 
 
@@ -113,7 +127,8 @@ def packet(engine, units):
     unit = units[0]
     state = start(engine, unit)
     ds, col = _column(engine, unit)
-    plan = controller.next_action(state, col.to_fit, state["params"])
+    plan = state.pop("pending", None) or controller.next_action(state, col.to_fit,
+                                                                state["params"])
     if plan is not None and plan["kind"] == "extend":
         new = controller.extend(state, plan["side"])
         bounds, n_cells = controller.window(state)
@@ -133,9 +148,11 @@ def packet(engine, units):
         "intervals": [{"from": iv["from"], "to": iv["to"], "n": iv["n"]}
                       for iv in plan["intervals"]],
         "exclude": _shown_ids(state), "n_sentinels": int(params["sentinels"]),
-        "sentinel_below": bounds[0], "seed": _seed(engine, state)})
+        "sentinel_below": bounds[0], "seed": _seed(engine, state),
+        "ids": plan.get("ids") or []})
     for cell in sampled["cells"]:
-        cell["interval"] = plan["intervals"][cell["interval"]]["interval"]
+        if cell.get("interval") is not None:
+            cell["interval"] = plan["intervals"][cell["interval"]]["interval"]
     seed = _seed(engine, state)
     arranged = panelmod.arrange(sampled["cells"], sampled["sentinels"], seed)
     if not arranged:
@@ -160,6 +177,10 @@ def packet(engine, units):
                                      "not_expected": partners["markers"].get("anti")}}
                  if partners else {})
     guide = ["panel", "collage_panel_m" if partners else "collage_panel"]
+    fibrous = ((engine.panel_for(unit["project"]).get("entries") or {})
+               .get(unit["marker"]) or {}).get("morphology") == "fibrous"
+    if fibrous:
+        guide.append("panel_fibrous")
     pkt = {
         "question": (f"{unit['marker']} ({ds.name}): for EVERY numbered cell, does it carry "
                      f"its OWN {stain} stain, around the nucleus the ticks mark? One word per "
@@ -223,10 +244,14 @@ def step(engine, unit) -> dict:
         state["leader"] = s["low"]
         state["support"] = {k: s[k] for k in ("loss", "fractions", "rivals", "labelled",
                                               "other_share")}
-    if status is None:
-        return transitions._outcome(unit, look=len(state["observations"]),
-                                    leader=state.get("leader"))
-    finish(engine, unit, status)
+    if status is not None:
+        finish(engine, unit, status)
+    if unit["state"] == "awaiting_panel":
+        # Still looking (or a classifier check's look is next): nothing that
+        # says where any gate is goes back to the reader, whose next panel
+        # must stay blind.
+        return {"unit": f"{unit['project']}::{unit['marker']}", "state": unit["state"],
+                "look": len(state["observations"])}
     return transitions._outcome(unit, status=status, leader=state.get("leader"))
 
 
@@ -237,6 +262,16 @@ def finish(engine, unit, status):
     state["status"] = status
     leader = state.get("leader")
     if status == "resolved":
+        from plexora.plugins.gating.server.autogate.hypotheses import classifier_check
+
+        check = classifier_check.plan(engine, unit, state, _shown_ids(state))
+        if check is not None:
+            # One more look before anything is written: the classifier's
+            # disagreements on both sides, among cells it did not choose.
+            state["status"] = None
+            state["pending"] = check
+            state["params"]["looks_max"] = int(state["params"]["looks_max"]) + 1
+            return
         state["reason"] = "the leading candidate beat every rival outside the tolerance"
         unit["candidate"] = float(leader)
         unit["path"] = "panel"
@@ -267,13 +302,22 @@ def settle(engine, unit):
 
 def confidence(unit) -> str:
     """The panel path's confidence, before the shared caps
-    (`engine.confidence_for`), tagged uncalibrated until it is fitted on
-    the dev bench: high when every rival outside the tolerance was beaten
-    by a clear margin and the candidates' estimators agree; moderate when
-    resolved; low otherwise."""
+    (`engine.confidence_for`). With a frozen calibration table
+    (`calibration.load`), the level of P(|gap| <= 0.2) its features give;
+    without one, a rule tagged `uncalibrated`: high when every rival outside
+    the tolerance was beaten by a clear margin and the candidates'
+    estimators agree; moderate when resolved; low otherwise."""
+    from plexora.plugins.gating.server.autogate.hypotheses import calibration
+
     state = unit.get("hypotheses") or {}
     if state.get("status") != "resolved":
         return "low"
+    table = calibration.load()
+    row = calibration.features(state) if table else None
+    if row is not None:
+        p = calibration.predict(table, row)
+        state["calibrated"] = {"version": table["version"], "p_within": round(p, 3)}
+        return calibration.level(p)
     rivals = (state.get("support") or {}).get("rivals") or []
     margins = [min(abs(r["ci"][0] - 0.5), abs(r["ci"][1] - 0.5)) for r in rivals]
     clear = not margins or min(margins) >= 0.1
@@ -293,4 +337,5 @@ def provenance(unit) -> dict | None:
                               "kind": (o.get("plan") or {}).get("kind"),
                               "n_cells": len(o.get("cells") or ())}
                              for o in state.get("observations") or ()],
-            "confidence": "uncalibrated"}
+            "confidence": ({"calibrated": state["calibrated"]} if state.get("calibrated")
+                           else "uncalibrated")}

@@ -295,6 +295,9 @@ class SessionOptions(AgentModel):
                                "picks the candidate the labels support, looks again only "
                                "where the leader has not beaten a rival, and closes for "
                                "review with a reason when it cannot.")
+    panel_looks: int = Field(3, ge=1, le=6, description="With engine candidates: the most "
+                             "cell panels one marker is shown before it closes for review "
+                             "(fewer when the leading candidate resolves first).")
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -869,7 +872,7 @@ def start(call, inp):
             "qc_exclusion": record["qc_exclusion"],
             **_qc_warning(record["qc_exclusion"]),
             **_unconfirmed_note(call.session, images, inp.setup),
-            **_guide(inp.reading, inp.known_guide),
+            **_guide(inp.reading, inp.known_guide, inp.engine),
             **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
@@ -1098,7 +1101,7 @@ def _expression_check(call, images):
     return {"status": "confirmed"}, receipts
 
 
-def _guide(reading, known=None):
+def _guide(reading, known=None, engine="classic"):
     """The reading guide, once per session (`packets.reading_guide`): a
     packet names the entries it relies on (and its answer schema) instead of
     repeating them. Byte-stable for a build, so a client caches it; a caller
@@ -1107,10 +1110,10 @@ def _guide(reading, known=None):
 
     if reading != "once":
         return {}
-    version = packets.guide_version()
+    version = packets.guide_version(engine)
     if known == version:
         return {"guide_version": version, "reading_guide": "unchanged (you hold it)"}
-    return {"guide_version": version, "reading_guide": packets.reading_guide(),
+    return {"guide_version": version, "reading_guide": packets.reading_guide(engine),
             "reading_note": "every packet's `evidence.guide` names the entries of this guide "
                             "it relies on, and `answer_schema.see` its answer schema; keep it "
                             "for the whole session (pass `guide_version` back as "
@@ -2002,7 +2005,8 @@ def status(call, inp):
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         reader = None
-        if engine.options["reading"] == "once" and inp.known_guide != packets.guide_version():
+        if engine.options["reading"] == "once" \
+                and inp.known_guide != packets.guide_version(engine.options["engine"]):
             # A caller without the guide is a new conversation: nothing sent
             # before may be pointed at (`packets.as_in`).
             reader = packets.new_reader(record)
@@ -2031,7 +2035,8 @@ def status(call, inp):
                "pixel": _pixel_brief(record.get("pixel")),
                "display": _display_brief(record.get("display")),
                "summary": engines.summary_of(record),
-               **_guide(record["options"]["reading"], inp.known_guide),
+               **_guide(record["options"]["reading"], inp.known_guide,
+                        engine.options["engine"]),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),

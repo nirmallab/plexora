@@ -149,8 +149,11 @@ class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring);
     `noisy:P` turns a word with probability P."""
 
-    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0):
+    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, ids=None):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
+        # Cell id -> row, when known: a panel's cells are then read by their
+        # own truth, not by the truth's best single cut.
+        self.rows = None if ids is None else {int(i): r for r, i in enumerate(ids)}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
         self.style, self.p = (style.split(":") + ["0.2"])[:2] if style.startswith("noisy") \
             else (style, "0")
@@ -181,18 +184,20 @@ class TruthAgent:
         return "too_low" if low < best else "too_high"
 
     def panel_labels(self, marker, packet) -> dict:
-        """A blind panel read against the truth's best single cut (the gate
-        the truth itself implies): own stain above it, not below; `noisy:P`
+        """A blind panel read by each cell's own truth (the scene's, by cell
+        id), or, without ids, against the truth's best single cut; `noisy:P`
         turns each cell's word with probability P, `lazy` cannot tell any.
-        The cells' values are the stored packet's (`_panel`), which the
-        reader never sees."""
+        The cells are the stored packet's (`_panel`), which the reader never
+        sees."""
         cells = (packet.get("_panel") or {}).get("cells") or []
         if self.style == "lazy":
             return {c["number"]: "uncertain" for c in cells}
         cut, _errors = self.best(marker)
         out = {}
         for c in cells:
-            own = float(c["value"]) > cut
+            row = None if self.rows is None else self.rows.get(int(c["cell_id"]))
+            own = bool(self.truth[marker][row]) if row is not None \
+                else float(c["value"]) > cut
             if self.style == "noisy" and self.rng.random() < self.p:
                 own = not own
             out[c["number"]] = "own_stain" if own else "not_own_stain"
@@ -271,7 +276,8 @@ class TruthAgent:
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
 VARIANTS = {"baseline": {}, "tiles": {"tiles": True}, "absence": {"absence_check": True},
             "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"},
-            "candidates": {"engine": "candidates"}}
+            "candidates": {"engine": "candidates"},
+            "candidates_2": {"engine": "candidates", "panel_looks": 2}}
 
 
 def variant_arm(variant, variants) -> str:
@@ -501,7 +507,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,
                                           seed=seed + index, markers=markers)
                 agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                   seed=seed + index)
+                                   seed=seed + index, ids=made.get("ids"))
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
                                                variants=variants)
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
@@ -551,13 +557,13 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
                 runs = []
                 for repeat in range(int(repeats)):
                     agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                       seed=seed + 1000 * repeat + index)
+                                       seed=seed + 1000 * repeat + index, ids=made.get("ids"))
                     units, _status, _s, _sid = run_session(
                         session, name, markers, agent, mode="propose",
                         options={**options, "agent": f"{agent_style}#{repeat}"})
                     runs.append(units)
                 replay_agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                          seed=seed + index)
+                                          seed=seed + index, ids=made.get("ids"))
                 replay, _status, _s, _sid = run_session(
                     session, name, markers, replay_agent, mode="propose",
                     options={**options, "agent": f"{agent_style}#0"})

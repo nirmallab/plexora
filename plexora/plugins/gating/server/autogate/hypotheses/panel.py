@@ -21,9 +21,10 @@ from plexora.plugins.gating.server.autogate import sampler
 
 
 def panel_cells(ds, marker, intervals, *, exclude=(), n_sentinels=4, sentinel_below=None,
-                spatial_k=8, seed=0) -> dict:
+                spatial_k=8, seed=0, ids=()) -> dict:
     """{cells, sentinels}: `intervals` is [{from, to, n}] (cells with
-    from < value <= to); `exclude` the cell ids already shown."""
+    from < value <= to); `exclude` the cell ids already shown; `ids` cells
+    chosen by id (a classifier check's), shown too unless excluded."""
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
@@ -42,6 +43,12 @@ def panel_cells(ds, marker, intervals, *, exclude=(), n_sentinels=4, sentinel_be
             record["interval"] = index
             record["selection"] = {"interval_cells": int(rows.shape[0]),
                                    "picked": int(len(picked))}
+            out.append(record)
+    if len(ids):
+        rows = np.flatnonzero(usable & np.isin(c.ids, np.asarray(list(ids), dtype=c.ids.dtype)))
+        for r in rows:
+            record = sampler._record(c, v, col, int(r), "panel", "chosen", None)
+            record["interval"] = None
             out.append(record)
     sentinels = []
     if n_sentinels and sentinel_below is not None:

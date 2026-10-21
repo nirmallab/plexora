@@ -126,6 +126,11 @@ READING_GUIDE = {
               "random order, so a row means nothing; judge every cell on its own, by shape, "
               "not brightness. Say `uncertain` rather than guess. Plexora chooses the gate "
               "from the words"),
+    "panel_fibrous": ("a fibrous stain (smooth muscle, vessel walls, fibroblasts): its "
+                      "own cells are spindle-shaped, their long nucleus lying inside a band "
+                      "or along it, the band hugging the outline on its long sides; a round "
+                      "nucleus beside a band, or one the band passes with a dark gap, is "
+                      "`not_own_stain`"),
     "collage_panel": ("each cell is two panels side by side, blue nuclei and the marker in "
                       "yellow. Left, morphology: the marker windowed on this cell's own "
                       "brightest pixels (a cell with no stain stays dark; a brighter "
@@ -191,11 +196,39 @@ READING_GUIDE = {
 SIGNIFICANT = 4
 
 
-def reading_guide() -> dict:
+#: Guide entries and answer kinds only one engine's looks use
+#: (`SessionOptions.engine`): a session is sent its own engine's, and a
+#: packet that needs another's (a classic look inside a candidates session,
+#: for a marker with one candidate) carries those texts and its answer
+#: schema itself (`_reading`, `lean`).
+ENGINE_ONLY = {
+    "classic": {"entries": ("rows", "collage_t2", "collage_t3", "collage_t2m",
+                            "collage_flips_m", "collage_flips", "sheet_candidates",
+                            "within_partner", "requests"),
+                "kinds": ("t2_confirm", "t3_biological", "t4_candidates")},
+    "candidates": {"entries": ("panel", "panel_fibrous", "collage_panel", "collage_panel_m"),
+                   "kinds": ("cell_panel",)},
+}
+
+
+def reading_guide(engine="classic") -> dict:
     """The session's reading guide (`gating_session_start`, `_status`): the
     fixed texts, the compartment readings and every answer schema, in a fixed
-    order -- the same bytes for every session of a build, so an agent's
-    client caches it once (`guide_version` says when it changed)."""
+    order -- the same bytes for every session of a build and engine, so an
+    agent's client caches it once (`guide_version` says when it changed).
+    Another engine's looks are left out (`ENGINE_ONLY`)."""
+    guide = _full_guide()
+    for other, parts in ENGINE_ONLY.items():
+        if other == engine:
+            continue
+        for key in parts["entries"]:
+            guide.pop(key, None)
+        guide["answer_schemas"] = {k: v for k, v in guide["answer_schemas"].items()
+                                   if k not in parts["kinds"]}
+    return guide
+
+
+def _full_guide() -> dict:
     guide = dict(READING_GUIDE)
     for name, policy in sorted(schemas.COMPARTMENT_POLICY.items()):
         guide[f"compartment:{name}"] = policy["reading"]
@@ -217,13 +250,13 @@ def reading_guide() -> dict:
     return guide
 
 
-def guide_version() -> str:
-    """A short hash of `reading_guide()`: an agent that holds this version
-    passes it back (`known_guide`) and is not sent the guide again."""
+def guide_version(engine="classic") -> str:
+    """A short hash of `reading_guide(engine)`: an agent that holds this
+    version passes it back (`known_guide`) and is not sent the guide again."""
     import hashlib
     import json
 
-    blob = json.dumps(reading_guide(), sort_keys=True, separators=(",", ":"))
+    blob = json.dumps(reading_guide(engine), sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
 
@@ -269,7 +302,12 @@ def lean(packet, options) -> dict:
     stored is what is sent, so a packet fetched again is the same bytes."""
     packet["evidence"] = _lean_value(packet.get("evidence") or {})
     if options["reading"] == "once":
-        packet["answer_schema"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
+        if any(packet["kind"] in parts["kinds"] for name, parts in ENGINE_ONLY.items()
+               if name != options["engine"]):
+            # Not in this session's guide: the schema comes with the packet.
+            packet["answer_schema"] = answers.schema_for(packet["kind"])
+        else:
+            packet["answer_schema"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
         packet.pop("answer_with", None)
     progress = packet.get("progress") or {}
     if progress:
@@ -404,8 +442,13 @@ def _reading(engine, keys, specific=()):
     (with the marker's compartment and the plotted relation among them),
     plus what is specific to it -- or every text in full, when the session
     asked for `reading="every_packet"`."""
-    guide = reading_guide()
+    guide = reading_guide(engine.options["engine"])
+    full = _full_guide()
     specific = [s.strip("; ") for s in specific if s]
+    # An entry this session's guide leaves out (another engine's look) is
+    # sent with the packet.
+    specific = [full[k] for k in dict.fromkeys(keys) if k not in guide and k in full] \
+        + specific
     keys = [k for k in dict.fromkeys(keys) if k in guide]
     if engine.options["reading"] == "every_packet":
         return {"how_to_read": "; ".join([guide[k] for k in keys] + specific)}

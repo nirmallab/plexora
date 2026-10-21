@@ -298,10 +298,11 @@ choosing among candidates, and the classic look asks the least reliable
 question for it (which way a moving gate should go, with each cell's value
 and current call in its caption).
 
-- **Candidates are hypotheses.** The lattice's points; estimators are
-  clustered to describe disagreement, never averaged. The surveyed range
-  runs one point past the lowest and highest estimator, and widens a point
-  at a time when the leader sits at its edge.
+- **Candidates are hypotheses.** The lattice's points, those nearer than
+  0.1 merged; estimators are clustered to describe disagreement, never
+  averaged. The surveyed range runs one point past the lowest and highest
+  estimator, and widens a point at a time when the leader sits at its edge
+  (never resolved there while points lie beyond).
 - **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
   intervals plus 4 negative sentinels from below every candidate, shuffled
   and numbered; the 2 x 2 multi-view block when the marker has a partner.
@@ -311,13 +312,23 @@ and current call in its caption).
 - **Code chooses.** Each candidate scores the cells it would get wrong
   (interval own-stain shares, monotone in value, unread intervals neutral);
   the leader beats a rival when the pooled cells between them have a
-  Wilson 95 % interval wholly on its side of one half. Rivals within 0.2
-  (fit units) need not be beaten.
-- **Stopping is by rule.** Resolved when every rival outside the tolerance
-  is beaten; otherwise review at the leader for a named reason
-  (`controller.STATUSES`). At most 3 looks; a cell is never shown twice; a
-  look whose sentinels are read stained twice is discarded, two such looks
-  mark the reader unreliable (review at the start).
+  Wilson 95 % interval wholly on its side of one half. Rivals within 0.3
+  (fit units), or whose call differs on fewer than 20 cells, need not be
+  beaten. The first look gives every interval an equal share of its cells;
+  later ones go where an unbeaten rival's dispute holds the most cells.
+- **Stopping is by rule.** Resolved when every rival that matters is
+  beaten; otherwise review at the leader for a named reason
+  (`controller.STATUSES`). At most `panel_looks` looks (3); a cell is never
+  shown twice; a look whose sentinels are read stained twice is discarded,
+  two such looks mark the reader unreliable (review at the start). While a
+  marker is in panels, an answer's outcome says nothing about any gate.
+- **Classifier check (`classifier: check`).** Once a leader resolves, the
+  classifier trained at it may earn one more panel: its disagreements on
+  both sides, at most half the cells, the rest chosen without it; it can
+  make a rival win, never move a gate itself (`classifier_check.py`).
+- **Confidence.** A rule tagged `uncalibrated` until a table fitted on dev
+  records by `tools/bench_gates/calibrate.py` is committed
+  (`hypotheses/calibration.py`); then the level of P(|gap| <= 0.2).
 - **Writes as any other.** A resolved leader passes `run_regression`; a
   failed check caps confidence, never moves it (no purity push, no
   whole-image confirm, no classifier check on this path). Provenance

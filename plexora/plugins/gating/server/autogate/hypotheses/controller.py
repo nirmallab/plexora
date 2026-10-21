@@ -5,19 +5,22 @@ A small closed set of actions, each a look at cells nobody has shown yet:
 - `survey` -- the first look: cells spread over every disputed interval of
   the surveyed range, more from the intervals holding more cells.
 - `refine` -- cells between the leader and the rival whose dispute holds the
-  most cells (the cells whose call that choice changes) among the rivals the
-  leader has not beaten yet.
+  most cells (the cells whose call that choice changes) among the rivals
+  that block resolving: not yet beaten, and farther than `resolve_within`.
 - `extend` -- the leader sits at the edge of the surveyed range and the
   lattice has a point beyond it: that interval joins the range and is looked
   at, so a gate past every estimator is reachable, by a lattice point.
 
 Every look is new evidence by construction: a cell is shown once per marker,
 and an action whose intervals hold no unshown cell is refused. Stopping is
-by rule (`decide`): resolved when the leader beats every rival outside the
-tolerance; otherwise review, for a stated reason, at the leader -- when the
-look budget is spent, when no new cell can separate the leader from a
-rival, when the negative sentinels were read stained twice, or when most
-cells could not be read. Running out of looks never counts as resolved.
+by rule (`decide`): resolved when the leader beats every rival farther than
+`resolve_within`; otherwise review, for a stated reason, at the leader --
+when the look budget is spent, when no new cell can separate the leader
+from a rival, when the negative sentinels were read stained twice, or when
+most cells could not be read. Running out of looks never counts as resolved.
+
+The first look gives every interval between candidates an equal share of
+its cells; later looks spread theirs in proportion to the cells in dispute.
 """
 
 from __future__ import annotations
@@ -67,9 +70,9 @@ def shown(state) -> list:
 
 
 def allocate(weights, available, total) -> list:
-    """`total` picks over intervals in proportion to sqrt(weight), at most
+    """`total` picks over intervals in proportion to `weights`, at most
     `available` each, largest remainders first."""
-    share = [math.sqrt(w) if a > 0 else 0.0 for w, a in zip(weights, available)]
+    share = [float(w) if a > 0 else 0.0 for w, a in zip(weights, available)]
     picks = [0] * len(weights)
     left = total
     while left > 0:
@@ -101,7 +104,9 @@ def support(state, to_fit, params) -> dict | None:
     lo = state["window"][0]
     prior = min(max(state["prior"] - lo, 0), len(bounds) - 1)
     return evidence.support(bounds, n_cells, valid, prior=prior, to_fit=to_fit,
-                            tolerance=params["tolerance"])
+                            tolerance=params["tolerance"],
+                            resolve_within=params.get("resolve_within"),
+                            min_between=int(params.get("min_between") or 0))
 
 
 def _plan(state, intervals, picks, kind, **extra) -> dict | None:
@@ -123,15 +128,22 @@ def next_action(state, to_fit, params) -> dict | None:
     total = int(params["panel_cells"])
     s = support(state, to_fit, params)
     if s is None:
+        # An equal share for every interval between candidates: by cell
+        # count the crowded background takes the look, by width the long
+        # bright tail does, and neither is where the stain starts.
         ks = list(range(len(n_cells)))
-        return _plan(state, ks, allocate(n_cells, available, total), "survey")
+        return _plan(state, ks, allocate([1.0] * len(ks), available, total), "survey")
     leader = s["leader"]
     lo, hi = state["window"]
     if leader == 0 and lo > 0:
         return {"kind": "extend", "side": "down"}
     if leader == len(bounds) - 1 and hi < len(state["points"]) - 1:
         return {"kind": "extend", "side": "up"}
-    for rival in sorted(s["undecided"], key=lambda r: (-r["n_between"], r["distance"])):
+    # Only a rival that keeps the marker from resolving is worth a look; the
+    # cells between it and the leader are drawn in proportion to how many
+    # each interval holds, so their pooled share estimates the cells the
+    # choice changes.
+    for rival in sorted(s["blocking"], key=lambda r: (-r["n_between"], r["distance"])):
         a, b = sorted((leader, rival["index"]))
         ks = list(range(a, b))
         picks = allocate([n_cells[k] for k in ks], [available[k] for k in ks], total)
@@ -160,7 +172,12 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
         return "readers_unreliable", s
     if s is None:
         return None, s
-    if s["resolved"]:
+    lo, hi = state["window"]
+    at_edge = (s["leader"] == 0 and lo > 0) or \
+        (s["leader"] == hi - lo and hi < len(state["points"]) - 1)
+    if s["resolved"] and not at_edge:
+        # A leader at the edge of the surveyed range says the gate is there or
+        # beyond it: the next lattice point is looked at first.
         return "resolved", s
     if s["labelled"] >= params["min_labelled"] \
             and (s["other_share"] or 0) > params["max_other_share"]:

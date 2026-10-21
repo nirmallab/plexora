@@ -1555,7 +1555,7 @@ def test_packets_are_sent_lean():
                            "candidate": {"low": 6.788859540491426}, "within_allowed": []},
               "progress": {"units_done": 1, "units_total": 9, "by_state": {"a": 1}},
               "images": [{"role": "r", "estimated_vision_tokens": 700}]}
-    packets.lean(packet, {"reading": "once"})
+    packets.lean(packet, {"reading": "once", "engine": "classic"})
     ev = packet["evidence"]
     assert ev["partners"][0]["contradiction"] == 0.1235 and "control" not in ev["partners"][0]
     assert ev["candidate"]["low"] == 6.788859540491426      # gate values stay exact
@@ -1563,9 +1563,18 @@ def test_packets_are_sent_lean():
     assert packet["answer_schema"] == {"see": "reading_guide.answer_schemas.t2_confirm"}
     assert packet["progress"] == {"units_done": 1, "units_total": 9}
     assert packets.guide_version() == packets.guide_version()
-    assert set(packets.reading_guide()["answer_schemas"]) == set(
-        __import__("plexora.plugins.gating.server.autogate.answers",
-                   fromlist=["KINDS"]).KINDS)
+    # Each engine's guide holds its own looks' schemas and every shared one;
+    # together they hold every kind.
+    kinds = set(__import__("plexora.plugins.gating.server.autogate.answers",
+                           fromlist=["KINDS"]).KINDS)
+    guides = {name: set(packets.reading_guide(name)["answer_schemas"])
+              for name in packets.ENGINE_ONLY}
+    assert set().union(*guides.values()) == kinds
+    for name, parts in packets.ENGINE_ONLY.items():
+        assert set(parts["kinds"]) <= guides[name]
+        assert not set(parts["kinds"]) & set().union(
+            *(g for other, g in guides.items() if other != name))
+    assert packets.guide_version("classic") != packets.guide_version("candidates")
 
 
 # -- determinism: the lattice, row placement, the memo --------------------------------

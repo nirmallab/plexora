@@ -95,6 +95,73 @@ separates (heterogeneous CD4, low_snr CD4). Under noise a share of markers
 ends in review instead of accepted: by design, never "resolved" because the
 looks ran out.
 
+### First live run, 2026-10-21 (lsp11385_2, 5 markers, one run)
+
+Session gs_20261021T010154_b5686e over MCP, propose mode (nothing written),
+display check off, no memo; the reader was the developing session's model
+(claude-opus-5-5), answering every panel from the picture alone. Against the
+user's gates (`~/gatevision/gates_vs_human.csv`) and the classic engine's
+2026-10-18 run on the same image:
+
+| marker | user | scored start | candidates | classic |
+|---|---|---|---|---|
+| CD3e | 6.6 | 6.62 | 6.61 | 6.61 |
+| CD8a | 6.1 (6.17) | 5.80 | 6.12 | 6.07 |
+| FOXP3 | 6.0 (6.42) | 5.82 | 6.23 | 6.18 |
+| CD4 | 6.6 | 6.86 | 7.00 | 6.89 |
+| SMA | 6.0 | 5.72 | 6.36 | 5.72 |
+| MAE | | 0.208 | 0.204 | 0.158 |
+
+Not better than classic on these five (one run: within noise). Every marker
+spent 3 panels and closed for review. What the records showed, and the
+Phase 2 change each led to:
+
+- The survey spent a third of its cells on lattice slivers a few hundredths
+  apart in the background: candidates nearer than 0.1 are merged
+  (`min_gap`), and the survey gives each interval an equal share (by cell
+  count the background took the look; by value width, tried next, the long
+  bright tail did -- 13 of 20 cells on a synthetic CD8).
+- No marker could resolve: a rival just past the tolerance is never beaten
+  when the stain's edge lies between the two. Resolved now asks the leader
+  to beat every rival farther than 0.3 (`resolve_within`), and a rival whose
+  call differs on fewer than 20 cells never blocks (`min_between`); a
+  leader at the edge of the surveyed range is not resolved while lattice
+  points lie beyond it (a synthetic low-SNR CD4 had resolved at its range's
+  top, far below the truth).
+- SMA (fibrous): "is the stain this cell's own" read bands beside cells as
+  not, where the user counts them; a `panel_fibrous` reading names the
+  spindle cell inside or along a band as own stain (untested).
+- CD4: the reader called the cells at 6.8 to 7.0 unstained, as the classic
+  reader did; the user gates them positive. Reader convention, not fixable
+  from one image without tuning on LSP.
+- The answer to each panel told the reader the leading gate: removed; while
+  a marker is still in panels the outcome carries its state and look count
+  only.
+
+## Phase 2 to 4 on the branch (2026-10-21)
+
+- 2a: the controller changes above; `SessionOptions.panel_looks` (default 3)
+  and the bench variant `candidates_2` for the hard-two-looks arm.
+- 2c: a session is sent its own engine's reading guide
+  (`packets.ENGINE_ONLY`); a packet needing another engine's entry (a
+  classic look for a marker with one candidate) carries the text and its
+  answer schema itself.
+- 3: `classifier: "check"` on the candidates path
+  (`hypotheses/classifier_check.py`): once a leader resolves, the classifier
+  trained at it is compared across the range; where it disagrees enough one
+  more panel shows its disagreements on both sides (at most half the panel)
+  among cells chosen without it. It can make a rival win, never move a gate
+  by itself; a low signal grade is not consulted.
+- 4: `hypotheses/calibration.py` and `tools/bench_gates/calibrate.py`: a
+  logistic calibration over five stored features, fitted on dev records
+  only, checked by reliability and coverage on others; read-only at run
+  time, and until a table is committed confidence stays `uncalibrated`.
+- Not built: cross-marker revisits (2b) -- the engine already rescreens
+  dependants when a partner fails, and a revisit loop is a feedback path
+  that needs its own bench; the skill consolidation (seven to three) --
+  documentation with length caps, best done once the engine's packet kinds
+  are settled.
+
 ## Not done in this branch
 
 - Sampling control (temperature, seed): the gateway chooses the model and

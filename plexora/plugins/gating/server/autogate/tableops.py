@@ -156,7 +156,8 @@ def _panel_cells(ds, payload):
     return panel.panel_cells(
         ds, payload["marker"], payload["intervals"], exclude=payload.get("exclude") or (),
         n_sentinels=int(payload.get("n_sentinels", 4)),
-        sentinel_below=payload.get("sentinel_below"), seed=int(payload.get("seed") or 0))
+        sentinel_below=payload.get("sentinel_below"), seed=int(payload.get("seed") or 0),
+        ids=payload.get("ids") or ())
 
 
 OPERATIONS = {

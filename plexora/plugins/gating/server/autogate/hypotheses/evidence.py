@@ -116,11 +116,19 @@ def between(table, a, b) -> tuple:
     return own, read
 
 
-def support(bounds, n_cells, observations, *, prior, to_fit, tolerance) -> dict:
+def support(bounds, n_cells, observations, *, prior, to_fit, tolerance,
+            resolve_within=None, min_between=0) -> dict:
     """The leader among the candidates `bounds` (sorted table values) and,
     for every rival outside `tolerance`, whether the leader beats it.
 
-    `prior` is the candidate index a tie goes to (the scored start)."""
+    `prior` is the candidate index a tie goes to (the scored start).
+    `resolved` asks the leader to beat every rival farther than
+    `resolve_within` (default `tolerance`): a rival nearer than that may stay
+    undecided, since where the stain truly starts can lie between two close
+    candidates, and the cells between them are then mixed by nature. A
+    rival whose call differs from the leader's on fewer than `min_between`
+    cells is the same gate in effect and never blocks."""
+    resolve_within = tolerance if resolve_within is None else resolve_within
     table = counts(bounds, observations)
     fitted = fractions(table)
     loss = losses(n_cells, fitted)
@@ -144,9 +152,12 @@ def support(bounds, n_cells, observations, *, prior, to_fit, tolerance) -> dict:
                        "distance": round(abs(fits[j] - fits[leader]), 4)})
     labelled = sum(c["own"] + c["not"] + c["other"] for c in table)
     other = sum(c["other"] for c in table)
+    blocking = [r for r in rivals if not r["decisive"]
+                and r["distance"] > resolve_within + 1e-9
+                and r["n_between"] >= min_between]
     return {"leader": leader, "low": float(bounds[leader]), "loss": [round(v, 3) for v in loss],
             "fractions": [None if f is None else round(f, 4) for f in fitted],
             "table": table, "rivals": rivals,
             "undecided": [r for r in rivals if not r["decisive"]],
-            "resolved": all(r["decisive"] for r in rivals),
+            "blocking": blocking, "resolved": not blocking,
             "labelled": labelled, "other_share": (other / labelled) if labelled else None}

@@ -52,12 +52,29 @@ def clusters(points, to_fit, tolerance) -> list:
     return out
 
 
-def build(lattice, start, to_fit, tolerance) -> dict:
+def thin(points, to_fit, min_gap) -> list:
+    """`points` (sorted by value) with neighbours closer than `min_gap` (fit
+    units) merged into one: the estimator among them when there is one,
+    else the first. A survey over slivers a few hundredths apart spends its
+    cells on intervals no reader can tell apart."""
+    kept = []
+    for p in points:
+        if kept and float(to_fit(p["low"])) - float(to_fit(kept[-1]["low"])) < min_gap:
+            if is_estimate(p) and not is_estimate(kept[-1]):
+                kept[-1] = p
+            continue
+        kept.append(p)
+    return kept
+
+
+def build(lattice, start, to_fit, tolerance, min_gap=0.0) -> dict:
     """The candidates (`bounds`, sorted table values, with their lattice ids
     and positive counts), the cells in each interval between them, the
     estimator clusters, and the index of the start (the prior a tie goes to).
     """
     points = sorted(lattice.get("points") or [], key=lambda p: p["low"])
+    if min_gap:
+        points = thin(points, to_fit, min_gap)
     if not points:
         return {"bounds": [], "n_cells": [], "clusters": [], "prior": None, "window": None}
     est = [i for i, p in enumerate(points) if is_estimate(p)]

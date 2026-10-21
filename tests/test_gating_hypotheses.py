@@ -90,6 +90,26 @@ def test_unread_intervals_favour_no_candidate_and_ties_go_to_the_start():
     assert s["low"] == 3.0 and s["labelled"] == 0
 
 
+def test_a_close_rival_may_stay_undecided_but_a_far_one_must_be_beaten():
+    bounds = [1.0, 1.25, 2.0]
+    values = [1.1] * 4 + [1.5] * 12
+    labels = ["own_stain", "not_own_stain", "own_stain", "not_own_stain"] + ["own_stain"] * 12
+    s = evidence.support(bounds, [100, 300], [_obs(values, labels)], prior=0,
+                         to_fit=IDENTITY, tolerance=0.2, resolve_within=0.3)
+    assert s["low"] == 1.0
+    near = [r for r in s["rivals"] if r["low"] == 1.25][0]
+    assert not near["decisive"] and s["resolved"] and not s["blocking"]
+
+
+def test_candidates_a_few_hundredths_apart_are_merged_keeping_the_estimate():
+    from plexora.plugins.gating.server.autogate.hypotheses import candidates
+
+    points = [{"low": 1.0, "sources": ["edge:low"]}, {"low": 1.03, "sources": ["kde"]},
+              {"low": 1.05, "sources": ["up:0.5sd"]}, {"low": 1.4, "sources": ["gmm"]}]
+    kept = candidates.thin(points, IDENTITY, 0.1)
+    assert [p["low"] for p in kept] == [1.03, 1.4]
+
+
 # -- controller ----------------------------------------------------------------------------
 
 
@@ -101,7 +121,8 @@ def _state(lows=(1.0, 2.0, 3.0, 4.0, 5.0), n_positive=(1000, 800, 600, 400, 200)
 
 
 PARAMS = {"panel_cells": 20, "sentinels": 4, "sentinel_misses": 2, "looks_max": 3,
-          "invalid_looks": 2, "tolerance": 0.2, "min_labelled": 10, "max_other_share": 0.5}
+          "invalid_looks": 2, "tolerance": 0.2, "resolve_within": 0.2, "min_gap": 0.0,
+          "min_labelled": 10, "max_other_share": 0.5}
 
 
 def test_the_first_look_surveys_every_disputed_interval():
@@ -110,6 +131,31 @@ def test_the_first_look_surveys_every_disputed_interval():
     assert plan["kind"] == "survey"
     assert [iv["interval"] for iv in plan["intervals"]] == [0, 1]
     assert sum(iv["n"] for iv in plan["intervals"]) == PARAMS["panel_cells"]
+
+
+def test_the_survey_gives_every_interval_an_equal_share():
+    # Neither the crowded background nor a long bright tail takes the look.
+    state = _state(lows=(1.0, 1.1, 2.1, 9.0), n_positive=(10_000, 500, 100, 10),
+                   window=(0, 3), prior=1)
+    plan = controller.next_action(state, IDENTITY, PARAMS)
+    n = [iv["n"] for iv in plan["intervals"]]
+    assert len(n) == 3 and max(n) - min(n) <= 1
+
+
+def test_a_leader_at_the_edge_of_the_range_is_not_resolved_while_points_lie_beyond():
+    state = _state(window=(1, 3))
+    state["observations"].append(_obs([2.5] * 10 + [3.5] * 10, ["not_own_stain"] * 20))
+    status, s = controller.decide(state, IDENTITY, PARAMS)
+    assert s["resolved"] and status is None
+    assert controller.next_action(state, IDENTITY, PARAMS) == {"kind": "extend", "side": "up"}
+
+
+def test_a_rival_that_changes_almost_no_cell_never_blocks():
+    bounds = [1.0, 1.5, 2.0]
+    s = evidence.support(bounds, [5, 300], [_obs([1.8] * 12, ["own_stain"] * 12)], prior=0,
+                         to_fit=IDENTITY, tolerance=0.2, resolve_within=0.3, min_between=20)
+    rival = [r for r in s["rivals"] if r["low"] == 1.5][0]
+    assert rival["n_between"] == 5 and not rival["decisive"] and s["resolved"]
 
 
 def test_allocation_never_asks_for_more_cells_than_an_interval_has():
@@ -252,8 +298,12 @@ def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
             assert packet["kind"] not in ("t2_confirm", "t3_biological", "t4_candidates"), \
                 packet["kind"]
             reply = oracle.answer(packet)
-        result = ok(invoke(session, "gating_answer", {
-            "session_id": sid, "packet_id": packet["packet_id"], "answer": reply}))["next"]
+        answered = ok(invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"], "answer": reply}))
+        if packet["kind"] == "cell_panel" and answered["outcome"]["state"] == "awaiting_panel":
+            # Still looking: the reader is told nothing about where a gate is.
+            assert set(answered["outcome"]) == {"unit", "state", "look"}
+        result = answered["next"]
     assert result["state"] in ("decided", "done"), result
     assert panels, "no marker was decided by a panel"
     status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
@@ -275,3 +325,101 @@ def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
             n = len(oracle.values[unit["marker"]])
             assert oracle.excess(unit["marker"], unit["final"]) <= 0.05 * n, unit["marker"]
     assert {u["marker"] for u in status["units"]} == set(HARD)
+
+
+# -- calibration ------------------------------------------------------------------------------
+
+
+def test_a_calibration_fits_and_predicts_within_zero_and_one():
+    from plexora.plugins.gating.server.autogate.hypotheses import calibration
+
+    rng = np.random.default_rng(0)
+    rows, outcomes = [], []
+    for _ in range(200):
+        margin = float(rng.uniform(-0.3, 0.5))
+        rows.append({"margin": margin, "spread": float(rng.uniform(0, 1)),
+                     "labelled": float(rng.integers(10, 60)),
+                     "other_share": float(rng.uniform(0, 0.4)), "looks": float(rng.integers(1, 4))})
+        outcomes.append(int(rng.random() < 0.2 + 0.7 * (margin > 0.1)))
+    table = calibration.fit(rows, outcomes)
+    clear = calibration.predict(table, {**rows[0], "margin": 0.45})
+    blocked = calibration.predict(table, {**rows[0], "margin": -0.25})
+    assert 0.0 < blocked < clear < 1.0
+    bins = calibration.reliability(table, rows, outcomes)
+    assert sum(b["n"] for b in bins) == len(rows)
+    assert calibration.level(0.85) == "high" and calibration.level(0.1) == "low"
+
+
+def test_without_a_table_confidence_is_the_uncalibrated_rule(monkeypatch, tmp_path):
+    from plexora.plugins.gating.server.autogate import hypotheses
+    from plexora.plugins.gating.server.autogate.hypotheses import calibration
+
+    monkeypatch.setattr(calibration, "TABLE_PATH", tmp_path / "none.json")
+    unit = {"hypotheses": {"status": "resolved", "spread": 0.1, "params": dict(PARAMS),
+                           "support": {"rivals": [{"ci": [0.7, 0.95], "low": 3.0,
+                                                   "distance": 1.0}]}}}
+    assert hypotheses.confidence(unit) == "high"
+    assert hypotheses.provenance(unit)["confidence"] == "uncalibrated"
+
+
+# -- the classifier as a two-way check -----------------------------------------------------
+
+
+def _check_engine(ds, mode="check"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(options={"classifier": mode, "purpose": "gating", "seed": 0},
+                           id="gs_test", call=SimpleNamespace(
+                               session=SimpleNamespace(data=lambda _p: ds)),
+                           log=lambda **_k: None)
+
+
+def test_a_classifier_check_shows_both_sides_and_at_most_half_the_panel(monkeypatch):
+    from plexora.plugins.gating.server.autogate.hypotheses import classifier_check
+    from plexora.plugins.gating.server.classifier import features, runs
+
+    rng = np.random.default_rng(1)
+    values = np.expm1(rng.uniform(1.0, 3.0, 6000))
+    ds = FakeData({"M": values})
+    log_v = np.log1p(values)
+    leader = float(np.expm1(2.0))
+    # The classifier calls a third of the cells below the leader positive and
+    # a third of those above it negative.
+    raw = np.where(log_v > 2.0, 1, 0)
+    flip = rng.random(values.size) < 0.33
+    raw = np.where(flip, 1 - raw, raw)
+    monkeypatch.setattr(features, "pixels_ready", lambda _ds, _m: (True, None))
+    monkeypatch.setattr(runs, "session_run", lambda *_a, **_k: {
+        "record": {"status": "ready", "snr": {"grade": "ok"}},
+        "arrays": {"gate_calls": np.zeros(values.size, dtype=np.int8), "raw_calls": raw}})
+    bounds = [float(np.expm1(x)) for x in (1.2, 1.6, 2.0, 2.4, 2.8)]
+    n_pos = [int((values > b).sum()) for b in bounds]
+    state = {"points": [{"low": b, "n_positive": n, "id": f"p{i}", "sources": ["gmm"]}
+                        for i, (b, n) in enumerate(zip(bounds, n_pos))],
+             "window": [0, 4], "leader": leader, "params": dict(PARAMS), "observations": []}
+    unit = {"project": "fake", "marker": "M", "high": None}
+    plan = classifier_check.plan(_check_engine(ds), unit, state, [])
+    assert plan is not None and state["classifier"]["status"] == "look"
+    chosen = np.isin(np.arange(1, values.size + 1), plan["ids"])
+    assert (log_v[chosen] <= 2.0).any() and (log_v[chosen] > 2.0).any()
+    assert len(plan["ids"]) <= PARAMS["panel_cells"] * classifier_check.FLAGGED_SHARE + 1
+    assert sum(iv["n"] for iv in plan["intervals"]) + len(plan["ids"]) <= PARAMS["panel_cells"] + 1
+    # Once per marker, and never without `check`.
+    assert classifier_check.plan(_check_engine(ds), unit, state, []) is None
+    assert classifier_check.plan(_check_engine(ds, "layer"), unit,
+                                 {**state, "classifier": None}, []) is None
+
+
+def test_a_classifier_with_a_low_signal_grade_is_not_consulted(monkeypatch):
+    from plexora.plugins.gating.server.autogate.hypotheses import classifier_check
+    from plexora.plugins.gating.server.classifier import features, runs
+
+    ds = FakeData({"M": np.expm1(np.linspace(1, 3, 500))})
+    monkeypatch.setattr(features, "pixels_ready", lambda _ds, _m: (True, None))
+    monkeypatch.setattr(runs, "session_run", lambda *_a, **_k: {
+        "record": {"status": "ready", "snr": {"grade": "low"}}, "arrays": {}})
+    state = {"points": [], "window": [0, 0], "leader": 1.0, "params": dict(PARAMS),
+             "observations": []}
+    assert classifier_check.plan(_check_engine(ds), {"project": "f", "marker": "M"},
+                                 state, []) is None
+    assert state["classifier"] == {"status": "untrusted", "grade": "low"}
