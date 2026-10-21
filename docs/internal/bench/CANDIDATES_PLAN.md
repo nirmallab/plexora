@@ -171,14 +171,95 @@ strict. What the records showed, and the Phase 2 change each led to:
   documentation with length caps, best done once the engine's packet kinds
   are settled.
 
+## Everything that needs no person's input (2026-10-20)
+
+Built, so the benchmark measures the engine that would ship:
+
+- **A lone candidate is tested.** A lattice of one point after thinning
+  gets steps 0.25 and 0.5 (fit units) either side, snapped like lattice
+  points (`hypotheses._steps`); before, such a marker fell back to the
+  classic look.
+- **Rare markers.** Under 2 % positive at the start, or the `long_tail`
+  class: the leader resolves only once the cells above it are read stained
+  (a `tail` look draws them, up to the brightest); read unstained, review
+  (`positives_not_confirmed`). A rival also blocks when its call changes
+  fewer than 20 cells but more than a quarter of the larger candidate's
+  positives (`evidence.material`): a population of 15 cells is all of what
+  its rival disputes.
+- **The leader-vs-rival test weighs intervals by their cells.** The first
+  look reads every interval equally, and the pooled reads let a sliver of
+  40 cells outvote 1000; the share between two candidates is now each
+  interval's share weighted by the cells it holds, at the weighting's
+  effective sample size (`evidence.between`).
+- **The classifier check reads its picks for what they are.** Its picks
+  are enriched by its own calls and were counted as if random within their
+  interval; the evidence is now post-stratified by the classifier's call,
+  the check's look is the marker's last, and the check is shown only where
+  a label-set score from another image has the classifier beating the gate
+  (`classifier_trust.json`, `tools/bench_gates/classifier_trust.py`;
+  exploratory otherwise). The 2026-10-19 wand bench had it beating the gate
+  on lsp11385_2 only (63 % vs 56 %; IMC 75 vs 76, CODEX 79 vs 81) and its
+  per-marker result files are not on this machine, so no table is written:
+  the check runs exploratory.
+- **Panels are blind in their manifest too.** The stored collage manifest,
+  served to any client by `get_artifact`, carried each cell's value and why
+  it was picked (a sentinel's "clear negative"); it now carries position
+  and number only.
+- **Replay.** `--replay-session --rerender` re-renders panels byte for byte
+  (the manifest now records the pixel size a session drew at; every collage
+  on an uncalibrated image had failed it) and checks each number is the
+  cell `_panel` scored; two sessions with one seed send the same first
+  panel (`tests/test_gating_panel_replay.py`).
+- **The live campaign driver.** `tools/bench_gates/run_arms.py`: arms from
+  `bench.VARIANTS`, k runs with the same seeds per arm and rotated order,
+  propose mode, no answer reuse, refuses the live data root, checks no gate
+  was written, records the reader model per task, writes session records
+  and a manifest under `docs/internal/bench/campaigns/<campaign>/`. A cell
+  panel is the `image_inspection` task (effort medium), classic's look
+  `threshold_evaluation` (effort high): run gate 1 with both on one model
+  (`--dev --model`) or say which served which.
+
+Offline, these changed nothing measurable on the synthetic scenes (they
+guard situations the scenes barely hold): truthful reader 0.9505 F1 and
+31-32 packets with each change off in turn or all on; reader turning 32 %
+of words, 3 seeds, all on 0.940 F1 / 22.5 % review / 144 packets against
+all off 0.941 / 22.5 % / 143.
+
+Not built, on the stored classic records (held-out PCA and dev sessions,
+`~/gatevision`):
+
+- **Conditional gates on panels.** 5 of 543 marker-images were
+  conditional; on the 3 held-out the conditional gate was farther from the
+  person's than the plain gate twice (CD3e 1.43 vs 0.89, PD1 0.16 vs 0.11;
+  CD20L 0.10 vs 0.19). A `within:` fit stays a candidate.
+- **A whole-image look on a failed spatial or edge check.** It would fire
+  on 28 % of markers (spatial tiles 116 of 467, edge 22), whose gates are no
+  farther from the person's (MAE 0.337 and 0.327 vs 0.308; 0.4 or more off
+  27 % and 30 % vs 28 %).
+- **Revisiting a partner when a dependent stays unresolved (2b).** Of 226
+  dependents, those whose partner gate was 0.4 or more off were no farther
+  off themselves (0.310 vs 0.323 with a partner within 0.2) and went to
+  review less often (6 % vs 15 %): an unresolved dependent does not point
+  at a wrong partner.
+- **A fibrous detector from measured shape.** No labelled fibrous set to
+  set it on, and a false trigger changes how every cell of a marker is
+  read; the `panel_fibrous` reading stays tied to the panel's morphology.
+- **Saturation and oscillation stops.** Under a three-look cap a leader
+  cannot alternate twice; the cap and the novelty rule already stop it.
+- **The zero-call falsifier (Phase 0.9a).** Superseded: the panels it was
+  to justify are built and measured directly.
+
 ## Not done in this branch
 
 - Sampling control (temperature, seed): the gateway chooses the model and
   its parameters, and the gating tasks run with reasoning effort, which
   rules out temperature 0 on the models that think. Variance is measured by
   replicate runs instead.
-- Calibrated confidence: the panel path's confidence is a rule (`hypotheses.
-  confidence`) tagged `uncalibrated` in provenance until it is fitted on the
-  dev records (isotonic, at most five features) and checked on held-out.
-- Cross-marker revisits and the classifier as a discrepancy detector: after
-  decision gate 1, each behind its own option.
+- Calibrated confidence: built (`hypotheses/calibration.py`, logistic over
+  five stored features) but not fitted: the panel path's confidence stays a
+  rule tagged `uncalibrated` until the dev campaign's records are fitted
+  and checked on held-out.
+- What needs runs or the user: the replicate and decision-gate-1
+  campaigns (`run_arms.py`), the calibration fit, the classifier trust
+  table (the wand bench's per-marker results), and the user's hand gates
+  on at least two non-LSP images for the external bar.

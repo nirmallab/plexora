@@ -302,7 +302,9 @@ and current call in its caption).
   0.1 merged; estimators are clustered to describe disagreement, never
   averaged. The surveyed range runs one point past the lowest and highest
   estimator, and widens a point at a time when the leader sits at its edge
-  (never resolved there while points lie beyond).
+  (never resolved there while points lie beyond). A lattice of one point
+  gets steps 0.25 and 0.5 (fit units) either side, so a lone candidate is
+  tested, never accepted unseen.
 - **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
   intervals plus 4 negative sentinels from below every candidate, shuffled
   and numbered; the 2 x 2 multi-view block when the marker has a partner.
@@ -311,10 +313,17 @@ and current call in its caption).
   confidence word: code's confidence is not the reader's.
 - **Code chooses.** Each candidate scores the cells it would get wrong
   (interval own-stain shares, monotone in value, unread intervals neutral);
-  the leader beats a rival when the pooled cells between them have a
-  Wilson 95 % interval wholly on its side of one half. Rivals within 0.3
-  (fit units), or whose call differs on fewer than 20 cells, need not be
-  beaten. The first look gives every interval an equal share of its cells;
+  the leader beats a rival when the cells between them -- each interval
+  weighted by the cells it holds, not by the cells read from it -- have a
+  Wilson 95 % interval, at the weighting's effective size, wholly on its
+  side of one half. Rivals within 0.3 (fit units), or whose call differs on
+  fewer than 20 cells and fewer than a quarter of the larger candidate's
+  positives, need not be beaten.
+- **Rare markers** (under 2 % positive at the start, or the `long_tail`
+  class): the leader resolves only once the cells above it are read
+  stained (a `tail` look draws them, up to the brightest); read unstained,
+  the marker closes for review (`positives_not_confirmed`). Panels never
+  declare a population absent. The first look gives every interval an equal share of its cells;
   later ones go where an unbeaten rival's dispute holds the most cells.
 - **Stopping is by rule.** Resolved when every rival that matters is
   beaten; otherwise review at the leader for a named reason
@@ -323,9 +332,16 @@ and current call in its caption).
   two such looks mark the reader unreliable (review at the start). While a
   marker is in panels, an answer's outcome says nothing about any gate.
 - **Classifier check (`classifier: check`).** Once a leader resolves, the
-  classifier trained at it may earn one more panel: its disagreements on
-  both sides, at most half the cells, the rest chosen without it; it can
-  make a rival win, never move a gate itself (`classifier_check.py`).
+  classifier trained at it may earn one more panel, the marker's last: its
+  disagreements on both sides, at most half the cells, the rest chosen
+  without it; it can make a rival win, never move a gate itself
+  (`classifier_check.py`). Its picks are an enriched sample, so the
+  evidence is post-stratified by its call (each interval's share read per
+  call, weighted by the cells it calls each way). Shown only where a
+  label-set score on record for the marker, from another image, has the
+  classifier beating the gate (`classifier_trust.json`, written by
+  `tools/bench_gates/classifier_trust.py`); without one it runs
+  exploratory -- counted and kept, no look.
 - **Confidence.** A rule tagged `uncalibrated` until a table fitted on dev
   records by `tools/bench_gates/calibrate.py` is committed
   (`hypotheses/calibration.py`); then the level of P(|gap| <= 0.2).
@@ -334,8 +350,16 @@ and current call in its caption).
   whole-image confirm, no classifier check on this path). Provenance
   `detail.hypotheses` holds the candidates, the looks and the status, with
   `confidence: uncalibrated` until it is fitted.
-- **Unchanged:** QC routing, the audit sheet for clean splits (now also
-  through the numeric checks), conditional gates, datasets, the memo.
+- **Unchanged:** QC routing and the whole-image `qc_confirm`, the audit
+  sheet for clean splits (now also through the numeric checks), datasets,
+  the memo.
+- **Not ported, on the stored records:** conditional gates (5 of 543
+  marker-images; on the 3 held-out the conditional gate was the farther
+  one twice -- a `within:` fit stays a candidate); a whole-image look on a
+  failed spatial or edge check (fails on 28 % of markers, whose gates are
+  no farther from the person's: MAE 0.337 vs 0.308); revisiting a partner
+  when a dependent is unresolved (a partner 0.4 or more off left its
+  dependents no farther off, 0.310 vs 0.323, and less often in review).
 
 ## 3. Where things live
 

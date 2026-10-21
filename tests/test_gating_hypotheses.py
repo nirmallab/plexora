@@ -383,10 +383,12 @@ def test_a_classifier_check_shows_both_sides_and_at_most_half_the_panel(monkeypa
     ds = FakeData({"M": values})
     log_v = np.log1p(values)
     leader = float(np.expm1(2.0))
-    # The classifier calls a third of the cells below the leader positive and
-    # a third of those above it negative.
+    # The classifier disagrees with the leader on most cells of the outer
+    # intervals, both ways, and agrees beside the leader: its picks fall
+    # outside the two intervals the blind cells come from.
     raw = np.where(log_v > 2.0, 1, 0)
-    flip = rng.random(values.size) < 0.33
+    outer = ((log_v > 1.2) & (log_v <= 1.6)) | ((log_v > 2.4) & (log_v <= 2.8))
+    flip = outer & (rng.random(values.size) < 0.8)
     raw = np.where(flip, 1 - raw, raw)
     monkeypatch.setattr(features, "pixels_ready", lambda _ds, _m: (True, None))
     monkeypatch.setattr(runs, "session_run", lambda *_a, **_k: {
@@ -398,16 +400,60 @@ def test_a_classifier_check_shows_both_sides_and_at_most_half_the_panel(monkeypa
                         for i, (b, n) in enumerate(zip(bounds, n_pos))],
              "window": [0, 4], "leader": leader, "params": dict(PARAMS), "observations": []}
     unit = {"project": "fake", "marker": "M", "high": None}
+    # Without a label-set score on record the check is exploratory: counted,
+    # kept, no look.
+    monkeypatch.setattr(classifier_check, "trust_records", lambda *_a: [])
+    assert classifier_check.plan(_check_engine(ds), unit, dict(state), []) is None
+    explored = dict(state)
+    classifier_check.plan(_check_engine(ds), unit, explored, [])
+    assert explored["classifier"]["status"] == "exploratory"
+    assert explored["classifier"]["counts"]["below"]["flagged"] > 0
+    monkeypatch.setattr(classifier_check, "trust_records", lambda *_a: [
+        {"project": "another", "marker": "m", "n": 80, "classifier": 0.80, "gate": 0.70}])
     plan = classifier_check.plan(_check_engine(ds), unit, state, [])
-    assert plan is not None and state["classifier"]["status"] == "look"
+    assert plan is not None and state["classifier"]["trusted_on"]["project"] == "another"
     chosen = np.isin(np.arange(1, values.size + 1), plan["ids"])
     assert (log_v[chosen] <= 2.0).any() and (log_v[chosen] > 2.0).any()
-    assert len(plan["ids"]) <= PARAMS["panel_cells"] * classifier_check.FLAGGED_SHARE + 1
-    assert sum(iv["n"] for iv in plan["intervals"]) + len(plan["ids"]) <= PARAMS["panel_cells"] + 1
+    picked = int((chosen & outer).sum())
+    blind = int((chosen & ~outer).sum())
+    assert picked <= PARAMS["panel_cells"] * classifier_check.FLAGGED_SHARE + 1
+    assert blind >= PARAMS["panel_cells"] * (1 - classifier_check.FLAGGED_SHARE) - 1
+    assert plan["intervals"] == [] and len(plan["ids"]) <= PARAMS["panel_cells"]
+    # Every chosen cell carries the classifier's call, and every interval of
+    # the range its cells by call, for the post-stratified evidence.
+    assert set(state["classifier"]["calls"]) >= {str(i) for i in plan["ids"]}
+    assert len(state["classifier"]["strata"]) == len(bounds) - 1
     # Once per marker, and never without `check`.
     assert classifier_check.plan(_check_engine(ds), unit, state, []) is None
     assert classifier_check.plan(_check_engine(ds, "layer"), unit,
                                  {**state, "classifier": None}, []) is None
+
+
+def test_a_record_from_the_same_image_or_a_narrow_win_does_not_trust_the_classifier():
+    from plexora.plugins.gating.server.autogate.hypotheses import classifier_check
+
+    same = [{"project": "img", "marker": "CD3e", "n": 200, "classifier": 0.9, "gate": 0.6}]
+    narrow = [{"project": "other", "marker": "CD3e", "n": 200, "classifier": 0.71,
+               "gate": 0.70}]
+    few = [{"project": "other", "marker": "CD3e", "n": 20, "classifier": 0.9, "gate": 0.6}]
+    good = [{"project": "other", "marker": "cd3e", "n": 200, "classifier": 0.8, "gate": 0.7}]
+    for records in (same, narrow, few):
+        assert classifier_check.trusted("CD3e", "img", records) is None
+    assert classifier_check.trusted("CD3e", "img", good) is good[0]
+
+
+def test_an_enriched_pick_is_read_per_classifier_call_not_as_the_interval():
+    # 1000 cells: 100 the classifier calls positive, 900 negative. Its picks
+    # (positive calls, all stained) and blind picks (negative, unstained):
+    # pooled they say one half; weighted by the strata, one tenth.
+    cells = ([{"cell_id": i, "value": 1.5, "label": "own_stain"} for i in range(10)]
+             + [{"cell_id": 100 + i, "value": 1.5, "label": "not_own_stain"} for i in range(10)])
+    calls = {**{str(i): 1 for i in range(10)}, **{str(100 + i): 0 for i in range(10)}}
+    table = evidence.counts([1.0, 2.0], [{"cells": cells}], calls)
+    plain, _n = evidence.estimate(table[0])
+    share, n_eff = evidence.estimate(table[0], {"1": 100, "0": 900})
+    assert plain == pytest.approx(0.5) and share == pytest.approx(0.1)
+    assert 0 < n_eff < 20
 
 
 def test_a_classifier_with_a_low_signal_grade_is_not_consulted(monkeypatch):
@@ -423,3 +469,97 @@ def test_a_classifier_with_a_low_signal_grade_is_not_consulted(monkeypatch):
     assert classifier_check.plan(_check_engine(ds), {"project": "f", "marker": "M"},
                                  state, []) is None
     assert state["classifier"] == {"status": "untrusted", "grade": "low"}
+
+
+# -- the evidence weighted by the cells each interval holds ---------------------------------
+
+
+def test_the_cells_between_two_candidates_are_weighed_by_interval_not_by_reads():
+    # A survey reads 20 cells from each interval: pooled as read, a sliver of
+    # 40 stained cells would outvote 1000 mostly unstained ones.
+    obs = _obs([1.5] * 20 + [2.5] * 20, ["own_stain"] * 9 + ["not_own_stain"] * 11
+               + ["own_stain"] * 20)
+    table = evidence.counts([1.0, 2.0, 3.0], [obs])
+    share, n_eff = evidence.between(table, [1000, 40], 0, 2)
+    assert share == pytest.approx((1000 * 0.45 + 40 * 1.0) / 1040)
+    assert n_eff < 40
+    low, _high = evidence.wilson(share * n_eff, n_eff)
+    assert low < 0.5
+    pooled_low, _ = evidence.wilson(29, 40)
+    assert pooled_low > 0.5
+
+
+def test_a_rival_that_would_remove_a_rare_population_blocks():
+    # 15 positives above the leader's interval: fewer than `min_between`, but
+    # all of the population whose existence the rival disputes.
+    bounds = [1.0, 2.0, 3.0]
+    obs = _obs([1.5] * 10, ["not_own_stain"] * 10)
+    plain = evidence.support(bounds, [500, 12], [obs], prior=1, to_fit=IDENTITY,
+                             tolerance=0.2, resolve_within=0.3, min_between=20, n_above=3)
+    rare = evidence.support(bounds, [500, 12], [obs], prior=1, to_fit=IDENTITY,
+                            tolerance=0.2, resolve_within=0.3, min_between=20,
+                            min_between_share=0.25, n_above=3)
+    assert plain["leader"] == rare["leader"] == 1
+    assert plain["resolved"] and not rare["resolved"]
+    assert [r["low"] for r in rare["blocking"]] == [3.0]
+
+
+# -- rare markers --------------------------------------------------------------------------
+
+
+def _rare_state():
+    state = _state(lows=(1.0, 2.0, 3.0), n_positive=(2000, 40, 10), window=(0, 2), prior=1)
+    state.update(rare={"fraction_at_start": 0.004, "class": "long_tail"}, top=5.0)
+    return state
+
+
+def test_a_rare_marker_reads_its_own_cells_before_its_gate_resolves():
+    state = _rare_state()
+    params = dict(PARAMS, min_between=20, min_between_share=0.25, resolve_within=0.3)
+    # The survey reads everything below 3 unstained: the leader is the top
+    # candidate, whose 10 positives lie above the range and were never shown.
+    state["observations"].append(_obs([1.5] * 10 + [2.5] * 10, ["not_own_stain"] * 20))
+    status, s = controller.decide(state, IDENTITY, params)
+    assert s["leader"] == 2 and s["resolved"] and status is None
+    plan = controller.next_action(state, IDENTITY, params)
+    assert plan["kind"] == "tail"
+    assert plan["intervals"] == [{"interval": None, "from": 3.0, "to": 5.0, "n": 10}]
+    stained = dict(state, observations=state["observations"]
+                   + [_obs([3.5] * 10, ["own_stain"] * 10)])
+    assert controller.decide(stained, IDENTITY, params)[0] == "resolved"
+    unstained = dict(state, observations=state["observations"]
+                     + [_obs([3.5] * 10, ["not_own_stain"] * 10)])
+    assert controller.decide(unstained, IDENTITY, params)[0] == "positives_not_confirmed"
+    # Not rare: the same evidence resolves at once.
+    assert controller.decide(dict(state, rare=None), IDENTITY, params)[0] == "resolved"
+
+
+def test_a_marker_that_is_not_rare_resolves_without_a_tail_look():
+    state = _rare_state()
+    state["rare"] = None
+    params = dict(PARAMS, min_between=20, min_between_share=0.25, resolve_within=0.3)
+    state["observations"].append(_obs([1.5] * 10 + [2.5] * 10, ["not_own_stain"] * 10
+                                      + ["own_stain"] * 10))
+    assert controller.decide(state, IDENTITY, params)[0] == "resolved"
+
+
+# -- a lattice with one point --------------------------------------------------------------
+
+
+def test_a_single_candidate_gets_steps_either_side_on_the_grid(monkeypatch):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import hypotheses
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    values = np.expm1(np.random.default_rng(3).normal(2.0, 0.4, 4000).clip(0.1))
+    ds = FakeData({"M": values})
+    monkeypatch.setattr(model, "_description", lambda _ds: {})
+    col = profmod.column(ds, "M")
+    only = [{"id": "gmm", "low": float(np.expm1(2.2)), "sources": ["gmm"],
+             "n_positive": int((values > np.expm1(2.2)).sum())}]
+    top = float(values.max())
+    added = hypotheses._steps(ds, "M", col, only, None, top)
+    fits = sorted(round(float(col.to_fit(p["low"])) - 2.2, 6) for p in added)
+    assert fits == pytest.approx(sorted(s * k for s in hypotheses.SINGLE_STEPS
+                                        for k in (-1, 1)), abs=1e-6)
+    assert all(p["n_positive"] == int(col.n_positive(p["low"], top)) for p in added)

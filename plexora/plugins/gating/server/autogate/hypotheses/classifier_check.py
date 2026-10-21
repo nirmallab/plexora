@@ -13,11 +13,27 @@ which, the labels join the same evidence, and the choice is still among the
 candidates: the classifier can make a rival win, never move a gate by
 itself, and its agreement is never counted as support.
 
+The classifier picks cells by its own calls, so its picks are an enriched
+sample: the evidence is post-stratified by its call (`evidence.estimate`).
+Every cell shown for the marker gets the classifier's call, every interval
+the number of cells it calls each way (`state["classifier"]["calls"]`,
+`["strata"]`), and each interval's share is read per call, weighted by the
+cells it holds. The check's look is the marker's last, so the strata stay
+those of the range it was computed over.
+
+Consulted only where it has earned it: a label-set score on record for the
+marker (`TRUST_PATH`, written by `tools/bench_gates/classifier_trust.py`
+from the classifier bench on the user's labelled cells, never the image
+being gated) in which the classifier beat the gate. Without one the check
+runs exploratory: its disagreements are counted and kept, no look is shown.
 A classifier whose signal grade is poor, or that cannot run (pixel features
 not ready), is skipped and recorded as such (`state["classifier"]`).
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import numpy as np
 
@@ -28,6 +44,36 @@ FLAGGED_SHARE = 0.5
 #: Signal grades (`classifier.rules.grade`) under which it is not consulted:
 #: nothing says the classifier sees the stain.
 UNTRUSTED_GRADES = ("low",)
+
+#: The label-set scores the check is trusted on (absent: none).
+TRUST_PATH = Path(__file__).with_name("classifier_trust.json")
+#: Bumped whenever a record's meaning changes.
+TRUST_VERSION = "1"
+#: [cal] a record trusts the classifier when its balanced accuracy beat the
+#: gate's by this much on at least this many labelled cells.
+TRUST_MARGIN = 0.02
+TRUST_MIN_CELLS = 50
+
+
+def trust_records(path=None) -> list:
+    path = Path(path or TRUST_PATH)
+    if not path.exists():
+        return []
+    table = json.loads(path.read_text(encoding="utf-8"))
+    return (table.get("records") or []) if table.get("version") == TRUST_VERSION else []
+
+
+def trusted(marker, project, records=None) -> dict | None:
+    """The record that trusts the classifier on `marker`, from an image other
+    than `project`, or None."""
+    for record in trust_records() if records is None else records:
+        if str(record.get("marker", "")).lower() != str(marker).lower() \
+                or record.get("project") == project:
+            continue
+        if int(record.get("n") or 0) >= TRUST_MIN_CELLS and \
+                float(record["classifier"]) >= float(record["gate"]) + TRUST_MARGIN:
+            return record
+    return None
 
 
 def plan(engine, unit, state, shown_ids) -> dict | None:
@@ -95,26 +141,52 @@ def _plan(engine, unit, state, shown_ids):
                            "counts": counts}
     if not passing:
         return None
+    record = trusted(marker, unit["project"])
+    if record is None:
+        state["classifier"].update(status="exploratory",
+                                   why="no label-set score on record for this marker")
+        return None
+    state["classifier"]["trusted_on"] = {k: record.get(k) for k in
+                                         ("project", "marker", "n", "classifier", "gate",
+                                          "source")}
     total = int(state["params"]["panel_cells"])
     n_flagged = int(total * FLAGGED_SHARE)
     flagged_total = sum(counts[n]["flagged"] for n in sides) or 1
     rng = np.random.default_rng(int(engine.options["seed"]) * 31 + 7)
-    ids = []
+    picked_rows = []
     for name, (mask, _all) in sides.items():
         # Both directions whenever both have flagged cells: a check that
         # only ever shows the cells below would only ever lower the gate.
         want = max(1 if counts[name]["flagged"] else 0,
                    round(n_flagged * counts[name]["flagged"] / flagged_total))
         rows = np.flatnonzero(mask)
-        picked = sampler._spread_by_value(c, values, rows, min(want, rows.shape[0]), 8, rng)
-        ids.extend(int(c.ids[r]) for r in picked)
+        picked_rows.extend(int(r) for r in
+                           sampler._spread_by_value(c, values, rows, min(want, rows.shape[0]),
+                                                    8, rng))
     # The rest from the two intervals beside the leader, chosen blind to the
-    # classifier.
+    # classifier (either call).
     lead = bounds.index(min(bounds, key=lambda b: abs(b - leader)))
     beside = [k for k in (lead - 1, lead) if 0 <= k < len(bounds) - 1]
-    left = max(0, total - len(ids))
-    intervals = [{"interval": k, "from": bounds[k], "to": bounds[k + 1],
-                  "n": left // len(beside) + (1 if i < left % len(beside) else 0)}
-                 for i, k in enumerate(beside)] if beside else []
-    return {"kind": "classifier_check", "ids": ids, "intervals": [i for i in intervals
-                                                                 if i["n"] > 0]}
+    left = max(0, total - len(picked_rows))
+    taken = np.zeros(c.n, dtype=bool)
+    taken[picked_rows] = True
+    for i, k in enumerate(beside):
+        n = left // len(beside) + (1 if i < left % len(beside) else 0)
+        rows = np.flatnonzero(called & ~taken & (values > bounds[k]) & (values <= bounds[k + 1]))
+        picked_rows.extend(int(r) for r in
+                           sampler._spread_by_value(c, values, rows, min(n, rows.shape[0]),
+                                                    8, rng))
+    # The strata: every interval's cells by the classifier's call, and the
+    # call of every cell shown so far or about to be.
+    called_all = (arrays["gate_calls"] >= 0) & c.valid & np.isfinite(values)
+    strata = []
+    for k in range(len(bounds) - 1):
+        inside = called_all & (values > bounds[k]) & (values <= bounds[k + 1])
+        strata.append({"1": int((inside & (raw == 1)).sum()),
+                       "0": int((inside & (raw == 0)).sum())})
+    rows_shown = np.flatnonzero(called_all & np.isin(c.ids, np.asarray(list(shown_ids) or [-1],
+                                                                  dtype=c.ids.dtype)))
+    calls = {str(int(c.ids[r])): int(raw[r]) for r in [*rows_shown.tolist(), *picked_rows]}
+    state["classifier"].update(calls=calls, strata=strata, window=list(state["window"]))
+    return {"kind": "classifier_check", "ids": [int(c.ids[r]) for r in picked_rows],
+            "intervals": []}

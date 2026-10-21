@@ -10,6 +10,11 @@ A small closed set of actions, each a look at cells nobody has shown yet:
 - `extend` -- the leader sits at the edge of the surveyed range and the
   lattice has a point beyond it: that interval joins the range and is looked
   at, so a gate past every estimator is reachable, by a lattice point.
+- `tail` -- a rare marker (`state["rare"]`) whose leader would resolve:
+  cells above the leader, up to the brightest, in proportion to where they
+  lie. A rare population is never accepted without its own cells having
+  been read as stained (`tail_status`), and never declared absent by
+  panels either: read unstained, it closes for review.
 
 Every look is new evidence by construction: a cell is shown once per marker,
 and an action whose intervals hold no unshown cell is refused. Stopping is
@@ -32,7 +37,7 @@ from plexora.plugins.gating.server.autogate.hypotheses import evidence
 #: Terminal statuses; all but `resolved` close the marker for review at the
 #: leader (or the start, when the reader failed the sentinels).
 STATUSES = ("resolved", "budget_exhausted", "unresolved_evidence", "readers_unreliable",
-            "unreadable", "no_identifiable_boundary")
+            "unreadable", "no_identifiable_boundary", "positives_not_confirmed")
 
 REASONS = {
     "budget_exhausted": "the looks allowed were spent before the leading gate beat every "
@@ -43,6 +48,9 @@ REASONS = {
     "no_identifiable_boundary": "the stain rises with the value without a boundary the "
                                 "looks could find (a continuous marker: an operational "
                                 "cutoff)",
+    "positives_not_confirmed": "a rare marker whose cells above the leading gate were read "
+                               "as not carrying the stain: whether this image has a positive "
+                               "population is for a person to say",
 }
 
 
@@ -53,6 +61,11 @@ def window(state) -> tuple:
     bounds = [p["low"] for p in pts[lo:hi + 1]]
     n_pos = [p["n_positive"] for p in pts[lo:hi + 1]]
     return bounds, [max(0, a - b) for a, b in zip(n_pos[:-1], n_pos[1:])]
+
+
+def above(state) -> int:
+    """Cells above the surveyed range's highest point."""
+    return int(state["points"][state["window"][1]]["n_positive"])
 
 
 def shown(state) -> list:
@@ -103,10 +116,76 @@ def support(state, to_fit, params) -> dict | None:
     bounds, n_cells = window(state)
     lo = state["window"][0]
     prior = min(max(state["prior"] - lo, 0), len(bounds) - 1)
+    check = state.get("classifier") or {}
+    # A classifier check's picks are read per classifier call
+    # (`classifier_check`), over the range its strata were counted on.
+    stratified = check.get("strata") is not None and check.get("window") == state["window"]
     return evidence.support(bounds, n_cells, valid, prior=prior, to_fit=to_fit,
                             tolerance=params["tolerance"],
                             resolve_within=params.get("resolve_within"),
-                            min_between=int(params.get("min_between") or 0))
+                            min_between=int(params.get("min_between") or 0),
+                            min_between_share=float(params.get("min_between_share") or 0.0),
+                            n_above=above(state),
+                            calls=check.get("calls") if stratified else None,
+                            strata=check.get("strata") if stratified else None)
+
+
+def tail(state, s) -> dict:
+    """The cells above the leader: {own, read} among those read in valid
+    looks, and how many are still unshown (`available`)."""
+    low = float(s["low"])
+    own = read = shown_above = 0
+    for obs in state["observations"]:
+        for cell in obs.get("cells") or ():
+            if cell.get("sentinel") or float(cell["value"]) <= low:
+                continue
+            shown_above += 1
+            if not obs.get("valid", True):
+                continue
+            if cell.get("label") == evidence.OWN:
+                own, read = own + 1, read + 1
+            elif cell.get("label") == evidence.NOT_OWN:
+                read += 1
+    return {"own": own, "read": read,
+            "available": max(0, int(s["positives"]) - shown_above)}
+
+
+def tail_status(state, s) -> str:
+    """`confirmed` when the cells above the leader are read stained (a
+    Wilson interval above one half, or a majority once every one was
+    shown), `refuted` the other way round, `open` while more could be
+    read."""
+    t = tail(state, s)
+    if not t["read"]:
+        return "refuted" if not t["available"] else "open"
+    low, high = evidence.wilson(t["own"], t["read"])
+    if low > 0.5:
+        return "confirmed"
+    if high < 0.5:
+        return "refuted"
+    if not t["available"]:
+        return "confirmed" if t["own"] * 2 > t["read"] else "refuted"
+    return "open"
+
+
+def _tail_plan(state, s, total) -> dict | None:
+    """Cells above the leader, each interval (and the cells above the
+    range) given its share of the look by the cells it holds."""
+    bounds, n_cells = window(state)
+    seen = shown(state)
+    leader = s["leader"]
+    ks = list(range(leader, len(n_cells)))
+    available = [max(0, n_cells[k] - seen[k]) for k in ks]
+    top_shown = sum(1 for o in state["observations"] for c in o.get("cells") or ()
+                    if not c.get("sentinel") and float(c["value"]) > bounds[-1])
+    available.append(max(0, above(state) - top_shown))
+    picks = allocate([float(a) for a in available], available, total)
+    intervals = [{"interval": k, "from": bounds[k], "to": bounds[k + 1], "n": n}
+                 for k, n in zip(ks, picks) if n > 0]
+    if picks[-1] > 0:
+        intervals.append({"interval": None, "from": bounds[-1], "to": float(state["top"]),
+                          "n": picks[-1]})
+    return {"kind": "tail", "intervals": intervals} if intervals else None
 
 
 def _plan(state, intervals, picks, kind, **extra) -> dict | None:
@@ -150,6 +229,8 @@ def next_action(state, to_fit, params) -> dict | None:
         plan = _plan(state, ks, picks, "refine", rival=rival["low"])
         if plan is not None:
             return plan
+    if state.get("rare") and not s["blocking"] and tail_status(state, s) == "open":
+        return _tail_plan(state, s, total)
     return None
 
 
@@ -178,7 +259,14 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
     if s["resolved"] and not at_edge:
         # A leader at the edge of the surveyed range says the gate is there or
         # beyond it: the next lattice point is looked at first.
-        return "resolved", s
+        if not state.get("rare"):
+            return "resolved", s
+        # A rare marker's leader stands only on its own cells read stained.
+        status = tail_status(state, s)
+        if status == "confirmed":
+            return "resolved", s
+        if status == "refuted":
+            return "positives_not_confirmed", s
     if s["labelled"] >= params["min_labelled"] \
             and (s["other_share"] or 0) > params["max_other_share"]:
         return "unreadable", s

@@ -7,7 +7,11 @@ beyond them:
 
 1. The unit's frozen lattice (`lattice.build`) gives the candidates
    (`candidates.build`): every estimator, the scored start, partner points,
-   and the steps around them. The gate written is always one of them.
+   and the steps around them. The gate written is always one of them. A
+   lattice that holds one point after thinning gets steps either side
+   (`_steps`), so a lone candidate is tested, never accepted unseen. A rare
+   marker (`PARAMS["rare_fraction"]`, or the `long_tail` class) is marked
+   so: its leader must have its own cells read stained (`controller.tail`).
 2. Each look is a `cell_panel` packet (`packet`): numbered cells from the
    disputed intervals, a few negative sentinels, shuffled, no value, call or
    gate anywhere. The reader labels each cell (`answers.CellPanelAnswer`).
@@ -30,8 +34,10 @@ from plexora.plugins.gating.server.autogate.hypotheses import candidates as cand
 from plexora.plugins.gating.server.autogate.hypotheses import controller, evidence
 from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 
-#: Bumped whenever the same answers would choose a different gate.
-VERSION = "2"
+#: Bumped whenever the same answers would choose a different gate ("3": a
+#: rival's cells are material relative to a rare population, rare markers
+#: confirm their own cells, a single candidate gets steps).
+VERSION = "3"
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -57,8 +63,16 @@ PARAMS = {
     # points a few hundredths apart in the background.
     "min_gap": 0.1,
     # A rival whose call differs from the leader's on fewer cells than this
-    # is the same gate in effect (the lattice merges intervals below it).
+    # is the same gate in effect (the lattice merges intervals below it) --
+    # unless they are more than this share of the larger candidate's
+    # positives (`evidence.material`): a rare population can be smaller than
+    # `min_between` whole.
     "min_between": 20,
+    "min_between_share": 0.25,
+    # A marker positive in fewer than this share of its cells at the start,
+    # or of the `long_tail` class, is rare: its leader must have its own
+    # cells read stained (`controller.tail_status`).
+    "rare_fraction": 0.02,
     # Most labels uncertain or artifact (once this many cells were read):
     # the marker is unreadable this way.
     "min_labelled": 10,
@@ -71,9 +85,18 @@ CLOSE_STATE = {status: "manual_review_recommended" for status in controller.STAT
                if status != "resolved"}
 CLOSE_STATE["no_identifiable_boundary"] = "not_binary"
 
+#: [cal] Steps (fit units) either side of a lattice that holds one point
+#: after thinning: past the tolerance, so each is a distinct hypothesis.
+SINGLE_STEPS = (0.25, 0.5)
+
 
 def active(engine, unit) -> bool:
-    """Whether this unit's looks are cell panels."""
+    """Whether this unit's looks are cell panels. Not a conditional gate:
+    only a classic look's `within` answer makes one, and a `within:` fit is
+    a lattice point the panels may choose among the rest. Not ported:
+    5 of 543 stored marker-images were conditional, and on the 3 held-out
+    the conditional gate was farther from the person's than the plain one
+    twice (CD3e 1.43 vs 0.89; PD1 0.16 vs 0.11; CD20L 0.10 vs 0.19)."""
     return engine.options["engine"] == "candidates" and not unit.get("condition") \
         and (unit.get("hypotheses") or {}).get("status") != "no_candidates"
 
@@ -93,25 +116,64 @@ def start(engine, unit) -> dict:
     if state is not None and state.get("version") == VERSION:
         return state
     lat = engine.lattice_for(unit)
-    _ds, col = _column(engine, unit)
+    ds, col = _column(engine, unit)
     begin = start_low(unit)
-    cands = candmod.build(lat, begin, col.to_fit, PARAMS["tolerance"],
-                          min_gap=PARAMS["min_gap"])
+    top = float(col.sorted32[-1]) if unit.get("high") is None else float(unit["high"])
+    lattice_points = sorted(lat.get("points") or [], key=lambda p: p["low"])
+    added = []
+    if len(candmod.thin(lattice_points, col.to_fit, PARAMS["min_gap"])) < 2:
+        added = _steps(ds, unit["marker"], col, lattice_points, begin, top)
+        lattice_points = sorted(lattice_points + added, key=lambda p: p["low"])
+    cands = candmod.build({"points": lattice_points}, begin, col.to_fit,
+                          PARAMS["tolerance"], min_gap=PARAMS["min_gap"])
     points = [{"low": float(p["low"]), "n_positive": int(p["n_positive"]), "id": p["id"],
                "sources": list(p["sources"])}
-              for p in candmod.thin(sorted(lat.get("points") or [], key=lambda p: p["low"]),
-                                    col.to_fit, PARAMS["min_gap"])]
+              for p in candmod.thin(lattice_points, col.to_fit, PARAMS["min_gap"])]
     if cands["window"] is None or len(cands["bounds"]) < 2:
         unit["hypotheses"] = {"version": VERSION, "status": "no_candidates",
                               "reason": "the lattice has fewer than two candidate gates"}
         return unit["hypotheses"]
+    params = {**PARAMS, "looks_max": int(engine.options["panel_looks"])}
+    at_start = points[int(cands["prior"])]["n_positive"] / max(1, col.n_finite)
+    rare = at_start < params["rare_fraction"] or unit.get("class") == "long_tail"
     unit["hypotheses"] = {
         "version": VERSION, "points": points, "window": list(cands["window"]),
-        "prior": int(cands["prior"]), "start": begin,
+        "prior": int(cands["prior"]), "start": begin, "top": top,
         "clusters": cands["clusters"], "spread": candmod.spread(cands, col.to_fit),
         "lattice": lat.get("fingerprint"), "observations": [], "status": None,
-        "params": {**PARAMS, "looks_max": int(engine.options["panel_looks"])}}
+        "rare": ({"fraction_at_start": round(at_start, 5), "class": unit.get("class")}
+                 if rare else None),
+        **({"added_points": [p["id"] for p in added]} if added else {}),
+        "params": params}
     return unit["hypotheses"]
+
+
+def _steps(ds, marker, col, lattice_points, begin, top) -> list:
+    """Points `SINGLE_STEPS` either side of a lattice's only point (or the
+    start), snapped to the sidebar's grid like every lattice point: a single
+    candidate has nothing to be told apart from, so it is tested against its
+    neighbours instead of accepted unseen."""
+    from plexora.plugins.gating.server import model
+
+    base = lattice_points[0]["low"] if lattice_points else begin
+    if base is None:
+        return []
+    desc = model._description(ds).get(marker) or {}
+    g0 = float(col.to_fit(base))
+    taken = {round(float(p["low"]), 9) for p in lattice_points}
+    out = []
+    for step in SINGLE_STEPS:
+        for sign, name in ((1, "up"), (-1, "down")):
+            value = float(col.from_fit(g0 + sign * step))
+            if desc:
+                value = model.snap_to_grid(value, top, desc)[0]
+            if round(value, 9) in taken or not value < top:
+                continue
+            taken.add(round(value, 9))
+            point_id = f"step:{name}{step:g}"
+            out.append({"id": point_id, "low": float(value), "sources": [point_id],
+                        "n_positive": int(col.n_positive(value, top))})
+    return out
 
 
 def _shown_ids(state) -> list:
@@ -162,7 +224,11 @@ def packet(engine, units):
     partners = engine.partner_panels(unit)
     layout = "t2m" if partners else "t2"
     per_row = views._per_row(layout)
-    rows = panelmod.rows_of(arranged, per_row)
+    # The picture's manifest is served to any client (`get_artifact`): it
+    # carries where each cell is and its number, never its value or why it
+    # was picked (a sentinel's "clear negative"); `_panel` keeps those.
+    rows = panelmod.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}
+                             for c in arranged], per_row)
     main = collage.render_collage(
         engine.call.session, ds, layout=layout, rows=rows, marker=channel, gate=None,
         high=unit.get("high"), fmt=packets._fmt(engine),
@@ -266,11 +332,12 @@ def finish(engine, unit, status):
 
         check = classifier_check.plan(engine, unit, state, _shown_ids(state))
         if check is not None:
-            # One more look before anything is written: the classifier's
-            # disagreements on both sides, among cells it did not choose.
+            # One more look before anything is written, and the last: the
+            # classifier's disagreements on both sides, among cells it did
+            # not choose. Its strata hold for this range only.
             state["status"] = None
             state["pending"] = check
-            state["params"]["looks_max"] = int(state["params"]["looks_max"]) + 1
+            state["params"]["looks_max"] = len(state["observations"]) + 1
             return
         state["reason"] = "the leading candidate beat every rival outside the tolerance"
         unit["candidate"] = float(leader)
@@ -333,6 +400,7 @@ def provenance(unit) -> dict | None:
     return {"version": state.get("version"), "status": state.get("status"),
             "reason": state.get("reason"), "leader": state.get("leader"),
             "start": state.get("start"), "clusters": state.get("clusters"),
+            "rare": state.get("rare"), "added_points": state.get("added_points"),
             "observations": [{"packet_id": o.get("packet_id"), "valid": o.get("valid"),
                               "kind": (o.get("plan") or {}).get("kind"),
                               "n_cells": len(o.get("cells") or ())}
