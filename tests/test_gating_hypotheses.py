@@ -570,7 +570,8 @@ def test_a_single_candidate_gets_steps_either_side_on_the_grid(monkeypatch):
 
 GROW = dict(PARAMS, min_between=20, min_between_share=0.25, resolve_within=0.3,
             edge_step=0.25, edge_steps=2, split_width=0.4, split_share=[0.2, 0.8],
-            split_reads=6, split_parts=4, unreadable_looks=2)
+            split_reads=6, split_parts=4, unreadable_looks=2, split_order_min=2,
+            split_order_p=0.05)
 
 
 def test_one_look_of_uncertain_cells_does_not_close_a_marker():
@@ -677,3 +678,81 @@ def test_a_step_and_a_split_are_lattice_like_points_on_the_column(monkeypatch):
     assert [round(float(col.to_fit(p["low"])), 6) for p in added] == [1.8]
     assert state["split"] == [[round(lows[0], 6), round(lows[1], 6)]]
     assert all(p["n_positive"] == int(col.n_positive(p["low"], top)) for p in step + added)
+
+
+# -- an edge inside an interval shows in the order of its reads ------------------------------
+
+
+def _wide(own, not_own):
+    """A window whose upper interval (2, 4] is wide; reads unstained below 2,
+    and `own` / `not_own` values read inside (2, 4]."""
+    state = _state(lows=(1.0, 2.0, 4.0), n_positive=(1000, 800, 100), window=(0, 2), prior=1)
+    state.update(n_finite=1200, grown={"up": 0, "down": 0}, split=[])
+    state["observations"].append(_obs([1.5] * 8 + list(own) + list(not_own),
+                                      ["not_own_stain"] * 8 + ["own_stain"] * len(own)
+                                      + ["not_own_stain"] * len(not_own)))
+    return state
+
+
+def test_an_interval_whose_stained_reads_lie_at_its_top_is_split_though_few_are_stained():
+    # 4 of 21 stained, under the mixed band, but all four above every
+    # unstained read: the edge is inside the interval.
+    state = _wide(own=(3.6, 3.7, 3.8, 3.9), not_own=[2.05 + 0.08 * i for i in range(17)])
+    s = controller.support(state, IDENTITY, GROW)
+    assert evidence.estimate(s["table"][1])[0] < GROW["split_share"][0]
+    assert controller.splittable(state, s, 1, IDENTITY, GROW, mixed=False)
+    assert controller.split_plan(state, s, IDENTITY, GROW, mixed=False)["interval"] == 1
+
+
+def test_reads_whose_words_follow_no_order_do_not_split_an_interval():
+    # The same counts, the stained reads among the unstained: a reader's
+    # slips, not an edge.
+    state = _wide(own=(2.3, 2.9, 3.3, 3.85), not_own=[2.05 + 0.11 * i for i in range(17)])
+    s = controller.support(state, IDENTITY, GROW)
+    assert not controller.splittable(state, s, 1, IDENTITY, GROW)
+    own, not_own = controller.reads_in(state, 1)
+    assert len(own) == 4 and len(not_own) == 17
+
+
+def test_a_marker_out_of_looks_splits_on_ordered_reads_and_still_closes_at_the_finer_leader(
+        monkeypatch):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import hypotheses
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    values = np.expm1(np.random.default_rng(7).normal(2.0, 0.5, 5000).clip(0.1))
+    ds = FakeData({"M": values})
+    monkeypatch.setattr(model, "_description", lambda _ds: {})
+    col = profmod.column(ds, "M")
+    top = float(values.max())
+    lows = [float(np.expm1(x)) for x in (1.6, 2.0, 2.8)]
+    params = dict(GROW, tolerance=0.2, min_gap=0.1)
+
+    def state_with(own, not_own):
+        fits = [1.7] * 8 + list(own) + list(not_own)
+        labels = ["not_own_stain"] * 8 + ["own_stain"] * len(own) \
+            + ["not_own_stain"] * len(not_own)
+        return {"points": [{"id": f"p{i}", "low": lo, "sources": ["gmm"],
+                            "n_positive": int(col.n_positive(lo, top))}
+                           for i, lo in enumerate(lows)],
+                "window": [0, 2], "prior": 1, "top": top, "n_finite": int(col.n_finite),
+                "grown": {"up": 0, "down": 0}, "split": [], "params": params,
+                "observations": [_obs([float(np.expm1(f)) for f in fits], labels)]}
+
+    # Unstained to 2.58, stained from 2.62: the leader at 2.8 comes down to
+    # the split point 2.6 on these reads, without another look.
+    state = state_with(own=(2.62, 2.67, 2.72, 2.77),
+                       not_own=[2.02 + 0.035 * i for i in range(17)])
+    s = controller.support(state, col.to_fit, params)
+    assert float(col.to_fit(s["low"])) == pytest.approx(2.8, abs=1e-6)
+    after = hypotheses._split_at_close(ds, "M", col, state, s)
+    assert float(col.to_fit(after["low"])) == pytest.approx(2.6, abs=1e-6)
+    assert len(state["observations"]) == 1
+    assert state["split_at_close"]["leader_before"] == s["low"]
+    # A mixed share whose reads follow no order is not split at the close:
+    # with no look to come, it may be the reader's slips.
+    state = state_with(own=(2.1, 2.3, 2.5, 2.7, 2.15, 2.45, 2.65, 2.2),
+                       not_own=(2.05, 2.25, 2.4, 2.55, 2.75, 2.35, 2.6, 2.12))
+    s = controller.support(state, col.to_fit, params)
+    assert hypotheses._split_at_close(ds, "M", col, state, s) is s
+    assert "split_at_close" not in state and state["split"] == []

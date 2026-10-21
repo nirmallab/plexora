@@ -38,8 +38,9 @@ from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 #: rival's cells are material relative to a rare population, rare markers
 #: confirm their own cells, a single candidate gets steps; "4": steps past
 #: the lattice's edge, wide mixed intervals split, unreadable takes two
-#: looks).
-VERSION = "4"
+#: looks; "5": an interval whose reads are ordered by value is split too,
+#: and a marker out of looks may split on the reads in hand).
+VERSION = "5"
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -95,6 +96,18 @@ PARAMS = {
     "split_share": [0.2, 0.8],
     "split_reads": 6,
     "split_parts": 4,
+    # ... or whose stained reads lie above its unstained ones: at least this
+    # many of each, a one-sided rank test at this level.
+    "split_order_min": 2,
+    "split_order_p": 0.05,
+    # A marker out of looks splits an interval whose reads are ordered, on
+    # the reads in hand, once, and closes for review at the leader among the
+    # finer points: the order may be plain only after the last look. Not on
+    # a mixed share alone, which with no look to come may be the reader's
+    # slips. lsp11385_2 replay (2026-10-21): ordered only, CD163 +0.38 to
+    # +0.18 and nothing else moved; with mixed shares too, SMA +0.19 to
+    # +0.43 and a run-1 CD163 +0.38 to -0.36.
+    "split_at_close": True,
 }
 
 #: Terminal status -> the unit's closed state (a review state writes the
@@ -444,9 +457,11 @@ def step(engine, unit) -> dict:
     from plexora.plugins.gating.server.autogate import transitions
 
     state = unit["hypotheses"]
-    _ds, col = _column(engine, unit)
+    ds, col = _column(engine, unit)
     status, s = controller.decide(state, col.to_fit, state["params"],
                                   continuous=bool(unit.get("continuous")))
+    if status == "budget_exhausted" and s is not None and state["params"].get("split_at_close"):
+        s = _split_at_close(ds, unit["marker"], col, state, s)
     if s is not None:
         state["leader"] = s["low"]
         state["support"] = {k: s[k] for k in ("loss", "fractions", "rivals", "labelled",
@@ -460,6 +475,24 @@ def step(engine, unit) -> dict:
         return {"unit": f"{unit['project']}::{unit['marker']}", "state": unit["state"],
                 "look": len(state["observations"])}
     return transitions._outcome(unit, status=status, leader=state.get("leader"))
+
+
+def _split_at_close(ds, marker, col, state, s):
+    """A marker out of looks cuts a wide interval beside its leader whose
+    reads are ordered (`controller.split_plan`, not on a mixed share), once,
+    and takes the leader among the finer points on the reads in hand: no
+    cell is shown, and the marker still closes for review. The support
+    after it, or `s`."""
+    params = state["params"]
+    plan = controller.split_plan(state, s, col.to_fit, params, mixed=False)
+    if plan is None or not _split(ds, marker, col, state, plan["from"], plan["to"]):
+        return s
+    after = controller.support(state, col.to_fit, params)
+    if after is None:
+        return s
+    state["split_at_close"] = {"from": plan["from"], "to": plan["to"],
+                               "leader_before": s["low"], "leader_after": after["low"]}
+    return after
 
 
 def finish(engine, unit, status):

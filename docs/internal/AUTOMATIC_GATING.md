@@ -308,9 +308,14 @@ and current call in its caption).
   rivals on the lattice's own highest or lowest point gets a point 0.25
   beyond it (`step`, at most two a side, while cells lie there); an
   interval beside the leader wider than 0.4 whose cells read mixed (own
-  share 0.2 to 0.8 on six definite reads or more) is cut into parts about
-  the tolerance wide, once (`split`). Both points are snapped like lattice
-  points, so the gate is still never a number typed by anyone.
+  share 0.2 to 0.8 on six definite reads or more) or ordered (its stained
+  reads above its unstained ones: two of each at least, a one-sided rank
+  test at 0.05) is cut into parts about the tolerance wide, once (`split`).
+  A marker out of looks makes that cut on ordered reads in hand, without a
+  look, and closes for review at the leader among the finer points; never
+  on a mixed share alone, which with no look to come may be the reader's
+  slips. All these points are snapped like lattice points, so the gate is
+  still never a number typed by anyone.
 - **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
   intervals plus 4 negative sentinels from below every candidate, shuffled
   and numbered; the 2 x 2 multi-view block when the marker has a partner.

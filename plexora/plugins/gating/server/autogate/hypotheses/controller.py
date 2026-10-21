@@ -19,9 +19,13 @@ A small closed set of actions, each a look at cells nobody has shown yet:
   unstained, and the person's gate lay above it).
 - `split` -- an interval beside the leader is wider than `split_width`
   (fit units) and its cells are mixed (an own-stain share inside
-  `split_share`, on `split_reads` definite reads): it is cut into parts
-  of about the tolerance and looked at, once (CD163: no candidate between
-  6.70 and 7.69, the person's gate 7.31).
+  `split_share`, on `split_reads` definite reads) or ordered (its stained
+  reads above its unstained ones, `ordered`): it is cut into parts of
+  about the tolerance and looked at, once (CD163: no candidate between
+  6.70 and 7.69, the person's gate 7.31). A marker out of looks may still
+  make that cut on the reads in hand, without a look, before it closes
+  for review (`split_at_close`) -- on ordered reads only: with no new look
+  to come, a mixed share could be the reader's slips.
 - `tail` -- a rare marker (`state["rare"]`) whose leader would resolve:
   cells above the leader, up to the brightest, in proportion to where they
   lie. A rare population is never accepted without its own cells having
@@ -259,9 +263,10 @@ def can_step(state, side, params) -> bool:
     return lo == 0 and below >= evidence.MIN_MATERIAL
 
 
-def splittable(state, s, k, to_fit, params) -> bool:
-    """Whether interval k (of the window) is wide, mixed, holds enough cells
-    to matter, and was not split before."""
+def splittable(state, s, k, to_fit, params, *, mixed=True) -> bool:
+    """Whether interval k (of the window) is wide, holds enough cells to
+    matter, was not split before, and reads ordered -- or mixed, unless
+    `mixed` is False."""
     bounds, n_cells = window(state)
     if not 0 <= k < len(n_cells) or not params.get("split_width"):
         return False
@@ -275,8 +280,56 @@ def splittable(state, s, k, to_fit, params) -> bool:
         return False
     share, n = evidence.estimate(s["table"][k])
     low, high = params.get("split_share") or (0.2, 0.8)
-    return share is not None and n >= float(params.get("split_reads") or 0) \
-        and low <= share <= high
+    if mixed and share is not None and n >= float(params.get("split_reads") or 0) \
+            and low <= share <= high:
+        return True
+    # A share outside the band can still hide an edge inside the interval
+    # when its dim end holds most of the cells (lsp11385_2 CD163,
+    # 2026-10-21: 4 of 21 read stained, all four at its top).
+    return ordered(*reads_in(state, k), params)
+
+
+def reads_in(state, k) -> tuple:
+    """(values read `own_stain`, values read `not_own_stain`) in interval k
+    of the window, over the valid looks (sentinels apart)."""
+    bounds, _ = window(state)
+    own, other = [], []
+    for obs in state["observations"]:
+        if not obs.get("valid", True):
+            continue
+        for cell in obs.get("cells") or ():
+            if cell.get("sentinel") or \
+                    evidence.interval_of(float(cell["value"]), bounds) != k:
+                continue
+            if cell.get("label") == evidence.OWN:
+                own.append(float(cell["value"]))
+            elif cell.get("label") == evidence.NOT_OWN:
+                other.append(float(cell["value"]))
+    return own, other
+
+
+def ordered(own, not_own, params) -> bool:
+    """Whether an interval's stained reads lie above its unstained ones: at
+    least `split_order_min` of each word and a one-sided rank test
+    (Mann-Whitney) at `split_order_p`. A reader's slips fall anywhere in an
+    interval; an edge inside it puts the stained reads at its top."""
+    least = int(params.get("split_order_min") or 0)
+    if not least or len(own) < least or len(not_own) < least:
+        return False
+    from scipy.stats import mannwhitneyu
+
+    p = float(mannwhitneyu(own, not_own, alternative="greater").pvalue)
+    return p <= float(params.get("split_order_p") or 0.0)
+
+
+def split_plan(state, s, to_fit, params, *, mixed=True) -> dict | None:
+    """The split of the first interval beside the leader (below, then
+    above) that is wide and reads ordered or (with `mixed`) mixed; None."""
+    bounds, _ = window(state)
+    for k in (s["leader"] - 1, s["leader"]):
+        if splittable(state, s, k, to_fit, params, mixed=mixed):
+            return {"kind": "split", "interval": k, "from": bounds[k], "to": bounds[k + 1]}
+    return None
 
 
 def growth(state, s, to_fit, params) -> dict | None:
@@ -298,10 +351,7 @@ def growth(state, s, to_fit, params) -> dict | None:
         return {"kind": "step", "side": "down"}
     if s["resolved"] and leader == len(bounds) - 1 and can_step(state, "up", params):
         return {"kind": "step", "side": "up"}
-    for k in (leader - 1, leader):
-        if splittable(state, s, k, to_fit, params):
-            return {"kind": "split", "interval": k, "from": bounds[k], "to": bounds[k + 1]}
-    return None
+    return split_plan(state, s, to_fit, params)
 
 
 def extend(state, side) -> dict:

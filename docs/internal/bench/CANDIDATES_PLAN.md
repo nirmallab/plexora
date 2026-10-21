@@ -375,7 +375,7 @@ unreadable before its third look. Two misses the records explain:
   lie at 7.26 to 7.55 and the unstained mostly below 7.2: the edge is
   inside the interval, and the share hides it because the dim end holds
   most of its cells. A trigger on the reads' order by value within the
-  interval would have split it (proposed, not built).
+  interval would have split it (built next, VERSION 5).
 - **CD4** (+0.63): the reader called the cells at 6.5 to 7.0 unstained
   although the panel named the lineage (helper T cells; monocytes and
   macrophages, weaker). Its partner panel showed CD3e as the expected
@@ -383,6 +383,41 @@ unreadable before its third look. Two misses the records explain:
   beside it. A multi-lineage marker's expected partner could be the
   lineages' common one (CD45) instead (proposed, not built: CD4's
   partners also feed the classic engine's looks and the hierarchy).
+
+### The ordered split (VERSION 5, 2026-10-21)
+
+An interval is also split when its stained reads lie above its unstained
+ones (`controller.ordered`: at least two of each, a one-sided Mann-Whitney
+test at 0.05): a reader's slips fall anywhere in an interval, an edge
+inside it puts the stained reads at its top. On run 2's CD163 the order
+was plain only after the third and last look (p 0.040; after two looks one
+stained read), so a trigger inside the loop could not have fired: a marker
+out of looks may now make the cut on the reads in hand, with no look, and
+close for review at the leader among the finer points
+(`split_at_close`).
+
+Replayed on the stored reads of runs 1 and 2 (counts at the new points
+interpolated between lattice points; no snapping), the trigger fires
+inside the loop on none of the 33 markers before their last look. At the
+close:
+
+| marker | ordered reads only | mixed share too |
+|---|---|---|
+| CD163, run 2 | +0.38 to +0.18 (p 0.040) | the same |
+| SMA, run 2 | not split (p 0.089) | +0.19 to +0.43 (8 of 10 stained) |
+| CD163, run 1 | not split (p 0.21) | +0.38 to -0.36 (4 of 9) |
+
+Cut finer with no look to come, each part rests on two to six reads, and
+the leader among them carries the reader's slips: the close takes ordered
+reads only. CD163 is the case the rule was drawn from, so this replay is
+not evidence for it; the replicate runs are its first test.
+
+Offline (the 8 scenes, the same seeds and readers as VERSION 4): every
+marker's gate and state identical to VERSION 4 (0.9505 truthful; 0.940
+under 32 % slips, with or without 40 % uncertain). Of the 37 markers that
+ran out of looks none moved at the close, and the order test never fired
+inside the loop: a reader whose slips are blind to the value gives it
+nothing to find.
 
 ## Not done in this branch
 
