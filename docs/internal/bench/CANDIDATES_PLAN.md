@@ -421,6 +421,16 @@ nothing to find.
 
 ## Not done in this branch
 
+- Robustness to a reader that reads the same cells differently run to
+  run (to revisit once the replicates measure the spread, at the user's
+  request, 2026-10-21). Built: the sentinels and the decisiveness test
+  guard the decision to accept. Missing: the gate of a marker that closes
+  for review is that run's leader (11 of 17 on live run 2), unprotected;
+  `uncertain` is dropped and no slip rate or leniency of the reader is
+  estimated; no second reader -- the fix that keeps to "never averaged"
+  would put the cells that decide a review marker to a fresh reader and
+  pool its reads into the evidence; the engine's run-to-run spread is
+  unmeasured.
 - Sampling control (temperature, seed): the gateway chooses the model and
   its parameters, and the gating tasks run with reasoning effort, which
   rules out temperature 0 on the models that think. Variance is measured by
