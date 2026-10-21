@@ -888,7 +888,11 @@ class Engine(BaseEngine):
         anchor = start_low(unit)
         result = tableops.local_or_node(ds, "gating.autogate.regression", {
             "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
-            "prior": prior, "partners": partners})
+            "prior": prior, "partners": partners,
+            # The band the looks walk, so a gate the lattice offered is never
+            # failed for leaving the mixture's narrower one.
+            "guard": (self.lattice_for(unit).get("guard")
+                      if (unit.get("start") or {}).get("source") == "scoring" else None)})
         result = self._with_lineage(unit, result, {p["partner"] for p in partners})
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],

@@ -188,7 +188,8 @@ def decide_first(engine, unit):
                 unit["state"] = "accepted_t1"
         else:
             unit["audited"] = False
-            engine.finalize(unit, method="gmm")
+            unit["state"] = "awaiting_regression"
+            engine.settle(unit)
         return
     # Whether the marker has a positive population at all comes first: a
     # mixture splits every column in two (`absence`).

@@ -73,8 +73,8 @@ READING_GUIDE = {
                    "brightest pixels (a cell with no stain stays dark; a brighter neighbour "
                    "saturates). Right, context: the marker at one fixed window for the whole "
                    "marker, cell outlines thin and grey. Four magenta ticks mark the judged "
-                   "cell's nucleus. Caption = value and the current call (+/-). Rows: just "
-                   "below, at and just above the gate; judge the rows nearest the gate most"),
+                   "cell's nucleus. Caption = the cell's place in its row. Rows: just below, "
+                   "at and just above the gate; judge the rows nearest the gate most"),
     "collage_t3": ("as the first look, with a third panel per cell: the reference channel "
                    "alone (white); a subset or co-expressed marker's positives should be "
                    "reference-bright, an exclusive one's reference-dark; the fields add the "
@@ -90,7 +90,7 @@ READING_GUIDE = {
                     "inside the outline supports the cell's own stain; a not-expected partner lit "
                     "inside it says the cell is another type, so marker light on it is likely a "
                     "neighbour's. Partners glow too: read them inside the outline. Caption = "
-                    "value and the current call (+/-). Rows: just below, at and just above the "
+                    "the cell's place in its row. Rows: just below, at and just above the "
                     "gate; judge the rows nearest the gate most"),
     "collage_flips_m": ("each cell is the 2 x 2 block of `collage_t2m`. Rows run from the "
                         "current gate outward: row i1 is the cells between the current gate and "
@@ -924,8 +924,11 @@ def t4_candidates(engine, units):
     unit["candidates_reach_edge"] = any(s.startswith("edge:") for s in points[-1]["sources"])
     thresholds = sorted([current] + [p["low"] for p in points])
     condition = unit.get("condition")
+    # As many cells an interval as a row draws: `delta_cells` spreads its
+    # picks over the interval's values, so a larger sample cut to the row
+    # would leave out its brightest cells.
     payload = {"marker": unit["marker"], "candidates": thresholds, "high": unit.get("high"),
-               "seed": _seed(engine)}
+               "seed": _seed(engine), "n_per_interval": views._per_row("flips")}
     if condition:
         payload["within"] = {"marker": condition["within"], "gate": condition["partner_gate"]}
     delta = tableops.local_or_node(ds, "gating.autogate.delta", payload)
@@ -1044,7 +1047,6 @@ def _check_rows(ds, unit, check, names):
     """Two collage rows per interval, `i<k>a` and `i<k>b`: the cells the
     classifier flags and the cells it agrees on, in the order `check_rows`
     drew (which is which is never in the packet)."""
-    from plexora.agent.evidence.collage import compact_number
     from plexora.plugins.gating.server.autogate import cells as cellmod
     from plexora.plugins.gating.server.autogate import profile as profmod
     from plexora.plugins.gating.server.autogate import sampler
@@ -1062,8 +1064,7 @@ def _check_rows(ds, unit, check, names):
                      for r in halves[tag]]
             rows.append({"key": key,
                          "label": f"{key}: {names.get(index) or ''} ({len(cells)} cells)",
-                         "cells": [dict(cell, caption=compact_number(cell["value"]))
-                                   for cell in cells]})
+                         "cells": views.indexed(cells)})
     return rows
 
 

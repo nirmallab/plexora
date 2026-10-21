@@ -336,3 +336,73 @@ def test_the_scored_candidates_are_a_read_only_tool(tmp_path):
     assert scored["proposal"] is not None
     assert {c["id"] for c in scored["candidates"]} >= {"gmm", "score"}
     assert model.get_gate(session.data("gsynth"), "CD8") == before
+
+
+# -- what a look is shown, and the checks every write passes -----------------------------
+
+
+def test_a_look_at_candidates_shows_every_cell_it_sampled_across_the_interval(tmp_path):
+    """The candidates' rows draw as many cells as were sampled, so the
+    brightest of an interval's cells are never cut from its row."""
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import sampler, views
+
+    make_gating_project(tmp_path)
+    ds = AgentSession().data("gsynth")
+    gmm = float(model.fit_for(ds, "CD8")["gate"])
+    values = np.asarray(ds.table.columns(["CD8"])["CD8"], dtype=np.float64)
+    hi = float(np.quantile(values[values > gmm], 0.5))
+    delta = sampler.delta_cells(ds, "CD8", [gmm, hi], n_per_interval=views._per_row("flips"))
+    rows = views.flip_rows(delta)
+    sampled = delta["intervals"][0]["cells"]
+    assert len(rows[0]["cells"]) == len(sampled) == views._per_row("flips")
+    shown = [c["value"] for c in rows[0]["cells"]]
+    inside = values[(values > gmm) & (values <= hi)]
+    assert max(shown) >= np.quantile(inside, 0.8)
+
+
+def test_a_looks_cells_are_captioned_by_place_not_value_or_call():
+    from plexora.plugins.gating.server.autogate import views
+
+    cells = [{"cell_id": i, "x": 0.0, "y": 0.0, "value": 1.0 + i} for i in range(3)]
+    sample = {"strata": {"just_below": cells, "borderline": cells, "just_above": cells},
+              "counts": {"just_below": 3, "borderline": 3, "just_above": 3}}
+    for row in views.t2_rows(sample, 2.0, None):
+        assert [c["caption"] for c in row["cells"]] == ["1", "2", "3"]
+        assert all(c["call"] in ("positive", "negative") for c in row["cells"])
+    delta = {"intervals": [{"from": 1.0, "to": 2.0, "n_flip": 3, "cells": cells}]}
+    assert [c["caption"] for c in views.flip_rows(delta)[0]["cells"]] == ["1", "2", "3"]
+
+
+def test_an_audited_split_still_passes_the_numeric_checks():
+    from plexora.plugins.gating.server.autogate import transitions
+
+    settled = []
+    unit = {"project": "p", "marker": "CD3", "state": "accepted_t1", "candidate": 2.0}
+    engine = SimpleNamespace(
+        record={"units": {"p::CD3": unit}},
+        settle=lambda u: settled.append(dict(u)))
+    packet = {"units": [{"project": "p", "marker": "CD3"}]}
+    answer = SimpleNamespace(verdicts={"CD3": "ok"})
+    transitions.apply_strip(engine, packet, answer)
+    assert settled and settled[0]["state"] == "awaiting_regression"
+    assert settled[0]["method"] == "gmm" and settled[0]["audited"] is True
+
+
+def test_the_guard_check_uses_the_band_the_lattice_walked(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import lattice, regression
+
+    make_gating_project(tmp_path)
+    ds = AgentSession().data("gsynth")
+    gmm = float(model.fit_for(ds, "CD8")["gate"])
+    plain = lattice.build(ds, "CD8", gmm=gmm)
+    top = float(np.asarray(ds.table.columns(["CD8"])["CD8"]).max())
+    far = float(plain["guard"][1] + (top - plain["guard"][1]) / 2)
+    outside = regression.numeric_checks(ds, "CD8", far, gmm)
+    assert "guard_band" in outside["failed"]
+    widened = [plain["guard"][0], far + 1e-3]
+    inside = regression.numeric_checks(ds, "CD8", far, gmm, guard=widened)
+    assert "guard_band" not in inside["failed"]

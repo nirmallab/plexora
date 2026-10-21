@@ -92,7 +92,8 @@ def decide_image(engine, project):
                     unit["state"] = "accepted_t1"
             else:
                 unit["transfer_confidence"] = "moderate"
-                engine.finalize(unit, method=METHOD)
+                unit["state"] = "awaiting_regression"
+                engine.settle(unit)
             continue
         if klass in ("image_specific_shift", "smooth_drift", "batch_effect") and inside:
             unit["candidate"] = float(predicted)
@@ -221,7 +222,9 @@ def apply_transfer(engine, packet, answer):
         if verdict == "holds":
             unit["path"] = "transfer"
             unit["transfer_confidence"] = "moderate"
-            engine.finalize(unit, method=METHOD)
+            unit["method"] = METHOD
+            unit["state"] = "awaiting_regression"
+            engine.settle(unit)
         elif verdict in ("too_low", "too_high"):
             unit["path"] = "t4"
             unit["method"] = "ai_refined"

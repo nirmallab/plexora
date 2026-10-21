@@ -91,6 +91,13 @@ def _with_calls(cells, low, high):
     return [dict(c, call=call_of(c["value"], low, high)) for c in cells]
 
 
+def indexed(cells):
+    """The cells captioned by their place in the row (1, 2, ...): a look is
+    blind to each cell's value and current call, which stay in the manifest
+    for code."""
+    return [dict(c, caption=str(index + 1)) for index, c in enumerate(cells)]
+
+
 def _per_row(layout):
     from plexora.agent.evidence.collage import LAYOUTS
 
@@ -111,7 +118,7 @@ def t2_rows(sample, low, high, per_row=None):
         cells = sorted(cells, key=lambda c: c["value"])
         n = sum(sample["counts"].get(name, 0) for name in names)
         out.append({"key": key, "label": f"{label} ({n} cells)",
-                    "cells": _with_calls(cells, low, high)})
+                    "cells": indexed(_with_calls(cells, low, high))})
     return out
 
 
@@ -138,8 +145,7 @@ def flip_rows(delta, per_row=None, labels=None):
             f"{compact_number(interval['from'])} to {compact_number(interval['to'])}"
         rows.append({"key": f"i{index + 1}",
                      "label": f"i{index + 1}: {name} ({interval['n_flip']} cells flip)",
-                     "cells": [dict(c, caption=compact_number(c["value"])) for c in
-                               interval["cells"][:per_row]]})
+                     "cells": indexed(interval["cells"][:per_row])})
     return rows
 
 

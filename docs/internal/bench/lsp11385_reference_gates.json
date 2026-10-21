@@ -1,4 +1,5 @@
 {
+ "kind": "model_gates",
  "what": "Reference gates for lsp11385 (primary cutaneous melanoma): the gates of the 2026-10-01 live run, answered by claude-opus-5-5 in one conversation. The bar a cheaper run is scored against (docs/internal/AUTOGATE_LIVE_RUN_2026-10-01.md).",
  "session_id": "gs_20261001T142835_c6b952",
  "project": "lsp11385",

@@ -142,7 +142,10 @@ def learn_from(context, markers, *, source, about=None) -> list:
     `source`, `ai` or `user`) for those of `markers` it did not know, partners
     named by their canonical names (`vocabulary.learn`). Returns the names
     learned; never raises -- a panel answer is applied whether or not the
-    file could be written."""
+    file could be written. Only a person's entries are learned: a reader's
+    stay with the project they were given for until someone confirms them."""
+    if source != "user":
+        return []
     teach = []
     for marker in markers or ():
         entry = (context.get("entries") or {}).get(marker) or {}

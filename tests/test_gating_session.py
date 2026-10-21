@@ -1553,9 +1553,10 @@ def test_gating_can_leave_auto_contrast_out(tmp_path):
     assert status["display"]["status"] == "off"
 
 
-def test_a_panel_answer_is_learned_for_the_next_panel(tmp_path, monkeypatch):
+def test_a_panel_answer_is_not_learned_until_confirmed(tmp_path, monkeypatch):
     """What the model said about a marker the vocabulary does not know is
-    kept: a project with another panel that has it is not asked again."""
+    used by the session and listed as unconfirmed; another panel that has
+    the marker is asked again, until a person confirms it."""
     from tests import autogate_fixtures
 
     from plexora.ai import vocabulary
@@ -1574,15 +1575,18 @@ def test_a_panel_answer_is_learned_for_the_next_panel(tmp_path, monkeypatch):
             "marker": "Mystery1", "role": "lineage_other", "compartment": "membrane",
             "lineage": "b_cell", "binary": True,
             "partners": [{"marker": "CD3", "relation": "exclusive", "confidence": "moderate"}]}]})
-    assert outcome["outcome"]["learned"] == ["Mystery1"]
-    assert vocabulary.origin("Mystery1") == "learned"
+    assert outcome["outcome"]["unconfirmed"] == ["Mystery1"]
+    assert vocabulary.origin("Mystery1") != "learned"
+    status = ok(invoke(session, "gating_session_status",
+                       {"session_id": started["session_id"]}))
+    assert status["unconfirmed_context"] == ["Mystery1"]
     ok(invoke(session, "gating_session_finish",
               {"session_id": started["session_id"], "action": "close"}))
     make_gating_project(tmp_path, name="gother", markers=("CD3", "Mystery1"))
     other = ok(invoke(session, "gating_session_start", {"scope": "project",
                                                         "project": "gother"}))
     jobs.drain(120)
-    assert not other.get("unresolved_markers")
+    assert other.get("unresolved_markers") == ["Mystery1"]
     del info
 
 

@@ -666,6 +666,7 @@ def expert_truth(session, project, table=TRUTH_TABLE, column=None):
 def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, seed=0,
                  markers=None, variants=("baseline",), truth_column=None) -> list:
     from plexora.agent import AgentSession, registry
+    from plexora.plugins.gating.server.autogate import profile as profmod
 
     registry.discover(["gating"])
     session = AgentSession(table_limit=4)
@@ -677,11 +678,15 @@ def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, s
         gates, extra = gates_for_arms(session, project, wanted, agent, arms,
                                       variants=variants)
         gates["expert"] = {m: expert[m] for m in wanted}
+        ds = session.data(project)
         for row in score_image(project, values, truth, gates, extra):
             if row["arm"] != "expert" and row.get("gate") is not None \
                     and row["marker"] in expert:
-                row["delta_log1p"] = float(np.log1p(max(row["gate"], 0))
-                                           - np.log1p(max(expert[row["marker"]], 0)))
+                # In the marker's fit space (log1p of raw intensities; a
+                # table already in log space is used as it is, not logged twice).
+                col = profmod.column(ds, row["marker"])
+                row["delta_log1p"] = float(col.to_fit(row["gate"])
+                                           - col.to_fit(expert[row["marker"]]))
             rows.append(row)
     return rows
 
@@ -1102,6 +1107,16 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
     if truth and truth.startswith(("json:", "csv:")):
         table = truth
     against = table if table.startswith(("json:", "csv:")) else f"uns[{table!r}]"
+    if table.startswith("json:"):
+        try:
+            kind = json.loads(Path(table[5:]).read_text(encoding="utf-8")).get("kind")
+        except (OSError, ValueError, AttributeError):
+            kind = None
+        if kind == "model_gates":
+            # A model's earlier gates measure agreement with that run, not
+            # accuracy against a person's gates.
+            emit(f"warning: {table[5:]} holds a model's gates, not a person's")
+            against += " (a model's gates)"
     if replay:
         rows = run_replay(replay, agent, truth_table=table, rerender=rerender, seed=seed,
                           truth_column=truth_column)

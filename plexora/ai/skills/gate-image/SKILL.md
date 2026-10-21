@@ -63,9 +63,9 @@ gate was decided: `gating_qc` lists the marker under `stale_qc`.
 ## Where a look starts: scored candidates
 
 Before a marker's first look the session scores candidate thresholds on the
-numbers and the biology (`evidence.scored`) and starts from the proposal,
-`score`: the Auto mixture gate `gmm`; `onset`, where background stops
-explaining the cells (local false-discovery rate below
+numbers and the biology (see the gate's provenance) and starts from the
+proposal, `score`: the Auto mixture gate `gmm`; `onset`, where background
+stops explaining the cells (local false-discovery rate below
 {{scoring.onset_percent}}%); `ceiling`, the background peak plus
 {{scoring.ceiling_sd}} core sds; `bio:<partner>`, where a subset or
 co-expressed partner's share has done most of its rise (`robust` false when it
@@ -85,11 +85,11 @@ the marker tree, then the numbers and the looks.
 
 - **Tissue and disease.** When the user names the sample's biology, pass it to
   `gating_session_start` as `biology` (`tissue`, `disease`, `notes`, in their
-  words). Its relations are laid over the panel, and each look carries
-  `evidence.biology`. It is a prior: it never moves a gate and never makes a
-  population exist. Without it the session takes it from metadata or infers
-  it from the panel (`source`): say an inferred context as inferred, ask the
-  user to confirm it, never report it as the diagnosis.
+  words). Its relations are laid over the panel (status `biology`). It is a
+  prior: it never moves a gate and never makes a population exist. Without
+  it the session takes it from metadata or infers it from the panel
+  (`source`): say an inferred context as inferred, ask the user to confirm
+  it, never report it as the diagnosis.
 - **The marker tree.** `get_marker_hierarchy` shows each marker's `stage`,
   `parents` and `children`. Gating follows it, broad markers first; it guides
   and never blocks. Describe unplaced markers in the panel context.
@@ -107,7 +107,7 @@ the marker tree, then the numbers and the looks.
 2. `gating_session_start` with `scope: "project"`, the project, `mode:
    "apply"` (each gate written as decided, undoable) unless the user asked to
    review first (`"propose"`), `biology`, and `agent` (your model's name).
-   `mirror: true` when the user watches in a viewer. Plexora AI (`ai.run_session`)
+   `mirror: true` when the user watches in a viewer. Plexora AI (`ai_run_session`)
    collects the same set-up itself before any model call. A start refused with
    `detail.setup` names a column the project does not have (a cell id, the
    coordinates, an image id): tell the user which, and that the viewer's

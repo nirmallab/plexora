@@ -2041,6 +2041,11 @@ def status(call, inp):
         models = engine.models_used()
         if models:
             out["models"] = models
+        if record.get("unconfirmed_context"):
+            # What a reader answered about the panel: used by this session,
+            # learned for later panels only once a person confirms it
+            # (`set_panel_context` with source user).
+            out["unconfirmed_context"] = list(record["unconfirmed_context"])
     if replay and not st.control(inp.session_id).get("viewer_detached"):
         try:
             packet, _ = st.read_packet(inp.session_id, replay)
