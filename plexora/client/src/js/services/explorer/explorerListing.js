@@ -826,12 +826,21 @@ window.PlexoraExplorerListing = (function () {
         }
 
         function setView(next) {
+            const before = state.view;
             const merged = { ...state.view, ...(next || {}) };
             merged.columns = { ...COLUMN_DEFAULTS, ...(state.view.columns || {}), ...((next && next.columns) || {}) };
             state.view = merged;
             paintColumns();
             derive();
             renderHead();
+            const reordered = ["sort_by", "sort_dir", "dirs_first", "layout"]
+                .some((key) => before[key] !== merged[key]);
+            if (reordered) {
+                // The row the cursor is on stays in view wherever the new
+                // order put it; with no cursor, a new order starts at its top.
+                if (state.cursor >= 0) ensureVisible(state.cursor);
+                else scroller.scrollTop = 0;
+            }
             render(true);
         }
 

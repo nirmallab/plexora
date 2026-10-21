@@ -651,6 +651,15 @@ def test_the_window_never_becomes_a_containing_block():
         assert banned not in css, banned
 
 
+def test_closing_always_answers_the_caller():
+    """The close handler tidies up, then resolves -- in a `finally`, because a
+    tidy-up that threw once (a PopoverPortal method that does not exist) left
+    every pick unanswered while the window had already gone."""
+    controller = module("fileExplorer.js")
+    handler = controller.split('dialog.addEventListener("close", () => {')[1]
+    assert handler.index("} finally {") < handler.index("resolve(answer);")
+
+
 def test_the_explorer_never_attaches_itself_to_the_portal():
     """It is a top-layer dialog: menus are portaled INTO it while it is open.
     Attached to the portal itself, it would be moved into whatever modal is

@@ -1371,26 +1371,32 @@ window.PlexoraFileExplorer = (function () {
         });
         const promise = new Promise((resolve) => {
             dialog.addEventListener("close", () => {
-                // Before `closed`, and before the window leaves the page: the
-                // write goes out synchronously, and removing the element it was
-                // started from does not cancel it.
-                remember();
-                closed = true;
-                document.removeEventListener("keydown", onEscapeCapture, true);
-                abort("listAbort");
-                abort("metaAbort");
-                abort("searchAbort");
-                [state.searchTimer, state.loadingTimer, state.explainTimer, state.viewTimer,
-                 state.typeaheadTimer].forEach((timer) => clearTimeout(timer));
-                if (window.PlexoraMenu && window.PlexoraMenu.isOpen && window.PlexoraMenu.isOpen()) {
-                    window.PlexoraMenu.close();
+                try {
+                    // Before `closed`, and before the window leaves the page:
+                    // the write goes out synchronously, and removing the
+                    // element it was started from does not cancel it.
+                    remember();
+                    closed = true;
+                    document.removeEventListener("keydown", onEscapeCapture, true);
+                    abort("listAbort");
+                    abort("metaAbort");
+                    abort("searchAbort");
+                    [state.searchTimer, state.loadingTimer, state.explainTimer, state.viewTimer,
+                     state.typeaheadTimer].forEach((timer) => clearTimeout(timer));
+                    if (window.PlexoraMenu && window.PlexoraMenu.isOpen
+                            && window.PlexoraMenu.isOpen()) {
+                        window.PlexoraMenu.close();
+                    }
+                    // A menu PopoverPortal hosted in here is moved back by the
+                    // portal itself, which listens for `close` at the document.
+                    win.dispose();
+                } finally {
+                    // Whatever the tidying did, the caller gets its answer: a
+                    // pick that never resolves leaves the field waiting for a
+                    // window that is already gone.
+                    closed = true;
+                    resolve(answer);
                 }
-                win.dispose();
-                // A menu adopted by this window goes back where it belongs.
-                // Spelled bare: PopoverPortal is a top-level const, not a
-                // property of `window`.
-                if (typeof PopoverPortal !== "undefined") PopoverPortal.relocate();
-                resolve(answer);
             });
         });
 

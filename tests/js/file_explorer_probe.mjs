@@ -500,6 +500,14 @@ const PlexoraMenu = {
     close() { menuOpen = false; },
     isOpen: () => menuOpen,
 };
+//: The real portal's public face, and no more: a call to anything else
+//: throws here as it would in the page.
+const PopoverPortal = Object.freeze({
+    attach: (el) => el,
+    reseat: (el) => el,
+    detach: (el) => { if (el && el.remove) el.remove(); },
+    root: () => body,
+});
 let clipboard = "";
 const windowListeners = new Map();
 
@@ -524,6 +532,7 @@ const context = {
     Number,
     navigator: { clipboard: { writeText: async (text) => { clipboard = text; } } },
     PlexoraMenu,
+    PopoverPortal,
     addEventListener(type, handler) {
         if (!windowListeners.has(type)) windowListeners.set(type, []);
         windowListeners.get(type).push(handler);
