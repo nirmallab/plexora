@@ -260,11 +260,17 @@ window.PlexoraResourceStatus = (function () {
             list.append(item);
         });
         body.append(list);
+        // A files-only server (`files` on its row) starts nothing over
+        // there: connecting opens SFTP, and the promise is worded for that.
+        const filesOnly = profiles.length && profiles.every((row) => row.files);
         body.append(el("p", "resource-modal-note",
-                       "Connecting reopens the data node on that machine and "
-                       + "loads this project again. Everything already on this "
-                       + "computer — your ROIs, figures and gates — is "
-                       + "untouched either way."));
+                       (filesOnly
+                           ? "Connecting opens the SFTP connection to that "
+                             + "machine and loads this project again. "
+                           : "Connecting reopens the data node on that machine "
+                             + "and loads this project again. ")
+                       + "Everything already on this computer — your ROIs, "
+                       + "figures and gates — is untouched either way."));
 
         const actions = el("div", "connect-modal-actions");
         //: Whether a connection attempt is in flight. It is what stops this

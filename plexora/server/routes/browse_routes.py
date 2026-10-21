@@ -51,6 +51,11 @@ def browse_path():
         return jsonify(error=f"Unknown file filter: {file_filter}"), 400
 
     node = (payload.get('node') or '').strip()
+    if _is_files_place(node):
+        # A files-only server has no desktop and no process of ours to open a
+        # dialog with; the listing picker is the whole of browsing it.
+        return jsonify(error="Browse the list for a files-only server.",
+                       fallback="list"), 400
     if node:
         return _browse_on_node(node, mode, file_filter)
 
@@ -123,6 +128,8 @@ def browse_capability():
     """
     payload = request.get_json(silent=True) or {}
     node = (payload.get('node') or '').strip()
+    if _is_files_place(node):
+        return jsonify(dialogs=native_dialog.NONE)
     if node:
         from plexora import nodes as node_api
         # None is a node too old to say or one not answering just now. Both
@@ -217,6 +224,8 @@ def list_dir():
     node = (payload.get('node') or '').strip()
     raw = (payload.get('path') or '').strip()
     show_hidden = bool(payload.get('show_hidden'))
+    if _is_files_place(node) or (not node and _is_files_place(raw)):
+        return _list_dir_over_sftp(node or raw, raw, show_hidden)
     if node:
         return _list_dir_on_node(node, raw, show_hidden)
 
@@ -224,6 +233,37 @@ def list_dir():
         return jsonify(**dir_listing.listing(raw, show_hidden=show_hidden))
     except dir_listing.ListingError as exc:
         return jsonify(error=str(exc)), 400
+
+
+def _is_files_place(value):
+    """Whether a machine key names a files-only server.
+
+    Such a place has no node, so the browser names it by the `sftp://` address
+    its files are read at (`data_places`' `files.base`) -- which is also what
+    every path in its listing starts with, so the picker hands back addresses
+    an import takes as they are.
+    """
+    from plexora.server.utils import sftp
+
+    return str(value or "").strip().lower().startswith(f"{sftp.SCHEME}://")
+
+
+def _list_dir_over_sftp(base, path, show_hidden=False):
+    """`/list_dir` for a files-only server, read over its SFTP connection.
+
+    503 for a server that is not connected, as a node that is not answering
+    gets: the picker shows the sentence, which names the server to connect.
+    """
+    from plexora.server.utils import sftp
+
+    try:
+        return jsonify(**sftp.listing(base, path, show_hidden=show_hidden))
+    except sftp.SFTPNotConnected as exc:
+        return jsonify(error=str(exc)), 503
+    except dir_listing.ListingError as exc:
+        return jsonify(error=str(exc)), 400
+    except (ConnectionError, TimeoutError) as exc:
+        return jsonify(error=str(exc)), 503
 
 
 def _list_dir_on_node(name, path, show_hidden=False):

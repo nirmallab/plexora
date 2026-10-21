@@ -11,6 +11,7 @@
     "google-cloud",
     "docker",
     "data-nodes",
+    "files-over-sftp",
     "split-data",
     "troubleshooting"
   ]

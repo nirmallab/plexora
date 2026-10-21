@@ -466,7 +466,9 @@ window.PlexoraRemoteGlobe = (function () {
             //: through _forget_node, which reads the registry, not a session.
             const probe = health[entry.name];
             const answering = Boolean(probe && probe.state === "healthy");
-            const ready = Boolean(node.node) || answering;
+            // A files-only server has no node to probe: its SFTP connection
+            // being up is the whole of "connected".
+            const ready = Boolean(node.node) || Boolean(node.files) || answering;
             const busy = Remotes().isOpening(node.state);
             const broken = node.state === "failed";
             const item = el("li", "remote-conn "
@@ -649,8 +651,11 @@ window.PlexoraRemoteGlobe = (function () {
                 closePanel();
                 window.PlexoraConnectionModal.open({
                     name: entry.name, kind: "node",
-                    intent: "Opens a data node on that machine, so files on "
-                            + "it can be used here.",
+                    intent: entry.filesOnly
+                        ? "Opens an SFTP connection to that machine, so images "
+                          + "on it can be streamed here. Nothing is started there."
+                        : "Opens a data node on that machine, so files on "
+                          + "it can be used here.",
                 });
             });
             go.append(icon("plug"));

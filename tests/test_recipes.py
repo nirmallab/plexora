@@ -79,8 +79,10 @@ def test_the_sites_we_have_actually_connected_to_are_the_ones_marked_tested():
     badge is the whole point of the distinction, so it has to be true."""
     assert [r.id for r in recipe_store.all_recipes() if r.tested] == [
         "gcloud", "hms-o2", "mgb-eris"]
+    # The O2 transfer node is shaped from HMS's own documentation and tested
+    # against OpenSSH's SFTP server, but not yet against the node itself.
     assert [r.id for r in recipe_store.all_recipes() if r.unverified] == [
-        "aws"]
+        "aws", "hms-o2-transfer"]
 
 
 def test_a_generic_shape_is_not_something_that_can_be_untested():
@@ -98,7 +100,10 @@ def test_an_unverified_preset_says_so_in_its_own_words_too():
     """Not only as a flag the UI renders: somebody reading the notes on the
     form should be told there, beside the values they are about to accept."""
     for recipe in recipe_store.all_recipes():
-        if not recipe.unverified:
+        # A form with no notes at all claims nothing beside its values; the
+        # catalogue card's badge is what says it is untested. (The O2
+        # transfer node's form was asked to carry no text.)
+        if not recipe.unverified or not recipe.notes:
             continue
         assert any("Untested" in note for note in recipe.notes), recipe.id
 
@@ -657,11 +662,11 @@ def test_the_named_institutions_are_the_ones_the_first_screen_holds_back():
     nobody. Which is which is the recipe's own flag, so this is the assertion
     that the flag still says what the catalogue believes it says."""
     assert [r.id for r in recipe_store.all_recipes() if r.institution] == [
-        "hms-o2", "mgb-eris"]
+        "hms-o2", "hms-o2-transfer", "mgb-eris"]
     # And they come last, so the shapes are the first grid in source order --
     # the browser filters, it does not sort.
     ids = [r.id for r in recipe_store.all_recipes()]
-    assert ids[-2:] == ["hms-o2", "mgb-eris"]
+    assert ids[-3:] == ["hms-o2", "hms-o2-transfer", "mgb-eris"]
 
 
 def test_a_named_institution_is_exactly_a_preset_that_fixes_the_address():
@@ -715,7 +720,7 @@ def test_the_catalogue_is_served_rather_than_shipped_in_every_page(client):
     # Both halves of what the browser draws with: the word a saved card names
     # the machine by, and the flag the catalogue splits its two grids on.
     assert [r["id"] for r in listed if r["institution"]] == [
-        "hms-o2", "mgb-eris"]
+        "hms-o2", "hms-o2-transfer", "mgb-eris"]
     assert all(r["summary"] for r in listed)
 
 

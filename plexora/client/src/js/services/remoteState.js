@@ -258,6 +258,11 @@ window.PlexoraRemotes = (function () {
                 //: before this could be known -- so surfaces draw it beside
                 //: the connection rather than instead of it.
                 osMismatch: place.os_mismatch || null,
+                //: For a files-only server, what stands in for `node`:
+                //: `{base, home}` -- the `sftp://` address its files are read
+                //: at, and the folder browsing opens in. Null until its SFTP
+                //: connection is up, and always null for every other kind.
+                files: place.files || null,
             };
             return {
                 name: remote.name,
@@ -298,11 +303,17 @@ window.PlexoraRemotes = (function () {
                 //: most worth being able to see when a connection is failing
                 //: because it is wrong.
                 workstation: remote.workstation || null,
+                //: Whether this is a files-only server: connecting opens SFTP
+                //: and starts nothing over there -- no job, no install, no
+                //: data node -- so no surface should say it does.
+                filesOnly: Boolean(remote.files_only),
                 viewer: viewer,
                 node: node,
                 //: Either half up is "this machine is reachable" for the
-                //: purposes of a globe; a data field cares only about `node`.
-                connected: viewer.state === "connected" || Boolean(node.node),
+                //: purposes of a globe; a data field cares only about `node`
+                //: (or, for a files-only server, `node.files`).
+                connected: viewer.state === "connected" || Boolean(node.node)
+                    || Boolean(node.files),
                 opening: isOpening(viewer.state) || isOpening(node.state),
                 prompt: viewer.prompt || node.prompt || null,
             };

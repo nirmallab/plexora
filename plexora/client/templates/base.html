@@ -50,7 +50,7 @@
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20260924_ui_pass" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20261020_sftp_files" type="text/javascript"></script>
     <!-- Viewer timings as histograms, for the same telemetry. After
          resourceRouting.js, whose direct-node origins it classifies by. -->
     <script src="{{ data.base_url }}/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry" type="text/javascript"></script>
@@ -134,7 +134,7 @@
        the one poll that four surfaces used to run three of. It costs nothing
        on a page that never subscribes -- there is no timer until somebody
        does. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteState.js?v=20261020_sftp_files" defer></script>
     {# The connection log, shared by the modal and the Settings page's cards.
        Before both of them: they call into it as they build. #}
     <script src="{{ data.base_url }}/client/src/js/services/logTerminal.js?v=20260829_terminal" defer></script>
@@ -143,13 +143,13 @@
        views/settingsPage.js too, which settings.html loads at the end of its
        own body, well after everything here. #}
     <script src="{{ data.base_url }}/client/src/js/services/failureMessage.js?v=20260923_failure_layout" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20260928_gcloud_folder" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20260828_connect_modal" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20261020_sftp_files" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
        so PlexoraPage.register exists by the time this file's last line runs.
        It needs popoverPortal.js, loaded above with the other widgets. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20260923_failure_layout" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20261020_sftp_files" defer></script>
     {# Says so before a scheduled job ends, from whichever page the user is on.
        After connectionModal.js, which its one button opens; passive, so it
        costs nothing while a connection sits settled. #}
@@ -160,13 +160,13 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260925_desktop_app" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261010_home_redesign" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261020_sftp_files" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
        dataLocation, all of which it calls into, and after browsePicker, whose
        attachBrowseButton it wires to its Browse button. #}
-    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20260919_transcript_controls" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20261020_sftp_files" defer></script>
     {# THE slider, and the number box beside it. Every range input in Plexora
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,
@@ -222,7 +222,7 @@
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
        way. Before both of them. #}
-    <script src="{{ data.base_url }}/client/src/js/views/locators.js?v=20260926_remote_import" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/locators.js?v=20261020_sftp_files" defer></script>
     {# The thinking orb: the agent panel's, and the import dialog's while it
        reads a pick -- so on every page the dialog opens from, not only the
        viewer. Small; the engine it draws with is import()ed on first mount. #}
@@ -231,7 +231,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261014_import_progressive" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261020_sftp_files" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

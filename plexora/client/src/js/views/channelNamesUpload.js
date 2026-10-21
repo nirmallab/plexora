@@ -138,8 +138,11 @@ window.PlexoraChannelNames = (function () {
         if (!place || place.kind === "server") return "";
         // `registered_node` as well as `node`: a data node outlives the
         // Plexora that started it, so after a restart `node` is empty for a
-        // machine that is up and answering.
-        return place.node || place.registered_node || "";
+        // machine that is up and answering. A files-only server has neither,
+        // and is asked by its `sftp://` base, which `/fetch_file` and the
+        // listing routes read over its SFTP connection.
+        return place.node || place.registered_node
+            || (place.files && place.files.base) || "";
     }
 
     /** Whether what is in the box is a path this server can open unaided. */

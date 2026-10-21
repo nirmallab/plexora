@@ -503,9 +503,10 @@ window.PlexoraImportSample = (function () {
         const apply = (snapshot) => {
             if (state !== owner || !state.location.isLocal()) return;
             const place = (snapshot.places || []).find((entry) => entry.id === wanted.id);
-            if (!place || !(place.kind === "server" || place.node)) return;
+            if (!place || !(place.kind === "server" || place.node || place.files)) return;
             state.location.setWhere("remote", {id: place.id, kind: place.kind,
-                                               label: place.label, node: place.node || null});
+                                               label: place.label, node: place.node || null,
+                                               files: place.files || null});
             paintMachine();
         };
         const now = Remotes().snapshot();
@@ -682,7 +683,8 @@ window.PlexoraImportSample = (function () {
         }), sep(), el("div", "plx-import-menu-label", "Remote")];
         if (!places.length) rows.push(el("div", "plx-import-menu-empty", "No servers yet."));
         places.forEach((place) => {
-            const up = place.kind === "server" || Boolean(place.node);
+            const up = place.kind === "server" || Boolean(place.node)
+                || Boolean(place.files);
             const waiting = !up && Remotes() && Remotes().isOpening(place.state);
             const row = menuItem({
                 dot: "plx-import-menu-dot" + (up ? "" : (waiting ? " is-waiting" : " is-off")),
@@ -693,7 +695,8 @@ window.PlexoraImportSample = (function () {
                 disabled: waiting,
                 onPick: () => (up
                     ? choose("remote", {id: place.id, kind: place.kind,
-                                        label: place.label, node: place.node || null})
+                                        label: place.label, node: place.node || null,
+                                        files: place.files || null})
                     : connect(place)),
             });
             row.dataset.place = place.id;
@@ -728,8 +731,11 @@ window.PlexoraImportSample = (function () {
         if (!window.PlexoraConnectionModal) return;
         const outcome = await window.PlexoraConnectionModal.open(place
             ? {name: place.id, kind: "node",
-               intent: "Opening a data node on this machine, so files on it "
-                       + "can be imported."}
+               intent: place.files_only
+                   ? "Opening an SFTP connection to this machine, so images on "
+                     + "it can be streamed in. Nothing is started there."
+                   : "Opening a data node on this machine, so files on it "
+                     + "can be imported."}
             : {kind: "node",
                intent: "Add the machine the files are on. Plexora will handle "
                        + "the SSH connection."});
@@ -737,7 +743,7 @@ window.PlexoraImportSample = (function () {
         if (outcome && outcome.connected) {
             choose("remote", {id: outcome.name, kind: "remote",
                               label: outcome.label || (place && place.label) || outcome.name,
-                              node: outcome.node || null});
+                              node: outcome.node || null, files: outcome.files || null});
         } else {
             state.machine?.button.focus();
         }
@@ -745,6 +751,11 @@ window.PlexoraImportSample = (function () {
 
     function browseNode() {
         return state.location ? state.location.browseNode() : null;
+    }
+
+    /** Whether a browse machine is a files-only server's `sftp://` base. */
+    function isFilesBase(node) {
+        return Boolean(node) && /^sftp:\/\//i.test(String(node));
     }
 
     // -- state 1: pick ------------------------------------------------------
@@ -1086,8 +1097,12 @@ window.PlexoraImportSample = (function () {
         if (!intent || !state) return "";
         const sample = (state.proposal?.samples || []).find((entry) => entry.key === intent.key);
         const node = browseNode();
+        const filesBase = isFilesBase(node) ? `${node.replace(/\/+$/, "")}/` : "";
         for (const layer of sample?.layers || []) {
             let path = String(pickOf(layer) || "");
+            // On a files-only server the picks ARE addresses on it, and the
+            // listing takes one as it is and opens in its folder.
+            if (filesBase && path.startsWith(filesBase)) return path;
             if (!path || window.PlexoraLocators?.isRemoteLocator(path)) continue;
             if (path.startsWith("node://")) {
                 const prefix = `node://${node}/`;
@@ -1150,7 +1165,16 @@ window.PlexoraImportSample = (function () {
         // path it has never heard of instead of asking this server to read
         // the bucket directly.
         const remote = window.PlexoraLocators && window.PlexoraLocators.isRemoteLocator(path);
-        const address = (node && !remote) ? `node://${node}/${path}` : path;
+        // A files-only server is not a node: a path on it becomes the `sftp://`
+        // address this server streams it from, the way a pasted URL is read.
+        let address = path;
+        if (!remote && isFilesBase(node)) {
+            const files = (state.location && state.location.place()
+                           && state.location.place().files) || {};
+            address = window.PlexoraLocators.sftpUrl(node, path, files.home);
+        } else if (node && !remote) {
+            address = `node://${node}/${path}`;
+        }
         // Deduplicated: the same file picked twice is one pick, and two rows
         // over one file is two ✕ buttons that each look broken.
         const isNew = !state.picks.includes(address);
@@ -2167,7 +2191,11 @@ window.PlexoraImportSample = (function () {
             // on a screen that is otherwise all local files, and not a
             // warning: an https layer is exactly as read-only-safe as a local
             // one, only slower the first time.
-            nameLine.appendChild(el("span", "plx-import-badge is-remote", "Web"));
+            // An `sftp://` layer streams from a files-only server rather than
+            // the web, and is named for what it is.
+            const sftp = window.PlexoraLocators.remoteScheme(layer.src) === "sftp";
+            nameLine.appendChild(el("span", "plx-import-badge is-remote",
+                                    sftp ? "SFTP" : "Web"));
         }
         text.appendChild(nameLine);
         text.appendChild(el("span", "plx-import-row-detail", layer.detail || ""));

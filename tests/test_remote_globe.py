@@ -273,7 +273,8 @@ def test_a_row_cannot_say_disconnected_about_a_machine_it_calls_healthy():
     """
     globe = source("src", "js", "services", "remoteGlobe.js")
     assert 'const answering = Boolean(probe && probe.state === "healthy");' in globe
-    assert "const ready = Boolean(node.node) || answering;" in globe
+    assert ("const ready = Boolean(node.node) || Boolean(node.files) "
+            "|| answering;") in globe
 
 
 def test_the_machine_plexora_runs_on_is_a_row_like_any_other():

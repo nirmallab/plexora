@@ -45,6 +45,8 @@ def fetch_file():
     payload = request.get_json(silent=True) or {}
     node = (payload.get('node') or '').strip()
     raw = payload.get('path') or ''
+    if node.lower().startswith('sftp://'):
+        return _fetch_over_sftp(node, raw)
     if node:
         return _fetch_from_node(node, raw)
 
@@ -68,6 +70,65 @@ def fetch_file():
         'Content-Length': str(size),
         'X-Plexora-File-Name': name,
     })
+
+
+def _fetch_over_sftp(base, raw):
+    """The same file, from a files-only server, read over its SFTP connection.
+
+    `base` is the place's `sftp://user@host` (what `/data_places` calls
+    `files.base`), and `raw` a path on it -- absolute, from home, or a whole
+    `sftp://` address as the listing hands them out. Read straight through
+    rather than through the chunk cache: this is one file handed to the
+    browser once (a channel-name list, a gene table), not tiles somebody will
+    look at again.
+    """
+    from plexora.server.utils import sftp
+
+    target = sftp.target_of(base)
+    text = str(raw or '').strip()
+    try:
+        client = sftp.require_client(target)
+    except sftp.SFTPNotConnected as exc:
+        return jsonify(error=str(exc)), 503
+    if text.lower().startswith('sftp://'):
+        if sftp.target_of(text) != target:
+            return jsonify(error=f"{text} is not on {target}"), 400
+        path = sftp.path_of(text)
+    elif text.startswith('/'):
+        path = text
+    elif text:
+        path = (client.home or '').rstrip('/') + '/' + text.lstrip('~/')
+    else:
+        return jsonify(error="Name a file to read."), 400
+    try:
+        attrs = client.stat(path)
+    except FileNotFoundError:
+        return jsonify(error=f"No such file on {target}: {path}"), 400
+    except PermissionError:
+        return jsonify(error=f"Permission denied: {path}"), 400
+    except (ConnectionError, TimeoutError) as exc:
+        return jsonify(error=str(exc)), 503
+    except OSError as exc:
+        return jsonify(error=str(exc)), 400
+    if attrs.is_dir or attrs.size is None:
+        return jsonify(error=f"{path} is a folder, not a file."), 400
+    size = int(attrs.size)
+
+    def chunks():
+        # Sixteen of the relay's steps per request: one round trip moves a
+        # megabyte, and the server holds no more than that at a time.
+        step = CHUNK * 16
+        for start in range(0, size, step):
+            piece = client.read_range(path, start, min(size, start + step))
+            if not piece:
+                return
+            yield piece
+
+    return Response(stream_with_context(chunks()),
+                    mimetype='application/octet-stream', headers={
+                        'Content-Length': str(size),
+                        'X-Plexora-File-Name': _tail(path),
+                    })
 
 
 def _fetch_from_node(name, path):

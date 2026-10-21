@@ -20,8 +20,9 @@ window.PlexoraLocators = (function () {
     //: Mirrors providers/base.py's `_REMOTE_RE` exactly -- gs/gcs both spelled
     //: out because a store may be named either way before `gcs://` is folded
     //: into `gs://`, and abfs/abfss for the same reason with Azure's two
-    //: spellings.
-    const REMOTE_RE = /^(https?|s3|gs|gcs|az|abfss?):\/\//i;
+    //: spellings. `sftp` is a file on a files-only saved server (an SSH
+    //: machine nothing runs on), read the same way: bytes travel, only here.
+    const REMOTE_RE = /^(https?|s3|gs|gcs|az|abfss?|sftp):\/\//i;
     const NODE_PREFIX = "node://";
 
     /**
@@ -69,8 +70,33 @@ window.PlexoraLocators = (function () {
             return text;
         }
         const segments = parsed.pathname.split("/").filter(Boolean);
-        return segments.length ? segments[segments.length - 1] : parsed.host;
+        if (!segments.length) return parsed.host;
+        const last = segments[segments.length - 1];
+        // An sftp address keeps a path's spaces literal (the server builds it
+        // that way, see `sftp.url_for`), and `URL` re-escapes them: undone
+        // here, or "my image.tif" would be offered as a name with a %20 in it.
+        if (parsed.protocol === "sftp:") {
+            try { return decodeURIComponent(last); } catch (error) { return last; }
+        }
+        return last;
     }
 
-    return { isRemoteLocator, isNodeLocator, remoteScheme, urlName };
+    /**
+     * The `sftp://` address of a path typed for a files-only server, built the
+     * way the server builds the ones its listing hands back (`sftp.url_for`):
+     * only what a URL parser would misread -- `%`, `?`, `#` -- is escaped. A
+     * path that is not absolute is taken from `home`, the account's home
+     * folder, which is where the server's own relative paths start too.
+     */
+    function sftpUrl(base, path, home) {
+        let text = String(path == null ? "" : path).trim();
+        if (!text.startsWith("/")) {
+            const root = String(home || "/").replace(/\/+$/, "");
+            text = `${root}/${text.replace(/^~\/?/, "")}`;
+        }
+        const escaped = text.replace(/[%?#]/g, (c) => encodeURIComponent(c));
+        return `${String(base).replace(/\/+$/, "")}${escaped}`;
+    }
+
+    return { isRemoteLocator, isNodeLocator, remoteScheme, urlName, sftpUrl };
 })();

@@ -151,13 +151,16 @@ def canonical_url(raw) -> str:
     and host lower-cased, `gcs://` read as `gs://` and `abfss://` as
     `abfs://`, the fragment dropped, repeated slashes in the path collapsed and
     a trailing slash removed. The query is kept: a presigned URL is nothing
-    without it.
+    without it. A username in front of the host is kept as written: on the
+    machine it belongs to it is case-sensitive (`sftp://AJN16@...` is somebody
+    else, or nobody).
     """
     text = str(raw or "").strip().strip("'\"").strip()
     parts = urlsplit(text)
     scheme = parts.scheme.lower()
     scheme = {"gcs": "gs", "abfss": "abfs"}.get(scheme, scheme)
-    netloc = parts.netloc.lower()
+    user, at, host = parts.netloc.rpartition("@")
+    netloc = f"{user}{at}{host.lower()}"
     path = re.sub(r"/{2,}", "/", parts.path).rstrip("/")
     return urlunsplit((scheme, netloc, path, parts.query, ""))
 
@@ -348,6 +351,9 @@ def support() -> dict:
         # DICOM slides at a web address: wsidicom reads the frames, pydicom
         # the headers, and both come with `plexora[remote]`.
         "dicom": has("wsidicom") and has("pydicom"),
+        # A files-only saved server: nothing to install beyond an ssh client,
+        # which is the system's own (see `server/utils/sftp.py`).
+        "sftp": shutil.which("ssh") is not None,
     }
 
 
@@ -370,6 +376,11 @@ def _require_scheme(url) -> None:
 
 #: What a failed fetch was, as far as a cache is concerned.
 _MISSING, _FORBIDDEN, _RETRY, _FATAL = "missing", "forbidden", "retry", "fatal"
+
+
+def _not_connected(exc) -> bool:
+    """Whether `exc` is an `sftp://` read whose server is not connected."""
+    return bool(getattr(exc, "not_connected", False))
 
 
 def _classify(exc) -> str:
@@ -1241,6 +1252,11 @@ class ChunkCacheStore(WrapperStore):
                 self.stats["fetches"] += 1
                 buffer = await self._store.get(key, prototype, byte_range)
             except Exception as exc:  # noqa: BLE001 -- classified below
+                if _not_connected(exc):
+                    # A files-only server nobody has connected yet: no retry
+                    # can help and no back-off should outlast the Connect
+                    # press that fixes it.
+                    raise RemoteUnreachable(str(exc), self.root_url) from exc
                 kind = _classify(exc)
                 if kind in (_MISSING, _FORBIDDEN):
                     self._last_status[key] = kind
@@ -1477,6 +1493,8 @@ class ChunkCacheStore(WrapperStore):
 
     def _raise_for(self, key: str, exc: BaseException):
         """A failed file-level request as the exception a file reader expects."""
+        if _not_connected(exc):
+            raise RemoteUnreachable(str(exc), self.root_url) from exc
         kind = _classify(exc)
         if kind == _MISSING:
             raise FileNotFoundError(
@@ -1774,11 +1792,20 @@ def open_store(url, options: Optional[Mapping[str, Any]] = None) -> tuple[ChunkC
     from zarr.storage import FsspecStore
     from zarr.storage._fsspec import ALLOWED_EXCEPTIONS
 
-    if options is None:
-        options = _options_for(root)
-    inner = FsspecStore.from_url(
-        root, storage_options=storage_options_for(root, options), read_only=True,
-        allowed_exceptions=tuple(ALLOWED_EXCEPTIONS))
+    if _scheme(root) == "sftp":
+        # Not through `from_url`: fsspec's own "sftp" is paramiko, a second SSH
+        # client that cannot use this one's login. See `server/utils/sftp.py`.
+        from plexora.server.utils import sftp
+
+        fs, path = sftp.filesystem(root)
+        inner = FsspecStore(fs=fs, path=path, read_only=True,
+                            allowed_exceptions=tuple(ALLOWED_EXCEPTIONS))
+    else:
+        if options is None:
+            options = _options_for(root)
+        inner = FsspecStore.from_url(
+            root, storage_options=storage_options_for(root, options), read_only=True,
+            allowed_exceptions=tuple(ALLOWED_EXCEPTIONS))
     store = ChunkCacheStore(inner, root)
     with _stores_lock:
         return _stores.setdefault(root, store), subpath
@@ -2497,6 +2524,8 @@ def _probe_folder(store: ChunkCacheStore, prefix: str, url: str) -> Optional[Pro
 
 
 def _describe(exc, url) -> str:
+    if _not_connected(exc):
+        return str(exc)
     text = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
     where = f"{host_of(url)} (through the proxy {proxy})" if proxy else host_of(url)

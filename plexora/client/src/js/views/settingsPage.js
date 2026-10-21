@@ -1322,8 +1322,11 @@
         // machine and leaves Plexora here -- see connect() for why there is no
         // longer a second kind of connection to choose between.
         const half = entry.node;
-        const live = Boolean(half.node) || isLive(half.state);
-        const state = half.node ? "connected" : half.state;
+        // A files-only server is up when its SFTP connection is, and has no
+        // node to be up as.
+        const up = Boolean(half.node) || Boolean(half.files);
+        const live = up || isLive(half.state);
+        const state = up ? "connected" : half.state;
 
         const word = window.PlexoraRemotes.label(state);
         card.chip.className =
@@ -1820,11 +1823,16 @@
      * surfaces, one heuristic for whether the answer is a secret.
      */
     RemotesSection.prototype.connect = function (name) {
+        const entry = (window.PlexoraRemotes.snapshot().entries || [])
+            .find((item) => item.name === name);
         return window.PlexoraConnectionModal.open({
             name: name,
             kind: window.PlexoraRemotes.KIND_NODE,
-            intent: "Opens a data node on that machine. Plexora stays here; "
-                    + "files over there become usable on every data field.",
+            intent: entry && entry.filesOnly
+                ? "Opens an SFTP connection to that machine. Nothing is "
+                  + "started there; its images are streamed to this Plexora."
+                : "Opens a data node on that machine. Plexora stays here; "
+                  + "files over there become usable on every data field.",
         });
     };
 

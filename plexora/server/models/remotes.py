@@ -232,6 +232,31 @@ class Remote:
         return None
 
     @property
+    def files(self) -> "dict | None":
+        """This profile's files-only record, or None for every other kind.
+
+        A files-only server is somewhere images are and nothing runs: HMS O2's
+        transfer node, or any machine a person can `sftp` to. Connecting one
+        opens an SFTP conversation (`connect.FilesSession`) instead of starting
+        a data node, and its files are read from here as `sftp://` addresses.
+
+        In `extra` for the reason `gcloud` and `workstation` are. `via` is what
+        makes a record count, and SFTP is the only way there is.
+        """
+        record = self.extra.get("files") if self.extra else None
+        if isinstance(record, Mapping) and record.get("via") == "sftp":
+            return dict(record)
+        return None
+
+    def as_files_kwargs(self) -> dict:
+        """What `connect.FilesSession(**...)` wants, minus the target.
+
+        How the host is reached and nothing about what runs there, because
+        nothing does: no scheduler line, no install, no Plexora command.
+        """
+        return {"jump": self.jump, "ssh_opts": tuple(self.ssh_opts)}
+
+    @property
     def recipe(self) -> str:
         """Which preset composed this profile, or "" for one that predates it.
 

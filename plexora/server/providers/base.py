@@ -73,9 +73,13 @@ def is_node_locator(value) -> bool:
 #: this process (see `server/utils/remote_store.py`), so, unlike `node://`,
 #: a resource at one of these is still *local* in the provider sense: every
 #: computation happens here and only the bytes travel.
-REMOTE_SCHEMES = ("http", "https", "s3", "gs", "gcs", "az", "abfs", "abfss")
+#:
+#: `sftp` is a file on an SSH server read through a files-only saved server
+#: (`server/utils/sftp.py`): no web involved, but the same arrangement -- the
+#: bytes travel, nothing runs over there.
+REMOTE_SCHEMES = ("http", "https", "s3", "gs", "gcs", "az", "abfs", "abfss", "sftp")
 
-_REMOTE_RE = re.compile(r"^(https?|s3|gs|gcs|az|abfss?)://", re.IGNORECASE)
+_REMOTE_RE = re.compile(r"^(https?|s3|gs|gcs|az|abfss?|sftp)://", re.IGNORECASE)
 
 
 def is_remote_locator(value) -> bool:

@@ -496,7 +496,8 @@ def resource_status():
         _node_mask_report(project) or _local_mask_report(datasource))
     return jsonify(unavailable=errors, nodes=nodes,
                    reconnect=_reconnect_hint(nodes),
-                   profiles=_profiles_for(nodes),
+                   profiles=(_profiles_for(nodes)
+                             + _files_profiles_for(datasource, errors)),
                    masks=masks)
 
 
@@ -714,6 +715,44 @@ def _profiles_for(names):
             owners.setdefault(node_name, remote.name)
     return [{"node": name, "profile": owners[name]}
             for name in names if name in owners]
+
+
+def _files_profiles_for(datasource, errors):
+    """The files-only servers that would bring back these unreadable resources.
+
+    The node-less half of `_profiles_for`. A resource streamed from a
+    files-only server has no binding -- this Plexora reads it at its
+    `sftp://` address -- so the address is read off the project record, and
+    the saved server is the one whose target that address names. Only while
+    it is not connected: a connected server that still cannot read the file
+    has a different problem, which reconnecting would not fix.
+
+    Each row carries `files: True` so the page can say what connecting does
+    there -- open SFTP -- rather than promise a data node.
+    """
+    from plexora.server.models import remotes as remote_store
+    from plexora.server.utils import sftp
+
+    record = get_config().get(datasource) or {}
+    sources = {
+        "image": record.get("channelFile"),
+        "segmentation": record.get("segmentationSource") or record.get("segmentation"),
+        "table": (record.get("dataset") or {}).get("src")
+        if isinstance(record.get("dataset"), dict) else None,
+    }
+    targets = set()
+    for kind in errors:
+        source = str(sources.get(kind) or "")
+        if source.lower().startswith(f"{sftp.SCHEME}://"):
+            target = sftp.target_of(source)
+            if sftp.client_for(target) is None:
+                targets.add(target)
+    if not targets:
+        return []
+    return [{"node": None, "profile": remote.name, "files": True}
+            for remote in sorted(remote_store.load_all().values(),
+                                 key=lambda item: item.name)
+            if remote.files and sftp.canonical_target(remote.target) in targets]
 
 
 def _reconnect_hint(names):

@@ -3000,6 +3000,202 @@ class NodeSession:
                 _ACTIVE.remove(watched)
 
 
+#: How long a files-only connection may take to come up. The login is all of
+#: it, and at a Duo site that is however long somebody takes to find their
+#: phone -- the askpass relay itself gives a prompt three minutes.
+FILES_TIMEOUT = 300
+
+#: What ssh says when it signed in but the server will not start SFTP.
+_SUBSYSTEM_REFUSED = ("subsystem request failed",)
+
+
+def sftp_ssh_argv(target, *, jump=None, ssh_opts=()):
+    """`ssh -s <target> sftp`: the SFTP side of the server and nothing else.
+
+    No pty (`-T`): the pipes carry a binary protocol, and a pty would rewrite
+    its bytes. No X11 or agent forwarding (`-x -a`), and every forward in
+    `~/.ssh/config` cleared: a `LocalForward` somebody set up for this host in
+    a terminal would otherwise try to bind the same port a second time from
+    here, and fail the whole connection over something it never needed.
+    """
+    argv = ["ssh", "-T", "-x", "-a", "-o", "ClearAllForwardings=yes",
+            *_ssh_options(ssh_opts)]
+    if jump:
+        argv += ["-J", jump]
+    return argv + ["-s", target, "sftp"]
+
+
+class _PipedSSH:
+    """An ssh whose stdin and stdout are a binary conversation.
+
+    `_Watched`'s interface (`lines`, `alive`, `drain`, `tail`, `stop`), so a
+    session that holds one is diagnosed and torn down like any other, but only
+    stderr is read as text here: stdout belongs to `sftp.SFTPClient`, and a
+    line reader on it would eat the protocol.
+    """
+
+    def __init__(self, argv, label, *, echo=print, env=None, detach=False):
+        self.argv = argv
+        self.label = label
+        self.lines = []
+        spawn_argv, env = _spawnable(argv, env)
+        self.process = _popen(
+            spawn_argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            # As for `_Watched`: no controlling tty, so every prompt goes to
+            # the askpass relay and none to a console nobody is looking at.
+            start_new_session=detach,
+            **_spawn_flags(),
+        )
+        self._echo = echo
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self):
+        stream = self.process.stderr
+        if stream is None:
+            return
+        for raw in iter(stream.readline, b""):
+            line = strip_ansi(raw.decode("utf-8", "replace").rstrip("\r\n"))
+            self.lines.append(line)
+            self._echo(f"  [{self.label}] {line}")
+
+    @property
+    def alive(self):
+        return self.process.poll() is None
+
+    def drain(self, timeout=2):
+        self._thread.join(timeout=timeout)
+
+    def tail(self, count=6):
+        return self.lines[-count:]
+
+    def stop(self):
+        if self.process.poll() is not None:
+            return
+        # Closing stdin first is the polite end of an SFTP conversation: the
+        # server sees EOF and exits on its own.
+        try:
+            if self.process.stdin is not None:
+                self.process.stdin.close()
+        except Exception:
+            pass
+        _kill_tree(self.process)
+        try:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+        except Exception:
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+
+
+class FilesSession:
+    """A saved server that is only where the files are: one ssh, speaking SFTP.
+
+    The third kind beside `Session` and `NodeSession`, and the smallest: nothing
+    is started over there -- no job, no Plexora, no tunnel. A transfer node is
+    the case that asked for it: a machine for moving files, where running
+    anything else is against the site's rules, but whose files are exactly the
+    images somebody wants to look at. SFTP gives random access to them, so the
+    Plexora on THIS machine reads them a byte range at a time, through the same
+    cache an `https://` image uses (`server/utils/sftp.py`).
+
+    Same shape as the other two -- `establish()`, `wait()`, `stop()`,
+    `watchers` -- so `RemoteSession` runs it, relays its prompts and reports
+    its state exactly as it does theirs. Connected means the SFTP handshake
+    came back, which over ssh means every login prompt was answered.
+    """
+
+    def __init__(self, target, *, jump=None, ssh_opts=(), timeout=None,
+                 echo=print, env=None, detach=False, on_phase=None, **_unused):
+        self.target = target
+        self.jump = jump
+        self.ssh_opts = tuple(ssh_opts or ())
+        self.timeout = timeout or FILES_TIMEOUT
+        self.echo = echo
+        self.env = env
+        self.detach = detach
+        self.on_phase = on_phase
+        self.watchers = []
+        self.client = None
+        #: The account's home folder on the far side, which is where browsing
+        #: starts and where a path that is not absolute is read from.
+        self.home = None
+
+    @property
+    def open_url(self):
+        return None
+
+    @property
+    def alive(self):
+        return bool(self.watchers) and all(w.alive for w in self.watchers)
+
+    def log(self, count=40):
+        lines = []
+        for watched in self.watchers:
+            lines += [f"[{watched.label}] {line}" for line in watched.tail(count)]
+        return lines
+
+    def establish(self):
+        if _which("ssh") is None:
+            raise ConnectError(_no_ssh_message())
+        # Here rather than at the top: this module loads without the package
+        # (see the docstring), and only the app ever opens a files connection.
+        from plexora.server.utils import sftp
+
+        argv = sftp_ssh_argv(self.target, jump=self.jump, ssh_opts=self.ssh_opts)
+        self.echo(f"$ {' '.join(argv)}")
+        watched = _PipedSSH(argv, self.target, echo=self.echo, env=self.env,
+                            detach=self.detach)
+        self.watchers.append(watched)
+        _ACTIVE.append(watched)
+
+        def said():
+            watched.drain(timeout=1)
+            return list(watched.lines)
+
+        client = sftp.SFTPClient(watched.process, label=self.target,
+                                 describe_exit=said)
+        try:
+            client.handshake(timeout=self.timeout)
+            client.home = client.realpath(".")
+        except sftp.SFTPError as exc:
+            raise ConnectError(str(exc), diagnosed=exc.diagnosed) from exc
+        except (ConnectionError, OSError) as exc:
+            lines = said()
+            if any(marker in line for line in lines for marker in _SUBSYSTEM_REFUSED):
+                raise ConnectError(
+                    f"{self.target} accepted the login but does not offer SFTP, "
+                    "so there is nothing for Plexora to read files through. "
+                    "Ask its administrators whether SFTP is enabled.",
+                    diagnosed=True) from exc
+            raise ConnectError(str(exc)) from exc
+        self.client = client
+        self.home = client.home
+        sftp.register(self.target, client)
+        self.echo(f"  Connected for files. Home folder: {self.home}")
+
+    def wait(self):
+        if self.watchers:
+            self.watchers[0].process.wait()
+
+    def stop(self):
+        if self.client is not None:
+            from plexora.server.utils import sftp
+
+            sftp.unregister(self.target, self.client)
+            self.client.close()
+        for watched in reversed(self.watchers):
+            watched.stop()
+            if watched in _ACTIVE:
+                _ACTIVE.remove(watched)
+
+
 def default_timeout(timeout, srun):
     """Seconds to wait, given that a queued job is not a failure."""
     if timeout is not None:

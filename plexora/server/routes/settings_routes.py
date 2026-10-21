@@ -218,7 +218,7 @@ def settings_data_migration():
 # between the user typing one and ssh consuming it; see plexora/askpass.py.
 
 
-def _session_kind():
+def _session_kind(name=None):
     """Which of the two things "connect to this server" can mean.
 
     `viewer` -- the default and the historical meaning -- runs Plexora over
@@ -227,9 +227,17 @@ def _session_kind():
     option opens so that a field can name a file on that machine. One profile,
     one login, two entirely different arrangements, so they are asked for
     separately rather than inferred.
-    """
-    from plexora.server.models import remote_sessions
 
+    Except for a files-only server (`Remote.files`), which has ONE thing
+    connecting can mean and keeps it under the `node` key whichever was asked:
+    two SFTP logins for one profile would be two Duo pushes for nothing.
+    """
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    if name is not None:
+        remote = remote_store.find(name)
+        if remote is not None and remote.files:
+            return remote_sessions.KIND_NODE
     asked = (request.args.get("kind") or "").strip().lower()
     return (remote_sessions.KIND_NODE if asked == remote_sessions.KIND_NODE
             else remote_sessions.KIND_VIEWER)
@@ -339,9 +347,15 @@ def _remote_view(remote, session=None, log_lines=25):
         # which is all a workstation has to record. Nothing here is a secret
         # either -- it says which shell is over there, not how to get into it.
         "workstation": remote.workstation,
+        # Whether this is a files-only server: Connect opens SFTP and starts
+        # nothing over there, so the card and the connection dialog drop every
+        # word about jobs and data nodes. `files` below is the live half --
+        # where its files are read from, once it is connected.
+        "files_only": bool(remote.files),
         "state": "idle",
         "kind": None,
         "node": None,
+        "files": None,
         "data_nodes": [],
         "node_errors": [],
         "phase": "",
@@ -441,6 +455,14 @@ def _remote_payload(payload, name, existing=None):
     # carries it; a hand-written one keeps whatever was already recorded.
     if str(payload.get("recipe") or "").strip():
         extra["recipe"] = str(payload["recipe"]).strip()
+    # A files-only server's record (`Remote.files`). Unlike the two above it
+    # is also taken AWAY by a compose body that does not carry it: it changes
+    # what Connect does, and a profile re-saved through a preset that runs
+    # Plexora must not go on opening SFTP instead.
+    if isinstance(payload.get("files"), dict):
+        extra["files"] = dict(payload["files"])
+    elif str(payload.get("recipe") or "").strip():
+        extra.pop("files", None)
 
     srun = None
     if payload.get("use_srun"):
@@ -700,6 +722,12 @@ def data_places():
             # launch already succeeded, so this is something to correct before
             # the next one rather than an error about this one.
             "os_mismatch": status.get("os_mismatch"),
+            # A files-only server has no node to name, ever. What makes it a
+            # place is `files` -- `{base, home}`, the `sftp://` address its
+            # files are read at and the folder browsing opens in -- set once
+            # its SFTP connection is up.
+            "files_only": bool(remote.files),
+            "files": status.get("files"),
         })
     return jsonify(places=places, client_node=_client_node_name(),
                    server_is_remote=_server_is_remote())
@@ -864,7 +892,7 @@ def settings_remotes_connect(name):
     remote = remote_store.find(name)
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
-    kind = _session_kind()
+    kind = _session_kind(name)
     extra = {}
     if kind == remote_sessions.KIND_NODE:
         # Read here, in the request, because both are facts about the browser
@@ -892,7 +920,7 @@ def settings_remotes_connect(name):
 def settings_remotes_disconnect(name):
     from plexora.server.models import remote_sessions, remotes as remote_store
 
-    kind = _session_kind()
+    kind = _session_kind(name)
     # Whether anything was actually running decides who stops the VM. A live
     # session stops its own (see `RemoteSession._release_compute`, which is
     # also what covers a crash, a dropped link and a quit app); the fallback
@@ -1004,7 +1032,7 @@ def settings_remotes_status(name):
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
     return jsonify(_remote_view(remote,
-                                remote_sessions.get(name, _session_kind()),
+                                remote_sessions.get(name, _session_kind(name)),
                                 log_lines=_log_lines()))
 
 
@@ -1017,7 +1045,7 @@ def settings_remotes_answer(name):
     """
     from plexora.server.models import remote_sessions
 
-    session = remote_sessions.get(name, _session_kind())
+    session = remote_sessions.get(name, _session_kind(name))
     if session is None:
         return jsonify(error="That connection is no longer running."), 404
     payload = request.get_json(silent=True) or {}

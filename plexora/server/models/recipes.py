@@ -29,6 +29,14 @@ The generic shapes -- "a Slurm cluster", "a plain SSH server" -- assert nothing
 about any particular machine, because the user supplies the address. They carry
 no badge, and there is nothing about them to test.
 
+**A files-only preset runs nothing at all.** `files=True` describes a machine
+that is only where the images are -- HMS O2's transfer node, or any host
+somebody can `sftp` to. Connecting it opens one SFTP conversation through the
+system ssh (`connect.FilesSession`); there is no job, no install and no data
+node, and its images are streamed to this Plexora as `sftp://` addresses, the
+way an `https://` image is. Its form asks for the address and nothing about
+what would run there, because nothing does.
+
 **Nothing here wraps a job in anything but `srun`.** Plexora's scheduler
 support IS `srun` (connect.srun_command_line), so an LSF or PBS site gets the
 plain-SSH shape and a note telling them to get their own interactive session
@@ -307,6 +315,11 @@ class Recipe:
     #: The catalogue offers the shapes and keeps these behind a second click,
     #: so that the first screen fits everybody.
     institution: bool = False
+    #: A machine that is only where the files are: nothing runs there, and its
+    #: images are streamed over SFTP (see the module docstring). Such a
+    #: preset has no scheduler, installs nothing and starts no data node, so
+    #: the form draws none of the boxes about those.
+    files: bool = False
     #: Anything this preset needs that the vocabulary above has no word for.
     #: Empty for all but one of them. `flow` is the only key with meaning to
     #: the form -- see the module docstring -- and the rest of a flow recipe's
@@ -356,6 +369,7 @@ class Recipe:
             "site": self.site,
             "tested": self.tested,
             "institution": self.institution,
+            "files": self.files,
             "unverified": self.unverified,
             # Serialised, unlike when this field was unused: it is how the form
             # learns which shape to draw, and how the Google Cloud form gets
@@ -364,17 +378,18 @@ class Recipe:
         }
 
 
-#: In the order the surfaces offer them: the five that describe a SHAPE of
-#: machine -- any ssh host, any Slurm cluster, a workstation, a cloud
-#: account -- and then the named institutions, which the catalogue keeps
-#: behind a second click. A shape fits everybody and asserts nothing about
+#: In the order the surfaces offer them: the six that describe a SHAPE of
+#: machine -- any ssh host, any host's files, any Slurm cluster, a
+#: workstation, a cloud account -- and then the named institutions, which the
+#: catalogue keeps behind a second click. A shape fits everybody and asserts nothing about
 #: anybody's cluster; a named site fits the few people who are at it, and
 #: is the one kind of preset that can be wrong -- which is what `tested`
 #: is about.
 #:
 #: Within the shapes this is the order of increasing commitment: an ssh
-#: host you already have, then a scheduler, then a machine on your desk,
-#: then two clouds that bill you. Offering "spend money in your own cloud
+#: host you already have (running Plexora there, or only reading its files),
+#: then a scheduler, then a machine on your desk, then two clouds that bill
+#: you. Offering "spend money in your own cloud
 #: account" ahead of "the machine you already log into" is the wrong
 #: first suggestion whether or not it has been tested.
 RECIPES = (
@@ -392,6 +407,26 @@ RECIPES = (
             "Plexora has to be installed on that machine and on your PATH "
             "when ssh runs a command without a login shell. If it is not, "
             "edit the saved server and give the full path to `plexora`.",
+        ),
+    ),
+    Recipe(
+        id="files",
+        label="Files on an SSH server",
+        summary="Files over SFTP",
+        blurb="Stream images from any machine you can ssh into. Nothing is "
+              "installed or run there; Plexora only reads the files.",
+        ask=(ASK_USER, "host"),
+        files=True,
+        notes=(
+            "Plexora opens one SFTP connection with your system ssh, so your "
+            "keys, your ~/.ssh/config and any login prompt work as they do in "
+            "a terminal.",
+            "Images are read a piece at a time as you view them and kept in "
+            "the cache on this computer, so a second look needs no network. "
+            "Tiled, pyramidal images (OME-Zarr, pyramidal OME-TIFF) stream "
+            "well; a large untiled TIFF is slow.",
+            "Analysis runs on this computer. To compute next to the data "
+            "instead, add the machine as a server that runs Plexora.",
         ),
     ),
     Recipe(
@@ -632,6 +667,24 @@ RECIPES = (
         institution=True,
     ),
     Recipe(
+        id="hms-o2-transfer",
+        label="HMS O2 transfer node",
+        summary="O2 transfer node (files only)",
+        blurb="Stream images from O2 storage.",
+        # HMS's documented address for file transfer. The transfer servers
+        # are for moving files, so a preset that started anything there would
+        # be against the site's rules; this one only reads.
+        target_template="{user}@transfer.rc.hms.harvard.edu",
+        ask=(ASK_USER,),
+        files=True,
+        # No notes, at the user's request: the form is a name and an HMS ID.
+        # Duo needs nothing said here -- its prompt arrives in the page, as
+        # it does for the O2 preset.
+        site=True,
+        tested=False,
+        institution=True,
+    ),
+    Recipe(
         id="mgb-eris",
         label="MGB / BWH ERIS",
         summary="MGB research compute cluster",
@@ -758,11 +811,18 @@ def for_remote(remote) -> str:
         return "gcloud"
     if getattr(remote, "workstation", None):
         return "workstation"
+    # A files-only profile and one that runs Plexora can name the same host
+    # (somebody may have both for O2), and each must reopen its own form.
+    files = bool(getattr(remote, "files", None))
     for recipe in RECIPES:
         if not recipe.site or "{host}" in recipe.target_template:
             continue
+        if recipe.files != files:
+            continue
         if host and host == split_target(recipe, "")["host"].lower():
             return recipe.id
+    if files:
+        return "files"
     return "slurm" if getattr(remote, "srun", None) is not None else "ssh"
 
 
@@ -779,6 +839,8 @@ def compose(recipe_id: str, answers) -> dict:
         raise KeyError(recipe_id)
     if recipe.flow == FLOW_GCLOUD:
         return _compose_gcloud(recipe, answers)
+    if recipe.files:
+        return _compose_files(recipe, answers)
 
     # The switches are read off the raw answers and the boxes off the trimmed
     # ones: `str(False or "")` is "" and `str(True or "")` is "True", so a
@@ -874,6 +936,35 @@ def compose(recipe_id: str, answers) -> dict:
         # `Remote.workstation` for why that seam and not a new column.
         body["workstation"] = {"os": system}
     return body
+
+
+def _compose_files(recipe, answers) -> dict:
+    """The `POST /settings/remotes` body for a files-only preset.
+
+    An address and the marker, and every switch about running things set to
+    off: no scheduler, no install, nothing forwarded. The marker is what makes
+    connecting it open SFTP instead of a data node (`Remote.files`).
+    """
+    answers = {k: str(v or "").strip() for k, v in dict(answers or {}).items()}
+    user = answers.get("user", "")
+    host = answers.get("host", "")
+    # Refused for the reason `compose` refuses them: an ssh with no username
+    # uses this laptop's, which on a cluster is somebody else's account.
+    if ASK_USER in recipe.ask and not user:
+        raise ValueError("Enter your username on that machine.")
+    if "host" in recipe.ask and not host:
+        raise ValueError("Enter the address to connect to, "
+                         "e.g. files.example.edu.")
+    return {
+        "name": answers.get("name") or recipe.id,
+        "target": recipe.target_template.format(user=user, host=host),
+        "use_srun": False,
+        "srun": "",
+        "recipe": recipe.id,
+        "bind_node": False,
+        "install": False,
+        "files": {"via": "sftp"},
+    }
 
 
 def _compose_gcloud(recipe, answers) -> dict:

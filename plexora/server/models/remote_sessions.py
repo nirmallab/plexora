@@ -183,6 +183,18 @@ def redact(line):
     return _REDACT.sub(lambda m: m.group(1) + "…", str(line))
 
 
+def _login_advice(lines):
+    """The sentence for a refused login or a changed host key, or None."""
+    if any(marker in line for line in lines for marker in _PERMISSION_DENIED):
+        return ("The remote host rejected the login. Check the username, "
+                "and the password or key you are using for it.")
+    if any(marker in line for line in lines for marker in _HOST_KEY):
+        return ("SSH refused to continue because this host's key is not "
+                "the one it saw last time. That is worth checking with "
+                "your administrator before accepting it.")
+    return None
+
+
 def unreachable_advice(remote, lines):
     """The checklist for a machine that never answered, or None.
 
@@ -495,7 +507,12 @@ class RemoteSession:
                 # here would hand a form a node identifier that resolves to
                 # nothing the moment the two differ.
                 "node": (self.node_name if self.kind == KIND_NODE
-                         and self.state == STATE_CONNECTED else None),
+                         and self.state == STATE_CONNECTED
+                         and not self.files_only else None),
+                # What a files-only connection gives a form instead of a node:
+                # the `sftp://` address its files are read at, and the home
+                # folder browsing starts in. Only once it is up.
+                "files": self._files_place(),
                 "state": self.state,
                 # The clock, in two forms because they answer different
                 # questions. `time_limit` is what was ASKED FOR and never
@@ -530,6 +547,23 @@ class RemoteSession:
             }
 
     @property
+    def files_only(self):
+        """Whether this profile is a files-only server (`Remote.files`)."""
+        return bool(getattr(self.remote, "files", None))
+
+    def _files_place(self):
+        """`{base, home}` for a connected files-only session, else None."""
+        if not self.files_only or self.state != STATE_CONNECTED:
+            return None
+        home = getattr(self.session, "home", None)
+        if not home:
+            return None
+        from plexora.server.utils import sftp
+
+        return {"base": f"{sftp.SCHEME}://{sftp.canonical_target(self.remote.target)}",
+                "home": home}
+
+    @property
     def time_left(self):
         """Seconds until the allocation ends, floored at zero, or None.
 
@@ -550,6 +584,8 @@ class RemoteSession:
         into minutes. The generic line reads as a hang for the second, so it
         says how long is normal rather than leaving somebody to guess.
         """
+        if self.files_only and self.state == STATE_CONNECTING:
+            return "Opening an SFTP connection… nothing is started over there."
         if (self.kind == KIND_NODE
                 and self.state == STATE_WAITING_FOR_APP):
             return ("Starting the data node over there… a first start can take "
@@ -634,6 +670,11 @@ class RemoteSession:
             detach=True,
             timeout=self._timeout,
         )
+        if self.files_only:
+            # Whichever half asked: a files-only server has one connection,
+            # and it starts nothing over there for either.
+            return connect.FilesSession(self.remote.target, **common,
+                                        **self.remote.as_files_kwargs())
         if self.kind == KIND_NODE:
             return connect.NodeSession(
                 self.remote.target,
@@ -943,7 +984,8 @@ class RemoteSession:
                 "outcome": outcome,
                 "connect_ms": schema.band_ms((perf_counter() - started) * 1000.0),
                 "scheduler": "slurm" if getattr(self.remote, "srun", None) else "ssh",
-                "kind": "node" if self.kind == KIND_NODE else "server",
+                "kind": ("files" if self.files_only
+                         else "node" if self.kind == KIND_NODE else "server"),
             })
         except Exception:
             pass
@@ -984,6 +1026,13 @@ class RemoteSession:
         # was fine and whose VM was missing a package.
         if getattr(exc, "diagnosed", False):
             return text
+
+        if getattr(self.remote, "files", None):
+            # Nothing ran over there, so none of the guesses below about a
+            # remote command, a scheduler or an operating system can be true.
+            # What is left is whether the login got through.
+            return (unreachable_advice(self.remote, lines)
+                    or _login_advice(lines) or text)
 
         # Before the missing-command check: argparse's refusal carries "usage:"
         # and a subcommand list, which trips the same markers a shell's "not
@@ -1027,14 +1076,7 @@ class RemoteSession:
                 f"Plexora is installed in, e.g. "
                 f"`/home/you/miniconda3/envs/plexora`."
             )
-        if any(marker in line for line in lines for marker in _PERMISSION_DENIED):
-            return ("The remote host rejected the login. Check the username, "
-                    "and the password or key you are using for it.")
-        if any(marker in line for line in lines for marker in _HOST_KEY):
-            return ("SSH refused to continue because this host's key is not "
-                    "the one it saw last time. That is worth checking with "
-                    "your administrator before accepting it.")
-        return text
+        return _login_advice(lines) or text
 
     # -- the askpass handshake ---------------------------------------------
 

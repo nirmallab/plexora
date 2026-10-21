@@ -108,7 +108,10 @@ window.PlexoraPlacePicker = (function () {
             }
             item.append(main);
 
-            const connected = place.kind === "server" || Boolean(place.node);
+            // A files-only server has no node; its SFTP connection (`files`)
+            // is what makes a file on it nameable.
+            const connected = place.kind === "server" || Boolean(place.node)
+                || Boolean(place.files);
             const busy = Remotes().isOpening(place.state);
             const chip = el("span", "place-picker-state",
                             connected ? "Connected"
@@ -144,7 +147,7 @@ window.PlexoraPlacePicker = (function () {
             action.addEventListener("click", () => {
                 if (connected) {
                     finish({ id: place.id, kind: place.kind, label: place.label,
-                             node: place.node || null });
+                             node: place.node || null, files: place.files || null });
                 } else {
                     connect(place);
                 }
@@ -169,14 +172,18 @@ window.PlexoraPlacePicker = (function () {
             const outcome = await window.PlexoraConnectionModal.open({
                 name: place.id,
                 kind: "node",
-                intent: "Opening a data node on this machine, so a file on it "
-                        + "can be named in the form behind.",
+                intent: place.files_only
+                    ? "Opening an SFTP connection to this machine, so a file on "
+                      + "it can be named in the form behind. Nothing is "
+                      + "started there."
+                    : "Opening a data node on this machine, so a file on it "
+                      + "can be named in the form behind.",
             });
             opening = null;
             if (outcome && outcome.connected) {
                 finish({ id: outcome.name, kind: "remote",
                          label: outcome.label || place.label,
-                         node: outcome.node || null });
+                         node: outcome.node || null, files: outcome.files || null });
                 return;
             }
             // Not connected, and not a failure to report here -- the modal has
@@ -219,7 +226,8 @@ window.PlexoraPlacePicker = (function () {
                 if (outcome && outcome.connected) {
                     finish({ id: outcome.name, kind: "remote",
                              label: outcome.label || outcome.name,
-                             node: outcome.node || null });
+                             node: outcome.node || null,
+                             files: outcome.files || null });
                 }
             });
 

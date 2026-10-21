@@ -3,10 +3,10 @@ title: "view"
 description: "Open a notebook-displayable viewer on datasource."
 generated: true
 symbol: "plexora.view"
-signature: "view(datasource, **kwargs)"
+signature: "view(datasource=None, **kwargs)"
 aliases: ["open viewer", "notebook", "jupyter", "display"]
 source:
-  end: 399
+  end: 411
   path: "plexora/__init__.py"
   start: 330
 ---
@@ -18,11 +18,16 @@ from plexora import view
 ```
 
 ```python
-view(datasource, **kwargs)
+view(datasource=None, **kwargs)
 ```
 
 In a Jupyter cell, making this the last expression starts a server and
 displays the viewer in an iframe.
+
+`datasource` may be left out when data is given: the project is named
+after the image file, as the Import dialog would name it, and calling
+again with the same data refreshes that project. Only opening an
+existing project needs its name.
 
 Called with a name alone, it opens a project that already exists.
 Called with data as well -- an image, a table, an AnnData, a
@@ -61,7 +66,7 @@ a plain `plexora.view(name)` restores.
 
 <ParamTable>
 
-<Param name={"datasource"} type={"str"} required>
+<Param name={"datasource"} type={"str"} default={"None"}>
 
 The project's name. Registered first when
 `**kwargs` includes a data argument; opened as-is otherwise.

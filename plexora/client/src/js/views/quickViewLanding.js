@@ -663,11 +663,13 @@ PlexoraPage.register(function () {
     }
 
     function connected(place) {
-        return place.kind === "server" || Boolean(place.node);
+        // A files-only server has no node; its SFTP connection is the answer.
+        return place.kind === "server" || Boolean(place.node) || Boolean(place.files);
     }
 
     function asPlace(place) {
-        return { id: place.id, kind: place.kind, label: place.label, node: place.node || null };
+        return { id: place.id, kind: place.kind, label: place.label,
+                 node: place.node || null, files: place.files || null };
     }
 
     function menuItem({ icon, dot, name, sub, checked, onPick, href, role, disabled, add }) {
@@ -793,15 +795,19 @@ PlexoraPage.register(function () {
         if (!window.PlexoraConnectionModal) return;
         const outcome = await window.PlexoraConnectionModal.open(place
             ? { name: place.id, kind: "node",
-                intent: "Opening a data node on this machine, so an image on it can "
-                        + "be opened from the home page." }
+                intent: place.files_only
+                    ? "Opening an SFTP connection to this machine, so an image on "
+                      + "it can be streamed from the home page. Nothing is started "
+                      + "there."
+                    : "Opening a data node on this machine, so an image on it can "
+                      + "be opened from the home page." }
             : { kind: "node",
                 intent: "Add the machine the image is on. Plexora will handle the "
                         + "SSH connection." });
         if (outcome && outcome.connected) {
             choose(REMOTE, { id: outcome.name, kind: "remote",
                              label: outcome.label || (place && place.label) || outcome.name,
-                             node: outcome.node || null });
+                             node: outcome.node || null, files: outcome.files || null });
         } else {
             whereButton.focus();
         }

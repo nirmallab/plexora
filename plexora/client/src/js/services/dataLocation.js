@@ -312,6 +312,27 @@ window.PlexoraDataLocation = (function () {
             return (state.place && state.place.node) || null;
         }
 
+        /**
+         * The files-only server this field is set to, as `{base, home}`, or
+         * null. Such a place has no node and needs none: its files are read
+         * by this Plexora at `sftp://` addresses, so a path on it is turned
+         * into one here and submitted as it is -- nothing is shared first.
+         */
+        function filesPlace() {
+            if (state.where !== REMOTE || !state.place) return null;
+            return state.place.files || null;
+        }
+
+        /** The `sftp://` address the box names on a files-only server. */
+        function filesAddress() {
+            const files = filesPlace();
+            const typed = input.value.trim();
+            if (!files || !typed) return "";
+            const locators = window.PlexoraLocators;
+            if (locators.isRemoteLocator(typed)) return typed;
+            return locators.sftpUrl(files.base, typed, files.home);
+        }
+
         /** Whether the typed path is what gets submitted, unchanged. */
         function plainPath() {
             if (state.where === LOCAL) return !serverIsRemote();
@@ -326,6 +347,7 @@ window.PlexoraDataLocation = (function () {
 
         function value() {
             if (plainPath()) return input.value.trim();
+            if (filesPlace()) return filesAddress();
             return state.uploadedPath || state.locator || "";
         }
 
@@ -338,6 +360,7 @@ window.PlexoraDataLocation = (function () {
                 return "Choose the machine this file is on.";
             }
             if (!input.value.trim()) return null;   // an empty optional field
+            if (filesPlace()) return null;
             if (!nodeName()) {
                 // Nothing here can read a path on that machine, so a path in
                 // the box is not an answer -- say which control is.
@@ -363,7 +386,8 @@ window.PlexoraDataLocation = (function () {
         }
 
         function emit() {
-            if (hidden) hidden.value = state.locator || "";
+            if (hidden) hidden.value = filesPlace() ? filesAddress()
+                                                    : (state.locator || "");
             onChange(value());
         }
 
@@ -377,7 +401,7 @@ window.PlexoraDataLocation = (function () {
             placeChip.textContent = placeLabel();
             placeChip.classList.toggle("is-unset", !state.place);
 
-            const detached = !plainPath() && !nodeName();
+            const detached = !plainPath() && !nodeName() && !filesPlace();
             if (uploadButton) uploadButton.hidden = !(uploadable && detached
                                                       && state.where === LOCAL);
             // With nothing that can read a path on the chosen machine, the box
@@ -396,6 +420,13 @@ window.PlexoraDataLocation = (function () {
                 status.textContent = uploadable
                     ? "Send a CSV with Upload… — or " + DETACHED
                     : DETACHED;
+                return;
+            }
+            if (filesPlace()) {
+                // Nothing is shared or prepared: the address is the answer.
+                status.textContent = input.value.trim()
+                    ? `Read from ${placeLabel()} over SFTP` : "";
+                if (input.value.trim()) status.classList.add("is-ready");
                 return;
             }
             if (plainPath() || state.phase === "empty") {
@@ -496,7 +527,8 @@ window.PlexoraDataLocation = (function () {
                     if (opened && opened.connected) {
                         const place = { id: opened.name, kind: "remote",
                                         label: opened.label || opened.name,
-                                        node: opened.node || null };
+                                        node: opened.node || null,
+                                        files: opened.files || null };
                         lastPlace = place;
                         choose(REMOTE, place);
                         return;
@@ -537,12 +569,13 @@ window.PlexoraDataLocation = (function () {
                 return undefined;   // fall through to the picker, which says so
             }
             const reachable = list.filter(
-                (place) => place.kind === "server" || Boolean(place.node));
+                (place) => place.kind === "server" || Boolean(place.node)
+                           || Boolean(place.files));
             if (reachable.length > 1) return undefined;
             if (!reachable.length) return null;
             const only = reachable[0];
             return { id: only.id, kind: only.kind, label: only.label,
-                     node: only.node || null };
+                     node: only.node || null, files: only.files || null };
         }
 
         function choose(where, place) {
@@ -727,6 +760,12 @@ window.PlexoraDataLocation = (function () {
         // machine, which is not something to do per keystroke. Browse fills the
         // box and dispatches this itself.
         input.addEventListener("change", () => {
+            if (filesPlace()) {
+                // Nothing to share: the address is read from here.
+                paint();
+                emit();
+                return;
+            }
             if (!plainPath()) share();
         });
 
@@ -779,8 +818,13 @@ window.PlexoraDataLocation = (function () {
             submitValue: value,
             blocking,
             release,
-            /** The node to browse on, or null for this server's own files. */
-            browseNode: nodeName,
+            /**
+             * The node to browse on, or null for this server's own files. A
+             * files-only server is browsed by its `sftp://` base address,
+             * which the listing routes answer over its SFTP connection.
+             */
+            browseNode: () => nodeName()
+                || (filesPlace() ? filesPlace().base : null),
             element: root,
             //: Separate, because the two no longer live together: the switch
             //: sits in the field's row and the status line under the field.

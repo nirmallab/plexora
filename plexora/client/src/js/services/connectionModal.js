@@ -95,6 +95,21 @@ window.PlexoraConnectionModal = (function () {
     //: is identical -- same profile, same ssh, same password.
     const NODE_LAST_STEP = "Starting the data node";
 
+    //: The steps a files-only server goes through: reaching it and signing
+    //: in. Nothing is started over there, so there is no tunnel to open and
+    //: nothing to wait for once the login is through.
+    const FILES_STEPS = ["connecting", "authenticating"];
+
+    /**
+     * Whether one half of a profile is up. A data node is up when it is on the
+     * map; a files-only server has no node and is up when its SFTP connection
+     * is (`files`, the address its files are read at).
+     */
+    function halfReady(half, kind) {
+        return kind === "node" ? Boolean(half.node || half.files)
+                               : half.state === "connected";
+    }
+
     let openDialog = null;
 
     // -- a connection left running in the background ---------------------------
@@ -179,8 +194,7 @@ window.PlexoraConnectionModal = (function () {
         const entry = (snapshot.entries || []).find((item) => item.name === row.name);
         if (!entry) return stopBackground(row.name, row.kind);  // forgotten elsewhere
         const half = Remotes().half(entry, row.kind) || {};
-        const ready = row.kind === "node" ? Boolean(half.node)
-                                          : half.state === "connected";
+        const ready = halfReady(half, row.kind);
         if (ready) {
             stopBackground(row.name, row.kind);
             window.PlexoraToast?.show?.({
@@ -1063,10 +1077,13 @@ window.PlexoraConnectionModal = (function () {
      * was running -- and marking the whole list pending would throw away the
      * most useful thing on screen, which is how far it got.
      */
-    function stepStates(state, kind, queued, lastOpening, install, gcloud) {
-        const steps = STEPS.filter((step) => (!step.queued || queued)
-                                          && (!step.install || Boolean(install))
-                                          && (!step.gcloud || Boolean(gcloud)));
+    function stepStates(state, kind, queued, lastOpening, install, gcloud,
+                        filesOnly) {
+        const steps = filesOnly
+            ? STEPS.filter((step) => FILES_STEPS.indexOf(step.state) >= 0)
+            : STEPS.filter((step) => (!step.queued || queued)
+                                  && (!step.install || Boolean(install))
+                                  && (!step.gcloud || Boolean(gcloud)));
         const failed = state === "failed" || state === "exited";
         const at = steps.findIndex(
             (step) => step.state === (failed ? lastOpening : state));
@@ -1203,8 +1220,7 @@ window.PlexoraConnectionModal = (function () {
                 .find((item) => item.name === name);
             if (!entry) return false;
             const half = Remotes().half(entry, kind) || {};
-            const ready = kind === "node" ? Boolean(half.node)
-                                          : half.state === "connected";
+            const ready = halfReady(half, kind);
             return !ready && (Boolean(half.prompt) || Remotes().isOpening(half.state));
         }
 
@@ -1246,8 +1262,7 @@ window.PlexoraConnectionModal = (function () {
             item.append(main);
 
             const half = Remotes().half(entry, kind);
-            const ready = kind === "node" ? Boolean(half.node)
-                                          : half.state === "connected";
+            const ready = halfReady(half, kind);
             const chip = el("span", "connect-modal-chip",
                             ready ? "Connected" : Remotes().label(half.state));
             chip.classList.add(ready ? "is-ready"
@@ -1356,7 +1371,8 @@ window.PlexoraConnectionModal = (function () {
             const installing = !entry || !entry.install ? false
                 : (entry.installEnv || true);
             stepStates(state, kind, entry ? entry.queued : false, lastOpening,
-                       installing, Boolean(entry && entry.gcloud))
+                       installing, Boolean(entry && entry.gcloud),
+                       Boolean(entry && entry.filesOnly))
                 .forEach((step) => {
                     const item = el("li", "connect-step is-" + step.status);
                     item.append(el("span", "connect-step-mark"));
@@ -1601,8 +1617,7 @@ window.PlexoraConnectionModal = (function () {
                 .find((item) => item.name === name);
             if (!entry) return false;
             const half = Remotes().half(entry, kind);
-            const ready = kind === "node" ? Boolean(half.node)
-                                          : half.state === "connected";
+            const ready = halfReady(half, kind);
             if (ready) {
                 settle(entry);
                 return true;
@@ -1623,8 +1638,8 @@ window.PlexoraConnectionModal = (function () {
         function settle(entry) {
             const half = Remotes().half(entry, kind);
             close({ connected: true, name: entry.name, kind: kind,
-                    node: half.node || null, label: entry.label,
-                    detail: entry.detail });
+                    node: half.node || null, files: half.files || null,
+                    label: entry.label, detail: entry.detail });
         }
 
         function editServer() {
@@ -1767,12 +1782,19 @@ window.PlexoraConnectionModal = (function () {
             // holding somebody's images -- one segment away from the directory
             // that account's own `plexora dataset create` writes to, which is
             // how a 51-sample cohort came to be invisible.
-            form.append(field(
-                "data_dir", "Data directory on this server (optional)",
-                "/path/to/data", saved ? (saved.data_dir || "") : "",
-                "Where Plexora keeps projects on that machine. Used the first "
-                + "time this account runs Plexora; after that the account's "
-                + "own setting applies."));
+            // Not on a files-only preset: nothing runs over there, so there is
+            // no Plexora to keep projects for. The same goes for everything
+            // under Advanced below -- job options, a launch command, an
+            // install, forwarded ports -- which is why it is not drawn at all.
+            const filesOnly = Boolean(recipe.files);
+            if (!filesOnly) {
+                form.append(field(
+                    "data_dir", "Data directory on this server (optional)",
+                    "/path/to/data", saved ? (saved.data_dir || "") : "",
+                    "Where Plexora keeps projects on that machine. Used the "
+                    + "first time this account runs Plexora; after that the "
+                    + "account's own setting applies."));
+            }
             parts.body.append(form);
 
             if (recipe.notes && recipe.notes.length) {
@@ -1874,7 +1896,7 @@ window.PlexoraConnectionModal = (function () {
                 || (job.extra || "")
                 || (saved.remote_command && saved.remote_command !== "plexora")
             ) : (recipe.advanced_open === false ? false : recipe.install));
-            parts.body.append(advanced);
+            if (!filesOnly) parts.body.append(advanced);
 
             parts.body.append(errorSlot());
 
