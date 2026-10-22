@@ -861,7 +861,7 @@ def _tenx_context(name, source, spatial):
 
     None, before the file is so much as opened, on a licence without
     `transcriptomics:visium`: a 10x matrix is how a Visium run's table arrives,
-    and the modality is Paid. The table then reads as whatever else it is --
+    and the modality is Pro. The table then reads as whatever else it is --
     for a 10x `.h5`, nothing -- which is what the importer already said by not
     detecting the run (`import_proposal._licensed`).
 

@@ -2,7 +2,7 @@
 
 The classifier's own, and not automatic gating's `autogate.cells`, which
 holds the same few arrays: the classifier is Free and the autogate package is
-the Paid half that is to ship apart (docs/LICENSING.md, "splitting out
+the Pro half that is to ship apart (docs/LICENSING.md, "splitting out
 plexora-ai"), so nothing here may import it.
 """
 

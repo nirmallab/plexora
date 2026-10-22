@@ -579,11 +579,11 @@ CLIENT_BLOCK = {
     "mode": F(Enum(ANONYMOUS, DIAGNOSTICS)),
     "plugins": F(ListOf(Struct(id=OWNER, version=Pattern(r"[0-9A-Za-z.+-]{1,24}", 24, "0.0.25")),
                         64)),
-    # Which plan this install is on, as a word: `free`, `paid` or `trial`.
+    # Which plan this install is on, as a word: `free`, `pro` or `trial`.
     # Coarse on purpose -- a tier, never who holds the licence -- and read
     # from the licence already on this machine with no network call.
     # Telemetry OBSERVES licensing; nothing in licensing reads telemetry.
-    "license_tier": F(Enum("free", "paid", "trial")),
+    "license_tier": F(Enum("free", "pro", "trial")),
     # Reserved for a future licensing service, which lives elsewhere. Allowed
     # when present, never set by this client, never required: they would tie
     # an anonymous install to a licence holder, and telemetry is anonymous.

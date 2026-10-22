@@ -216,7 +216,7 @@ gate does not).
 
 ## Surface Studio (feature/surface-studio, 2026-10-11)
 
-Surfaces in the 3-D view, Phases 1 + 2 of the Surface Studio spec, Paid (`surfaces`).
+Surfaces in the 3-D view, Phases 1 + 2 of the Surface Studio spec, Pro (`surfaces`).
 Design, measurements, limits and merge notes: [SURFACES.md](SURFACES.md).
 
 | Item | State |
@@ -271,7 +271,7 @@ main. Design and the full list: `SLICE_CLIP.md`. Plan:
 | 2026-10-21 (`feature/area-tool`, after milume's Inspect): the AREA (`volume.area`; the Area tool on the strip, V, a slide by Shift+drag, Alt / middle-drag pans), never a blank frame (stand-in texture through `u_tex_lo/span`), the cut moved with the area, Cut along ONE axis (`hole` removed everywhere), Crop to area, saved areas (`services/savedAreas.js`) | done (SLICE_CLIP.md "The area"); bench `area_slide` in PERF.md |
 | 2026-10-22 (`feature/bookmarks`): the 3-D button is always the whole stack and leaving 3-D lets the square go; Back (B, `services/viewHistory.js`, `views/backButton.js`) from a square's or Crop to area's view; the area's own grips (resize, slide via `dragArea`); the square's side on screen (`area: {screen}`); saved areas retired for bookmarks (Figure Builder captures, `services/bookmarks.js`, `views/bookmarkTray.js`) | done (SLICE_CLIP.md "The area") |
 | Oblique planes | not done (seams kept) |
-| A 3-D mask in 3-D: the Cells control's Outlines/Filled as cell surfaces (`services/maskSurfaces.js`, preview → standard, Paid `volume:surfaces`, hidden without it); one-pass surface nets (`surface/nets.py`) | done 2026-10-13 (SURFACES.md §4) |
+| A 3-D mask in 3-D: the Cells control's Outlines/Filled as cell surfaces (`services/maskSurfaces.js`, preview → standard, Pro `volume:surfaces`, hidden without it); one-pass surface nets (`surface/nets.py`) | done 2026-10-13 (SURFACES.md §4) |
 
 ## The cog popover, compact (2026-10-13)
 

@@ -13,7 +13,7 @@ driven by the agent. Nothing here ever writes into an image or a mask.
 
 ## 1. Licence
 
-Surface Studio is Paid: **`volume:surfaces`** in `plexora/licensing/manifest.py`
+Surface Studio is Pro: **`volume:surfaces`** in `plexora/licensing/manifest.py`
 (label "Surface Studio"), under the Plexora 3D root `volume` — not under `ai`, not an
 add-on. A plain `["ai"]` licence does not unlock it; `["volume"]` does.
 
@@ -26,9 +26,9 @@ add-on. A plain `["ai"]` licence does not unlock it; `["volume"]` does.
 Not granted means not shown (docs/LICENSING.md): without `volume:surfaces` the Layers
 header button, the 3-D menu's New surface… / Import mesh…, a card's Edit, the inspector's
 Neighbours and the S key are absent, and the routes still refuse. A 403 that arrives anyway
-(a licence lapsed mid-session) closes the dock quietly. Over MCP the Paid tools also need
-`mcp`, by the existing rule. The platform's `plexora.paid` plan grants `volume`
-(`manifest.paid_default()`, checked by `tools/bioc_sync.py --check`).
+(a licence lapsed mid-session) closes the dock quietly. Over MCP the Pro tools also need
+`mcp`, by the existing rule. The platform's `plexora.pro` plan grants `volume`
+(`manifest.pro_default()`, checked by `tools/bioc_sync.py --check`).
 
 ## 2. What existed (assessment)
 

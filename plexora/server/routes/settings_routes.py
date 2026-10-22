@@ -44,7 +44,7 @@ SECTIONS = (
     {"id": "telemetry", "label": "Usage data", "icon": "fa-chart-simple",
      "blurb": "What anonymous usage counts are sent, and turning them off."},
     {"id": "license", "label": "License", "icon": "fa-key",
-     "blurb": "Your plan: Free, or Paid for AI features."},
+     "blurb": "Your plan: Free, or Pro with a licence."},
 )
 
 
@@ -59,8 +59,15 @@ def settings_page():
     # memory boxes on this page's own "add a server" form. That form is gone --
     # the preset catalogue asks those three, and gets the same constants from
     # `/settings/recipes` with the rest of the recipe.
+    #
+    # `pro_words` is the License lead's "Pro adds ..." from the manifest's
+    # Pro default, and its sentence on what is off by default, so the page
+    # cannot describe a plan the manifest no longer has. Data only: no
+    # licence is resolved for it.
+    from plexora.licensing import manifest
+
     return render_template('settings.html', data=template_data(),
-                           sections=SECTIONS)
+                           sections=SECTIONS, pro_words=manifest.pro_words())
 
 
 def _resolve(raw):

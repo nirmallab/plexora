@@ -70,7 +70,7 @@ def inject_layout():
 
 def licensed(entitlement):
     """Whether this licence unlocks `entitlement`, for a template to decide
-    whether a Paid control is drawn at all: `{% if licensed('volume:objects') %}`.
+    whether a Pro control is drawn at all: `{% if licensed('volume:objects') %}`.
 
     Not granted means not shown -- no badge, no greyed button, no "needs a
     licence" text; the server still refuses the action if it is called
@@ -226,7 +226,7 @@ def template_data(**values):
         'launch': {},
         # The licence as far as drawing the page goes: plan, state and grants,
         # never the certificate. A HINT for badges and Settings -- the server
-        # refuses a Paid action whatever the page believes. Read without any
+        # refuses a Pro action whatever the page believes. Read without any
         # network call, and for a Free user it is one missing-file stat.
         'license': _license_summary(),
     }
@@ -629,7 +629,7 @@ def image_viewer(datasource):
     offered = plugin_registry.tools_for(app, project)
     ready = plugin_registry.ready_tools(app, project)
     requested_tool = request.args.get('tool', '')
-    # A Paid tool this licence does not unlock is not in `ready`, so a `?tool=`
+    # A Pro tool this licence does not unlock is not in `ready`, so a `?tool=`
     # link to it renders the plain viewer (plugins.unlocked).
     active_tool = requested_tool if any(p.name == requested_tool for p in ready) else ''
 
@@ -640,7 +640,7 @@ def image_viewer(datasource):
     # rendered and their assets loaded on every view of it -- no ?tool=, no
     # lazy fetch, no close button. `applies_to` rather than `satisfied_by`:
     # see plugins.layer_sections_for.
-    # A Paid layer plugin is not mounted on a licence that does not unlock
+    # A Pro layer plugin is not mounted on a licence that does not unlock
     # it (plugins.unlocked); its data stays on disk untouched.
     sections = plugin_registry.layer_sections_for(app, project)
     section_scripts, section_styles = [], []

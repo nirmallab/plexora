@@ -41,7 +41,7 @@ def test_qc_tools_prompts_and_resources_are_served(tmp_path):
     schema = listed["set_blur_check"].input_schema
     adjust = json.dumps(schema["properties"]["adjust"])
     assert "tighter" in adjust and "looser" in adjust
-    assert "Paid" in (listed["sample_qc_examples"].description or "") or \
+    assert "Plexora Pro" in (listed["sample_qc_examples"].description or "") or \
         "licen" in (listed["sample_qc_examples"].description or "").lower()
     assert {"qc_session_start", "qc_next", "qc_answer", "get_qc_results",
             "set_qc_strictness", "export_qc", "refresh_qc"} <= tools

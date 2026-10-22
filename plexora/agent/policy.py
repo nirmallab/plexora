@@ -334,7 +334,9 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
         return {"state": CAN_RECOMMEND, "capabilities": names, "missing": missing,
                 "not_permitted": not_permitted, "unknown": unknown, **how, **extra,
                 "reason": ("Plexora can do this once what is listed is supplied"
-                           + ("; the tools in license_required are part of Plexora Paid"
+                           + ("; the tools in license_required need a licence (Plexora Pro; "
+                              "over MCP, also external MCP access, which is off by default "
+                              "until an administrator turns it on)"
                               if license_required else ""))}
     if all(cap.permission == "read" for cap in matched):
         return {"state": CAN_ANALYZE, "capabilities": names, **how,

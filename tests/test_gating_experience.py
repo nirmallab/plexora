@@ -13,7 +13,7 @@ from tests.agent_fixtures import local_handles
 from tests.autogate_fixtures import make_gating_project
 from tests.test_gating_session import Oracle, drive, ok, start
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

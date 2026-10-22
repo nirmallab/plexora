@@ -29,12 +29,12 @@ ACTIONS = ("status", "activate", "install", "refresh", "deactivate", "remove",
 
 _STATE_WORDS = {
     "free": "Free",
-    "trial": "Paid (trial)",
-    "paid_active": "Paid",
-    "offline_valid": "Paid (offline licence)",
-    "grace": "Paid (expired -- in grace period)",
-    "expired": "Free (Paid licence expired)",
-    "revoked": "Free (Paid licence revoked)",
+    "trial": "Pro (trial)",
+    "pro_active": "Pro",
+    "offline_valid": "Pro (offline licence)",
+    "grace": "Pro (expired -- in grace period)",
+    "expired": "Free (Pro licence expired)",
+    "revoked": "Free (Pro licence revoked)",
     "invalid": "Free (licence could not be verified)",
 }
 
@@ -66,7 +66,7 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="plexora license",
         description="Show or manage this device's Plexora licence. Free needs no "
-                    "licence; Paid unlocks AI features. Sign-in happens at "
+                    "licence; a licence unlocks Pro. Sign-in happens at "
                     "account.biocognia.com, never in Plexora.")
     sub = parser.add_subparsers(dest="action")
 
@@ -119,7 +119,7 @@ def build_parser():
     lease.add_argument("--entitlement", action="append", dest="entitlements",
                        help="Narrow the job to this entitlement (repeatable).")
 
-    trial = sub.add_parser("trial", help="Start a 30-day Paid trial.")
+    trial = sub.add_parser("trial", help="Start a 30-day Pro trial.")
     trial.add_argument("--email", help="Send the sign-in link here directly instead of "
                                        "opening the portal.")
     return parser
@@ -153,7 +153,7 @@ def _validity_lines(info: dict) -> list[str]:
             label = "Ended" if ended else "Valid until"
         lines.append(f"{label}: {_when(until)}")
     if ended and info["state"] == "grace" and info.get("grace_until"):
-        lines.append(f"Paid features stop: {_when(info['grace_until'])}")
+        lines.append(f"Pro features stop: {_when(info['grace_until'])}")
     renew, renew_by = validity.get("renew"), validity.get("renew_by")
     if renew == "file":
         lines.append(f"Offline licence file works until: {_when(renew_by)}; download a new one "
@@ -163,17 +163,26 @@ def _validity_lines(info: dict) -> list[str]:
     elif renew == "online":
         lines.append(f"Renew by: {_when(renew_by)}. Connect to the internet and Plexora renews "
                      "it automatically, or run `plexora license refresh`." if renew_by else
-                     "Paid features are paused until this licence is renewed: connect to the "
+                     "Pro features are paused until this licence is renewed: connect to the "
                      "internet and run `plexora license refresh`.")
     return lines
 
 
 def status_lines(info: dict) -> list[str]:
+    from plexora import links
+    from plexora.licensing import manifest
+
     lines = [f"Plan: {_STATE_WORDS.get(info['state'], info['state'])}"]
     if info["state"] == "free" and info.get("reason") == "no_license":
-        lines.append("Everything Free works with no licence. Paid unlocks AI features: "
+        words = manifest.pro_words()
+        lines.append(f"Everything Free works with no licence. Pro adds "
+                     f"{words['included']}: "
                      "`plexora license activate` connects this device, or "
                      "`plexora license trial` starts a trial.")
+        if words["off_by_default"]:
+            lines.append(words["off_by_default"])
+        lines.append(f"Buy Plexora Pro: {links.PRICING_URL} -- the licence key arrives by email; "
+                     "`plexora license activate KEY` uses it.")
         return lines
     reason = info.get("reason")
     if info["state"] in ("invalid",) or reason in _REASON_WORDS and info["state"] == "free":
@@ -182,8 +191,6 @@ def status_lines(info: dict) -> list[str]:
         lines.append(f"Licence: {info['license_id']}"
                      + (f" ({info['use_class']})" if info.get("use_class") else ""))
     if info.get("paid"):
-        from plexora.licensing import manifest
-
         for row in manifest.unlocks(info.get("entitlements"), paid=True):
             lines.append(f"{row['label']}: {'included' if row['granted'] else 'not included'}")
     env = info.get("environment") or {}
@@ -200,7 +207,8 @@ def status_lines(info: dict) -> list[str]:
                      "`plexora license refresh` re-checks it online.")
     if info["state"] in ("expired", "revoked"):
         lines.append("Gates, ROIs, figures and everything else you made are untouched; "
-                     "only Paid features are off.")
+                     "only Pro features are off.")
+        lines.append(f"Buy Plexora Pro: {links.PRICING_URL}")
     return lines
 
 
@@ -351,6 +359,9 @@ def _trial(args, log) -> int:
         f"{store.portal_url(f'start?product={PRODUCT.id}')}")
     log("Then connect this device with `plexora license activate`, or "
         "`plexora license trial --email you@example.org`.")
+    from plexora import links
+
+    log(f"To buy Plexora Pro instead: {links.PRICING_URL}")
     return 0
 
 

@@ -21,8 +21,25 @@ export const pypiUrl = 'https://pypi.org/project/plexora/';
 export const accountUrl = 'https://account.biocognia.com';
 /** Buy, activate or start a trial of Plexora. */
 export const startUrl = `${accountUrl}/start?product=plexora`;
-/** Start a 30-day trial of Paid (sign-in first, then one button). */
+/** Start a 30-day trial of Plexora Pro (sign-in first, then one button). */
 export const trialUrl = `${accountUrl}/portal/trial?product=plexora`;
+/** Buy Plexora Pro: the portal's Plans & prices, where checkout opens. */
+export const buyUrl = `${accountUrl}/portal/billing?product=plexora`;
+
+export type UseClass = 'academic' | 'commercial';
+
+/** The pricing page's Buy: Plans & prices with the seats and use class chosen
+ * there filled in (they survive sign-in). One seat is an individual account;
+ * two or more make the account a team. */
+export function buyHref(seats: number, useClass: UseClass): string {
+  const count = Math.max(1, Math.floor(seats));
+  return `${buyUrl}&seats=${count}&use_class=${useClass}`;
+}
+
+/** Where a seat's licence key is shown again, with Copy and Replace. */
+export const licencesUrl = `${accountUrl}/portal/licenses`;
+/** Quotes, purchase orders and invoices, for those who cannot pay by card. */
+export const quoteUrl = `${accountUrl}/portal/quotes`;
 
 /** Where the exported search index is fetched from. Must carry basePath:
  * Fumadocs' default reads import.meta.env.BASE_URL, which only Vite sets. */

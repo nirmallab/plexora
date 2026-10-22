@@ -36,9 +36,20 @@ def description_for(capability) -> str:
         parts.append("Returns an image plus a JSON manifest of exactly what was drawn.")
     # Static, whatever the licence: every tool is listed on every transport,
     # and the call is what decides (a `license_required` error on Free).
-    if getattr(capability, "entitlement", None) not in (None, "free"):
-        parts.append("Part of Plexora Paid; on Free it answers license_required, and over MCP "
-                     "it also needs a licence with external MCP access.")
+    entitlement = getattr(capability, "entitlement", None)
+    if entitlement not in (None, "free"):
+        from plexora.licensing import manifest
+
+        if manifest.third_party(entitlement):
+            where = ("From a plugin's maker, not part of Plexora Pro; without a licence "
+                     "that includes it, it answers license_required")
+        elif manifest.off_by_default(entitlement):
+            where = ("Off by default, not part of Plexora Pro; until an administrator "
+                     "turns it on for the licence, it answers license_required")
+        else:
+            where = "Part of Plexora Pro; on Free it answers license_required"
+        parts.append(f"{where}. Over MCP it also needs external MCP access, which is off "
+                     "by default; an administrator can turn it on for the licence.")
     return " ".join(parts)
 
 

@@ -19,7 +19,7 @@ The ladder, in order, per picked path:
    output, a DICOM slide folder or an OME-Zarr image store. A bundle is ONE
    sample and its elements are its layers, which is the whole reason "select a
    folder" is the primary action. A Xenium, Visium or Visium HD run is spatial
-   transcriptomics, a Paid root: on a licence without it the run is not
+   transcriptomics, a Pro root: on a licence without it the run is not
    detected at all (`_licensed`), and neither is a loose transcripts parquet.
 2. **Single files, by content.** An image (by the same sniff quick view used), a
    label mask (by dtype and plane count, with a name hint only as a tie-break),
@@ -132,7 +132,7 @@ def register_detector(fn) -> None:
 
 
 #: Which licence entitlement each 10x run layout needs to be detected. The
-#: spatial-transcriptomics modality is a Paid root (plexora/licensing/
+#: spatial-transcriptomics modality is a Pro root (plexora/licensing/
 #: manifest.py), and not granted means not shown: without it these runs are
 #: not proposed at all -- no layers, no bundle, and no warning naming a
 #: licence. A project already imported from one still opens; this gates only

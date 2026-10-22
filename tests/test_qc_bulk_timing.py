@@ -55,7 +55,7 @@ STAGE_BUDGETS_S = {"load_or_run": 35.0, "run_all": 15.0, "build": 10.0,
 TOTAL_BUDGET_S = 60.0
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatch):
     """A large-ish synthetic (qc_fixtures' fixed 5 channels, a 3072 px image,
     several artifacts so every stage has real work: the detectors and the

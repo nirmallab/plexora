@@ -2,12 +2,12 @@
 
 - A refusal happens at the server, whatever the client does or hides.
 - A revocation or a grant change reaches a running MCP server; the platform
-  failing leaves Paid working from the certificate in hand (the `biocognia`
+  failing leaves Pro working from the certificate in hand (the `biocognia`
   package tests every way it can fail), and Free untouched.
 - Expiry removes nothing: every gate, provenance row and export survives,
   editable, on Free.
 - The render and data paths never look at the licence.
-- The manual half of gating does not depend on the automatic (Paid) half, so
+- The manual half of gating does not depend on the automatic (Pro) half, so
   the AI half can one day ship as a package of its own.
 """
 
@@ -47,7 +47,7 @@ def client():
 
 # -- the server decides ------------------------------------------------------------------
 
-def test_the_mcp_protocol_itself_refuses_a_paid_tool_on_free(session):
+def test_the_mcp_protocol_itself_refuses_a_pro_tool_on_free(session):
     """Option B: every tool is listed on every transport, and the CALL refuses
     -- through the real protocol, not just the registry."""
     pytest.importorskip("mcp")
@@ -68,7 +68,7 @@ def test_the_mcp_protocol_itself_refuses_a_paid_tool_on_free(session):
             return tools, refused, allowed
 
     tools, refused, allowed = anyio.run(go)
-    assert "gating_session_start" in tools, "Paid tools are listed, never hidden"
+    assert "gating_session_start" in tools, "Pro tools are listed, never hidden"
     assert refused.is_error
     text = refused.content[0].text
     assert json.loads(text[text.index("{"):])["error"]["code"] == "license_required"
@@ -96,8 +96,8 @@ def _over_mcp(server, *calls):
     return anyio.run(go)
 
 
-def test_a_paid_tool_over_mcp_needs_mcp_access_too(session, license_issuer):
-    """External MCP access is its own grant: a Paid licence without it runs
+def test_a_pro_tool_over_mcp_needs_mcp_access_too(session, license_issuer):
+    """External MCP access is its own grant: a Pro licence without it runs
     the AI tools in Plexora but not from an outside agent."""
     pytest.importorskip("mcp")
     from plexora.mcp.server import build_server
@@ -190,7 +190,7 @@ def test_a_grant_change_reaches_a_running_mcp_server(session, license_issuer, li
 def test_the_mcp_hint_never_claims_manual_tools_keep_working():
     from plexora.licensing import guards
 
-    for name in ("free", "paid_active", "expired", "revoked", "invalid"):
+    for name in ("free", "pro_active", "expired", "revoked", "invalid"):
         hint = guards.hint_for(guards.MCP, name)
         assert "keep working" not in hint and "Free tools still answer" in hint, name
 
@@ -213,7 +213,7 @@ def test_the_client_holds_nothing_that_can_sign_a_certificate():
         assert "Ed25519PrivateKey" not in text and "PRIVATE KEY" not in text, path
 
 
-def test_a_revocation_is_the_only_answer_that_turns_paid_off(license_issuer, license_service):
+def test_a_revocation_is_the_only_answer_that_turns_pro_off(license_issuer, license_service):
     license_issuer.install(last_validated=time.time() - 30 * 86400)
     license_service.script("/v1/refresh", 200, {"status": "revoked", "server_time": int(time.time())})
     LICENSING.heartbeat(licensing.current())
@@ -225,7 +225,7 @@ def test_a_revocation_is_the_only_answer_that_turns_paid_off(license_issuer, lic
 def test_expiry_removes_nothing(session, license_issuer, tmp_path):
     now = int(time.time())
     license_issuer.install(license_issuer.issue(exp=now + 3600, grace_days=0))
-    # Work done while Paid: a manual gate, and a Paid capability's output.
+    # Work done while Pro: a manual gate, and a Pro capability's output.
     assert invoke(session, "set_gate", {"project": "synth", "marker": "CD8", "low": 900})["ok"]
     context = invoke(session, "set_panel_context", {"project": "synth", "tissue": "tonsil"})
     before = {p: p.stat().st_mtime for p in tmp_path.rglob("*") if p.is_file()
@@ -245,7 +245,7 @@ def test_expiry_removes_nothing(session, license_issuer, tmp_path):
         exported = invoke(session, "export_gates", {"project": "synth"})
         assert exported["ok"], exported
         assert invoke(session, "set_gate", {"project": "synth", "marker": "CD8", "low": 950})["ok"]
-        # The Paid capability itself is what stops, and it says why.
+        # The Pro capability itself is what stops, and it says why.
         refused = invoke(session, "get_panel_context", {"project": "synth"})
         assert refused["error"]["detail"]["state"] == "expired"
         del context
@@ -254,7 +254,7 @@ def test_expiry_removes_nothing(session, license_issuer, tmp_path):
 
 
 def test_reading_qc_results_survives_expiry(session, license_issuer, tmp_path):
-    """QC made while Paid stays readable, changeable and exportable on Free;
+    """QC made while Pro stays readable, changeable and exportable on Free;
     only the session tools stop."""
     now = int(time.time())
     license_issuer.install(license_issuer.issue(exp=now + 3600, grace_days=0))
@@ -312,7 +312,7 @@ def test_a_broken_licensing_module_breaks_no_page(client, tmp_path, monkeypatch)
 
 
 def test_importing_plexora_resolves_no_licence(tmp_path):
-    """Startup reads no licence file: resolution waits for a Paid feature."""
+    """Startup reads no licence file: resolution waits for a Pro feature."""
     import os
     import subprocess
     import sys
@@ -360,7 +360,7 @@ def test_the_classifier_and_the_experience_record_import_nothing_from_autogate()
 
 
 #: Every place gating's manual half, or core, still reaches into the automatic
-#: (Paid) package. Pinned so the list can only shrink on purpose; each entry is
+#: (Pro) package. Pinned so the list can only shrink on purpose; each entry is
 #: a step in docs/LICENSING.md's "splitting out plexora-ai".
 KNOWN_COUPLINGS = {
     "plexora/plugins/gating/capabilities.py",      # capabilities() aggregates the AI capabilities
@@ -393,12 +393,12 @@ def test_the_remaining_couplings_are_the_documented_ones():
 
 # -- telemetry observes, never enforces ---------------------------------------------------------
 
-def test_telemetry_carries_the_tier_and_never_the_licence(paid_license):
+def test_telemetry_carries_the_tier_and_never_the_licence(pro_license):
     from plexora.telemetry import schema
     from plexora.telemetry.client import telemetry
 
     block = telemetry.client_block()
-    assert block["license_tier"] == "paid"
+    assert block["license_tier"] == "pro"
     assert schema.validate_client(block)
     assert not set(schema.RESERVED_LICENSE_FIELDS) & set(block)
     text = json.dumps(block)
@@ -411,7 +411,7 @@ def test_telemetry_says_free_by_default():
     assert telemetry.client_block()["license_tier"] == "free"
 
 
-def test_turning_telemetry_off_changes_no_licence(paid_license, monkeypatch):
+def test_turning_telemetry_off_changes_no_licence(pro_license, monkeypatch):
     monkeypatch.setenv("PLEXORA_TELEMETRY", "off")
     monkeypatch.setenv("DO_NOT_TRACK", "1")
     licensing.reset_for_tests()

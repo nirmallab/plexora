@@ -397,8 +397,8 @@ def _no_developer_licence(tmp_path_factory):
 
     `_isolated_license` below is per test, so it runs after module- and
     session-scoped fixtures -- and some of those start fresh interpreters
-    (the plugin boundary probe) that would otherwise read a real Paid licence
-    from the per-user config directory and render every page as Paid.
+    (the plugin boundary probe) that would otherwise read a real Pro licence
+    from the per-user config directory and render every page as Pro.
     """
     from biocognia import store
 
@@ -416,7 +416,7 @@ def _isolated_license(tmp_path, monkeypatch):
     """A licence directory of this test's own, and no licensing network.
 
     The licence lives in the per-user config directory, which the data-root
-    fixture above does not move, so without this a developer's own Paid
+    fixture above does not move, so without this a developer's own Pro
     licence would unlock every entitled capability under test -- and every
     "denied on Free" assertion would pass or fail by whose laptop ran it.
     Offline and heartbeat-free, like telemetry is pinned off; the platform's
@@ -446,25 +446,25 @@ def _isolated_license(tmp_path, monkeypatch):
 
 def pytest_configure(config):
     config.addinivalue_line(
-        "markers", "paid: run with a valid Paid test licence installed (AI capabilities "
+        "markers", "pro: run with a valid Pro test licence installed (AI capabilities "
                    "unlocked). The default is Free, as it is for a real install.")
     config.addinivalue_line(
         "markers", "perf: a timing, skipped unless PLEXORA_PERF=1 (run with -m perf -s).")
 
 
-#: What the `paid` marker and the `paid_license` fixture install: the Paid
-#: default (every root but the add-ons) plus external MCP access, so a Paid
-#: test may drive its tools over an in-process MCP client.
-#: `license_issuer.issue()` alone still mints `["ai"]`, the narrowest Paid
-#: licence, which is what a test of a single root or of the `mcp` add-on
-#: starts from.
-PAID_TEST_GRANTS = ("ai", "volume", "transcriptomics", "mcp")
+#: What the `pro` marker and the `pro_license` fixture install: the Pro
+#: default (every root but those off by default, and Video Studio) plus
+#: external MCP access, so a Pro test may drive its tools over an in-process
+#: MCP client. `license_issuer.issue()` alone still mints `["ai"]`, the
+#: narrowest Pro licence, which is what a test of a single root or of the
+#: `mcp` grant starts from.
+PRO_TEST_GRANTS = ("ai", "volume", "transcriptomics", "plugin:video_studio", "mcp")
 
 
 def _issuer(monkeypatch):
     """`biocognia.testing.Issuer` bound to Plexora: a throwaway Ed25519 key
     that is the only one trusted for this test. `issue(**claims)` takes BIOC1
-    claim names and mints the plain Paid default; `install(cert)` writes it
+    claim names and mints the plain Pro default; `install(cert)` writes it
     into Plexora's licence as an online activation would."""
     from biocognia.testing import Issuer
 
@@ -482,15 +482,15 @@ def _issuer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _paid_when_marked(request, _isolated_license, monkeypatch):
-    """Install a Paid test licence for tests marked `paid`.
+def _pro_when_marked(request, _isolated_license, monkeypatch):
+    """Install a Pro test licence for tests marked `pro`.
 
     After `_isolated_license`, so it lands in this test's own licence
     directory, signed by a throwaway key only this test trusts.
     """
-    if request.node.get_closest_marker("paid") is not None:
+    if request.node.get_closest_marker("pro") is not None:
         issuer = _issuer(monkeypatch)
-        issuer.install(issuer.issue(ent=list(PAID_TEST_GRANTS)))
+        issuer.install(issuer.issue(ent=list(PRO_TEST_GRANTS)))
     yield
 
 
@@ -501,9 +501,9 @@ def license_issuer(monkeypatch):
 
 
 @pytest.fixture
-def paid_license(license_issuer):
-    """A valid Paid licence (PAID_TEST_GRANTS: the Paid default and `mcp`) installed for this test."""
-    license_issuer.install(license_issuer.issue(ent=list(PAID_TEST_GRANTS)))
+def pro_license(license_issuer):
+    """A valid Pro licence (PRO_TEST_GRANTS: the Pro default and `mcp`) installed for this test."""
+    license_issuer.install(license_issuer.issue(ent=list(PRO_TEST_GRANTS)))
     return license_issuer
 
 

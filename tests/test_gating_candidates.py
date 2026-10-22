@@ -289,7 +289,7 @@ def test_a_look_at_a_scored_start_is_not_contradicted_by_the_mixtures_band():
 # -- every gated marker ends with a value ----------------------------------------------------
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_marker_sent_to_review_is_written_and_tagged_not_left_ungated(tmp_path):
     from plexora.agent import AgentSession, invoke, jobs, registry
     from plexora.plugins.gating.server import model
@@ -321,7 +321,7 @@ def test_a_marker_sent_to_review_is_written_and_tagged_not_left_ungated(tmp_path
     assert row["method"] == "needs_review" and row["confidence"] == "manual_review"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_scored_candidates_are_a_read_only_tool(tmp_path):
     from plexora.agent import AgentSession, invoke, registry
     from plexora.plugins.gating.server import model

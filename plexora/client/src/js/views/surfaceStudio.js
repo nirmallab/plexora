@@ -20,8 +20,8 @@
  * judged against the voxels it is drawn from. "Create surface" builds the
  * real one, at the chosen quality, as a layer.
  *
- * Surface Studio is Paid (`surfaces`): the dock's first request is a Paid one,
- * and a refusal closes it and opens the Paid modal with the server's words.
+ * Surface Studio is Pro (`surfaces`): the dock's first request is a Pro one,
+ * and a refusal closes it and opens the Pro modal with the server's words.
  *
  * Classic script: `window.PlexoraSurfaceStudio`.
  */
@@ -702,7 +702,7 @@ window.PlexoraSurfaceStudio = (function () {
     async function open({ from = null, channel = null, source = null, ids = null } = {}) {
         // Plexora 3D: without it Surface Studio does not open at all -- the
         // S key and every menu entry included -- and says nothing.
-        if (!window.PlexoraPaid?.allows?.("volume:surfaces")) return false;
+        if (!window.PlexoraPro?.allows?.("volume:surfaces")) return false;
         if (!viewState()?.enabled?.()) {
             window.PlexoraToast?.show?.({ title: "Surfaces are made from a z-stack; this image has one plane.",
                                           tone: "warning" });
@@ -733,7 +733,7 @@ window.PlexoraSurfaceStudio = (function () {
         state.source = start;
         if (start === MASK) {
             setSource(MASK);
-            // The licence, asked once: the estimate is Paid like the rest.
+            // The licence, asked once: the estimate is Pro like the rest.
             const answer = await service().estimate(body()).catch(() => ({}));
             if (answer === null) {
                 close();

@@ -66,7 +66,7 @@ def _resolve(datasource, tool_name):
 
 
 def _locked(plugin) -> bool:
-    """Whether a Paid plugin's tool is locked on this licence. A Free plugin
+    """Whether a Pro plugin's tool is locked on this licence. A Free plugin
     returns before the licence is looked at. The page never offers a locked
     tool (plugins.unlocked); this answers a URL typed by hand."""
     return not plugin_registry.unlocked(plugin)

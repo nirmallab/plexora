@@ -10017,10 +10017,10 @@ dialog .file-source .data-location-place {
     margin: 0;
 }
 
-/* The "Paid" tag (services/paidFeature.js): beside a Paid tool's name in a
+/* The "Pro" tag (services/proFeature.js): beside a Pro tool's name in a
    menu, so a locked feature is visible before it is clicked rather than a
    surprise after. Quiet on purpose -- it labels, it does not advertise. */
-.plx-paid-badge {
+.plx-pro-badge {
     display: inline-block;
     margin-left: var(--space-2);
     padding: 0 6px;

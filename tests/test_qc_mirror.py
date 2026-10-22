@@ -19,7 +19,7 @@ from tests.qc_fixtures import make_qc_project
 from tests.test_agent_viewer_api import FakeTab
 from tests.test_qc_session import QCOracle
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture

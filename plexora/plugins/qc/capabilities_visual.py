@@ -132,9 +132,9 @@ def inspect_channels(call, inp):
     return with_image(out, rendered["image"])
 
 
-def capabilities(paid):
+def capabilities(pro):
     return [
-        paid(name="qc.render_artifact_overview", tool_name="render_artifact_overview",
+        pro(name="qc.render_artifact_overview", tool_name="render_artifact_overview",
              purpose="The whole tissue in four views on which large artifacts stand out: the "
                      "brightest DNA across cycles, the first cycle's DNA against the last's, "
                      "the mean of the channels, and where channels are bright or dark "
@@ -145,7 +145,7 @@ def capabilities(paid):
              permission="read", input_model=OverviewInput, handler=render_overview,
              visual_output=True, egress="rendered_pixels", reads=("image", "qc", "rois"),
              tags=("qc", "artifact", "overview", "look", "fold", "tear", "debris", "visual")),
-        paid(name="qc.inspect_artifact_channels", tool_name="inspect_artifact_channels",
+        pro(name="qc.inspect_artifact_channels", tool_name="inspect_artifact_channels",
              purpose="One place in every channel, ranked by how much it differs from the "
                      "tissue round it, and a contact sheet of the strongest few beside a DNA "
                      "reference: how to choose the channels that show a suspected artifact "

@@ -890,7 +890,7 @@ window.PlexoraToolLoader = (function () {
         }
 
         if (payload.locked) {
-            // A Paid tool on a Free (or lapsed) licence. The page does not
+            // A Pro tool on a Free (or lapsed) licence. The page does not
             // offer one (plugins.unlocked), so this is a stale link or a
             // licence that lapsed while the page was open: the server sent
             // nothing to mount, and the viewer stays exactly as it was.
@@ -1385,7 +1385,7 @@ window.PlexoraToolLoader = (function () {
         });
         // A launcher is a second way to press the Tools-menu row, so it hands
         // the row itself to toggleTool: whatever the row's click does -- the
-        // lazy fetch, the requirements modal, the Paid explanation -- the
+        // lazy fetch, the requirements modal, the Pro explanation -- the
         // button does too.
         document.querySelectorAll("#viewer_tool_launchers [data-tool]").forEach((button) => {
             const shortcut = button.dataset.launcherShortcut;

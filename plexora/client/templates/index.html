@@ -604,10 +604,10 @@
 {# A 3-D mask drawn in 3-D: the Cells control's Outlines and Filled as cell
    surfaces, and the wait while the mask is converted. #}
 <script src="{{ data.base_url }}/client/src/js/views/maskSurfaceWait.js?v=20261013_mask_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261014_late_mask" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261021_pro" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261021_pro" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261021_pro" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261022_views3d" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
@@ -634,7 +634,7 @@
    and controls. Its orb driver is base.html's, which the import dialog draws
    with too. Before agentBridge.js, which routes show_evidence to the panel
    when one is up. #}
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261016_display_contrast" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261021_pro" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
@@ -643,7 +643,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_views2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_views3d" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

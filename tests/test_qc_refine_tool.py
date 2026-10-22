@@ -14,7 +14,7 @@ from plexora.agent import AgentSession, invoke, jobs, registry
 from plexora.plugins.qc.server import polygons
 from tests.qc_fixtures import make_qc_project
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

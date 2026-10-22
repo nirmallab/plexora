@@ -993,7 +993,7 @@
  * licence (.license-add). The plan is a status header, not a form -- a seal,
  * the plan's name in large type, a status chip, and the facts as a definition
  * list -- so it reads at a glance. Its tone comes from `data-tone`, set by
- * settingsPage.js: Paid wears the same gold as the sidebar's Plexora AI
+ * settingsPage.js: Pro wears the same gold as the sidebar's Plexora AI
  * badge (agentPanel.css .plx-ai-spark), which is the one place the gold is
  * spent. The gold literals below are that badge's, on purpose; tokens.css
  * has no gold. */
@@ -1020,7 +1020,7 @@
     position: absolute;
 }
 
-.license-plan[data-tone="paid"] {
+.license-plan[data-tone="pro"] {
     --license-tone: #e4b84e;
     --license-tone-soft: rgba(228, 184, 78, 0.12);
     background:
@@ -1060,7 +1060,7 @@
     width: 44px;
 }
 
-.license-plan[data-tone="paid"] .license-seal {
+.license-plan[data-tone="pro"] .license-seal {
     background: linear-gradient(135deg, #f3d27a 0%, #e4b84e 55%, #d9a93c 100%);
     border-color: transparent;
     box-shadow: 0 4px 14px rgba(228, 184, 78, 0.22);
@@ -1113,8 +1113,8 @@
     width: 6px;
 }
 
-/* An active Paid plan's chip is green: gold is the plan, green is "working". */
-.license-plan[data-tone="paid"] .license-status {
+/* An active Pro plan's chip is green: gold is the plan, green is "working". */
+.license-plan[data-tone="pro"] .license-status {
     background: rgba(52, 211, 153, 0.12);
     color: var(--accent-success);
 }

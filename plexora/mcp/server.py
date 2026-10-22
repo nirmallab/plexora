@@ -62,8 +62,9 @@ was done. Nothing writes into the user's source files unless the server was \
 started to allow it AND the user explicitly asked. Errors come back as \
 {{code, message, detail, retryable}}.
 
-Licensing: Free tools always answer. A Paid tool called from here needs its own \
-grant and external MCP access (`server_info.license.mcp`); without them it answers \
+Licensing: Free tools always answer. A Pro tool called from here needs its own \
+grant and external MCP access (`server_info.license.mcp`), which is off by default \
+until an administrator turns it on for the licence; without them it answers \
 license_required with a hint to pass on to the user.\
 """
 
@@ -240,7 +241,7 @@ class Runtime:
         # counts. A context variable, so a capability that calls another sees
         # it too -- and is told apart as nested by the registry's own depth.
         token = telemetry.call_source.set(self.transport)
-        # And how it came, for the licence: from an external MCP client a Paid
+        # And how it came, for the licence: from an external MCP client a Pro
         # capability also needs `mcp` (guards.check_origin); from another
         # application through the bridge it does not.
         try:
@@ -363,8 +364,8 @@ def _iso(seconds):
 
 
 def _license_info():
-    """Plan, state and grants -- enough for an agent to say "that is a Paid
-    feature" before trying, and `mcp`: whether Paid tools answer over this
+    """Plan, state and grants -- enough for an agent to say "that is a Pro
+    feature" before trying, and `mcp`: whether Pro tools answer over this
     connection at all. Never the certificate; no network call."""
     try:
         from plexora import licensing
@@ -502,7 +503,7 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
 
         def classify():
             # Asked over this connection, so `license_required` lists what this
-            # path refuses (over MCP, Paid tools without the `mcp` add-on).
+            # path refuses (over MCP, Pro tools without the `mcp` grant).
             origin = registry.CALL_ORIGIN.set(runtime.origin)
             try:
                 return policy_rules.classify_scope(runtime.session, request, project=project,

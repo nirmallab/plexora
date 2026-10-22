@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { baseOptions } from '@/lib/layout.shared';
 import { startUrl, trialUrl } from '@/lib/site';
@@ -12,6 +13,9 @@ export default function Layout({ children }: { children: ReactNode }) {
       sidebar={{
         footer: (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-fd-muted-foreground">
+            <Link href="/pricing" className="hover:text-fd-foreground">
+              Pricing
+            </Link>
             <a href={startUrl} className="hover:text-fd-foreground">
               Sign in or sign up
             </a>

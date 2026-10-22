@@ -6,7 +6,7 @@ through `registry.invoke`; what it may do is decided by the request's token,
 never by anything in its body:
 
 - no token on loopback (or the server's own token) -> the bridge: `write`
-  policy, origin `bridge` -- a Paid capability does not also need `mcp`;
+  policy, origin `bridge` -- a Pro capability does not also need `mcp`;
 - a `bridge` token -> the same; a `read`/`write`/`admin` token -> an outside
   agent, origin `mcp`;
 - source-file writes need an `admin` token AND `--allow-source-writes`.
@@ -35,7 +35,7 @@ class _Slow(BaseModel):
     seconds: float = 0.05
 
 
-def _paid(call, inp):
+def _pro(call, inp):
     from plexora.agent.registry import CALL_ORIGIN
 
     return {"answered": True, "origin": CALL_ORIGIN.get()}
@@ -50,8 +50,8 @@ def _job(call, inp):
 def client(monkeypatch):
     registry._reset_for_tests()
     registry.discover(["gating"])
-    registry.register(Capability(name="test.paid", owner="test", purpose="A Paid read.",
-                                 permission="read", input_model=_Empty, handler=_paid,
+    registry.register(Capability(name="test.pro", owner="test", purpose="A Pro read.",
+                                 permission="read", input_model=_Empty, handler=_pro,
                                  entitlement="ai"))
     registry.register(Capability(name="test.job", owner="test", purpose="A short job.",
                                  permission="read", input_model=_Slow, handler=_job,
@@ -145,23 +145,23 @@ def test_a_bad_body_or_token_is_refused(client):
     assert bad.status_code == 403
 
 
-def test_origin_bridge_passes_paid_without_the_mcp_add_on(client, license_issuer):
-    license_issuer.install()                       # the plain Paid default: ["ai"], no mcp
-    loopback = client.post("/agent/v1/capabilities/test_paid", json={"arguments": {}})
+def test_origin_bridge_passes_pro_without_the_mcp_grant(client, license_issuer):
+    license_issuer.install()                       # the plain Pro default: ["ai"], no mcp
+    loopback = client.post("/agent/v1/capabilities/test_pro", json={"arguments": {}})
     assert loopback.status_code == 200, loopback.get_json()
     assert loopback.get_json()["result"] == {"answered": True, "origin": "bridge"}
-    bridged = client.post("/agent/v1/capabilities/test_paid", json={"arguments": {}},
+    bridged = client.post("/agent/v1/capabilities/test_pro", json={"arguments": {}},
                           headers=_bearer("bridge"))
     assert bridged.status_code == 200
     # An outside agent's token is an outside agent, whatever the transport.
-    outside = client.post("/agent/v1/capabilities/test_paid", json={"arguments": {}},
+    outside = client.post("/agent/v1/capabilities/test_pro", json={"arguments": {}},
                           headers=_bearer("write"))
     assert outside.status_code == 403
     assert outside.get_json()["error"]["code"] == "license_required"
 
 
 def test_the_bridge_still_needs_the_capabilitys_own_entitlement(client):
-    answer = client.post("/agent/v1/capabilities/test_paid", json={"arguments": {}})
+    answer = client.post("/agent/v1/capabilities/test_pro", json={"arguments": {}})
     assert answer.status_code == 403                # Free: no `ai` grant at all
     assert answer.get_json()["error"]["code"] == "license_required"
 

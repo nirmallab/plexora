@@ -10,7 +10,7 @@ import pytest
 
 from tests.test_agent_gate_panel import _deep_cells
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 def test_the_context_sheet_draws_a_field_at_its_cells_plane(tmp_path):

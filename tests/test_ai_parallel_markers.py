@@ -27,7 +27,7 @@ from tests.autogate_fixtures import make_gating_project
 from tests.test_ai_harness import client, oracle_brain
 from tests.test_gating_session import Oracle
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 #: CD3, CD4 and CD8 are partners of each other (the vocabulary's); the three
 #: KI markers are unknown to it -- no partners -- and their populations

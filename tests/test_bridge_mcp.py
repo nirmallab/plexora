@@ -21,7 +21,7 @@ class _Empty(BaseModel):
     pass
 
 
-def _paid(call, inp):
+def _pro(call, inp):
     from plexora.agent.registry import CALL_ORIGIN
 
     return {"answered": True, "origin": CALL_ORIGIN.get()}
@@ -31,8 +31,8 @@ def _server(origin=None):
     from plexora.mcp.server import Runtime, build_server
 
     runtime = Runtime(names=["gating", "roi", "qc"], origin=origin)
-    registry.register(Capability(name="test.paid", owner="test", purpose="A Paid read.",
-                                 permission="read", input_model=_Empty, handler=_paid,
+    registry.register(Capability(name="test.pro", owner="test", purpose="A Pro read.",
+                                 permission="read", input_model=_Empty, handler=_pro,
                                  entitlement="ai"))
     return build_server(runtime=runtime)
 
@@ -88,12 +88,12 @@ def test_errors_come_back_in_the_protocols_shape(peer):
     assert invalid.value.code == "invalid_input"
 
 
-def test_a_bridge_origin_needs_no_mcp_add_on(license_issuer):
-    license_issuer.install()                       # Paid default: ["ai"], no mcp
+def test_a_bridge_origin_needs_no_mcp_grant(license_issuer):
+    license_issuer.install()                       # Pro default: ["ai"], no mcp
     registry._reset_for_tests()
     bridged = _peer(_server(ORIGIN_BRIDGE))
     try:
-        assert bridged.invoke("test_paid", {}) == {"answered": True, "origin": "bridge"}
+        assert bridged.invoke("test_pro", {}) == {"answered": True, "origin": "bridge"}
     finally:
         bridged.close()
     registry._reset_for_tests()
@@ -102,7 +102,7 @@ def test_a_bridge_origin_needs_no_mcp_add_on(license_issuer):
         from spatialbridge.errors import BridgeError
 
         with pytest.raises(BridgeError) as refused:
-            outside.invoke("test_paid", {})
+            outside.invoke("test_pro", {})
         assert refused.value.code == "license_required"
     finally:
         outside.close()
@@ -119,7 +119,7 @@ def test_an_outside_agent_calling_a_bridge_tool_stays_an_outside_agent(license_i
     outside = _peer(_server(ORIGIN_MCP))
     try:
         with pytest.raises(BridgeError) as refused:
-            outside.invoke("bridge_invoke", {"to": "plexora", "capability": "test_paid"})
+            outside.invoke("bridge_invoke", {"to": "plexora", "capability": "test_pro"})
         assert refused.value.code == "license_required"
     finally:
         outside.close()

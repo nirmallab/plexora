@@ -74,7 +74,7 @@ user says so.
 | Cells | `cells/calls.py` (`derive`), `propagate.py` (ROI -> cell overlap) |
 | Storage | `results.py` (the QC store), `roi_link.py` (ROIs, user edits, adoption) |
 | Files | `export.py`, `source_write.py`, `report.py` |
-| Tools | `capabilities_session.py` (Paid), `capabilities.py` (Free + analytics) |
+| Tools | `capabilities_session.py` (Pro), `capabilities.py` (Free + analytics) |
 | The free image checks | `server/registration.py`, `server/blur.py`, `server/segqc/`, `capabilities_checks.py` |
 | The checks as one shape | `server/score_fields.py` (fields, bars in steps, regions, strata), `score_review.py` (the sampled look, shared by the session and `sample_qc_examples`) |
 | The visual pass | `server/overview.py` (the overview sheet, the channel ranking and contact sheet, the two-panel preview), `server/frames.py` (a click on any tile of a sheet -> image pixels), `capabilities_visual.py` (`render_artifact_overview`, `inspect_artifact_channels`), `capabilities_segment.py` (`segment_qc_roi`: the write, standalone or into the session's pass), `tissue.clip_to_tissue`, `polygons.overlap` |
@@ -471,7 +471,7 @@ refused without `replace`; `obs` is backed up first.
 
 `ai:qc:session` (the session tools and the report) and `ai:qc:analytics`
 (`profile_image_qc`, `render_qc_overview`, `refine_qc_roi`,
-`sample_qc_examples`) are Paid; the image checks and their writers are Free; everything that reads,
+`sample_qc_examples`) are Pro; the image checks and their writers are Free; everything that reads,
 changes or exports what QC made -- and manual QC -- is Free and survives
 expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
 
@@ -879,7 +879,7 @@ rows and the whole-tissue row; a tile that comes out black or dim (its
 99th-percentile level under `sheets.DIM_P99_LEVEL`) is redrawn contrast
 stretched and captioned `*`, and an Artifact Detector field is drawn in its
 nuclear and lead channel (`ScoreField.display_channels`). The session's
-packet and `sample_qc_examples` (Paid) call the same function, so the same
+packet and `sample_qc_examples` (Pro) call the same function, so the same
 field, bar and seed are the same sheet.
 
 **Thresholds are never typed by an agent.** A session stores

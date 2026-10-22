@@ -294,7 +294,7 @@ def test_scores_are_soft_and_never_saturate():
     assert values[4] < 1.0 and np.all(np.diff(values) >= 0)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_session_reviews_each_category_and_writes_the_objects(tmp_path):
     """Opt-in: one score review per category; what is confirmed becomes the
     object's own snug outline, of its own class."""

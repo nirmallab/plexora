@@ -14,7 +14,7 @@ The split follows the transcripts plugin's exactly, and for its reason: which
 vendor files Plexora can read is a question that grows, and each answer is a
 plugin rather than a branch in core's importer.
 
-**Paid, as `transcriptomics:visium`** -- a child of the spatial-transcriptomics
+**Pro, as `transcriptomics:visium`** -- a child of the spatial-transcriptomics
 root (plexora/licensing/manifest.py). Not granted means not shown: on a licence
 without it the importer does not detect a Visium or Visium HD run
 (`import_proposal._licensed`), this section is not mounted and its scripts are
@@ -68,6 +68,6 @@ PLUGIN = Plugin(
            "coarse the squares are."),
     # It colours SQUARES and SPOTS of its own, not cells.
     owns_cell_layer=False,
-    # Spatial transcriptomics is Paid (see the module docstring).
+    # Spatial transcriptomics is Pro (see the module docstring).
     entitlement="transcriptomics:visium",
 )

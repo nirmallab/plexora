@@ -28,10 +28,45 @@ def test_status_on_free_says_free_and_carries_no_secrets(client):
     assert "certificate" not in json.dumps(body)
 
 
-def test_status_on_paid(client, paid_license):
+def test_status_says_where_pro_is_bought_even_offline(client):
+    """The pricing page is a website, not a platform call: a licence bought
+    there can still reach this machine as an offline file."""
+    from plexora import links
+
     info = client.get("/license/status").get_json()["license"]
-    assert info["plan"] == "paid" and info["entitlements"] == ["ai", "mcp", "transcriptomics", "volume"]
-    assert paid_license.issue()[:30] not in json.dumps(info)
+    assert info["pricing_url"] == links.PRICING_URL
+
+
+def test_settings_offers_the_pricing_page_and_says_where_the_key_goes(client):
+    from plexora import links
+
+    page = client.get("/settings").get_data(as_text=True)
+    assert 'id="settings_license_buy"' in page
+    assert f'href="{links.PRICING_URL}"' in page
+    assert "licence key comes by email" in page
+
+
+def test_settings_says_what_pro_adds_from_the_manifest(client):
+    """The License lead is built from the Pro default's labels, so it names
+    every root and plugin the plan carries and what is off by default -- and
+    goes on doing so when one is added."""
+    from plexora.licensing import manifest
+
+    page = client.get("/settings").get_data(as_text=True)
+    words = manifest.pro_words()
+    assert words["included"] == "Plexora AI, Plexora 3D, Spatial transcriptomics and Video Studio"
+    assert words["off_by_default"] == ("External MCP access is off by default; "
+                                       "an administrator can turn it on.")
+    assert f"{words['included']}. {words['off_by_default']}" in page
+    for name in manifest.pro_default():
+        assert manifest.label(name) in words["included"]
+
+
+def test_status_on_pro(client, pro_license):
+    info = client.get("/license/status").get_json()["license"]
+    assert info["plan"] == "pro" and info["entitlements"] == ["ai", "mcp", "plugin:video_studio",
+                                                              "transcriptomics", "volume"]
+    assert pro_license.issue()[:30] not in json.dumps(info)
 
 
 def test_status_lists_what_each_root_and_plugin_unlocks(client, license_issuer):
@@ -42,7 +77,7 @@ def test_status_lists_what_each_root_and_plugin_unlocks(client, license_issuer):
                        "plugin:video_studio": False}
 
 
-def test_the_page_carries_a_licence_hint_and_nothing_more(client, paid_license):
+def test_the_page_carries_a_licence_hint_and_nothing_more(client, pro_license):
     html = client.get("/settings").get_data(as_text=True)
     assert 'id="settings_panel_license"' in html
     marker = "window.flaskVariables"
@@ -115,7 +150,7 @@ def test_activate_under_offline_says_so(client):
     assert "BIOCOGNIA_OFFLINE" in reply.get_json()["error"]
 
 
-def test_refresh_and_deactivate_through_settings(client, license_service, paid_license):
+def test_refresh_and_deactivate_through_settings(client, license_service, pro_license):
     reply = client.post("/settings/license/refresh", json={})
     assert reply.status_code == 200 and reply.get_json()["outcome"] == "ok"
     reply = client.post("/settings/license/deactivate", json={})
@@ -124,12 +159,12 @@ def test_refresh_and_deactivate_through_settings(client, license_service, paid_l
     assert not LICENSING.store.path.exists()
 
 
-def test_remove(client, paid_license):
+def test_remove(client, pro_license):
     reply = client.post("/settings/license/remove", json={})
     assert reply.status_code == 200 and reply.get_json()["license"]["plan"] == "free"
 
 
-def test_changes_are_refused_from_another_machine(client, paid_license):
+def test_changes_are_refused_from_another_machine(client, pro_license):
     """A neighbour who can reach the tiles cannot swap or release a licence."""
     remote = {"REMOTE_ADDR": "10.0.0.8"}
     for path in ("/settings/license/remove", "/settings/license/install",
@@ -141,9 +176,9 @@ def test_changes_are_refused_from_another_machine(client, paid_license):
     assert client.get("/license/status", environ_base=remote).status_code == 200
 
 
-def test_about_names_the_plan_and_nothing_else(client, paid_license):
+def test_about_names_the_plan_and_nothing_else(client, pro_license):
     info = client.get("/desktop/info").get_json()
-    assert info["plan"] == "Paid"
+    assert info["plan"] == "Pro"
     assert "lic_" not in json.dumps(info)
 
 
@@ -180,7 +215,7 @@ def test_connect_shows_a_code_and_the_link_then_fills_in_on_approval(client, lic
 
     done = client.post("/settings/license/connect/poll", json={"code": started["code"]}).get_json()
     assert done["pending"] is False
-    assert done["license"]["paid"] and done["license"]["state"] == "paid_active"
+    assert done["license"]["paid"] and done["license"]["state"] == "pro_active"
     assert done["license"]["environment"]["name"] == "Bench PC"
     assert licensing.allows("ai:gating")
     assert "BIOC1." not in json.dumps(done)

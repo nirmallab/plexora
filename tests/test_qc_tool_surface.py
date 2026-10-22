@@ -157,7 +157,7 @@ def test_the_export_says_why_each_region_and_cell_was_flagged(tmp_path):
     assert {r["flag_source"] for r in flagged} == {"roi"}
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_sampler_shows_rows_across_the_score_and_previews_a_step(tmp_path):
     make_qc_project(tmp_path, artifacts=("blur_local",))
     session = AgentSession()
@@ -187,7 +187,7 @@ def test_the_sampler_shows_rows_across_the_score_and_previews_a_step(tmp_path):
     assert not missing["ok"] and missing["error"]["code"] == "precondition_missing"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_registration_region_retraces_to_its_map(tmp_path):
     from plexora.plugins.qc.server import polygons
 

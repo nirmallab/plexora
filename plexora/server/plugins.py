@@ -158,7 +158,7 @@ def install(app, names=None) -> list[Plugin]:
 
 
 def _guard_licensed_routes(plugin: Plugin, blueprint) -> None:
-    """A Paid plugin's routes, or a mixed plugin's Paid endpoints, answer 403
+    """A Pro plugin's routes, or a mixed plugin's Pro endpoints, answer 403
     without the entitlement. Before registration: Flask refuses a
     before_request added to a blueprint that is already registered. A Free
     plugin gets nothing added at all. Every requested plugin is installed
@@ -232,7 +232,7 @@ def unlocked(plugin) -> bool:
     """Whether this licence unlocks `plugin`, so the page may show it.
 
     A plugin with no `entitlement` -- every basic one -- returns before the
-    licence is looked at. A Paid plugin the licence does not unlock is still
+    licence is looked at. A Pro plugin the licence does not unlock is still
     installed (its routes refuse, its `layer_jobs` builders keep serving what
     it made) but absent from every page-facing list below: no menu row, no
     launcher, no layer section, no scripts. Asked per request, so a licence
@@ -286,7 +286,7 @@ def tools_for(app, project) -> list[Plugin]:
     something already open would be a second way to reach one panel with no
     way to tell which one you got.
 
-    A Paid plugin this licence does not unlock is not offered (`unlocked`).
+    A Pro plugin this licence does not unlock is not offered (`unlocked`).
 
     In menu order (`Plugin.order`); the sort is stable, so ties keep discovery
     order.
@@ -306,7 +306,7 @@ def layer_sections_for(app, project) -> list[Plugin]:
     it had something to say, and the user would watch a sample finish
     importing with no sign that anything was coming.
 
-    A Paid layer plugin this licence does not unlock is not mounted; the
+    A Pro layer plugin this licence does not unlock is not mounted; the
     layer's card and saved tiles stay, since what it made is a read.
     """
     return [p for p in installed(app)

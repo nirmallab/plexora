@@ -28,13 +28,13 @@ window.PlexoraImportHelp = (function () {
     "use strict";
 
     //: Whether this licence offers `entitlement`. Spatial transcriptomics is a
-    //: Paid root, and without it the importer does not detect a Xenium, Visium
+    //: Pro root, and without it the importer does not detect a Xenium, Visium
     //: or Visium HD run at all (import_proposal._licensed) -- so the catalogue
     //: does not describe one either: an entry marked `entitlement` is left out,
     //: not greyed and not explained. Asked when the dialog is built, so a
     //: licence adopted in Settings shows them the next time it opens.
     function allows(entitlement) {
-        return !entitlement || Boolean(window.PlexoraPaid?.allows?.(entitlement));
+        return !entitlement || Boolean(window.PlexoraPro?.allows?.(entitlement));
     }
 
     //: The one entitlement this catalogue asks about.

@@ -264,7 +264,7 @@ def _gate(runtime, limit=60):
     raise AssertionError("the session did not finish")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_gating_session_with_no_server_looks_for_one_once(tmp_path, finder):
     from tests.autogate_fixtures import make_gating_project
 
@@ -278,7 +278,7 @@ def test_a_gating_session_with_no_server_looks_for_one_once(tmp_path, finder):
     assert finder.calls == 1               # once per back-off window, not per event
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_gating_answer_is_one_event_carrying_the_markers_it_closed(tmp_path, finder):
     from tests.autogate_fixtures import make_gating_project
 

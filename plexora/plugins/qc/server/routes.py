@@ -4,7 +4,7 @@ Every route is the user's own act in the viewer, so none is licence-gated:
 reading results, changing the strictness, taking in edits made in the ROI
 panel, preparing a QC category to draw in (one of the five, a subtype of
 one, or one the user names), approving a region, downloading files, and the running
-session's pause / stop / take-over control. One route reaches a Paid tool:
+session's pause / stop / take-over control. One route reaches a Pro tool:
 `/regions/refine` calls `refine_qc_roi`, whose licence check still applies. They go
 through the same capabilities an agent calls (`registry.invoke`), so the
 receipts, the revision checks and the audit are the same whoever acts.

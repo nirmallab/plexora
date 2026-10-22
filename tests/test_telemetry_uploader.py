@@ -207,7 +207,7 @@ def test_the_client_block_names_nothing_personal(started, tmp_path):
     for leak in (getpass.getuser(), socket.gethostname(), str(tmp_path), "license_token"):
         assert leak not in raw
     client = fake.uploads[0]["client"]
-    # `license_tier` is a word (free/paid/trial), never who holds a licence;
+    # `license_tier` is a word (free/pro/trial), never who holds a licence;
     # the licence identity fields stay reserved and unset.
     assert set(client) <= {"install_id", "session_id", "plexora_version", "python", "os",
                            "arch", "launch_mode", "deployment", "scheduler", "install_kind",

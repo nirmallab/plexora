@@ -590,7 +590,7 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
                                                       "agent": f"bench_{agent_style}"})
         if not answer["ok"]:
             if answer["error"]["code"] == "license_required":
-                row.update(skipped="the session arm needs a Paid licence (ai:qc:session)")
+                row.update(skipped="the session arm needs a Pro licence (ai:qc:session)")
                 row["seconds"] = round(time.monotonic() - started, 2)
                 return row
             raise RuntimeError(answer["error"])

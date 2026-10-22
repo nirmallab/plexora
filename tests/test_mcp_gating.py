@@ -11,9 +11,9 @@ from plexora.agent import AgentSession, jobs  # noqa: E402
 from plexora.mcp.server import build_server  # noqa: E402
 from tests.autogate_fixtures import make_gating_project  # noqa: E402
 
-#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: These exercise Pro (AI) capabilities, so they run with a test licence
 #: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 def test_prompts_resources_and_webp_packets(tmp_path):

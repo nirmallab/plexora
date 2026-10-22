@@ -60,7 +60,7 @@ function boot({ licensed = true, labels3d = true, volume = true, mode = "none",
         },
         viewerControls: { mode },
     };
-    win.PlexoraPaid = { allows: (entitlement) => licensed && entitlement === "volume:surfaces" };
+    win.PlexoraPro = { allows: (entitlement) => licensed && entitlement === "volume:surfaces" };
 
     // -- the wait ----------------------------------------------------------
     const waits = [];

@@ -1,4 +1,4 @@
-"""Spatial transcriptomics is a Paid root, and on Free it is not there at all.
+"""Spatial transcriptomics is a Pro root, and on Free it is not there at all.
 
 Without `transcriptomics` a Xenium, Visium or Visium HD run is not detected at
 import: no layers, no bundle, and no warning that names a licence -- the run
@@ -65,7 +65,7 @@ def _visium_hd_run(root):
 def _nothing_said_about_a_licence(proposal):
     said = " ".join([*proposal.warnings,
                      *(entry["reason"] for entry in proposal.unrecognised)]).lower()
-    assert "licen" not in said and "paid" not in said, said
+    assert "licen" not in said and "paid" not in said and "plexora pro" not in said, said
 
 
 def _found_nothing(proposal):
@@ -146,7 +146,7 @@ def test_a_free_licence_still_imports_what_is_not_transcriptomics(tmp_path):
     assert len(proposal.samples) == 1
 
 
-def test_a_licensing_failure_reads_as_not_granted(tmp_path, monkeypatch, paid_license):
+def test_a_licensing_failure_reads_as_not_granted(tmp_path, monkeypatch, pro_license):
     from plexora import licensing
 
     def broken(_entitlement):
@@ -190,7 +190,7 @@ GENES = ["EPCAM", "CD3E", "PTPRC"]
 
 @pytest.fixture
 def xenium_project(tmp_path, monkeypatch):
-    """A Xenium sample already imported (on a Paid licence, say): an image, a
+    """A Xenium sample already imported (on a Pro licence, say): an image, a
     transcripts layer and its built tile cache."""
     use_data_root(monkeypatch, tmp_path)
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
@@ -252,7 +252,7 @@ def test_with_the_grant_the_section_and_its_scripts_are_there(xenium_project,
 
 
 def test_an_imported_transcript_layer_still_serves_its_tiles_on_free(xenium_project):
-    """What a Paid feature made stays readable: the density raster is core's
+    """What a Pro feature made stays readable: the density raster is core's
     layer route, and it does not ask the licence."""
     tile = xenium_project.get("/generated/layer/xen/tx/density/0/0_0")
     assert tile.status_code == 200, tile.get_data(as_text=True)[:200]
@@ -291,7 +291,7 @@ def test_the_two_plugins_name_their_transcriptomics_children():
     assert manifest.known(transcripts.entitlement)
     assert manifest.known(visium_hd.entitlement)
     # Nothing for discovery to inherit the entitlement onto: neither plugin
-    # contributes a capability, so no agent tool turned Paid with them.
+    # contributes a capability, so no agent tool turned Pro with them.
     assert transcripts.capabilities_factory is None
     assert visium_hd.capabilities_factory is None
 

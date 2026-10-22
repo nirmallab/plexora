@@ -21,7 +21,7 @@ from tests.tenx_fixtures import (GRID_TO_FULLRES, HIRES_SCALEF,
 
 
 #: A Visium HD run is detected only with `transcriptomics:visium`.
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 pytest.importorskip("pyarrow")
 

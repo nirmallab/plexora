@@ -30,7 +30,7 @@ from tests.helpers import use_data_root
 
 
 #: The plugin's routes need `transcriptomics:xenium`; on Free they 403.
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 GENES = ["EPCAM", "CD3E", "PTPRC"]

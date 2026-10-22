@@ -176,7 +176,7 @@ def drive_scoped(session_id, agent, limit=400, answer_scope=True):
     raise AssertionError("the scoped session did not finish")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
         tmp_path, scene, models_file):  # noqa: F811
     registry.discover(["gating"])
@@ -206,7 +206,7 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     assert all(state in schemas.TERMINAL_STATES for state, _f, _c in scoped.values())
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
         tmp_path, scene, models_file):  # noqa: F811
     # The packet after an answer is drawn for the reader its packet went to, in
@@ -224,7 +224,7 @@ def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
     assert any(kind == "t4_candidates" for _t, _m, kind in got["judges"])
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
         tmp_path, scene, monkeypatch):  # noqa: F811
     registry.discover(["gating"])
@@ -247,7 +247,7 @@ def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
 # -- QC: workers handed between --------------------------------------------------------------
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_qc_workers_scoped_by_task_take_turns_to_the_end(tmp_path, models_file):
     from tests.qc_fixtures import make_qc_project
     from tests.test_qc_session import QCOracle

@@ -11,7 +11,7 @@ from plexora.plugins.qc.server import polygons
 from tests.qc_fixtures import make_qc_project
 from tests.test_qc_session import QCOracle, _qc, drive, ok, start  # noqa: F401
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 TRACED = {"saturation_or_clipping", "tissue_fold", "autofluorescence", "antibody_aggregate",
           "debris_or_foreign_object"}

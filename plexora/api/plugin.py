@@ -893,13 +893,15 @@ class Plugin:
     #: whose whole point is the image (Video Studio). Data only: core renders
     #: the button from `icon`, `label` and `shortcut` and wires its click to
     #: the same `toggleTool` a Tools-menu row uses, so the launcher can never
-    #: open a tool the menu would not (a locked Paid tool is in neither).
+    #: open a tool the menu would not (a locked tool is in neither).
     launcher: bool = False
 
     #: The licence entitlement this WHOLE plugin needs (plexora/licensing/
-    #: manifest.py) -- `plugin:<name>` for a plugin sold as a unit. None, the
-    #: default and what every basic plugin declares, is Free: a third-party
-    #: plugin never has to know licensing exists.
+    #: manifest.py) -- `plugin:<name>` for a plugin licensed as a whole. A
+    #: first-party one is listed in the manifest and is part of Pro; a
+    #: third-party one is not, and its maker licenses it. None, the default
+    #: and what every basic plugin declares, is Free: a third-party plugin
+    #: never has to know licensing exists.
     #:
     #: When set and the licence does not unlock it, the plugin is still
     #: installed but not shown: no Tools-menu row, launcher, layer section or
@@ -910,7 +912,7 @@ class Plugin:
     #: that instead: the capability-level answer wins.
     entitlement: str | None = None
 
-    #: For a MIXED plugin -- Free as a whole, with a few Paid actions: bare
+    #: For a MIXED plugin -- Free as a whole, with a few Pro actions: bare
     #: blueprint endpoint name -> the entitlement that endpoint needs. The
     #: plugin's other routes, and its manual workflow, stay Free.
     endpoint_entitlements: Mapping[str, str] = field(default_factory=dict)
@@ -979,8 +981,8 @@ class Plugin:
     def describe(self) -> dict:
         """The shape core hands the client for the Tools menu.
 
-        `entitlement` only for a Paid plugin; a Free plugin's shape is
-        unchanged from before licensing existed. A Paid plugin the licence
+        `entitlement` only for a plugin that needs a licence; a Free plugin's
+        shape is unchanged from before licensing existed. A plugin the licence
         does not unlock is never described to a page (plugins.unlocked).
         """
         out = {"name": self.name, "label": self.label,

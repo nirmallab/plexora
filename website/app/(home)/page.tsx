@@ -131,6 +131,9 @@ export default function HomePage() {
         <a href={pypiUrl} className="hover:text-fd-foreground">
           PyPI
         </a>
+        <Link href="/pricing" className="hover:text-fd-foreground">
+          Pricing
+        </Link>
         <a href={startUrl} className="hover:text-fd-foreground">
           Sign in or sign up
         </a>

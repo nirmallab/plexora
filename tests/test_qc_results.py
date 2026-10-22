@@ -166,7 +166,7 @@ def test_reset_snapshots_and_restore_puts_it_back(tmp_path):
     assert after["active_result_id"] == before["active_result_id"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_session_region_changes_action_with_strictness_and_undo_puts_it_back(tmp_path):
     from tests.test_qc_session import QCOracle, drive
 

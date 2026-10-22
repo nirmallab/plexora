@@ -281,7 +281,7 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
             if (!winHandlers.has(type)) winHandlers.set(type, []);
             winHandlers.get(type).push(fn);
         },
-        PlexoraPaid: {
+        PlexoraPro: {
             allows: (entitlement) => license.paid
                 && license.entitlements.some((grant) => entitlement === grant
                                              || entitlement.startsWith(`${grant}:`)),

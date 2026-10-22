@@ -1,4 +1,4 @@
-"""Plugin-level licensing: a Paid plugin, a mixed plugin, and which shipped
+"""Plugin-level licensing: a Pro plugin, a mixed plugin, and which shipped
 plugins are which. The basic plugins are untouched by any of it."""
 
 import pytest
@@ -34,9 +34,9 @@ def _blueprint(name):
     return bp
 
 
-#: The shipped plugins that are Paid, and the entitlement each needs. One entry
-#: per deliberate decision: a plugin turning Paid by accident fails below.
-PAID_SHIPPED = {"video_studio": "plugin:video_studio",
+#: The shipped plugins that are Pro, and the entitlement each needs. One entry
+#: per deliberate decision: a plugin turning Pro by accident fails below.
+PRO_SHIPPED = {"video_studio": "plugin:video_studio",
                 # Plexora 3D: Cellpose over a whole stack.
                 "segmentation": "volume:segmentation",
                 # Spatial transcriptomics, one child per vendor plugin.
@@ -44,12 +44,12 @@ PAID_SHIPPED = {"video_studio": "plugin:video_studio",
                 "visium_hd": "transcriptomics:visium"}
 
 
-def test_basic_plugins_are_free_and_paid_ones_name_declared_entitlements():
+def test_basic_plugins_are_free_and_pro_ones_name_declared_entitlements():
     """Every shipped plugin is Free unless it is listed above, and a listed one
     names an entitlement the manifest declares (describe() carries it)."""
     from plexora.licensing import manifest
 
-    paid = {}
+    pro = {}
     for name in plugin_registry.available_names():
         plugin = plugin_registry.load(name)
         if plugin is None:
@@ -58,11 +58,11 @@ def test_basic_plugins_are_free_and_paid_ones_name_declared_entitlements():
             assert manifest.known(needed), (name, needed)
         if plugin.entitlement is not None:
             assert manifest.known(plugin.entitlement), name
-            paid[name] = plugin.entitlement
+            pro[name] = plugin.entitlement
             assert plugin.describe()["entitlement"] == plugin.entitlement, name
             continue
         assert "entitlement" not in plugin.describe(), name
-    assert paid == {name: ent for name, ent in PAID_SHIPPED.items()
+    assert pro == {name: ent for name, ent in PRO_SHIPPED.items()
                     if name in plugin_registry.available_names()}
 
 
@@ -73,41 +73,41 @@ def test_a_malformed_plugin_entitlement_is_refused():
         Plugin(name="bad", label="Bad", endpoint_entitlements={"x": "not valid"})
 
 
-def test_a_paid_plugins_routes_answer_403_on_free_but_its_assets_load():
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
-    client = _app_with(plugin, _blueprint("paidplug"))
-    refused = client.post("/plugins/paidplug/analyze")
+def test_a_pro_plugins_routes_answer_403_on_free_but_its_assets_load():
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug")
+    client = _app_with(plugin, _blueprint("proplug"))
+    refused = client.post("/plugins/proplug/analyze")
     assert refused.status_code == 403
     body = refused.get_json()
     assert body["success"] is False
     assert body["license"]["code"] == "license_required"
-    assert body["license"]["entitlement"] == "plugin:paidplug"
-    assert body["license"]["plan_required"] == "paid"
-    assert client.get("/plugins/paidplug/view").status_code == 403
-    assert client.get("/plugins/paidplug/static/app.js").status_code == 200
+    assert body["license"]["entitlement"] == "plugin:proplug"
+    assert body["license"]["plan_required"] == "pro"
+    assert client.get("/plugins/proplug/view").status_code == 403
+    assert client.get("/plugins/proplug/static/app.js").status_code == 200
 
 
-def test_a_paid_plugins_routes_work_on_paid(license_issuer):
-    license_issuer.install(license_issuer.issue(ent=["ai", "plugin:paidplug"]))
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
-    client = _app_with(plugin, _blueprint("paidplug"))
-    assert client.post("/plugins/paidplug/analyze").get_json()["ran"] == "analyze"
+def test_a_pro_plugins_routes_work_on_pro(license_issuer):
+    license_issuer.install(license_issuer.issue(ent=["ai", "plugin:proplug"]))
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug")
+    client = _app_with(plugin, _blueprint("proplug"))
+    assert client.post("/plugins/proplug/analyze").get_json()["ran"] == "analyze"
 
 
-def test_paid_alone_does_not_unlock_a_separately_sold_plugin(paid_license):
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
-    client = _app_with(plugin, _blueprint("paidplug"))
-    assert client.post("/plugins/paidplug/analyze").status_code == 403
+def test_pro_alone_does_not_unlock_a_separately_sold_plugin(pro_license):
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug")
+    client = _app_with(plugin, _blueprint("proplug"))
+    assert client.post("/plugins/proplug/analyze").status_code == 403
 
 
-def test_a_mixed_plugin_guards_only_its_paid_endpoint():
+def test_a_mixed_plugin_guards_only_its_pro_endpoint():
     plugin = Plugin(name="mixed", label="Mixed", endpoint_entitlements={"analyze": "ai"})
     client = _app_with(plugin, _blueprint("mixed"))
     assert client.post("/plugins/mixed/analyze").status_code == 403
     assert client.get("/plugins/mixed/view").get_json()["ran"] == "view"
 
 
-def test_a_mixed_plugin_on_paid(paid_license):
+def test_a_mixed_plugin_on_pro(pro_license):
     plugin = Plugin(name="mixed", label="Mixed", endpoint_entitlements={"analyze": "ai"})
     client = _app_with(plugin, _blueprint("mixed"))
     assert client.post("/plugins/mixed/analyze").status_code == 200
@@ -122,13 +122,13 @@ def test_a_free_plugin_gets_no_guard_at_all():
     assert client.post("/plugins/freeplug/analyze").status_code == 200
 
 
-def test_a_paid_plugin_is_described_with_its_entitlement_and_hidden_until_unlocked(
+def test_a_pro_plugin_is_described_with_its_entitlement_and_hidden_until_unlocked(
         license_issuer):
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
-    assert plugin.describe()["entitlement"] == "plugin:paidplug"
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug")
+    assert plugin.describe()["entitlement"] == "plugin:proplug"
     assert "locked" not in plugin.describe()
     assert plugin_registry.unlocked(plugin) is False
-    license_issuer.install(license_issuer.issue(ent=["plugin:paidplug"]))
+    license_issuer.install(license_issuer.issue(ent=["plugin:proplug"]))
     assert plugin_registry.unlocked(plugin) is True
 
 
@@ -149,30 +149,31 @@ def _fake_resolve(monkeypatch, plugin):
 
 
 def test_a_locked_tool_panel_says_locked_and_sends_nothing_to_mount(client, monkeypatch):
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug",
-                    scripts=("paid.js",))
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug",
+                    scripts=("pro.js",))
     _fake_resolve(monkeypatch, plugin)
-    reply = client.get("/anything/tools/paidplug/panel")
+    reply = client.get("/anything/tools/proplug/panel")
     assert reply.status_code == 403
     body = reply.get_json()
     assert set(body) == {"locked"}
-    assert body["locked"] == {"entitlement": "plugin:paidplug", "plan_required": "paid",
-                              "tool": "paidplug", "label": "Paid Plug",
-                              "summary": "A Paid Plexora feature.", "state": "free"}
+    assert body["locked"] == {"entitlement": "plugin:proplug", "plan_required": "pro",
+                              "tool": "proplug", "label": "Pro Plug",
+                              "summary": "A plugin from its maker, not part of Plexora Pro.",
+                              "state": "free", "off_by_default": True}
 
 
 def test_an_unlocked_tool_panel_is_served(client, monkeypatch, license_issuer):
-    license_issuer.install(license_issuer.issue(ent=["plugin:paidplug"]))
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug",
-                    scripts=("paid.js",))
+    license_issuer.install(license_issuer.issue(ent=["plugin:proplug"]))
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug",
+                    scripts=("pro.js",))
     _fake_resolve(monkeypatch, plugin)
-    body = client.get("/anything/tools/paidplug/panel").get_json()
+    body = client.get("/anything/tools/proplug/panel").get_json()
     assert "locked" not in body and body["scripts"]
 
 
 def test_the_plain_link_to_a_locked_tool_goes_back_to_the_viewer(client, monkeypatch):
-    plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
+    plugin = Plugin(name="proplug", label="Pro Plug", entitlement="plugin:proplug")
     _fake_resolve(monkeypatch, plugin)
-    reply = client.get("/demo/tools/paidplug")
+    reply = client.get("/demo/tools/proplug")
     assert reply.status_code == 302
     assert reply.headers["Location"].endswith("/demo")

@@ -159,8 +159,8 @@ const box = {
     dispatchEvent: () => true, addEventListener() {},
     document, fetch: fetchImpl, plexoraUrl: (path) => `/${path}`,
     flaskVariables: { datasource: "stack" },
-    // The page's render-time hint (paidFeature.js `allows`).
-    PlexoraPaid: { allows: (entitlement) => hinted && entitlement.startsWith("volume"),
+    // The page's render-time hint (proFeature.js `allows`).
+    PlexoraPro: { allows: (entitlement) => hinted && entitlement.startsWith("volume"),
                    explain: (license) => explained.push(license) },
     PlexoraToast: { show() {} },
     PlexoraCanvasLayout: { place: (node) => { wrapper.appendChild(node); return () => node.remove(); } },
@@ -190,7 +190,7 @@ box.PlexoraSurfaceLayers.init({ datasource: "stack", layerStack: box.__plexora.s
 const hidden = await Studio.open({ channel: "CD31" });
 check("on Free the dock does not open and asks the server nothing",
       hidden === false && !Studio.isOpen() && requests.length === 0 && explained.length === 0);
-// The page was told Paid; the server no longer agrees (a licence that lapsed).
+// The page was told Pro; the server no longer agrees (a licence that lapsed).
 hinted = true;
 const refused = await Studio.open({ channel: "CD31" });
 check("a licence that lapsed: the server refuses and the dock closes",

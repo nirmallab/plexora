@@ -116,7 +116,7 @@ window.PlexoraHelpMenu = (function () {
         // The version is the heading's; the table starts with what is not.
         content.appendChild(table(rows.slice(1)));
         content.appendChild(el("p", "plx-about-legal",
-            "Free for academic and noncommercial use. © Nirmal Lab."));
+            "Plexora Free is free for any use; Plexora Pro is sold per seat. © BioCognia."));
 
         const answer = await window.PlexoraConfirm.choose({
             title: "About Plexora",

@@ -1,4 +1,4 @@
-"""Plexora's two plans, Free and Paid, and the one place that tells them apart.
+"""Plexora's two plans, Free and Pro, and the one place that tells them apart.
 
 Free is everything Plexora does without a licence: every image, table and
 modality, every plugin's manual tools, remote and HPC viewing, notebooks,
@@ -6,11 +6,11 @@ export. It needs no account, no network and no activation, and nothing in this
 package runs on a Free path -- a capability with no entitlement returns before
 the licence is even looked at (`guards.check_capability`).
 
-Paid unlocks entitlements (`manifest.py`), which attach to capabilities and
+Pro unlocks entitlements (`manifest.py`), which attach to capabilities and
 actions, never to plan names:
 
     from plexora import licensing
-    licensing.allows("ai:gating:session")      # True on a Paid licence
+    licensing.allows("ai:gating:session")      # True on a Pro licence
 
 The licence itself is the shared BioCognia client (`biocognia`): a `BIOC1`
 certificate the platform signs for `aud: "plexora"`, verified offline against
@@ -18,7 +18,7 @@ public keys shipped in that package, resolved lazily and failing open to Free.
 A person connects a device at account.biocognia.com; Plexora holds no account.
 This module holds Plexora's three handles on it -- `PRODUCT` (the manifest),
 `LICENSING` (the state) and `GUARD` (the gate) -- and Plexora's own words for
-what the library calls a licensed state: Paid.
+what the library calls a licensed state: Pro.
 
 Importing this package reads no file, starts no thread and loads no crypto.
 """
@@ -37,15 +37,15 @@ GUARD = Guard(LICENSING)
 
 #: The library's state names, in Plexora's words where they differ. Everything
 #: a person or an agent sees -- Settings, `plexora license status`,
-#: `server_info` -- says `paid_active` for a licence that is simply working.
-STATE_NAMES = {"active": "paid_active"}
+#: `server_info` -- says `pro_active` for a licence that is simply working.
+STATE_NAMES = {"active": "pro_active"}
 
 
 def plan_of(state: LicenseState) -> str:
-    """`paid` or `free`: whether Paid features run in `state`. Plexora's plan
+    """`pro` or `free`: whether Pro features run in `state`. Plexora's plan
     is this, never the catalogue's plan id (which `describe()` carries as
-    `plan_id`)."""
-    return "paid" if state.licensed else "free"
+    `plan_id`, e.g. `plexora.pro`; a trial is that plan with `trial: true`)."""
+    return "pro" if state.licensed else "free"
 
 
 def state_name(state: LicenseState) -> str:
@@ -76,11 +76,14 @@ def now() -> float:
 
 def describe(*, network: bool = False, state: LicenseState | None = None) -> dict:
     """The public description of the licence, in Plexora's words: `plan`
-    (free/paid), `paid`, `state` (`paid_active` for a working licence), grants
+    (free/pro), `paid`, `state` (`pro_active` for a working licence), grants
     and dates. Never the certificate."""
     resolved = state if state is not None else LICENSING.current(network=network)
     info = resolved.describe(now=LICENSING.now())
     info["plan_id"] = info.get("plan")
+    # `paid` is a boolean that means "holds a licence" (Pro or a trial), not a
+    # plan name: the key predates the plan being called Pro and every surface,
+    # the client and the JS probes read it, so it keeps its name.
     info.update(plan=plan_of(resolved), paid=resolved.licensed, state=state_name(resolved))
     return info
 

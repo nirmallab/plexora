@@ -862,7 +862,7 @@ window.PlexoraImportSample = (function () {
 
     function chipsFor(examples) {
         if (examples === "sample") {
-            return window.PlexoraPaid?.allows?.("transcriptomics")
+            return window.PlexoraPro?.allows?.("transcriptomics")
                 ? PICK_CHIPS : PICK_CHIPS_WITHOUT_TRANSCRIPTOMICS;
         }
         const table = (typeof KIND_EXAMPLES !== "undefined" && KIND_EXAMPLES[examples]) || {};

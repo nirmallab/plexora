@@ -95,7 +95,7 @@ const TRANSCRIPTOMICS_EXAMPLES = new Set(["Xenium", "Visium", "transcripts"]);
 /** A KIND_EXAMPLES entry as this licence offers it. Asked when the control is
  *  built, so a licence adopted in Settings shows the words on the next one. */
 function offeredExamples(entry) {
-    if (window.PlexoraPaid?.allows?.("transcriptomics")) return entry;
+    if (window.PlexoraPro?.allows?.("transcriptomics")) return entry;
     const keep = (text) => String(text || "").split(" · ")
         .filter((word) => word && !TRANSCRIPTOMICS_EXAMPLES.has(word)).join(" · ");
     return { file: keep(entry.file), directory: keep(entry.directory) };

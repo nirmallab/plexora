@@ -4,7 +4,7 @@
  *   - toolLoader.js: a `locked` panel answer (a stale link, a licence that
  *     lapsed while the page was open) mounts NOTHING and opens nothing --
  *     not granted, not shown; a quiet (restore) load reports it the same way.
- *   - paidFeature.js: the modal's words and choices, trial and licence
+ *   - proFeature.js: the modal's words and choices, trial and licence
  *     routes, the page hint, and that loading it does nothing at all.
  *
  * Run directly:  node tests/js/license_probe.mjs
@@ -24,9 +24,9 @@ async function check(label, fn) {
     console.log("  ok  " + label);
 }
 
-// -- paidFeature.js -------------------------------------------------------------
+// -- proFeature.js -------------------------------------------------------------
 
-function paidSandbox({ status = {}, answer = null, flask = {} } = {}) {
+function proSandbox({ status = {}, answer = null, flask = {} } = {}) {
     const fetched = [];
     const opened = [];
     const dialogs = [];
@@ -54,70 +54,103 @@ function paidSandbox({ status = {}, answer = null, flask = {} } = {}) {
         tell: async (spec) => { dialogs.push(spec); return true; },
     };
     createContext(ctx);
-    runInContext(read("plexora/client/src/js/services/paidFeature.js"), ctx);
-    return { P: ctx.PlexoraPaid, ctx, fetched, opened, dialogs, storage };
+    runInContext(read("plexora/client/src/js/services/proFeature.js"), ctx);
+    return { P: ctx.PlexoraPro, ctx, fetched, opened, dialogs, storage };
 }
 
-await check("loading paidFeature.js fetches nothing, stores nothing, shows nothing", () => {
-    const { fetched, dialogs, storage } = paidSandbox();
+await check("loading proFeature.js fetches nothing, stores nothing, shows nothing", () => {
+    const { fetched, dialogs, storage } = proSandbox();
     assert.equal(fetched.length, 0);
     assert.equal(dialogs.length, 0);
     assert.equal(storage.length, 0);
 });
 
 await check("the page hint is hierarchical and false on Free", () => {
-    const free = paidSandbox({ flask: { license: { paid: false, entitlements: [] } } });
+    const free = proSandbox({ flask: { license: { paid: false, entitlements: [] } } });
     assert.equal(free.P.allows("ai:gating"), false);
     assert.equal(free.P.allows(null), true);
     assert.equal(free.P.allows("free"), true);
-    const paid = paidSandbox({ flask: { license: { paid: true, entitlements: ["ai"] } } });
-    assert.equal(paid.P.allows("ai:gating:session"), true);
-    assert.equal(paid.P.allows("aix"), false);
-    const narrow = paidSandbox({ flask: { license: { paid: true, entitlements: ["ai:evidence"] } } });
+    const pro = proSandbox({ flask: { license: { paid: true, entitlements: ["ai"] } } });
+    assert.equal(pro.P.allows("ai:gating:session"), true);
+    assert.equal(pro.P.allows("aix"), false);
+    const narrow = proSandbox({ flask: { license: { paid: true, entitlements: ["ai:evidence"] } } });
     assert.equal(narrow.P.allows("ai:gating"), false);
 });
 
 await check("the modal names the feature, says Free keeps working, and offers a trial on Free", async () => {
-    const { P, dialogs } = paidSandbox({ status: { state: "free", paid: false } });
+    const { P, dialogs } = proSandbox({ status: { state: "free", paid: false } });
     await P.explain({ entitlement: "ai:gating:session", label: "AI gating sessions",
                       summary: "Guided gating sessions an agent runs." });
     assert.equal(dialogs.length, 1);
     const spec = dialogs[0];
-    assert.match(spec.title, /AI gating sessions is a Paid feature/);
+    assert.match(spec.title, /AI gating sessions is a Pro feature/);
     assert.ok(spec.body.some((line) => /Everything Free keeps working/.test(line)));
     assert.deepEqual(Array.from(spec.choices, (c) => c.value), [null, "license", "trial"]);
 });
 
+await check("Video Studio is a Pro feature like any other, with a trial on Free", async () => {
+    const { P, dialogs } = proSandbox({ status: { state: "free", paid: false } });
+    await P.explain({ entitlement: "plugin:video_studio", label: "Video Studio", off_by_default: false });
+    const spec = dialogs[0];
+    assert.match(spec.title, /Video Studio is a Pro feature/);
+    assert.ok(spec.body.some((line) => /Video Studio is part of Plexora Pro/.test(line)));
+    assert.deepEqual(Array.from(spec.choices, (c) => c.value), [null, "license", "trial"]);
+});
+
+await check("what is off by default is never called Pro and offers no trial or price", async () => {
+    const { P, dialogs } = proSandbox({ status: { state: "pro_active", paid: true } });
+    await P.explain({ entitlement: "mcp", label: "External MCP access", off_by_default: true });
+    const spec = dialogs[0];
+    assert.match(spec.title, /External MCP access is off by default/);
+    assert.ok(spec.body.some((line) => /not part of Plexora Pro or its trial/.test(line)));
+    assert.ok(spec.body.some((line) => /an administrator can turn it on for your licence/.test(line)));
+    assert.ok(!spec.body.some((line) => /is part of Plexora Pro|sold|price|buy/i.test(line)));
+    assert.deepEqual(Array.from(spec.choices, (c) => c.value), [null, "license"]);
+    const free = proSandbox({ status: { state: "free", paid: false } });
+    await free.P.explain({ entitlement: "mcp", label: "External MCP access", off_by_default: true });
+    assert.deepEqual(Array.from(free.dialogs[0].choices, (c) => c.value), [null, "license"]);
+});
+
+await check("a third-party plugin comes from its maker, never from Pro", async () => {
+    const { P, dialogs } = proSandbox({ status: { state: "free", paid: false } });
+    await P.explain({ entitlement: "plugin:spatial_stats", label: "Spatial Stats", off_by_default: true });
+    const spec = dialogs[0];
+    assert.match(spec.title, /Spatial Stats comes from its maker/);
+    assert.ok(spec.body.some((line) => /not part of Plexora Pro or its trial/.test(line)));
+    assert.ok(!spec.body.some((line) => /administrator|sold|price/i.test(line)));
+    assert.deepEqual(Array.from(spec.choices, (c) => c.value), [null, "license"]);
+});
+
 await check("a lapsed licence says so", async () => {
-    const { P, dialogs } = paidSandbox({ status: { state: "expired", paid: false } });
+    const { P, dialogs } = proSandbox({ status: { state: "expired", paid: false } });
     await P.explain({ label: "X", state: "expired" });
     assert.ok(dialogs[0].body.some((line) => /expired/.test(line)));
 });
 
 await check("Start a Trial opens the portal's trial page in the browser", async () => {
     const url = "https://account.biocognia.test/start?product=plexora";
-    const { P, opened } = paidSandbox({ status: { state: "free", trial_url: url }, answer: "trial" });
+    const { P, opened } = proSandbox({ status: { state: "free", trial_url: url }, answer: "trial" });
     assert.equal(await P.explain({ label: "X" }), "trial");
     assert.deepEqual(Array.from(opened), [url]);
 });
 
 await check("Enter License goes to Settings > License", async () => {
-    const { P, ctx } = paidSandbox({ status: { state: "free" }, answer: "license" });
+    const { P, ctx } = proSandbox({ status: { state: "free" }, answer: "license" });
     await P.explain({ label: "X" });
     assert.equal(ctx.location.href, "/base/settings#license");
 });
 
 await check("with no BioCognia platform, a trial explains itself instead of opening nothing", async () => {
-    const { P, opened, dialogs } = paidSandbox({ status: { state: "free", trial_url: "" } });
+    const { P, opened, dialogs } = proSandbox({ status: { state: "free", trial_url: "" } });
     assert.equal(await P.startTrial(), false);
     assert.equal(opened.length, 0);
     assert.match(dialogs[0].title, /Trials are not available/);
 });
 
-await check("the badge says Paid", () => {
-    const { P } = paidSandbox();
-    assert.equal(P.badge().textContent, "Paid");
-    assert.equal(P.badge().className, "plx-paid-badge");
+await check("the badge says Pro", () => {
+    const { P } = proSandbox();
+    assert.equal(P.badge().textContent, "Pro");
+    assert.equal(P.badge().className, "plx-pro-badge");
 });
 
 // -- toolLoader.js: the locked outcome --------------------------------------------
@@ -148,7 +181,7 @@ function loaderSandbox(payload) {
         __plexoraReady: Promise.resolve(), addEventListener() {}, removeEventListener() {},
         Plexora: { plugins: new Map() },
         __plexora: { activatePlugin: async () => { throw new Error("must not activate a locked tool"); } },
-        PlexoraPaid: { explain: async (info) => { explained.push(info); return null; } },
+        PlexoraPro: { explain: async (info) => { explained.push(info); return null; } },
     };
     Object.assign(ctx, ctx.window);
     createContext(ctx);
@@ -157,8 +190,9 @@ function loaderSandbox(payload) {
     return { L: ctx.window.PlexoraToolLoader || ctx.PlexoraToolLoader, mounted, explained };
 }
 
-const LOCKED = { locked: { entitlement: "plugin:spatial_stats", plan_required: "paid", tool: "spatial_stats",
-                           label: "Spatial Stats", summary: "A Paid Plexora feature.", state: "free" } };
+const LOCKED = { locked: { entitlement: "plugin:spatial_stats", plan_required: "pro", tool: "spatial_stats",
+                           label: "Spatial Stats", summary: "A plugin from its maker, not part of Plexora Pro.",
+                           state: "free", off_by_default: true } };
 
 await check("a locked tool opens nothing, explains nothing and mounts nothing", async () => {
     const { L, mounted, explained } = loaderSandbox(LOCKED);

@@ -23,7 +23,7 @@ when a proxy in front buffers the stream.
 
 Guarded like `/agent/v1`: with no server token, loopback clients only; and
 behind the `ai:chat` entitlement (a Free licence answers the structured 403
-the paid-feature modal reads). The person at this viewer is the one who
+the Pro-feature modal reads). The person at this viewer is the one who
 approves, so `/approve` is invoked with the policy that lets an approved call
 run; the call itself still needs that approval, one call at a time.
 """

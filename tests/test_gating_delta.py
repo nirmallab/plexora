@@ -15,7 +15,7 @@ import pytest
 from plexora.agent import AgentSession, invoke, registry
 from plexora.plugins.gating.server.autogate import packets, sheet
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

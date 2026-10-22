@@ -11,11 +11,11 @@ description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 # Not an SPDX-listed license, so it is carried as a LicenseRef- custom
-# identifier (PEP 639). Free for academic/noncommercial use, no distribution of
-# modified versions, plugins explicitly carved out; commercial use needs a
-# separate license. Full terms in LICENSE, which license-files ships into the
-# wheel and sdist.
-license = "LicenseRef-Plexora-Academic-1.0"
+# identifier (PEP 639). The Plexora End User Licence Agreement: Free for any
+# purpose, Pro per seat, term and use class (academic or commercial), no
+# distribution of modified versions, plugins explicitly carved out. Full terms
+# in LICENSE, which license-files ships into the wheel and sdist.
+license = "LicenseRef-Plexora-EULA-1.0"
 license-files = ["LICENSE"]
 dependencies = [
     # Reading images from a web address (server/utils/remote_store.py):
@@ -28,10 +28,10 @@ dependencies = [
     "anndata>=0.10",
     # The licence, the device and the AI token (plexora/licensing/): the
     # client every BioCognia product shares. A hard dependency rather than an
-    # extra, because the Free/Paid gates read it on every install -- Free
+    # extra, because the Free/Pro gates read it on every install -- Free
     # included, where it answers "nothing is licensed" without touching a file.
     # Stdlib-only at import; it verifies certificates with `cryptography`
-    # (imported only when a Paid feature or the licence status is asked for)
+    # (imported only when a Pro feature or the licence status is asked for)
     # and locates its files with platformdirs.
     "biocognia>=0.1.1,<0.2",
     "Flask>=3.1",

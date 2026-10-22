@@ -14,8 +14,9 @@ edit whatever an agent made.
     duplicate_video / delete_video
 
 Rendering needs the live viewer, so `preview_video` and `export_video` need an
-open tab; everything else works from the project record alone. Paid with the
-plugin (`plugin:video_studio`), so over MCP these need the `mcp` add-on too.
+open tab; everything else works from the project record alone. Pro with the
+plugin (`plugin:video_studio`, which the Pro default carries), so over MCP
+these need external MCP access (`mcp`) too.
 """
 
 from __future__ import annotations

@@ -21,8 +21,8 @@ in their viewer, and only then export it.
 
 An open viewer for preview and export (`list_viewers`); a z-stack for the
 volume and stack presets; a time series for the time-lapse; two or more
-channels for a reveal. Video Studio is Paid (`video_studio` is sold as a
-plugin of its own).
+channels for a reveal. Video Studio is part of Plexora Pro (`video_studio` is a
+plugin licensed as a whole, `plugin:video_studio`).
 
 ## Decision logic
 

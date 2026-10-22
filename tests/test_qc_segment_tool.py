@@ -17,7 +17,7 @@ from plexora.agent import AgentSession, invoke, registry
 from plexora.vision import sam, sam_backend
 from plexora.vision import segment as segmenter
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

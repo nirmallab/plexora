@@ -25,6 +25,7 @@ export function baseOptions(): BaseLayoutProps {
       { text: 'Documentation', url: '/docs', active: 'nested-url' },
       { text: 'Python API', url: '/docs/python-api', active: 'nested-url' },
       { text: 'Build a plugin', url: '/docs/plugin-development', active: 'nested-url' },
+      { text: 'Pricing', url: '/pricing', active: 'url' },
     ],
   };
 }

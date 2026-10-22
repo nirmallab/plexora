@@ -49,22 +49,29 @@ def test_the_sync_tool_prints_what_it_would_upload():
     assert payload["manifest"]["id"] == "plexora"
 
 
-def test_the_sync_check_wants_the_paid_plans_to_carry_the_paid_default():
+def test_the_sync_check_wants_the_pro_plan_to_carry_the_pro_default():
+    """One plan, `plexora.pro` (a trial is Pro with `trial: true`), granting
+    every root but external MCP access, and Video Studio."""
     import importlib.util
+
+    from plexora.licensing import manifest
 
     spec = importlib.util.spec_from_file_location("bioc_sync", ROOT / "tools" / "bioc_sync.py")
     sync = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sync)
 
-    default = ["ai", "transcriptomics", "volume"]
-    assert sync.plan_problems([{"id": "plexora.paid", "entitlements": default},
-                               {"id": "plexora.trial", "entitlements": default[::-1]},
-                               {"id": "plexora.ai_mcp", "entitlements": ["mcp"]}]) == []
-    assert sync.plan_problems([{"id": "plexora.paid", "entitlements": default}]) == []
-    stale = sync.plan_problems([{"id": "plexora.paid", "entitlements": ["ai"]},
-                                {"id": "plexora.trial", "entitlements": [*default, "mcp"]}])
-    assert len(stale) == 2 and "plexora.paid" in stale[0] and "plexora.trial" in stale[1]
-    assert sync.plan_problems([]) == ["The platform has no active plexora.paid plan."]
+    assert sync.DEFAULT_PLANS == ("plexora.pro",)
+    default = ["ai", "plugin:video_studio", "transcriptomics", "volume"]
+    assert sorted(manifest.pro_default()) == default
+    assert sync.plan_problems([{"id": "plexora.pro", "entitlements": default[::-1]}]) == []
+    # Another plan's grants are not the check's business.
+    assert sync.plan_problems([{"id": "plexora.pro", "entitlements": default},
+                               {"id": "plexora.other", "entitlements": ["mcp"]}]) == []
+    # Without Video Studio, or with external MCP access, the plan is stale.
+    for wrong in (["ai", "transcriptomics", "volume"], [*default, "mcp"]):
+        stale = sync.plan_problems([{"id": "plexora.pro", "entitlements": wrong}])
+        assert len(stale) == 1 and "plexora.pro" in stale[0], stale
+    assert sync.plan_problems([]) == ["The platform has no active plexora.pro plan."]
 
 
 def test_every_task_is_well_formed():

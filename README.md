@@ -93,15 +93,24 @@ export PLEXORA_TELEMETRY=off
 and `plexora telemetry status` says which of the above is in force.
 [docs/TELEMETRY.md](./docs/TELEMETRY.md) has the details.
 
-## Free and Paid
+## Free and Pro
 
 **Free** is everything described above: every image, table and modality, every
 tool's manual features, remote, HPC and notebook viewing, and export. It needs no
-account, no activation and no network, and it never asks.
+account, no activation and no network, it never asks, and anyone may use it for
+any purpose, commercial work included.
 
-**Paid** adds AI features: guided gating sessions an agent runs with you, and
-the evidence and analysis tools it uses. Licences, devices and AI credits are
-managed on the BioCognia platform, which Plexora shares with SCIMAP Pro: you
+**Pro** adds Plexora AI (guided gating and QC sessions an agent runs with you,
+the evidence and analysis tools it uses, and the chat), Plexora 3D (analysing
+z-stacks and time series beyond viewing them), spatial transcriptomics
+(Xenium, Visium and Visium HD) and Video Studio (videos made from the viewer).
+A 30-day trial is everything in Pro. External MCP access, for an outside coding
+agent, is off by default and not part of Pro; an administrator can turn it on
+for a licence. Pro is a yearly subscription per seat, at an academic or a
+commercial price, and both are bought online from the
+[pricing page](https://nirmallab.github.io/plexora/pricing/): one seat is an
+individual account, two or more make a team. Licences, devices and AI credits
+are managed on the BioCognia platform, which Plexora shares with SCIMAP Pro: you
 sign in at [account.biocognia.com](https://account.biocognia.com), never in
 Plexora. In Settings > License, **Connect this device** shows a short code and
 opens the page to approve it; or, from a terminal:
@@ -112,7 +121,7 @@ plexora license activate                            # this computer: prints a co
 plexora license activate BIOC-XXXX-XXXX-XXXX-XXXX   # with your licence key from the portal, no browser needed
 plexora license activate --cluster --name O2        # a whole HPC cluster, once, from a login node
 plexora license install lab.bioc                    # an offline licence file
-plexora license trial                               # 30 days of Paid
+plexora license trial                               # 30 days of Pro
 ```
 
 A licence check sends the licence certificate and a hash that identifies the
@@ -124,17 +133,22 @@ separately. [docs/LICENSING.md](./docs/LICENSING.md) has the details.
 
 ## License
 
-Plexora is released under the **Plexora Academic License 1.0** (see [LICENSE](./LICENSE)).
-It is **not** an open source license. In short:
+Plexora is licensed by BioCognia under the **Plexora End User Licence Agreement
+1.0** (`LicenseRef-Plexora-EULA-1.0`, see [LICENSE](./LICENSE)). It is **not** an
+open source license. In short:
 
 | | |
 |---|---|
-| Academic research, teaching, personal study | ✅ Free |
-| Use by a nonprofit or government research institution | ✅ Free (whatever the funding source) |
-| Redistributing Plexora unmodified, with the license attached | ✅ Allowed |
+| Plexora Free, for any purpose: research, teaching, personal or commercial | ✅ Free, no account or licence key |
+| Plexora Pro for academic research and teaching | Per seat, per year, at the academic price |
+| Plexora Pro for commercial use | Per seat, per year, at the commercial price |
+| Redistributing Plexora unmodified, with the licence attached | ✅ Allowed |
 | Patching your own copy to fix a bug or a compatibility problem | ✅ Allowed |
 | Publishing a fork, a patched build, or a renamed version | ❌ Not allowed |
-| Commercial use of any kind | ❌ Requires a paid license |
+
+Prices, and Buy for either use class, are on the
+[pricing page](https://nirmallab.github.io/plexora/pricing/); a subscription
+renews at the price it was bought at.
 
 **Plugins are a deliberate exception.** Anything you build against the documented
 extension interfaces — the `plexora.plugins` entry point group and the `plexora.api`
@@ -142,7 +156,7 @@ package — is yours. You may distribute and sell your plugin under whatever lic
 you like, and you do not need our permission. Extending Plexora through the plugin
 API is the supported way to change what it does; editing its source is not.
 
-For a commercial license, contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
+For licensing questions, contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
 
 Some bundled components carry their own licenses, which are unaffected by the above —
-see section 8 of [LICENSE](./LICENSE).
+see section 13 of [LICENSE](./LICENSE).

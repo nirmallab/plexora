@@ -35,7 +35,7 @@ plexora ai credits [--days 30]                           # balance and usage
 plexora ai chat [--resume ID] [--dev]                    # a conversation in the terminal
 ```
 
-To use it, the device needs to be connected to a Paid licence
+To use it, the device needs to be connected to a Pro licence
 (Settings › License › Connect this device, or `plexora license activate`) that
 includes the `ai` entitlement (or `ai:gating` / `ai:qc` for the CLI; the in-app routes and
 `ai.*` capabilities need `ai`; chat needs `ai:chat`, which `ai` covers).
@@ -243,14 +243,14 @@ platform, `docs/internal/AI_DEPLOY.md` lists the manual checks.
   - `plexora ai run qc` from the command line.
 - `tests/test_ai_routes.py` (9 tests) runs the Flask test client against FakeGateway, which it reaches through `BIOCOGNIA_AI_GATEWAY` / `BIOCOGNIA_AI_TOKEN`. It covers:
   - the entitlement guard and the loopback guard;
-  - registration: all four `ai.*` capabilities are Paid, and the run is a job;
+  - registration: all four `ai.*` capabilities are Pro, and the run is a job;
   - the estimate;
   - a QC run over HTTP that an open tab hears (both the session's and the harness's events), with its audit lines;
   - a credit pause: the tab is told what to resume, control works on the paused session, and the run resumes over HTTP;
   - a stop through control;
   - a gating run over HTTP.
 - `tests/js/agent_panel_probe.mjs` has 5 new checks, listed in `tests/test_agent_client_probes.py`. They cover:
-  - the launcher on Free and on Paid, with its estimates, and kinds that are unaffordable or unavailable;
+  - the launcher on Free and on Pro, with its estimates, and kinds that are unaffordable or unavailable;
   - the usage line;
   - the credit card, with Resume and Add credits;
   - the gateway-error card.

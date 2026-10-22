@@ -58,7 +58,7 @@ def test_an_ungated_marker_scores_zero_and_a_failed_image_fails_the_bar():
     assert m["failure_rate"] == 1.0 and m["invalid_answer_rate"] == 0.25 and m["cache_hit_ratio"] == 0.8
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_candidate_route_is_gated_through_the_dev_route_and_scored(monkeypatch):
     made = {}
     register = bench_data.register

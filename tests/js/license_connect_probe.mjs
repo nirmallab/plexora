@@ -80,7 +80,7 @@ function sandbox(routes) {
         open: (url) => opened.push(url),
         addEventListener() {}, removeEventListener() {},
         PlexoraConfirm: { ask: async () => true, tell: async () => true, choose: async () => null },
-        PlexoraPaid: { adopt() {}, forget() {} },
+        PlexoraPro: { adopt() {}, forget() {} },
         PlexoraRemotes: { watch: () => ({ stop() {} }), subscribe: () => () => {} },
     };
     let registered = null;
@@ -112,7 +112,7 @@ function sandbox(routes) {
 }
 
 const FREE = { state: "free", plan: "free", paid: false, service_configured: true, unlocks: [] };
-const PAID = { state: "paid_active", plan: "paid", paid: true, source: "cache", service_configured: true,
+const PRO = { state: "pro_active", plan: "pro", paid: true, source: "cache", service_configured: true,
                environment: { type: "desktop", name: "Bench PC" }, validity: {},
                unlocks: [{ entitlement: "ai", label: "Plexora AI", granted: true }] };
 
@@ -130,7 +130,7 @@ function platform({ polls = 1, decline = false } = {}) {
                                               license: FREE } };
             }
             if (pending-- > 0) return { body: { success: true, pending: true } };
-            return { body: { success: true, pending: false, license: PAID } };
+            return { body: { success: true, pending: false, license: PRO } };
         }
         return { body: {} };
     };
@@ -152,7 +152,7 @@ await check("Connect this device shows the code and the link, opens the portal, 
     assert.equal(posted.at(-1).body.code, "BIOC-7F3K-9Q2M");
     assert.equal(el("settings_license_plan").textContent, "Free");
     await tick();                                         // approved
-    assert.equal(el("settings_license_plan").textContent, "Paid");
+    assert.equal(el("settings_license_plan").textContent, "Pro");
     assert.equal(el("settings_license_connect_box").hidden, true);
     assert.equal(el("settings_license_connect").hidden, false);
     assert.equal(el("settings_license_error").hidden, true);

@@ -11,7 +11,7 @@ Two halves with one store:
 
 - **Manual and read paths (Free)**: drawing QC regions in the ROI panel,
   reading results, changing strictness, exports, source writes, reports.
-- **The AI session (Paid, `ai:qc:session`)**: a deterministic pyramid scan
+- **The AI session (Pro, `ai:qc:session`)**: a deterministic pyramid scan
   finds where to look; an agent audits every channel at a glance and judges
   the candidates one typed packet at a time (`capabilities_session.py`).
 

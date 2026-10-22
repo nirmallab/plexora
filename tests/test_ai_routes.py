@@ -82,18 +82,18 @@ def test_every_route_needs_the_ai_entitlement(client):
         assert body["success"] is False and "ai" in json.dumps(body)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_neighbour_on_the_network_is_refused(client):
     answer = client.get("/ai/v1/runs", environ_base={"REMOTE_ADDR": "10.1.2.3"})
     assert answer.status_code == 403
     assert "this machine" in answer.get_json()["error"]
 
 
-def test_the_ai_capabilities_are_registered_paid_and_the_run_is_a_job():
+def test_the_ai_capabilities_are_registered_pro_and_the_run_is_a_job():
     registry.register_core()
     described = {d["name"]: d for d in registry.describe()}
     for name in ("ai.run_session", "ai.run_status", "ai.run_control", "ai.balance"):
-        assert described[name]["entitlement"] == "ai" and described[name]["plan"] == "paid", name
+        assert described[name]["entitlement"] == "ai" and described[name]["plan"] == "pro", name
     assert described["ai.run_session"]["execution"] == "job"
     assert described["ai.run_session"]["permission"] == "reversible_write"
     assert described["ai.run_status"]["permission"] == "read"
@@ -101,7 +101,7 @@ def test_the_ai_capabilities_are_registered_paid_and_the_run_is_a_job():
     assert not refused["ok"] and refused["error"]["code"] == "license_required"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_unknown_run_is_invalid_input():
     registry.register_core()
     answer = invoke(AgentSession(), "ai_run_status", {"run_id": "air_000000000000"})
@@ -111,7 +111,7 @@ def test_an_unknown_run_is_invalid_input():
 # -- runs ----------------------------------------------------------------------------------
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_balance_carries_an_estimate_for_the_open_project(client, gateway, scene):
     body = client.get("/ai/v1/balance?project=qcsynth&kind=qc").get_json()
     assert body["success"] and body["available_micro"] == gateway.credits
@@ -124,7 +124,7 @@ def test_the_balance_carries_an_estimate_for_the_open_project(client, gateway, s
     assert picked["estimates"]["qc"]["units"] == 2
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_run_started_over_http_qcs_the_image_and_the_tab_hears_it(client, gateway, scene):
     view = _tab(client)
     started = _start(client)
@@ -163,7 +163,7 @@ def test_a_run_started_over_http_qcs_the_image_and_the_tab_hears_it(client, gate
     assert "ai.run_session" in capabilities and "qc.session_start" in capabilities
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_credit_pause_tells_the_tab_and_resumes_over_http(client, gateway):
     view = _tab(client)
     original = gateway._messages
@@ -198,7 +198,7 @@ def test_a_credit_pause_tells_the_tab_and_resumes_over_http(client, gateway):
     assert gateway.runs["run_1"]["status"] == "finished"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_running_run_carries_the_snapshot_a_reloaded_tab_rebuilds_its_card_from(client, gateway):
     original = gateway._messages
     seen = {}
@@ -224,7 +224,7 @@ def test_a_running_run_carries_the_snapshot_a_reloaded_tab_rebuilds_its_card_fro
     assert "session" not in done                     # only a running run has one
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_stop_through_control_ends_the_session_at_its_next_packet(client, gateway):
     original = gateway._messages
     state = {"stopped": False}
@@ -246,7 +246,7 @@ def test_stop_through_control_ends_the_session_at_its_next_packet(client, gatewa
     assert len(gateway.calls) == 2, [c["packet_id"] for c in gateway.calls]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_gating_run_over_http_gates_every_marker(client, tmp_path, monkeypatch):
     from tests.autogate_fixtures import make_gating_project
     from tests.test_gating_session import Oracle

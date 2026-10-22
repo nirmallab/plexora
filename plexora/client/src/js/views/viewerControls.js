@@ -243,13 +243,13 @@ class ViewerControls {
      *
      * Outlines and Filled draw a 3-D mask's cells as surfaces, which is
      * Surface Studio's (`volume:surfaces`): without it, or with a 2-D mask,
-     * they are not offered -- not shown greyed, the rule every Paid control
-     * follows (services/paidFeature.js) -- and come back on the plane.
+     * they are not offered -- not shown greyed, the rule every Pro control
+     * follows (services/proFeature.js) -- and come back on the plane.
      */
     volumeModes() {
         if (!this.inVolume()) return null;
         const surfaces = Boolean(window.__plexora?.viewState?.labelsAre3d?.())
-            && Boolean(window.PlexoraPaid?.allows?.("volume:surfaces"));
+            && Boolean(window.PlexoraPro?.allows?.("volume:surfaces"));
         return { none: true, centroids: false, outlines: surfaces, filled: surfaces };
     }
 

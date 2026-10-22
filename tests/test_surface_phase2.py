@@ -182,7 +182,7 @@ def test_routes_export_refine_and_undo_a_built_surface(tmp_path, client, surface
     assert client.post(f"{base}/refine", json={"op": "undo"}).status_code == 400
 
 
-def test_neighbours_and_import_are_paid_and_work(tmp_path, client, surfaces_license):
+def test_neighbours_and_import_are_pro_and_work(tmp_path, client, surfaces_license):
     _project(tmp_path)
     layer_id = client.post("/volume/surf/surfaces", json=ISO).get_json()["layer"]
     assert _settle("surf", layer_id)["status"] == "ready"

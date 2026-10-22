@@ -66,7 +66,7 @@
         surfacesPresent: (ctx) => ctx.surfaceCount > 0,
         surfaceStudio: (ctx) => Boolean(ctx.surfaceStudio),
         // Making a surface or importing a mesh is Plexora 3D; showing and
-        // lighting the surfaces that exist is not (services/paidFeature.js).
+        // lighting the surfaces that exist is not (services/proFeature.js).
         surfaceMaking: (ctx) => ctx.surfaceMaking !== false,
         // The popover's Surfaces row: surfaces to show, or one to make.
         surfaceRow: (ctx) => Boolean(ctx.surfacesAvailable) && (ctx.surfaceCount > 0 || ctx.surfaceMaking !== false),

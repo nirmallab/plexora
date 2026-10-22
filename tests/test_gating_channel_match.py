@@ -18,7 +18,7 @@ import pytest
 from plexora.agent import AgentSession, invoke, jobs, registry
 from tests.autogate_fixtures import make_gating_project
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

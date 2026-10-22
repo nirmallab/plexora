@@ -7,7 +7,7 @@ gate should stay inside.
 
 In gating core rather than under autogate/, because the Free `adjust_gate`
 steps a gate with them, and gating's manual workflow must never depend on the
-automatic-gating (Paid) package: that is what lets the AI half be split out
+automatic-gating (Pro) package: that is what lets the AI half be split out
 into a package of its own later without touching the manual half. autogate/
 re-exports every name here (profile.py, candidates.py), so its modules and
 their tests are unchanged.

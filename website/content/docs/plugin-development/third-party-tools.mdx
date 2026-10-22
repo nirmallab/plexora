@@ -58,7 +58,7 @@ How a call reached Plexora is decided by the transport, never by anything in the
 - `plexora mcp serve --origin bridge --bridge-nonce N`, spawned by a peer that also sets `SPATIALBRIDGE_NONCE=N`, marks its calls `bridge`. A wrong or missing nonce is an ordinary MCP server.
 - Over HTTP, a token from `plexora ai token create --scope bridge` is the bridge; a `read`, `write` or `admin` token is an outside agent (`mcp`); no token on loopback is the bridge.
 
-A Paid capability called with origin `bridge` does not also need the `mcp` add-on -- one product calling another on the user's behalf is not an outside agent -- but its own entitlement still applies. The receipt and the audit line record the origin.
+A Pro capability called with origin `bridge` does not also need the `mcp` grant (external MCP access, off by default) -- one product calling another on the user's behalf is not an outside agent -- but its own entitlement still applies. The receipt and the audit line record the origin.
 
 The bridge never writes into the user's source files: the source-file writes rewrite the whole `obs` group in place, and a peer may hold the same file open. Those need an `admin` token and a server started with `--allow-source-writes`.
 

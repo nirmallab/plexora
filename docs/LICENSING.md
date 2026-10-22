@@ -5,9 +5,12 @@ Plexora has two plans. **Free** is everything Plexora does without a licence:
 projections, sections and the volume view included), every basic plugin's
 manual tools, remote, HPC, Open OnDemand, JupyterHub and notebook viewing, and
 export. It needs no account, no network and no activation, and shows no nag.
-**Paid** unlocks Plexora AI, Plexora 3D (analysis of a stack beyond looking at
-it) and spatial transcriptomics; external MCP access is an add-on. A trial is
-Paid for 30 days (`trial: true` on the certificate), not a third plan.
+**Pro** unlocks Plexora AI, Plexora 3D (analysis of a stack beyond looking at
+it), spatial transcriptomics and Video Studio. A trial is Pro for 30 days
+(`trial: true` on the certificate), not a third plan. External MCP access is
+off by default: it is not part of Pro or its trial and is not sold, and an
+administrator turns it on for a licence on the platform's admin licence page.
+Plexora is licensed by BioCognia (the Licensor in `LICENSE`).
 
 Licences, seats, devices and AI credits live on the BioCognia platform, which
 every BioCognia product (Plexora, SCIMAP Pro) shares. People sign in and buy
@@ -17,42 +20,59 @@ only credentials are a device certificate and a 30-minute AI token. The client
 side is the shared `biocognia` package, a hard dependency; this repository
 keeps only Plexora's gates, its Free semantics and its words.
 
+**Buying** starts on the docs site's pricing page (`links.PRICING_URL`, the
+same path SCIMAP Pro's site has). Plexora Pro is a yearly subscription per
+seat at one flat price per use class, academic or commercial, and both are
+bought self-serve: the total is the seat price times the seats, and a
+subscription renews at the price it was bought at. One seat is an Individual
+account; two or more make a Team, whose owner gives the other seats out in
+the portal. Buy opens Plans & prices in the portal, where Paddle's checkout
+runs. The platform then makes the buyer's seat and emails its licence key,
+which stays under Licences in the portal to show and copy again. Settings ›
+License (on Free and on a trial), `plexora license status` and a Pro
+refusal all point at the page. Its numbers are the platform's: the website
+reads `website/data/pricebook.json`, which `tools/sync_pricing.py --source`
+refreshes from `GET /v1/products/plexora` and `tests/test_pricing_sync.py`
+checks offline. The platform's catalogue id is `plexora.pro`; a trial runs on
+it with `trial: true`.
+
 This page is for people working on Plexora and on plugins. Running the
 platform is in the `biocognia-platform` repository.
 
-## What is Paid
+## What is Pro
 
 Entitlements attach to **capabilities and actions**, never to plugins as such
 and never to plan names. They are colon paths; a grant covers everything
 beneath it (`ai` satisfies `ai:gating:session`; `ai:gating` does not satisfy
 `ai:evidence`). The declared set is `plexora/licensing/manifest.py`. Its four
-roots:
+roots, and the first-party plugins licensed as a whole:
 
 | Root | Shown as | What it unlocks |
 |---|---|---|
 | `ai` | Plexora AI | Every AI path: gating and QC sessions and their analysis, evidence in the viewer, the chat |
 | `volume` | Plexora 3D | Surface Studio (`volume:surfaces`), measuring, tracking and reviewing 3-D cells and regions made from them or carried through planes (`volume:objects`), Cellpose over a stack (`volume:segmentation`), Stack QC and 3-D analysis (`volume:analysis`) |
 | `transcriptomics` | Spatial transcriptomics | Xenium (`transcriptomics:xenium`), Visium and Visium HD (`transcriptomics:visium`): import, transcript and bin layers, gene lists |
-| `mcp` | External MCP access | An add-on (`manifest.ADD_ONS`): Paid tools from an outside agent |
+| `mcp` | External MCP access | Off by default (`manifest.OFF_BY_DEFAULT`): Pro tools from an outside agent |
+| `plugin:video_studio` | Video Studio | The Video Studio plugin as a whole (`manifest.PLUGINS`) |
 
-A purchased or trial licence carries `manifest.paid_default()`, every root but
-the add-ons (`["ai", "volume", "transcriptomics"]`); an administrator adds
-`mcp` by hand (see [External MCP access](#external-mcp-access)) and can switch
-any root, or any plugin sold on its own, on or off per licence on the
-platform's admin licence page.
+A purchased or trial licence carries `manifest.pro_default()`: every root that
+is not off by default, then every first-party plugin (`["ai", "volume",
+"transcriptomics", "plugin:video_studio"]`). An administrator turns `mcp` on
+for a licence (see [External MCP access](#external-mcp-access)) and can switch
+any root or plugin on or off per licence on the platform's admin licence
+page. Nothing outside the Pro default is sold.
 
 `manifest.py` is also the one editable source of Plexora's **product
 manifest** (`manifest.product_manifest()`): the roots `ai`, `volume`,
 `transcriptomics`, `mcp` and `plugin` (for `plugin:<name>`) with their labels
-and sentences, the plugins sold one by one (`manifest.PLUGINS`, today Video
+and sentences, the first-party plugins (`manifest.PLUGINS`, today Video
 Studio as `plugin:video_studio`; the platform shows a switch for each), the
 Free tier,
 the AI modules the `ai` root opens (`gating`, `qc`, `chat`, the modules of
 `plexora/ai/tasks.yaml`) and the trial length. `tools/bioc_sync.py` uploads it,
 with the task registry, to the platform; `--check` fails on drift. Plans and
 prices are the platform's to edit, and only there; `--check` also fails when
-the `plexora.paid` (or `plexora.trial`) plan does not carry exactly
-`paid_default()`.
+the `plexora.pro` plan does not carry exactly `pro_default()`.
 
 | Entitlement | Capabilities |
 |---|---|
@@ -94,13 +114,21 @@ One place for agents: `registry._invoke` calls
 policy and before anything touches a viewer, a project or a job. Every MCP
 transport (stdio and HTTP), the agent HTTP API, jobs at submit and nested
 invokes go through it. MCP follows "option B": every tool is listed on every
-transport, a Paid tool's description says so, and on Free the call answers
+transport, a Pro tool's description says so, and on Free the call answers
 
 ```json
 {"ok": false, "error": {"code": "license_required",
-  "detail": {"entitlement": "ai:gating:session", "plan_required": "paid",
-             "state": "free", "plan": "free", "label": "...", "hint": "..."}}}
+  "detail": {"entitlement": "ai:gating:session", "plan_required": "pro",
+             "state": "free", "plan": "free", "label": "...",
+             "off_by_default": false, "hint": "..."}}}
 ```
+
+`off_by_default` (`manifest.off_by_default()`) is true for what the Pro
+default does not cover: `mcp`, which an administrator turns on for a licence,
+and a third-party plugin (`manifest.third_party()`: a `plugin:<name>` that
+`manifest.PLUGINS` does not list), which comes from its maker. Its refusal,
+hint, MCP tool description and page modal never call it part of Pro, and offer
+no trial and no price, none of which would unlock it.
 
 `validate_scope` answers `can_recommend` with `license_required: [...]`, and
 `server_info` carries `license: {plan, state, entitlements, mcp, hint?}`.
@@ -112,12 +140,12 @@ licence file, loads `cryptography` or waits on anything
 
 Other enforcement points:
 
-- **Tools.** A Paid plugin the licence does not unlock is not on the page at
+- **Tools.** A Pro plugin the licence does not unlock is not on the page at
   all (below). A typed `/panel` URL answers `{"locked": {...}}` with 403, the
   page mounts nothing, and `?tool=` never activates it.
 - **Routes.** `guards.require_entitlement` (a view) and `guard_blueprint` (a
   blueprint, or chosen endpoints) answer 403 with a `license` block.
-- **Data nodes.** Table operations that serve Paid capabilities
+- **Data nodes.** Table operations that serve Pro capabilities
   (`gating.autogate.*`) need an `X-Plexora-Entitlement-Proof` header: an
   HMAC under the node token, minted by the primary only when its licence
   allowed the work (`licensing/tokens.py`). Nodes hold no licence and never
@@ -129,7 +157,7 @@ Other enforcement points:
 
 Deliberately not guarded: the `agent_session/<id>/control` route (the user's
 own stop/pause control over a session), raw `/agent/v1` viewer commands (Free
-infrastructure), and every read of what Paid features produced. A job admitted
+infrastructure), and every read of what Pro features produced. A job admitted
 on a valid licence finishes even if the licence lapses meanwhile, and gates,
 provenance, reports, artifacts and exports stay readable, exportable and
 editable after expiry.
@@ -137,10 +165,10 @@ editable after expiry.
 ## Not granted means not shown
 
 On a licence that does not carry an entitlement, nothing on the page offers
-it: no Tools-menu row, launcher, button, context-menu item, section, "Paid"
+it: no Tools-menu row, launcher, button, context-menu item, section, "Pro"
 badge, greyed control or "needs a licence" message. The server still refuses
-a direct call (above), and everything a Paid feature made stays readable. An
-upsell is a later, separate decision; `PlexoraPaid.explain` and `badge` are
+a direct call (above), and everything a Pro feature made stays readable. An
+upsell is a later, separate decision; `PlexoraPro.explain` and `badge` are
 kept for it and nothing calls them today.
 
 - **Plugins.** `plugins.unlocked(plugin)` decides, per request. `tools_for`,
@@ -150,11 +178,11 @@ kept for it and nothing calls them today.
   its `/panel` still says `locked`, its capabilities are still discovered
   (and refuse), and its `layer_jobs` builders keep serving the layers it made.
 - **Templates.** `licensed(entitlement)` is a template global (a context
-  processor, never raises): a mixed panel wraps a Paid control in
+  processor, never raises): a mixed panel wraps a Pro control in
   `{% if licensed('volume:objects') %}` so the element is absent from the HTML.
 - **The client.** A control built in JavaScript (a context-menu item, the
   magic bar's Through planes, a card action) is not built when
-  `PlexoraPaid.allows(entitlement)` says no. That is a hint from the page's
+  `PlexoraPro.allows(entitlement)` says no. That is a hint from the page's
   render-time licence summary; the server decides. A 403 that still arrives
   (a licence lapsed while the page was open) is a `console.warn` and a quiet
   close, never a modal.
@@ -171,7 +199,7 @@ kept for it and nothing calls them today.
   Nothing is deleted, and the licence brings it all back.
 - **MCP** keeps listing every tool whatever the licence: the list is built
   once per server, the licence can change under it within 15 minutes, and a
-  Paid tool's description says it is Paid. A call answers `license_required`.
+  Pro tool's description says it is Pro. A call answers `license_required`.
 
 `tests/test_license_visibility.py`, `tests/test_license_volume.py` and
 `tests/test_license_transcriptomics.py` pin this.
@@ -182,9 +210,10 @@ An outside coding agent (Claude Code, Codex, Cursor) reaches Plexora through
 `plexora mcp serve` and pays for its own model; Plexora's AI harness (the chat
 bar, gating and QC runs) runs on models billed through the BioCognia AI
 gateway, from the organisation's one credit wallet.
-The two are licensed separately by one add-on, `mcp` (`manifest.ADD_ONS`):
+The two are licensed separately by one grant, `mcp`, which is off by default
+(`manifest.OFF_BY_DEFAULT`) and which an administrator turns on for a licence:
 
-**A Paid capability called over MCP needs its own entitlement and `mcp`.
+**A Pro capability called over MCP needs its own entitlement and `mcp`.
 Free capabilities never look at the licence, on any path.**
 
 `plexora/mcp/server.py Runtime.invoke`, the one function every external tool
@@ -193,9 +222,9 @@ call and resource read passes through, sets `registry.CALL_ORIGIN` to `"mcp"`;
 The in-app harness and the HTTP agent API never set an origin, so they are
 unaffected. The refusal is the usual `license_required` with
 `detail.entitlement == "mcp"` and a hint that never claims the refused tool
-"keeps working". `server_info.license.mcp` says whether Paid tools answer on
+"keeps working". `server_info.license.mcp` says whether Pro tools answer on
 this connection before an agent tries one, and `validate_scope` asked over MCP
-lists them under `license_required`. When more of Plexora becomes Paid, those
+lists them under `license_required`. When more of Plexora becomes Pro, those
 capabilities are MCP-gated by the same rule with no further code.
 
 Tiers are grant sets, named by the platform's plans, never in code:
@@ -203,8 +232,8 @@ Tiers are grant sets, named by the platform's plans, never in code:
 | Tier | `entitlements` |
 |---|---|
 | Plexora application only | `[]` |
-| The Paid default (`paid_default()`) | `["ai", "volume", "transcriptomics"]` |
-| The Paid default + MCP | `["ai", "volume", "transcriptomics", "mcp"]` |
+| The Pro default (`pro_default()`) | `["ai", "volume", "transcriptomics", "plugin:video_studio"]` |
+| The Pro default + MCP | `["ai", "volume", "transcriptomics", "plugin:video_studio", "mcp"]` |
 | AI harness only | `["ai"]` |
 | MCP access only | `["mcp"]` |
 
@@ -212,8 +241,9 @@ An `["mcp"]`-only licence runs every Free tool and none of the `ai:*` ones
 (over MCP or in the app), and the AI token carries no Plexora module, so the
 gateway answers `ai_not_entitled`.
 
-**Granting and revoking.** An administrator sets grants on a licence or a
-seat in the platform's portal or admin. Nothing on the user's machine changes:
+**Granting and revoking.** An administrator turns `mcp` on or off for a
+licence on the platform's admin licence page, and sets other grants on a
+licence or a seat in the portal or admin. Nothing on the user's machine changes:
 `plexora mcp serve` refreshes its certificate at start (3 s at most, failing
 open to the cached certificate) and every `PLEXORA_MCP_LICENSE_RECHECK_S`
 seconds after (default 900, at least 60), on a `plexora-mcp-license` thread,
@@ -229,9 +259,9 @@ recheck sends `client: "mcp"`.
 certificate from before a revocation or grant change (15 minutes online; with
 no network, the certificate's own expiry, at most 90 days), clock rollback
 (the high-water mark) and another machine's certificate (the binding). It does
-not resist editing the installed Python package: that is true of every Paid
+not resist editing the installed Python package: that is true of every Pro
 check in Plexora, and the only hard boundary is the AI gateway, which an
-outside agent using its own model never touches. Executing Paid tools on the
+outside agent using its own model never touches. Executing Pro tools on the
 server, or a signed build, would be the next step.
 
 ## For plugin authors
@@ -241,20 +271,22 @@ to `None`, which is Free.
 
 ```python
 Plugin(name="spatial_stats", label="Spatial Stats",
-       entitlement="plugin:spatial_stats")          # the whole plugin is Paid
+       entitlement="plugin:spatial_stats")          # the whole plugin, licensed as a whole
 
 Plugin(name="mixed", label="Mixed",
-       endpoint_entitlements={"run_model": "ai"})   # a Free plugin with one Paid route
+       endpoint_entitlements={"run_model": "ai"})   # a Free plugin with one Pro route
 
-Capability(name="mixed.analyze", ..., entitlement="ai")   # a Paid action
+Capability(name="mixed.analyze", ..., entitlement="ai")   # a Pro action
 Capability(name="spatial_stats.view", ..., entitlement="free")  # opt back out
 ```
 
 A plugin's entitlement is the default for its capabilities; a capability that
 names its own (or `"free"`) keeps it: the capability-level answer wins. Declare
-new first-party entitlements in `manifest.py`. A shipped plugin sold on its own
-(`plugin:<name>`) is listed in `manifest.PLUGINS`, so staff can grant it; a
-third-party `plugin:<name>` path needs no declaration.
+new first-party entitlements in `manifest.py`. A shipped plugin licensed as a
+whole (`plugin:<name>`) is listed in `manifest.PLUGINS`, which puts it in the
+Pro default and gives staff a switch for it. A third-party `plugin:<name>`
+path needs no declaration: it is not part of Pro, its refusal says it comes
+from its maker, and its maker licenses it (LICENSE, section 7).
 
 ## The licence on a machine
 
@@ -274,7 +306,7 @@ holds no personal data and nothing scientific. An empty grant list unlocks
 nothing.
 
 It carries two end dates. `exp` is the certificate's own, at most 90 days out,
-and is what stops Paid; it is renewed online without anyone noticing.
+and is what stops Pro; it is renewed online without anyone noticing.
 `lic_exp` is the licence's, and is the only date Settings and `plexora
 license status` show as "Valid until". A renewal date appears only when it
 needs acting on: an unrenewed certificate within 14 days of its end (the
@@ -306,12 +338,15 @@ Resolution is lazy and fails open to Free. It runs in this order:
 4. `<config>/biocognia/plexora/license.json` (`user_config_dir("biocognia")`),
    written by `plexora license activate|install` or by Settings > License
 
-The states are `free`, `trial`, `paid_active` (the library's `active`),
-`offline_valid`, `grace`, `expired`, `revoked` and `invalid`. Paid runs in the
-four in the middle. `BIOCOGNIA_OFFLINE=1` forbids every network call from
-every BioCognia product. A clock high water mark (`now = max(time, hwm)`,
-refreshed from the platform's `server_time`) makes winding the clock back
-pointless.
+The states are `free`, `trial`, `pro_active` (the library's `active`),
+`offline_valid`, `grace`, `expired`, `revoked` and `invalid`. Pro runs in the
+four in the middle. `licensing.describe()` says `plan` (`free` or `pro`, never
+the catalogue id, which is `plan_id`) and `paid`, a boolean: whether a licence
+is held, Pro or a trial. `paid` predates the plan's name and is not a plan; it
+keeps its name because every surface and the page read it.
+`BIOCOGNIA_OFFLINE=1` forbids every network call from every BioCognia product.
+A clock high water mark (`now = max(time, hwm)`, refreshed from the platform's
+`server_time`) makes winding the clock back pointless.
 
 The only network activity is a background refresh of a cached certificate.
 It runs only when the last check is more than 7 days old or the certificate
@@ -353,7 +388,7 @@ A licence call sends the credential or certificate, the device binding, a
 coarse platform and scheduler family, and the Plexora version. It never
 sends a hostname, a username, a MAC address, a path, a project, or anything
 about data. Telemetry, when it is on, carries one word, `license_tier`
-(free/paid/trial). The reserved licence identity fields stay unset.
+(free/pro/trial). The reserved licence identity fields stay unset.
 Licensing never reads telemetry, and turning telemetry off changes nothing
 about a licence.
 
@@ -363,13 +398,13 @@ about a licence.
   gives each test its own `BIOCOGNIA_DIR`, sets `BIOCOGNIA_OFFLINE=1`,
   disables the heartbeat, and points the default platform and gateway
   addresses nowhere, so no test can reach the network.
-- `pytest.mark.paid` installs a Paid test licence (`conftest.PAID_TEST_GRANTS`:
-  the Paid default and `mcp`), for suites that exercise Paid capabilities in
-  depth.
+- `pytest.mark.pro` installs a Pro test licence (`conftest.PRO_TEST_GRANTS`:
+  the Pro default, Video Studio included, and `mcp`), for suites that
+  exercise Pro capabilities in depth.
 - `license_issuer` is `biocognia.testing.Issuer` bound to Plexora: a throwaway
   Ed25519 key, the only one trusted during that test. `.issue(**claims)` takes
   `BIOC1` claim names (`ent`, `iat`, `exp`, `offline_until`, ...) and mints the
-  narrowest Paid licence (`ent=["ai"]`); `.install()` writes it as an
+  narrowest Pro licence (`ent=["ai"]`); `.install()` writes it as an
   activation would.
 - `license_service` is `biocognia.testing.FakeService`, a stand-in platform
   with the network switched back on for loopback.
@@ -380,8 +415,8 @@ about a licence.
 
 ## Splitting out `plexora-ai`
 
-Paid AI may later ship as a private package, a plugin under
-`plexora.plugins` (LICENSE §4 permits separate plugins). Steps done so far:
+Pro AI may later ship as a private package, a plugin under
+`plexora.plugins` (LICENSE §7 permits separate plugins). Steps done so far:
 gating's shared mixture maths (`server/mixture.py`) and gate provenance
 (`server/provenance.py`) now live in gating core. The manual half no longer
 imports the automatic half for them, and the old `autogate.*` names are

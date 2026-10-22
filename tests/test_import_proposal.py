@@ -65,7 +65,7 @@ def _by_id(sample):
 
 # -- bundles ---------------------------------------------------------------
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_xenium_run_is_one_sample_with_no_questions(tmp_path):
     """The default flow, and the reason "select a folder" is the primary action.
 
@@ -90,7 +90,7 @@ def test_a_xenium_run_is_one_sample_with_no_questions(tmp_path):
     assert sample.bundles[0]["format"] == "xenium"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_focus_stack_may_be_a_folder(tmp_path):
     """C9. XOA 2.0 writes `morphology_focus/` as a multi-file OME series, and
     the old table was filename-keyed and files only -- so a current run
@@ -103,7 +103,7 @@ def test_the_focus_stack_may_be_a_folder(tmp_path):
     assert morphology.geometry["width"] == 256
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_morphology_row_says_which_of_the_runs_pictures_it_chose(tmp_path):
     """A run ships up to three pictures of one section and Plexora opens one.
 
@@ -117,7 +117,7 @@ def test_the_morphology_row_says_which_of_the_runs_pictures_it_chose(tmp_path):
     assert "focus composite" in morphology.detail
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_z_stack_row_says_how_many_depths_it_set_aside(tmp_path):
     """The one fact that is in the file rather than in its name.
 
@@ -141,7 +141,7 @@ def test_a_z_stack_row_says_how_many_depths_it_set_aside(tmp_path):
     assert "5 focal planes, opens on the middle one" in morphology.detail
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_folder_that_only_wraps_a_run_proposes_the_run(tmp_path):
     """The wrapper directory a download unpacks into.
 
@@ -159,7 +159,7 @@ def test_a_folder_that_only_wraps_a_run_proposes_the_run(tmp_path):
     assert _by_id(sample)["morphology"].reference is True
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_folder_holding_two_runs_is_left_alone(tmp_path):
     """Exactly one, and this is why.
 
@@ -196,7 +196,7 @@ def _boundaries(path, *, count=3, label=True):
     return path
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_runs_cell_boundaries_become_its_segmentation_mask(tmp_path):
     """A Xenium run states its segmentation as polygons rather than pixels.
     Claimed as the sample's mask so the viewer draws it the way it draws every
@@ -217,7 +217,7 @@ def test_the_runs_cell_boundaries_become_its_segmentation_mask(tmp_path):
     assert layers["nucleus_boundaries"].role == "layer"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_boundaries_with_no_numeric_id_are_left_as_a_plain_layer(tmp_path):
     """Numbering them here would invent an order the cell table does not
     share, which colours every cell as its neighbour -- silently."""
@@ -230,7 +230,7 @@ def test_boundaries_with_no_numeric_id_are_left_as_a_plain_layer(tmp_path):
     assert layers["cell_boundaries"].role == "layer"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_run_shipping_a_cell_table_proposes_it_as_the_table(tmp_path):
     pytest.importorskip("pyarrow")
     import pyarrow as pa
@@ -248,7 +248,7 @@ def test_a_run_shipping_a_cell_table_proposes_it_as_the_table(tmp_path):
     assert (cells.kind, cells.role) == ("table", "table")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_expression_matrix_is_recorded_and_said_to_be_unread(tmp_path):
     """Said out loud rather than silently dropped. A run imported with its
     matrix ignored is a sample whose marker tools are mysteriously empty."""
@@ -340,7 +340,7 @@ def test_a_name_hint_never_overrules_the_pixels(tmp_path):
     assert import_proposal.looks_like_label_image(tmp_path / "mask.tif") is False
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_transcripts_alone_get_a_frame_the_size_of_the_data(tmp_path):
     """A sample with no conventional image. The frame's extent comes from the
     parquet's own row-group statistics -- a footer read -- because the frame IS
@@ -415,7 +415,7 @@ def test_a_layer_id_is_not_the_double_extension(tmp_path):
     assert sample.layers[0].id == "slide"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_proposal_serializes_whole(tmp_path):
     """It crosses to the browser as JSON, so every field has to survive."""
     run = _xenium_run(tmp_path / "run")
@@ -652,7 +652,7 @@ def test_a_second_cell_table_is_said_to_be_left_out(tmp_path):
         proposal.warnings
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_every_row_says_which_pick_it_came_from(tmp_path):
     """What Remove needs, and the reason it did nothing for a remote image.
 

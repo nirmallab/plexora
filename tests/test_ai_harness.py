@@ -324,7 +324,7 @@ def test_an_open_circuit_is_waited_out_once_then_the_run_pauses():
     assert {"circuit_open", "provider_unavailable", "provider_rate_limited"} <= set(PAUSE_CODES)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gating, tmp_path):
     oracle = Oracle(gating)
     spoiled = {"done": False}
@@ -541,7 +541,7 @@ def hard(tmp_path):
     return make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     with FakeGateway(oracle_brain(hard)) as gateway:
         trace = TraceStore(tmp_path / "trace.sqlite")
@@ -614,7 +614,7 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     assert [e["event"] for e in events][:2] == ["started", "quoted"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path):
     with FakeGateway(oracle_brain(hard)) as gateway:
         trace = TraceStore(tmp_path / "trace.sqlite")
@@ -663,7 +663,7 @@ def _resume_later(store, session_id, delay=0.4):
                                                      paused_by=None)).start()
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_viewer_pause_parks_the_run_and_the_answer_is_applied_once(gating, tmp_path, monkeypatch):
     from plexora.ai.harness import decision
 
@@ -701,7 +701,7 @@ def _note_or_oracle(info):
     return brain
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_viewer_run_collects_the_set_up_before_any_model_is_called(gating, tmp_path, monkeypatch):
     """2026-10-15: the run went on while the set-up form was still open, its
     model answered "X, log1p off" for the user, and the user's own answer
@@ -742,7 +742,7 @@ def test_a_viewer_run_collects_the_set_up_before_any_model_is_called(gating, tmp
     assert gateway.runs["run_1"]["units"] == len(MARKERS)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_unclear_matrix_alone_is_read_by_a_model_before_the_session(gating, tmp_path, monkeypatch):
     """Everything else settled, the values readable but their shape unclear:
     one cheap call reads the numbers, the reading is checked and applied,
@@ -783,7 +783,7 @@ def test_an_unclear_matrix_alone_is_read_by_a_model_before_the_session(gating, t
     assert "long upper tails" in applied[0]["why"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_stop_while_the_form_is_up_ends_the_run_before_anything_started(gating, tmp_path,
                                                                           monkeypatch):
     from plexora.ai.harness import decision
@@ -808,7 +808,7 @@ def test_a_stop_while_the_form_is_up_ends_the_run_before_anything_started(gating
     assert summary["session_id"] is None and not gateway.calls and not gateway.runs
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_command_line_run_fails_on_an_unfinished_set_up_saying_what(gating, tmp_path):
     import dataclasses
 
@@ -842,7 +842,7 @@ def test_the_command_line_names_a_matrix_with_log1p():
         _expression(args(matrix="X"))
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_take_over_parks_the_run_detached_and_resume_goes_on_in_the_background(gating, tmp_path,
                                                                                 monkeypatch):
     from plexora.agent.sessions import control as session_control
@@ -874,7 +874,7 @@ def test_take_over_parks_the_run_detached_and_resume_goes_on_in_the_background(g
     assert engine.store().control(summary["session_id"])["viewer_detached"] is True
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_stop_while_parked_ends_the_run_with_no_further_call(gating, tmp_path, monkeypatch):
     from plexora.ai.harness import decision
 
@@ -893,7 +893,7 @@ def test_a_stop_while_parked_ends_the_run_with_no_further_call(gating, tmp_path,
     assert calls == 1
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_invalid_answer_gets_one_repair_turn_inside_its_worker(gating, tmp_path):
     oracle = Oracle(gating)
     spoiled = {"done": False}
@@ -925,7 +925,7 @@ def test_an_invalid_answer_gets_one_repair_turn_inside_its_worker(gating, tmp_pa
     assert report["packets"] == summary["packets"] and report["fresh_share"] > 0
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_answer_that_stalls_in_blank_space_is_cut_off_and_repaired(gating, tmp_path, caplog):
     # SayGM, run air_582df209dfec: `"rows":` and then whitespace to max_tokens.
     oracle = Oracle(gating)
@@ -949,7 +949,7 @@ def test_an_answer_that_stalls_in_blank_space_is_cut_off_and_repaired(gating, tm
     assert len(repair[-2]["content"][0]["text"]) < 100      # the blank run is not sent back
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_several_projects_are_gated_in_parallel_with_one_prefix_write(tmp_path):
     registry.discover(["gating"])
     infos = {name: make_gating_project(tmp_path, name=name, markers=("CD3", "CD8"), seed=i)

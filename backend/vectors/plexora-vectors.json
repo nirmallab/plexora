@@ -96,7 +96,7 @@
    "t": "enum",
    "v": [
     "free",
-    "paid",
+    "pro",
     "trial"
    ]
   },

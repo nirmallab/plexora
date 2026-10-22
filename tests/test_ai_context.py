@@ -215,7 +215,7 @@ def _session(session_id):
     return status["result"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_note_is_one_cheap_call_before_the_run_and_becomes_the_sessions_biology(gating, tmp_path):
     answer = reading(normalized_text="A tonsil sample; T cells are of interest.", tissue="tonsil",
                      populations_of_interest=["T cells"])
@@ -246,7 +246,7 @@ def test_a_note_is_one_cheap_call_before_the_run_and_becomes_the_sessions_biolog
     assert status["biology"]["said"]["tissue"] == "tonsil"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_explicit_restriction_gates_only_those_markers(gating, tmp_path):
     answer = reading(mode="selected_markers", requested_markers=["CD3", "CD8"])
     with FakeGateway(brain_with(answer, gating)) as gateway:
@@ -257,7 +257,7 @@ def test_an_explicit_restriction_gates_only_those_markers(gating, tmp_path):
     assert gateway.runs["run_1"]["units"] == 2
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_an_unreadable_reply_passes_the_note_on_as_written(gating, tmp_path):
     with FakeGateway(brain_with("not json at all", gating)) as gateway:
         events = []
@@ -307,7 +307,7 @@ def test_corrections_given_as_entries_or_as_an_object_settle_alike():
         assert (out.tissue, out.disease) == ("skin", "melanoma")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_refused_note_is_traced_and_told_with_why(gating, tmp_path):
     oracle = Oracle(gating)
 
@@ -331,7 +331,7 @@ def test_a_refused_note_is_traced_and_told_with_why(gating, tmp_path):
     assert row["task"] == "gating.biological_context"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_restriction_to_markers_the_panel_lacks_stops_before_the_session(gating, tmp_path):
     answer = reading(mode="selected_markers", requested_markers=["SOX10"])
     with FakeGateway(brain_with(answer, gating)) as gateway:

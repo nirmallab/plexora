@@ -10,7 +10,7 @@
  *   Hide · Isolate · Show all · In planes (the plane through it, centred)
  *   · Neighbours within … (distances, and contact areas for cells)
  *
- * Neighbours are Paid like the rest of Surface Studio; the card itself is a
+ * Neighbours are Pro like the rest of Surface Studio; the card itself is a
  * read and stays open on any plan.
  *
  * Classic script: `window.PlexoraSurfaceInspect`.
@@ -127,7 +127,7 @@ window.PlexoraSurfaceInspect = (function () {
         const list = el("ol", "plx-surf-near-list");
         near.append(el("span", null, "Within"), within, el("span", "plx-surf-unit", "µm"), go);
         // Spatial neighbours are Plexora 3D: absent without it.
-        if (window.PlexoraPaid?.allows?.("volume:surfaces")) {
+        if (window.PlexoraPro?.allows?.("volume:surfaces")) {
             card.append(near, list);
             go.addEventListener("click", () => neighbours(id, object, Number(within.value) || 5, list));
         }

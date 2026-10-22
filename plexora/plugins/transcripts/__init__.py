@@ -29,7 +29,7 @@ Deliberately NOT here: cell boundaries, spots and bins. Those are core rendering
 primitives too, and a plugin that owned them would be a plugin every spatial
 project had to install to see its own data.
 
-**Paid, as `transcriptomics:xenium`** -- a child of the spatial-transcriptomics
+**Pro, as `transcriptomics:xenium`** -- a child of the spatial-transcriptomics
 root (plexora/licensing/manifest.py). Not granted means not shown: on a licence
 without it the importer does not detect a Xenium run or a transcripts parquet
 (`import_proposal._licensed`), this section is not mounted and its scripts are
@@ -108,6 +108,6 @@ PLUGIN = Plugin(
     # evict whichever plugin legitimately holds it -- the shader has one range
     # table -- in exchange for nothing.
     owns_cell_layer=False,
-    # Spatial transcriptomics is Paid (see the module docstring).
+    # Spatial transcriptomics is Pro (see the module docstring).
     entitlement="transcriptomics:xenium",
 )

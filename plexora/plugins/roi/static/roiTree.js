@@ -744,7 +744,7 @@ class RoiTree {
             // Carrying a region through planes and making it an ellipsoid are
             // Plexora 3D: without it they are not offered. Flattening a 3-D
             // region, and limiting a flat one to planes, stay.
-            const in3d = Boolean(window.PlexoraPaid?.allows?.("volume:objects"));
+            const in3d = Boolean(window.PlexoraPro?.allows?.("volume:objects"));
             if (feature.solid) {
                 // Its planes come from its shape: reshaped by carrying again,
                 // or made flat -- never limited to planes as a flat one is.

@@ -1,0 +1,44 @@
+---
+title: "Free and Pro"
+description: "What Plexora does without a licence, what Plexora Pro adds, how to buy it, and how to try it free for 30 days."
+aliases: ["paid", "plans", "pro", "trial", "free and paid"]
+---
+
+Plexora has two plans. **Free** is everything Plexora does without a licence, for as long as you like. **Plexora Pro** adds Plexora's AI, Plexora 3D, spatial transcriptomics and Video Studio. A 30-day trial gives you everything in Pro with no card.
+
+## Free
+
+2-D and 3-D multiplexed images and their cell tables: z-stacks and time series with their planes, projections, sections and volume view, and the manual tools of cell exploration, figures, gating, quality control and regions. Remote and HPC viewing, notebooks and export. Free needs no account, no sign-up and no network, and it shows no nag. Nothing ever stops working: when a Pro licence or a trial ends, Plexora goes back to Free, and everything you made stays yours.
+
+## Pro
+
+- **Plexora AI.** AI agents that act on your data: guided gating sessions, AI quality control, and an assistant inside Plexora that answers questions about your projects. AI runs on your account's AI credits.
+- **Plexora 3D.** Analysis of a z-stack or time series beyond looking at it: surfaces (Surface Studio), measuring and tracking cells in 3-D, segmenting a whole stack, Stack QC, 3-D colocalisation, and regions made from cells or carried through planes.
+- **Spatial transcriptomics.** Importing and working with Xenium, Visium and Visium HD runs: transcript and bin layers and gene lists.
+- **[Video Studio](/docs/plugins/video-studio).** Videos made from the viewer: z-stack rotations, plane sweeps, time-lapses, zooms and channel reveals.
+
+**External MCP access** is off by default, and is not part of Pro or the trial. It lets an outside coding agent such as Claude Code, Codex or Cursor use Plexora's Pro features over the Model Context Protocol, with that agent's own model. An administrator can turn it on for your licence.
+
+Features your licence does not include do not appear in Plexora at all.
+
+Pro is a yearly subscription with one price per seat, academic or commercial: the total is that price times the number of seats. Each seat comes with 1,000 AI credits a year. Buy more credits whenever you need them.
+
+Accounts, licences, seats and AI credits live on **BioCognia**, the platform Plexora shares with the lab's other tools, at [account.biocognia.com](https://account.biocognia.com). Plexora itself never sees a password, an email address or a card number.
+
+## Buy Pro
+
+Choose academic or commercial and the number of seats on the [pricing page](/pricing), then **Buy**. You pay by card through Paddle at account.biocognia.com, and your **licence key** (`BIOC-XXXX-XXXX-XXXX-XXXX`) arrives by email. Paste it in **Settings › License › Licence key**, or run `plexora license activate` with it. The key is always under Licences at account.biocognia.com to copy again. One seat is an individual account; two or more make your account a team you can invite people to. See [Buying Plexora Pro](/docs/licensing/buying) and [Your licence key](/docs/licensing/licence-key).
+
+## Start a free trial
+
+A 30-day trial of everything in Pro, with 100 AI credits. No card. There is one trial per email address.
+
+The quickest way is from the computer you want to use:
+
+```bash
+plexora license activate --trial
+```
+
+Approve the code in your browser and the trial starts on that computer. You can also **start on the web** at [account.biocognia.com](https://account.biocognia.com/portal/trial?product=plexora). Sign in with your email address. A one-time sign-in link arrives (there is no password), and your first sign-in creates your account. Choose **Start the trial**, then run `plexora license activate` on your computer, or choose **Connect this device** in Settings › License.
+
+`plexora license status` shows the trial and when it ends. A trial has no grace period and cannot be used for an offline licence file.

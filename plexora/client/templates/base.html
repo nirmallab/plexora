@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_area_drop">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_pro">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -105,7 +105,7 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261014_import_progressive"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261021_pro"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261018_display_contrast3"></script>
     {# After viewerSidebar (whose class it instantiates) and before
@@ -134,7 +134,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261021_explorer_waiting" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_native_drop" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261021_pro" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -209,10 +209,10 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
-    {# The Paid-feature modal and badge (PlexoraPaid). After confirmDialog,
+    {# The Pro-feature modal and badge (PlexoraPro). After confirmDialog,
        which it opens. Inert until a locked feature is asked for: no banner,
        no timer, no request at load. #}
-    <script src="{{ data.base_url }}/client/src/js/services/paidFeature.js?v=20261012_license_tiers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/proFeature.js?v=20261021_mcp_off" defer></script>
     <!-- Drags inside the page by pointer, for the desktop app's window only
          (its native file drop swallows HTML5 drag events on Windows). -->
     <script src="{{ data.base_url }}/client/src/js/services/pointerDrag.js?v=20260925_desktop_app" defer></script>
@@ -228,8 +228,8 @@
        confirmDialog and toast, which both use; <dialog>s of their own with
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20260926_help_menu" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260927_docs" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261014_import_progressive" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261021_mcp_off" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261021_pro" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -243,7 +243,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261021_native_drop" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261021_pro" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

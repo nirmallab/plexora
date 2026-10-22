@@ -652,7 +652,7 @@ def service(tmp_path):
     conversations.set_service(None)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_chat_capabilities_drive_a_conversation(caps, service):
     from plexora.agent import AgentSession, invoke
 
@@ -674,7 +674,7 @@ def test_the_chat_capabilities_drive_a_conversation(caps, service):
     assert [c["session_id"] for c in listed] == [cid]
 
 
-def test_the_chat_capabilities_are_paid():
+def test_the_chat_capabilities_are_pro():
     from plexora.agent import AgentSession, invoke
 
     registry.discover([])
@@ -682,7 +682,7 @@ def test_the_chat_capabilities_are_paid():
     assert not refused["ok"] and refused["error"]["code"] == "license_required"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_approving_a_delete_needs_the_users_policy(caps, service):
     from plexora.agent import AgentSession, invoke
 
@@ -723,7 +723,7 @@ def http():
     return plexora.app.test_client()
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_blueprint_starts_sends_streams_and_approves(caps, service, http):
     with FakeGateway(_destructive_brain()) as gateway:
         made = service(gateway)
@@ -753,7 +753,7 @@ def test_the_blueprint_starts_sends_streams_and_approves(caps, service, http):
     assert bad.status_code == 400
 
 
-def test_the_blueprint_is_paid(http):
+def test_the_blueprint_is_pro(http):
     refused = http.post("/ai/v1/conversations", json={})
     assert refused.status_code == 403
     assert refused.get_json()["license"]["code"] == "license_required"
@@ -781,7 +781,7 @@ def test_plexora_ai_chat_is_a_repl(caps, tmp_path, monkeypatch, capsys):
     assert "gone" in capsys.readouterr().out
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_undo_chip_route_undoes_a_write_the_conversation_made(caps, service, http):
     brain = scripted(Reply("", [{"name": "tc_write", "input": {"value": 5}}]), Reply("set"), Reply("noted"))
     with FakeGateway(brain) as gateway:

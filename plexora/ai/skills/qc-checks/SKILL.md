@@ -17,7 +17,7 @@ nucleus by which cycle, and which labels have no nucleus. The Background ROI
 is the glass outside the tissue (the tissue grown a little), written as one
 region whose cells are noted, never excluded.
 
-Everything here is Free except `sample_qc_examples` (Paid): the whole loop
+Everything here is Free except `sample_qc_examples` (Pro): the whole loop
 works without a licence, with a narrower look.
 
 ## When to use

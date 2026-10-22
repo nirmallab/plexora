@@ -122,7 +122,7 @@ def get_state():
 #: Giving a flat region a shape through a z-stack's planes -- carried,
 #: an ellipsoid, built from cells -- is Plexora 3D (plexora/licensing/
 #: manifest.py). Editing, flattening, restoring or deleting a region that is
-#: already 3-D stays Free: it is something a Paid feature made.
+#: already 3-D stays Free: it is something a Pro feature made.
 SOLID_ENTITLEMENT = "volume:objects"
 
 

@@ -55,3 +55,12 @@ def test_updater_uses_the_same_repository():
     from plexora import updates
 
     assert updates.GITHUB_REPO == links.GITHUB_REPO
+
+
+def test_the_pricing_url_is_a_page_the_site_builds():
+    """`PRICING_URL` is where Settings, `plexora license status` and a refusal
+    send someone to buy Pro; the site's Buy then names this product."""
+    assert links.PRICING_URL == f"{links.DOCS_URL}pricing/"
+    assert (ROOT / "website" / "app" / "(home)" / "pricing" / "page.tsx").exists()
+    site = (ROOT / "website" / "lib" / "site.ts").read_text(encoding="utf-8")
+    assert "buyUrl = `${accountUrl}/portal/billing?product=plexora`" in site
