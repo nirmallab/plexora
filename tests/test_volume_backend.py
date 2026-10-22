@@ -345,6 +345,48 @@ def test_a_volumes_node_requests_name_the_view_and_the_reading(monkeypatch):
     assert sent[-1][1].endswith("quantization?channel_index=1&view=z2&zs=depth&wc=volume")
 
 
+def test_a_volumes_mini_map_overview_asks_the_node_for_the_view_on_screen(monkeypatch):
+    """The mini-map of a node-backed stack shows the plane or projection on
+    screen -- in 3-D, the cut's maximum -- not always the default plane."""
+    from plexora.server.providers.node import NodeImageProvider
+
+    sent = _capture(monkeypatch, headers={"X-Plexora-View": "z0-3max"})
+    provider = NodeImageProvider(_binding()).with_channels(["A", "B", "C"], 1024, 1024) \
+        .with_volume(_volumetric_spec())
+    provider._geometry = _volume_geometry()
+    assert provider.overview("B", view="z0-3max") == b"tile"
+    assert sent[-1][1].endswith("overview?channel_index=1&view=z0-3max&zs=depth")
+
+
+def test_a_mini_map_overview_at_a_view_the_stack_lacks_is_the_default_plane(monkeypatch):
+    """The map is decoration: a view the node cannot read is its default
+    plane, never an error."""
+    from plexora.server.providers.node import NodeImageProvider
+
+    sent = _capture(monkeypatch, headers={"X-Plexora-View": "z2"})
+    provider = NodeImageProvider(_binding()).with_channels(["A", "B", "C"], 1024, 1024) \
+        .with_volume(_volumetric_spec())
+    provider._geometry = _volume_geometry()
+    assert provider.overview("A", view="z9") == b"tile"
+    assert sent[-1][1].endswith("overview?channel_index=0&view=z2&zs=depth")
+
+
+def test_the_primary_hands_a_node_backed_overview_its_view(monkeypatch):
+    """`generate_channel_overview` forwards the view to the node provider
+    rather than dropping it (the map then showed the default plane always)."""
+    asked = []
+
+    class Remote:
+        def overview(self, channel, view=None):
+            asked.append((channel, view))
+            return b"webp"
+
+    monkeypatch.setattr(data_model, "ensure_loaded", lambda name: None)
+    monkeypatch.setattr(data_model, "_remote_image", lambda: Remote())
+    assert data_model.generate_channel_overview("vol", "A", "z1-3max") == b"webp"
+    assert asked == [("A", "z1-3max")]
+
+
 def test_a_section_carries_the_anisotropy_the_primary_draws_it_at(monkeypatch):
     from plexora.server.providers.node import NodeImageProvider
 
@@ -525,6 +567,23 @@ def test_the_viewer_routes_serve_a_nodes_views(volume_node, client):
     assert np.array_equal(np.asarray(Image.open(io.BytesIO(response.data))),
                           volume_node.data[0, 0, 3])
     assert client.get("/generated/data/remote/slide_0/0/0_0.png?view=z9").status_code == 400
+
+
+def test_a_nodes_mini_map_shows_the_plane_and_the_cut_on_screen(volume_node, client):
+    """The mini-map of a node-backed stack: a plane's own overview (not the
+    default plane's, which is what a plane's statistics use), and a cut's
+    maximum -- as a local stack's map is drawn."""
+    data_model.load_datasource("remote", reload=True)
+    one = client.get("/generated/overview/remote/A?view=z1")
+    three = client.get("/generated/overview/remote/A?view=z3")
+    cut = client.get("/generated/overview/remote/A?view=z0-4max")
+    assert one.status_code == three.status_code == cut.status_code == 200
+    assert one.data != three.data
+    assert one.headers["ETag"] != three.headers["ETag"]
+    assert cut.data not in (one.data, three.data)
+    # Scrubbing through the stack keeps a few planes, not all of them.
+    for z in range(5):
+        assert client.get(f"/generated/overview/remote/A?view=z{z}").status_code == 200
 
 
 def test_a_node_refuses_a_view_it_does_not_have(volume_node):

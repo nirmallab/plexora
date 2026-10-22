@@ -394,3 +394,101 @@ def test_the_probe_catches_a_note_that_turns_with_the_tissue(tmp_path):
                       "        orient.appendChild(note);\n        stage.appendChild(orient);")
     returncode, result = _run(mutated)
     assert returncode != 0
+
+
+# -- a z-stack in 3-D ------------------------------------------------------
+#
+# In 3-D the main picture is the volume renderer's, not the tiles': the map
+# shows the cut as a maximum over the planes it keeps, its indicator is the
+# area square, and a drag on it slides the area. Every mutation below still
+# draws a perfectly ordinary map -- of the wrong plane, or with the wrong
+# rectangle on it -- which is why each is pinned.
+
+def _fails_on(tmp_path, old, new, words):
+    returncode, result = _run(_mutate(tmp_path, old, new))
+    assert returncode != 0
+    assert any(words in f["name"] for f in result["failures"]), result["failures"]
+
+
+def test_the_probe_catches_3d_showing_the_frozen_plane(tmp_path):
+    """`spec()` in 3-D answers with the plane the tiles froze on when the user
+    pressed V -- a real plane, so a real map, of nothing on screen."""
+    _fails_on(tmp_path, "if (state.isVolume?.()) return this._volumeToken(state);", "",
+              "a crop of planes 2-6")
+
+
+def test_the_probe_catches_a_cut_spelled_with_an_exclusive_bound(tmp_path):
+    """The server's tokens are inclusive (`z0-9max` for ten planes). One off is
+    either a bad request or a map one plane short, and a different cache entry
+    from the one `zmax` canonicalises to."""
+    _fails_on(tmp_path, "return `${t}z${lo}-${hi - 1}max`;", "return `${t}z${lo}-${hi}max`;",
+              "the whole stack, spelled")
+
+
+def test_the_probe_catches_a_whole_stack_outline_left_showing(tmp_path):
+    """With no area the outline would be the frame itself -- and a handle that
+    moves nothing."""
+    _fails_on(tmp_path, 'style.display = area ? "" : "none";', 'style.display = "";',
+              "the whole stack: no indicator")
+
+
+def test_the_probe_catches_a_3d_map_turned_with_the_tiles(tmp_path):
+    """OSD's rotation turns the tiles under the 3-D canvas, not the volume."""
+    _fails_on(tmp_path, "if (this._inVolume()) return { degrees: 0, flipped: false };", "",
+              "the map is upright")
+
+
+def test_the_probe_catches_an_area_slid_off_the_image(tmp_path):
+    """A square half off the stack is a smaller square drawn, a different
+    texture request, and a cut that no longer fits it."""
+    _fails_on(tmp_path,
+              "Math.round(Math.min(Math.max(value, lo), lo + Math.max(0, span - size)));",
+              "Math.round(value);", "corner click")
+
+
+def test_the_probe_catches_a_crop_left_free_to_leave_its_area(tmp_path):
+    """Inside Crop to area, the square is a crop of the AREA: past its edge
+    there is nothing loaded to draw."""
+    _fails_on(tmp_path,
+              'const bounds = drawn.kind === "crop" && area ? area : { x: 0, y: 0, width, height };',
+              "const bounds = { x: 0, y: 0, width, height };", "stops at the area's edge")
+
+
+def test_the_probe_catches_the_crop_square_moved_as_an_area(tmp_path):
+    """The Area tool's square is a crop with no area under it; sliding an
+    area instead moves nothing that is drawn."""
+    _fails_on(tmp_path, 'if (drawn.kind === "crop") {', "if (false) {", "centres the crop")
+
+
+def test_the_probe_catches_a_crop_drag_that_is_not_one_gesture(tmp_path):
+    """Saved only at the end, and named, so the controller makes one undo
+    entry of a drag rather than one per pointer move."""
+    _fails_on(tmp_path,
+              'cutter.set({ inspect: { crop } }, { save: final, gesture: "mini-map" });',
+              "cutter.set({ inspect: { crop } }, { save: true });", "still under way")
+
+
+def test_the_probe_catches_a_slide_that_bypasses_the_cut_controller(tmp_path):
+    """Through the controller the slide carries the cut with it and undoes as
+    one step, as the renderer's own Shift-drag does."""
+    _fails_on(tmp_path, "cutter.slideArea(next, { final });", "state.set({ volume: { area: next } });",
+              "centres the area")
+
+
+def test_the_probe_catches_a_slide_never_sent_as_final(tmp_path):
+    """Final is what saves the area and closes the undo entry."""
+    _fails_on(tmp_path, "this._moveArea(point.u + drag.u, point.v + drag.v, true);", "",
+              "sends the slide as final")
+
+
+def test_the_probe_catches_a_3d_wheel_that_zooms_the_tiles(tmp_path):
+    _fails_on(tmp_path,
+              "// the Area tool's grips'.\n        if (this._inVolume()) return;",
+              "// the Area tool's grips'.", "the wheel zooms nothing")
+
+
+def test_the_probe_catches_a_square_that_waits_for_the_settle(tmp_path):
+    """The renderer's own slide moves the area a frame before the view settles;
+    an indicator that waited would trail the hand."""
+    _fails_on(tmp_path, "if (this.expanded && this._inVolume()) this._syncIndicator();", "",
+              "moves the indicator at once")

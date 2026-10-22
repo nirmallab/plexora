@@ -276,6 +276,9 @@ class FigureBuilderApi {
             w: String(Math.round(params.w)), h: String(Math.round(params.h)),
             out_w: String(Math.round(params.out_w)), out_h: String(Math.round(params.out_h)),
         });
+        // A z-stack panel's plane or projection (`z12`, `z4-19max`); absent
+        // reads the image's default plane, which is all a planar image has.
+        if (params.view) query.set("view", params.view);
         let response;
         try {
             response = await fetch(

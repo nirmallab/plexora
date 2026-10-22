@@ -49,6 +49,15 @@ and Quick Edit asks for one region per visible channel on every framing change
 -- so a user panning across a slide was paying that open several times a
 second, for the same file, having changed nothing about it. `_reader` keeps a
 few open instead. See its docstring for what keeps them honest.
+
+## A z-stack is read at the panel's view
+
+A panel captured on a z-stack records which plane or projection it showed
+(`scene.plugins.volume.state`), and Quick Edit reads at that view's token
+(`z12`, `z4-19max`, ...: `server/volume/viewspec.py`). One reader per
+(datasource, view), the way core's `ReaderShelf` keys them, because a
+`SourceImage` is opened AT a view. Scrubbing through planes therefore cycles
+readers through the LRU below; a plane reader is cheap to open again.
 """
 
 from __future__ import annotations
@@ -78,7 +87,8 @@ STATS_SAMPLE = 512
 #: a zarr store, not pixels, so this is small on purpose.
 READER_LIMIT = 4
 
-#: datasource -> _Reader, least-recently-used first.
+#: datasource, or "datasource\0view" for a z-stack view -> _Reader,
+#: least-recently-used first.
 _READERS: "OrderedDict[str, _Reader]" = OrderedDict()
 
 #: Guards the map above, and nothing else. Never held across a read.
@@ -124,22 +134,27 @@ def _image_path(datasource):
 
 
 @contextlib.contextmanager
-def _reader(datasource):
-    """The open reader for a datasource, made once and kept.
+def _reader(datasource, view=""):
+    """The open reader for a datasource (at a z-stack view), made once and kept.
 
     Exclusive for the duration of the block: callers may read concurrently
-    across datasources but never within one -- see `_Reader`.
+    across datasources but never within one -- see `_Reader`. A token the
+    image cannot be read at is `SourceImage`'s `RenderError`, raised before
+    anything is held.
     """
+    view = str(view or "").strip()
+    key = f"{datasource}\0{view}" if view else datasource
     with _READERS_LOCK:
-        held = _READERS.pop(datasource, None)
+        held = _READERS.pop(key, None)
         if held is not None and held.path != _image_path(datasource):
             held.source.close()
             held = None
         if held is None:
             path = _image_path(datasource)
-            held = _Reader(SourceImage(datasource), path)
+            source = SourceImage(datasource, view=view) if view else SourceImage(datasource)
+            held = _Reader(source, path)
         # Re-inserted at the end, which is what makes this an LRU.
-        _READERS[datasource] = held
+        _READERS[key] = held
         while len(_READERS) > READER_LIMIT:
             _, evicted = _READERS.popitem(last=False)
             # Waited for rather than closed underneath: a reader in the middle
@@ -162,8 +177,11 @@ def close_readers():
                 held.source.close()
 
 
-def read_region(datasource, channel_key, box, out_size):
+def read_region(datasource, channel_key, box, out_size, view=""):
     """One channel of one region, resampled to `out_size`.
+
+    `view` is a z-stack view token (`z12`, `z4-19max`); empty reads the
+    image's default plane, which is all a planar image has.
 
     `box` is (x, y, w, h) in FULL-RESOLUTION image pixels -- the same
     coordinate system a panel's `scene.viewport` is in, so a caller never has
@@ -183,7 +201,7 @@ def read_region(datasource, channel_key, box, out_size):
             f"a region of {out_w}x{out_h} is past what one read returns "
             f"(max {MAX_OUT_PIXELS} a side)")
 
-    with _reader(datasource) as source:
+    with _reader(datasource, view) as source:
         index = source.channel_index(channel_key)
         if index is None:
             raise RenderError(f"{channel_key!r} is not a channel of this image")
@@ -227,6 +245,10 @@ def channel_stats(datasource, channel_key):
     Read from the COARSEST pyramid level: the percentiles of a whole slide are
     the same to within noise at any level, and reading level 0 to draw a slider
     would be a gigabyte for a number the user is about to drag past anyway.
+
+    View-less on a z-stack: the default plane's range is a fine domain for a
+    slider that then windows any plane or projection, and one summary per
+    channel keeps a plane scrub from re-reading it.
     """
     with _reader(datasource) as source:
         index = source.channel_index(channel_key)

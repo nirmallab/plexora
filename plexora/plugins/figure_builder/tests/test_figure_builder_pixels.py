@@ -388,3 +388,192 @@ def test_pixel_info_for_a_channel_that_is_gone_is_400(client, figure):
     response = client.get(
         f"{API}/figures/{figure}/sources/src_1/pixel_info?channel=GONE")
     assert response.status_code == 400
+
+
+# -- a z-stack panel, at the view it was captured on -----------------------
+#
+# A panel captured on plane 3 of a stack, or on a projection over planes 1-3,
+# records that view (`scene.plugins.volume.state`). Read without it, Quick Edit
+# and the export both showed the stack's DEFAULT plane -- a picture the user
+# never captured, with nothing on it to say so.
+
+STACK_DEPTH = 5
+
+
+@pytest.fixture
+def stack_figure(tmp_path, monkeypatch):
+    """A registered three-channel z-stack (5 planes, two levels) and a figure
+    whose source is it. Plane z of channel c is about (c + 1) * 1000 + z * 10
+    (tests/volume_fixtures.value), so a read says which plane it came from."""
+    from plexora.datasource import register_image_datasource
+    from tests import volume_fixtures as vf
+
+    use_data_root(monkeypatch, tmp_path)
+    path, _ = vf.write_ome_volume(tmp_path / "vol.ome.tif", axes="CZYX", channels=3,
+                                  depth=STACK_DEPTH, levels=2)
+    entry = register_image_datasource("vol", path)
+    key = entry["imageData"][0]["src"].rstrip("/").rsplit("/", 1)[-1]
+
+    figure_id = repository.create("Stack figure")
+    repository.apply(figure_id, 0, [
+        {"op": "add_source", "source": {
+            "source_id": "src_1", "kind": "plexora_project", "datasource": "vol",
+            "image": {"width": 80, "height": 96}, "channels": [{"key": key}]}},
+    ])
+    yield {"figure": figure_id, "key": key}
+    pixels.close_readers()
+
+
+def _plane_value(array):
+    """The plane's own value, the 0-6 ripple of `vf.value` taken off."""
+    return float(np.median(np.asarray(array, dtype=np.float64)))
+
+
+def _panel(state):
+    return {"source_id": "src_1",
+            "scene": {"plugins": {"volume": {"version": 1, "state": state}}}}
+
+
+def test_a_stack_is_read_at_the_plane_asked_for(stack_figure):
+    key = stack_figure["key"]
+    low, _ = pixels.read_region("vol", key, (0, 0, 80, 96), (20, 24), view="z0")
+    high, _ = pixels.read_region("vol", key, (0, 0, 80, 96), (20, 24), view="z4")
+    assert _plane_value(low) == pytest.approx(1003, abs=4)
+    assert _plane_value(high) == pytest.approx(1043, abs=4)
+
+
+def test_a_stack_is_read_at_a_projection(stack_figure):
+    """A MIP over planes 1-3 is plane 3's values (each plane is brighter than
+    the one before)."""
+    key = stack_figure["key"]
+    array, _ = pixels.read_region("vol", key, (0, 0, 80, 96), (20, 24), view="z1-3max")
+    assert _plane_value(array) == pytest.approx(1033, abs=4)
+
+
+def test_a_view_the_stack_does_not_have_is_named(stack_figure):
+    with pytest.raises(render.RenderError):
+        pixels.read_region("vol", stack_figure["key"], (0, 0, 80, 96), (20, 24), view="zz")
+
+
+def test_each_view_has_a_reader_of_its_own(stack_figure, monkeypatch):
+    """Keyed like core's ReaderShelf: a SourceImage is opened AT a view, so a
+    reader for plane 0 cannot serve plane 4."""
+    opened = []
+    real = pixels.SourceImage
+
+    def counted(datasource, view=None):
+        opened.append(view)
+        return real(datasource, view=view)
+
+    monkeypatch.setattr(pixels, "SourceImage", counted)
+    key = stack_figure["key"]
+    for view in ("z0", "z4", "z0"):
+        pixels.read_region("vol", key, (0, 0, 80, 96), (20, 24), view=view)
+    assert opened == ["z0", "z4"]
+
+
+def test_reading_a_plane_never_loads_a_datasource(stack_figure, monkeypatch):
+    def explode(*args, **kwargs):  # pragma: no cover - the point is not calling it
+        raise AssertionError("Quick Edit must not load a datasource")
+
+    monkeypatch.setattr(data_model, "load_datasource", explode)
+    pixels.read_region("vol", stack_figure["key"], (0, 0, 80, 96), (20, 24), view="z2")
+
+
+def test_the_route_reads_at_the_view(stack_figure):
+    if plugin_registry.find(plexora.app, "figure_builder") is None:  # pragma: no cover
+        pytest.skip("figure_builder is not installed")
+    client = plexora.app.test_client()
+    url = (f"{API}/figures/{stack_figure['figure']}/sources/src_1/pixels"
+           f"?channel={stack_figure['key']}&x=0&y=0&w=80&h=96&out_w=20&out_h=24")
+    response = client.get(url + "&view=z4")
+    assert response.status_code == 200
+    array = np.frombuffer(response.data, dtype="<u2")
+    assert _plane_value(array) == pytest.approx(1043, abs=4)
+    assert client.get(url + "&view=zz").status_code == 400
+
+
+@pytest.mark.parametrize("state, token", [
+    ({"mode": "plane", "z": 12}, "z12"),
+    ({"mode": "plane", "z": 12, "t": 3}, "t3z12"),
+    ({"mode": "plane", "z": 0, "t": 0}, "z0"),
+    ({"mode": "slab", "z": 7, "slab": {"z0": 4, "z1": 19, "op": "max"}}, "z4-19max"),
+    ({"mode": "slab", "slab": {"z0": 4, "z1": 19, "op": "pct", "q": 90}}, "z4-19p90"),
+    ({"mode": "slab", "slab": {"z0": 4, "z1": 19, "op": "pct", "q": 99.5}}, "z4-19p99.5"),
+    ({"mode": "slab", "t": 2, "slab": {"z0": 0, "z1": 3, "op": "mean"}}, "t2z0-3mean"),
+    # A 3-D panel exports from its stored picture; nothing is read at a token.
+    ({"mode": "volume", "z": 4}, ""),
+    ({}, ""),
+])
+def test_a_panels_view_token_is_spelled_as_the_viewer_spells_it(state, token):
+    from plexora.plugins.figure_builder.server import export
+
+    assert export.panel_view_token(_panel(state)) == token
+
+
+def test_a_panel_with_no_recorded_view_has_no_token():
+    from plexora.plugins.figure_builder.server import export
+
+    assert export.panel_view_token({"scene": {}}) == ""
+    assert export.panel_view_token({"scene": {"plugins": {"volume": "junk"}}}) == ""
+
+
+def _stack_document(state):
+    return {"sources": {"src_1": {"kind": "plexora_project", "datasource": "vol"}}}, \
+        _panel(state)
+
+
+def test_the_export_reads_a_plane_panel_at_its_plane(stack_figure):
+    """The exported figure used to show the stack's default plane (z2 here)
+    whatever plane the panel was captured on."""
+    from plexora.plugins.figure_builder.server import export
+
+    document, panel = _stack_document({"mode": "plane", "z": 4})
+    cache = {}
+    try:
+        source, stale = export._source_for(document, panel, cache)
+        assert not stale
+        index = source.channel_index(stack_figure["key"])
+        plane, _ = source.read(index, 0, (0, 0, 80, 96))
+        assert _plane_value(plane) == pytest.approx(1043, abs=4)
+    finally:
+        for held in cache.values():
+            if held is not None:
+                held.close()
+
+
+def test_a_plane_the_stack_no_longer_has_exports_the_default_and_says_so(stack_figure):
+    from plexora.plugins.figure_builder.server import export
+
+    document, panel = _stack_document({"mode": "plane", "z": 40})
+    cache = {}
+    try:
+        source, stale = export._source_for(document, panel, cache)
+        assert stale and source is not None
+        index = source.channel_index(stack_figure["key"])
+        plane, _ = source.read(index, 0, (0, 0, 80, 96))
+        # The default plane, the middle one.
+        assert _plane_value(plane) == pytest.approx(1023, abs=4)
+    finally:
+        for held in cache.values():
+            if held is not None:
+                held.close()
+
+
+def test_describing_a_stack_carries_its_geometry_without_loading_it(stack_figure, monkeypatch):
+    from plexora.plugins.figure_builder.server import sources
+
+    def explode(*args, **kwargs):  # pragma: no cover - the point is not calling it
+        raise AssertionError("describing a source must not load it")
+
+    monkeypatch.setattr(data_model, "load_datasource", explode)
+    monkeypatch.setattr(data_model, "ensure_loaded", explode)
+    described = sources.describe("vol")
+    assert described["volume"]["depth"] == STACK_DEPTH
+    assert described["volume"]["frames"] == 1
+
+
+def test_describing_a_planar_image_has_no_volume(figure):
+    from plexora.plugins.figure_builder.server import sources
+
+    assert sources.describe("demo")["volume"] is None

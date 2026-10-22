@@ -152,13 +152,14 @@ def preflight(document, options):
                                             "effective_dpi": int(round(native / w_in)),
                                             "cut": volume_cut(panel)}))
                     continue
-                source = _source_for(document, panel, sources)
+                source, stale = _source_for(document, panel, sources)
                 if source is None:
                     reports.append((panel, {"missing_source": True,
                                             "missing_channels": [], "missing_overlays": []}))
                     continue
-                reports.append((panel, render.panel_report(
-                    source, panel["scene"], panel["placement"]["w_mm"], dpi)))
+                report = render.panel_report(
+                    source, panel["scene"], panel["placement"]["w_mm"], dpi)
+                reports.append((panel, {**report, "stale_view": True} if stale else report))
     finally:
         for source in sources.values():
             if source is not None:
@@ -191,16 +192,34 @@ def _pages(document):
 
 
 def _source_for(document, panel, cache):
+    """`(source, stale)`: the panel's image opened at the z-stack view it was
+    captured on (`panel_view_token`), one handle per (datasource, view).
+
+    `stale` is True when that view can no longer be read (the image is planar
+    now, or has fewer planes) and the image's default plane was opened
+    instead: the panel still exports, and the report says it is not the
+    plane it was captured on."""
     source = document["sources"].get(panel["source_id"])
     if not source or source["kind"] != "plexora_project" or not source["datasource"]:
-        return None
+        return None, False
     name = source["datasource"]
-    if name not in cache:
+    view = panel_view_token(panel)
+    opened = _open_source(name, view, cache)
+    if opened is None and view:
+        fallback = _open_source(name, "", cache)
+        return fallback, fallback is not None
+    return opened, False
+
+
+def _open_source(name, view, cache):
+    key = (name, view)
+    if key not in cache:
         try:
-            cache[name] = render.SourceImage(name)
+            cache[key] = (render.SourceImage(name, view=view) if view
+                          else render.SourceImage(name))
         except (KeyError, render.RenderError, OSError):
-            cache[name] = None
-    return cache[name]
+            cache[key] = None
+    return cache[key]
 
 
 def _imported_report(source, panel, dpi):
@@ -244,6 +263,36 @@ def volume_state(panel):
     part = plugins.get("volume") if isinstance(plugins, dict) else None
     state = (part or {}).get("state") if isinstance(part, dict) else None
     return state if isinstance(state, dict) and state.get("mode") == "volume" else None
+
+
+def panel_view_token(panel) -> str:
+    """The z-stack view token a plane or projection panel is read at
+    (`z12`, `t3z12`, `z4-19max`, `z4-19p90`), or "" for a 3-D panel, a
+    planar image or a panel captured before views were recorded.
+
+    The Python twin of `PlexoraViewerScene.viewToken` (core's
+    services/viewerScene.js), which spells it as the viewer's
+    `ViewState.spec()` does; `server/volume/viewspec.py` parses it. A frame
+    prefix is written for any nonzero `t`: the recorded state came from a
+    stack with frames, since a single-frame stack never sets one."""
+    plugins = (panel.get("scene") or {}).get("plugins") or {}
+    part = plugins.get("volume") if isinstance(plugins, dict) else None
+    state = (part or {}).get("state") if isinstance(part, dict) else None
+    if not isinstance(state, dict) or state.get("mode") not in ("plane", "slab"):
+        return ""
+    try:
+        t = int(state.get("t") or 0)
+        prefix = f"t{t}" if t else ""
+        slab = state.get("slab")
+        if state["mode"] == "slab" and isinstance(slab, dict):
+            op = str(slab.get("op") or "max")
+            if op == "pct":
+                q = float(slab.get("q"))
+                op = f"p{int(q) if q == int(q) else q}"
+            return f"{prefix}z{int(slab['z0'])}-{int(slab['z1'])}{op}"
+        return f"{prefix}z{int(state.get('z') or 0)}"
+    except (KeyError, TypeError, ValueError):
+        return ""
 
 
 def volume_cut(panel) -> str:
@@ -338,7 +387,7 @@ def _render_unflipped(document, panel, sources, dpi):
                            "effective_dpi": int(round(native / w_in)),
                            "cut": volume_cut(panel)}
 
-    source = _source_for(document, panel, sources)
+    source, stale = _source_for(document, panel, sources)
     if source is None:
         # The source is gone. A black panel rather than a hole, and the
         # provenance says which panel and why -- an export that silently
@@ -348,6 +397,8 @@ def _render_unflipped(document, panel, sources, dpi):
                  "effective_dpi": 0, "requested_dpi": dpi})
 
     report = render.panel_report(source, panel["scene"], panel["placement"]["w_mm"], dpi)
+    if stale:
+        report = {**report, "stale_view": True}
     image, detail = render.render_panel(source, panel["scene"], width_px, height_px)
     return image, {**report, **detail}
 
@@ -388,6 +439,11 @@ def _warnings(results, fonts=()):
     if missing_source:
         out.append({"kind": "missing_source", "panels": missing_source,
                     "message": "Some panels' images are no longer available and export black."})
+    stale_view = [panel["panel_id"] for panel, report in results if report.get("stale_view")]
+    if stale_view:
+        out.append({"kind": "stale_view", "panels": stale_view,
+                    "message": "Some panels' images no longer have the plane they were "
+                               "captured on and export the image's default plane."})
     overlays = sorted({name for _, report in results
                        for name in report.get("missing_overlays") or []})
     if overlays:

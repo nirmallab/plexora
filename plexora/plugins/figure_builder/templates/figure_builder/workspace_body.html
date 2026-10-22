@@ -32,7 +32,8 @@
    so anything that has to survive a render -- the context bar, an open text
    editor -- lives out here instead. #}
 <div class="fb-workspace" id="fb_workspace"
-     data-figure-id="{{ data.figure_id | default('') }}">
+     data-figure-id="{{ data.figure_id | default('') }}"
+     data-loaded-datasource="{{ data.loaded_datasource | default('') }}">
     {# Clusters on the desk, not a strip across it. The bar itself paints
        nothing: what floats is the controls, in the same card as the rail and
        the tray. The gap between two clusters is what says which controls belong
@@ -498,6 +499,15 @@
 
             <div class="fb-quickedit-view">
                 <canvas id="fb_quickedit_canvas"></canvas>
+            </div>
+            {# Which plane of a z-stack the panel shows, or where its projection
+               sits: shown only for a panel captured on a plane or a projection
+               of a stack (FigureQuickEdit.mountPlaneControl). Done writes it
+               back into the panel's recorded view. #}
+            <div class="fb-quickedit-z" id="fb_quickedit_z" hidden>
+                <label for="fb_quickedit_z_range" class="fb-quickedit-z-label"
+                       id="fb_quickedit_z_label"></label>
+                <input type="range" id="fb_quickedit_z_range" min="0" max="0" step="1" value="0">
             </div>
             <p class="fb-muted fb-quickedit-note" id="fb_quickedit_note">
                 Drag to reposition, scroll to zoom. Quick Edit allows changes to

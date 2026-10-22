@@ -66,7 +66,20 @@ def describe(datasource) -> dict:
         "channels": channels,
         "fingerprint": fingerprint(datasource),
         "status": "ok",
+        # A z-stack's description (depth, frames, spacing, levels: the
+        # `/volume/<ds>/info` payload), None for a planar image. For Quick
+        # Edit, which reads a panel at the plane it was captured on. Read off
+        # the file, never through that route, which loads the project; not
+        # stored with the source (`schema.normalize_source` keeps none of it).
+        "volume": _volume_of(handle),
     }
+
+
+def _volume_of(handle):
+    try:
+        return handle.image.volume()
+    except Exception:  # noqa: BLE001 -- a stack that cannot be described reads as planar
+        return None
 
 
 def fingerprint(datasource) -> dict:

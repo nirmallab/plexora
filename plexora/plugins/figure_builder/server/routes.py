@@ -545,9 +545,13 @@ def source_pixels(figure_id, source_id):
         return jsonify(success=False, error="bad_region"), 400
     if box[2] <= 0 or box[3] <= 0:
         return jsonify(success=False, error="bad_region"), 400
+    # A z-stack panel's plane or projection (`z12`, `z4-19max`); a token the
+    # image cannot be read at is the RenderError below.
+    view = (request.args.get("view") or "").strip()
 
     try:
-        array, clipped = pixels.read_region(source["datasource"], channel, box, out)
+        array, clipped = pixels.read_region(
+            source["datasource"], channel, box, out, view=view)
     except render.RenderError as exc:
         return jsonify(success=False, error=str(exc)), 400
     except KeyError:
@@ -737,9 +741,27 @@ def _page_data(**values):
         'plugin_nav_items': plugin_registry.nav_items(app, base_url),
         'figure_builder_url': f"{base_url}{PLUGIN.url_prefix}",
         'figure_builder_version': VERSION,
+        'loaded_datasource': _loaded_datasource(),
     }
     data.update(values)
     return data
+
+
+def _loaded_datasource():
+    """The datasource the viewer has loaded, or "" with none.
+
+    Quick Edit's live 3-D view reads through core's `/volume/<ds>/...` routes,
+    which LOAD the datasource they are asked about; it is offered only for a
+    panel on this one, so a figure never evicts what the viewer has open.
+    Asked, never loaded -- the way `api.features.reload_if_loaded` asks -- and
+    read once per page: a stale answer only falls back to the stored picture.
+    """
+    try:
+        from plexora.server.models import data_model
+        name = data_model.get_current_datasource_name()
+        return name if name and data_model.is_loaded(name) else ""
+    except Exception:  # noqa: BLE001 -- a process without the viewer
+        return ""
 
 
 @figure_builder_bp.route('/figures', methods=['GET'])

@@ -308,6 +308,9 @@ class FigureWorkspace {
             api: this.api,
             state: this.state,
             figureId: this.figureId,
+            // The datasource the viewer has loaded: the only one Quick Edit
+            // may draw live in 3-D (routes._loaded_datasource says why).
+            loadedDatasource: this.root?.dataset.loadedDatasource || "",
             onOpenInViewer: (panelId) => this.onEditPanel(panelId),
             // Opening the slide-over shuts the strip; closing it gives the strip
             // back to whatever the selection asks for. See `contextSidebar`.

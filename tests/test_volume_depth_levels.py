@@ -549,3 +549,22 @@ def test_the_mini_map_overview_is_of_the_plane_on_screen(tmp_path, client):
     assert plain.headers["ETag"] != planed.headers["ETag"]
     assert planed.data == four
     assert client.get("/generated/overview/mm/CD8?view=nonsense").status_code == 200
+
+
+def test_the_mini_map_of_a_3d_view_is_one_picture_under_both_spellings(tmp_path, client):
+    """In 3-D the map asks for the cut as `z{lo}-{hi}max`, inclusive, even for
+    the whole stack (miniMap._volumeToken): the spelling `zmax` canonicalises
+    to, so the two are one picture and one ETag, and not any one plane."""
+    path, _data = vf.write_ome_volume(tmp_path / "mm3.ome.tif", axes="CZYX", channels=2,
+                                      depth=6, height=256, width=240, names=["DNA", "CD8"])
+    register_image_datasource("mm3", path)
+    data_model.load_datasource("mm3")
+    bare = client.get("/generated/overview/mm3/CD8?view=zmax")
+    spelled = client.get("/generated/overview/mm3/CD8?view=z0-5max")
+    plane = client.get("/generated/overview/mm3/CD8?view=z1")
+    assert bare.status_code == spelled.status_code == plane.status_code == 200
+    assert bare.headers["ETag"] == spelled.headers["ETag"]
+    assert bare.data == spelled.data
+    assert spelled.data != plane.data
+    cut = client.get("/generated/overview/mm3/CD8?view=z2-4max")
+    assert cut.status_code == 200 and cut.headers["ETag"] != spelled.headers["ETag"]

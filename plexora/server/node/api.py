@@ -1917,7 +1917,7 @@ def image_overview(resource_id):
             (qmin, qmax), exact = _volume_window(
                 resource, view, index, view.spec.window_class()), True
             encoded = data_model.encode_overview(
-                _view_overview(resource, view)[index], qmin, qmax)
+                _minimap_view_overview(resource, view)[index], qmin, qmax)
     parts = ("overview", index, qmin, qmax) + (view.key if view is not None else ())
     return _viewed(_stamped(
         _image(encoded, "image/webp", _etag(resource, *parts), durable=exact),
@@ -2324,6 +2324,39 @@ def _view_overview(resource, view):
                        resource, name, lambda: volume_overview(plane_pyramid(view.base, spec))))
 
 
+def _minimap_view_overview(resource, view):
+    """The mini-map's picture of a view: a plane's own overview -- the plane
+    on screen, as the primary draws it (`data_model._minimap_overview`) --
+    and `_view_overview` for anything else. Not `_view_overview` for a
+    plane, whose answer is the default plane's: right for a plane's
+    statistics, which are the stack's, wrong for a picture of it."""
+    from plexora.server.providers.local import volume_overview
+    from plexora.server.volume.plane_view import plane_pyramid
+
+    if view.spec.kind != "plane":
+        return _view_overview(resource, view)
+    # A few planes, not every plane ever shown: `_cached` keeps forever, and a
+    # scrub through a stack would keep every channel's overview of each. In
+    # `derived`, so a reopen of the resource drops them with the rest.
+    key = (view.reading, view.spec.token())
+    with _MINIMAP_PLANES_LOCK:
+        derived = getattr(resource, "derived", None)
+        if derived is None:
+            derived = resource.derived = {}
+        held = derived.get(("minimap-planes",))
+        if held is None:
+            held = derived[("minimap-planes",)] = OrderedDict()
+        if key in held:
+            held.move_to_end(key)
+            return held[key]
+    overview = volume_overview(plane_pyramid(view.base, view.spec))
+    with _MINIMAP_PLANES_LOCK:
+        held[key] = overview
+        while len(held) > MINIMAP_PLANES:
+            held.popitem(last=False)
+    return overview
+
+
 def _keep_open_overview(resource):
     """Have the provider keep a volume's opening overview on disk
     (`_persisted_array`). Opening a volume builds every channel's overview of
@@ -2524,6 +2557,10 @@ def _tile_size():
 #: the reason spelled out in `_cached`: it must have no ordering relationship
 #: with the resource locks.
 _COMPUTE_GUARD = threading.Lock()
+
+#: Planes whose own mini-map overview a volume keeps (`_minimap_view_overview`).
+MINIMAP_PLANES = 8
+_MINIMAP_PLANES_LOCK = threading.Lock()
 
 #: Encoded tiles this node has already produced.
 #:

@@ -21,6 +21,7 @@ const sourceIndex = args.indexOf("--source");
 const SOURCE = sourceIndex >= 0
     ? args[sourceIndex + 1]
     : path.resolve("plexora/client/src/js/views/miniMap.js");
+const GEOMETRY = path.resolve("plexora/client/src/js/services/inspectGeometry.js");
 
 const failures = [];
 let checked = 0;
@@ -168,6 +169,8 @@ function makeHarness(options = {}) {
         ImageData: FakeImageData,
         encodeURIComponent,
         setTimeout,
+        clearTimeout,
+        URLSearchParams,
         datasource: "proj",
         plexoraUrl: (p) => `/${p}`,
         toFloatColor: (c) => [c.r / 255, c.g / 255, c.b / 255],
@@ -216,14 +219,20 @@ function makeHarness(options = {}) {
             devicePixelRatio: options.dpr ?? 1,
             listeners: {},
             addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
-            __plexora: { viewerSidebar: options.sidebar || null },
+            __plexora: { viewerSidebar: options.sidebar || null, viewState: options.viewState || null },
             flaskVariables: { datasource: "proj" },
         },
     };
     sandbox.window.window = sandbox.window;
     sandbox.globalThis = sandbox;
+    if (options.inspect) sandbox.window.PlexoraInspect = options.inspect;
 
     const context = createContext(sandbox);
+    if (options.geometry) {
+        // The real cut arithmetic, the one the 3-D view and the map share:
+        // it hangs itself on `window`, which here is the sandbox's stand-in.
+        runInContext(readFileSync(GEOMETRY, "utf-8"), context, { filename: GEOMETRY });
+    }
     runInContext(readFileSync(SOURCE, "utf-8"), context, { filename: SOURCE });
     runInContext("globalThis.__MiniMap = MiniMap;", context);
 
@@ -244,6 +253,10 @@ function makeHarness(options = {}) {
     return {
         map, viewer, viewerHandlers, panCalls, zoomCalls, fetchCalls, sandbox,
         get constraintCalls() { return constraintCalls; },
+        // A window event, as the view state raises them.
+        dispatch(type, detail) {
+            (sandbox.window.listeners[type] || []).forEach((fn) => fn({ type, detail }));
+        },
         setBounds(next) { bounds = next; },
         // The server comes back -- a restarted waitress, or a transient error
         // that stops recurring.
@@ -892,6 +905,366 @@ async function composite(options) {
     check("...and the image is fitted upright again",
         map.geom.turn === 0 && near(map.geom.drawWidth, 240) && near(map.geom.drawHeight, 120),
         map.geom);
+}
+
+// -- a z-stack in 3-D: the cut as a map, the area square as the indicator ---
+
+/** The viewer's view state, as much of it as the map reads, recording calls. */
+function makeViewState(options = {}) {
+    const calls = { spec: 0, set: [] };
+    const width = options.width ?? 1000;
+    const height = options.height ?? 500;
+    const vs = {
+        depth: options.depth ?? 10,
+        frames: options.frames ?? 1,
+        info: { width, height, depth: options.depth ?? 10, volumetric: true },
+        state: {
+            mode: options.mode ?? "volume", t: options.t ?? 0, z: options.z ?? 3,
+            inspect: options.inspect ?? null,
+            volume: { area: options.area === undefined ? null : options.area },
+        },
+        calls,
+        enabled: () => true,
+        isVolume() { return this.state.mode === "volume"; },
+        get() { return JSON.parse(JSON.stringify(this.state)); },
+        // In 3-D the real one answers with the frozen plane; any token from
+        // here in 3-D means the map asked the wrong question.
+        spec() { calls.spec += 1; return `z${this.state.z}`; },
+        set(patch, opts) {
+            calls.set.push({ patch: JSON.parse(JSON.stringify(patch)), opts });
+            if (patch.volume) this.state.volume = { ...this.state.volume, ...patch.volume };
+            return this.get();
+        },
+    };
+    return vs;
+}
+
+/** The cut's controller (services/inspectState.js): owns `viewState`. */
+function makeInspect(vs) {
+    const slides = [];
+    const sets = [];
+    return {
+        viewState: vs,
+        slides,
+        sets,
+        slideArea(area, opts) {
+            slides.push({ area: { ...area }, opts: { ...opts } });
+            vs.state.volume = { ...vs.state.volume, area: { ...area } };
+            return vs.get();
+        },
+        set(patch, opts) {
+            sets.push({ patch: JSON.parse(JSON.stringify(patch)), opts: { ...opts } });
+            const before = vs.state.inspect || {};
+            vs.state.inspect = { ...before, ...patch.inspect,
+                                 crop: { ...(before.crop || {}), ...(patch.inspect?.crop || {}) } };
+            return vs.get();
+        },
+    };
+}
+
+/** The Area tool's square: an x/y crop of the whole stack. */
+const CROP_XY = (x, y) => ({ mode: "crop", axes: { x: true, y: true }, crop: { x, y } });
+
+const CROP_Z = (lo, hi) => ({ mode: "crop", axes: { z: true }, crop: { z: [lo, hi] } });
+const CUT_Z = (at, keep) => ({ mode: "cutaway", axes: { z: true }, cutaway: { z: { at, keep } } });
+const AREA = { x: 100, y: 50, width: 200, height: 100 };
+const A_SLOT = [{ index: 0, name: "A", colorHex: "#ffffff", range: [0, 255], enabled: true }];
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The view the first overview request asks for, once the lens is opened. */
+async function firstView(viewState, extra = {}) {
+    const h = makeHarness({ width: 1000, height: 500, slots: A_SLOT, colors: { "#ffffff": WHITE },
+                            viewState, geometry: true, ...extra });
+    h.map.expand();
+    await h.map._loading;
+    const url = String(h.fetchCalls[0] || "");
+    return { h, url, view: new URL(url, "http://x").searchParams.get("view") };
+}
+
+{
+    const crop = await firstView(makeViewState({ inspect: CROP_Z(2, 6) }));
+    check("3-D, a crop of planes 2-6: the map is their maximum, inclusive bounds",
+        crop.view === "z2-6max", crop.url);
+    const cut = await firstView(makeViewState({ inspect: CUT_Z(4, "hi") }));
+    check("3-D, cut away below plane 4 of 10: the map is planes 4-9",
+        cut.view === "z4-9max", cut.url);
+    const whole = await firstView(makeViewState());
+    check("3-D, no cut: the whole stack, spelled as the server canonicalises zmax",
+        whole.view === "z0-9max", whole.url);
+    const timed = await firstView(makeViewState({ t: 3, frames: 4 }));
+    check("3-D on frame 3 of a time series: the frame is named",
+        timed.view === "t3z0-9max", timed.url);
+    const single = await firstView(makeViewState({ t: 3, frames: 1 }));
+    check("3-D, a stray t on a stack with one frame is not named",
+        single.view === "z0-9max", single.url);
+    const bare = await firstView(makeViewState({ inspect: CROP_Z(2, 6) }), { geometry: false });
+    check("3-D without the cut arithmetic on the page: the whole stack, not a guess",
+        bare.view === "z0-9max", bare.url);
+
+    const vs = makeViewState({ inspect: CROP_Z(2, 6) });
+    await firstView(vs);
+    check("3-D never asks for the frozen plane's token", vs.calls.spec === 0, vs.calls);
+
+    const plane = makeViewState({ mode: "plane", z: 7 });
+    const planeView = await firstView(plane);
+    check("on a plane, the map is still the plane on screen",
+        planeView.view === "z7" && plane.calls.spec > 0, planeView.url);
+}
+
+{
+    // The indicator is the area square in 3-D, whatever OSD's bounds say.
+    const vs = makeViewState({ area: { ...AREA } });
+    const h = makeHarness({ width: 1000, height: 500, viewState: vs, geometry: true });
+    h.setBounds({ x: 7, y: -3, width: 0.01, height: 40 });
+    h.map.expand();
+    const g = h.map.geom;
+    const style = h.map.indicator.style;
+    check("3-D: the indicator is the area square, not the tiles' viewport",
+        style.display === "" && near(parseFloat(style.left), g.offsetX + 0.1 * g.drawWidth)
+        && near(parseFloat(style.top), g.offsetY + 0.1 * g.drawHeight)
+        && near(parseFloat(style.width), 0.2 * g.drawWidth)
+        && near(parseFloat(style.height), 0.2 * g.drawHeight), { ...style });
+
+    // The renderer's own Shift-drag: the square follows as it is asked for,
+    // in the same frame, not a settle later.
+    vs.state.volume.area = { x: 500, y: 250, width: 200, height: 100 };
+    h.dispatch("plexora:view-requested");
+    check("3-D: a requested area moves the indicator at once",
+        near(parseFloat(style.left), g.offsetX + 0.5 * g.drawWidth)
+        && near(parseFloat(style.top), g.offsetY + 0.5 * g.drawHeight), { ...style });
+
+    // The whole stack: no square to show, and none to drag.
+    vs.state.volume.area = null;
+    h.dispatch("plexora:view-requested");
+    check("3-D, the whole stack: no indicator", style.display === "none", { ...style });
+
+    // Back on a plane: OSD's viewport again, visible.
+    vs.state.mode = "plane";
+    h.setBounds({ x: 0.25, y: 0.125, width: 0.5, height: 0.25 });
+    h.dispatch("plexora:view-changed");
+    check("back on a plane, the indicator is the viewport again and shows",
+        style.display === "" && near(parseFloat(style.left), g.offsetX + 0.25 * g.drawWidth)
+        && near(parseFloat(style.width), 0.5 * g.drawWidth), { ...style });
+}
+
+{
+    // OSD's rotation is the tiles'; the 3-D picture is not drawn through it.
+    const vs = makeViewState({ area: { ...AREA } });
+    const h = makeHarness({ width: 1000, height: 500, viewState: vs, geometry: true });
+    h.viewer.viewport.getRotation = () => 90;
+    h.viewer.viewport.getFlip = () => true;
+    h.map.expand();
+    check("3-D on a turned view: the map is upright",
+        h.map.geom.turn === 0 && near(h.map.geom.drawWidth, 240)
+        && (h.map.orient.style.transform || "") === "", { geom: h.map.geom, t: h.map.orient.style.transform });
+    vs.state.mode = "plane";
+    h.dispatch("plexora:view-changed");
+    check("...and turns with the view again on a plane",
+        h.map.geom.turn === 90, h.map.geom);
+}
+
+{
+    // A click on the map in 3-D slides the area there: centred, its size kept,
+    // through the cut's controller -- and never pans or zooms the tiles.
+    const vs = makeViewState({ area: { ...AREA } });
+    const inspect = makeInspect(vs);
+    const h = makeHarness({ width: 1000, height: 500, viewState: vs, inspect, geometry: true });
+    h.map.expand();
+    const g = h.map.geom;
+    const at = (u, v) => ({ clientX: g.offsetX + u * g.drawWidth, clientY: g.offsetY + v * g.drawHeight });
+    h.map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 21, ...at(0.5, 0.5), target: h.map.canvas, preventDefault() {},
+    });
+    const first = inspect.slides[0];
+    check("3-D: a click centres the area on the point, its size kept",
+        first && first.area.x === 400 && first.area.y === 200
+        && first.area.width === 200 && first.area.height === 100, inspect.slides);
+    check("...as a slide still under way", first && first.opts.final === false, first);
+
+    h.map.stage.dispatch("pointermove", { pointerId: 21, ...at(0.6, 0.5) });
+    const moved = inspect.slides.at(-1);
+    check("3-D: dragging slides the area with the pointer",
+        moved && moved.area.x === 500 && moved.opts.final === false, moved);
+    h.map.stage.dispatch("pointerup", { pointerId: 21, ...at(0.6, 0.5) });
+    const last = inspect.slides.at(-1);
+    check("3-D: letting go sends the slide as final", last && last.opts.final === true, last);
+    check("3-D: the map never pans or zooms the tiles",
+        h.panCalls.length === 0 && h.zoomCalls.length === 0 && h.constraintCalls === 0,
+        { pans: h.panCalls.length, zooms: h.zoomCalls.length, constraints: h.constraintCalls });
+
+    // Grabbing the square keeps the point under the hand: no jump to centre.
+    const count = inspect.slides.length;
+    const area = vs.state.volume.area;
+    h.map._syncIndicator();
+    h.map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 22, ...at((area.x + 10) / 1000, (area.y + 10) / 500),
+        target: h.map.indicator, preventDefault() {},
+    });
+    check("3-D: grabbing the square does not move it", inspect.slides.length === count,
+        inspect.slides.slice(count));
+    h.map.stage.dispatch("pointermove", { pointerId: 22, ...at((area.x + 110) / 1000, (area.y + 10) / 500) });
+    const grabbed = inspect.slides.at(-1);
+    check("3-D: dragging the square moves it by the drag",
+        grabbed && grabbed.area.x === area.x + 100 && grabbed.area.y === area.y, grabbed);
+    h.map.stage.dispatch("pointerup", { pointerId: 22, ...at((area.x + 110) / 1000, (area.y + 10) / 500) });
+
+    // A click in a corner: the whole square stays inside the image.
+    h.map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 23, ...at(0, 0), target: h.map.canvas, preventDefault() {},
+    });
+    const corner = inspect.slides.at(-1);
+    check("3-D: a corner click keeps the whole area inside the image",
+        corner && corner.area.x === 0 && corner.area.y === 0
+        && corner.area.width === 200 && corner.area.height === 100, corner);
+    h.map.stage.dispatch("pointerup", { pointerId: 23, ...at(0, 0) });
+
+    // The wheel: neither a tiles zoom nor a page scroll.
+    let prevented = false;
+    h.map.stage.dispatch("wheel", { deltaY: -100, ...at(0.5, 0.5), preventDefault() { prevented = true; } });
+    check("3-D: the wheel zooms nothing and does not scroll the page",
+        h.zoomCalls.length === 0 && prevented, h.zoomCalls);
+    check("3-D: nothing went to the view state behind the controller's back",
+        vs.calls.set.length === 0, vs.calls.set);
+}
+
+{
+    // Without a controller for this view state, the area is set directly,
+    // saved only when the slide is done.
+    const vs = makeViewState({ area: { ...AREA } });
+    const stranger = makeInspect(makeViewState());
+    const h = makeHarness({ width: 1000, height: 500, viewState: vs, inspect: stranger, geometry: true });
+    h.map.expand();
+    const g = h.map.geom;
+    const point = { clientX: g.offsetX + 0.5 * g.drawWidth, clientY: g.offsetY + 0.5 * g.drawHeight };
+    h.map.stage.dispatch("pointerdown", { button: 0, pointerId: 31, ...point, target: h.map.canvas,
+                                          preventDefault() {} });
+    h.map.stage.dispatch("pointerup", { pointerId: 31, ...point });
+    const [during, done] = vs.calls.set;
+    check("3-D with no controller of its own: the area goes to the view state",
+        stranger.slides.length === 0 && during?.patch?.volume?.area?.x === 400
+        && during.opts.save === false && done && done.opts.save === true, vs.calls.set);
+
+    // No area (the whole stack): a click changes nothing.
+    const whole = makeViewState();
+    const w = makeHarness({ width: 1000, height: 500, viewState: whole, geometry: true });
+    w.map.expand();
+    w.map.stage.dispatch("pointerdown", { button: 0, pointerId: 32, ...point, target: w.map.canvas,
+                                          preventDefault() {} });
+    check("3-D, the whole stack: a click on the map changes nothing",
+        whole.calls.set.length === 0 && w.panCalls.length === 0, whole.calls.set);
+}
+
+{
+    // The Area tool's square is a CROP of the whole stack (volume.area stays
+    // null): the indicator is the crop, and a drag moves the crop -- through
+    // the cut's controller, as one gesture -- never the area.
+    const vs = makeViewState({ width: 1000, height: 800,
+                               inspect: CROP_XY([100, 300], [50, 250]) });
+    const inspect = makeInspect(vs);
+    const h = makeHarness({ width: 1000, height: 800, viewState: vs, inspect, geometry: true });
+    h.setBounds({ x: 9, y: 9, width: 0.001, height: 0.001 });
+    h.map.expand();
+    const g = h.map.geom;
+    const style = h.map.indicator.style;
+    check("3-D crop square: the indicator is the crop",
+        style.display === "" && near(parseFloat(style.left), g.offsetX + 0.1 * g.drawWidth)
+        && near(parseFloat(style.top), g.offsetY + (50 / 800) * g.drawHeight)
+        && near(parseFloat(style.width), 0.2 * g.drawWidth)
+        && near(parseFloat(style.height), 0.25 * g.drawHeight), { ...style, g });
+
+    const at = (u, v) => ({ clientX: g.offsetX + u * g.drawWidth, clientY: g.offsetY + v * g.drawHeight });
+    h.map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 41, ...at(0.5, 0.5), target: h.map.canvas, preventDefault() {},
+    });
+    const first = inspect.sets[0];
+    check("3-D crop square: a click centres the crop, its size kept",
+        first && JSON.stringify(first.patch) === JSON.stringify({ inspect: { crop: { x: [400, 600], y: [300, 500] } } }),
+        inspect.sets);
+    check("...as a mini-map gesture still under way",
+        first && first.opts.save === false && first.opts.gesture === "mini-map", first);
+    h.map.stage.dispatch("pointerup", { pointerId: 41, ...at(0.5, 0.5) });
+    const done = inspect.sets.at(-1);
+    check("3-D crop square: letting go saves it",
+        done && done.opts.save === true && done.opts.gesture === "mini-map", done);
+    check("3-D crop square: the area is never slid and the tiles never pan",
+        inspect.slides.length === 0 && h.panCalls.length === 0 && vs.calls.set.length === 0,
+        { slides: inspect.slides, pans: h.panCalls.length, sets: vs.calls.set });
+
+    h.map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 42, ...at(1, 1), target: h.map.canvas, preventDefault() {},
+    });
+    const corner = inspect.sets.at(-1);
+    check("3-D crop square: a corner click keeps the crop inside the image",
+        JSON.stringify(corner?.patch?.inspect?.crop) === JSON.stringify({ x: [800, 1000], y: [600, 800] }),
+        corner);
+    h.map.stage.dispatch("pointerup", { pointerId: 42, ...at(1, 1) });
+
+    // A crop that keeps the whole image draws nothing to point at.
+    vs.state.inspect = CROP_XY([0, 1000], [0, 800]);
+    h.dispatch("plexora:view-requested");
+    check("3-D, a crop of the whole image and no area: no indicator",
+        style.display === "none", { ...style });
+}
+
+{
+    // A crop inside an area (Crop to area, then the square): kept inside the
+    // area, not merely the image.
+    const vs = makeViewState({ width: 1000, height: 800,
+                               area: { x: 100, y: 100, width: 400, height: 400 },
+                               inspect: CROP_XY([150, 250], [150, 250]) });
+    const inspect = makeInspect(vs);
+    const h = makeHarness({ width: 1000, height: 800, viewState: vs, inspect, geometry: true });
+    h.map.expand();
+    const g = h.map.geom;
+    h.map.stage.dispatch("pointerdown", { button: 0, pointerId: 51, clientX: g.offsetX,
+                                          clientY: g.offsetY, target: h.map.canvas, preventDefault() {} });
+    const moved = inspect.sets.at(-1);
+    check("3-D crop inside an area: a corner click stops at the area's edge",
+        JSON.stringify(moved?.patch?.inspect?.crop) === JSON.stringify({ x: [100, 200], y: [100, 200] })
+        && inspect.slides.length === 0, { sets: inspect.sets, slides: inspect.slides });
+
+    // No controller owning the state: the crop goes to the view state, the
+    // rest of the cut kept.
+    const bare = makeViewState({ width: 1000, height: 800, inspect: CROP_XY([100, 300], [50, 250]) });
+    const b = makeHarness({ width: 1000, height: 800, viewState: bare, geometry: true });
+    b.map.expand();
+    const bg = b.map.geom;
+    const mid = { clientX: bg.offsetX + 0.5 * bg.drawWidth, clientY: bg.offsetY + 0.5 * bg.drawHeight };
+    b.map.stage.dispatch("pointerdown", { button: 0, pointerId: 52, ...mid, target: b.map.canvas,
+                                          preventDefault() {} });
+    b.map.stage.dispatch("pointerup", { pointerId: 52, ...mid });
+    const [during, after] = bare.calls.set;
+    check("3-D crop with no controller: the crop goes to the view state, the cut kept",
+        during?.patch?.inspect?.mode === "crop" && during.patch.inspect.axes?.x === true
+        && JSON.stringify(during.patch.inspect.crop?.x) === "[400,600]"
+        && during.opts.save === false && after && after.opts.save === true, bare.calls.set);
+}
+
+{
+    // What a view change costs: a slid area is the same picture (no request);
+    // a new cut is another one (one request, at the new token).
+    const vs = makeViewState({ area: { ...AREA }, inspect: CROP_Z(2, 6) });
+    const h = makeHarness({ width: 1000, height: 500, slots: A_SLOT, colors: { "#ffffff": WHITE },
+                            viewState: vs, geometry: true });
+    h.map.expand();
+    await h.map._loading;
+    const before = h.fetchCalls.length;
+    vs.state.volume.area = { x: 600, y: 300, width: 200, height: 100 };
+    h.dispatch("plexora:view-changed");
+    await wait(h.sandbox.__MiniMap.VIEW_SETTLE_MS + 60);
+    await h.map._loading;
+    check("3-D: sliding the area fetches nothing", h.fetchCalls.length === before, h.fetchCalls);
+    check("...but the indicator follows it",
+        near(parseFloat(h.map.indicator.style.left), h.map.geom.offsetX + 0.6 * h.map.geom.drawWidth),
+        { ...h.map.indicator.style });
+
+    vs.state.inspect = CUT_Z(4, "hi");
+    h.dispatch("plexora:view-changed");
+    await wait(h.sandbox.__MiniMap.VIEW_SETTLE_MS + 60);
+    await h.map._loading;
+    const after = h.fetchCalls.slice(before);
+    check("3-D: a new cut refetches once, at its own planes",
+        after.length === 1 && after[0].includes("view=z4-9max"), after);
 }
 
 // -- report -------------------------------------------------------------

@@ -384,6 +384,30 @@
         });
     }
 
+    // -- z-stack view token ------------------------------------------------
+    //
+    // The `?view=` token a z-stack plane or projection is read at, spelled as
+    // `ViewState.spec()` spells it (services/viewState.js) and as the server's
+    // viewspec.py parses it: `[t N]z N` for a plane, `[t N]zA-Bop` for a slab
+    // (inclusive bounds, `pct` written `p{q}`). `stack` is `{depth, frames}`.
+    // A 3-D state has no token (it is not read through tiles), nor does an
+    // image that is not a stack; both are "". Figure Builder's Quick Edit
+    // reads a captured panel's pixels at this token, and its Python twin is
+    // `export.panel_view_token`.
+    function viewToken(state, stack) {
+        if (!state || !stack || state.mode === "volume") return "";
+        const depth = Number(stack.depth) || 1;
+        const frames = Number(stack.frames) || 1;
+        if (depth <= 1 && frames <= 1) return "";
+        const t = frames > 1 && state.t ? `t${state.t}` : "";
+        if (state.mode === "slab" && depth > 1 && state.slab) {
+            const { z0, z1, op, q } = state.slab;
+            const opToken = op === "pct" ? `p${Number(q).toString()}` : op;
+            return `${t}z${z0}-${z1}${opToken}`;
+        }
+        return depth > 1 ? `${t}z${Number(state.z) || 0}` : (t || "t0");
+    }
+
     const ViewerScene = {
         normalizeDegrees: normalizeDegrees,
         orientationOf: orientationOf,
@@ -401,6 +425,7 @@
         fitRegion: fitRegion,
         viewOf: viewOf,
         glideTo: glideTo,
+        viewToken: viewToken,
     };
 
     // On `window` for the page, and on the script's global as well: Figure

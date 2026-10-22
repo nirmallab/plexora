@@ -3550,6 +3550,47 @@
     cursor: grabbing;
 }
 
+/* A 3-D panel's live view (FigureQuickEdit.open3d): core's renderer canvas,
+   in a box exactly where the panel's frame is, so what turns is what Done
+   stores. The renderer's canvas fills it (viewer.css .viewer-volume-canvas). */
+.fb-quickedit-3d {
+    overflow: hidden;
+    position: absolute;
+}
+
+/* A 3-D panel shown, not drawn: its channels would change nothing. */
+.fb-quickedit-channels.is-locked {
+    opacity: 0.45;
+}
+
+/* The plane of a z-stack panel: one row under the image, label then slider,
+   so it reads as a property of the picture above it. */
+.fb-quickedit-z {
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+}
+
+.fb-quickedit-z[hidden] {
+    display: none;
+}
+
+.fb-quickedit-z-label {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 7.5em;
+}
+
+.fb-quickedit-z input[type="range"] {
+    accent-color: var(--accent-channel);
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .fb-quickedit-note {
     font-size: 11px;
     margin: 0;

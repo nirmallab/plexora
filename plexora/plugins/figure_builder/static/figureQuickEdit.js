@@ -57,6 +57,23 @@
  * transcription of `frag.glsl`. Two copies of one piece of arithmetic is one
  * too many, but the alternative is a preview that disagrees with the export --
  * and the windows were chosen against this arithmetic, by eye.
+ *
+ * ## A z-stack panel is edited at the view it was captured on
+ *
+ * A panel captured on a z-stack records its view (`scene.plugins.volume.state`,
+ * core's services/surfaceLayers.js `sceneState`). On a plane or a projection
+ * the pixels are read at that view's token (`PlexoraViewerScene.viewToken`:
+ * `z12`, `z4-19max`), a slider under the view moves the plane -- or slides a
+ * projection's range, keeping its thickness -- and Done writes `z` or `slab`
+ * back into that record, so the export reads the same plane.
+ *
+ * A panel captured in 3-D is drawn by core's own `VolumeRenderer`, live, in
+ * the frame: drag turns it, the wheel zooms, and Done writes the camera back
+ * and stores a print-size picture, which is what the export uses for a 3-D
+ * panel. The renderer reads through core's `/volume/<ds>/...` routes, which
+ * load the datasource they name, so this is offered only for a panel on the
+ * datasource the viewer already has open; any other shows its stored picture
+ * and points at Open in Main Viewer.
  */
 class FigureQuickEdit {
 
@@ -68,6 +85,38 @@ class FigureQuickEdit {
     /** Widest preview written back on Done. A preview is a convenience raster,
      *  never the master -- the export re-renders from the source. */
     static get PREVIEW_WIDTH() { return 640; }
+
+    /** Longest side of the picture Done stores for a 3-D panel. Unlike any
+     *  other panel's preview, this one IS the master: the server has no 3-D
+     *  renderer, so the export resamples it (`export._render_client_raster`).
+     *  The capture tool's size for the same picture
+     *  (`PlexoraViewRaster.MAX_VOLUME_EDGE`, a viewer-page script). */
+    static get VOLUME_PREVIEW_EDGE() { return 2400; }
+
+    /** What a 3-D picture falls back to when the GPU will not draw one that
+     *  large. */
+    static get VOLUME_PREVIEW_FALLBACK() { return 1200; }
+
+    /** How a projection is named under the view: the viewer's words
+     *  (services/viewState.js OP_LABELS), which this page does not load. */
+    static get OP_LABELS() {
+        return { max: "MIP", mean: "Mean", min: "Min", std: "Std. dev.",
+                 med: "Median", pct: "Percentile" };
+    }
+
+    /** What the note under the view says, by kind of panel. */
+    static get NOTES() {
+        return {
+            plane: "Drag to reposition, scroll to zoom. Quick Edit allows changes to "
+                + "image rendering only. For overlays, click 'Open in Main Viewer' to "
+                + "update the figure panel.",
+            volume: "Drag to turn, scroll to zoom, Shift-drag to move the area. "
+                + "Surfaces and the orientation gizmo are not shown here; click "
+                + "'Open in Main Viewer' for them.",
+            locked: "This 3-D panel's image is not open in the viewer. Open in Main "
+                + "Viewer to change it.",
+        };
+    }
 
     /** How long the view has to stand still before its pixels are re-fetched. */
     static get SETTLE_MS() { return 140; }
@@ -111,9 +160,16 @@ class FigureQuickEdit {
         //: levels of chrome on screen at once -- in two colour schemes -- was
         //: nothing ranking anything.
         this.onSessionChange = options.onSessionChange || (() => {});
+        //: The datasource the viewer has loaded ("" with none): the only one
+        //: a 3-D panel is drawn live for (see the class comment).
+        this.loadedDatasource = options.loadedDatasource || "";
 
         this.root = document.getElementById("fb_quickedit");
         this.canvasEl = document.getElementById("fb_quickedit_canvas");
+        this.zEl = document.getElementById("fb_quickedit_z");
+        this.zRange = document.getElementById("fb_quickedit_z_range");
+        this.zLabel = document.getElementById("fb_quickedit_z_label");
+        this.noteEl = document.getElementById("fb_quickedit_note");
         //: {panelId, aspect, view:{cx, cy, w}} while a session is open.
         this.session = null;
         //: channel key -> {data, width, height, box} for the region currently
@@ -148,6 +204,7 @@ class FigureQuickEdit {
             ?.addEventListener("click", () => this.close());
         document.getElementById("fb_quickedit_main")
             ?.addEventListener("click", () => this.openInViewer());
+        this.zRange?.addEventListener("input", () => this.onPlaneInput());
         this.bindView();
 
         // The card is a flex child of the body and the body is the window's:
@@ -158,6 +215,11 @@ class FigureQuickEdit {
             this.resizeObserver = new ResizeObserver(() => {
                 if (!this.session) return;
                 this.resizeCanvas();
+                if (this.session.three) {
+                    // The renderer watches its own frame and redraws.
+                    this.layout3d();
+                    return;
+                }
                 this.paint();
                 this.settle();
             });
@@ -230,6 +292,16 @@ class FigureQuickEdit {
             },
         };
         this.planes.clear();
+        const session = this.session;
+        // The z-stack view the panel was captured on, when it was: a copy,
+        // edited here and merged back on Done (mergeVolumeState).
+        const recorded = panel.scene?.plugins?.volume?.state;
+        session.volume = recorded && typeof recorded === "object"
+            ? JSON.parse(JSON.stringify(recorded)) : null;
+        session.three = session.volume?.mode === "volume";
+        //: The stack's description (`/volume/<ds>/info`'s payload, read off
+        //: the file by `sources.describe`), or null: planar, or not asked.
+        session.stack = null;
 
         const title = document.getElementById("fb_quickedit_title");
         if (title) {
@@ -238,9 +310,30 @@ class FigureQuickEdit {
         }
         this.root.hidden = false;
         this.onSessionChange(true);
+        this.setNote(session.three ? "volume" : "plane");
         this.resizeCanvas();
 
+        if (session.volume && source.datasource) {
+            // Asked only for a panel that recorded a view: one project-record
+            // read and a look at the file, never a load (server/sources.py).
+            const described = await this.api.describeSource(source.datasource);
+            if (this.session !== session) return;
+            const current = described.ok ? described.data.source : null;
+            session.stack = current?.volume || null;
+            // The channels' names NOW, by key: the 3-D view's routes look a
+            // channel up by its current full name, and a figure keeps the
+            // name it had at capture.
+            session.fullByKey = Object.fromEntries((current?.channels || [])
+                .map((channel) => [channel.key, channel.fullname_at_capture]));
+        }
+
         await this.mountChannels(panel, source);
+        if (this.session !== session) return;
+        if (session.three) {
+            await this.open3d(panel, source);
+            return;
+        }
+        this.mountPlaneControl();
         // Twice, coarse then sharp. The sharp read of a mid-zoom region on a
         // whole slide is four compressed tiles per channel and the channels
         // queue behind each other on one reader, which was three seconds of
@@ -262,6 +355,12 @@ class FigureQuickEdit {
      */
     teardownSession() {
         const panelId = this.session && this.session.panelId;
+        // The 3-D view, if there was one: its canvases, its observer and its
+        // GPU textures go with it (VolumeRenderer.destroy).
+        this.session?.renderer?.destroy();
+        this.session?.frame3d?.remove();
+        if (this.zEl) this.zEl.hidden = true;
+        this.setChannelsLocked(false);
         this.fetchAbort?.abort();
         this.fetchAbort = null;
         this.fetchSeq += 1;
@@ -440,7 +539,22 @@ class FigureQuickEdit {
         for (const event of [ChannelList.events.CHANNELS_CHANGE,
                              ChannelList.events.COLOR_TRANSFER_CHANGE,
                              ChannelList.events.BRUSH_MOVE]) {
-            this.sidebar.eventHandler.bind(event, repaint);
+            this.sidebar.eventHandler.bind(event, () => {
+                const renderer = this.session?.renderer;
+                if (!renderer) {
+                    repaint();
+                    return;
+                }
+                // The 3-D view, as the viewer's attach() wires it: a channel
+                // appearing needs its level fetched; a colour or a window is
+                // a uniform, read at the next draw.
+                if (event === ChannelList.events.CHANNELS_CHANGE) {
+                    renderer.refresh().then(() => this.scheduleLivePreview());
+                } else {
+                    renderer.invalidate();
+                }
+                this.scheduleLivePreview();
+            });
         }
 
         await this.sidebar.init(described);
@@ -529,14 +643,309 @@ class FigureQuickEdit {
         };
     }
 
+    // -- z-stacks: the plane, the projection, the 3-D view -------------------
+
+    setNote(kind) {
+        if (this.noteEl) this.noteEl.textContent = FigureQuickEdit.NOTES[kind] || "";
+    }
+
+    /** Lock the channel widget (a 3-D panel shown, not drawn): its settings
+     *  would change nothing anybody can see. */
+    setChannelsLocked(locked) {
+        const list = document.getElementById("fb_quickedit_channels");
+        if (!list) return;
+        list.classList.toggle("is-locked", Boolean(locked));
+        if (locked) list.setAttribute("inert", "");
+        else list.removeAttribute("inert");
+    }
+
+    /** The token this panel's pixels are read at ("" for a planar image, a
+     *  panel captured before views were recorded, or a 3-D panel). */
+    viewToken() {
+        const session = this.session;
+        if (!session || !session.stack || !session.volume) return "";
+        return PlexoraViewerScene.viewToken(session.volume, session.stack);
+    }
+
+    /** The plane slider, for a panel captured on a plane or a projection of a
+     *  stack with more than one plane; hidden otherwise. */
+    mountPlaneControl() {
+        const session = this.session;
+        const depth = Number(session?.stack?.depth) || 1;
+        const volume = session?.volume;
+        const usable = Boolean(this.zEl && this.zRange && volume && depth > 1
+            && (volume.mode === "plane" || (volume.mode === "slab" && volume.slab)));
+        if (this.zEl) this.zEl.hidden = !usable;
+        if (!usable) return;
+        if (volume.mode === "slab") {
+            // The range slides; its thickness is the panel's.
+            const thickness = Math.max(0, volume.slab.z1 - volume.slab.z0);
+            this.zRange.max = String(Math.max(0, depth - 1 - thickness));
+            this.zRange.value = String(volume.slab.z0);
+        } else {
+            this.zRange.max = String(depth - 1);
+            this.zRange.value = String(Number(volume.z) || 0);
+        }
+        this.zLabel.textContent = this.planeLabel();
+    }
+
+    onPlaneInput() {
+        const session = this.session;
+        const volume = session?.volume;
+        if (!volume || session.three) return;
+        const at = Math.round(Number(this.zRange.value) || 0);
+        if (volume.mode === "slab" && volume.slab) {
+            const thickness = volume.slab.z1 - volume.slab.z0;
+            volume.slab = { ...volume.slab, z0: at, z1: at + thickness };
+        } else {
+            volume.z = at;
+        }
+        this.zLabel.textContent = this.planeLabel();
+        this.settle();
+    }
+
+    /** "z 12 / 40" or "MIP z 4–19", as the viewer's badge words them. */
+    planeLabel() {
+        const volume = this.session?.volume;
+        const depth = Number(this.session?.stack?.depth) || 1;
+        if (!volume) return "";
+        if (volume.mode === "slab" && volume.slab) {
+            const { z0, z1, op, q } = volume.slab;
+            const name = op === "pct" ? `${q}th pct.` : FigureQuickEdit.OP_LABELS[op] || op;
+            return `${name} z ${z0}–${z1}`;
+        }
+        return `z ${Number(volume.z) || 0} / ${depth}`;
+    }
+
+    /**
+     * A 3-D panel: core's renderer, live, in the panel's frame.
+     *
+     * It reads a view state and the channel widget; this hands it a stand-in
+     * for the first, seeded from what the panel recorded, and Quick Edit's own
+     * sidebar for the second. Where it cannot draw -- no WebGL2, or the
+     * panel's image is not the one the viewer has open -- the panel's stored
+     * picture is shown instead, and Done changes nothing.
+     */
+    async open3d(panel, source) {
+        const session = this.session;
+        const Renderer = window.PlexoraVolumeRenderer;
+        const live = Boolean(Renderer && window.PlexoraVolumeWindows && session.stack
+            && Number(session.stack.depth) > 1
+            && source.datasource && source.datasource === this.loadedDatasource
+            && Renderer.supported());
+        if (!live) {
+            this.showStill(panel);
+            return;
+        }
+
+        const recorded = session.volume;
+        const stack = session.stack;
+        const standIn = {
+            info: stack,
+            depth: Math.max(1, Number(stack.depth) || 1),
+            frames: Math.max(1, Number(stack.frames) || 1),
+            state: {
+                mode: "volume", t: Number(recorded.t) || 0, z: Number(recorded.z) || 0,
+                slab: recorded.slab || null, inspect: recorded.inspect || null,
+                volume: {
+                    composite: recorded.composite === "additive" ? "additive" : "mip",
+                    area: recorded.box || null,
+                    interpolation: recorded.interpolation || "linear",
+                    opacity: {},
+                },
+            },
+            get() { return JSON.parse(JSON.stringify(this.state)); },
+            // The renderer writes only an area (Shift-drag) and, when the GPU
+            // drops the context, a way back to planes -- which here is the
+            // still: there are no planes to go back to.
+            set(patch) {
+                if (patch?.volume) this.state.volume = { ...this.state.volume, ...patch.volume };
+                return this.get();
+            },
+            enabled: () => true,
+            isVolume: () => true,
+        };
+        session.standIn = standIn;
+
+        // The frame on screen IS the panel's shape, so what turns here is what
+        // Done stores. The 2-D canvas stays under it, black, for the surround.
+        const frame = document.createElement("div");
+        frame.className = "fb-quickedit-3d";
+        this.canvasEl.parentElement.appendChild(frame);
+        session.frame3d = frame;
+        this.layout3d();
+        this.paint();
+
+        const renderer = new Renderer({
+            viewState: standIn, datasource: source.datasource, wrapper: frame,
+            sidebar: this.volumeSidebar(), windows: new window.PlexoraVolumeWindows(source.datasource),
+        });
+        renderer.view = standIn.get();
+        if (!renderer.mount()) {
+            frame.remove();
+            session.frame3d = null;
+            this.showStill(panel);
+            return;
+        }
+        session.renderer = renderer;
+        renderer.composite = standIn.state.volume.composite;
+        renderer.restoreCamera(recorded.camera);
+        renderer.setArea(standIn.state.volume.area, { refresh: false });
+        renderer.onRest = () => this.scheduleLivePreview();
+        renderer.onSlide = (area, { final = false } = {}) => {
+            standIn.set({ volume: { area } });
+            renderer.view = standIn.get();
+            renderer.setArea(area);
+            if (final) this.scheduleLivePreview();
+        };
+        renderer.show(true);
+        await renderer.refresh();
+        if (this.session === session) this.scheduleLivePreview();
+    }
+
+    /** The stored picture, still, with the channels locked. */
+    showStill(panel) {
+        const session = this.session;
+        session.locked = true;
+        this.setNote("locked");
+        this.setChannelsLocked(true);
+        const still = new Image();
+        still.onload = () => {
+            if (this.session === session) this.paint();
+        };
+        still.src = this.api.previewUrl(this.figureId, panel.panel_id, panel.render_revision);
+        session.still = still;
+        this.paint();
+    }
+
+    /** The 3-D frame over the mini view, where the panel's frame is. */
+    layout3d() {
+        const frame = this.session?.frame3d;
+        if (!frame) return;
+        const rect = this.frameRect();
+        Object.assign(frame.style, {
+            left: rect.x + "px", top: rect.y + "px",
+            width: rect.w + "px", height: rect.h + "px",
+        });
+    }
+
+    /**
+     * Quick Edit's sidebar as the renderer reads a sidebar: its slots, always
+     * HD (raw units, like everything here), and each channel by its CURRENT
+     * full name -- what `/volume/<ds>/level` looks a channel up by.
+     */
+    volumeSidebar() {
+        const quick = this;
+        const fullByKey = this.session.fullByKey || {};
+        const keyByName = this.session.keyByName || {};
+        return {
+            get channelSlots() { return quick.sidebar?.channelSlots || []; },
+            isHdMode: () => true,
+            quantWindow: (name, viewClass) => quick.sidebar?.quantWindow?.(name, viewClass) || null,
+            dataLayer: {
+                getFullChannelName: (name) => fullByKey[keyByName[name]] || name,
+            },
+        };
+    }
+
+    /**
+     * The 3-D view as a picture of the panel's shape. `print` draws it at
+     * that size on the GPU (Done: the picture the export uses), capped where
+     * the GPU's own limits are and falling back to a smaller one if it
+     * refuses; otherwise it is the frame as drawn, scaled (the live preview,
+     * which must not make the view on screen jump).
+     */
+    volumeBitmap(maxWidth, { print = false } = {}) {
+        const renderer = this.session.renderer;
+        const aspect = this.session.aspect || 1;
+        const sized = (edge) => {
+            const width = aspect >= 1 ? edge : edge * aspect;
+            return { width: Math.max(1, Math.round(width)),
+                     height: Math.max(1, Math.round(width / aspect)) };
+        };
+        let picture = null;
+        let size = sized(maxWidth);
+        if (print) {
+            const gl = renderer.gl;
+            const limit = gl ? Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) || maxWidth,
+                                        (gl.getParameter(gl.MAX_VIEWPORT_DIMS) || [maxWidth])[0])
+                : maxWidth;
+            size = sized(Math.min(maxWidth, limit));
+            for (const attempt of [size, sized(FigureQuickEdit.VOLUME_PREVIEW_FALLBACK)]) {
+                try {
+                    picture = renderer.snapshot(attempt);
+                    size = attempt;
+                } catch (error) {
+                    picture = null;
+                }
+                if (picture) break;
+            }
+        } else {
+            try {
+                picture = renderer.snapshot();
+            } catch (error) {
+                picture = null;
+            }
+            if (picture) {
+                const width = Math.min(maxWidth, picture.width);
+                size = { width: Math.max(1, width),
+                         height: Math.max(1, Math.round(width / aspect)) };
+            }
+        }
+        const out = document.createElement("canvas");
+        out.width = size.width;
+        out.height = size.height;
+        if (picture) out.getContext("2d").drawImage(picture, 0, 0, out.width, out.height);
+        return out;
+    }
+
+    /**
+     * What this session changed of the panel's recorded view, into `scene`.
+     * A plane writes its `z`, a projection its `slab`; a 3-D view its camera,
+     * its area and how it was drawn. Nothing else of the record is touched:
+     * the surfaces, the cut's words and the version stay the panel's.
+     */
+    mergeVolumeState(scene) {
+        const session = this.session;
+        if (!session?.volume) return;
+        const plugins = scene.plugins && typeof scene.plugins === "object" ? scene.plugins : {};
+        const existing = plugins.volume && typeof plugins.volume === "object" ? plugins.volume : {};
+        let edited = {};
+        if (session.renderer && session.standIn) {
+            const state = session.standIn.state;
+            edited = {
+                camera: session.renderer.cameraState(),
+                composite: state.volume.composite,
+                box: state.volume.area || null,
+                inspect: state.inspect,
+                t: state.t,
+                interpolation: state.volume.interpolation,
+            };
+        } else if (session.volume.mode === "slab" && session.volume.slab) {
+            edited = { slab: { ...session.volume.slab } };
+        } else if (session.volume.mode === "plane") {
+            edited = { z: Number(session.volume.z) || 0 };
+        }
+        scene.plugins = {
+            ...plugins,
+            volume: {
+                ...existing,
+                version: existing.version ?? 1,
+                state: { ...(existing.state || {}), ...edited },
+            },
+        };
+    }
+
     // -- the mini view -------------------------------------------------------
 
     bindView() {
         const canvas = this.canvasEl;
         if (!canvas) return;
 
+        // None of this is a 3-D panel's: its view turns under the renderer's
+        // own pointer handling, or is a still picture that does not move.
         canvas.addEventListener("pointerdown", (event) => {
-            if (!this.session || event.button !== 0) return;
+            if (!this.session || this.session.three || event.button !== 0) return;
             canvas.setPointerCapture?.(event.pointerId);
             this.drag = { x: event.clientX, y: event.clientY,
                           cx: this.session.view.cx, cy: this.session.view.cy };
@@ -567,7 +976,7 @@ class FigureQuickEdit {
         canvas.addEventListener("pointercancel", stop);
 
         canvas.addEventListener("wheel", (event) => {
-            if (!this.session) return;
+            if (!this.session || this.session.three) return;
             event.preventDefault();
             const factor = Math.exp(event.deltaY * 0.0015);
             const source = this.session.source.image || {};
@@ -663,7 +1072,8 @@ class FigureQuickEdit {
      * passes it; the ones that mean "this is what the user settled on" do not.
      */
     async refresh(options) {
-        if (!this.session || !this.sidebar) return;
+        // A 3-D panel's pixels are the renderer's, never these.
+        if (!this.session || !this.sidebar || this.session.three) return;
         const region = this.viewRegion();
         const image = this.session.source.image || {};
         // Clamped on THIS side rather than relying on the server's clipping: a
@@ -693,8 +1103,11 @@ class FigureQuickEdit {
             w: Math.max(1, Math.min(1024, Math.round(clamped.w / region.perPixel * detail))),
             h: Math.max(1, Math.min(1024, Math.round(clamped.h / region.perPixel * detail))),
         };
+        // The z-stack view is part of what was fetched: another plane is
+        // other pixels of the same region.
+        const view = this.viewToken();
         const signature = [clamped.x, clamped.y, clamped.w, clamped.h, out.w, out.h]
-            .map((value) => Math.round(value)).join(":");
+            .map((value) => Math.round(value)).join(":") + "|" + view;
 
         const wanted = this.activeSlots().map((slot) => this.session.keyByName[slot.name]);
         const fetches = wanted.filter((key) => {
@@ -720,7 +1133,7 @@ class FigureQuickEdit {
             key: key,
             result: await this.api.readPixels(this.figureId, this.session.sourceId, {
                 channel: key, x: clamped.x, y: clamped.y, w: clamped.w, h: clamped.h,
-                out_w: out.w, out_h: out.h, signal: controller.signal,
+                out_w: out.w, out_h: out.h, view: view, signal: controller.signal,
             }),
         })));
         if (seq !== this.fetchSeq || !this.session) return;
@@ -819,6 +1232,19 @@ class FigureQuickEdit {
         context.fillStyle = "#000000";
         context.fillRect(0, 0, width, height);
 
+        if (this.session.three) {
+            // Only a 3-D panel whose image is not open comes here (the live
+            // view hides this canvas): its stored picture, in the frame.
+            const frame = this.frameRect();
+            const still = this.session.still;
+            if (still && still.complete && still.naturalWidth) {
+                context.drawImage(still, frame.x, frame.y, frame.w, frame.h);
+            }
+            context.strokeStyle = "rgba(120, 190, 255, 0.95)";
+            context.lineWidth = 1;
+            context.strokeRect(frame.x + 0.5, frame.y + 0.5, frame.w - 1, frame.h - 1);
+            return;
+        }
         if (this.sheetDirty) this.composite();
         if (this.sheet && this.session.orientation) {
             // Turned about the middle of the mini view, as the panel is shown.
@@ -859,6 +1285,7 @@ class FigureQuickEdit {
      * once, here, and the two callers differ only in what they do with it.
      */
     frameBitmap(maxWidth) {
+        if (this.session?.renderer) return this.volumeBitmap(maxWidth);
         const frame = this.frameRect();
         const dpr = this.dpr || 1;
         const out = document.createElement("canvas");
@@ -930,18 +1357,24 @@ class FigureQuickEdit {
     async commit(options) {
         const session = this.session;
         const panel = session && this.state.panel(session.panelId);
-        if (!panel) {
-            if (!(options && options.keepOpen)) this.close();
+        // A 3-D panel that could only be shown, not drawn: nothing here was
+        // changed, and its stored picture is the master -- re-saving the
+        // still would only make it softer.
+        if (!panel || session.locked) {
+            if (options && options.keepOpen) this.teardownSession();
+            else this.close();
             return;
         }
         const height = session.view.w / session.aspect;
+        const copied = JSON.parse(JSON.stringify(panel.scene));
         const scene = {
-            ...JSON.parse(JSON.stringify(panel.scene)),
+            ...copied,
             // A turned panel stays turned: the reframed frame, through the
             // orientation it was framed with. Not rounded -- the box around a
             // turned frame is not whole pixels, and rounding it would move the
-            // frame's middle.
-            viewport: session.orientation
+            // frame's middle. A 3-D panel's is what it was captured with: its
+            // framing is the camera's.
+            viewport: session.three ? copied.viewport : session.orientation
                 ? FigureSchema.orientedViewport(session.view.cx, session.view.cy,
                                                 session.view.w, height, session.orientation)
                 : {
@@ -962,6 +1395,7 @@ class FigureQuickEdit {
             }),
             captured_at: new Date().toISOString(),
         };
+        this.mergeVolumeState(scene);
         const renderRevision = panel.render_revision + 1;
         const changes = { scene: scene, render_revision: renderRevision };
 
@@ -970,7 +1404,10 @@ class FigureQuickEdit {
         // preview at the new revision -- a URL the server does not have a
         // picture for yet -- so without the override the panel blinks to the
         // old raster, or to nothing, for as long as the upload takes.
-        const bitmap = this.frameBitmap(FigureQuickEdit.PREVIEW_WIDTH);
+        // A 3-D panel's at print size: its picture is what it exports from.
+        const bitmap = session.renderer
+            ? this.volumeBitmap(FigureQuickEdit.VOLUME_PREVIEW_EDGE, { print: true })
+            : this.frameBitmap(FigureQuickEdit.PREVIEW_WIDTH);
         const canvas = this.workspace?.canvas;
         canvas?.previewOverrides.set(session.panelId, bitmap.toDataURL("image/webp", 0.9));
 

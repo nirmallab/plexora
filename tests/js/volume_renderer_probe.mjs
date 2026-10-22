@@ -894,6 +894,43 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
           view.restoreCamera(kept) && view.camera.dist === kept.dist, `${kept.dist} -> ${view.camera.dist}`);
 }
 
+// -- a sidebar and windows of its own ----------------------------------------------
+{
+    // Figure Builder's Quick Edit draws a 3-D panel beside its own scoped
+    // channel widget, on a page with no viewer sidebar at all: the renderer
+    // is handed both rather than reading the viewer's globals.
+    runInContext(readFileSync(join(JS, "services/volumeWindows.js"), "utf8"), context);
+    const held = box.__plexora;
+    box.__plexora = {};
+    const own = {
+        channelSlots: [{ index: 0, name: "A", enabled: true, range: [100, 900], color: "#ff0000" },
+                       { index: 1, name: "B", enabled: true, range: [0, 4000], color: "#00ff00" }],
+        dataLayer: { getFullChannelName: (name) => `now:${name}` },
+        isHdMode: () => true,
+        quantWindow: () => ({ qmin: 0, qmax: 4095 }),
+    };
+    const asked = [];
+    const windows = new box.PlexoraVolumeWindows("vol", { fetchImpl: (url) => {
+        asked.push(url);
+        const names = new URLSearchParams(url.split("?")[1]).getAll("channel");
+        return Promise.resolve({ ok: true, json: async () => ({ windows: Object.fromEntries(
+            names.map((name) => [name, { qmin: 3, qmax: 5000, exact: true }])) }) });
+    } });
+    requests.length = 0;
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl, sidebar: own, windows });
+    view.gl = fakeGl();
+    view.maxTexture = 2048;
+    await view.refresh();
+    check("handed a sidebar, the renderer draws its channels with no viewer sidebar on the page",
+          requests.length === 2 && requests.some((url) => url.includes("channel=now%3AA"))
+          && requests.some((url) => url.includes("channel=now%3AB")), requests.join(" "));
+    check("in its HD format", view.format() === "f16" && requests.every((url) => url.includes("format=f16")));
+    check("with the windows it was handed",
+          asked.length === 1 && requests.every((url) => url.includes("w=3%2C5000")),
+          `${asked.join(" ")} | ${requests.join(" ")}`);
+    box.__plexora = held;
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

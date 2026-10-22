@@ -896,9 +896,15 @@ ${sample}`;
 
     class VolumeRenderer {
         constructor({ viewState, datasource, wrapper = null, fetchImpl = null,
-                      budget = DEFAULT_BUDGET } = {}) {
+                      budget = DEFAULT_BUDGET, sidebar = null, windows = null } = {}) {
             this.viewState = viewState;
             this.datasource = datasource;
+            //: The channel widget whose slots are drawn, and the per-stack
+            //: windows their levels are made with: the viewer's own unless
+            //: handed others (Figure Builder's Quick Edit runs a scoped
+            //: sidebar of its own beside a live 3-D view).
+            this.sidebarFor = () => sidebar || global.__plexora?.viewerSidebar;
+            this.windowsFor = () => windows || global.__plexora?.volumeWindows;
             this.wrapper = wrapper || document.getElementById("openseadragon_wrapper");
             this.fetch = fetchImpl || ((...args) => global.fetch(...args));
             this.budget = budget;
@@ -1143,7 +1149,8 @@ ${sample}`;
 
         /** The sidebar's visible channels: name, colour, window in 0..1. */
         channels() {
-            const sidebar = global.__plexora?.viewerSidebar;
+            const sidebar = this.sidebarFor();
+            const windows = this.windowsFor();
             const slots = (sidebar?.channelSlots || []).filter((slot) => slot.enabled && slot.name)
                 .slice(0, MAX_CHANNELS);
             return slots.map((slot) => {
@@ -1163,8 +1170,8 @@ ${sample}`;
                 // the request (`w=`): an address only those bytes have. The
                 // viewer's (services/volumeWindows.js) when it holds one.
                 const packet = sidebar.quantWindow?.(slot.name, "volume");
-                const held = global.__plexora?.volumeWindows?.peek?.(fullName);
-                const stamp = held ? global.__plexora.volumeWindows.stamp(fullName)
+                const held = windows?.peek?.(fullName);
+                const stamp = held ? windows.stamp(fullName)
                     : (packet && Number.isFinite(Number(packet.qmin))
                         ? `${formatG(packet.qmin)},${formatG(packet.qmax)}` : "");
                 const levelWindow = held ? [held.qmin, held.qmax]
@@ -1436,7 +1443,7 @@ ${sample}`;
 
         /** `f16` while HD tiles are on (16-bit data, half-float textures), else `u8`. */
         format() {
-            return global.__plexora?.viewerSidebar?.isHdMode?.() ? "f16" : "u8";
+            return this.sidebarFor()?.isHdMode?.() ? "f16" : "u8";
         }
 
         /** One channel's texture: at `level` when given (the level the other
@@ -2364,7 +2371,7 @@ ${sample}`;
                 // first time has none yet. Its first answer is announced to
                 // nobody (volumeWindows.adopt), so a level fetched before it
                 // was looked for under another window and never drawn.
-                await global.__plexora?.volumeWindows?.ensure?.(
+                await this.windowsFor()?.ensure?.(
                     this.channels().map((channel) => channel.name));
                 const channels = this.channels();
                 await this.ensureTextures(channels);

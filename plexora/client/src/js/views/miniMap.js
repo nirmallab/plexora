@@ -228,17 +228,162 @@ class MiniMap {
         // still good but every LUT built from a range is not.
         window.addEventListener("plexora:hd-mode-changed", () => this.invalidate());
         // Another plane or projection of a z-stack: the map shows what is on
-        // screen, fetched once the stepping stops.
-        window.addEventListener("plexora:view-changed", () => this._viewChanged());
+        // screen, fetched once the stepping stops. Entering or leaving 3-D
+        // also swaps what the indicator is (_syncIndicator).
+        window.addEventListener("plexora:view-changed", () => {
+            this._viewChanged();
+            if (this.expanded) this._syncIndicator();
+        });
+        // In 3-D the indicator is the area square, which moves on every
+        // request -- a slide under the hand among them -- a frame before the
+        // view settles. Followed as it is asked for.
+        window.addEventListener("plexora:view-requested", () => {
+            if (this.expanded && this._inVolume()) this._syncIndicator();
+        });
+    }
+
+    /** The z-stack's view state, or null for a planar image. */
+    _state() {
+        const state = window.__plexora?.viewState;
+        try {
+            return state?.enabled?.() ? state : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /** True while the 3-D view, not the tiles, is the main picture. */
+    _inVolume() {
+        try {
+            return Boolean(this._state()?.isVolume?.());
+        } catch (error) {
+            return false;
+        }
     }
 
     /** The view on screen of a z-stack, canonical; "" for a planar image. */
     _viewToken() {
         try {
-            const state = window.__plexora?.viewState;
-            return state?.enabled?.() ? String(state.spec?.() || "") : "";
+            const state = this._state();
+            if (!state) return "";
+            // In 3-D `spec()` is the plane the tiles froze on, which is not
+            // what anybody is looking at: the map shows the cut instead.
+            if (state.isVolume?.()) return this._volumeToken(state);
+            return String(state.spec?.() || "");
         } catch (error) {
             return "";
+        }
+    }
+
+    /**
+     * The 3-D view's cut as a map: the maximum over the planes it draws.
+     * Spelled `z{lo}-{hi}max` with inclusive bounds even for the whole stack,
+     * because that is the canonical form the server turns a bare `zmax`
+     * into (viewspec.ViewSpec.clipped) -- one spelling, one cache entry.
+     */
+    _volumeToken(state) {
+        const s = state.get?.() || {};
+        const depth = Math.max(1, Number(state.depth) || 1);
+        const t = Number(state.frames) > 1 && s.t ? `t${s.t}` : "";
+        let lo = 0;
+        let hi = depth;
+        const G = window.PlexoraInspectGeometry;
+        if (G && s.inspect) {
+            const z = G.resolve(s.inspect, G.dims(state.info, depth, s.volume?.area || null)).box?.z;
+            if (Array.isArray(z)) {
+                lo = Math.max(0, Math.min(depth - 1, Math.floor(Number(z[0]) || 0)));
+                hi = Math.max(lo + 1, Math.min(depth, Math.ceil(Number(z[1]) || depth)));
+            }
+        }
+        return `${t}z${lo}-${hi - 1}max`;
+    }
+
+    /**
+     * What the 3-D view draws in x and y, `{x, y, width, height}` image
+     * pixels, and what defines it: `"crop"` (the cut's crop -- the Area
+     * tool's square is one), `"area"` (`volume.area`, Crop to area), or null
+     * for the whole image, which has nothing to point at.
+     */
+    _drawn() {
+        const state = this._state();
+        const width = Number(this.config.width) || 0;
+        const height = Number(this.config.height) || 0;
+        if (!state || !width || !height) return null;
+        const s = state.get?.() || {};
+        const G = window.PlexoraInspectGeometry;
+        const area = G ? G.cleanArea(s.volume?.area || null, { width, height })
+            : (s.volume?.area || null);
+        let rect = area ? { ...area } : { x: 0, y: 0, width, height };
+        let kind = area ? "area" : null;
+        if (G && s.inspect?.mode === "crop") {
+            const box = G.resolve(s.inspect, G.dims(state.info || { width, height },
+                                                    state.depth, area)).box;
+            const x = box?.x;
+            const y = box?.y;
+            if (Array.isArray(x) && Array.isArray(y)
+                    && (x[0] > rect.x + 0.5 || x[1] < rect.x + rect.width - 0.5
+                        || y[0] > rect.y + 0.5 || y[1] < rect.y + rect.height - 0.5)) {
+                rect = { x: x[0], y: y[0], width: x[1] - x[0], height: y[1] - y[0] };
+                kind = "crop";
+            }
+        }
+        return kind ? { kind, rect, area } : null;
+    }
+
+    /** What the 3-D view draws in [0, 1] image coordinates, or null for the
+     *  whole image. */
+    _areaRect() {
+        const drawn = this._drawn();
+        if (!drawn) return null;
+        const width = Number(this.config.width) || 1;
+        const height = Number(this.config.height) || 1;
+        const { rect } = drawn;
+        return {
+            left: MiniMap._clamp01(rect.x / width),
+            top: MiniMap._clamp01(rect.y / height),
+            right: MiniMap._clamp01((rect.x + rect.width) / width),
+            bottom: MiniMap._clamp01((rect.y + rect.height) / height),
+        };
+    }
+
+    /**
+     * Move what the 3-D view draws so its centre is at (`u`, `v`), its size
+     * kept and the whole of it inside the image (a crop, inside the area).
+     * Through the cut's controller when it owns this view state, as the 3-D
+     * view's own gestures go, so a move from the map undoes the same way:
+     * a crop as one undo entry per drag (nothing is fetched for it, it is
+     * the shader's), the area as a slide that takes the cut with it.
+     */
+    _moveArea(u, v, final) {
+        const state = this._state();
+        const drawn = this._drawn();
+        const width = Number(this.config.width) || 0;
+        const height = Number(this.config.height) || 0;
+        if (!drawn || !width || !height) return;
+        const { rect, area } = drawn;
+        const bounds = drawn.kind === "crop" && area ? area : { x: 0, y: 0, width, height };
+        const clamp = (value, size, lo, span) =>
+            Math.round(Math.min(Math.max(value, lo), lo + Math.max(0, span - size)));
+        const x = clamp(u * width - rect.width / 2, rect.width, bounds.x, bounds.width);
+        const y = clamp(v * height - rect.height / 2, rect.height, bounds.y, bounds.height);
+        const cutter = window.PlexoraInspect;
+        const owned = cutter?.viewState === state;
+        if (drawn.kind === "crop") {
+            const crop = { x: [x, x + rect.width], y: [y, y + rect.height] };
+            if (owned && typeof cutter.set === "function") {
+                cutter.set({ inspect: { crop } }, { save: final, gesture: "mini-map" });
+            } else {
+                const inspect = state.get().inspect;
+                state.set({ inspect: { ...inspect, crop: { ...inspect.crop, ...crop } } },
+                          { save: final });
+            }
+            return;
+        }
+        const next = { x, y, width: rect.width, height: rect.height };
+        if (owned && typeof cutter.slideArea === "function") {
+            cutter.slideArea(next, { final });
+        } else {
+            state.set({ volume: { area: next } }, { save: final });
         }
     }
 
@@ -483,8 +628,10 @@ class MiniMap {
         };
     }
 
-    /** OSD's own rotation and mirror, which is what the tiles are drawn with. */
+    /** OSD's own rotation and mirror, which is what the tiles are drawn with.
+     *  Upright in 3-D, whose picture is not drawn through OSD's. */
     _orientation() {
+        if (this._inVolume()) return { degrees: 0, flipped: false };
         const viewport = this.viewer.viewport;
         const turned = Number(viewport?.getRotation?.(true)) || 0;
         return {
@@ -558,8 +705,24 @@ class MiniMap {
         // the geometry, and the indicator belongs in the new one.
         this._syncOrientation();
         const geom = this.geom;
-        const bounds = this.viewer.viewport.getBounds(true);
         const style = this.indicator.style;
+        if (this._inVolume()) {
+            // The 3-D area square. None for the whole stack: an outline round
+            // the whole image is the frame itself, and a handle that moves
+            // nothing.
+            style.transformOrigin = "";
+            style.transform = "";
+            const area = this._areaRect();
+            style.display = area ? "" : "none";
+            if (!area) return;
+            style.left = `${geom.offsetX + area.left * geom.drawWidth}px`;
+            style.top = `${geom.offsetY + area.top * geom.drawHeight}px`;
+            style.width = `${Math.max(area.right - area.left, 0) * geom.drawWidth}px`;
+            style.height = `${Math.max(area.bottom - area.top, 0) * geom.drawHeight}px`;
+            return;
+        }
+        style.display = "";
+        const bounds = this.viewer.viewport.getBounds(true);
         const turn = ((Number(bounds.degrees) || 0) % 360 + 360) % 360;
         if (turn) {
             // The view is turned, so what is on screen is a turned rectangle
@@ -1019,7 +1182,20 @@ class MiniMap {
             return;
         }
         const point = this._stagePoint(event);
-        if (event.target === this.indicator) {
+        if (this._inVolume()) {
+            // The map moves the 3-D area, kept whole and inside the image;
+            // the 3-D view follows it as it would a Shift-drag.
+            const area = this._areaRect();
+            if (!area) return;
+            if (event.target === this.indicator) {
+                this._drag = { volume: true,
+                               u: (area.left + area.right) / 2 - point.u,
+                               v: (area.top + area.bottom) / 2 - point.v };
+            } else {
+                this._drag = { volume: true, u: 0, v: 0 };
+                this._moveArea(point.u, point.v, false);
+            }
+        } else if (event.target === this.indicator) {
             // Grab the rectangle where it was grabbed, so it does not jump its
             // centre to the cursor.
             const centre = this._viewportCentre();
@@ -1048,6 +1224,10 @@ class MiniMap {
             return;
         }
         const point = this._stagePoint(event);
+        if (this._drag.volume) {
+            this._moveArea(point.u + this._drag.u, point.v + this._drag.v, false);
+            return;
+        }
         // Immediately, not animated: a navigation gesture should track the
         // cursor rather than easing behind it.
         this._panToNormalized(point.u + this._drag.u, point.v + this._drag.v, true);
@@ -1057,9 +1237,16 @@ class MiniMap {
         if (!this._drag) {
             return;
         }
+        const drag = this._drag;
         this._drag = null;
         if (this.stage.hasPointerCapture && this.stage.hasPointerCapture(event.pointerId)) {
             this.stage.releasePointerCapture(event.pointerId);
+        }
+        if (drag.volume) {
+            // The slide's last move, sent as final: saved, one undo entry.
+            const point = this._stagePoint(event);
+            this._moveArea(point.u + drag.u, point.v + drag.v, true);
+            return;
         }
         // panTo(immediately) skips OSD's constraints, so re-apply them once
         // the gesture ends rather than fighting them during it.
@@ -1071,6 +1258,9 @@ class MiniMap {
             return;
         }
         event.preventDefault();
+        // In 3-D the tiles' zoom is not what is on screen; the area's size is
+        // the Area tool's grips'.
+        if (this._inVolume()) return;
         const point = this._stagePoint(event);
         // Zoom about the point under the cursor, so the wheel reads as
         // "magnify here" rather than "magnify wherever I happen to be".

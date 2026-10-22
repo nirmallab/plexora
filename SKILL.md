@@ -4756,6 +4756,22 @@ deliberately left out and what should be built next.
   `toTileLevels`, and one `addTiledImage` per active channel.
   **The tile QUALITY a change of which rebuilds every item** (the HD toggle)
   goes through `handOverWhenReady(items, commit)` so the old items keep drawing
+  **In 3-D** (`_inVolume()`) the map shows the cut, not the plane the tiles
+  froze on (which is what `spec()` still answers): `_volumeToken` spells the
+  maximum over the planes `PlexoraInspectGeometry.resolve(...).box.z` keeps as
+  `z{lo}-{hi}max`, inclusive even for the whole stack, because that is the
+  canonical form the server turns a bare `zmax` into — one spelling, one cache
+  entry. The indicator is what the 3-D view draws in x/y (`_drawn()`: the
+  crop's square, else `volume.area`), hidden for the whole image, whose
+  outline would be the frame itself and a handle that moves nothing; the map
+  is upright, since OSD's rotation turns only the tiles under the 3-D canvas.
+  A click or drag moves that square, kept whole inside the image (a crop
+  inside its area), through the cut's controller as the 3-D view's own
+  gestures go — `PlexoraInspect.set` with gesture `"mini-map"` for a crop,
+  `slideArea` for an area, saved as final only on release, so a drag is one
+  undo entry. The wheel does nothing in 3-D (the area's size is the Area
+  tool's grips'), and the indicator follows `plexora:view-requested`, because
+  a slide moves the area a frame before the view settles.
   until the new ones can — `addChannelItems(srcIdx, outgoing)` for the
   reference image, `addTiledLayer`'s `prepareStyle(next)` for a registered
   layer, `referenceItemsFor(url)`/`dropWorldItems(items)` for finding and
@@ -6546,6 +6562,43 @@ ordering, restyling and deleting one are the generic layer routes.
   `extract_label_surfaces` a local build calls; `providers.node.
   build_surface_on_node` polls `/volume/jobs/<id>`, relays stage/progress and
   cancel, and turns the float-exact `.npz` result into a `Mesh`. The primary
+  A plane or projection panel is read at the view it was captured on, since
+  read without it both Quick Edit and the export showed the stack's default
+  plane with nothing to say so. The token is spelled twice, by
+  `PlexoraViewerScene.viewToken(state, {depth, frames})`
+  (`services/viewerScene.js`, what Quick Edit fetches with) and by
+  `export.panel_view_token(panel)` (what the export opens) — `z12`, `t3z12`,
+  `z4-19max`, `z4-19p90`, "" for a 3-D panel or a planar image — and
+  `test_figure_builder_quickedit.py` pins the two equal, because a drift is a
+  panel edited on one plane and exported on another. `pixels.read_region(...,
+  view=)` keeps one reader per (datasource, view) (keyed `ds\0view`, as
+  `ReaderShelf` does, since a `SourceImage` is opened AT a view); the
+  `source_pixels` route takes `?view=`; `export._source_for` returns
+  `(source, stale)` and, when the view can no longer be read, opens the
+  default plane and reports `stale_view` with a warning rather than failing.
+  `sources.describe()` carries `volume` (the `/volume/<ds>/info` payload,
+  read off the file through `ImageHandle.volume()`, never that route, which
+  loads the project). Quick Edit (`figureQuickEdit.js`) shows a plane slider
+  (`#fb_quickedit_z`: the plane, or the slab slid keeping its thickness), and
+  Done merges only `z` or `slab` back (`mergeVolumeState`). A 3-D panel is
+  drawn live by core's `VolumeRenderer` in `.fb-quickedit-3d`, sized to the
+  panel frame, only when its datasource is the one the viewer has loaded
+  (`routes._loaded_datasource` → `#fb_workspace[data-loaded-datasource]`) and
+  `VolumeRenderer.supported()` (WebGL2 with 3-D textures), because the
+  `/volume/<ds>/...` routes it reads
+  load the datasource they name and would evict the viewer's; otherwise it
+  shows the stored picture with the channels locked and Done changes nothing.
+  Done on a live one writes camera, composite, box, inspect, t and
+  interpolation, and stores a print-size picture
+  (`VOLUME_PREVIEW_EDGE`, 2400 px; 1200 when the GPU refuses), which the
+  export uses. For that the renderer takes `sidebar` and `windows` options
+  (`sidebarFor`/`windowsFor`, defaulting to `__plexora.viewerSidebar`/
+  `volumeWindows`), since the figure page has no viewer sidebar, and
+  `workspace.html` loads `inspectGeometry.js`, `volumeWindows.js`,
+  `volumeCamera.js` and `volumeRenderer.js` with index.html's tags.
+  Tests: `test_figure_builder_pixels.py` (the z-stack section),
+  `tests/js/figure_quickedit_probe.mjs` (z-stack and 3-D cases),
+  `volume_renderer_probe.mjs` (a sidebar and windows of its own).
   then measures, joins and writes the surface, so every read after the build
   is local. `store.open_volume_for(project)` (also used by
   `agent/core/surface.py`) opens the stack locally or as a
@@ -8227,15 +8280,25 @@ median 8.3 ms both with the lens collapsed and expanded — identical to the
 documented pan baseline above — with zero `_draw()` calls across 100 pan
 frames, zero network requests until the lens is first opened, and no request
 on a colour change or a re-expand. `tests/js/mini_map_probe.mjs` +
-`tests/test_mini_map.py` cover the client geometry/shader/guard logic (61
-probe checks, 19 pytest tests, 15 of them mutation tests) and
+`tests/test_mini_map.py` cover the client geometry/shader/guard logic (123
+probe checks, 39 pytest tests, 33 of them mutation tests) and
 `tests/test_channel_overview.py` covers the route and the quantization
 contract, including that the Area placeholder does not shift the zarray
 channel index. On a z-stack the lens shows the plane or projection on screen:
 `miniMap.js` follows `plexora:view-changed` and asks
 `/generated/overview/...?view=`, and `generate_channel_overview(view=)` reads
 that view's coarsest level through `_minimap_overview`, held per load and
-view, in place of `zarray`.
+view, in place of `zarray`. A node-backed image forwards the view too:
+`generate_channel_overview` passes it to `NodeImageProvider.overview(channel,
+view=None)`, which falls back to the default plane on a `BadView` (the map is
+decoration), and the node's `image_overview` answers a plane token with
+`_minimap_view_overview` — that plane's own overview, not `_view_overview`'s,
+whose answer for a plane is the default plane's (right for a plane's
+statistics, which are the stack's, wrong for a picture of it). Those are kept
+in a small LRU in `resource.derived` (`MINIMAP_PLANES`, 8), not `_cached`,
+which keeps forever and would hold every plane of a scrub; a reopen drops
+them. In 3-D the lens asks for the cut as a projection (see `views/miniMap.js`
+in the Repository Map).
 
 If the lens opens to a black circle, check the server's age before the code —
 see "A Python change needs a restart" under Key Invariants. `MiniMap._updateNote`

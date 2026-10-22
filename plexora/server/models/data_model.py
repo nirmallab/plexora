@@ -3961,7 +3961,7 @@ def generate_channel_overview(datasource_name, channel_name, view=None):
 
     remote = _remote_image()
     if remote is not None:
-        return remote.overview(channel_name)
+        return remote.overview(channel_name, view)
 
     if config[datasource_name].get('image_kind') == brightfield.BRIGHTFIELD:
         # One layer, three samples, no window -- the same asymmetry the tile

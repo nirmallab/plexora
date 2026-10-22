@@ -69,9 +69,11 @@ function contextStub() {
 function canvasStub(width, height) {
     return {
         width: width || 1, height: height || 1, style: {},
-        parentElement: { getBoundingClientRect: () => ({ width: 400, height: 300 }) },
+        parentElement: { getBoundingClientRect: () => ({ width: 400, height: 300 }),
+                         appendChild() {} },
         handlers: {},
         addEventListener(type, fn) { this.handlers[type] = fn; },
+        remove() {},
         setPointerCapture() {},
         getContext() { return contextStub(); },
         toDataURL() { return "data:image/webp;base64,LIVE"; },
@@ -81,16 +83,23 @@ function canvasStub(width, height) {
 
 function elementStub() {
     return {
-        hidden: true, innerHTML: "", textContent: "",
-        addEventListener() {},
+        hidden: true, innerHTML: "", textContent: "", value: "", max: "",
+        handlers: {}, attributes: {}, classes: new Set(),
+        addEventListener(type, fn) { this.handlers[type] = fn; },
         querySelector() { return null; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+        removeAttribute(name) { delete this.attributes[name]; },
+        classList: {
+            toggle: (name, on) => {},
+        },
     };
 }
 
 const elements = {};
 for (const id of ["fb_quickedit", "fb_quickedit_done", "fb_quickedit_cancel",
                   "fb_quickedit_close", "fb_quickedit_main", "fb_quickedit_title",
-                  "fbqe_channel_slot_list"]) {
+                  "fbqe_channel_slot_list", "fb_quickedit_z", "fb_quickedit_z_range",
+                  "fb_quickedit_z_label", "fb_quickedit_note", "fb_quickedit_channels"]) {
     elements[id] = elementStub();
 }
 elements.fb_quickedit_canvas = canvasStub();
@@ -114,6 +123,10 @@ const ctx = createContext({
     },
 });
 ctx.globalThis = ctx;
+// A 3-D panel that is shown rather than drawn loads its stored picture.
+ctx.Image = class {
+    constructor() { this.complete = false; this.naturalWidth = 0; }
+};
 ctx.ImageData = class {
     constructor(width, height) {
         this.width = width;
@@ -175,41 +188,106 @@ let manualPixels = false;
 let commitResolver = null;
 let manualCommit = false;
 
-function panelRecord(id) {
+function panelRecord(id, volume, sourceId = "src_1") {
     return {
-        panel_id: id, source_id: "src_1", title: id, render_revision: 3,
+        panel_id: id, source_id: sourceId, title: id, render_revision: 3,
         placement: { x_mm: 0, y_mm: 0, w_mm: 40, h_mm: 40, z: 1, page_id: "pg_1" },
         scene: {
             viewport: { x: 0, y: 0, w: 512, h: 512 },
             channels: [{ key: "DNA", fullname_at_capture: "DNA",
                          color: { r: 0, g: 0, b: 255 }, window: [120, 880], visible: true }],
+            // core's `scene.plugins.volume` (services/surfaceLayers.js
+            // sceneState), with a field this side never writes, to show it
+            // survives a commit.
+            ...(volume ? { plugins: { volume: { version: 1,
+                state: { surfaces: ["kept"], cut: "Z planes 4-9", ...volume } } } } : {}),
         },
     };
 }
 
-const panels = { p1: panelRecord("p1"), p2: panelRecord("p2") };
+const panels = {
+    p1: panelRecord("p1"), p2: panelRecord("p2"),
+    plane: panelRecord("plane", { mode: "plane", z: 12, t: 0 }),
+    slab: panelRecord("slab", { mode: "slab", z: 7, t: 0,
+                                slab: { z0: 4, z1: 19, op: "pct", q: 90 } }),
+    framed: panelRecord("framed", { mode: "plane", z: 12, t: 3 }),
+    flat: panelRecord("flat", { mode: "plane", z: 0 }, "src_flat"),
+    three: panelRecord("three", { mode: "volume", z: 7, t: 0, composite: "mip",
+                                  camera: { q: [0, 0, 0, 1], dist: 2.2, pan: [0, 0] },
+                                  box: { x: 10, y: 20, width: 300, height: 300 },
+                                  inspect: null, interpolation: "linear" }),
+};
+//: What each source describes itself as: a 40-plane, 5-frame stack; or planar.
+const described = {
+    demo: { volume: { depth: 40, frames: 5, width: 1024, height: 1024 },
+            channels: [{ key: "DNA", fullname_at_capture: "DNA (renamed)" },
+                       { key: "CD8", fullname_at_capture: "CD8" }] },
+    flat: { volume: null, channels: [{ key: "DNA", fullname_at_capture: "DNA" }] },
+};
+//: Every `view` a readPixels call carried, and every commit's operations.
+const views = [];
+const commits = [];
+const previews = [];
+
+// A stand-in for core's VolumeRenderer (views/volumeRenderer.js), recording
+// what Quick Edit asks of it. `webgl` off makes it a browser without 3-D
+// textures.
+const renderers = [];
+let webgl = true;
+ctx.window.PlexoraVolumeWindows = class {
+    constructor(datasource) { this.datasource = datasource; }
+};
+ctx.window.PlexoraVolumeRenderer = class {
+    static supported() { return webgl; }
+    constructor(options) {
+        this.options = options;
+        this.calls = [];
+        renderers.push(this);
+    }
+    mount() { this.calls.push("mount"); return true; }
+    restoreCamera(camera) { this.calls.push("restoreCamera"); this.restored = camera; return true; }
+    setArea(area) { this.area = area; return true; }
+    show(visible) { this.calls.push("show:" + visible); }
+    async refresh() { this.calls.push("refresh"); }
+    invalidate() { this.calls.push("invalidate"); }
+    cameraState() { return { q: [0.1, 0.2, 0.3, 0.9], dist: 3, pan: [0.5, 0] }; }
+    snapshot(size) {
+        this.calls.push("snapshot:" + (size ? `${size.width}x${size.height}` : "screen"));
+        return canvasStub(size ? size.width : 300, size ? size.height : 300);
+    }
+    destroy() { this.calls.push("destroy"); }
+};
 const canvasSpy = {
     previewOverrides: new Map(),
     surfaceEl: { querySelector: () => null },
     render: () => log.push("canvas.render"),
 };
 
-function build() {
+function build({ loaded = "" } = {}) {
     log.length = 0;
     pending = [];
     buses.length = 0;
     sidebars.length = 0;
+    views.length = 0;
+    commits.length = 0;
+    previews.length = 0;
+    renderers.length = 0;
     canvasSpy.previewOverrides.clear();
     ctx.__deps = {
         workspace: { canvas: canvasSpy },
         figureId: "fig_1",
+        loadedDatasource: loaded,
         api: {
+            describeSource: async (datasource) => ({
+                ok: true, data: { source: described[datasource] || null } }),
+            previewUrl: (figureId, panelId, revision) => `/preview/${panelId}/${revision}`,
             pixelInfo: async (figureId, sourceId, key) => {
                 log.push("pixelInfo:" + key);
                 return { ok: true, data: { stats: { min: 0, max: 1000, p01: 10, p999: 900 } } };
             },
             readPixels: (figureId, sourceId, params) => {
                 log.push("readPixels:" + params.channel);
+                views.push(params.view);
                 const answer = {
                     ok: true, width: params.out_w, height: params.out_h,
                     data: new Uint16Array(params.out_w * params.out_h),
@@ -217,19 +295,25 @@ function build() {
                 if (!manualPixels) return Promise.resolve(answer);
                 return new Promise((resolve) => pending.push({ params, resolve, answer }));
             },
-            putPreview: async () => { log.push("putPreview"); return { ok: true }; },
+            putPreview: async (figureId, panelId, revision, blob, size) => {
+                log.push("putPreview");
+                previews.push(size);
+                return { ok: true };
+            },
         },
         state: {
             sourceStatus: {},
             panel: (id) => panels[id] || null,
-            source: () => ({
-                kind: "plexora_project", datasource: "demo", display_name: "Demo",
+            source: (id) => ({
+                kind: "plexora_project", datasource: id === "src_flat" ? "flat" : "demo",
+                display_name: "Demo",
                 image: { width: 1024, height: 1024 },
                 channels: [{ key: "DNA", fullname_at_capture: "DNA" },
                            { key: "CD8", fullname_at_capture: "CD8" }],
             }),
             commit: (ops) => {
                 log.push("commit:" + ops[0].panel_id);
+                commits.push(JSON.parse(JSON.stringify(ops)));
                 if (!manualCommit) return Promise.resolve(true);
                 return new Promise((resolve) => { commitResolver = () => resolve(true); });
             },
@@ -497,6 +581,194 @@ check("cancelling writes nothing",
 check("and puts the panel back", cancelled.override, false);
 check("and redraws it", cancelled.log.includes("canvas.render"), true);
 check("and ends the session", cancelled.session, null);
+
+// -- a z-stack panel, at its plane -------------------------------------------
+//
+// A panel captured on plane 12 used to open on the stack's DEFAULT plane, and
+// one captured on a projection as a single plane: the pixels were read with no
+// view at all. Its recorded view is what is read now, a slider moves it, and
+// Done writes back only the part of the record the slider owns.
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const SETTLE = runInContext("FigureQuickEdit.SETTLE_MS", ctx) + 40;
+const volumeState = (ops) => ops[0].changes.scene.plugins.volume;
+
+const plane = await (async () => {
+    const quickEdit = build();
+    await quickEdit.open("plane");
+    await settled();
+    const opened = [...views];
+    const control = { hidden: elements.fb_quickedit_z.hidden,
+                      max: elements.fb_quickedit_z_range.max,
+                      value: elements.fb_quickedit_z_range.value,
+                      label: elements.fb_quickedit_z_label.textContent };
+    views.length = 0;
+    elements.fb_quickedit_z_range.value = "20";
+    elements.fb_quickedit_z_range.handlers.input();
+    const label = elements.fb_quickedit_z_label.textContent;
+    await pause(SETTLE);
+    const moved = [...views];
+    await quickEdit.commit();
+    return { opened, control, label, moved, commit: volumeState(commits[0]) };
+})();
+check("a plane panel is read at its plane", plane.opened.every((view) => view === "z12")
+    && plane.opened.length > 0, true);
+check("and offers a plane slider over the whole stack",
+    plane.control, { hidden: false, max: "39", value: "12", label: "z 12 / 40" });
+check("moving it relabels at once", plane.label, "z 20 / 40");
+check("and reads the new plane once it settles",
+    plane.moved.length > 0 && plane.moved.every((view) => view === "z20"), true);
+check("Done writes the plane back and keeps the rest of the record",
+    plane.commit, { version: 1, state: { surfaces: ["kept"], cut: "Z planes 4-9",
+                                         mode: "plane", z: 20, t: 0 } });
+
+const slab = await (async () => {
+    const quickEdit = build();
+    await quickEdit.open("slab");
+    await settled();
+    const opened = [...views];
+    const control = { max: elements.fb_quickedit_z_range.max,
+                      value: elements.fb_quickedit_z_range.value,
+                      label: elements.fb_quickedit_z_label.textContent };
+    views.length = 0;
+    elements.fb_quickedit_z_range.value = "10";
+    elements.fb_quickedit_z_range.handlers.input();
+    await pause(SETTLE);
+    const moved = [...views];
+    await quickEdit.commit();
+    return { opened, control, moved, commit: volumeState(commits[0]).state };
+})();
+check("a projection panel is read as that projection",
+    slab.opened.length > 0 && slab.opened.every((view) => view === "z4-19p90"), true);
+// 16 planes thick in a 40-plane stack: its first plane goes from 0 to 24.
+check("its slider slides the range and keeps its thickness",
+    slab.control, { max: "24", value: "4", label: "90th pct. z 4–19" });
+check("and reads the slid range",
+    slab.moved.length > 0 && slab.moved.every((view) => view === "z10-25p90"), true);
+check("Done writes the slab back, not a plane",
+    { slab: slab.commit.slab, z: slab.commit.z },
+    { slab: { z0: 10, z1: 25, op: "pct", q: 90 }, z: 7 });
+
+const framed = await (async () => {
+    const quickEdit = build();
+    await quickEdit.open("framed");
+    await settled();
+    quickEdit.close();
+    return [...views];
+})();
+check("a time series reads the panel's frame too",
+    framed.length > 0 && framed.every((view) => view === "t3z12"), true);
+
+const flat = await (async () => {
+    const quickEdit = build();
+    elements.fb_quickedit_z.hidden = true;
+    await quickEdit.open("flat");
+    await settled();
+    const out = { views: [...views], hidden: elements.fb_quickedit_z.hidden };
+    quickEdit.close();
+    return out;
+})();
+// A record left on a panel whose image is now planar asks for no view (which
+// the server would refuse) and offers no slider.
+check("an image that is no longer a stack is read with no view",
+    flat.views.length > 0 && flat.views.every((view) => !view), true);
+check("and has no plane slider", flat.hidden, true);
+
+const plain = await (async () => {
+    const quickEdit = build();
+    await quickEdit.open("p1");
+    await settled();
+    await quickEdit.commit();
+    return { views: [...views], scene: commits[0][0].changes.scene };
+})();
+check("a panel that recorded no view is read as before",
+    plain.views.every((view) => !view), true);
+check("and its commit adds no view record", "plugins" in plain.scene, false);
+
+// -- a 3-D panel, drawn live ---------------------------------------------------
+
+const three = await (async () => {
+    const quickEdit = build({ loaded: "demo" });
+    await quickEdit.open("three");
+    await settled();
+    const renderer = renderers[0];
+    const options = renderer && { datasource: renderer.options.datasource,
+                                  depth: renderer.options.viewState.depth,
+                                  area: renderer.options.viewState.get().volume.area,
+                                  windows: renderer.options.windows?.datasource,
+                                  slots: renderer.options.sidebar.channelSlots.length,
+                                  hd: renderer.options.sidebar.isHdMode(),
+                                  // By its name NOW: what the 3-D routes look up.
+                                  name: renderer.options.sidebar.dataLayer
+                                      .getFullChannelName("DNA") };
+    const opened = { views: [...views], hidden: elements.fb_quickedit_z.hidden,
+                     calls: renderer ? [...renderer.calls] : [],
+                     restored: renderer?.restored, options,
+                     note: elements.fb_quickedit_note.textContent };
+    await quickEdit.commit();
+    return { opened, commit: volumeState(commits[0]).state, previews: [...previews],
+             snapshots: renderer.calls.filter((call) => call.startsWith("snapshot")),
+             destroyed: renderer.calls.includes("destroy"),
+             viewport: commits[0][0].changes.scene.viewport };
+})();
+check("a 3-D panel reads no plane pixels", three.opened.views, []);
+check("it is drawn by the 3-D renderer, mounted, at the recorded camera, and refreshed",
+    { calls: three.opened.calls.filter((call) => ["mount", "restoreCamera", "show:true",
+                                                  "refresh"].includes(call)),
+      restored: three.opened.restored },
+    { calls: ["mount", "restoreCamera", "show:true", "refresh"],
+      restored: { q: [0, 0, 0, 1], dist: 2.2, pan: [0, 0] } });
+check("over the panel's own stack, area, channels and windows",
+    three.opened.options,
+    { datasource: "demo", depth: 40, area: { x: 10, y: 20, width: 300, height: 300 },
+      windows: "demo", slots: 2, hd: true, name: "DNA (renamed)" });
+check("with no plane slider", three.opened.hidden, true);
+check("and says how to turn it", three.opened.note.startsWith("Drag to turn"), true);
+check("Done writes the camera back, and leaves the plane and the surfaces",
+    { camera: three.commit.camera, z: three.commit.z, surfaces: three.commit.surfaces,
+      box: three.commit.box, mode: three.commit.mode },
+    { camera: { q: [0.1, 0.2, 0.3, 0.9], dist: 3, pan: [0.5, 0] }, z: 7, surfaces: ["kept"],
+      box: { x: 10, y: 20, width: 300, height: 300 }, mode: "volume" });
+// The export draws a 3-D panel from this picture: it is stored at print size.
+check("and stores the picture at print size", three.previews, [{ width: 2400, height: 2400 }]);
+check("drawn by the renderer at that size", three.snapshots.includes("snapshot:2400x2400"), true);
+check("its framing is the camera's, so its viewport is left as it was",
+    three.viewport, { x: 0, y: 0, w: 512, h: 512 });
+check("closing lets the renderer go", three.destroyed, true);
+
+const elsewhere = await (async () => {
+    const quickEdit = build({ loaded: "other" });
+    await quickEdit.open("three");
+    await settled();
+    const out = { renderers: renderers.length, views: [...views],
+                  inert: "inert" in elements.fb_quickedit_channels.attributes,
+                  note: elements.fb_quickedit_note.textContent };
+    await quickEdit.commit();
+    return { ...out, commits: commits.length,
+             unlocked: !("inert" in elements.fb_quickedit_channels.attributes) };
+})();
+// Core's 3-D routes LOAD the datasource they are asked about: drawing this one
+// would evict the image the viewer has open.
+check("a 3-D panel on an image the viewer has not open is not drawn",
+    { renderers: elsewhere.renderers, views: elsewhere.views }, { renderers: 0, views: [] });
+check("its channels are locked and the note says why",
+    { inert: elsewhere.inert, note: elsewhere.note.startsWith("This 3-D panel") },
+    { inert: true, note: true });
+check("and Done changes nothing", elsewhere.commits, 0);
+check("closing unlocks the channels for the next panel", elsewhere.unlocked, true);
+
+const noGpu = await (async () => {
+    webgl = false;
+    const quickEdit = build({ loaded: "demo" });
+    await quickEdit.open("three");
+    await settled();
+    webgl = true;
+    const out = { renderers: renderers.length,
+                  locked: "inert" in elements.fb_quickedit_channels.attributes };
+    quickEdit.close();
+    return out;
+})();
+check("nor where the browser cannot draw a volume", noGpu, { renderers: 0, locked: true });
 
 console.error(JSON.stringify({ problems }));
 process.exitCode = problems.length ? 1 : 0;

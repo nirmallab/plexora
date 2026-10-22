@@ -921,8 +921,11 @@ class NodeImageProvider(_NodeBacked):
         self._served(response, params)
         return data, response.headers.get("Content-Type") or "image/webp"
 
-    def overview(self, channel_name):
+    def overview(self, channel_name, view=None):
+        """One channel's mini-map overview, at `view` (a z-stack's plane or
+        projection on screen; the default plane without one)."""
         from plexora.server.models.data_model import UnknownChannelError
+        from plexora.server.volume.viewspec import BadView
 
         try:
             index = self._index(channel_name)
@@ -930,7 +933,11 @@ class NodeImageProvider(_NodeBacked):
             # No image rather than an error, matching the local path: the
             # mini-map is decoration and a missing thumbnail beats a failure.
             return None
-        params = self._view_params()
+        try:
+            params = self._view_params(view)
+        except BadView:
+            # Decoration again: the default plane stands in.
+            params = self._view_params()
         data, response = http.bytes_request(
             self.node, "GET",
             f"/node/v1/image/{self._binding.resource_id}/overview"
