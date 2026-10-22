@@ -323,10 +323,23 @@ ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
 CLASSIFIER_MODES = ("off", "layer", "check")
 
 #: How a marker that needs a look is decided (`SessionOptions.engine`).
-#: classic: the look at rows below, at and above the gate, then the
-#: candidates beyond it. candidates: blind panels of single cells choose
-#: among the lattice's candidate gates (`hypotheses`).
-ENGINES = ("classic", "candidates")
+#: v1 (first called "classic"): the look at rows below, at and above the
+#: gate, then the candidates beyond it. v2 (first called "candidates"): blind
+#: panels of single cells choose among the lattice's candidate gates
+#: (`hypotheses`, whose decision rules carry their own revision,
+#: `hypotheses.VERSION`).
+ENGINES = ("v1", "v2")
+#: The engine of a session that names none: v2 since 2026-10-22, after it
+#: tied v1 on four dev images (docs/internal/GATING_ENGINE_V2.md).
+DEFAULT_ENGINE = "v2"
+#: The engines' first names, accepted wherever an engine is named, so a
+#: stored session or an older caller keeps the engine it was started with.
+ENGINE_ALIASES = {"classic": "v1", "candidates": "v2"}
+
+
+def engine_name(value) -> str:
+    """The engine `value` names (`ENGINES`), a first name mapped to it."""
+    return ENGINE_ALIASES.get(value, value)
 
 #: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
 PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")

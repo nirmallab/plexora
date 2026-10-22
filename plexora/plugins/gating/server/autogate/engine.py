@@ -420,6 +420,9 @@ class Engine(BaseEngine):
             # without one, as it was started.
             record["classifier"] = {"schema": 0}
             options["classifier"] = "off"
+        # Stored under an engine's first name (classic, candidates): it keeps
+        # that engine (one stored before the option is v1, `option_defaults`).
+        options["engine"] = schemas.engine_name(options["engine"])
         if "hybrid" in options:
             if options.pop("hybrid") in ("tiles", "full"):
                 options["tiles"] = True
@@ -436,9 +439,12 @@ class Engine(BaseEngine):
     # -- the workflow's hooks (`BaseEngine`) --
 
     def option_defaults(self):
+        """What a stored session's missing options are completed with: today's
+        defaults, except the engine -- a session stored before the engine
+        option (2026-10-20) ran v1, whatever the default is now."""
         from plexora.plugins.gating.capabilities_session import option_defaults
 
-        return option_defaults()
+        return {**option_defaults(), "engine": "v1"}
 
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])
@@ -1686,7 +1692,7 @@ class Engine(BaseEngine):
         first = kind in ("t2_confirm", "absence_check", "cell_panel")
         if first and unit.get("scoring") is None:
             self.propose(unit)
-        if kind == "t2_confirm" and self.options["engine"] == "candidates":
+        if kind == "t2_confirm" and schemas.engine_name(self.options["engine"]) == "v2":
             kind = self._to_panel(unit) or kind
         if kind in ("t2_confirm", "cell_panel"):
             self.lineage_screen(unit)

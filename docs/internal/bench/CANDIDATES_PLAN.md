@@ -1,7 +1,9 @@
 # The candidates engine: pre-registered plan and bars
 
 Branch `feature/gating-candidates`, from 2026-10-20. The engine is
-`SessionOptions.engine = "candidates"` (default `classic`); the code is
+`SessionOptions.engine = "v2"` (first called `candidates`; the default since
+2026-10-22, with `v1`, first called `classic`, kept as the alternative); the
+code is
 `plexora/plugins/gating/server/autogate/hypotheses/`. These bars were written
 before any candidates run was scored. A bar that is changed after a run is
 reported as changed, with the run that prompted it.

@@ -1,5 +1,9 @@
 # Candidates gating engine: handoff for a fresh review (2026-10-21)
 
+> Superseded on 2026-10-22 by `docs/internal/GATING_ENGINE_V2.md`. The engine
+> is now `v2`, and it is the default. This file is kept as the state of the
+> work before VERSION 6 and the dev campaign.
+
 Branch `feature/gating-candidates`, worktree `../plexora-candidates` (off main
 c380ffdb, unmerged, locked). The design record and every measurement are in
 `docs/internal/bench/CANDIDATES_PLAN.md`, and the engine is described in

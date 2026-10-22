@@ -1,6 +1,6 @@
 """The classifier as a two-way discrepancy detector on the candidates path.
 
-`SessionOptions.classifier = "check"` with `engine = "candidates"`: once a
+`SessionOptions.classifier = "check"` with `engine = "v2"`: once a
 leader resolves, the Single Cell Classifier is trained at it
 (`runs.session_run`, kept nowhere) and its raw calls compared with the
 leader's across the surveyed range. Where it disagrees enough

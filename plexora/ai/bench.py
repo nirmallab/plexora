@@ -322,10 +322,16 @@ class TruthAgent:
 
 #: The ablation's variants: what each sets of a session's options. `tiles`
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
+#: A variant that names no engine runs on `BASE` (the ablations are v1's,
+#: whatever the session default); `candidates` and `candidates_2` are v2's
+#: first names, kept for the campaigns recorded under them.
 VARIANTS = {"baseline": {}, "tiles": {"tiles": True}, "absence": {"absence_check": True},
             "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"},
-            "candidates": {"engine": "candidates"},
-            "candidates_2": {"engine": "candidates", "panel_looks": 2}}
+            "v2": {"engine": "v2"}, "v2_2": {"engine": "v2", "panel_looks": 2},
+            "candidates": {"engine": "v2"},
+            "candidates_2": {"engine": "v2", "panel_looks": 2}}
+#: What every variant starts from.
+BASE = {"engine": "v1"}
 
 
 def variant_arm(variant, variants) -> str:
@@ -467,7 +473,7 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
     if "session" in arms:
         for variant in check_variants(variants):
             arm = variant_arm(variant, variants)
-            started = {**(options or {}), **VARIANTS[variant],
+            started = {**BASE, **(options or {}), **VARIANTS[variant],
                        "agent": f"bench:{variant}", "reuse_answers": False}
             units, status, seconds, sid = run_session(session, project, markers, agent,
                                                       mode="propose", options=started)
@@ -597,7 +603,7 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
         try:
             registry.discover(["gating"])
             session = AgentSession(table_limit=4)
-            options = dict(VARIANTS[check_variants((variant,))[0]])
+            options = {**BASE, **VARIANTS[check_variants((variant,))[0]]}
             for index, scenario in enumerate(scenarios):
                 name = f"bench_{scenario}"
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,

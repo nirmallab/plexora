@@ -1,6 +1,7 @@
 """Candidate gates as competing hypotheses, chosen by blind cell panels.
 
-`SessionOptions.engine = "candidates"`. A marker that needs a look (not a
+`SessionOptions.engine = "v2"` (first called "candidates"; the default
+since 2026-10-22). A marker that needs a look (not a
 clean split the audit sheet settles, not a conditional gate) is decided
 here instead of by the classic below/at/above rows and the candidates
 beyond them:
@@ -31,7 +32,7 @@ unit (`unit["hypotheses"]`) and in the gate's provenance.
 
 from __future__ import annotations
 
-from plexora.plugins.gating.server.autogate import tableops
+from plexora.plugins.gating.server.autogate import schemas, tableops
 from plexora.plugins.gating.server.autogate.hypotheses import candidates as candmod
 from plexora.plugins.gating.server.autogate.hypotheses import controller, evidence
 from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
@@ -187,7 +188,8 @@ def active(engine, unit) -> bool:
     5 of 543 stored marker-images were conditional, and on the 3 held-out
     the conditional gate was farther from the person's than the plain one
     twice (CD3e 1.43 vs 0.89; PD1 0.16 vs 0.11; CD20L 0.10 vs 0.19)."""
-    return engine.options["engine"] == "candidates" and not unit.get("condition") \
+    return schemas.engine_name(engine.options["engine"]) == "v2" \
+        and not unit.get("condition") \
         and (unit.get("hypotheses") or {}).get("status") != "no_candidates"
 
 

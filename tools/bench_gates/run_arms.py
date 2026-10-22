@@ -71,7 +71,7 @@ CAMPAIGNS = ROOT / "docs" / "internal" / "bench" / "campaigns"
 #: A stored session record larger than this is kept trimmed (`trim_record`).
 MAX_BYTES = 1_000_000
 #: Arm names that are not `bench.VARIANTS` keys themselves.
-ALIASES = {"classic": "baseline"}
+ALIASES = {"classic": "baseline", "v1": "baseline"}
 #: Nothing is written until a commit, and the harness only ever closes.
 MODE = "propose"
 #: A string at least this long with no space in it is an encoded payload (a
@@ -100,7 +100,7 @@ def arm_options(name) -> dict:
 
     variant = ALIASES.get(name, name)
     bench.check_variants((variant,))
-    return {"engine": "classic", **bench.VARIANTS[variant]}
+    return {**bench.BASE, **bench.VARIANTS[variant]}
 
 
 def parse_arms(text) -> dict:
@@ -291,9 +291,17 @@ def store_record(source, dest) -> dict:
 def started_as_planned(record, entry) -> list:
     """The planned options the stored session does not hold, as
     `name: planned != stored` lines (empty when it ran as planned)."""
+    from plexora.plugins.gating.server.autogate import schemas
+
     stored = record.get("options") or {}
     planned = {**entry["options"], "mode": MODE}
-    return [f"{k}: {v!r} != {stored.get(k)!r}" for k, v in planned.items() if stored.get(k) != v]
+
+    def same(key, value):
+        if key == "engine":  # a first name (classic, candidates) is the same engine
+            return schemas.engine_name(stored.get(key)) == schemas.engine_name(value)
+        return stored.get(key) == value
+
+    return [f"{k}: {v!r} != {stored.get(k)!r}" for k, v in planned.items() if not same(k, v)]
 
 
 def gate_state(project) -> str:

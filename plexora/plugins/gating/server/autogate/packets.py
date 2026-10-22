@@ -209,25 +209,26 @@ SIGNIFICANT = 4
 
 #: Guide entries and answer kinds only one engine's looks use
 #: (`SessionOptions.engine`): a session is sent its own engine's, and a
-#: packet that needs another's (a classic look inside a candidates session,
+#: packet that needs another's (a v1 look inside a v2 session,
 #: for a marker with one candidate) carries those texts and its answer
 #: schema itself (`_reading`, `lean`).
 ENGINE_ONLY = {
-    "classic": {"entries": ("rows", "collage_t2", "collage_t3", "collage_t2m",
+    "v1": {"entries": ("rows", "collage_t2", "collage_t3", "collage_t2m",
                             "collage_flips_m", "collage_flips", "sheet_candidates",
                             "within_partner", "requests"),
                 "kinds": ("t2_confirm", "t3_biological", "t4_candidates")},
-    "candidates": {"entries": ("panel", "panel_fibrous", "collage_panel", "collage_panel_m"),
+    "v2": {"entries": ("panel", "panel_fibrous", "collage_panel", "collage_panel_m"),
                    "kinds": ("cell_panel",)},
 }
 
 
-def reading_guide(engine="classic") -> dict:
+def reading_guide(engine=schemas.DEFAULT_ENGINE) -> dict:
     """The session's reading guide (`gating_session_start`, `_status`): the
     fixed texts, the compartment readings and every answer schema, in a fixed
     order -- the same bytes for every session of a build and engine, so an
     agent's client caches it once (`guide_version` says when it changed).
     Another engine's looks are left out (`ENGINE_ONLY`)."""
+    engine = schemas.engine_name(engine)
     guide = _full_guide()
     for other, parts in ENGINE_ONLY.items():
         if other == engine:
@@ -261,7 +262,7 @@ def _full_guide() -> dict:
     return guide
 
 
-def guide_version(engine="classic") -> str:
+def guide_version(engine=schemas.DEFAULT_ENGINE) -> str:
     """A short hash of `reading_guide(engine)`: an agent that holds this
     version passes it back (`known_guide`) and is not sent the guide again."""
     import hashlib
@@ -314,7 +315,7 @@ def lean(packet, options) -> dict:
     packet["evidence"] = _lean_value(packet.get("evidence") or {})
     if options["reading"] == "once":
         if any(packet["kind"] in parts["kinds"] for name, parts in ENGINE_ONLY.items()
-               if name != options["engine"]):
+               if name != schemas.engine_name(options["engine"])):
             # Not in this session's guide: the schema comes with the packet.
             packet["answer_schema"] = answers.schema_for(packet["kind"])
         else:

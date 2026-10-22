@@ -161,7 +161,7 @@ def _start(session, project, **options):
     from plexora.agent import invoke, jobs
     from tests.test_gating_session import ok
 
-    started = ok(invoke(session, "gating_session_start", {"scope": "project",
+    started = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "project",
                                                           "project": project, **options}))
     jobs.drain(120)
     return started

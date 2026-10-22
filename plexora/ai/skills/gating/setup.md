@@ -66,8 +66,9 @@ the markers it cannot place in the panel context.
 - `reuse_answers`: answers are kept under a hash of each packet (per `agent`)
   and reused by an identical later packet (status `replayed`). Pass false to
   be asked afresh.
-- `engine: "candidates"`: blind cell panels instead of rows around a gate
-  (gating/decisions); experimental, only when the user asks.
+- `engine`: `v2` (the default) decides a marker by blind cell panels choosing
+  among candidate gates (gating/decisions); `v1` by rows around a gate, only
+  when the user asks. `classic` and `candidates` are their first names.
 
 ## Tools
 

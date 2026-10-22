@@ -60,7 +60,7 @@ def _run(made) -> str:
     try:
         _units, _status, _seconds, sid = bench.run_session(
             session, made["name"], MARKERS, _reader(made), mode="propose",
-            options={"engine": "candidates", "seed": 0, "agent": "bench:candidates",
+            options={"engine": "v2", "seed": 0, "agent": "bench:candidates",
                      "reuse_answers": False})
     finally:
         session.close()

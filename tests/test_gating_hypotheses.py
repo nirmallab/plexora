@@ -262,6 +262,32 @@ def _no_numbers_about_gates(packet):
         assert word not in text, word
 
 
+def test_v2_is_the_default_engine_and_the_first_names_still_work(tmp_path):
+    """v2 (first called candidates) is the default; classic and candidates
+    name v1 and v2 wherever an engine is given; a stored session keeps its
+    engine, and one stored before the engine option ran v1."""
+    from types import SimpleNamespace
+
+    from plexora.agent.sessions.store import SessionStore
+    from plexora.plugins.gating.capabilities_session import SessionOptions
+    from plexora.plugins.gating.server.autogate import schemas
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    assert SessionOptions().engine == "v2" == schemas.DEFAULT_ENGINE
+    assert SessionOptions(engine="classic").engine == "v1"
+    assert SessionOptions(engine="candidates").engine == "v2"
+    assert SessionOptions(engine="v1").model_dump(mode="json")["engine"] == "v1"
+    with pytest.raises(Exception):
+        SessionOptions(engine="v3")
+    st = SessionStore("gating", root=tmp_path)
+    for sid, options, expected in (("s_old", {}, "v1"), ("s_classic", {"engine": "classic"}, "v1"),
+                                   ("s_cand", {"engine": "candidates"}, "v2"),
+                                   ("s_v2", {"engine": "v2"}, "v2")):
+        st.create({"session_id": sid, "options": options, "units": {}})
+        engine = Engine(SimpleNamespace(), sid, st=st)
+        assert engine.options["engine"] == expected, sid
+
+
 @pytest.mark.paid
 def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -272,7 +298,7 @@ def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
     session = AgentSession()
     started = ok(invoke(session, "gating_session_start", {
         "scope": "project", "project": "gsynth", "markers": list(HARD),
-        "engine": "candidates"}))
+        "engine": "v2"}))
     jobs.drain(120)
     sid = started["session_id"]
     oracle = Oracle(info)

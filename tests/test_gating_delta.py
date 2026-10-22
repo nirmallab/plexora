@@ -130,7 +130,7 @@ def _run(tmp_path, name, options):
     session = AgentSession()
     units, status, _seconds, _sid = bench.run_session(
         session, project, ["CD3", "CD8", "CD20", "CD4"], Oracle(info),
-        options={"reuse_answers": False, **options})
+        options={"engine": "v1", "reuse_answers": False, **options})
     return ({m: (u["state"], u.get("final")) for m, u in units.items()},
             status["sent_to_agent"])
 

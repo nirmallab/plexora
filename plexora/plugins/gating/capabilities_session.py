@@ -23,7 +23,7 @@ import dataclasses
 import time
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from plexora.agent import presets
 from plexora.agent.errors import AgentError
@@ -286,18 +286,24 @@ class SessionOptions(AgentModel):
                             "as stained. count: the reader counts the cells in each row "
                             "that carry their own stain (unmeasured).")
     engine: Literal[schemas.ENGINES] = Field(
-        "classic", description="How a marker that needs a look is decided. classic: rows "
-                               "below, at and above the gate, then candidates beyond it, "
-                               "judged a row at a time. candidates (experimental): the "
-                               "lattice's candidate gates are competing hypotheses; blind "
-                               "panels of single cells, numbered and shuffled with no value "
-                               "or gate shown, are labelled one cell at a time, and code "
-                               "picks the candidate the labels support, looks again only "
-                               "where the leader has not beaten a rival, and closes for "
-                               "review with a reason when it cannot.")
-    panel_looks: int = Field(3, ge=1, le=6, description="With engine candidates: the most "
+        schemas.DEFAULT_ENGINE,
+        description="How a marker that needs a look is decided. v2 (the default): the "
+                    "lattice's candidate gates are competing hypotheses; blind panels of "
+                    "single cells, numbered and shuffled with no value or gate shown, are "
+                    "labelled one cell at a time, and code picks the candidate the labels "
+                    "support, looks again only where the leader has not beaten a rival, and "
+                    "closes for review with a reason when it cannot. v1: rows below, at and "
+                    "above the gate, then candidates beyond it, judged a row at a time. The "
+                    "first names, classic (v1) and candidates (v2), are accepted.")
+    panel_looks: int = Field(3, ge=1, le=6, description="With engine v2: the most "
                              "cell panels one marker is shown before it closes for review "
                              "(fewer when the leading candidate resolves first).")
+
+    @field_validator("engine", mode="before")
+    @classmethod
+    def _engine_first_names(cls, value):
+        return schemas.engine_name(value)
+
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -1101,7 +1107,7 @@ def _expression_check(call, images):
     return {"status": "confirmed"}, receipts
 
 
-def _guide(reading, known=None, engine="classic"):
+def _guide(reading, known=None, engine=schemas.DEFAULT_ENGINE):
     """The reading guide, once per session (`packets.reading_guide`): a
     packet names the entries it relies on (and its answer schema) instead of
     repeating them. Byte-stable for a build, so a client caches it; a caller

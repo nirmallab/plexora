@@ -104,7 +104,7 @@ def main(argv=None) -> int:
                                              ids=made.get("ids"))
                     _units, _status, _s, sid = bench.run_session(
                         session, name, markers, agent, mode="propose",
-                        options={"engine": "candidates", "seed": repeat,
+                        options={"engine": "v2", "seed": repeat,
                                  "agent": f"bench:{arm}#{repeat}", "reuse_answers": False})
                     stored = {u["marker"]: u for u in bench._session_units(sid)}
                     for marker in markers:

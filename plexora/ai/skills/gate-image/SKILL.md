@@ -29,11 +29,10 @@ A cell table with cell-id/x/y roles; image channels and a mask for the looks.
 2. `gating_session_start`: `scope: "project"`, `mode: "apply"`
    (`"propose"` if the user reviews first), `agent` (your model's name),
    `biology` when the user named the tissue or disease, `mirror: true` when
-   they watch a viewer. `engine: "candidates"` only when asked: looks become
-   blind numbered cell panels (`cell_panel`) and code picks among candidate
-   gates; the loop is the same. Set-up refusals and packets are yours, not a
-   worker's (gating/setup); an `expression_setup` goes to the user, never
-   guessed.
+   they watch a viewer. `engine` is `v2` (blind cell panels, `cell_panel`)
+   unless the user asks for `v1` (rows); the loop is the same. Set-up
+   refusals and packets are yours, not a worker's (gating/setup); an
+   `expression_setup` goes to the user, never guessed.
 3. Hand packets out as the start's `delegate` says (`how`). Its `brief` is a
    worker's whole prompt: add no skill or guide text; keep only the lines it
    returns. `waiting_for_user`: ask the user, pass their word as

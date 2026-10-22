@@ -246,7 +246,7 @@ def _gate(runtime, limit=60):
     from tests.autogate_fixtures import make_gating_project  # noqa: F401 (made by caller)
     from tests.test_gating_session import Oracle
 
-    started = _ok(runtime.invoke("gating_session_start", {"scope": "project",
+    started = _ok(runtime.invoke("gating_session_start", {"engine": "v1", "scope": "project",
                                                            "project": "gsynth"}))
     jobs.drain(120)
     sid = started["session_id"]

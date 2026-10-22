@@ -3047,10 +3047,13 @@ deliberately left out and what should be built next.
   dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
   are never read. Which steps earned their place is
   `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
-  `hypotheses/` is the experimental `candidates` engine
-  (`SessionOptions.engine`, `schemas.ENGINES`, default `classic`;
-  `docs/internal/bench/CANDIDATES_PLAN.md`, which pre-registers its live
-  bars): a marker that needs a look is decided by blind panels of single
+  `hypotheses/` is engine `v2` (first called `candidates`; the default since
+  2026-10-22, `schemas.DEFAULT_ENGINE`; `v1`, first called `classic`, is the
+  rows engine, kept as the alternative; `schemas.ENGINES`, the first names in
+  `schemas.ENGINE_ALIASES` are accepted everywhere and a record stored
+  without an engine resumes as v1; `docs/internal/GATING_ENGINE_V2.md` is the
+  architecture and where it fails, `docs/internal/bench/CANDIDATES_PLAN.md`
+  pre-registers its live bars): a marker that needs a look is decided by blind panels of single
   cells choosing among the frozen lattice's points, instead of rows below,
   at and above a moving gate, because the gate written must be one of the
   candidates and a reader shown values or calls is no longer blind.
@@ -3869,7 +3872,8 @@ deliberately left out and what should be built next.
   `status["sent_to_agent"]` (packets/chars/images/pixels actually sent,
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
-  `--variants candidates` runs the `candidates` engine.
+  `--variants v2` runs engine v2 (`candidates` is its first name); the
+  other variants run on `bench.BASE`, engine v1, whatever the default.
   `tools/bench_gates/run_arms.py` (dev only) is the live campaign driver:
   it records under `docs/internal/bench/campaigns/<campaign>/` (tracked) and
   refuses the live data root; `docs/internal/bench/runs/` stays gitignored

@@ -48,8 +48,9 @@ def _argv(root, records, *extra, images="img1,img2"):
 
 def test_each_session_has_its_arms_options_and_its_runs_seed():
     arms = run_arms.parse_arms("classic,candidates,candidates_2")
-    assert arms == {"classic": {"engine": "classic"}, "candidates": {"engine": "candidates"},
-                    "candidates_2": {"engine": "candidates", "panel_looks": 2}}
+    assert arms == {"classic": {"engine": "v1"}, "candidates": {"engine": "v2"},
+                    "candidates_2": {"engine": "v2", "panel_looks": 2}}
+    assert run_arms.parse_arms("v1,v2") == {"v1": {"engine": "v1"}, "v2": {"engine": "v2"}}
     entries = run_arms.plan(["a", "b c"], arms, 3, 5, COMMON)
     assert len(entries) == 2 * 3 * 3
     assert [e["order"] for e in entries] == list(range(1, 19))
@@ -219,6 +220,8 @@ def test_a_session_that_did_not_start_as_planned_is_named():
     entry = run_arms.plan(["a"], {"candidates": {"engine": "candidates"}}, 1, 0, COMMON)[0]
     stored = {"options": {**COMMON, "engine": "candidates", "seed": 0, "mode": "propose"}}
     assert run_arms.started_as_planned(stored, entry) == []
+    stored["options"]["engine"] = "v2"         # the same engine under its new name
+    assert run_arms.started_as_planned(stored, entry) == []
     stored["options"].update(engine="classic", mode="apply")
     assert run_arms.started_as_planned(stored, entry) == [
         "engine: 'candidates' != 'classic'", "mode: 'propose' != 'apply'"]
@@ -271,8 +274,7 @@ def test_a_campaign_runs_each_arm_through_the_harness_and_writes_no_gate(tmp_pat
     assert os.environ["PLEXORA_DATA_PATH"] == str(tmp_path)
 
     manifest = json.loads((records / "e2e" / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["arms"] == {"classic": {"engine": "classic"},
-                                "candidates": {"engine": "candidates"}}
+    assert manifest["arms"] == {"classic": {"engine": "v1"}, "candidates": {"engine": "v2"}}
     assert manifest["seeds"] == [4] and manifest["ended"] and manifest["code"]["git_sha"]
     assert manifest["reader_models"] == ["approved-model-a"] and manifest["one_reader_model"]
     assert manifest["attempts"] == [] and manifest["records"]["trimmed"] == []

@@ -40,7 +40,7 @@ agent = bench.TruthAgent(made["values"], made["truth"], style, seed=seed + index
                          ids=made.get("ids"))
 units, status, _s, sid = bench.run_session(
     session, name, markers, agent, mode="propose",
-    options={"engine": "candidates", "agent": "bench:candidates", "reuse_answers": False})
+    options={"engine": "v2", "agent": "bench:candidates", "reuse_answers": False})
 import numpy as np
 stored = {u["marker"]: u for u in bench._session_units(sid)}
 def f1(m, g):

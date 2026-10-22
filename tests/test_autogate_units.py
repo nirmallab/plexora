@@ -1555,7 +1555,7 @@ def test_packets_are_sent_lean():
                            "candidate": {"low": 6.788859540491426}, "within_allowed": []},
               "progress": {"units_done": 1, "units_total": 9, "by_state": {"a": 1}},
               "images": [{"role": "r", "estimated_vision_tokens": 700}]}
-    packets.lean(packet, {"reading": "once", "engine": "classic"})
+    packets.lean(packet, {"reading": "once", "engine": "v1"})
     ev = packet["evidence"]
     assert ev["partners"][0]["contradiction"] == 0.1235 and "control" not in ev["partners"][0]
     assert ev["candidate"]["low"] == 6.788859540491426      # gate values stay exact
@@ -1574,7 +1574,11 @@ def test_packets_are_sent_lean():
         assert set(parts["kinds"]) <= guides[name]
         assert not set(parts["kinds"]) & set().union(
             *(g for other, g in guides.items() if other != name))
-    assert packets.guide_version("classic") != packets.guide_version("candidates")
+    assert packets.guide_version("v1") != packets.guide_version("v2")
+    # The engines' first names give the same guide.
+    assert packets.guide_version("classic") == packets.guide_version("v1")
+    assert packets.guide_version("candidates") == packets.guide_version("v2")
+    assert packets.guide_version() == packets.guide_version("v2")
 
 
 # -- determinism: the lattice, row placement, the memo --------------------------------

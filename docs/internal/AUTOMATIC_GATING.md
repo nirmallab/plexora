@@ -287,11 +287,13 @@ finding becomes a `[cal]` constant by hand, with a VERSION bump and a bench
 on the frozen label sets. Never tuned on the LSP images alone: their signal
 is better than most (the user, 2026-10-19).
 
-## 2f. The candidates engine (experimental, 2026-10-20)
+## 2f. Engine v2, the candidates engine (2026-10-20; the default since 2026-10-22)
 
-`SessionOptions.engine = "candidates"` (default `classic`), in
+`SessionOptions.engine = "v2"` (first called `candidates`; the rows engine
+is `v1`, first called `classic`, kept as the alternative), in
 `server/autogate/hypotheses/`; plan and bars in
-`docs/internal/bench/CANDIDATES_PLAN.md`. Why: on the held-out images the
+`docs/internal/bench/CANDIDATES_PLAN.md`, the architecture and where it fails
+in `docs/internal/GATING_ENGINE_V2.md`. Why: on the held-out images the
 frozen lattice held a point within 0.2 of the user's gate for 93 % of
 markers, while the classic looks ended 0.368 MAE away; the error is in
 choosing among candidates, and the classic look asks the least reliable

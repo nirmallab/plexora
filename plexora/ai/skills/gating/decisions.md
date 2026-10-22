@@ -37,9 +37,10 @@ one only when nothing better exists. A parent whose own distribution is weak
 waits for its children (`defer_parents`). A marker that leaned on a reference
 which later failed carries `stood_on_failed`: say so in the report.
 
-## The candidates engine
+## The default engine, `v2`
 
-With `engine: "candidates"` the candidate gates are competing hypotheses. Each
+With engine `v2` (first called candidates) the candidate gates are competing
+hypotheses. Each
 look is a `cell_panel`: numbered cells from the disputed intervals, shuffled,
 no value, call or gate shown; the reader labels every cell (`own_stain`,
 `not_own_stain`, `uncertain`, `artifact`), never a gate or a direction. Code
@@ -53,9 +54,9 @@ when another look could not settle it (`looks_uninformative`). `uncertain`
 is never a vote: a marker whose crowded cells cannot be read may resolve on
 its isolated cells alone, and says so. The gate written is always one of the candidates and
 passes the same whole-image checks; a failed check caps its confidence, it
-never moves the gate. A conditional gate (a classic look's `within` answer)
-or a marker with no candidates gets the classic looks, whose reading comes
-with the packet.
+never moves the gate. A conditional gate (a `within` answer of engine
+`v1`) or a marker with no candidates gets `v1` looks, whose reading comes with
+the packet.
 
 ## How a marker ends, and what is written
 
