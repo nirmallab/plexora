@@ -103,6 +103,9 @@
             this.button = null;
             this.items = new Map();       // bookmark id -> {node, img, label, entry}
             this.open = false;
+            //: False while a routed page (Settings) is over the viewer: K is
+            //: not the viewer's then (views/datasetNav.js does the same).
+            this.viewerShown = true;
             this._off = [];
         }
 
@@ -150,13 +153,17 @@
             this._off.push(this.bookmarks.onChange((detail) => this.changed(detail)));
 
             const onKey = (event) => {
-                if (!this.bookmarks.available() || !isBookmarkKey(event)) return;
-                if (!document.getElementById("openseadragon_wrapper")) return;
+                if (!this.viewerShown || !this.bookmarks.available() || !isBookmarkKey(event)) return;
                 event.preventDefault();
                 this.save();
             };
             document.addEventListener("keydown", onKey);
             this._off.push(() => document.removeEventListener("keydown", onKey));
+            for (const [name, shown] of [["plexora:viewer-hidden", false], ["plexora:viewer-shown", true]]) {
+                const fn = () => { this.viewerShown = shown; };
+                global.addEventListener?.(name, fn);
+                this._off.push(() => global.removeEventListener?.(name, fn));
+            }
 
             // The view moved: the ringed bookmark is not what is on screen any more.
             const moved = () => this.bookmarks.viewMoved();

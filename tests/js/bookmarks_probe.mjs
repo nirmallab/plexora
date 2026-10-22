@@ -292,6 +292,12 @@ check("× takes the flag off, nothing else, and it leaves the row",
                     && Object.keys(r[2]).length === 1)
       && !B.find("cap_old") && !tray.items.has("cap_old"));
 
+// -- a routed page over the viewer ---------------------------------------------------------------
+box.dispatchEvent(new box.CustomEvent("plexora:viewer-hidden"));
+const hiddenCount = box.__captured.length;
+check("with Settings over the viewer, K is not the viewer's", !press().prevented && box.__captured.length === hiddenCount);
+box.dispatchEvent(new box.CustomEvent("plexora:viewer-shown"));
+
 // -- + Save View, the tray open -------------------------------------------------------------------
 tray.saveButton.fire("click");
 check("+ Save View bookmarks too, into the open tray", box.__captured.length === 2

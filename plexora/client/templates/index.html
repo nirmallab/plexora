@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261021_area">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261022_bookmarks">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -564,7 +564,7 @@
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
 <script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261012_project_title" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261012_project_title" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260927_docs" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -579,19 +579,19 @@
 {# How the 3-D view may be cut, in numbers (before the state, which repairs
    its `inspect` with it), and the controller every control changes it
    through. #}
-<script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261022_bookmarks" defer></script>
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261013_znav" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261021_area" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
@@ -600,7 +600,7 @@
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
 <script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261022_bookmarks" defer></script>
 {# A 3-D mask drawn in 3-D: the Cells control's Outlines and Filled as cell
    surfaces, and the wait while the mask is converted. #}
 <script src="{{ data.base_url }}/client/src/js/views/maskSurfaceWait.js?v=20261013_mask_surfaces" defer></script>
@@ -609,10 +609,10 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261022_bookmarks" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
-<script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261022_bookmarks" defer></script>
 {# The Area tool (a square on the image, opened in 3-D), and Back (B) to the
    view it was opened from. #}
 <script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261022_bookmarks" defer></script>
@@ -638,12 +638,12 @@
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261022_bookmarks" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_bookmarks" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

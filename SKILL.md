@@ -1698,8 +1698,10 @@ Entry points:
   `satisfied_by`: a transcript layer whose tile cache is still building still
   APPLIES (the run has transcripts in it), and requiring readiness would make
   the section vanish for exactly as long as it had something to say.
-  `unlocked(plugin)` filters `tools_for`, `ready_tools`, `layer_sections_for`
-  and `nav_items`: a Paid plugin the licence does not unlock is still
+  `viewer_scripts_for(app, project)` takes the same gate for plugins with
+  `Plugin.viewer_scripts` (see the Public plugin API entry below).
+  `unlocked(plugin)` filters `tools_for`, `ready_tools`, `layer_sections_for`,
+  `viewer_scripts_for` and `nav_items`: a Paid plugin the licence does not unlock is still
   installed (routes refuse, its `layer_jobs` builders keep serving what it
   made) but on no page -- no menu row, launcher, layer section or scripts.
   `installed`, `tools` and `find` stay unfiltered. Asked per request, so a
@@ -2647,6 +2649,20 @@ A third-party pip package and a bundled one get exactly the same thing.
   descriptor from its key alone —
   core calls it for things no plugin declared, like the Cells control's
   "Add Data" button and a Python caller naming a key directly.
+  `Plugin.viewer_scripts` are scripts loaded on EVERY viewer page the plugin
+  applies to, its tool open or not — for a store or a bridge core's own UI
+  talks to, never for UI of the plugin's own, which waits for the tool to
+  open. `asset_urls("viewer_scripts", ...)` resolves them as `scripts` are;
+  `page_routes.image_viewer` puts them (`plugins.viewer_scripts_for`) ahead
+  of the active tool's scripts and the layer sections' and dedupes the list
+  with `dict.fromkeys`, because a second `<script>` of a file that declares a
+  class is a SyntaxError; `toolLoader.loadScript` already skips a `src` that
+  is on the page, so opening the tool later does not load one twice. Figure
+  Builder declares `figureSchema.js`, `figureSceneSnapshot.js`,
+  `figureBuilderApi.js` and `figureBookmarkStore.js`; the last is the
+  captures bin registered as core's bookmarks store
+  (`services/bookmarks.js`), and the only code that knows the capture routes
+  a bookmark goes through.
 - `layers(project, kind=None, modality=None)`, `layer(project, id)` and
   `sample(project)` — what is IN this sample, beside what its table holds.
   **`kind` is core's and `modality` is the plugin's**, and the split is the
@@ -5101,7 +5117,10 @@ deliberately left out and what should be built next.
   thumbnail grid below, since a B/N walk with it open has nothing left to
   show. The "2 / 12" counter is itself a button now
   (`aria-haspopup`/`aria-expanded`); pressing it opens `datasetStrip.js` under
-  the whole chip, and a pick there calls this same `go()`.
+  the whole chip, and a pick there calls this same `go()`. `onKeyDown`
+  returns on an event already `defaultPrevented`, because B is also Back
+  while there is a view to go back to (`views/backButton.js`, which listens
+  first, in the capture phase).
 - `views/datasetStrip.js` — `window.PlexoraDatasetStrip`, every sample's
   thumbnail (`GET project_thumbnail/<name>`) in a grid under the "2 / 12"
   counter, for reaching the fortieth sample rather than the next one. Exactly
@@ -5138,6 +5157,53 @@ deliberately left out and what should be built next.
   when `viewerErrorState.js` is already showing something louder. Nothing
   captured here is persisted back to the new project; it rides the same
   launch-state path a notebook's `?channels=` argument uses.
+- `services/viewHistory.js` — `window.PlexoraViewHistory`, Back: the views a
+  derived view was opened from. `areaTool.place` and `inspectState.cropToArea`
+  each `push()` where the user was before changing the view, and `back()`
+  returns there in one step (`LIMIT` 20; Back puts the cut back with
+  `inspectState.set(..., {exact: true})`, so no tool's axes are traded).
+  **Spatial only**: the mode, the plane, the projection's range, the area,
+  the cut, the 3-D camera and the 2-D viewport — never the rendering, so a
+  colour changed in the child view survives Back; bookmarks are the
+  persistent, rendering-included kind, and neither module knows the other.
+  The trail ENDS when the view returns to 2-D any other way (the mode
+  buttons, V) or on `plexora:viewer-hidden`, because then there is no
+  derived view left to come back from. Attached by `main.js` on a z-stack.
+- `views/backButton.js` — `window.PlexoraBackButton`, the Back pill
+  (canvasLayout's `top-center` dock) shown only while `viewHistory` can go
+  back, and B. B is also `datasetNav.js`'s previous sample, so while history
+  exists Back listens in the capture phase and `preventDefault`s, which the
+  chip respects; with no history B walks samples as before. Not while
+  typing, with a modifier, or with a dialog or confirm up.
+- `services/viewRaster.js` — `window.PlexoraViewRaster` (`grab`, `blob`,
+  `volumeCanvas`, `fullViewRect`, `MAX_PREVIEW_EDGE`/`MAX_VOLUME_EDGE`): a
+  picture of what the viewer has drawn, every canvas in the viewer's element
+  cropped to a screen rectangle by its own bounding box, and in 3-D the
+  volume renderer redrawn at print size. Moved out of Figure Builder's
+  `FigureCaptureTool`, which now delegates, because a capture's preview and
+  a bookmark's thumbnail are the same picture. Loaded by `base.html`.
+- `services/bookmarks.js` — `window.PlexoraBookmarks`, views kept to come
+  back to, on any image, 2-D or 3-D. **A bookmark is a capture**: core keeps
+  no store of its own; a plugin registers one (`registerStore`, or answering
+  the `plexora:bookmarks-ready` event when its script ran first) with
+  `list`/`capture`/`restore`/`add`/`putPreview`/`update`/`locateUrl`, and
+  with no store there are no bookmarks and no icon. `bookmark()` reads the
+  scene synchronously, before anything is awaited, so a pan in the next
+  frame is not in it; the picture (`viewRaster.blob`) and the write follow
+  behind. `restore` persists (`{persist: true}`), because going back to a
+  bookmark is going somewhere. Changes are announced as
+  `plexora:bookmarks-changed`.
+- `views/bookmarkTray.js` — `window.PlexoraBookmarkTray`, the tray along the
+  bottom of the canvas (canvasLayout's `bottom-center` dock;
+  `canvasLayout.measure` starts the bottom lane above that dock, so the
+  chat's lane rises over the tray rather than under it), newest first; a
+  click restores, × takes the bookmark off (the capture stays in Figure
+  Builder), a double-click renames. `#viewer_bookmark_button` in the sidebar
+  header only opens and closes the tray, and is hidden until a store
+  registers; bare K bookmarks the view from anywhere on the viewer, tray
+  open or not, unless another handler took it first. A save flies the
+  view's picture into the tray (or the icon), with no flight under reduced
+  motion. Attached by `main.js` on every image.
 - `services/renderClipboard.js` — `window.PlexoraRenderClipboard`, the Image
   card's copy/paste (its `•••` menu, `views/layerManager.js`). Two independent
   `sessionStorage` slots under key `plexora:clipboard` — `names` (the
@@ -6169,12 +6235,17 @@ axes opens on its first, x before y before z.
   `TOOL_AXES`, `CUT` `{none: 0, faces: 1}`; for the area `dims(info, depth,
   area)`, `cleanArea`, `areaCovered`, `squareAt`, `inside`, `whole` (the area
   or the stack, which `clean` clamps every cut position to), `shift` (the cut
-  moved by the area's move), `cleanSaved`, `SAVED_MAX` 50); every consumer asks this one
+  moved by the area's move)); every consumer asks this one
   module. `services/inspectState.js` (`PlexoraInspectState`;
   `window.PlexoraInspect` built by `main.js` on a z-stack) is the only way a
   control changes the cut: `preview` (redrawn from uniforms, nothing saved,
   `plexora:inspect-preview`), `commit`/`set` (one undo entry each, through
-  `withTool`, which swaps a tool's axes in and out of `axesBy`), `pick(tool)`,
+  `withTool`, which swaps a tool's axes in and out of `axesBy`; `set(...,
+  {exact: true})` skips `withTool`, for a whole cut put back as it was by
+  Back), `slideArea` (the area moved, the cut with it) and `resizeArea` (an
+  area grip: the cut stays where it is in the image, kept inside the new
+  area), each one undo entry from first move to `final`, `cropToArea`
+  (which `push()`es `viewHistory` first, being a view of its own), `pick(tool)`,
   `toggle()` (the tool last chosen off and on, settings kept),
   `undo`/`redo`/`reset(axis|mode|full)` (`mode` on a hidden cut resets the
   tool last chosen and shows it).
@@ -6187,43 +6258,60 @@ axes opens on its first, x before y before z.
   types; the panel stays out while the cut is hidden (`is-off`, its grid
   dimmed) and only › / Esc / × put it away; a panel edit while hidden shows
   the cut again (`change()`)) and `views/volumeHandles.js` (`PlexoraVolumeHandles`, SVG
-  grips on a crop's faces and body or a cutaway's cut, which never turn the
-  camera). `views/areaTool.js` (`window.PlexoraAreaTool`, attached by
+  grips on a crop's faces and body or a cutaway's cut, and on an area's four
+  sides and middle (`is-area`; a side grip resizes through
+  `inspectState.resizeArea`, the middle slides as Shift+drag does, both
+  through `volumeRenderer.dragArea`; an area grip gives way to a cut's where
+  they meet on screen, since a crop made with Crop to area IS the area),
+  none of which turn the camera; shown while a tool cuts or an area is
+  drawn). `views/areaTool.js` (`window.PlexoraAreaTool`, attached by
   `main.js` on a z-stack the 3-D view can draw): the strip's Area button
-  (`tool.area`, plane and projection only) arms a dashed square of the viewer
-  pref `area` that follows the pointer; a click, or V with the pointer on the
-  image, places it as ONE `viewState.enterVolume({area})`.
-  `services/savedAreas.js` (`window.PlexoraSavedAreas`): the area, the cut and
-  the camera under a name, restored in one change; thumbnails are this page's
-  only, never saved. Keys: V toggles 2-D and 3-D on any z-stack
+  (`tool.area`, plane and projection only) arms a dashed square that follows
+  the pointer; a click, or V with the pointer on the image, `push()`es
+  `viewHistory` and places it as ONE `viewState.enterVolume({area})`. The
+  viewer pref `area` is the square's side ON SCREEN, so `sizePx()` is
+  `screen / viewerScene.scaleOf(viewer)`: zooming in takes less tissue, the
+  square follows a zoom or pan under a still pointer (`zoomed()`, on
+  `onViewportChange`), and a readout under it says how much tissue it takes
+  (microns where the image states its spacing, else pixels). The placed
+  square is a view of its own, not a mode's: leaving 3-D lets it go, and
+  Back (B, `services/viewHistory.js`) returns to the view it was placed
+  from; no outline of it is left on the plane. Keys: V toggles 2-D and 3-D on any z-stack
   (`depthStrip.onKey` → `toggleVolume`), yielding to the ROI tool (whose V is
   its own), typing and open dialogs; in 3-D Shift+drag slides the area under a
   fixed frame and Alt+drag or the middle button pans (Shift+drag pans when
   there is no area). `index.html` loads inspectGeometry before `viewState.js` (which
   repairs `inspect` with it), inspectState after it, the panel and
-  handles after `volumeRenderer.js`, and areaTool then savedAreas after them,
-  before `main.js`. `sectionPanes.js` draws nothing of the
+  handles after `volumeRenderer.js`, then areaTool, viewHistory,
+  backButton, bookmarks and bookmarkTray after them, before `main.js`. `sectionPanes.js` draws nothing of the
   3-D cut (the 2-D panes and the Sections button stay).
 - View state: `inspect` (`mode` full/cutaway/crop; `tool`, the tool last
   chosen, kept while off; `axes`, the current tool's; `axesBy`, each tool's
   own, Cut starting on X and Crop on X/Y/Z, a Cut's exactly one; `crop`, `cutaway`, `face`),
   `volume.interpolation`, `volume.area` (`{x, y, width, height}` in
-  full-resolution pixels, or null for the whole stack) and `volume.saved`
-  (`[{id, name, area, inspect, camera}]`, at most 50); there is no `section` any more.
+  full-resolution pixels, or null for the whole stack); there is no
+  `section` any more, and no `volume.saved` (saved areas were retired for
+  bookmarks; `viewState._migrate` and the server both drop a stored one).
   `viewState._migrate` opens a 3-D view saved with a narrowed projection
   range as a Z crop. `enterVolume(volume)` (from a fixed projection the cut
-  becomes a Z crop of its planes, `_bandCrop`), `toggleVolume()` (back to the
-  projection when entered from one), and `_areaShift`: a `set` with a new
-  `volume.area` and no `inspect` shifts the cut with it, while a patch that
-  says where the cut is (a restore, a Video Studio frame, Crop to area, an
-  undo) is never shifted. Server: `routes/volume_routes.py` `normalize_inspect`
+  becomes a Z crop of its planes, `_bandCrop`; with no `volume`, the whole
+  stack, `{area: null}`), `toggleVolume()` (back to the projection when
+  entered from one, the area cleared either way), and `_areaShift`: a `set`
+  with a new `volume.area` and no `inspect` shifts the cut with it, while a
+  patch that says where the cut is (a restore, a Video Studio frame, Crop to
+  area, an undo, Back) is never shifted. A square let go (`area` set to null)
+  resets the cut's places to the whole stack's (`_wholeCut`, tool and axes
+  kept), because a cut made inside the square is about the square — unless
+  the same patch says where the cut is. Server: `routes/volume_routes.py` `normalize_inspect`
   (with `tool`/`axesBy`; `axes_of(..., single=True)` for a cutaway keeps the
-  first axis on), `_area`/`_saved_areas` (`SAVED_AREAS_MAX` 50) in
+  first axis on), `_area` in
   `normalize_view_state`, `INSPECT_MODES`, `INSPECT_TOOLS`,
   `INSPECT_TOOL_AXES`, `INTERPOLATIONS`, and the viewer prefs `handles`
   (`normalize_handles`) and `area` (`normalize_area`, `AREA_DEFAULTS`
-  `{um: 300, px: 1024}`: the square's side in microns where the image states
-  its spacing, in pixels where it does not).
+  `{screen: 320}`, bounds `AREA_SCREEN` 64–4096: the square's side on
+  screen in CSS pixels, mirrored by `viewerPrefs.js`'s `mergeArea`; a side
+  saved in `um`/`px` before the square kept its size on screen reads as the
+  default).
 - Renderer: `volumeRenderer.js`'s `u_clip_z`/`u_clip_xy` are gone; the box is
   `u_box_lo/hi` and `u_cut` (1: cut faces
   solid; `cutSource`, `sampleAt`, `cutFace`), set by `cutUniforms()`/
@@ -6236,47 +6324,60 @@ axes opens on its first, x before y before z.
   (a same-size slide keeps the level, so its atlas and bricks stay), and
   `entryFor` standing the last-drawn texture in for any area, because a slide
   must never show a blank frame; `areaOnScreen()` is gone (3-D with no area
-  draws the whole stack). Shift+drag calls `onSlide` at most every
-  `SLIDE_MS` (40 ms), the last on release, into `inspectState.slideArea`, one
-  undo entry with the cut it carried. `surfaceRenderer.js`'s `volumeFragment` gained
+  draws the whole stack). `dragArea({to, send})` is the one area drag,
+  shared by Shift+drag and the area grips (`volumeHandles.js`): it sends at
+  most one change every `SLIDE_MS` (40 ms), since each is a fetch, the last
+  on `end()`, and `cancel()` puts the area back; by default it slides
+  (`onSlide`, into `inspectState.slideArea`, one undo entry with the cut it
+  carried), and a grip passes its own `to`/`send` to resize. `surfaceRenderer.js`'s `volumeFragment` gained
   one swap (a cut face in front of or behind the nearest translucent
   surface), and its mesh shader is cut by the same box, with flat
   caps on back faces. `volumeAtlas.js` plans only the bricks the cut keeps
   (`view.box`).
-- Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`, `savedAreas`; FLAGS
-  `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`, `crop.narrower`,
-  `areas.saved`; the strip's `tool.area` (plane and slab) and
-  `tool.cutaway`/`tool.crop` (group `cut`), the popover's `area.size`, and the panel's `dock` entries
+- Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`; FLAGS
+  `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`, `crop.narrower`;
+  the strip's `tool.area` (plane and slab) and
+  `tool.cutaway`/`tool.crop` (group `cut`), the popover's `area.size` (the
+  side on screen, no unit config), and the panel's `dock` entries
   `cut.axes` (config `{flip, single}`: a Cut's chips are a radio), `cut.toArea`
-  ("Crop to area", while `crop.narrower`), `area.save`/`area.list` (group
-  `areas`, placed at 235), `cut.face`, `cut.handles`, `cut.reset`,
+  ("Crop to area", while `crop.narrower`), `cut.face`, `cut.handles`, `cut.reset`,
   `cut.history`, `cut.interpolation`, `cut.handleOpacity`, `cut.toggle`
   (group `toggle`), shown in 3-D whether the cut is on or hidden (no `when`;
   they follow `ctx.cutTool`, the live tool or else the one last chosen). The
   rail, band, thumb and hover are plane/slab only. `transition()` no longer rewrites the slab on entering
-  3-D.
+  3-D, and returns `{mode, volume: {area: null}}`: the mode buttons always
+  mean the whole stack, because a placed square is a view of its own.
 - Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`: `mode`
   full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only; a cutaway named
   with more than one axis is refused, here and in
   `agentBridge.js` `set_inspect`); `viewer_set_volume_mode` takes `area`
   (`{x, y, width, height}`, full-resolution pixels) or `clear_area`, not both;
   `viewer_set_z` takes `mode: "keep"`;
-  `describeVolumeView` reports inspect/cut/camera/show/area/saved, with `box`
+  `describeVolumeView` reports inspect/cut/camera/show/area, with `box`
   kept as `area`'s old name for one release. Figure
   Builder: `export.volume_cut(panel)` and `cut` in a 3-D panel's report.
   Video Studio frames carry `view.inspect` (bounded by the schema); a frame
   cut as a section or slab plays the whole stack. A scene's `box` is the view
   state's `volume.area`, applied in the same patch as the frame's `inspect`,
   so the cut is not moved with the area a second time.
-- Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles,area_tool}_probe.mjs`
+- Tests: probes `tests/js/{inspect_geometry,volume_dock,volume_handles,area_tool,view_history}_probe.mjs`
   (wrapped in `tests/test_view_state_client.py`, with the script-order and
-  `node --check` tests; floors view_state 70, inspect_geometry 73,
-  volume_dock 67, volume_handles 22, area_tool 22), cut and area checks in the view_state, volume_renderer,
+  `node --check` tests; floors view_state 70, inspect_geometry 69,
+  volume_dock 60, volume_handles 35 (the area's grips), area_tool 25 (the
+  side on screen, the square let go), view_history 27 (spatial only, the
+  trail's end, B's precedence over the dataset chip), depth_strip 41), cut and area checks in the view_state, volume_renderer,
   view_controls, depth_strip, section_panes (nothing of the 3-D cut left in
   the panes) and video_studio_scene probes (`surface_renderer`'s floor is 29 in
   `test_viewer_3d_client.py`);
   `test_volume_routes`, `test_agent_viewer_api`, `test_figure_builder_volume`,
-  `test_video_schema`. Bench scenarios `clip` and `area_slide` (an area slid
+  `test_video_schema`. Bookmarks: `tests/test_bookmarks.py` (wraps
+  `tests/js/bookmarks_probe.mjs`, floor 30, and pins the load order and the
+  hidden icon), `test_figure_builder_captures` (the bookmark columns,
+  `set_bookmark`, `kept`), `canvas_layout_probe` (the lane rises over the
+  bottom-center dock), `figure_restore_probe` (`persist`),
+  `test_plugins` (`viewer_scripts`) and `test_plugin_boundary`
+  (`figure_builder_closed`: the store on a viewer page with the tool closed,
+  and once with it open). Bench scenarios `clip` and `area_slide` (an area slid
   as Shift+drag does; black and flash frames, landing time, GPU bytes) in `tools/bench3d`.
 
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
@@ -6368,6 +6469,7 @@ ordering, restyling and deleting one are the generic layer routes.
   `viewer_set_inspect` (`agent/core/viewer.py`, handled in `agentBridge.js`), the MCP `volume`
   profile, skill `plexora/ai/skills/surface-rendering`.
 - Figure Builder: a capture taken in 3-D has `figureCaptureTool.grabPreview`
+  (which delegates to core's `services/viewRaster.js` `grab`)
   draw the volume renderer again at print size (`snapshot({width, height})`),
   and core contributes `scene.plugins.volume` to the panel; export's
   `volume_state(panel)` sends such a panel down a client-raster branch — the
@@ -7146,7 +7248,10 @@ hidden -- the Cells buttons still read Outlines. `selectMode` clears the mute
 before its own no-op early return, so clicking the already-selected mode is the
 way back for somebody who has forgotten the key. Bare letters are otherwise
 each plugin's (ROI's v/p/f/r and Space, Figure Builder's C and S, gating's Z/X
-to step the marker, `views/datasetNav.js`'s B/N to walk the dataset); core owns
+to step the marker, `views/datasetNav.js`'s B/N to walk the dataset, with B
+Back's instead while there is a view to go back to, `views/backButton.js`;
+and K, which bookmarks the view, `views/bookmarkTray.js`, standing aside
+when another handler took it first, as Video Studio's K does); core owns
 the modified chords in `services/keyboardShortcuts.js`, and this is the
 documented exception, taken because the control is the canvas's and the key is
 pressed repeatedly while comparing. OpenSeadragon owns W/A/S/D on the canvas
@@ -9097,6 +9202,27 @@ in **5.6 s**.
   Edit's mini view/commit) composite the box padded to size, then
   `orient_raster` and crop the frame from its own true centre, so a panel
   looks the same whichever one drew it.
+- **The captures bin never shows a capture that was adopted into a figure
+  unless it is bookmarked.** A bookmark is a capture with `bookmarked` set
+  and a `label` (`plexora/plugins/figure_builder/server/captures.py`; both
+  columns added to a bin made before them by `_ensure_columns`, so an old
+  bin reads as having no bookmarks), because a second store of views would
+  be a second scene format to drift. `transfer_previews` copies a
+  bookmarked capture's raster and KEEPS its row, listing it in `kept`
+  beside `moved`/`missing`, because a bookmark is still a place to go back
+  to; every other adopted row is deleted. `set_bookmark` (`PATCH
+  /api/captures/<id>`, `{bookmarked?, label?}`) changes only the fields
+  given: taking a bookmark off leaves the capture in the bin and every
+  figure panel made from it untouched, and a re-`add` of the same id never
+  takes a bookmark off nor blanks its label. `GET /api/captures?bookmarked=1`
+  lists bookmarks only (core's tray). The restore differs too:
+  `FigureScene.restore(ctx, scene, {persist})` with `persist` (a bookmark's)
+  schedules one channel save after `resumePersistence` and passes `persist`
+  on `plexora:figure-restore-state`, so what a bookmark shows becomes what
+  the image keeps, while a figure panel reopened never writes the
+  project's channels. `surfaceLayers`' volume bridge takes the same flag
+  (`applyScene(scene, {save})`) and now contributes on a z-stack in 2-D as
+  well (`mode` plane/slab), so a bookmark goes back to its plane.
 - **`updates.current_version()` is `lru_cache`d on purpose, and
   `installed_on_disk()` is the one place that deliberately reads fresh.**
   The moment `pip install --upgrade plexora` finishes inside an install job,
@@ -9388,7 +9514,11 @@ in **5.6 s**.
   area with no `inspect` in the same patch moves the cut with it
   (`viewState._areaShift`); a patch that names the cut is never shifted,
   because a restore, a Video Studio frame or an undo already says where the
-  cut is and shifting it again would move it twice. A Cut is one axis — the
+  cut is and shifting it again would move it twice. A placed square is a
+  view of its own, never a mode's: the mode buttons and V always mean the
+  whole stack, letting the square go resets the cut's places to the whole
+  stack's (`_wholeCut`) unless the patch says where the cut is, and Back
+  (`viewHistory`, spatial only) is the way back into it. A Cut is one axis — the
   multi-axis corner (`hole`) is gone from the renderers, the handles and the
   geometry, the server's `normalize_inspect` keeps a cutaway's first axis,
   and the agent refuses a cutaway over more than one.

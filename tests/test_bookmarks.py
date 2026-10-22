@@ -37,7 +37,7 @@ def test_the_bookmarks_probe_passes():
                           capture_output=True, text=True, cwd=REPO_ROOT, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "all " in proc.stdout and "checks passed" in proc.stdout
-    assert proc.stdout.count("ok - ") >= 29
+    assert proc.stdout.count("ok - ") >= 30
 
 
 def test_the_bookmark_scripts_parse():
