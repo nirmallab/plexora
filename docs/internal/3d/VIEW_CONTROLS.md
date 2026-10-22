@@ -62,8 +62,9 @@ PlexoraViewControls.register({
   and plugins, so they cannot disagree.
 - `resolve(ctx, {surface})` returns `[{id, group, config}]` in order.
 - `visible(id, ctx)` and `configOf(id, ctx)` answer for a single entry.
-- `transition(ctx, mode)` is the view-state patch for a mode button. Entering 3-D from a
-  projection that follows the plane opens the whole stack.
+- `transition(ctx, mode)` is the view-state patch for a mode button: `{mode, volume: {area:
+  null}}`. The 3-D button always opens the whole stack (a placed square is the Area tool's own
+  view, and Back returns from it), and leaving 3-D lets the square go.
 - Resolving never calls `viewState.set`, and `tests/js/view_controls_probe.mjs` spies to
   check this. A mode change only repaints. A plane stepper whose kind no longer applies
   stops with `persist: false`, because nobody chose the plane it stopped on.
@@ -94,7 +95,7 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Popover: Percentile | – | when pct | when pct | – | |
 | Popover: Planes z0–z1, Follow | – | ✓ | ✓ | – | |
 | Popover: Render (MIP / Additive) | – | – | – | ✓ | WebGL2 |
-| Popover: Area (`area.size`: the square's side, µm or px) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2, prefs |
+| Popover: Area (`area.size`: the square's side on screen, px) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2, prefs |
 | Popover: Motion | ✓ | ✓ | ✓ | ✓ | depth or frames, prefs |
 | Popover: Turn (axis and direction), Speed | – | – | – | ✓ | prefs |
 | Popover: Grid (on, where, labels); Lines (spacing, strength) while on | – | – | – | ✓ | the 3-D view's grid |
@@ -131,7 +132,6 @@ tool's (`cutTool`: the tool cutting, or else the one last chosen):
 | Crop to area (`cut.toArea`: the area becomes the crop) | – | while narrower than the area (`crop.narrower`) | |
 | Voxels: smooth or blocks | ✓ | ✓ | volumeDrawn |
 | Handles' strength | ✓ | ✓ | prefs |
-| Save area; the saved areas once there is one (`area.save`, `area.list`) | ✓ | ✓ | `savedAreas` |
 | `O` Show/Hide (the cut hidden or shown, the panel left out) | ✓ | ✓ | |
 
 While the cut is hidden the panel's axes and actions are dimmed (`is-off`) and the `O` key cap

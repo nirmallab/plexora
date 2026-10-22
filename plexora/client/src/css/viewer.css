@@ -3778,6 +3778,8 @@ body.sidebar-collapsed .viewer-shell,
     overflow-y: hidden;
     /* Room above and at the ends for an enlarged thumbnail. */
     padding: 14px 12px 2px;
+    /* Snapping keeps that room, so the first item's buttons are never cut. */
+    scroll-padding-inline: 12px;
     scroll-snap-type: x proximity;
     scrollbar-width: thin;
 }

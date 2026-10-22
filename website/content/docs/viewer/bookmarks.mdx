@@ -1,0 +1,70 @@
+---
+title: "Bookmarks and Back"
+description: "Keep a view to come back to with K, find it in the bookmarks tray, and step back out of a square's 3-D view with B."
+aliases: ["bookmark", "save view", "saved views", "back", "previous view"]
+---
+
+A bookmark keeps exactly what is on screen — where you are and how far in,
+every channel with its colour and contrast, the overlays, and on a z-stack the
+plane, the projection, or in 3-D the camera, the area and the cut — so one
+click brings it all back. It works on any image, in 2-D and in 3-D.
+
+<Callout type="info" title="Bookmarks need Figure Builder">
+A bookmark is a [Figure Builder](/docs/plugins/figure-builder) capture with a
+bookmark on it, so it is kept with the sample, shows in Figure Builder's
+captures marked as a bookmark, and can go into a figure like any other
+capture. Where Figure Builder is not installed the bookmark icon is not shown.
+</Callout>
+
+## Bookmark a view
+
+Press **K** anywhere on the image, or **+ Save View** in the tray. The tray
+does not need to be open. The view flashes, and its picture flies into the
+tray (or into the bookmark icon when the tray is closed). With reduced motion
+turned on, the new bookmark is simply marked instead.
+
+Each bookmark is named **View 1**, **View 2** and so on. Double-click a name to
+rename it.
+
+## The bookmarks tray
+
+The bookmark icon in the sidebar header, beside the AI button, opens and closes
+the tray along the bottom of the image. The tray shows this image's bookmarks,
+newest first, and scrolls sideways when there are many. Hover over one to see
+it larger.
+
+- **Click** a bookmark to go back to it. Its channels, contrast and view are
+  restored and kept, and it is ringed while that view is on screen.
+- **×** removes the bookmark. The capture stays in Figure Builder, and any
+  figure that uses it is unchanged.
+- **⋯** offers **Rename**, **Show in Figure Builder** and **Remove bookmark**.
+
+## Back to the previous view
+
+Placing a square on a z-stack opens that area in its own 3-D view, and **Crop
+to area** opens a tighter one. **Back**, the button at the top of the image, or
+**B**, returns to the view you came from, smoothly. Your channel and colour
+changes made in the meantime stay as they are. Back only moves the view.
+
+While there is a view to go back to, **B** means Back. Otherwise it is the
+dataset's "previous sample" key, as before.
+
+## In the 3-D view of a square
+
+- The **3-D button** on the depth strip always opens the whole stack, never the
+  last square.
+- The square's **centre grip** slides it across the tissue, the same as
+  Shift+drag. The grips on its **sides** resize it, and the cut stays where it is.
+- Going back to a plane clears the square from the image.
+
+The Area tool's square keeps the **same size on screen** as you zoom, and a
+readout under it says how much tissue it covers. Zoom in to select a smaller
+area and out to select a larger one. Set its size under the depth strip's gear.
+
+## Related
+
+<Cards>
+  <Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Where bookmarks are kept, and how a captured view becomes a figure panel." />
+  <Card title="Keyboard shortcuts" href="/docs/viewer/keyboard-shortcuts" description="K, B and every other key the viewer binds." />
+  <Card title="Move between samples" href="/docs/viewer/dataset-navigation" description="B and N between samples when there is no view to go back to." />
+</Cards>

@@ -57,7 +57,9 @@ name elsewhere.
 | `0` | Return to the home view |
 | `W` `A` `S` `D` | Pan, once the canvas has focus |
 | `T` | Show or hide whatever is drawn over the image — the mask, or a plugin's coloured cells |
-| `B` / Page Up | Previous sample in this dataset |
+| `K` | Bookmark this view ([Bookmarks](/docs/viewer/bookmarks)) |
+| `B` | Back to the previous view, while there is one (after a square's 3-D view or Crop to area) |
+| `B` / Page Up | Previous sample in this dataset, when there is no view to go back to |
 | `N` / Page Down | Next sample in this dataset |
 
 ## On a z-stack
@@ -76,17 +78,20 @@ planes.
 | Key or gesture | Action |
 | --- | --- |
 | Drag | Turn the stack |
-| Shift+drag | Slide the area across the tissue; any cut moves with it |
+| Shift+drag, or drag the area's centre grip | Slide the area across the tissue; any cut moves with it |
+| Drag a side grip of the area | Resize the area; the cut stays where it is |
 | Alt+drag, or the middle button | Pan the camera (Shift+drag too, when the whole stack is drawn) |
 | `X` `Y` `Z` | With the pointer over it: turn about that axis only; again, or `Esc`, to let go |
 | `O` | Show or hide the cut |
 
-The **Area** button on the strip arms a square of a fixed size (300 µm by
-default; set it under the strip's gear). Click the image to open that square
-in 3-D, drawn at the finest level it allows. A **Cut** takes a side off along
-one axis — X, Y or Z; a **Crop** keeps a box along any of them, and **Crop to
-area** makes that box the area, fetched finer. **Save area** in the cut panel
-keeps the area, the cut and the camera to come back to.
+The **Area** button on the strip arms a square that keeps its size on screen
+(set it under the strip's gear), so zooming in selects less tissue; a readout
+under it says how much. Click the image to open that square in 3-D, drawn at
+the finest level it allows, and press **B** to go back. The strip's 3-D button
+always opens the whole stack. A **Cut** takes a side off along one axis — X, Y
+or Z; a **Crop** keeps a box along any of them, and **Crop to area** makes that
+box the area, fetched finer. To keep a view to come back to, bookmark it with
+**K** ([Bookmarks](/docs/viewer/bookmarks)).
 
 <Callout type="info" title="A tool's own keys">
 [ROI](/docs/plugins/roi) and [Figure Builder](/docs/plugins/figure-builder)

@@ -252,7 +252,7 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
 
     turn = {"speed": 30.0, "axis": "screen", "direction": 1}
     handles = {"visible": True, "opacity": 0.55}
-    area = {"um": 300.0, "px": 1024}
+    area = {"screen": 320}
     paths.write_settings({"data_dir": "/somewhere"})
     grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {

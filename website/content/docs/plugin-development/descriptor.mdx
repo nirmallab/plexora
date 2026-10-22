@@ -34,6 +34,8 @@ PLUGIN = Plugin(
 
 **`scripts`**, **`styles`** — filenames within your plugin's own `static/` directory. Plexora turns each into a full, cache-busted, base-URL-safe URL; never construct one of these paths yourself; see `asset_urls`.
 
+**`viewer_scripts`** — scripts loaded on every viewer page your plugin applies to, whether its tool is open or not. For a store or a bridge that core's own UI talks to (Figure Builder's captures store sits behind the viewer's bookmarks), never for UI of your own, which should wait for the tool to open. A file in both `scripts` and `viewer_scripts` is loaded once.
+
 **`requires`** — a `Requires()` describing what a project must offer before this plugin can open. See [Requirements](/docs/plugin-development/requirements).
 
 **`intro`** — one sentence shown in the requirements dialog when nothing is blocking the tool but some inputs are still optional. Core writes the wording for the blocking case ("this tool needs a little more about this project"); a form made entirely of optional fields needs your own sentence saying why anyone would fill it in.

@@ -229,7 +229,10 @@
          *  where the pointer is now, at its size for the new zoom. */
         zoomed() {
             if (!this._armed || !this.pointer || !this.onPlane()) return;
-            this.hover = this.imagePoint(this.pointer);
+            // OpenSeadragon's own point: its conversions call its methods.
+            const Point = global.OpenSeadragon?.Point;
+            const at = Point ? new Point(this.pointer.x, this.pointer.y) : this.pointer;
+            this.hover = this.imagePoint(at);
             this.repaint();
         }
 
