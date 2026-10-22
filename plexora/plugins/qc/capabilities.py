@@ -1,7 +1,7 @@
 """What an external agent may ask the QC plugin to do.
 
 Two halves with one store. The session tools (`capabilities_session.py`) and
-the analysis tools here (`ai:qc:analytics`) are Paid; everything that reads,
+the analysis tools here (`ai:qc:analytics`) are Pro; everything that reads,
 changes or exports what a session -- or a user drawing QC regions by hand --
 produced is Free, and stays usable after a licence lapses:
 
@@ -22,7 +22,7 @@ produced is Free, and stays usable after a licence lapses:
 plus the image checks the panel runs, Registration Check and Segmentation QC
 (`capabilities_checks.py`), also Free;
 
-and, Paid: `profile_image_qc`, `render_qc_overview`, `sample_qc_examples` (places
+and, Pro: `profile_image_qc`, `render_qc_overview`, `sample_qc_examples` (places
 sampled across a check's score distribution, one row per part of it, to judge
 by eye) and `refine_qc_roi` (trace a QC region's artifact at pixel level inside
 its outline).
@@ -888,7 +888,7 @@ def restore(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "restored_rois": len(deleted)}
 
 
-# -- analysis (Paid) ------------------------------------------------------------------------
+# -- analysis (Pro) ------------------------------------------------------------------------
 
 
 class ProfileInput(ProjectInput):
@@ -1379,7 +1379,7 @@ def capabilities():
         kwargs.setdefault("tags", TAGS)
         return Capability(owner=OWNER, version="1", **kwargs)
 
-    def paid(**kwargs):
+    def pro(**kwargs):
         kwargs.setdefault("tags", TAGS)
         kwargs.setdefault("entitlement", "ai:qc:analytics")
         return Capability(owner=OWNER, version="1", **kwargs)
@@ -1473,13 +1473,13 @@ def capabilities():
              purpose="Put back a QC snapshot (the undo of reset_qc).",
              permission="reversible_write", input_model=RestoreInput, handler=restore,
              writes=("qc", "rois"), persistent=True),
-        paid(name="qc.profile_image", tool_name="profile_image_qc",
+        pro(name="qc.profile_image", tool_name="profile_image_qc",
              purpose="Scan an image for QC without a session: every channel's global "
                      "numbers and flags, the tissue, the cycles, and the candidate artifact "
                      "regions the detectors found. A job.",
              permission="read", input_model=ProfileInput, handler=profile_image,
              execution="job", egress="aggregates", reads=("image",)),
-        paid(name="qc.refine_roi", tool_name="refine_qc_roi",
+        pro(name="qc.refine_roi", tool_name="refine_qc_roi",
              purpose="Trace a QC region's artifact at pixel level: its outline becomes the "
                      "search area, and the region is rewritten as the artifact's own pixels "
                      "inside it (aggregate specks, a fold's band, the blurred patch), so the "
@@ -1490,9 +1490,9 @@ def capabilities():
                      "alone. Needs the image scanned (a QC session or profile_image_qc).",
              permission="reversible_write", input_model=RefineRoiInput, handler=refine_roi,
              writes=("qc", "rois"), persistent=True, reads=("image", "qc", "rois", "table")),
-        capabilities_segment.capability(paid),
-        *capabilities_visual.capabilities(paid),
-        paid(name="qc.sample_examples", tool_name="sample_qc_examples",
+        capabilities_segment.capability(pro),
+        *capabilities_visual.capabilities(pro),
+        pro(name="qc.sample_examples", tool_name="sample_qc_examples",
              purpose="Look at an image check the way a QC session does: places sampled "
                      "across its score distribution -- a row each of clearly fine, just "
                      "below and just above the bar, far above it, inside the largest "
@@ -1504,7 +1504,7 @@ def capabilities():
              permission="read", input_model=SampleInput, handler=sample_examples,
              visual_output=True, egress="rendered_pixels", reads=("image", "qc", "mask"),
              tags=TAGS + ("blur", "registration", "segmentation", "sample", "threshold")),
-        paid(name="qc.render_overview", tool_name="render_qc_overview",
+        pro(name="qc.render_overview", tool_name="render_qc_overview",
              purpose="A channel audit sheet: up to eight channels, whole tissue, at the "
                      "project's calibrated windows, beside the nuclear stain.",
              permission="read", input_model=OverviewInput, handler=render_overview,

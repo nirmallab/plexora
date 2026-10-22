@@ -19,8 +19,8 @@ from plexora.vision import segment as segmenter
 from tests import volume_fixtures as vf
 
 #: Plexora 3D's analysis paths (plexora/licensing/manifest.py `volume`): these
-#: tests exercise them, so they run on a Paid test licence.
-pytestmark = pytest.mark.paid
+#: tests exercise them, so they run on a Pro test licence.
+pytestmark = pytest.mark.pro
 
 
 def _disc(radius, centre=(48, 48), shape=(96, 96)):

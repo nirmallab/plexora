@@ -158,11 +158,11 @@ window.PlexoraAgentPanel = (function () {
         run_closed: "The gateway closed this run",
         ai_disabled: "AI is switched off for your organisation",
         ai_not_entitled: "This licence does not include Plexora AI",
-        no_license: "Plexora AI needs this device connected to a Paid licence",
+        no_license: "Plexora AI needs this device connected to a Pro licence",
         offline_refused: "BIOCOGNIA_OFFLINE is set, so Plexora AI cannot reach the gateway",
         cancelled: "The run was cancelled",
     };
-    const NO_AI = "Plexora AI is part of a Paid licence that includes AI.";
+    const NO_AI = "Plexora AI is part of a Pro licence that includes AI.";
 
     const MINIMIZE_TITLE = "Minimize. The agent keeps working; its status stays here.";
     const EXPAND_TITLE = "Show the agent's controls";
@@ -780,8 +780,8 @@ window.PlexoraAgentPanel = (function () {
     }
 
     function aiAllowed() {
-        const paid = window.PlexoraPaid;
-        return Boolean(paid && typeof paid.allows === "function" && paid.allows("ai"));
+        const pro = window.PlexoraPro;
+        return Boolean(pro && typeof pro.allows === "function" && pro.allows("ai"));
     }
 
     //: The launcher's card, or null.

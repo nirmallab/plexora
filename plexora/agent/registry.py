@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from plexora.agent.errors import AgentError, as_agent_error
 from plexora.agent.policy import PERMISSIONS, EGRESS, Policy
 from plexora.licensing import guards as license_guards
+from plexora.licensing import manifest as license_manifest
 
 _log = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ ORIGIN_MCP = "mcp"
 #: (spatialbridge): a `plexora mcp serve --origin bridge` that the peer spawned
 #: and proved with its nonce, or an HTTP call to `/agent/v1/capabilities` with
 #: a `bridge`-scoped token or on this machine's loopback. Not an outside agent,
-#: so the `mcp` add-on does not apply; a capability's own entitlement still does.
+#: so the `mcp` grant does not apply; a capability's own entitlement still does.
 ORIGIN_BRIDGE = "bridge"
 ORIGINS = (ORIGIN_MCP, ORIGIN_BRIDGE)
 
@@ -117,10 +118,11 @@ class Capability:
             "egress": self.egress, "reads": list(self.reads), "writes": list(self.writes),
             "tags": list(self.tags), "version": self.version, "input_schema": schema,
             # "free" or the entitlement, and which plan unlocks it: an agent
-            # can tell a Paid tool before calling it, though the call is what
+            # can tell a Pro tool before calling it, though the call is what
             # decides.
             "entitlement": self.entitlement or "free",
-            "plan": "free" if self.entitlement in (None, "free") else "paid",
+            "plan": ("free" if self.entitlement in (None, "free")
+                     else license_manifest.plan_for(self.entitlement)),
         }
 
 

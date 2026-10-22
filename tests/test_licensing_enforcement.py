@@ -1,8 +1,8 @@
 """Enforcement at the one place every agent action passes: registry.invoke.
 
 Free is the default here, as for a real install -- these tests are where the
-refusals are asserted. The suites that exercise Paid capabilities in depth
-run with `pytest.mark.paid`.
+refusals are asserted. The suites that exercise Pro capabilities in depth
+run with `pytest.mark.pro`.
 """
 
 import json
@@ -19,9 +19,9 @@ from plexora.agent.registry import Capability
 from plexora.licensing import LICENSING, manifest
 from tests.agent_fixtures import make_synthetic_project
 
-#: The classification, pinned: changing what is Paid is a product decision,
+#: The classification, pinned: changing what is Pro is a product decision,
 #: and this is where it has to be made on purpose.
-PAID = {
+PRO = {
     # Plexora AI runs inside Plexora (plexora/ai/harness/capabilities.py).
     "ai.run_session": "ai", "ai.run_status": "ai", "ai.run_control": "ai", "ai.balance": "ai",
     "gating.session_start": "ai:gating:session",
@@ -137,17 +137,17 @@ def test_every_capability_names_a_known_entitlement(session):
             assert manifest.known(cap.entitlement), (cap.name, cap.entitlement)
 
 
-def test_the_paid_set_is_exactly_the_classification(session):
-    # A plugin sold as a unit (`plugin:<name>`, Video Studio) is classified as a
+def test_the_pro_set_is_exactly_the_classification(session):
+    # A plugin licensed as a whole (`plugin:<name>`, Video Studio) is classified as a
     # whole by its descriptor and tested with it; the registry is process-wide,
     # so its capabilities are here whenever an earlier test discovered it.
     entitled = {cap.name: cap.entitlement for cap in registry.all_capabilities()
                 if cap.entitlement not in (None, "free")
                 and not cap.entitlement.startswith(manifest.PLUGIN_ROOT + ":")}
-    assert entitled == PAID
+    assert entitled == PRO
 
 
-def test_a_plugin_sold_as_a_unit_entitles_only_its_own_capabilities(session):
+def test_a_plugin_licensed_as_a_whole_entitles_only_its_own_capabilities(session):
     for cap in registry.all_capabilities():
         if (cap.entitlement or "").startswith(manifest.PLUGIN_ROOT + ":"):
             assert cap.entitlement == f"{manifest.PLUGIN_ROOT}:{cap.owner}", (cap.name, cap.owner)
@@ -159,27 +159,27 @@ def test_manual_gating_stays_free(session):
         assert names[name].entitlement in (None, "free"), name
 
 
-def test_paid_covers_everything_it_should():
-    # The Paid default: every root but the add-ons.
-    grants = manifest.paid_default()
-    for entitlement in set(PAID.values()):
+def test_pro_covers_everything_it_should():
+    # The Pro default: every root but those off by default, and the plugins.
+    grants = manifest.pro_default()
+    for entitlement in set(PRO.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
 
-def test_describe_and_the_mcp_description_say_paid(session):
+def test_describe_and_the_mcp_description_say_pro(session):
     from plexora.mcp import tools
 
     described = {entry["name"]: entry for entry in registry.describe()}
-    assert described["gating.session_start"]["plan"] == "paid"
+    assert described["gating.session_start"]["plan"] == "pro"
     assert described["gating.set"]["plan"] == "free"
-    assert "Part of Plexora Paid" in tools.description_for(registry.get("gating.session_start"))
-    assert "Paid" not in tools.description_for(registry.get("gating.set"))
+    assert "Part of Plexora Pro" in tools.description_for(registry.get("gating.session_start"))
+    assert "Plexora Pro" not in tools.description_for(registry.get("gating.set"))
 
 
-def test_mcp_lists_paid_tools_on_free_too(session):
+def test_mcp_lists_pro_tools_on_free_too(session):
     """Not granted, not shown is the page's rule, not MCP's: the tool list is
-    built once per server and the licence can change under it, so a Paid tool
-    stays listed (its description says Paid) and its call refuses."""
+    built once per server and the licence can change under it, so a Pro tool
+    stays listed (its description says Pro) and its call refuses."""
     from types import SimpleNamespace
 
     from plexora.mcp.server import _offered
@@ -197,7 +197,7 @@ def test_license_required_is_a_known_code_everywhere():
 
 # -- refusals on Free -----------------------------------------------------------------
 
-def test_a_paid_capability_is_refused_on_free_with_a_structured_error(session, tmp_path):
+def test_a_pro_capability_is_refused_on_free_with_a_structured_error(session, tmp_path):
     result = invoke(session, "gating_session_start", {"project": "synth"})
     assert result["ok"] is False
     error = result["error"]
@@ -205,10 +205,47 @@ def test_a_paid_capability_is_refused_on_free_with_a_structured_error(session, t
     assert error["retryable"] is False
     detail = error["detail"]
     assert detail["entitlement"] == "ai:gating:session"
-    assert detail["plan_required"] == "paid"
+    assert detail["plan_required"] == "pro"
     assert detail["state"] == "free" and detail["plan"] == "free"
+    assert detail["off_by_default"] is False
     assert "Settings > License" in detail["hint"]
+    assert "is part of Plexora Pro" in detail["hint"] and "start a trial" in detail["hint"]
     assert _audit(tmp_path)[-1]["status"] == "refused"
+
+
+def test_video_studio_is_part_of_pro():
+    """Video Studio is in the Pro default, so its refusal is an ordinary Pro
+    one: part of Plexora Pro, with a trial on offer."""
+    from plexora.licensing import guards
+
+    assert "plugin:video_studio" in manifest.pro_default()
+    assert not manifest.off_by_default("plugin:video_studio")
+    hint = guards.hint_for("plugin:video_studio", "free")
+    assert "Video Studio is part of Plexora Pro" in hint and "start a trial" in hint, hint
+    assert "needs a Plexora Pro licence" in guards.hint_for("plugin:video_studio", "expired")
+
+
+def test_what_is_off_by_default_is_never_called_pro_or_sold():
+    """External MCP access, and a third-party plugin, are outside the Pro
+    default: neither Pro nor its trial unlocks them, and Plexora sells
+    neither, so a refusal offers no trial and no price."""
+    from plexora.licensing import guards
+    from plexora.links import PRICING_URL
+
+    assert manifest.off_by_default("mcp") and manifest.off_by_default("plugin:spatial_stats")
+    assert not any(manifest.off_by_default(name) for name in manifest.pro_default())
+    assert manifest.third_party("plugin:spatial_stats") and not manifest.third_party("plugin:video_studio")
+    assert not manifest.third_party("mcp")
+    for state in ("free", "pro_active"):
+        mcp = guards.hint_for("mcp", state)
+        assert "External MCP access is off by default and is not part of Plexora Pro or its trial" in mcp
+        assert "an administrator can turn it on for their licence" in mcp
+        plugin = guards.hint_for("plugin:spatial_stats", state)
+        assert "Spatial Stats is a plugin from its maker, not part of Plexora Pro or its trial" in plugin
+        for hint in (mcp, plugin):
+            assert "is part of Plexora Pro" not in hint and "start a trial" not in hint, hint
+            assert PRICING_URL not in hint and "sold" not in hint, hint
+    assert "needs a licence that includes Spatial Stats" in guards.hint_for("plugin:spatial_stats", "expired")
 
 
 def test_a_refused_job_never_starts(session):
@@ -218,7 +255,7 @@ def test_a_refused_job_never_starts(session):
     assert invoke(session, "job_list", {})["result"]["jobs"] == []
 
 
-def test_the_same_call_passes_on_paid(session, paid_license):
+def test_the_same_call_passes_on_pro(session, pro_license):
     result = invoke(session, "gating_session_status", {})
     assert result["ok"], result
 
@@ -269,8 +306,8 @@ def test_permission_errors_outrank_licence_errors(session):
     assert result["error"]["code"] == "permission_required"
 
 
-def test_a_nested_paid_call_is_refused_too(session):
-    """A Free capability cannot launder a Paid one by calling it."""
+def test_a_nested_pro_call_is_refused_too(session):
+    """A Free capability cannot launder a Pro one by calling it."""
     class Empty(BaseModel):
         pass
 
@@ -284,7 +321,7 @@ def test_a_nested_paid_call_is_refused_too(session):
     assert result["ok"] and result["result"] == {"inner": False, "code": "license_required"}
 
 
-def test_a_job_that_started_on_a_valid_licence_finishes_after_it_lapses(session, paid_license):
+def test_a_job_that_started_on_a_valid_licence_finishes_after_it_lapses(session, pro_license):
     """Checked at submit, not mid-run: a running job is never cut off, and what
     it produced stays readable."""
     from plexora.agent import jobs
@@ -298,10 +335,10 @@ def test_a_job_that_started_on_a_valid_licence_finishes_after_it_lapses(session,
         release.wait(10)
         return {"done": True}
 
-    registry.register(Capability(name="test.slow_paid", owner="core", purpose="test",
+    registry.register(Capability(name="test.slow_pro", owner="core", purpose="test",
                                  permission="read", input_model=Empty, handler=slow,
                                  execution="job", entitlement="ai:gating:session"))
-    submitted = invoke(session, "test.slow_paid", {})
+    submitted = invoke(session, "test.slow_pro", {})
     assert submitted["ok"], submitted
     job_id = submitted["result"]["job_id"]
     LICENSING.store.clear()
@@ -337,23 +374,24 @@ def test_scope_says_license_required_on_free(session):
     assert "license_required" not in free
 
 
-def test_server_info_names_the_plan(session, paid_license):
+def test_server_info_names_the_plan(session, pro_license):
     from plexora.mcp.server import _license_info
 
-    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp", "transcriptomics", "volume"],
+    assert _license_info() == {"plan": "pro", "state": "pro_active",
+                               "entitlements": ["ai", "mcp", "plugin:video_studio", "transcriptomics", "volume"],
                                "mcp": True}
 
 
 def test_server_info_says_when_mcp_is_not_included(session, license_issuer):
     from plexora.mcp.server import _license_info
 
-    license_issuer.install()  # the plain Paid default: ["ai"]
+    license_issuer.install()  # the plain Pro default: ["ai"]
     info = _license_info()
     assert info["entitlements"] == ["ai"] and info["mcp"] is False
     assert "external MCP access" in info["hint"]
 
 
-def test_scope_lists_paid_tools_over_mcp_without_the_add_on(session, license_issuer):
+def test_scope_lists_pro_tools_over_mcp_without_the_mcp_grant(session, license_issuer):
     from plexora.agent.policy import classify_scope
     from plexora.agent.registry import CALL_ORIGIN, ORIGIN_MCP
 
@@ -401,32 +439,32 @@ def test_a_plugin_entitlement_is_the_default_and_capability_level_wins(monkeypat
         return {"ran": True}
 
     class FakePlugin:
-        name = "paidplug"
-        entitlement = "plugin:paidplug"
+        name = "proplug"
+        entitlement = "plugin:proplug"
 
         def load_capabilities(self):
             return [
-                Capability(name="paidplug.analyze", owner="paidplug", purpose="x", permission="read",
+                Capability(name="proplug.analyze", owner="proplug", purpose="x", permission="read",
                            input_model=Empty, handler=handler),
-                Capability(name="paidplug.view", owner="paidplug", purpose="x", permission="read",
+                Capability(name="proplug.view", owner="proplug", purpose="x", permission="read",
                            input_model=Empty, handler=handler, entitlement="free"),
             ]
 
     from plexora.server import plugins as plugin_registry
 
-    monkeypatch.setattr(plugin_registry, "available_names", lambda: ["paidplug"])
-    registry.discover(["paidplug"], loader=lambda name: FakePlugin())
-    assert registry.get("paidplug.analyze").entitlement == "plugin:paidplug"
-    assert registry.get("paidplug.view").entitlement == "free"
+    monkeypatch.setattr(plugin_registry, "available_names", lambda: ["proplug"])
+    registry.discover(["proplug"], loader=lambda name: FakePlugin())
+    assert registry.get("proplug.analyze").entitlement == "plugin:proplug"
+    assert registry.get("proplug.view").entitlement == "free"
     sess = AgentSession()
-    assert invoke(sess, "paidplug.analyze", {})["error"]["code"] == "license_required"
-    assert invoke(sess, "paidplug.view", {})["ok"]
+    assert invoke(sess, "proplug.analyze", {})["error"]["code"] == "license_required"
+    assert invoke(sess, "proplug.view", {})["ok"]
 
 
 # -- the bridge origin ---------------------------------------------------------
 
 
-def test_check_origin_exempts_the_bridge_from_the_mcp_add_on(session, license_issuer):
+def test_check_origin_exempts_the_bridge_from_the_mcp_grant(session, license_issuer):
     from plexora.licensing import guards
 
     license_issuer.install()                       # ["ai"]: no external MCP access

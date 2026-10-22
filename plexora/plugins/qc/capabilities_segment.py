@@ -814,9 +814,9 @@ def _preview(call, inp, geometry, points, box, view, found, summary, result):
                        **summary}, rendered["image"])
 
 
-def capability(paid):
-    """The registry entry (Paid, like `refine_qc_roi`)."""
-    return paid(
+def capability(pro):
+    """The registry entry (Pro, like `refine_qc_roi`)."""
+    return pro(
         name="qc.segment_roi", tool_name="segment_qc_roi",
         purpose="Outline an artifact with magic select: point inside it (and, if needed, on "
                 "tissue it should not take, or a box round it) and get a snug QC region -- "

@@ -165,7 +165,7 @@ def client(tmp_path):
     return plexora.app.test_client()
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_xenium_run_imports_with_its_cell_table(client, tmp_path):
     """The bug report, end to end. The run's morphology, its transcripts and
     its cells, from one pick of one folder."""
@@ -180,7 +180,7 @@ def test_a_xenium_run_imports_with_its_cell_table(client, tmp_path):
     assert [layer.id for layer in project.spatial_layers] == ["transcripts"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_vendor_column_names_resolve_to_roles(client, tmp_path):
     """`x_centroid`/`y_centroid` are what 10x writes, and the same predictor
     that reads a CSV header reads these -- so the import asks nothing and the
@@ -199,7 +199,7 @@ def test_the_vendor_column_names_resolve_to_roles(client, tmp_path):
                                                  "y_centroid")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_string_cell_id_gains_a_numeric_counterpart(client, tmp_path):
     """The whole Cells layer turned on this. `centroid_tiles` casts the id
     column to float to pack it into a fixed-width record, so a string id made
@@ -216,7 +216,7 @@ def test_the_string_cell_id_gains_a_numeric_counterpart(client, tmp_path):
     assert table["cell_id"][0] == "aaaabbbb-0"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_copied_table_is_in_reference_pixels(client, tmp_path):
     """Everything in a Xenium run is in MICRONS, and a table gets no
     transform -- `CsvAdapter` reads x and y and they are reference pixels by
@@ -238,7 +238,7 @@ def test_the_copied_table_is_in_reference_pixels(client, tmp_path):
         == pytest.approx(original["x_centroid"].max())
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_what_the_importer_changed_is_written_down(client, tmp_path):
     """A silent improvement to a file the user handed over is exactly the
     kind of thing that has to be recorded: without it, somebody comparing
@@ -254,7 +254,7 @@ def test_what_the_importer_changed_is_written_down(client, tmp_path):
     assert derived["cell_index_from"] == "row_number"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_run_pixel_size_reaches_the_image(client, tmp_path):
     """Every layer's transform is built from this number, so a project whose
     ImageSpec did not carry it was one where the scale bar said "px" while
@@ -268,7 +268,7 @@ def test_the_run_pixel_size_reaches_the_image(client, tmp_path):
     assert pixel_size["source"] == "metadata"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_counts_are_markers_and_the_geometry_is_not(client, tmp_path):
     """The split is a guess the user can correct, but it has to start out
     roughly right: `cell_area` offered as a marker is a nonsense histogram in
@@ -282,7 +282,7 @@ def test_the_counts_are_markers_and_the_geometry_is_not(client, tmp_path):
     assert "x_centroid" in columns.metadata
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_registered_table_actually_loads(client, tmp_path):
     """Registration records a path and a type; this is the other half --
     `get_adapter` reads that record back and produces cells."""
@@ -297,7 +297,7 @@ def test_the_registered_table_actually_loads(client, tmp_path):
     assert "transcript_counts" in normalized.feature_columns
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_no_table_name_is_invented_for_a_file_that_is_the_table(client,
                                                                 tmp_path):
     """`DataSpec.table` names a table INSIDE a container -- the one a
@@ -310,7 +310,7 @@ def test_no_table_name_is_invented_for_a_file_that_is_the_table(client,
     assert Project.load("run_0042").dataset.table is None
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_table_is_copied_into_the_project(client, tmp_path):
     """The rule a CSV already followed, and it matters more here: the ROI
     plugin writes its region columns into this file, and writing them into
@@ -340,7 +340,7 @@ def test_inspecting_a_parquet_asks_no_container_questions(client, tmp_path):
     assert body["tables"] == [] and body["ambiguous"] == []
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_edit_page_offers_the_column_classifier_not_the_read_spec(client,
                                                                       tmp_path):
     """The branch that would have been missed by a `== "csv"` left behind: a

@@ -126,7 +126,7 @@ def test_a_map_given_as_entries_decodes_to_the_answer_model():
 # -- end to end ----------------------------------------------------------------------------
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path):
     with FakeGateway(qc_brain(scene)) as gateway:
         trace = TraceStore(tmp_path / "trace.sqlite")
@@ -199,7 +199,7 @@ def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path)
     assert answered[-1]["usage"]["packets"] == summary["packets"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_running_out_of_credit_pauses_qc_and_a_resume_finishes_it(scene, tmp_path):
     with FakeGateway(qc_brain(scene)) as gateway:
         trace = TraceStore(tmp_path / "trace.sqlite")
@@ -231,7 +231,7 @@ def test_running_out_of_credit_pauses_qc_and_a_resume_finishes_it(scene, tmp_pat
     assert rois_of(AgentSession())
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_plexora_ai_run_qc_runs_from_the_command_line(scene, monkeypatch, capsys):
     from plexora import cli
 

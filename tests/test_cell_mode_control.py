@@ -453,7 +453,7 @@ def test_every_mode_the_control_offers_has_a_button():
 def test_the_3d_view_offers_only_what_it_can_draw(probe):
     """In 3-D, Outlines and Filled are a 3-D mask's cell surfaces (Surface
     Studio, `volume:surfaces`) and Centroids are not drawn at all. Without the
-    licence they are hidden -- not greyed, the rule every Paid control follows
+    licence they are hidden -- not greyed, the rule every Pro control follows
     -- and the plane gets them back (tests/js/cell_mode_control_probe.mjs)."""
     for line in ("unlicensed, 3-D hides Centroids, Outlines and Filled",
                  "...and with only None left the whole row gives way",

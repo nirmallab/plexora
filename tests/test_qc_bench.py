@@ -16,7 +16,7 @@ def test_the_detectors_find_every_painted_artifact():
     assert summary["detect"]["region_recall"] == 1.0
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_careful_agent_keeps_the_real_regions_and_the_good_cells():
     rows = bench_qc.run_synthetic(["clean", "saturation", "mixed"], "oracle",
                                   arms=("detect", "session"))
@@ -30,7 +30,7 @@ def test_a_careful_agent_keeps_the_real_regions_and_the_good_cells():
     assert "| session |" in text and "| detect |" in text
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_lazy_agent_finds_less_than_a_careful_one():
     careful = bench_qc.summarise(bench_qc.run_synthetic(["mixed"], "oracle",
                                                         arms=("session",)))
@@ -38,7 +38,7 @@ def test_a_lazy_agent_finds_less_than_a_careful_one():
     assert (lazy["session"]["region_recall"] or 0) < careful["session"]["region_recall"]
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_traced_regions_match_the_artifacts_better_than_their_envelopes():
     # (Aggregates are judged per channel, never outlined: no region to trace.)
     rows = bench_qc.run_synthetic(["fold", "saturation", "damage"], "oracle",
@@ -54,7 +54,7 @@ def test_traced_regions_match_the_artifacts_better_than_their_envelopes():
     assert "region_iou_px" in bench_qc.to_markdown(bench_qc.summarise(rows), rows, title="t")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_staining_is_found_per_channel_and_a_failed_stain_fails_its_marker():
     """Staining is judged per channel, never outlined: the aggregates'
     channel is not called clean, and a failed stain's marker is unreliable
@@ -66,7 +66,7 @@ def test_staining_is_found_per_channel_and_a_failed_stain_fails_its_marker():
     assert by["aggregates"]["staining_channel_recall"] == 1.0, rows
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_rim_and_a_broad_background_are_found_as_channel_findings():
     """What QC finds about a channel that is no region: CD3 bright in the
     tissue's rim is warned on the rim cells, CD20's widened background is a

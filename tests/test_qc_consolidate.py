@@ -6,7 +6,7 @@ from plexora.agent import AgentSession, invoke, registry
 from tests.qc_fixtures import make_qc_project
 from tests.test_qc_session import QCOracle, drive, ok, start
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

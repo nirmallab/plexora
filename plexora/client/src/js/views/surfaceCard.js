@@ -216,7 +216,7 @@ window.PlexoraSurfaceCard = (function () {
         action("fa-file-export", "Export", "Save the mesh (PLY, OBJ, STL or glTF) with its provenance",
             (event) => window.PlexoraSurfaceObjects?.exportMenu?.(layer.id, event.currentTarget));
         // Remaking a surface is Plexora 3D; everything above is a read.
-        if (window.PlexoraPaid?.allows?.("volume:surfaces")) {
+        if (window.PlexoraPro?.allows?.("volume:surfaces")) {
             action("fa-sliders", "Edit", "Open Surface Studio with this surface's settings", () => {
                 window.PlexoraSurfaceStudio?.open({ from: layer.spec?.surface || null });
             });

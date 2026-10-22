@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261021_native_drop">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261021_pro">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -614,14 +614,18 @@
             </section>
 
             {# License: the plan (plexora/licensing) from /license/status, and
-               the three ways to add Paid -- connect this device (a code the
+               the three ways to add Pro -- connect this device (a code the
                person approves at account.biocognia.com), the licence key
                shown under Licences in the portal (or an activation code or
                token), or an offline licence file -- behind
                one switch, so the page shows one form at a time. Nothing here
                is needed for Free, the page never asks the BioCognia platform
                anything until a button does, and Plexora never sees a
-               password: signing in happens in the browser. #}
+               password: signing in happens in the browser.
+               What Pro adds is `pro_words` (manifest.pro_words, passed by
+               settings_routes.settings_page): the Pro default's own labels,
+               and what is off by default, so the sentence cannot fall behind
+               the manifest. #}
             <section class="settings-panel" id="settings_panel_license"
                      data-section="license" aria-label="License">
 
@@ -630,16 +634,15 @@
                     Plexora <strong>Free</strong> is everything Plexora does without a
                     licence: every image, table and modality, every tool's manual
                     features, remote and HPC viewing, notebooks and export &mdash;
-                    with no account and no network. <strong>Paid</strong> adds AI
-                    features: guided gating sessions and the evidence an agent
-                    gathers, with more to come. Licences, devices and AI credits
+                    with no account and no network. <strong>Pro</strong> adds
+                    {{ pro_words.included }}. {{ pro_words.off_by_default }} Licences, devices and AI credits
                     are managed at <a href="https://account.biocognia.com" target="_blank"
                     rel="noopener">account.biocognia.com</a>; Plexora itself
                     holds no account.
                 </p>
 
                 {# The plan. `data-tone` (settingsPage.js LicenseSection.draw)
-                   colours the seal and the status: paid, warn, lapsed or free. #}
+                   colours the seal and the status: pro, warn, lapsed or free. #}
                 <div class="license-plan" id="settings_license_card" data-tone="free">
                     <div class="license-plan-head">
                         <span class="license-seal" aria-hidden="true">
@@ -665,6 +668,20 @@
                     </div>
                     <dl class="license-facts" id="settings_license_facts" hidden></dl>
                     <p class="license-notes" id="settings_license_meta" hidden></p>
+                    {# Where Pro is bought, on a page without it: the pricing
+                       page, then checkout at account.biocognia.com. The key
+                       the seat comes with goes in Licence key below. A line in
+                       the card, not a banner: it never moves, opens or nags. #}
+                    <p class="license-notes" id="settings_license_buy" hidden>
+                        Pro is a yearly subscription per seat.
+                        <a id="settings_license_pricing" href="{{ docs_url }}pricing/"
+                           target="_blank" rel="noopener">See prices and buy</a>; your
+                        licence key comes by email and is always under Licences at
+                        account.biocognia.com, ready to paste in Licence key below.
+                        <span id="settings_license_trial_offer" hidden>Or
+                            <a id="settings_license_trial" href="#" target="_blank"
+                               rel="noopener">start a 30-day trial</a>.</span>
+                    </p>
                 </div>
 
                 <div class="license-add">
@@ -782,7 +799,7 @@
                         Your data never leaves this machine: a licence check sends the
                         certificate and a hash that identifies this device, nothing
                         else. When a licence ends, everything Free keeps working and
-                        everything you made with Paid features stays yours.
+                        everything you made with Pro features stays yours.
                     </span>
                 </p>
             </section>
@@ -792,5 +809,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261020_file_explorer" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261021_mcp_off" defer></script>
 {% endblock %}

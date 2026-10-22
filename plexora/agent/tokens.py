@@ -10,7 +10,7 @@ allow (`Policy.narrowed_by_scope`) -- never widens it:
 - `admin`: whatever the server allows, source-file writes and deletes included;
 - `bridge`: another application on the same dataset (SCIMAP Pro, through
   spatialbridge) -- the `write` policy, and calls made with it carry the
-  `bridge` origin, so a Paid capability does not also need the `mcp` add-on.
+  `bridge` origin, so a Pro capability does not also need the `mcp` grant.
 
 Kept in `<data_root>/.agent/tokens.json`, owner-readable only, as SHA-256
 digests: the secret is shown once, when it is made, and never stored.

@@ -179,7 +179,7 @@ def test_a_refusal_says_what_the_packet_allows():
     assert _refusal({"ok": True, "result": {}}) is None
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_second_unusable_answer_releases_the_packet(tmp_path):
     """A well-formed answer naming rows the packet does not hold is a strike:
     two of them send the channels to manual review, and the same packet is

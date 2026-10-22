@@ -211,7 +211,7 @@ class PlexoraProvider(Adapter):
         `upper` the upper, with how it was set and the receipt that set it."""
         from spatialbridge.schema import Gate, Gates
 
-        # Gating's core, never its automatic (Paid) package: reading a gate is
+        # Gating's core, never its automatic (Pro) package: reading a gate is
         # Free, and the bridge must not couple core to what may ship apart.
         from plexora.plugins.gating.server import model, provenance
 

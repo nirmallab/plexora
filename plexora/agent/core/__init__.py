@@ -16,7 +16,7 @@ def core_capabilities() -> list:
                  "plexora.agent.core.viewer",
                  "plexora.agent.core.selection", "plexora.agent.core.bridge",
                  # The Plexora AI conversation and in-app runs (plexora/ai/harness), absent from a
-                 # build that ships without the harness. Paid, entitlement `ai` / `ai:chat`.
+                 # build that ships without the harness. Pro, entitlement `ai` / `ai:chat`.
                  "plexora.ai.harness.chat_capabilities", "plexora.ai.harness.capabilities"):
         try:
             module = __import__(name, fromlist=["capabilities"])

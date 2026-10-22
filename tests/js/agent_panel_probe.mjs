@@ -207,7 +207,7 @@ function makePage({ wrapper = true, dock = true, reduced = false, requirements =
         PlexoraRequirements: requirements === false ? undefined
             : { collect: async (ds, form) => { collected.push({ ds, form }); return true; } },
         PlexoraToast: { show: (options) => toasts.push(options) },
-        PlexoraPaid: { allows: (entitlement) => paid && (entitlement === "ai" || entitlement.startsWith("ai:")),
+        PlexoraPro: { allows: (entitlement) => paid && (entitlement === "ai" || entitlement.startsWith("ai:")),
                        explain: (args) => { explained.push(args); return Promise.resolve(null); },
                        goToLicense: () => { licensed.push(true); } },
         PlexoraConfirm: { choose: (args) => { choices.push(args); return Promise.resolve(page.confirmAnswer); } },

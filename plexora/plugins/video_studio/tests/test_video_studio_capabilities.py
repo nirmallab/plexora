@@ -6,7 +6,7 @@ same schema, so it cannot make a track the UI would refuse. What is pinned:
 * registration -- ten capabilities, tool names unique across everything any
   plugin registers, and each inheriting the plugin's `plugin:video_studio`
   entitlement at discovery (the capabilities themselves name none), so they
-  are Paid with the plugin and refused on a licence without it;
+  are Pro with the plugin and refused on a licence without it;
 * the handlers that work from the project record alone (everything but
   preview and export, which need a live viewer), invoked through the real
   pipeline -- validation, policy, licence, receipt;
@@ -87,7 +87,7 @@ def test_the_plugin_declares_ten_capabilities_without_entitlements_of_their_own(
     assert all(cap.entitlement is None for cap in caps)
 
 
-def test_discovery_registers_them_paid_with_the_plugin():
+def test_discovery_registers_them_pro_with_the_plugin():
     registry._reset_for_tests()
     try:
         names = registry.discover()
@@ -104,7 +104,12 @@ def test_discovery_registers_them_paid_with_the_plugin():
         assert len(tool_names) == len(set(tool_names))
         described = {row["name"]: row for row in registry.describe(sorted(NAMES))}
         assert {row["entitlement"] for row in described.values()} == {ENTITLEMENT}
-        assert {row["plan"] for row in described.values()} == {"paid"}
+        assert {row["plan"] for row in described.values()} == {"pro"}
+        from plexora.mcp import tools
+
+        for cap in ours:
+            said = tools.description_for(cap)
+            assert "Part of Plexora Pro" in said and "not part of" not in said, cap.name
     finally:
         registry._reset_for_tests()
 

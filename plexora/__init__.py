@@ -258,7 +258,7 @@ def create_app(plugins=None):
     # guarded by the ai:chat entitlement -- see ai_chat_routes.
     from plexora.server.routes.ai_chat_routes import ai_chat_bp
     app.register_blueprint(ai_chat_bp, url_prefix="/ai/v1")
-    # Licensing (plexora/licensing): Settings > License and the paid-feature
+    # Licensing (plexora/licensing): Settings > License and the Pro-feature
     # modal. Nothing Free calls it; its mutations answer this machine only.
     from plexora.server.routes.license_routes import license_bp
     app.register_blueprint(license_bp)

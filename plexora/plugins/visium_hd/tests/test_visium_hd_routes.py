@@ -24,7 +24,7 @@ from tests.tenx_fixtures import GRID_TO_FULLRES, write_visium_hd_run
 
 
 #: The plugin's routes need `transcriptomics:visium`; on Free they 403.
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture

@@ -66,7 +66,7 @@ def test_the_real_model_outlines_a_speck_and_a_dark_patch(real_model, tmp_path):
         assert iou >= 0.8, (region["name"], iou)
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_real_model_tightens_a_loose_region_from_itself(real_model, tmp_path):
     """A region three times the size of the object it holds -- a box that
     loose comes back as the box -- is redrawn snug by `segment_qc_roi` from

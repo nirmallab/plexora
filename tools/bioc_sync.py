@@ -2,7 +2,7 @@
 """Upload Plexora's product manifest and AI task registry to the BioCognia platform.
 
     python tools/bioc_sync.py                # upload both
-    python tools/bioc_sync.py --check        # diff both, and the Paid plans, against the platform
+    python tools/bioc_sync.py --check        # diff both, and the Pro plan, against the platform
     python tools/bioc_sync.py --print        # print what would be uploaded, touch nothing
 
 The editable sources stay in this repository (invariant 15):
@@ -14,11 +14,14 @@ The editable sources stay in this repository (invariant 15):
 
 This tool is the only writer of the platform's copies; admin shows them
 read-only. Plans are the platform's to edit, but `--check` also reads them
-(`GET {core}/v1/products/plexora`) and fails when the Paid plan -- and the
-trial plan, when there is one -- does not carry exactly the Paid default,
-`manifest.paid_default()`: every root but the add-ons, so a purchase carries
-everything but external MCP access, which an administrator adds by hand. Both requests carry `Authorization: Bearer $BIOC_ADMIN_TOKEN`
-(the gateway's `$BIOC_AI_ADMIN_TOKEN` instead, when set).
+(`GET {core}/v1/products/plexora`) and fails when the Pro plan, `plexora.pro`,
+does not carry exactly the Pro default, `manifest.pro_default()`: every root
+that is not off by default, plus every first-party plugin (Video Studio,
+`plugin:video_studio`). So a purchase, and a trial (which is Pro with
+`trial: true`, not a plan of its own), carries everything but external MCP
+access, which is off by default and which an administrator turns on for a
+licence. Both requests carry `Authorization: Bearer $BIOC_ADMIN_TOKEN` (the
+gateway's `$BIOC_AI_ADMIN_TOKEN` instead, when set).
 `BIOC_CORE_URL` and `BIOC_AI_URL` (or `--core` / `--ai`) say where the two
 Workers are; staging is whatever they point at.
 """
@@ -102,29 +105,28 @@ def _diff(label: str, ours, theirs) -> list[str]:
             *difflib.unified_diff(left, right, "platform", "plexora", lineterm="")]
 
 
-#: The plans whose grants must be the Paid default, by catalogue id. The trial
-#: plan is optional (the platform falls back to the oldest non-add-on plan).
-DEFAULT_PLANS = (f"{PRODUCT}.paid", f"{PRODUCT}.trial")
+#: The plans whose grants must be the Pro default, by catalogue id: Pro, the
+#: one plan there is. A trial is Pro with `trial: true`, so it has no plan.
+DEFAULT_PLANS = (f"{PRODUCT}.pro",)
 
 
 def plan_problems(plans) -> list[str]:
     """What is wrong with the platform's Plexora plans, given the `plans` list of
-    `GET /v1/products/plexora`: each of DEFAULT_PLANS that exists must grant
-    exactly `paid_default()`, and the Paid plan must exist."""
+    `GET /v1/products/plexora`: each of DEFAULT_PLANS must exist and grant
+    exactly `pro_default()`."""
     from plexora.licensing import manifest as source
 
-    wanted = sorted(source.paid_default())
+    wanted = sorted(source.pro_default())
     by_id = {plan.get("id"): plan for plan in plans or () if isinstance(plan, dict)}
     problems = []
-    if DEFAULT_PLANS[0] not in by_id:
-        problems.append(f"The platform has no active {DEFAULT_PLANS[0]} plan.")
     for plan_id in DEFAULT_PLANS:
         plan = by_id.get(plan_id)
         if plan is None:
+            problems.append(f"The platform has no active {plan_id} plan.")
             continue
         granted = sorted(plan.get("entitlements") or [])
         if granted != wanted:
-            problems.append(f"{plan_id} grants {granted}; the Paid default is {wanted} "
+            problems.append(f"{plan_id} grants {granted}; the Pro default is {wanted} "
                             f"(set it on /admin/products, or PUT /admin/api/plans).")
     return problems
 
@@ -150,7 +152,7 @@ def check(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
     if problems:
         print("Run python tools/bioc_sync.py to upload.", file=sys.stderr)
         return 1
-    print("The platform's manifest, task registry and Paid plans match this repository.")
+    print("The platform's manifest, task registry and Pro plan match this repository.")
     return 0
 
 

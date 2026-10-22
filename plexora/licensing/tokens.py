@@ -4,7 +4,7 @@ A data node (`plexora node serve`) runs where the data is -- an HPC compute
 node, a lab workstation -- and has no Settings page, no licence and no reason
 to contact the BioCognia platform; it never should. Most of what it runs is Free
 plumbing (tiles, rows, columns). A few table operations exist only to serve
-Paid capabilities: automatic gating's evidence and statistics. For those, the
+Pro capabilities: automatic gating's evidence and statistics. For those, the
 primary attaches a short-lived proof that ITS licence admitted the work:
 
     X-Plexora-Entitlement-Proof: v1.<entitlements>.<expires>.<hmac>
@@ -16,7 +16,7 @@ work -- or, for a job, when it allowed it at submit (see `admitted`), so a job
 that started on a valid licence is never cut off halfway.
 
 What this is and is not. The enforcement point is the primary's capability
-registry. This is the second check behind it: a Paid code path inside Plexora
+registry. This is the second check behind it: a Pro code path inside Plexora
 that ever reached a node without going through the registry would be refused
 here. It is not a barrier against somebody who already holds the node token --
 they are, by construction, the primary.

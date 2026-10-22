@@ -135,7 +135,7 @@ def test_it_is_refused_without_rendered_pixels_egress(session):
     assert refused["error"]["code"] == "permission_required"
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_on_a_z_stack_each_cell_is_cropped_at_its_own_plane(tmp_path):
     from tests.test_agent_gate_panel import _deep_cells
 

@@ -149,7 +149,7 @@ def objects_project(tmp_path):
     return session
 
 
-@pytest.mark.paid  # measure_objects is Plexora 3D
+@pytest.mark.pro  # measure_objects is Plexora 3D
 def test_counting_a_region_follows_its_planes(objects_project):
     from plexora.agent import invoke
 

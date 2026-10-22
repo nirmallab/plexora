@@ -49,7 +49,7 @@ window.PlexoraSurfaceLayers = (function () {
         return (stack?.layers?.() || []).filter((layer) => layer.kind === KIND);
     }
 
-    /** Whether a Paid route refused (403 with a `license` block). Quiet: the
+    /** Whether a Pro route refused (403 with a `license` block). Quiet: the
      *  caller closes what it opened, and nothing explains or upsells. */
     async function refused(response) {
         if (response.status !== 403) return false;
@@ -233,7 +233,7 @@ window.PlexoraSurfaceLayers = (function () {
 
     /**
      * Make a surface. `body` is the server's SurfaceSpec (+ `render`). Answers
-     * the server's JSON, or null when the licence refused (the Paid modal is
+     * the server's JSON, or null when the licence refused (the Pro modal is
      * then open) -- and throws with the server's sentence on a 400.
      */
     async function create(body) {

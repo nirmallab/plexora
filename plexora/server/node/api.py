@@ -997,11 +997,11 @@ def table_rows(resource_id):
 
 
 def _licence_refusal(operation):
-    """403 for an operation that serves a Paid capability, unless the primary
+    """403 for an operation that serves a Pro capability, unless the primary
     sent a valid entitlement proof (plexora/licensing/tokens.py). None -- and
     nothing looked at -- for every Free operation. A node has no licence of
     its own and never contacts the BioCognia platform."""
-    from plexora.licensing import tokens
+    from plexora.licensing import manifest, tokens
 
     required = tokens.required_for(operation)
     if required is None:
@@ -1010,10 +1010,10 @@ def _licence_refusal(operation):
     if tokens.verify_proof(token, request.headers.get(tokens.PROOF_HEADER), required):
         return None
     return jsonify(success=False,
-                   error=f"{operation} serves a Paid Plexora feature and the primary sent no "
+                   error=f"{operation} serves a Plexora Pro feature and the primary sent no "
                          f"valid licence proof for it.",
                    license={"code": "license_required", "entitlement": required,
-                            "plan_required": "paid"}), 403
+                            "plan_required": manifest.plan_for(required)}), 403
 
 
 @node_bp.route("/table/<resource_id>/op/<path:operation>", methods=["POST"])

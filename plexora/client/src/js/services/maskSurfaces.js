@@ -6,7 +6,7 @@
  * 3-D mask (a label volume) as its own closed surface -- Surface Studio's
  * cell surfaces (`label_surfaces`, plexora/server/surface/nets.py), made for
  * the viewer and marked as the mask's own (`role: "mask"`). Surface Studio is
- * Paid (`volume:surfaces`): without it the control does not offer Outlines or
+ * Pro (`volume:surfaces`): without it the control does not offer Outlines or
  * Filled in 3-D (views/viewerControls.js `volumeModes`), and this does nothing.
  *
  * The first time Outlines or Filled is chosen in 3-D the mask is converted,
@@ -71,7 +71,7 @@ window.PlexoraMaskSurfaces = (function () {
      *  and Surface Studio in the licence. */
     function allowed() {
         return Boolean(viewState()?.labelsAre3d?.())
-            && Boolean(window.PlexoraPaid?.allows?.(ENTITLEMENT));
+            && Boolean(window.PlexoraPro?.allows?.(ENTITLEMENT));
     }
 
     function drawing(next = mode) { return next === "outlines" || next === "filled"; }

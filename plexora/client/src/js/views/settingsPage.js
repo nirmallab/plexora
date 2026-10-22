@@ -2096,7 +2096,7 @@
 
     // -- License -----------------------------------------------------------
 
-    // The plan from /license/status, and the three ways to add Paid: connect
+    // The plan from /license/status, and the three ways to add Pro: connect
     // this device (a short code approved at account.biocognia.com), an
     // activation code or token minted in the portal, or an offline file.
     // Nothing is asked of the BioCognia platform until one of these buttons is
@@ -2107,16 +2107,16 @@
     }
 
     //: Each state as [plan, status chip, tone]. The tone is the plan card's
-    //: `data-tone` (settings.css .license-plan): gold for working Paid, amber
-    //: for Paid that needs attention, red for a licence that has lapsed.
+    //: `data-tone` (settings.css .license-plan): gold for working Pro, amber
+    //: for Pro that needs attention, red for a licence that has lapsed.
     const LICENSE_STATES = {
         free: ["Free", "", "free"],
-        trial: ["Paid", "Trial", "paid"],
-        paid_active: ["Paid", "Active", "paid"],
-        offline_valid: ["Paid", "Offline licence", "paid"],
-        grace: ["Paid", "Expired — grace period", "warn"],
-        expired: ["Free", "Paid licence expired", "lapsed"],
-        revoked: ["Free", "Paid licence no longer active", "lapsed"],
+        trial: ["Pro", "Trial", "pro"],
+        pro_active: ["Pro", "Active", "pro"],
+        offline_valid: ["Pro", "Offline licence", "pro"],
+        grace: ["Pro", "Expired — grace period", "warn"],
+        expired: ["Free", "Pro licence expired", "lapsed"],
+        revoked: ["Free", "Pro licence no longer active", "lapsed"],
         invalid: ["Free", "Licence could not be verified", "lapsed"],
     };
 
@@ -2137,6 +2137,15 @@
             if (event.key === "Enter") this.activate();
         });
         el("settings_license_install")?.addEventListener("click", () => this.install());
+        // A target=_blank link opens no window in the desktop app: the shell
+        // sends these to the browser instead.
+        ["settings_license_pricing", "settings_license_trial"].forEach((id) => {
+            el(id)?.addEventListener("click", (event) => {
+                if (!window.PlexoraDesktop) return;
+                event.preventDefault();
+                window.PlexoraDesktop.openUrl(event.currentTarget.href).catch(() => {});
+            });
+        });
         el("settings_license_file")?.addEventListener("change", async (event) => {
             const file = event.target.files && event.target.files[0];
             if (!file) return;
@@ -2170,7 +2179,7 @@
 
     LicenseSection.prototype.load = async function () {
         const answer = await getJson("license/status");
-        if (answer.license) window.PlexoraPaid?.adopt?.(answer.license);
+        if (answer.license) window.PlexoraPro?.adopt?.(answer.license);
         this.draw(answer.license || {});
     };
 
@@ -2196,10 +2205,10 @@
     LicenseSection.prototype.act = async function (path, body) {
         this.say("");
         const answer = await postJson(path, body || {});
-        window.PlexoraPaid?.forget();
+        window.PlexoraPro?.forget();
         if (!answer.ok) this.say(answer.error || "That did not work.");
         if (answer.license) {
-            window.PlexoraPaid?.adopt?.(answer.license);
+            window.PlexoraPro?.adopt?.(answer.license);
             this.draw(answer.license, answer.outcome);
         }
         return answer;
@@ -2249,9 +2258,9 @@
                 return;
             }
             this.stopConnecting(reply.ok ? "" : (reply.error || "The device was not connected."));
-            window.PlexoraPaid?.forget();
+            window.PlexoraPro?.forget();
             if (reply.license) {
-                window.PlexoraPaid?.adopt?.(reply.license);
+                window.PlexoraPro?.adopt?.(reply.license);
                 this.draw(reply.license);
             }
         };
@@ -2273,7 +2282,8 @@
     LicenseSection.prototype.activate = async function () {
         const credential = (el("settings_license_key")?.value || "").trim();
         if (!credential) {
-            this.say("Enter an activation code from account.biocognia.com (BIOC-…) or a BIOCT1_ token.");
+            this.say("Enter your licence key from account.biocognia.com (BIOC-XXXX-XXXX-XXXX-XXXX), "
+                     + "an activation code or a BIOCT1_ token.");
             return;
         }
         const button = el("settings_license_activate");
@@ -2302,7 +2312,7 @@
 
     LicenseSection.prototype.draw = function (info, outcome) {
         if (!info || !info.state) return;
-        const [plan, status, tone] = LICENSE_STATES[info.state] || [info.paid ? "Paid" : "Free", info.state, "free"];
+        const [plan, status, tone] = LICENSE_STATES[info.state] || [info.paid ? "Pro" : "Free", info.state, "free"];
         const card = el("settings_license_card");
         if (card) card.dataset.tone = tone;
         text(el("settings_license_plan"), plan);
@@ -2322,7 +2332,7 @@
             facts.push([label, day(validity.until)]);
         }
         if (validity.ended && info.state === "grace" && info.grace_until) {
-            facts.push(["Paid features stop", day(info.grace_until)]);
+            facts.push(["Pro features stop", day(info.grace_until)]);
         }
         if (info.environment?.type) {
             const kind = info.environment.type === "cluster" ? "Cluster"
@@ -2332,8 +2342,9 @@
         if (info.use_class) {
             facts.push(["Licensed for", info.use_class.charAt(0).toUpperCase() + info.use_class.slice(1) + " use"]);
         }
-        // What this licence unlocks, add-ons it lacks included: "External
-        // MCP access: Not included" is what explains an outside agent's refusal.
+        // What this licence unlocks, and what it lacks: "External MCP access:
+        // Not included" (it is off by default) is what explains an outside
+        // agent's refusal.
         if (info.paid) {
             (info.unlocks || []).forEach((row) => {
                 facts.push([row.label, row.granted ? "Included" : "Not included"]);
@@ -2362,7 +2373,7 @@
         } else if (validity.renew === "online") {
             notes.push(validity.renew_by
                 ? `Connect to the internet by ${day(validity.renew_by)} so Plexora can renew it, or click Check Now.`
-                : "Paid features are paused until this licence is renewed: connect to the internet and click Check Now.");
+                : "Pro features are paused until this licence is renewed: connect to the internet and click Check Now.");
         }
         if (info.state === "free" && !info.service_configured) {
             notes.push(info.offline_only
@@ -2370,7 +2381,7 @@
                 : "No BioCognia platform is configured for this build; offline licence files still work.");
         }
         if (["expired", "revoked"].includes(info.state)) {
-            notes.push("Everything you made with Paid features is untouched.");
+            notes.push("Everything you made with Pro features is untouched.");
         }
         if (info.clock_rollback) notes.push("This computer's clock is behind a time Plexora has already seen.");
         if (outcome) {
@@ -2381,6 +2392,17 @@
         const said = notes.filter(Boolean).join(" ");
         text(meta, said);
         show(meta, Boolean(said));
+
+        // Where Pro is bought, whenever it is not running here or is only a
+        // trial: the pricing page, and the trial beside it while the platform
+        // can start one.
+        const buy = el("settings_license_buy");
+        const pricing = el("settings_license_pricing");
+        if (pricing && info.pricing_url) pricing.href = info.pricing_url;
+        const trial = el("settings_license_trial");
+        if (trial && info.trial_url) trial.href = info.trial_url;
+        show(el("settings_license_trial_offer"), Boolean(info.trial_url) && !info.trial);
+        show(buy, !info.paid || Boolean(info.trial));
 
         text(el("settings_license_add_title"), info.paid ? "Replace this licence" : "Add a licence");
         const activated = ["cache", "token"].includes(info.source) && info.state !== "invalid";

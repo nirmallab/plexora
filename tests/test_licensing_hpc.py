@@ -1,4 +1,4 @@
-"""Remote data nodes run Paid work only for a licensed primary -- without
+"""Remote data nodes run Pro work only for a licensed primary -- without
 ever holding a licence themselves.
 
 One registration per cluster, job licences for containers and their expiry are
@@ -48,7 +48,7 @@ def test_a_proof_for_another_node_or_out_of_time_is_refused():
     assert not tokens.verify_proof("node-token", future, "ai:gating")
 
 
-def test_the_primary_attaches_a_proof_only_when_licensed_and_only_for_paid_work(paid_license):
+def test_the_primary_attaches_a_proof_only_when_licensed_and_only_for_pro_work(pro_license):
     assert tokens.headers_for("t", "roi.map_to_cells") == {}
     headers = tokens.headers_for("t", "gating.autogate.profile")
     assert tokens.verify_proof("t", headers[tokens.PROOF_HEADER], "ai:gating")
@@ -58,7 +58,7 @@ def test_no_proof_on_free():
     assert tokens.headers_for("t", "gating.autogate.profile") == {}
 
 
-def test_a_job_admitted_on_a_valid_licence_keeps_its_proof(paid_license):
+def test_a_job_admitted_on_a_valid_licence_keeps_its_proof(pro_license):
     grants = licensing.current().entitlements
     LICENSING.store.clear()
     licensing.reset_for_tests()
@@ -89,13 +89,13 @@ def _op(node, operation, proof=None):
                      headers=headers)
 
 
-def test_the_node_refuses_paid_work_without_a_proof(node):
+def test_the_node_refuses_pro_work_without_a_proof(node):
     reply = _op(node, "gating.autogate.profile_all")
     assert reply.status_code == 403
     assert reply.get_json()["license"]["code"] == "license_required"
 
 
-def test_the_node_runs_paid_work_with_a_proof(node):
+def test_the_node_runs_pro_work_with_a_proof(node):
     reply = _op(node, "gating.autogate.profile_all", tokens.mint_proof("node-secret", ["ai"]))
     assert reply.status_code != 403, reply.get_data(as_text=True)[:400]
 

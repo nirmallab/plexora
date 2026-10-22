@@ -102,16 +102,16 @@ function sandbox(license) {
     ctx.window = ctx;
     ctx.window.flaskVariables = { license };
     createContext(ctx);
-    runInContext(read("plexora/client/src/js/services/paidFeature.js"), ctx);
+    runInContext(read("plexora/client/src/js/services/proFeature.js"), ctx);
     runInContext(read("plexora/client/src/js/services/browsePicker.js"), ctx);
     runInContext(read("plexora/client/src/js/views/importHelp.js"), ctx);
     return { ctx, body };
 }
 
 const FREE = { plan: "free", state: "free", paid: false, entitlements: [] };
-const PAID = { plan: "paid", state: "licensed", paid: true,
+const PRO = { plan: "pro", state: "licensed", paid: true,
                entitlements: ["ai", "volume", "transcriptomics"] };
-const AI_ONLY = { plan: "paid", state: "licensed", paid: true, entitlements: ["ai"] };
+const AI_ONLY = { plan: "pro", state: "licensed", paid: true, entitlements: ["ai"] };
 
 /** Every tab of the help, as text, the way a person would read them all. */
 function helpText(license) {
@@ -134,7 +134,7 @@ check("on Free the help describes no Xenium, Visium or transcripts format", () =
     const text = helpText(FREE);
     assert.doesNotMatch(text, TENX, text);
     assert.doesNotMatch(text, /Transcripts/);
-    assert.doesNotMatch(text, /licen|Paid/i);
+    assert.doesNotMatch(text, /licen|\bpaid\b|\bpro\b/i);
     // ...and still describes everything else.
     for (const name of ["SpatialData store", "OME-Zarr image", "Multiplex image",
                         "Segmentation mask", "Cell table", "Boundaries",
@@ -143,12 +143,12 @@ check("on Free the help describes no Xenium, Visium or transcripts format", () =
     }
 });
 
-check("a Paid licence without transcriptomics is Free here", () => {
+check("a Pro licence without transcriptomics is Free here", () => {
     assert.doesNotMatch(helpText(AI_ONLY), TENX);
 });
 
 check("with transcriptomics every 10x format is described", () => {
-    const text = helpText(PAID);
+    const text = helpText(PRO);
     for (const name of ["Xenium run", "Visium (Space Ranger)",
                         "Visium HD (Space Ranger 3/4)", "Transcripts",
                         "a Xenium run, Visium", "transcripts.parquet"]) {
@@ -164,7 +164,7 @@ check("on Free the sample examples name no 10x run", () => {
 });
 
 check("with transcriptomics they do", () => {
-    const text = sampleExamples(PAID);
+    const text = sampleExamples(PRO);
     assert.match(text, /Xenium · SpatialData · Visium · \.zarr/);
     assert.match(text, /image · mask · table · transcripts/);
 });
@@ -172,9 +172,9 @@ check("with transcriptomics they do", () => {
 check("the other examples are the same on every plan", () => {
     for (const name of ["image", "mask", "data"]) {
         const free = sandbox(FREE);
-        const paid = sandbox(PAID);
+        const pro = sandbox(PRO);
         const of = (box) => textOf(runInContext(`buildSplitControl("${name}", () => {})`, box.ctx));
-        assert.equal(of(free), of(paid), name);
+        assert.equal(of(free), of(pro), name);
     }
 });
 

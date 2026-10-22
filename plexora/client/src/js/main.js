@@ -254,8 +254,8 @@ function depthControlExtras() {
         surfacesAvailable: Boolean(surfaces && volume),
         surfaceCount,
         surfaceStudio: Boolean(window.PlexoraSurfaceStudio && volume),
-        surfaceMaking: typeof window.PlexoraPaid?.allows === "function"
-            ? Boolean(window.PlexoraPaid.allows("volume:surfaces")) : true,
+        surfaceMaking: typeof window.PlexoraPro?.allows === "function"
+            ? Boolean(window.PlexoraPro.allows("volume:surfaces")) : true,
         prefs: prefs || null,
         grid: Boolean(prefs?.grid && window.PlexoraVolumeRenderer?.grid),
         gridOn: Boolean(prefs?.grid?.()?.on),

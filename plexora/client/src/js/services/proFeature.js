@@ -1,5 +1,5 @@
 /**
- * paidFeature.js -- the one way the page talks about a Paid feature.
+ * proFeature.js -- the one way the page talks about a Pro feature.
  *
  * Not granted means not shown: a control whose entitlement `allows` says no
  * is never built (and a template leaves it out with `licensed()`), so on a
@@ -7,24 +7,29 @@
  * `goToLicense` are kept for the upsell the product will add later; nothing
  * calls them today. Settings uses `adopt` and `forget`.
  *
- *   PlexoraPaid.explain({entitlement, label, summary, state})
+ *   PlexoraPro.explain({entitlement, label, summary, state, off_by_default})
  *       The modal a locked feature opens: what it is, that it is part of
- *       Paid, and two ways forward -- start a trial (the trial page at
+ *       Pro, and two ways forward -- start a trial (the trial page at
  *       account.biocognia.com, in the browser) or connect this device
- *       (Settings > License).
+ *       (Settings > License). A feature that is off by default
+ *       (`off_by_default` in the server's refusal) is never called Pro and
+ *       offers no trial and no price, none of which would unlock it: external
+ *       MCP access is turned on for a licence by an administrator, and a
+ *       third-party plugin (`plugin:<name>`, the only plugin that can be off
+ *       by default) comes from its maker.
  *       Resolves "trial", "license" or null.
- *   PlexoraPaid.badge()      a small "Paid" tag for a menu entry
- *   PlexoraPaid.allows(ent)  what the page was told at render; a HINT for
+ *   PlexoraPro.badge()      a small "Pro" tag for a menu entry
+ *   PlexoraPro.allows(ent)  what the page was told at render; a HINT for
  *                            drawing badges, never the decision -- the server
- *                            refuses a Paid action whatever the page thinks
- *   PlexoraPaid.startTrial() / goToLicense()
+ *                            refuses a Pro action whatever the page thinks
+ *   PlexoraPro.startTrial() / goToLicense()
  *
  * Nothing here runs on a Free path. There are no banners, no nags and no
- * timers: the modal opens only when somebody asks for a Paid feature. The
+ * timers: the modal opens only when somebody asks for a Pro feature. The
  * licence itself never reaches the browser -- no certificate, key or token is
  * ever in this page or in its storage.
  */
-window.PlexoraPaid = (function () {
+window.PlexoraPro = (function () {
     "use strict";
 
     let cached = null;
@@ -111,31 +116,44 @@ window.PlexoraPaid = (function () {
     }
 
     const LAPSED = {
-        expired: "Your Paid licence has expired.",
-        revoked: "Your Paid licence is no longer active.",
+        expired: "Your Pro licence has expired.",
+        revoked: "Your Pro licence is no longer active.",
         invalid: "The licence on this machine could not be verified.",
     };
 
     /**
      * The locked-feature modal. `label` and `summary` come from the server's
      * refusal (the entitlement manifest), so the page never has to know what
-     * a Paid feature is called.
+     * a Pro feature is called.
      */
-    async function explain({ label, summary, state } = {}) {
+    async function explain({ entitlement, label, summary, state, off_by_default: off } = {}) {
         const info = await status();
         const name = label || "This feature";
+        // Off by default and a plugin: a third-party one, from its maker.
+        const fromMaker = Boolean(off) && String(entitlement || "").startsWith("plugin:");
         const lines = [];
         if (summary) lines.push(summary);
-        const lapsed = LAPSED[state || info.state];
+        const lapsed = !off && LAPSED[state || info.state];
         if (lapsed) lines.push(lapsed);
-        lines.push(`${name} is part of Plexora Paid. Everything Free keeps working, and everything `
-                   + "you have made stays yours.");
+        let why = `${name} is part of Plexora Pro. `;
+        if (fromMaker) {
+            why = `${name} is a plugin from its maker: it is not part of Plexora Pro or its trial, `
+                + "and its maker licenses it. ";
+        } else if (off) {
+            why = `${name} is off by default and is not part of Plexora Pro or its trial; `
+                + "an administrator can turn it on for your licence. ";
+        }
+        lines.push(why + "Everything Free keeps working, and everything you have made stays yours.");
         const choices = [{ value: null, label: "Not Now" },
                          { value: "license", label: "Enter License…" }];
-        if (!info.paid) choices.push({ value: "trial", label: "Start a Trial…", kind: "primary", focus: true });
-        else choices[1].kind = "primary";
+        if (!info.paid && !off) {
+            choices.push({ value: "trial", label: "Start a Trial…", kind: "primary", focus: true });
+        } else choices[1].kind = "primary";
+        let title = `${name} is a Pro feature`;
+        if (fromMaker) title = `${name} comes from its maker`;
+        else if (off) title = `${name} is off by default`;
         const answer = await window.PlexoraConfirm.choose({
-            title: `${name} is a Paid feature`,
+            title,
             body: lines,
             choices,
         });
@@ -146,9 +164,9 @@ window.PlexoraPaid = (function () {
 
     function badge(text) {
         const node = document.createElement("span");
-        node.className = "plx-paid-badge";
-        node.textContent = text || "Paid";
-        node.title = "Part of Plexora Paid";
+        node.className = "plx-pro-badge";
+        node.textContent = text || "Pro";
+        node.title = "Part of Plexora Pro";
         return node;
     }
 

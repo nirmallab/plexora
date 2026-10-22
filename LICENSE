@@ -1,18 +1,23 @@
-Plexora Academic License 1.0
-SPDX-License-Identifier: LicenseRef-Plexora-Academic-1.0
+Plexora End User Licence Agreement
+Version 1.0
+SPDX-License-Identifier: LicenseRef-Plexora-EULA-1.0
 
-Copyright (c) 2026 Nirmal Lab. All rights reserved.
+Copyright (c) 2026 BioCognia. All rights reserved.
 
-Plexora is free to use for academic research, teaching, and other
-noncommercial purposes. Commercial use requires a separate paid license.
-Plugins are welcome: you may build and distribute them freely, and you own
-what you write. What you may not do is publish a modified copy or fork of
-Plexora itself.
+IMPORTANT: read this agreement before installing or using Plexora. By
+installing, copying, or using the Software you agree to be bound by it. If you
+do not agree, do not install or use the Software.
 
-For a commercial license, contact Ajit Johnson Nirmal
-<ajitjohnson.n@gmail.com>.
+In short, for orientation only (the terms below are what govern):
 
-The summary above is for orientation only. The terms below are what govern.
+- Plexora Free -- everything Plexora does without a licence -- may be used by
+  anyone, for any purpose, including commercial use, at no charge and with no
+  account.
+- Plexora Pro is a paid subscription, per Seat and per term, bought for an
+  academic or a commercial Use Class at https://account.biocognia.com.
+- Plugins are welcome: you may build and distribute them freely, and you own
+  what you write.
+- You may not publish a modified copy or fork of Plexora itself.
 
 --------------------------------------------------------------------------
 
@@ -20,13 +25,39 @@ The summary above is for orientation only. The terms below are what govern.
 
    "Software" means Plexora, including its source code, object code,
    documentation, and bundled assets, as made available by the Licensor,
-   excluding Third-Party Components (Section 8).
+   excluding Third-Party Components (Section 13).
 
-   "Licensor" means Nirmal Lab.
+   "Licensor" ("we", "us") means BioCognia, 22 West Ave, Brockton, MA 02301,
+   USA.
 
    "You" means the individual or legal entity exercising rights under this
-   License. If you are acting in the course of your employment or
+   agreement. If you are acting in the course of your employment or
    engagement, "You" includes your employer or the entity engaging you.
+
+   "Free" means the Software used without a Licence Key: every feature that
+   runs without one.
+
+   "Licensed Features" means the features of the Software that run only under
+   a Licence Key that grants them: the features of Plexora Pro, and any
+   feature that is off by default and that the Licensor has enabled for your
+   Licence Key (Section 3).
+
+   "Licence Key" means a licence key, activation code, token, certificate, or
+   offline licence file issued through the Account Portal that enables
+   Licensed Features.
+
+   "Account Portal" means the BioCognia account platform at
+   https://account.biocognia.com, through which accounts, seats, devices and
+   purchases are managed.
+
+   "Subscription Term" means the period for which you have paid, as stated in
+   your order or in the Account Portal.
+
+   "Seat" means one named individual permitted to use Licensed Features under
+   your subscription.
+
+   "Use Class" means the class of use a subscription was bought for, academic
+   or commercial, as stated in your order.
 
    "Noncommercial Purpose" means any use that is not a Commercial Use,
    including academic research, classroom and educational use, personal
@@ -56,28 +87,96 @@ The summary above is for orientation only. The terms below are what govern.
    a derivative work of the Software under copyright law. A Plugin is not
    a Modified Version.
 
-2. GRANT FOR NONCOMMERCIAL USE
+   "Your Results" means data, figures, gates, regions, reports, and other
+   output you produce by running the Software on your own data.
 
-   Subject to your compliance with this License, the Licensor grants you a
+2. FREE: GRANT FOR ANY PURPOSE
+
+   Subject to your compliance with this agreement, we grant you a
    worldwide, royalty-free, non-exclusive, non-transferable, non-
-   sublicensable license to:
+   sublicensable licence to:
 
-   (a) install, run, and use the Software for any Noncommercial Purpose;
+   (a) install, run, and use the Software as Free for any purpose,
+       including Commercial Use;
 
    (b) reproduce and distribute verbatim, unmodified copies of the
-       Software, provided that each copy retains this License in full and
+       Software, provided that each copy retains this agreement in full and
        all copyright and attribution notices; and
 
    (c) make modifications to your own copy of the Software, solely for your
-       own internal Noncommercial use -- for example to fix a bug, resolve
-       a compatibility problem in your environment, or debug an issue --
-       subject to Section 3.
+       own internal use -- for example to fix a bug, resolve a
+       compatibility problem in your environment, or debug an issue --
+       subject to Sections 5 and 6, and never to enable Licensed Features
+       without a Licence Key that grants them.
 
-   No fee may be charged for the Software itself under this grant. Recovery
-   of actual media or bandwidth costs for distributing a verbatim copy is
-   permitted.
+   Free needs no account, no Licence Key, and no network connection. No
+   fee may be charged for the Software itself under this grant. Recovery of
+   actual media or bandwidth costs for distributing a verbatim copy is
+   permitted. Which features run as Free may change between versions of the
+   Software.
 
-3. NO DISTRIBUTION OF MODIFIED VERSIONS
+3. PRO: GRANT PER SEAT, TERM, AND USE CLASS
+
+   Subject to this agreement and to payment of the applicable fees, we grant
+   you a non-exclusive, non-transferable, non-sublicensable licence, during
+   the Subscription Term, to use the Licensed Features your Licence Key
+   grants:
+
+   (a) for the number of Seats you have purchased, each used by the one
+       named individual it is assigned to;
+
+   (b) on the number of devices per Seat stated in your plan or in the
+       Account Portal; and
+
+   (c) within the Use Class you purchased: a subscription bought for the
+       academic Use Class may be used for Noncommercial Purposes only; a
+       subscription bought for the commercial Use Class may be used for any
+       purpose, including Commercial Use.
+
+   Plexora Pro includes every Licensed Feature of the Software, Video Studio
+   among them, except the features that are off by default. A feature that
+   is off by default, such as External MCP access, is not part of Plexora Pro
+   or of a trial and is not sold; the Licensor may enable it for a Licence
+   Key, at its discretion, and once enabled it is used on the same terms as
+   Plexora Pro, for the Seats and the Subscription Term of that licence.
+
+   A trial licence grants Plexora Pro for the trial period stated when it
+   starts, to evaluate the Software, at no charge. It ends at the end of
+   that period and does not renew.
+
+   Everything else in the Software remains available to you as Free under
+   Section 2.
+
+4. ACADEMIC USE CLASS
+
+   The academic Use Class is available to individuals at accredited
+   universities, teaching hospitals, government research institutes, and
+   other non-profit research organisations, for research and teaching that
+   is a Noncommercial Purpose. It does not cover work performed for, or
+   funded as a service to, a for-profit entity. We may verify eligibility,
+   for example by institutional email domain, and may require the commercial
+   Use Class where the use is a Commercial Use.
+
+5. RESTRICTIONS
+
+   You may not:
+
+   (a) circumvent, disable, or interfere with the Software's licensing,
+       activation, or entitlement checks, or use a Licence Key you were not
+       issued;
+
+   (b) share a Licence Key or a Seat with anyone who is not the individual
+       that Seat is assigned to;
+
+   (c) make Licensed Features available to anyone who does not hold a Seat,
+       including through a hosted or network-accessible service;
+
+   (d) use a subscription bought for the academic Use Class for Commercial
+       Use; or
+
+   (e) remove or alter any proprietary notice in the Software.
+
+6. NO DISTRIBUTION OF MODIFIED VERSIONS
 
    You may not distribute, publish, share, host, sell, sublicense, or
    otherwise make available to any third party any Modified Version, in
@@ -92,59 +191,116 @@ The summary above is for orientation only. The terms below are what govern.
    the Licensor for possible inclusion upstream.
 
    Nothing in this Section restricts your distribution of Plugins, which is
-   governed by Section 4.
+   governed by Section 7.
 
-4. PLUGINS
+7. PLUGINS
 
    You may write, use, distribute, sell, and license Plugins without
-   restriction under this License, and without needing the Licensor's
+   restriction under this agreement, and without needing the Licensor's
    permission.
 
    You own the Plugins you write and may license them on any terms you
    choose, including commercial terms. A Plugin is not a Modified Version
-   and is not subject to Section 3 or to the noncommercial limitation in
-   Section 2, whether or not it is distributed together with the Software.
+   and is not subject to Section 6 or to any Use Class limitation in
+   Section 3, whether or not it is distributed together with the Software.
+   A Plugin that relies on Licensed Features may require its users to hold
+   their own Seat.
 
    For the avoidance of doubt: linking to, importing, calling, subclassing,
    or registering against the Software's documented extension interfaces
    does not by itself make your Plugin a derivative work of the Software
-   for the purposes of this License.
+   for the purposes of this agreement.
 
    Distributing the Software itself alongside your Plugin remains subject
    to Section 2(b) -- the copy of the Software must be verbatim.
 
-5. COMMERCIAL USE
+8. YOUR RESULTS AND ATTRIBUTION
 
-   This License grants no rights for Commercial Use. Any Commercial Use
-   requires a separate written license from the Licensor. To obtain one,
-   contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
-
-6. RESERVATION OF RIGHTS; NO TRADEMARK LICENSE
-
-   All rights not expressly granted are reserved by the Licensor. This
-   License does not grant permission to use the trade names, trademarks,
-   service marks, product names, or logos of the Licensor, including the
-   name "Plexora", except as required for reasonable and customary
-   descriptive use in reproducing the notices required by this License.
-
-   This License grants no patent rights.
-
-7. ATTRIBUTION AND NOTICES
+   Your Results are yours. We claim no ownership of them. When a Licence Key
+   expires or is revoked, nothing you made with the Software is deleted or
+   locked, and it stays readable and exportable as Free.
 
    Any copy of the Software you distribute, and any publication or
    presentation reporting results obtained using the Software, must retain
    or provide, as applicable, the copyright notice above and a reference to
-   this License. Academic users are asked to cite the Software in
+   this agreement. Academic users are asked to cite the Software in
    accordance with the citation information provided with it.
 
-8. THIRD-PARTY COMPONENTS
+9. LICENCE ADMINISTRATION AND DATA
+
+   Free makes no licensing network call. Activating a Licence Key, and the
+   periodic renewal of an activated licence, send the Licence Key or
+   certificate, a hash that identifies the device, any name you give the
+   device, a coarse platform family, and the Software version. They never
+   send your data, file names, paths, or anything about what you are looking
+   at. We process this information to administer licences and to detect
+   licence sharing. Your account details are held by the Account Portal;
+   the Software itself never receives your password, email address, or
+   payment details. Setting BIOCOGNIA_OFFLINE=1 prevents every licensing
+   network call.
+
+   The Software's optional anonymous usage data is described in its
+   documentation, and can be switched off at any time with
+   "plexora telemetry off" or DO_NOT_TRACK=1.
+
+10. FEES AND RENEWAL
+
+   Fees are charged per Seat per Subscription Term for the Use Class you
+   purchased, at the price stated at the time of purchase, and are
+   non-refundable except as required by law or by our published refund
+   policy. Fees exclude taxes, which are charged as required in your
+   jurisdiction.
+
+   A subscription renews for successive terms, unless cancelled, at the
+   price per Seat at which it was bought. Seats added to a subscription
+   during a term are charged at that same price per Seat, prorated for the
+   rest of the term; a reduction in Seats is credited against the next
+   renewal and is not refunded. We may change the prices of new
+   subscriptions at any time; a price change never applies mid-term.
+
+11. TERM AND TERMINATION
+
+   Section 2 applies for as long as you comply with this agreement. Section
+   3 applies for the Subscription Term and each renewal of it. You may
+   cancel a subscription at any time, effective at the end of the current
+   term.
+
+   When a subscription expires, Licensed Features may continue for a grace
+   period stated in your licence and then stop; the Software continues as
+   Free.
+
+   If you breach any term, your rights under this agreement terminate
+   automatically. If the breach is your first and you cure it in full, and
+   take reasonable steps to correct its effects, within 30 days of
+   receiving written notice from the Licensor, your rights are reinstated
+   as of the date of cure. We may revoke a Licence Key immediately in the
+   case of a chargeback, fraud, or a breach of Section 5(a) or 5(b).
+
+   On termination of your rights under Section 3 you must stop using
+   Licensed Features. On termination of your rights under Section 2 you
+   must cease all use of the Software and destroy all copies in your
+   possession or control. Sections 6, 8, 12, 13, 15, 16, and 17 survive
+   termination. Termination does not affect any licence you or anyone else
+   holds in a Plugin.
+
+12. RESERVATION OF RIGHTS; NO TRADEMARK LICENCE
+
+   All rights not expressly granted are reserved by the Licensor. This
+   agreement does not grant permission to use the trade names, trademarks,
+   service marks, product names, or logos of the Licensor, including the
+   name "Plexora", except as required for reasonable and customary
+   descriptive use in reproducing the notices required by this agreement.
+
+   This agreement grants no patent rights.
+
+13. THIRD-PARTY COMPONENTS
 
    The Software is distributed with components authored by third parties
    and licensed under their own terms. Those components remain governed
-   exclusively by their own licenses, which are unaffected by this License;
-   in particular, nothing in Section 3 restricts any right you hold in a
-   Third-Party Component under that component's own license. Known
-   Third-Party Components include:
+   exclusively by their own licenses, which are unaffected by this
+   agreement; in particular, nothing in Section 6 restricts any right you
+   hold in a Third-Party Component under that component's own license.
+   Known Third-Party Components include:
 
    - plexora/server/utils/smallestenclosingcircle.py -- Copyright (c) 2020
      Project Nayuki, LGPL-3.0-or-later.
@@ -154,32 +310,17 @@ The summary above is for orientation only. The terms below are what govern.
      Software, each under its own license.
 
    Where a Third-Party Component's license conflicts with a term of this
-   License as applied to that component, that component's license controls
-   for that component.
+   agreement as applied to that component, that component's license
+   controls for that component.
 
-9. FAIR USE AND MANDATORY RIGHTS
+14. FAIR USE AND MANDATORY RIGHTS
 
-   This License does not limit any right you have under applicable law that
-   cannot be limited by agreement, including fair use, fair dealing, and
-   any statutory right to decompile or modify the Software for
+   This agreement does not limit any right you have under applicable law
+   that cannot be limited by agreement, including fair use, fair dealing,
+   and any statutory right to decompile or modify the Software for
    interoperability or error correction.
 
-10. TERM AND TERMINATION
-
-   This License applies for as long as you comply with it. If you breach
-   any term, your rights under this License terminate automatically.
-
-   If the breach is your first and you cure it in full, and take
-   reasonable steps to correct its effects, within 30 days of receiving
-   written notice from the Licensor, your rights are reinstated as of the
-   date of cure.
-
-   On termination you must cease all use of the Software and destroy all
-   copies in your possession or control. Sections 3, 6, 8, 11, and 12
-   survive termination. Termination does not affect any license you or
-   anyone else holds in a Plugin.
-
-11. NO WARRANTY
+15. NO WARRANTY
 
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
@@ -188,9 +329,10 @@ The summary above is for orientation only. The terms below are what govern.
 
    THE SOFTWARE IS A RESEARCH TOOL. IT IS NOT A MEDICAL DEVICE AND IS NOT
    INTENDED, VALIDATED, OR APPROVED FOR CLINICAL DIAGNOSIS, TREATMENT, OR
-   ANY OTHER USE INVOLVING PATIENT CARE.
+   ANY OTHER USE INVOLVING PATIENT CARE. YOU ARE RESPONSIBLE FOR VALIDATING
+   ANY RESULT BEFORE RELYING ON IT.
 
-12. LIMITATION OF LIABILITY
+16. LIMITATION OF LIABILITY
 
    TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE LICENSOR
    OR ANY CONTRIBUTOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
@@ -200,8 +342,36 @@ The summary above is for orientation only. The terms below are what govern.
    CONSEQUENTIAL DAMAGES, OR ANY LOSS OF DATA, PROFITS, OR RESEARCH
    RESULTS, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
 
-13. SEVERABILITY
+   OUR TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATED TO THIS AGREEMENT
+   SHALL NOT EXCEED THE FEES YOU PAID IN THE TWELVE MONTHS PRECEDING THE
+   EVENT GIVING RISE TO THE CLAIM.
 
-   If any provision of this License is held unenforceable, that provision
-   shall be enforced to the maximum extent permissible and the remaining
-   provisions shall remain in full force and effect.
+   Nothing in this agreement excludes liability that cannot lawfully be
+   excluded.
+
+17. GENERAL
+
+   This agreement is the entire agreement between us regarding the Software
+   and supersedes any prior understanding. If any provision is held
+   unenforceable, that provision shall be enforced to the maximum extent
+   permissible and the remaining provisions shall remain in full force and
+   effect. Our failure to enforce a provision is not a waiver of it. You may
+   not assign this agreement without our written consent; a transfer of a
+   Seat or a subscription between individuals or entities may be arranged
+   through the Account Portal or by contacting us.
+
+18. LICENSOR AND CONTACT
+
+   Licensor: BioCognia, 22 West Ave, Brockton, MA 02301, USA
+   Governing law: the laws of the Commonwealth of Massachusetts, USA
+
+   Licensing:  Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>
+   Accounts:   https://account.biocognia.com
+   Web:        https://nirmallab.github.io/plexora/
+
+--------------------------------------------------------------------------
+
+Earlier versions: releases of Plexora made before this agreement was first
+shipped were released under the Plexora Academic License 1.0. Those releases
+remain available under that licence; this agreement governs the releases that
+ship it.

@@ -26,9 +26,9 @@ refuses anything else, and every export carries a manifest that says what each
 frame shows (server/schema.py, server/manifest.py).
 
 Card-less, like Figure Builder: its controls dock over the image, and nothing is
-added to the sidebar. Paid: the whole plugin needs the `plugin:video_studio`
-entitlement, so the Tools menu badges it and its routes answer 403 on a licence
-without it.
+added to the sidebar. Part of Pro, as a whole: the plugin needs the
+`plugin:video_studio` entitlement, which the Pro default carries, so on a
+licence without it the tool is not on the page and its routes answer 403.
 
 Kept import-light, like every descriptor module.
 """

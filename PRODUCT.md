@@ -109,12 +109,14 @@ tags in the templates that load them.
   `PLEXORA_TELEMETRY=off`, `plexora telemetry off` or the Settings page.
 - **WebGL2 and a modern browser are the floor.** There is no fallback rendering
   path and no legacy browser support. Design may assume both.
-- **Licensing and attribution are facts, not marketing.** Plexora Academic
-  License 1.0 — free for academic, nonprofit and government research; *not* an
-  open source license; forks and commercial use are not permitted without a
-  separate license; plugins built against the documented API are explicitly
-  carved out and belong to whoever wrote them. Any public-facing surface must
-  state this correctly.
+- **Licensing and attribution are facts, not marketing.** Plexora End User
+  Licence Agreement 1.0 (`LicenseRef-Plexora-EULA-1.0`) — Free for any purpose,
+  commercial included, with no account; Pro sold per seat per year at an
+  academic or a commercial price, both self-serve; *not* an open source
+  license; forks, patched builds and renamed versions may not be distributed;
+  plugins built against the documented API are explicitly carved out and
+  belong to whoever wrote them. Any public-facing surface must state this
+  correctly.
 
 **Explicitly NOT binding: the dark chrome.** The near-black surface tokens are
 the incumbent choice, not a rule. This was offered as a constraint and
@@ -125,7 +127,7 @@ composite is on screen — but it is a consideration, not a locked palette.
 **No user accounts, by design.** A multi-user deployment is one process per user
 behind a reverse proxy. The single place any authentication exists is the Open
 OnDemand route, where a per-server token protects a single-user server rather
-than distinguishing users. Paid licensing does not change this: the app still
+than distinguishing users. Pro licensing does not change this: the app still
 holds no account, password or email address -- a person signs in at
 account.biocognia.com, and Plexora receives only a device certificate.
 
@@ -134,14 +136,18 @@ segmentation mask, centroid, gate / threshold, ROI, cell layer, figure panel and
 scene, shared project, data directory. These are the words in the code, the
 docs and the UI; a redesign renames them only deliberately.
 
-**Undecided / not established.** Whether a public-facing marketing site or hosted
-documentation exists or is planned — there is none in this repository, and no
-design work should assume one.
+**Established: a documentation site.** `website/` builds Plexora's public
+documentation and pricing page, published at
+https://nirmallab.github.io/plexora/ (`plexora/links.py` `DOCS_URL`). Settings,
+`plexora license status` and a Pro refusal link to its pricing page.
 
 ## Brand Commitments
 
-- **Name:** Plexora. **Owner:** Nirmal Lab (`github.com/nirmallab/plexora`).
-  Contact for commercial licensing: Ajit Johnson Nirmal.
+- **Name:** Plexora. **Owner:** BioCognia, the Licensor in `LICENSE`
+  (22 West Ave, Brockton, MA 02301, USA); the code is at
+  `github.com/nirmallab/plexora`.
+  Commercial seats are bought self-serve, like academic ones; contact for
+  licensing questions: Ajit Johnson Nirmal.
 - **Existing assets:** `plexora/client/src/img/logo.svg` and
   `logo_with_text.svg`, with `.ai` sources beside them; `favicon.ico`,
   `apple-touch-icon.png`; `icon.icns` and `icon.ico` at the repository root.
@@ -158,7 +164,8 @@ design work should assume one.
 
 - `README.md` and `DEPLOYMENT.md` (~31 KB, with the actual output of each
   command) — genuine, detailed, already-written product copy.
-- `LICENSE` — the full Academic License 1.0 text.
+- `LICENSE` — the full Plexora End User Licence Agreement 1.0 text
+  (`LicenseRef-Plexora-EULA-1.0`).
 - `SKILL.md` (~88 KB) — an internal engineering guide including a
   "Performance: Measured Facts" section with real measured numbers.
 - Logo and icon assets (SVG plus editable `.ai`).
@@ -174,9 +181,8 @@ design work should assume one.
 - No publication, preprint, or citation.
 - No benchmark or performance claims other than the measured ones already in
   SKILL.md.
-- No pricing or terms for the commercial license.
 - No screenshots, demo dataset, or sample images in the repository.
-- No public documentation site, changelog, or roadmap.
+- No public changelog or roadmap.
 
 ## Product Principles
 

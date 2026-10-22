@@ -190,7 +190,7 @@ def desktop_info():
 
 
 def _plan():
-    """"Free", "Paid", "Paid (trial)"... for About. Never an identifier: this
+    """"Free", "Pro", "Pro (trial)"... for About. Never an identifier: this
     is the document people paste into bug reports."""
     try:
         from plexora import licensing
@@ -199,7 +199,7 @@ def _plan():
     except Exception:
         return "Free"
     if state.state == "trial":
-        return "Paid (trial)"
+        return "Pro (trial)"
     if state.state == "grace":
-        return "Paid (in grace period)"
-    return "Paid" if state.licensed else "Free"
+        return "Pro (in grace period)"
+    return "Pro" if state.licensed else "Free"

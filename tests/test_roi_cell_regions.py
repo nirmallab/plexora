@@ -22,8 +22,8 @@ from plexora.server.models.project import Project
 from tests import volume_fixtures as vf
 
 #: Plexora 3D's analysis paths (plexora/licensing/manifest.py `volume`): these
-#: tests exercise them, so they run on a Paid test licence.
-pytestmark = pytest.mark.paid
+#: tests exercise them, so they run on a Pro test licence.
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

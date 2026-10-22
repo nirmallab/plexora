@@ -21,10 +21,10 @@ the generic layer routes. What is here is what only a surface has:
 
 **Licensed.** Making and analysing surfaces is Surface Studio, the
 `volume:surfaces` entitlement: the POST, the preview, the suggestions and the
-estimate, refinement, neighbours and import answer the Paid 403 on a
-licence without it, which the page turns into the Paid modal. Reading a
+estimate, refinement, neighbours and import answer the Pro 403 on a
+licence without it, which the page turns into the Pro modal. Reading a
 surface that exists -- its manifest, mesh, objects and sections -- exporting
-it, cancelling it and removing it are never guarded: what a Paid feature
+it, cancelling it and removing it are never guarded: what a Pro feature
 produced stays readable, exportable and editable on any plan.
 """
 
@@ -42,7 +42,7 @@ from plexora.server.surface import ENTITLEMENT
 from plexora.server.surface import levels as surface_levels
 from plexora.server.surface import store as surface_store
 
-paid = guards.require_entitlement(ENTITLEMENT)
+pro = guards.require_entitlement(ENTITLEMENT)
 
 
 def _project(datasource):
@@ -156,7 +156,7 @@ def _float(args, key, default=None):
 
 
 @app.route('/volume/<string:datasource>/surfaces', methods=['POST'])
-@paid
+@pro
 def create_surface(datasource):
     """Make a surface. The body is `store.SurfaceSpec` (type, channel, t, iso,
     preprocess, min_size, smoothing, quality, level, region, ids, inset,
@@ -183,7 +183,7 @@ def create_surface(datasource):
 
 
 @app.route('/volume/<string:datasource>/surfaces/preview', methods=['GET'])
-@paid
+@pro
 def preview_surface(datasource):
     """The slider's mesh: `channel`, `t`, `iso` (raw units), optional
     `min_size`, `sigma_um`, `background_um`, `box`, `planes`, `budget`
@@ -219,7 +219,7 @@ def preview_surface(datasource):
 
 
 @app.route('/volume/<string:datasource>/surfaces/suggest', methods=['GET'])
-@paid
+@pro
 def suggest_threshold(datasource):
     """Threshold suggestions (Otsu, triangle, mixture split) and a histogram of
     the preview grid: `channel`, `t`, and the preview's `box`, `planes`,
@@ -247,7 +247,7 @@ def suggest_threshold(datasource):
 
 
 @app.route('/volume/<string:datasource>/surfaces/estimate', methods=['POST'])
-@paid
+@pro
 def estimate_surface(datasource):
     """What a POST with this body would build -- the level, grid voxels or
     object count and triangle estimate -- or the 400 it would answer."""
@@ -526,7 +526,7 @@ def export_surface(datasource, surface_id):
 
 
 @app.route('/volume/<string:datasource>/surfaces/<path:surface_id>/refine', methods=['POST'])
-@paid
+@pro
 def refine_surface(datasource, surface_id):
     """An edit as a new version of the mesh: `{op, ...params}` (refine.OPS);
     `undo` drops the last one. The mask is never touched."""
@@ -557,7 +557,7 @@ def refine_surface(datasource, surface_id):
 
 
 @app.route('/volume/<string:datasource>/surfaces/<path:surface_id>/neighbours', methods=['GET'])
-@paid
+@pro
 def surface_neighbours(datasource, surface_id):
     """Objects near `object`: `mode=surface` (shortest surface-to-surface
     distance, the default) or `centroid`, within `within` (µm, or voxels
@@ -623,7 +623,7 @@ def surface_neighbours(datasource, surface_id):
 
 
 @app.route('/volume/<string:datasource>/surfaces/import', methods=['POST'])
-@paid
+@pro
 def import_surface(datasource):
     """A mesh file (PLY, OBJ, STL, GLB, or a zip Plexora exported) as a
     surface: multipart `file`, `units` = um | voxel (read from the file when

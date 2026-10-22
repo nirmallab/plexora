@@ -30,7 +30,7 @@ TAGS = ("volume", "3d", "z-stack", "zstack", "z", "plane", "planes", "depth", "f
 #: Plexora 3D (plexora/licensing/manifest.py). Looking at a stack -- its
 #: planes, profiles, sections, projections, a pinned projection -- is Free;
 #: measuring, tracking and judging whole 3-D cells, and the stack's quality
-#: check, are Paid.
+#: check, are Pro.
 OBJECTS_ENTITLEMENT = "volume:objects"
 ANALYSIS_ENTITLEMENT = "volume:analysis"
 

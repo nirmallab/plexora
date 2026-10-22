@@ -34,3 +34,8 @@ ACCOUNT_URL = "https://account.biocognia.com"
 
 #: Buy, activate or start a trial of Plexora (the onboarding contract's link).
 START_URL = f"{ACCOUNT_URL}/start?product=plexora"
+
+#: The pricing page on the documentation site: the price for any number of
+#: seats, and Buy, which opens checkout in the portal. A seat bought there
+#: comes with a licence key by email, kept under Licences in the portal.
+PRICING_URL = f"{DOCS_URL}pricing/"

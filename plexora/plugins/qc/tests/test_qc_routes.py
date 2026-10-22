@@ -352,7 +352,7 @@ def test_a_category_and_a_reason_are_recoloured_from_the_panel(client):
                      ).status_code == 400
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_region_is_traced_from_the_panel(client):
     from plexora.agent import AgentSession, invoke, jobs
     from plexora.plugins.roi.server import service

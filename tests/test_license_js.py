@@ -15,14 +15,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "license_probe.mjs"
 
 CHECKS = (
-    "loading paidFeature.js fetches nothing, stores nothing, shows nothing",
+    "loading proFeature.js fetches nothing, stores nothing, shows nothing",
     "the page hint is hierarchical and false on Free",
     "the modal names the feature, says Free keeps working, and offers a trial on Free",
+    "Video Studio is a Pro feature like any other, with a trial on Free",
+    "what is off by default is never called Pro and offers no trial or price",
+    "a third-party plugin comes from its maker, never from Pro",
     "a lapsed licence says so",
     "Start a Trial opens the portal's trial page in the browser",
     "Enter License goes to Settings > License",
     "with no BioCognia platform, a trial explains itself instead of opening nothing",
-    "the badge says Paid",
+    "the badge says Pro",
     "a locked tool opens nothing, explains nothing and mounts nothing",
     "a quiet (restore) load of a locked tool opens nothing",
 )
@@ -53,7 +56,7 @@ def test_connect_this_device_probe():
     assert tuple(lines) == CONNECT_CHECKS
 
 
-@pytest.mark.parametrize("source", ["services/paidFeature.js", "views/settingsPage.js",
+@pytest.mark.parametrize("source", ["services/proFeature.js", "views/settingsPage.js",
                                     "views/toolLoader.js", "views/helpMenu.js"])
 def test_syntax(source):
     path = REPO_ROOT / "plexora" / "client" / "src" / "js" / source
@@ -66,7 +69,7 @@ def test_no_licence_secret_is_ever_in_browser_code():
     reach for a certificate, a seat key or a token, or keep one in storage."""
     for path in (REPO_ROOT / "plexora" / "client" / "src" / "js").rglob("*.js"):
         text = path.read_text(encoding="utf-8")
-        if "PlexoraPaid" not in text and "license" not in text.lower():
+        if "PlexoraPro" not in text and "license" not in text.lower():
             continue
         assert "PLEXORA1." not in text and "BIOC1.ey" not in text, path
         assert "localStorage.setItem(\"license" not in text, path

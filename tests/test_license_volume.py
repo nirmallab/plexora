@@ -1,4 +1,4 @@
-"""Plexora 3D (`volume`): looking at a stack is Free, analysing it is Paid.
+"""Plexora 3D (`volume`): looking at a stack is Free, analysing it is Pro.
 
 On Free a z-stack opens with its planes, projections, sections and volume
 view; the controls that measure, track, review or segment cells in 3-D, run
@@ -61,7 +61,7 @@ DEPTH_3D_IDS = ("data-depth-cells", 'id="depth_measure_button"', 'id="depth_trac
 # -- the page -------------------------------------------------------------------------
 
 
-def test_a_free_stack_page_shows_viewing_and_nothing_paid(stack, client):
+def test_a_free_stack_page_shows_viewing_and_nothing_pro(stack, client):
     html = client.get(f"/{stack}").get_data(as_text=True)
     for marker in VIEWER_3D_IDS:
         assert marker not in html, marker
@@ -71,10 +71,10 @@ def test_a_free_stack_page_shows_viewing_and_nothing_paid(stack, client):
         assert marker not in depth, marker
     assert 'data-tool="segmentation"' not in html
     assert "/plugins/segmentation/static/" not in html
-    assert "plx-paid-badge" not in html
+    assert "plx-pro-badge" not in html
 
 
-def test_a_paid_stack_page_has_every_3d_control(stack, client, paid_license):
+def test_a_pro_stack_page_has_every_3d_control(stack, client, pro_license):
     html = client.get(f"/{stack}").get_data(as_text=True)
     for marker in VIEWER_3D_IDS:
         assert marker in html, marker
@@ -151,7 +151,7 @@ def _set_solid(client, stack, roi_id, revision, solid):
         "operations": [{"op": "roi.set_solid", "id": roi_id, "solid": solid}]})
 
 
-def test_making_a_flat_region_3d_is_paid_but_a_3d_one_stays_editable(stack, client,
+def test_making_a_flat_region_3d_is_pro_but_a_3d_one_stays_editable(stack, client,
                                                                      license_issuer):
     roi_id, revision = _flat_region(stack)
     block = _license_block(_set_solid(client, stack, roi_id, revision, CONTOURS))
@@ -186,15 +186,15 @@ def test_3d_analysis_capabilities_refuse_on_free(stack, tool, arguments):
     assert answer["error"]["detail"]["entitlement"].startswith("volume:")
 
 
-def test_create_roi_from_cells_is_paid_but_a_flat_one_is_free(stack):
+def test_create_roi_from_cells_is_pro_but_a_flat_one_is_free(stack):
     refused = registry.invoke(AgentSession(), "create_roi", {
         "project": stack, "category": "Cells", "cells": [5]})
     assert not refused["ok"] and refused["error"]["code"] == "license_required"
     _flat_region(stack)
 
 
-@pytest.mark.paid
-def test_with_the_paid_default_the_licence_lets_them_through(stack, client):
+@pytest.mark.pro
+def test_with_the_pro_default_the_licence_lets_them_through(stack, client):
     # Past the licence, each answers on its own merits (202, or 400 with a
     # reason when the mask has not become a label volume on this machine).
     assert client.post(f"/volume/{stack}/objects", json={"units": "voxel"}).status_code != 403

@@ -230,7 +230,7 @@ def get_capture(artifact_id):
 # - a bearer token from `plexora ai token create` narrows the server's policy
 #   by its scope (`Policy.narrowed_by_scope`). A `bridge` token is another
 #   application -- origin `bridge`; any other is an outside agent -- origin
-#   `mcp`, so a Paid capability needs the `mcp` add-on here exactly as it would
+#   `mcp`, so a Pro capability needs the `mcp` grant here exactly as it would
 #   over `plexora mcp serve`. Changing transport is not a way round a licence.
 # - no such token -- this machine's loopback on a server without a token, or a
 #   holder of the server's own token (the record in servers.json, owner-readable

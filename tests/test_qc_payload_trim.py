@@ -16,7 +16,7 @@ from plexora.agent import invoke
 from tests.qc_fixtures import make_qc_project
 from tests.test_qc_session import QCOracle, _qc, drive, ok, start  # noqa: F401
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 def _record(session_id):

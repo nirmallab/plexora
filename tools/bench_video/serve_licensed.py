@@ -2,7 +2,7 @@
 
     python tools/bench_video/serve_licensed.py ROOT DATA PORT LICENCE_DIR
 
-Video Studio is Paid (`plugin:video_studio`), so a scratch server needs a
+Video Studio is Pro (`plugin:video_studio`), so a scratch server needs a
 licence that includes it. This installs a TEST licence -- signed by a
 throwaway key that only this process trusts (biocognia.testing.Issuer, the
 test suite's own issuer) -- into LICENCE_DIR, which must be a scratch

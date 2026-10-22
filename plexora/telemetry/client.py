@@ -623,7 +623,7 @@ telemetry = Telemetry()
 
 
 def _license_tier() -> str:
-    """`free`, `paid` or `trial`, from the licence on this machine -- never a
+    """`free`, `pro` or `trial`, from the licence on this machine -- never a
     network call, never an identifier, and `free` if licensing misbehaves."""
     try:
         from plexora import licensing
@@ -633,4 +633,4 @@ def _license_tier() -> str:
         return "free"
     if not state.licensed:
         return "free"
-    return "trial" if state.trial else "paid"
+    return "trial" if state.trial else "pro"

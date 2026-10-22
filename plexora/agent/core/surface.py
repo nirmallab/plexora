@@ -10,8 +10,8 @@ the quantitative ones; nearness is geometry, not interaction.
 
 Licensed: making, refining and analysing surfaces is Surface Studio
 (`surfaces`); listing, reading, restyling, exporting and deleting a surface
-that exists are Free, like everything else a Paid feature produced. Over MCP
-a Paid tool also needs `mcp` (plexora/licensing/guards.py).
+that exists are Free, like everything else a Pro feature produced. Over MCP
+a Pro tool also needs `mcp` (plexora/licensing/guards.py).
 """
 
 from __future__ import annotations
@@ -498,37 +498,37 @@ def surface_delete(call, inp):
 
 
 def capabilities():
-    def paid(**kwargs):
+    def pro(**kwargs):
         return Capability(owner="core", entitlement=ENTITLEMENT, tags=TAGS, **kwargs)
 
     def free(**kwargs):
         return Capability(owner="core", tags=TAGS, **kwargs)
 
     return [
-        paid(name="surface.create", tool_name="surface_create",
+        pro(name="surface.create", tool_name="surface_create",
              purpose="Make a 3-D surface of a z-stack and add it as a layer: the isosurface "
                      "where a channel crosses a raw value, or one closed surface per cell of "
                      "the 3-D mask (under the cell's id). Records how it was made; never "
                      "edits the mask.",
              permission="reversible_write", input_model=CreateInput, handler=surface_create,
              execution="job", writes=("project_config",), reads=("image", "segmentation")),
-        paid(name="surface.suggest_threshold", tool_name="surface_suggest_threshold",
+        pro(name="surface.suggest_threshold", tool_name="surface_suggest_threshold",
              purpose="Threshold suggestions (Otsu, triangle, mixture split) for a channel's "
                      "isosurface, in raw intensity units, from a coarse level of the stack.",
              permission="read", input_model=SuggestInput, handler=surface_suggest_threshold,
              egress="aggregates", reads=("image",)),
-        paid(name="surface.inspect", tool_name="surface_inspect",
+        pro(name="surface.inspect", tool_name="surface_inspect",
              purpose="Check a surface: fragments, objects cut by the volume's edge, open "
                      "objects, how far smoothing moved it, and mesh versus voxel volume.",
              permission="read", input_model=SurfaceInput, handler=surface_inspect,
              egress="aggregates"),
-        paid(name="surface.refine", tool_name="surface_refine",
+        pro(name="surface.refine", tool_name="surface_refine",
              purpose="Edit a surface as a new version (remove small pieces, keep the largest, "
                      "delete or keep objects, smooth again, decimate; undo the last edit). "
                      "The mask is never touched.",
              permission="reversible_write", input_model=RefineInput, handler=surface_refine,
              writes=("project_config",)),
-        paid(name="surface.neighbours", tool_name="surface_neighbours",
+        pro(name="surface.neighbours", tool_name="surface_neighbours",
              purpose="Objects near one object of a surface: shortest surface-to-surface or "
                      "centroid distance within a radius. Geometry, not interaction.",
              permission="read", input_model=NeighboursInput, handler=surface_neighbours,

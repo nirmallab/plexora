@@ -12,7 +12,8 @@ channels revealed one at a time — watch it play on the image, and export it.
 When a preset is not enough, place camera positions yourself and arrange
 everything on a timeline.
 
-Video Studio is part of [Plexora Paid](/docs/getting-started/free-and-paid).
+Video Studio is part of [Plexora Pro](/docs/getting-started/free-and-pro),
+and of the 30-day trial.
 
 ## When to use it
 
@@ -203,8 +204,9 @@ export writes a `video-manifest.json` beside the file. It records:
 An agent connected to Plexora can make videos too: `create_video` builds a
 preset or storyboard from what the viewer shows, `get_video` describes it,
 `preview_video` plays it in the open viewer, and `export_video` renders it as a
-job. Edits are reversible operations. Over MCP these tools also need the
-external MCP add-on.
+job. Edits are reversible operations. Over MCP these tools also need external
+MCP access, which is off by default; an administrator can turn it on for your
+licence.
 
 ## Keyboard
 
@@ -235,8 +237,8 @@ external MCP add-on.
 
 ## Troubleshooting
 
-- **The tool says it is part of Plexora Paid.** Video Studio needs a licence
-  that includes it; see Settings → License.
+- **The tool says it needs a licence.** Video Studio is part of Plexora Pro;
+  see Settings → License, or start a trial.
 - **MP4 is greyed out.** Neither this browser nor the server can encode H.264
   here: use WebM or PNG frames, or install `plexora[video]` on the server.
 - **An export stopped, naming what it waited on.** A frame did not finish

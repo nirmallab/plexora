@@ -1,9 +1,9 @@
-"""The local end of licensing: what the Settings page and the paid-feature
+"""The local end of licensing: what the Settings page and the Pro-feature
 modal ask, and the few things they can change.
 
 - `GET  /license/status` -- plan, state, grants, dates; whether the BioCognia
-  platform is reachable by configuration; where the portal and the trial page
-  are. Never the certificate, never a code, never a token. No network: a page
+  platform is reachable by configuration; where the portal, the trial page and
+  the pricing page are. Never the certificate, never a code, never a token. No network: a page
   load must not wait on the platform.
 - `POST /settings/license/connect` `{name?, cluster?, trial?}` -- Connect this
   device: start the device flow. Answers `{code, verify_url, interval,
@@ -77,7 +77,7 @@ def status_payload() -> dict:
     """The status every licence surface shows. Safe to render into a page."""
     from biocognia import store
 
-    from plexora import licensing
+    from plexora import licensing, links
     from plexora.licensing import LICENSING, PRODUCT, manifest
 
     try:
@@ -90,7 +90,7 @@ def status_payload() -> dict:
         info = licensing.describe(state=free_state(PRODUCT.id, PRODUCT.free_limits,
                                                    "unreadable_file", state="invalid"))
     # What each root grants on this licence ("External MCP access: Not
-    # included"), so Settings lists add-ons a licence lacks as well as has.
+    # included"), so Settings lists what a licence lacks as well as has.
     info["unlocks"] = manifest.unlocks(info.get("entitlements"), paid=bool(info.get("paid")))
     info["service_configured"] = bool(store.server_url())
     info["offline_only"] = store.offline_only()
@@ -99,6 +99,10 @@ def status_payload() -> dict:
     # offline, or a build with no platform to connect to afterwards.
     info["trial_url"] = (store.portal_url(f"start?product={PRODUCT.id}")
                          if info["service_configured"] and not info["offline_only"] else "")
+    # Where Pro is bought: the pricing page, then checkout in the portal. A
+    # page on the website, so it stands even offline -- a bought licence can
+    # still reach an air-gapped machine as a licence file.
+    info["pricing_url"] = links.PRICING_URL
     info["license_dir"] = str(LICENSING.store.path.parent)
     return info
 

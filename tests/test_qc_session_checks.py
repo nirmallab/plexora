@@ -8,7 +8,7 @@ from tests.qc_fixtures import make_qc_project
 from tests.test_qc_session import (FIVE, QCOracle, classes_of, drive, findings_of, ok,
                                    rois_of, start)
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 
 @pytest.fixture(autouse=True)

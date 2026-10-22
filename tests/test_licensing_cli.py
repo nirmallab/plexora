@@ -25,10 +25,27 @@ def test_bare_command_is_status_and_says_free():
     assert "plexora license activate" in out
 
 
-def test_status_json_on_paid(paid_license):
+def test_status_on_free_says_where_to_buy_and_what_the_key_is_for():
+    from plexora import links
+
+    code, out = _run(["status"])
+    assert code == 0
+    assert f"Buy Plexora Pro: {links.PRICING_URL}" in out
+    assert "licence key arrives by email" in out
+    assert "Pro adds Plexora AI, Plexora 3D, Spatial transcriptomics and Video Studio" in out
+    assert "External MCP access is off by default; an administrator can turn it on." in out
+    assert "paid" not in out.lower() and "sold" not in out.lower()
+
+
+def test_status_on_pro_does_not_offer_to_buy(pro_license):
+    code, out = _run(["status"])
+    assert code == 0 and "Buy Plexora Pro" not in out
+
+
+def test_status_json_on_pro(pro_license):
     code, out = _run(["status", "--json"])
     info = json.loads(out)
-    assert code == 0 and info["plan"] == "paid" and info["state"] == "paid_active"
+    assert code == 0 and info["plan"] == "pro" and info["state"] == "pro_active"
     assert info["plan_id"] == "plexora.pro"
     assert "certificate" not in info
 
@@ -57,7 +74,7 @@ def test_status_on_a_trial_says_when_it_ends(license_issuer):
     end = int(time.time()) + 30 * 86400
     license_issuer.install(license_issuer.issue(trial=True, grace_days=0, exp=end, lic_exp=end))
     _, out = _run(["status"])
-    assert "Plan: Paid (trial)" in out
+    assert "Plan: Pro (trial)" in out
     assert f"Trial ends: {license_cli._when(end)}" in out
 
 
@@ -73,7 +90,7 @@ def test_install_a_licence_file(license_issuer, tmp_path):
     path.write_text(f"# issued to Test Lab\n{cert}\n")
     code, out = _run(["install", str(path)])
     assert code == 0, out
-    assert "Paid (offline licence)" in out
+    assert "Pro (offline licence)" in out
     assert LICENSING.store.read()["certificate"] == cert
     assert licensing.current().state == "offline_valid"
 
@@ -102,7 +119,7 @@ def test_install_refuses_a_missing_file(tmp_path):
     assert code == 1 and "Could not read" in out
 
 
-def test_remove(paid_license):
+def test_remove(pro_license):
     code, out = _run(["remove"])
     assert code == 0 and "removed from this device" in out
     assert not licensing.current().licensed
@@ -132,7 +149,7 @@ def test_cluster_fingerprint_carries_a_delegation_key():
     assert report["kind"] == "cluster" and report["delegation_pubkey"]
 
 
-def test_online_commands_under_offline_say_so(paid_license):
+def test_online_commands_under_offline_say_so(pro_license):
     code, out = _run(["refresh"])
     assert code == 1 and "BIOCOGNIA_OFFLINE" in out
     code, out = _run(["activate", "BIOC-AAAA-BBBB"])
@@ -143,17 +160,18 @@ def test_trial_points_at_the_portal():
     code, out = _run(["trial"])
     assert code == 0
     assert "30-day trial" in out and "start?product=plexora" in out
+    assert "pricing/" in out
 
 
 def test_status_shows_what_the_licence_unlocks(license_issuer):
-    license_issuer.install()  # the Paid default, ["ai"]
+    license_issuer.install()  # the Pro default, ["ai"]
     code, out = _run(["status"])
     assert code == 0
     assert "Plexora AI: included" in out
     assert "External MCP access: not included" in out
 
 
-def test_a_desktop_lease_asks_the_platform(paid_license, license_service):
+def test_a_desktop_lease_asks_the_platform(pro_license, license_service):
     code, out = _run(["lease", "--ttl", "6h"])
     assert code == 0, out
     assert out.strip().startswith("BIOC1.")
@@ -169,7 +187,7 @@ def test_activate_with_no_code_runs_the_device_flow(license_service, monkeypatch
     code, out = _run(["activate", "--name", "Lab Mac"])
     assert code == 0, out
     assert "Open https://account.biocognia.test/activate and enter BIOC-TEST-0001" in out
-    assert "Activated." in out and "Plan: Paid" in out
+    assert "Activated." in out and "Plan: Pro" in out
     start = license_service.of("/v1/activate/start")[0]["body"]
     assert start["product"] == "plexora" and start["environment"]["display_name"] == "Lab Mac"
     assert licensing.current().licensed
@@ -182,7 +200,7 @@ def test_activate_with_a_portal_code_needs_no_browser(license_service):
     assert license_service.of("/v1/activate")[0]["body"]["credential"] == "BIOC-AAAA-BBBB"
 
 
-def test_refresh_asks_the_platform_now(paid_license, license_service):
+def test_refresh_asks_the_platform_now(pro_license, license_service):
     code, out = _run(["refresh"])
     assert code == 0, out
     assert "Refresh: ok" in out

@@ -1,7 +1,7 @@
 """A surface as a layer: licensed to make, free to read, built in the background.
 
 The routes end to end through the app: Surface Studio is refused without the
-`volume:surfaces` entitlement and the refusal carries what the Paid modal needs; with
+`volume:surfaces` entitlement and the refusal carries what the Pro modal needs; with
 it, an isosurface and a set of cell surfaces are registered pending, built,
 listed, served (immutable mesh, objects table, manifest), reused for the same
 request, restyled through the generic layer PATCH and removed with their files.
@@ -82,7 +82,7 @@ ISO = {"type": "isosurface", "channel": "CD31", "iso": 500, "smoothing": "light"
 # -- the licence ----------------------------------------------------------------------
 
 
-def test_making_a_surface_is_paid_and_says_so(tmp_path, client):
+def test_making_a_surface_is_pro_and_says_so(tmp_path, client):
     _project(tmp_path)
     for method, url in (("post", "/volume/surf/surfaces"),
                         ("get", "/volume/surf/surfaces/preview?channel=CD31&iso=500"),

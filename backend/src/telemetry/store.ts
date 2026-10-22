@@ -251,7 +251,7 @@ const INSTALL_COLUMNS = [
   'install_kind',
   'mode',
   'country',
-  // The plan tier (free/paid/trial) -- the reserved installs column, now
+  // The plan tier (free/pro/trial) -- the reserved installs column, now
   // filled. A word, never who holds the licence.
   'license_tier',
 ] as const;

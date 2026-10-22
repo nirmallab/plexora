@@ -47,6 +47,10 @@ jobs:
         run: python tools/docs/sync_docs.py check
       - name: Documentation tests
         run: python -m pytest -q -p no:randomly tests/test_docs_coverage.py tests/test_docs_docstrings.py tests/test_docs_signatures.py tests/test_docs_envvars.py tests/test_docs_examples.py tests/test_docs_links.py tests/test_docs_freshness.py
+      # Offline: the pricing page's copy of the platform's prices is whole and
+      # consistent. `tools/sync_pricing.py --source` refreshes it from the platform.
+      - name: The price list is valid
+        run: python -m pytest -q -p no:randomly tests/test_pricing_sync.py
 
   build:
     name: Build the site

@@ -1,6 +1,7 @@
 """Video Studio's HTTP surface: the licence guard, then the codes the client acts on.
 
-The plugin is Paid as a whole (`plugin:video_studio`), so the first thing pinned
+The plugin is Pro as a whole (`plugin:video_studio`, which the Pro default
+carries), so the first thing pinned
 is that core's blueprint guard answers every API route 403 with a machine-
 readable licence body on a licence without it -- while the plugin's static
 files still load, so the Tools menu can badge the tool rather than break.
@@ -137,8 +138,23 @@ def test_without_the_entitlement_every_api_route_is_403(app_client, method, path
     assert body["license"]["entitlement"] == "plugin:video_studio"
 
 
-def test_paid_alone_does_not_unlock_video_studio(app_client, paid_license):
-    assert app_client.get(f"{API}/videos").status_code == 403
+def test_without_it_the_refusal_is_an_ordinary_pro_one(app_client, license_issuer):
+    """A licence narrower than the Pro default (`["ai"]`) does not carry Video
+    Studio, and the refusal says what any Pro refusal says: part of Plexora
+    Pro, with a trial on offer."""
+    license_issuer.install(license_issuer.issue(ent=["ai"]))
+    response = app_client.get(f"{API}/videos")
+    assert response.status_code == 403
+    body = response.get_json()
+    assert body["license"]["off_by_default"] is False
+    assert body["error"] == "Video Studio needs a Plexora Pro licence."
+    assert "Video Studio is part of Plexora Pro" in body["license"]["hint"]
+    assert "start a trial" in body["license"]["hint"]
+    assert "sold" not in body["error"] + body["license"]["hint"]
+
+
+def test_the_pro_default_unlocks_video_studio(app_client, pro_license):
+    assert app_client.get(f"{API}/videos").status_code == 200
 
 
 def test_the_static_files_load_without_the_entitlement(app_client):

@@ -1050,7 +1050,7 @@ class NodeImageProvider(_NodeBacked):
 
 
 def _licence_headers(node, operation: str) -> dict:
-    """The entitlement proof for an operation that serves a Paid capability
+    """The entitlement proof for an operation that serves a Pro capability
     (plexora/licensing/tokens.py). Empty -- and nothing looked at -- for the
     Free plumbing that is nearly every operation."""
     from plexora.licensing import tokens

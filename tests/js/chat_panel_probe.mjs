@@ -2,7 +2,7 @@
  * Runs the real views/chatPanel.js in a `vm` context against a stand-in
  * viewer page: a small DOM (createElement, appendChild, classList, events),
  * a fetch spy that answers the /ai/v1 routes, no EventSource (so the panel
- * takes its held-poll fallback), a FileReader stub and a PlexoraPaid stub.
+ * takes its held-poll fallback), a FileReader stub and a PlexoraPro stub.
  *
  *     node tests/js/chat_panel_probe.mjs
  *
@@ -111,7 +111,7 @@ function makeWorld({ license = false, saved = null, gone = false } = {}) {
     };
     const context = {
         window: { flaskVariables: { datasource: "demo" }, sessionStorage,
-                  PlexoraPaid: { explain: (detail) => { explained.push(detail); return Promise.resolve(null); } } },
+                  PlexoraPro: { explain: (detail) => { explained.push(detail); return Promise.resolve(null); } } },
         document, fetch, console, setTimeout, clearTimeout, JSON, Promise, Array, String, Number, Boolean,
         plexoraUrl: (path) => "/" + path,
         FileReader: class { readAsDataURL(file) { this.result = "data:" + file.type + ";base64,AAAA"; setTimeout(() => this.onload(), 0); } },

@@ -167,7 +167,7 @@ def _start(session, project, **options):
     return started
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_tiles_off_is_todays_session(tmp_path):
     from plexora.agent import invoke
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -200,7 +200,7 @@ def test_tiles_off_is_todays_session(tmp_path):
         session.close()
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_tiles_draw_every_look_as_the_multi_view_block(tmp_path):
     from plexora.agent import artifacts
     from tests.test_gating_session import Oracle, drive

@@ -502,7 +502,7 @@ def test_visium_hd_route_inventory_matches_golden(visium_hd):
 
 def test_the_transcriptomics_sections_are_not_mounted_on_a_free_licence(
         transcripts, visium_hd):
-    """Spatial transcriptomics is Paid (`transcriptomics:xenium`,
+    """Spatial transcriptomics is Pro (`transcriptomics:xenium`,
     `transcriptomics:visium`). The probe's project has a transcripts and a bins
     layer, so on a licence that granted it both sections would mount; on Free
     neither does, and neither plugin's scripts or styles are on the page. Their
@@ -620,7 +620,7 @@ def test_qc_build_matches_its_golden(qc):
 
 
 # --------------------------------------------------------------------------
-# Video Studio: card-less like Figure Builder, Paid as a whole, and the one
+# Video Studio: card-less like Figure Builder, Pro as a whole, and the one
 # plugin with a launcher in the viewer's top-right dock (Plugin.launcher).
 # --------------------------------------------------------------------------
 
@@ -662,7 +662,7 @@ def test_a_locked_plugins_launcher_is_not_offered(core, video_studio):
 
 
 def test_video_studio_is_not_mounted_on_a_free_licence(video_studio):
-    """Paid as a whole: on Free neither the Tools menu nor the launcher lists
+    """Pro as a whole: on Free neither the Tools menu nor the launcher lists
     it, and `?tool=video_studio` mounts nothing -- its scripts stay unloaded."""
     page = video_studio["pages"]["viewer_tool"]
     assert page["flask_variables"]["active_tool"] in (None, "")
