@@ -5,7 +5,7 @@ wizard, the thumbnailer -- used to ask "is this zarr?" and then treat the
 answer "no" as "this is a TIFF file on disk". For a web address that second
 step is wrong twice over: nothing can be tested for existence with `Path()`,
 and each format has its own reader for streamed bytes. So a URL is sorted here
-into one of four kinds, and each ladder branches on the kind before it builds
+into one of five kinds, and each ladder branches on the kind before it builds
 a single path:
 
 * ``zarr`` -- an OME-Zarr store, read by `ome_zarr` exactly as before;
@@ -14,6 +14,9 @@ a single path:
 * ``tiff`` -- an OME-TIFF, TIFF or TIFF-based slide (`.svs`, `.ndpi`, ...),
   read by `tiff_region` without tifffile's zarr view (that view reads the
   file on zarr's IO loop, where a streamed read cannot run);
+* ``ims`` -- an Imaris file, read by `volume.sources.ims` with h5py over a
+  `remote_store.RemoteFile` -- always as a volume, since no 2-D reader opens
+  one;
 * ``picture`` -- a PNG or JPEG, read whole.
 
 The suffix answers without a request. Only a name that says nothing -- a
@@ -28,11 +31,13 @@ from pathlib import Path
 ZARR = "zarr"
 DICOM = "dicom"
 TIFF = "tiff"
+IMS = "ims"
 PICTURE = "picture"
 
 TIFF_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".bif")
 PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg")
 DICOM_SUFFIXES = (".dcm", ".dicom")
+IMS_SUFFIXES = (".ims",)
 
 
 def suffix_of(path) -> str:
@@ -49,7 +54,7 @@ def suffix_of(path) -> str:
 
 
 def kind_of(url, *, probe: bool = True) -> str:
-    """ZARR / DICOM / TIFF / PICTURE for a web address, or ValueError.
+    """ZARR / DICOM / TIFF / IMS / PICTURE for a web address, or ValueError.
 
     `probe=False` answers from the name alone and raises when the name does
     not say -- what a caller on a keystroke path wants.
@@ -72,6 +77,8 @@ def kind_of(url, *, probe: bool = True) -> str:
             "Download it, or open it through a data node next to the data.")
     if suffix in TIFF_SUFFIXES:
         return TIFF
+    if suffix in IMS_SUFFIXES:
+        return IMS
     if suffix in PICTURE_SUFFIXES:
         return PICTURE
     if not probe:
@@ -85,7 +92,7 @@ def kind_of(url, *, probe: bool = True) -> str:
         return DICOM
     raise ValueError(
         f"Nothing at {url} answers as an OME-Zarr store, a folder of DICOM "
-        "instances, or a TIFF, PNG or JPEG file. A DICOM folder can only be "
+        "instances, or a TIFF, Imaris, PNG or JPEG file. A DICOM folder can only be "
         "found when its host lists folders (s3://, gs://, az:// do); on an "
         "https:// gateway, paste the address of one .dcm file instead.")
 
@@ -101,6 +108,8 @@ def kind_or_none(url, *, probe: bool = True):
 __all__ = [
     "DICOM",
     "DICOM_SUFFIXES",
+    "IMS",
+    "IMS_SUFFIXES",
     "PICTURE",
     "PICTURE_SUFFIXES",
     "TIFF",

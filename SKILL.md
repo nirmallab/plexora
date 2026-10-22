@@ -265,8 +265,8 @@ Entry points:
   work — `physical_metadata` itself is deliberately unchanged, because it
   answers a different question (pixel size, not where a layer sits).
 - `server/utils/remote_store.py` — reading a zarr store, or one file — a
-  DICOM instance, a TIFF-family slide, a PNG/JPEG — from a web address
-  (`https`/`s3`/`gs`/`gcs`/`az`/`abfs(s)`) through an on-disk chunk cache,
+  DICOM instance, a TIFF-family slide, an Imaris `.ims`, a PNG/JPEG — from a
+  web address (`https`/`s3`/`gs`/`gcs`/`az`/`abfs(s)`) through an on-disk chunk cache,
   because zarr's own reader keeps nothing: every tile refetches the whole
   chunk it sits in, and against IDR forty 256px tiles cost 123s uncached
   versus 0.12s cached. `canonical_url`/`split_store_url` are the one URL
@@ -301,7 +301,7 @@ Entry points:
   `models/remote_sources.py`.
 
   A file's bytes are served by `RemoteFile(io.RawIOBase)`, the seekable
-  stream `pydicom`/`wsidicom`/`tifffile`/PIL read in place of an open handle
+  stream `pydicom`/`wsidicom`/`tifffile`/PIL/h5py read in place of an open handle
   — what a parser walks 8 bytes at a time (a DICOM header) is aligned to a
   64 KiB block grid, a pixel read (a 2 MiB frame, a run of tiles) to a 2 MiB
   grid, blocks never clamped to the file's length so the last block keeps one
@@ -358,10 +358,12 @@ Entry points:
   OpenSSH's own `sftp-server` directly (skips when absent), `test_sftp.py`,
   `test_files_server.py`. Tested end to end against a user-level `sshd` with
   real ssh; **not yet against the real O2 transfer node** (Duo).
-- `server/utils/remote_image.py` — which of four kinds a web address is,
+- `server/utils/remote_image.py` — which of five kinds a web address is,
   decided once, by name before any request: `ZARR`, `DICOM` (one `.dcm` or a
   folder of instances), `TIFF` (OME-TIFF, TIFF, or a TIFF-based slide —
-  `.svs`/`.ndpi`/...), `PICTURE` (`.png`/`.jpg`). Every ladder that opens a
+  `.svs`/`.ndpi`/...), `IMS` (`.ims`, `IMS_SUFFIXES`; always read as a volume
+  by `volume/sources/ims.py`, since no 2-D reader opens one), `PICTURE`
+  (`.png`/`.jpg`). Every ladder that opens a
   remote image — the provider, import, detection, the thumbnailer — used to
   ask "is this zarr?" and treat "no" as "this is a local TIFF", which is
   wrong twice over for a URL. `kind_of(url, probe=True)` answers from the
@@ -1823,8 +1825,10 @@ One authoritative database; nodes are data services with no project state.
   every label tile 404'd. `geometry()` and `read_region()` take a `timeout` for
   the thumbnail path.
 - `providers/remote.py` -- `RemoteImageProvider`, the channel image read from
-  an `https`/`s3`/`gs`/`az` address through the chunk cache -- OME-Zarr, a
-  DICOM slide, or a TIFF-family file, not OME-Zarr alone. **Still
+  an `https`/`s3`/`gs`/`az`/`sftp` address through the chunk cache -- OME-Zarr,
+  a DICOM slide, a TIFF-family file, or an Imaris file, not OME-Zarr alone. An
+  `IMS` kind opens only through the volume layer (`_open_volume`); its
+  `_open_pyramid` raises, because there is no 2-D reader to fall back to. **Still
   `is_local = True`** -- every computation happens in this process and only
   bytes travel over the network, so nothing here is proxied to a node and
   `data_model._remote`/`has_remote` stay False (that flag means node-proxied,
@@ -6148,7 +6152,13 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   it, in parallel (`_RawFile`: `os.pread`, or a handle per thread on
   Windows); the first chunk per dataset is checked against h5py's
   `read_direct_chunk`, and a mismatch (or an h5py too old to locate) reads
-  that dataset the old locked way. `server/volume/prefetch.py`
+  that dataset the old locked way. At a web address (`is_remote_ims`,
+  `_open_file`) h5py opens a `remote_store.RemoteFile` instead, so metadata
+  comes through the block cache, and `_StreamRaw` reads chunk bytes by offset
+  with a tile's chunks fetched in one `pread_many` batch, since over a network
+  each request is a round trip; what h5py still reads itself (a mask's slab,
+  the per-channel label-detection windows) is pre-fetched by `_chunk_spans` +
+  `_warm`. `server/volume/prefetch.py`
   (`PREFETCHER`, a `PlanePrefetcher`) reads the chunk block of planes ahead
   of each plane tile served, in the direction of travel, in the background
   lane, from the node tile route (`node/api._read_ahead`) and the primary
@@ -8693,14 +8703,19 @@ in **5.6 s**.
   zarr view, which deadlocks on streamed reads; `_remote_level_zero(url)`
   returns `(plane, closer)`. `import_proposal.looks_like_label_image` reads PNGs
   too, `_detect_image` warns with the refusal when a file added as a mask cannot
-  be one, `_remote_image_layer` proposes a remote TIFF/PNG as a mask when
+  be one, `_remote_image_layer` proposes a remote TIFF/PNG/`.ims` as a mask when
   answered so, or when declared or named so AND `_remote_label_plane`
   (header-only) says it is one integer plane, and
   `import_routes.attach_segmentation` raises `ValueError` with the refusal
   before recording anything. **An Imaris `.ims` is a mask too**, always converted
   (`is_ims`; `can_serve_in_place` is False; `label_pyramid_gaps` answers "it is
-  an Imaris file"), and refused when remote (`_REMOTE_IMS`: HDF5 can only be
-  read from a disk). `volume/sources/ims.py`'s `ImsLabels(path, channel=None)`
+  an Imaris file"), and streamed when remote (h5py over a `RemoteFile`; the
+  old `_REMOTE_IMS` refusal is gone): `_remote_label_verdict`/
+  `_remote_label_plane` ask `ims.mask_verdict`, a 2-D one is read by
+  `_remote_level_zero` through `ims.ImsPlane`, and a 3-D one is built into a
+  label volume in the project folder only (`data_model._resolve_label_volume`
+  needs `dataDirectory`; `resolve_label_volume` keeps the URL a string, since
+  `Path()` would fold its `//`). `volume/sources/ims.py`'s `ImsLabels(path, channel=None)`
   reads one channel as (Z,Y,X) or (T,Z,Y,X) at the real extent; Imaris stores
   32-bit data as float, so a mask of more than 65,535 cells arrives as float32
   and is read as uint32 only after every value is checked whole (`FLOAT_ID_LIMIT`
@@ -8756,7 +8771,8 @@ in **5.6 s**.
   manifest, result meta) with `.../result` and `.../cancel` answers for
   either kind; the measure-specific routes are kept beside it. The mask must be on the same node, or
   `ObjectsUnavailable` says so. `tests/test_ims_masks.py`,
-  `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
+  `tests/test_remote_ims.py` (a remote `.ims` as image and mask, against
+  `remote_fixtures`), `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
   `tests/test_node_new_formats.py` pin it;
   `tests/test_nan_tables.py` pins the NaN-position rules above.
 - **A remote mask is never served directly — always converted into the
@@ -8773,6 +8789,11 @@ in **5.6 s**.
   `ome_zarr._open_group`/the chunk cache, and `_Plane2D` pins any leading
   axes (t=0, c=0, z=middle) to the one (rows, cols) plane the pyramidizer
   wants — an NGFF label image can be anything from (y, x) to (t, c, z, y, x).
+- **A remote `.ims` asks `stream.size` before h5py opens it.**
+  `ims._open_file` reads the length outside h5py, because h5py's open keeps
+  asking a stream whose length raises (a 404, a 403) and never returns; the
+  error surfaces there instead, and h5py's own ask is then answered from the
+  remembered size.
 - **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
   `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
   against `"filled"`, so an absent key greys Filled out ("stored as outlines,

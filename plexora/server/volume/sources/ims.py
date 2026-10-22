@@ -54,6 +54,18 @@ in parallel, then inflated there as before. The first chunk read this way
 from each dataset is compared with h5py's own `read_direct_chunk` of it; a
 file where they differ (a driver that is not a plain file, say) reads that
 dataset the old way.
+
+AT A WEB ADDRESS. An .ims at an https/s3/gs/az/sftp address is the same
+file, read through `remote_store.RemoteFile`: h5py opens that stream (its
+`fileobj` driver), so the superblock, the object headers and the chunk index
+are read through the block cache, a 64 KB block at a time and kept on disk.
+Chunk bytes go the way they go on a cluster filesystem, by offset -- except
+that the chunks under a read are fetched in one batch (`_StreamRaw.read_many`)
+rather than a request per chunk on the decode pool, because over a network a
+request is a round trip. What h5py still reads itself -- a mask's slab, the
+windows that decide whether a file is a mask -- is fetched the same way first
+(`_warm`), so h5py's one-chunk-at-a-time reads are answered from the cache
+rather than one round trip after another.
 """
 
 from __future__ import annotations
@@ -93,12 +105,111 @@ def chunk_cache_bytes() -> int:
     return int(max(1.0, megabytes) * 2**20)
 
 
+#: Most bytes `_warm` asks for in one batch: what is fetched is kept by the
+#: cache, not here, so this only bounds what one batch holds in memory.
+WARM_BATCH_BYTES = 64 * 2**20
+
+
 def is_ims_path(path) -> bool:
+    """Whether `path` is an .ims: a file on this disk, or -- by its name,
+    without a request -- one at a web address."""
     try:
         text = str(path)
     except Exception:
         return False
+    if is_remote_ims(text):
+        return True
     return text.lower().endswith(SUFFIXES) and Path(text).is_file()
+
+
+def is_remote_ims(path) -> bool:
+    """Whether `path` is a web address naming an .ims (name only)."""
+    from plexora.server.providers.base import is_remote_locator
+
+    if not is_remote_locator(path):
+        return False
+    from plexora.server.utils import remote_image
+
+    return remote_image.suffix_of(path) in SUFFIXES
+
+
+def _open_file(path, **options):
+    """`(h5py.File, stream)` for `path`, read-only. `stream` is the
+    `RemoteFile` h5py reads when `path` is a web address, else None; close
+    the file first and the stream after it (`_close_file`)."""
+    import h5py
+
+    if not is_remote_ims(path):
+        return h5py.File(str(path), "r", **options), None
+    from plexora.server.utils import remote_store
+
+    stream = remote_store.open_file(path)
+    try:
+        # The length first, outside h5py: a missing or forbidden file raises
+        # here, where h5py's open would keep asking a stream that cannot say
+        # and never return. h5py asks for it next anyway; it is remembered.
+        stream.size
+        return h5py.File(stream, "r", **options), stream
+    except Exception:
+        stream.close()
+        raise
+
+
+def _close_file(handle, stream) -> None:
+    try:
+        handle.close()
+    except Exception:  # noqa: BLE001
+        pass
+    if stream is not None:
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _name(path) -> str:
+    """The file's name, for a sentence -- a web address's included."""
+    if is_remote_ims(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.url_name(path)
+    return Path(str(path)).name
+
+
+def _chunk_spans(dataset, z0, z1, rows, cols) -> list:
+    """`(offset, size)` of each stored chunk under planes z0..z1 (inclusive)
+    of the rectangle -- as many as HDF5 can say where they are."""
+    chunks = dataset.chunks
+    if not chunks or len(chunks) != 3:
+        return []
+    cz, cy, cx = (int(c) for c in chunks)
+    spans = []
+    try:
+        for zc in chunk_cache.chunk_ranges(int(z0), int(z1) + 1, cz):
+            for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy):
+                for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx):
+                    info = dataset.id.get_chunk_info_by_coord((zc * cz, yc * cy, xc * cx))
+                    if getattr(info, "byte_offset", None) is not None:
+                        spans.append((int(info.byte_offset), int(info.size)))
+    except Exception:  # noqa: BLE001 -- an h5py too old to say: nothing warmed
+        pass
+    return spans
+
+
+def _warm(stream, spans) -> None:
+    """Fetch `spans` of a remote file a batch at a time, so h5py's own reads
+    of them, one chunk after another, come out of the cache. A no-op on disk."""
+    if stream is None or not spans:
+        return
+    batch, held = [], 0
+    for span in spans:
+        batch.append(span)
+        held += span[1]
+        if held >= WARM_BATCH_BYTES:
+            stream.pread_many(batch)
+            batch, held = [], 0
+    if batch:
+        stream.pread_many(batch)
 
 
 def _text(value) -> str:
@@ -234,6 +345,29 @@ class _RawFile:
                 pass
 
 
+class _StreamRaw:
+    """`_RawFile` for a file at a web address: bytes by offset through the
+    chunk cache, and `read_many` for a batch fetched together. The stream is
+    the h5py file's too, so the source closes it, after the file."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def read(self, offset: int, size: int) -> bytes:
+        return self.read_many([(offset, size)])[0]
+
+    def read_many(self, spans) -> list:
+        spans = [(int(o), int(n)) for o, n in spans]
+        out = self.stream.pread_many(spans)
+        for (offset, size), data in zip(spans, out):
+            if len(data) < size:
+                raise EOFError(f"{self.stream.name} ends before byte {offset + size}")
+        return out
+
+    def close(self) -> None:
+        pass
+
+
 #: A chunk HDF5 could not say where it is: read it through h5py instead.
 _UNLOCATED = object()
 
@@ -241,10 +375,12 @@ _UNLOCATED = object()
 class ImsVolumeSource(VolumeSource):
     prefers_block = True
 
-    def __init__(self, path, handle, levels, volume: Volume):
+    def __init__(self, path, handle, levels, volume: Volume, stream=None):
         super().__init__(volume)
         self.path = str(path)
         self._file = handle
+        #: The `RemoteFile` h5py reads, for a file at a web address.
+        self._stream = stream
         self._levels = levels
         self._depth0 = levels[0]["depth"]
         self._io = threading.Lock()
@@ -257,11 +393,15 @@ class ImsVolumeSource(VolumeSource):
         #: h5py's own path (see the module notes).
         self._layouts = {}
         #: The file's bytes by offset, read in parallel (see the module notes).
-        self._raw = _RawFile(self.path)
+        self._raw = _RawFile(self.path) if stream is None else _StreamRaw(stream)
         #: (level, t, channel) -> whether its chunks are read by offset: True
         #: once one read that way matched h5py's own, False when it did not
         #: (or this h5py cannot say where a chunk is); absent until known.
         self._direct = {}
+        if stream is not None:
+            # h5py asked for the length when it opened the stream.
+            self.cache_id = ("ims", self.path, stream.known_size)
+            return
         try:
             stat = os.stat(self.path)
             self.cache_id = ("ims", self.path, stat.st_size, stat.st_mtime_ns)
@@ -350,7 +490,7 @@ class ImsVolumeSource(VolumeSource):
                     mask, raw = 0, None
             return raw, mask
 
-        def load(entry):
+        def load(entry, fetched=None):
             key, where = entry
             started = perf_counter()
             if where is _UNLOCATED:
@@ -359,7 +499,7 @@ class ImsVolumeSource(VolumeSource):
                 raw, mask = None, 0
             else:
                 offset, size, mask = where
-                raw = self._raw.read(offset, size)
+                raw = fetched if fetched is not None else self._raw.read(offset, size)
             if phases is None:
                 return decode(raw, mask)
             read = perf_counter()
@@ -392,10 +532,21 @@ class ImsVolumeSource(VolumeSource):
                                     (int(offset), int(info.size), int(info.filter_mask))))
             if direct and dkey not in self._direct:
                 located = self._check_direct(dkey, located, origin_of, read_locked)
+            fetched = {}
+            read_many = getattr(self._raw, "read_many", None)
+            wanted = [(key, where) for key, where in located if isinstance(where, tuple)]
+            if read_many is not None and wanted:
+                # At a web address: every chunk's bytes in one batch of
+                # requests, not a round trip each on the decode pool.
+                started = perf_counter()
+                datas = read_many([(where[0], where[1]) for _, where in wanted])
+                fetched = {key: data for (key, _), data in zip(wanted, datas)}
+                _perf.part("io", (perf_counter() - started) * 1000.0, phases)
             work = chunk_cache.pool()
             if len(located) == 1:
-                return {located[0][0]: load(located[0])}
-            futures = [(entry[0], work.submit(load, entry)) for entry in located]
+                return {located[0][0]: load(located[0], fetched.get(located[0][0]))}
+            futures = [(entry[0], work.submit(load, entry, fetched.get(entry[0])))
+                       for entry in located]
             return {key: future.result() for key, future in futures}
 
         chunks = chunk_cache.CACHE.fetch(
@@ -471,10 +622,7 @@ class ImsVolumeSource(VolumeSource):
         self._open.clear()
         self._direct.clear()
         self._raw.close()
-        try:
-            self._file.close()
-        except Exception:
-            pass
+        _close_file(self._file, self._stream)
 
 
 def _inflate(raw: bytes) -> bytes:
@@ -589,13 +737,11 @@ def channel_names(handle, count: int) -> list[str] | None:
 
 def open_ims_volume(path):
     """An `ImsVolumeSource` for the file at `path` (planar files included:
-    no other reader opens an .ims)."""
-    import h5py
-
+    no other reader opens an .ims), on this disk or at a web address."""
     # The chunk cache is set on the file and given to every dataset opened
     # from it; `rdcc_nslots` a prime well above the chunks it can hold.
-    handle = h5py.File(str(path), "r", rdcc_nbytes=chunk_cache_bytes(),
-                       rdcc_nslots=100_003, rdcc_w0=0.75)
+    handle, stream = _open_file(path, rdcc_nbytes=chunk_cache_bytes(),
+                                rdcc_nslots=100_003, rdcc_w0=0.75)
     try:
         levels = _levels_of(handle)
         frames = max(1, _count(handle, "DataSet/ResolutionLevel 0", "TimePoint"))
@@ -614,9 +760,9 @@ def open_ims_volume(path):
             stored_axes=("t" if frames > 1 else "") + "c"
             + ("z" if levels[0]["depth"] > 1 else "") + "yx")
     except Exception:
-        handle.close()
+        _close_file(handle, stream)
         raise
-    return ImsVolumeSource(path, handle, levels, volume)
+    return ImsVolumeSource(path, handle, levels, volume, stream=stream)
 
 
 def physical_metadata(source: ImsVolumeSource) -> dict:
@@ -673,15 +819,23 @@ def _channel_name(handle, channel: int) -> str:
     return "" if name == UNNAMED else name
 
 
-def _window(handle, channel: int, levels) -> np.ndarray:
-    """The middle plane's central 512 x 512 of `channel`, frame 0, level 0."""
+def _window_of(levels) -> tuple:
+    """(z, rows, cols) of the middle plane's central 512 x 512 at level 0."""
     info = levels[0]
-    data = handle[f"DataSet/ResolutionLevel 0/TimePoint 0/Channel {channel}/Data"]
-    z = info["depth"] // 2
     y0 = max(0, info["height"] // 2 - 256)
     x0 = max(0, info["width"] // 2 - 256)
-    return np.asarray(data[z, y0:min(info["height"], y0 + 512),
-                           x0:min(info["width"], x0 + 512)])
+    return (info["depth"] // 2, slice(y0, min(info["height"], y0 + 512)),
+            slice(x0, min(info["width"], x0 + 512)))
+
+
+def _window_data(handle, channel: int):
+    return handle[f"DataSet/ResolutionLevel 0/TimePoint 0/Channel {channel}/Data"]
+
+
+def _window(handle, channel: int, levels) -> np.ndarray:
+    """The middle plane's central 512 x 512 of `channel`, frame 0, level 0."""
+    z, rows, cols = _window_of(levels)
+    return np.asarray(_window_data(handle, channel)[z, rows, cols])
 
 
 def looks_like_labels(window: np.ndarray) -> bool:
@@ -714,23 +868,30 @@ def _mask_named(name: str) -> bool:
     return any(hint in lowered for hint in MASK_HINTS)
 
 
-def label_channels(handle) -> tuple[list[int], list[str]]:
-    """(channels whose middle window reads as ids, every channel's name)."""
+def label_channels(handle, stream=None) -> tuple[list[int], list[str]]:
+    """(channels whose middle window reads as ids, every channel's name).
+
+    `stream` is the file's `RemoteFile` at a web address: every channel's
+    window is then fetched in one batch first, not a channel at a time."""
     levels = _levels_of(handle)
     count = max(1, _count(handle, "DataSet/ResolutionLevel 0/TimePoint 0", "Channel"))
     names = [_channel_name(handle, c) for c in range(count)]
+    if stream is not None:
+        z, rows, cols = _window_of(levels)
+        _warm(stream, [span for c in range(count)
+                       for span in _chunk_spans(_window_data(handle, c), z, z, rows, cols)])
     looks = [c for c in range(count) if looks_like_labels(_window(handle, c, levels))]
     return looks, names
 
 
-def label_channel(handle, path) -> int:
+def label_channel(handle, path, stream=None) -> int:
     """The channel of an .ims mask that holds the ids.
 
     The only channel; else the one channel that reads as ids, preferring one
     NAMED as a mask when several do. Anything else is a sentence naming the
     channels, rather than a guess between a nuclear and a whole-cell mask.
     """
-    looks, names = label_channels(handle)
+    looks, names = label_channels(handle, stream)
     if len(names) == 1:
         return 0
     named = [c for c in looks if _mask_named(names[c])]
@@ -741,7 +902,7 @@ def label_channel(handle, path) -> int:
     which = (f"{len(looks)} of them hold ids ({', '.join(label(c) for c in looks)})"
              if looks else "none of them holds cell ids")
     raise ValueError(
-        f"{Path(path).name} has {len(names)} channels and {which}, so which one "
+        f"{_name(path)} has {len(names)} channels and {which}, so which one "
         "is the mask cannot be told. Save the mask channel as an .ims of its "
         "own, or name it (mask, cells, nuclei...).")
 
@@ -751,18 +912,21 @@ def mask_verdict(path):
     None to ask. A file of one channel of ids is a mask; a file of stains with
     one channel of ids beside them is either, and is asked about unless a name
     -- the file's or the channel's -- says mask."""
-    import h5py
-
     try:
-        with h5py.File(str(path), "r") as handle:
-            looks, names = label_channels(handle)
+        handle, stream = _open_file(path)
     except Exception:
         return None
+    try:
+        looks, names = label_channels(handle, stream)
+    except Exception:
+        return None
+    finally:
+        _close_file(handle, stream)
     if not looks:
         return False
     if len(names) == 1:
         return True
-    if len(looks) == 1 and (_mask_named(names[looks[0]]) or _mask_named(Path(path).name)):
+    if len(looks) == 1 and (_mask_named(names[looks[0]]) or _mask_named(_name(path))):
         return True
     return None
 
@@ -780,25 +944,23 @@ class ImsLabels:
     """
 
     def __init__(self, path, channel=None):
-        import h5py
-
         self.path = str(path)
-        self._file = h5py.File(self.path, "r")
+        self._file, self._stream = _open_file(self.path)
         try:
             levels = _levels_of(self._file)
             self.frames = max(1, _count(self._file, "DataSet/ResolutionLevel 0", "TimePoint"))
             self.depth = levels[0]["depth"]
             self.height = levels[0]["height"]
             self.width = levels[0]["width"]
-            self.channel = (label_channel(self._file, self.path) if channel is None
-                            else int(channel))
+            self.channel = (label_channel(self._file, self.path, self._stream)
+                            if channel is None else int(channel))
             stored = np.dtype(self._data(0).dtype)
         except Exception:
-            self._file.close()
+            _close_file(self._file, self._stream)
             raise
         if stored.kind not in "uif":
-            self._file.close()
-            raise TypeError(f"{Path(self.path).name} holds {stored} values, not cell ids.")
+            _close_file(self._file, self._stream)
+            raise TypeError(f"{_name(self.path)} holds {stored} values, not cell ids.")
         self._float = stored.kind == "f"
         self.dtype = np.dtype(np.uint32) if self._float else stored
         self.shape = (((self.frames,) if self.frames > 1 else ())
@@ -816,7 +978,7 @@ class ImsLabels:
                            or not np.array_equal(block, np.floor(block))
                            or block.min() < 0 or block.max() > FLOAT_ID_LIMIT):
             raise ValueError(
-                f"{Path(self.path).name}'s mask channel holds values that are "
+                f"{_name(self.path)}'s mask channel holds values that are "
                 "not whole numbers, so they are not cell ids.")
         return block.astype(np.uint32)
 
@@ -827,16 +989,20 @@ class ImsLabels:
         cols = _clip(cols, self.width)
         whole = (rows == slice(0, self.height) and cols == slice(0, self.width))
         if not whole:
-            return self._ids(np.asarray(self._data(t)[int(z), rows, cols]))
+            data = self._data(t)
+            _warm(self._stream, _chunk_spans(data, z, z, rows, cols))
+            return self._ids(np.asarray(data[int(z), rows, cols]))
         data = self._data(t)
         depth = int((data.chunks or data.shape)[0])
         if depth > 1 and depth * self.height * self.width * data.dtype.itemsize <= SLAB_LIMIT:
             z0 = int(z) // depth * depth
             if self._slab is None or self._slab[:2] != (int(t), z0):
-                block = np.asarray(data[z0:min(self.depth, z0 + depth),
-                                        :self.height, :self.width])
+                z1 = min(self.depth, z0 + depth)
+                _warm(self._stream, _chunk_spans(data, z0, z1 - 1, rows, cols))
+                block = np.asarray(data[z0:z1, :self.height, :self.width])
                 self._slab = (int(t), z0, block)
             return self._ids(self._slab[2][int(z) - z0])
+        _warm(self._stream, _chunk_spans(data, z, z, rows, cols))
         return self._ids(np.asarray(data[int(z), :self.height, :self.width]))
 
     def __getitem__(self, index):
@@ -846,7 +1012,7 @@ class ImsLabels:
 
     def close(self):
         self._slab = None
-        self._file.close()
+        _close_file(self._file, self._stream)
 
 
 class _ImsFrame:

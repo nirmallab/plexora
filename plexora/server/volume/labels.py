@@ -67,7 +67,9 @@ def label_volume_shape(path) -> Optional[tuple]:
     for an .ims, the header and one window per channel, to find the ids."""
     import tifffile as tf
 
-    if str(path).lower().endswith(".ims"):
+    from plexora.server.utils import segmentation_pyramid
+
+    if segmentation_pyramid.is_ims(path):
         from plexora.server.volume.sources import ims
 
         return ims.label_shape(path)
@@ -109,6 +111,12 @@ def _write_frame(group, array, shapes, progress, done, total):
     return done
 
 
+def _is_ims(source) -> bool:
+    from plexora.server.utils import segmentation_pyramid
+
+    return segmentation_pyramid.is_ims(source)
+
+
 def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
                        target: int = TARGET, min_levels: Optional[int] = None) -> str:
     """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF,
@@ -134,9 +142,9 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
     if in_memory:
         array = source
         close = None
-    elif str(source).lower().endswith(".ims"):
+    elif _is_ims(source):
         # One channel of an Imaris file (sources/ims.ImsLabels), read a
-        # plane at a time like everything else here.
+        # plane at a time like everything else here -- at a web address too.
         from plexora.server.volume.sources import ims
 
         array = ims.ImsLabels(source)
@@ -411,10 +419,18 @@ def resolve_label_volume(source, folders, *, progress: Optional[Callable] = None
     build keeps its levels.
     """
     from plexora import paths
-    from plexora.server.utils import segmentation_pyramid
+    from plexora.server.providers.base import is_remote_locator
+    from plexora.server.utils import remote_store, segmentation_pyramid
 
-    source = Path(source)
-    stem = source.name.split(".")[0]
+    # An .ims at a web address is streamed (sources/ims.py); it stays the
+    # string it is -- `Path()` would fold its `//`.
+    if is_remote_locator(source):
+        source = remote_store.canonical_url(source)
+        name = remote_store.url_name(source)
+    else:
+        source = Path(source)
+        name = source.name
+    stem = name.split(".")[0]
     key = segmentation_pyramid.source_fingerprint(source)
     targets = [Path(folder) / f"{stem}_labels_v1.zarr" for folder in folders]
     for target in targets:
@@ -434,7 +450,7 @@ def resolve_label_volume(source, folders, *, progress: Optional[Callable] = None
             break
     else:
         raise OSError(f"none of {', '.join(str(f) for f in folders)} can be written, "
-                      f"so {source.name} cannot be stored as a label volume")
+                      f"so {name} cannot be stored as a label volume")
     if stage is not None:
         stage("building")
     built = build_label_volume(source, target, progress=progress, min_levels=min_levels)

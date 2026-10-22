@@ -53,8 +53,9 @@ The image list marks such a layer **SFTP**.
 ## What streams well
 
 The same formats an `https://` address can hold: OME-Zarr, OME-TIFF and other
-TIFFs, DICOM, PNG and JPEG. A label image at an `sftp://` address can be used
-as a mask.
+TIFFs, DICOM, Imaris (`.ims`), PNG and JPEG. A label image at an `sftp://`
+address can be used as a mask, and a 3-D Imaris mask is stored in the project
+as a label volume.
 
 - **Tiled, pyramidal images stream best.** Each view reads only the tiles it
   shows. A large untiled TIFF has to be read in big pieces and is slow.

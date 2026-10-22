@@ -15,7 +15,7 @@ Plexora decides what a file is from its contents first and its extension second,
 |---|---|---|
 | `.bif` | Brightfield whole-slide image | Roche Ventana whole-slide image, read as brightfield. Local or at a web address. |
 | `.dcm` | Image | DICOM whole-slide image (a folder of .dcm files), read with wsidicom; a fluorescence slide's focal planes open as a z-stack. Local or at a web address (`pip install "plexora[remote]"`). |
-| `.ims` | Image | Imaris image (HDF5), with every channel, plane and resolution level and the voxel size the file states. Local only. |
+| `.ims` | Image | Imaris image (HDF5), with every channel, plane and resolution level and the voxel size the file states, or a label mask, 2-D or 3-D. Local or at a web address. |
 | `.jpeg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
 | `.jpg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
 | `.mrxs` | Brightfield whole-slide image | 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). Local only. |

@@ -421,7 +421,7 @@ format_notes:
   ".jpeg": Single-plane RGB or grayscale image. Local or at a web address.
   ".tif": TIFF or OME-TIFF image (a z-stack opens plane by plane), or a label mask, 2-D or 3-D. An image may also be at a web address.
   ".tiff": TIFF or OME-TIFF image (a z-stack opens plane by plane), or a label mask, 2-D or 3-D. An image may also be at a web address.
-  ".ims": Imaris image (HDF5), with every channel, plane and resolution level and the voxel size the file states. Local only.
+  ".ims": Imaris image (HDF5), with every channel, plane and resolution level and the voxel size the file states, or a label mask, 2-D or 3-D. Local or at a web address.
   ".qptiff": Akoya PhenoImager (Vectra/Polaris) multiplex image. Local or at a web address.
 
 # Folders and stores, which have no single extension (formats.py).

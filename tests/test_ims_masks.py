@@ -224,9 +224,9 @@ def test_a_one_channel_ims_of_ids_is_recognised_as_a_mask(tmp_path):
     assert layer.role == "mask" and not warnings
 
 
-def test_an_ims_at_a_web_address_says_it_needs_a_disk():
-    reason = sp.mask_format_refusal("https://example.org/data/cells.ims")
-    assert "can only be read from a disk" in reason
+def test_an_ims_at_a_web_address_can_be_a_mask():
+    # Streamed (tests/test_remote_ims.py), so the name alone refuses nothing.
+    assert sp.mask_format_refusal("https://example.org/data/cells.ims") is None
 
 
 # -- end to end -------------------------------------------------------------------

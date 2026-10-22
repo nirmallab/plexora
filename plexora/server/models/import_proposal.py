@@ -1916,15 +1916,16 @@ def _detect_remote(url, answers, declared=None):
     from plexora.server.utils import ome_zarr, remote_image, remote_store
 
     name = remote_store.url_name(url)
-    # A file names its own kind: a DICOM instance, a TIFF or a picture is
-    # streamed and proposed as the image it is, with no zarr probing.
+    # A file names its own kind: a DICOM instance, a TIFF, an Imaris file or
+    # a picture is streamed and proposed as the image it is, with no zarr
+    # probing.
     try:
         named = remote_image.kind_or_none(url, probe=False)
     except Exception:  # noqa: BLE001
         named = None
     if named == remote_image.DICOM:
         return _dicom_slides(url, answers)
-    if named in (remote_image.TIFF, remote_image.PICTURE):
+    if named in (remote_image.TIFF, remote_image.IMS, remote_image.PICTURE):
         return _remote_image_layer(url, answers, declared)
     try:
         remote_image.kind_of(url, probe=False)
@@ -2064,6 +2065,12 @@ def _remote_label_plane(url) -> bool:
 
     if segmentation_pyramid.mask_format_refusal(url) is not None:
         return False
+    if segmentation_pyramid.is_ims(url):
+        # Added as a mask: unless no channel holds ids (`looks_like_label_image`
+        # takes an undecided .ims added as a mask the same way).
+        from plexora.server.volume.sources import ims
+
+        return ims.mask_verdict(url) is not False
     if segmentation_pyramid.is_png(url):
         return segmentation_pyramid.png_header(url) is not None
     try:
@@ -2097,13 +2104,19 @@ def _remote_label_verdict(url):
 
     from plexora.server.utils import remote_store, segmentation_pyramid
 
+    if segmentation_pyramid.is_ims(url):
+        # Asked of the channels themselves, as on disk; each channel's middle
+        # window is fetched in one batch (volume/sources/ims.mask_verdict).
+        from plexora.server.volume.sources import ims
+
+        return ims.mask_verdict(url)
     if not _remote_label_plane(url):
         return False
     name = remote_store.url_name(url)
     try:
         if segmentation_pyramid.is_png(url):
             # No tiles: the whole file is the one window there is.
-            if remote_store.open_file(url).size() > REMOTE_LABEL_BUDGET:
+            if remote_store.open_file(url).size > REMOTE_LABEL_BUDGET:
                 return True if _name_says_mask(name) else None
             plane = segmentation_pyramid.read_png_labels(url)
             return _plane_verdict(name, plane.dtype, plane.shape[-2:],

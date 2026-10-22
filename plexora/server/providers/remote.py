@@ -7,9 +7,10 @@ from a file on disk is three things, and they are the three overrides below:
 
 * **Opening** dispatches on `remote_image.kind_of`, by name before any probe:
   an OME-Zarr store, a DICOM slide (one `.dcm` or a folder of instances,
-  streamed through `remote_store.RemoteFile`), or a TIFF-family file read by
-  `tiff_region`. Never a Xenium focus directory or an OpenSlide-only slide:
-  those are read by path.
+  streamed through `remote_store.RemoteFile`), a TIFF-family file read by
+  `tiff_region`, or an Imaris file, which only the volume layer reads (h5py
+  over a `RemoteFile`). Never a Xenium focus directory or an OpenSlide-only
+  slide: those are read by path.
 * **Identity** comes from the metadata document's (or the file's) ETag or
   Last-Modified, or a DICOM folder's listing -- not a stat
   (`Fingerprint.of_remote`).
@@ -100,7 +101,7 @@ class LazyOverview:
 
 
 class RemoteImageProvider(LocalImageProvider):
-    """An image at an https/s3/gs/az address: OME-Zarr, DICOM, TIFF.
+    """An image at an https/s3/gs/az/sftp address: OME-Zarr, DICOM, TIFF, IMS.
 
     `rgb` is the project's "read as colour" decision, carried exactly as the
     local provider carries it; only a TIFF consults it (DICOM states its own
@@ -141,7 +142,7 @@ class RemoteImageProvider(LocalImageProvider):
     def _open_pyramid(self, extension=None):
         """The pyramid for this address, by kind, with `extension` appended."""
         from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
-                                          remote_image, tiff_region)
+                                          remote_image, remote_store, tiff_region)
 
         kind = self.kind()
         if kind == remote_image.ZARR:
@@ -152,6 +153,12 @@ class RemoteImageProvider(LocalImageProvider):
             if self._reads_colour():
                 return brightfield.open_rgb(self._path, extension=extension)
             return tiff_region.open_image(self._path, extension=extension)
+        if kind == remote_image.IMS:
+            # Served only as a volume (`open`), whose plane pyramid has every
+            # level the file stores: there is no 2-D reader to fall back to.
+            raise ValueError(
+                f"{remote_store.url_name(self._path)} is an Imaris file, which is "
+                "read as a volume; it did not open as one.")
         raise ValueError(
             f"{self._path} is a picture, which is drawn whole rather than "
             "served as tiles.")
@@ -185,13 +192,15 @@ class RemoteImageProvider(LocalImageProvider):
         # time through the volume layer, as the local provider does, with the
         # overview left lazy because computing it is a download.
         self.volume_source = None
-        if kind in (remote_image.ZARR, remote_image.TIFF):
+        if kind in (remote_image.ZARR, remote_image.TIFF, remote_image.IMS):
             from plexora.server.providers.local import volume_overview
 
             opened = self._open_volume(
                 overview=lambda pyramid: LazyOverview(pyramid, compute=volume_overview))
             if opened is not None:
                 return opened
+        if kind == remote_image.IMS:
+            return self._open_pyramid()  # says why
         channels = self._open_pyramid(self._missing_pyramid())
         if kind == remote_image.ZARR:
             return (channels, LazyOverview(channels),

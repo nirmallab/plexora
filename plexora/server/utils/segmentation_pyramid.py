@@ -275,11 +275,6 @@ _NOT_A_MASK = {
               "segmentation objects.",
 }
 
-#: An Imaris file is HDF5, which is read by path: there is no streaming it.
-_REMOTE_IMS = ("{name} is an Imaris file at a web address, and an Imaris file "
-               "can only be read from a disk. Download it, or open it through a "
-               "data node next to the data.")
-
 #: What every refusal goes on to say: the formats that do work.
 _SAVE_AS = (" Save the mask as a TIFF (.tif, .ome.tif) or a PNG of integer "
             "labels, or point at OME-Zarr labels.")
@@ -396,8 +391,6 @@ def mask_format_refusal(path) -> Optional[str]:
     """
     name = _display_name(path)
     reason = _NOT_A_MASK.get(_suffix(path))
-    if reason is None and is_ims(path) and _is_remote(path):
-        reason = _REMOTE_IMS
     if reason is not None:
         return reason.format(name=name) + _SAVE_AS
     if is_png(path):
@@ -559,10 +552,16 @@ def _remote_level_zero(url):
     """(plane, closer) for a label image at a web address, through the cache.
 
     OME-Zarr labels as a zarr group; a TIFF read tile by tile (`_TiffPlane`);
-    a PNG fetched once and decoded whole.
+    a PNG fetched once and decoded whole; an Imaris file's mask channel, its
+    middle plane, over the stream (`ims.ImsPlane`, as on disk).
     """
     if is_png(url):
         return read_png_labels(url), lambda: None
+    if is_ims(url):
+        from plexora.server.volume.sources import ims
+
+        plane = ims.ImsPlane(url)
+        return plane, plane.close
     from plexora.server.utils import remote_image
 
     if remote_image.kind_or_none(url, probe=False) == remote_image.TIFF:

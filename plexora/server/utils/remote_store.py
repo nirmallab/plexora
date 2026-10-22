@@ -192,7 +192,8 @@ def split_store_url(url) -> tuple[str, str]:
 #: the folder it sits in -- so the slide, and any sibling instance of a DICOM
 #: series, share one cache tree and one connection pool.
 FILE_SUFFIXES = (".dcm", ".dicom", ".tif", ".tiff", ".qptiff", ".svs", ".ndpi",
-                 ".scn", ".bif", ".mrxs", ".svslide", ".png", ".jpg", ".jpeg")
+                 ".scn", ".bif", ".mrxs", ".svslide", ".png", ".jpg", ".jpeg",
+                 ".ims")
 
 
 def _has_zarr_segment(url) -> bool:

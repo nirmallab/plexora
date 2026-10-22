@@ -395,8 +395,8 @@ def _file_images_under(root) -> list:
         if not is_remote_locator(src) or remote_store.split_locator_url(src)[0] != root:
             continue
         kind = remote_image.kind_or_none(src, probe=False)
-        if kind in (remote_image.TIFF, remote_image.PICTURE, remote_image.DICOM) \
-                and src not in found:
+        if kind in (remote_image.TIFF, remote_image.IMS, remote_image.PICTURE,
+                    remote_image.DICOM) and src not in found:
             found.append(src)
     return found
 

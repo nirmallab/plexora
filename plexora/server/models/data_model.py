@@ -333,15 +333,19 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
     there is no project directory), named after the mask, and adopted when
     one built from the same file -- same fingerprint -- is already there.
     """
-    if providers.is_remote_locator(segmentation_path):
-        return None
     from plexora.server.volume import labels as volume_labels
+    from plexora.server.volume.sources import ims as _ims
 
-    if volume_labels.is_label_volume(segmentation_path):
+    remote = providers.is_remote_locator(segmentation_path)
+    # At a web address only an .ims is streamed into a label volume, and only
+    # into the project's own folder: there is no writing beside a URL.
+    if remote and not (_ims.is_remote_ims(segmentation_path) and dataDirectory):
+        return None
+    if not remote and volume_labels.is_label_volume(segmentation_path):
         return str(segmentation_path)
     if volume_labels.label_volume_shape(segmentation_path) is None:
         return None
-    source = Path(segmentation_path)
+    source = segmentation_path if remote else Path(segmentation_path)
     folder = Path(dataDirectory) if dataDirectory else source.parent
     # The rule a data node follows too (volume_labels.resolve_label_volume),
     # so a mask converted by either is adopted by both.

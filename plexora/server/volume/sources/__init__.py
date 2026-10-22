@@ -38,6 +38,8 @@ def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
     from plexora.server.volume.sources import ims
 
     if is_remote_locator(path):
+        if ims.is_remote_ims(path):
+            return ims.open_ims_volume(path)
         if ome_zarr.is_zarr_image_path(path):
             from plexora.server.volume.sources.ngff import open_ngff_volume
 

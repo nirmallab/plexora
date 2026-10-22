@@ -444,7 +444,9 @@ def _sniff_remote_kind(url):
     if kind == remote_image.DICOM:
         dicom_wsi.assemble_slide(url)
         return "ome_tiff"
-    if kind == remote_image.TIFF:
+    if kind in (remote_image.TIFF, remote_image.IMS):
+        # An Imaris file goes through the same pipeline as on disk (see the
+        # local branch), read by the volume layer over the stream.
         return "ome_tiff"
     from PIL import Image
 
