@@ -518,7 +518,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   to 7.69 (the user's gate 7.3). The memo keys carry the scale.
 - **A model checks the brightness, code sets it.** `display_setup` (per
   image, after the panel context, before that image's first look;
-  `SessionOptions.display_check`, `vision` by default) shows up to
+  `SessionOptions.display_check`, `vision` by default with engine v1, `off`
+  with v2: `schemas.DISPLAY_CHECK_DEFAULT`) shows up to
   `ENGINE["display_batch"]` markers in rows and the calibration's brightness
   ladder in columns (on the linear scale `calibration.linear_columns`, gains
   over the linear window; on log `columns_for`, every display level times

@@ -980,14 +980,24 @@ def clear_artifacts(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "cleared": changed}
 
 
-def _artifact_candidate(fp, obj, bar, action):
+def _artifact_candidate(fp, obj, bar, action, *, cycles=None, automatic=False):
+    """An object as a region candidate. A fold the cycle rule found (`metrics.
+    rule == "cycle"`) is scoped to its cycles' channels -- the markers imaged
+    while it was there -- as a registration region is; a saturated patch to
+    its own channels; anything else to every channel."""
     art = _artifacts()
     saturation = obj["category"] == "saturation"
     metrics = obj.get("metrics") or {}
+    held = [int(c) for c in metrics.get("cycles") or ()] if metrics.get("rule") == "cycle" \
+        else []
+    by_index = {int(c["index"]): c for c in cycles or ()}
+    cycle_channels = [n for k in held for n in (by_index.get(k) or {}).get("channels") or ()]
+    scope, channels = ("cycle", cycle_channels) if cycle_channels else \
+        ("channel" if saturation else "all_channels", obj.get("channels") or [])
     return _check_candidate(
         "artifacts", art.VERSION, obj["class"], f"{fp}:{obj['id']}",
-        {**obj, "max": obj["score"]}, channels=obj.get("channels") or [],
-        scope="channel" if saturation else "all_channels",
+        {**obj, "max": obj["score"]}, channels=channels, scope=scope,
+        cycles=held if cycle_channels else (), automatic=automatic,
         threshold={"threshold": bar["value"], "threshold_source": bar.get("source") or "auto",
                    "auto_threshold": bar.get("auto"), "offset_steps": bar.get("offset_steps")},
         action=action, trace="object",
@@ -996,6 +1006,7 @@ def _artifact_candidate(fp, obj, bar, action):
                        "area_um2": obj["area_um2"], "fingerprint": fp,
                        "source_channel": obj.get("source_channel"),
                        "shape": metrics.get("shape"), "agreement": metrics.get("agreement"),
+                       "rule": metrics.get("rule") or "most_channels",
                        "refined": obj.get("refined")})
 
 
@@ -1003,37 +1014,131 @@ def write_artifact_regions(call, inp):
     """The retained objects of the categories asked (default all) as ROIs in
     `qc_tissue_acquisition`: the artifact ROIs of those categories nobody has
     edited, locked, renamed or moved are replaced; the rest are kept."""
+    return _write_artifacts(call, inp.project, categories=inp.categories, channel=inp.channel,
+                            action=inp.action)
+
+
+def _write_artifacts(call, project, *, categories=None, channel=None, action="exclude",
+                     automatic=False, min_score=None):
+    """`write_artifact_regions`' work; `automatic` for `run_basic_qc`, which
+    also raises every category's bar to `min_score` (the objects between the
+    two are counted as `held_back`)."""
     art = _artifacts()
-    project = inp.project
     summary = art.current(project)
     if summary is None:
         raise AgentError("precondition_missing", "run the Artifact Detector first "
                          "(run_artifact_check)")
-    channel = _art_channel(call, project, inp.channel)
-    categories = list(inp.categories or art.CATEGORIES)
+    channel = _art_channel(call, project, channel)
+    categories = list(categories or art.CATEGORIES)
+    cycles = (summary.get("cycle_rule") or {}).get("cycles")
     fp = summary["fingerprint"]
     work, per_bar = [], {}
     for category in categories:
         bar = art.threshold_of(project, category, summary)
         kept = art.objects_at(summary, {category: bar["value"]}, categories=[category],
                               channels=[channel] if channel else None, geometry=True)
-        per_bar[category] = (bar, kept)
-        work.append((category, [_artifact_candidate(fp, o, bar, inp.action) for o in kept]))
+        held = 0
+        if min_score is not None and min_score > bar["value"]:
+            sure = [o for o in kept if o["score"] >= min_score]
+            held, kept = len(kept) - len(sure), sure
+            bar = {**bar, "value": float(min_score), "source": "basic_qc"}
+        per_bar[category] = (bar, kept, held)
+        work.append((category, [_artifact_candidate(fp, o, bar, action, cycles=cycles,
+                                                    automatic=automatic) for o in kept]))
     classes = {art.CATEGORY_CLASS[c] for c in categories}
     written, kept, removed, receipts, per_key, revisions = _write_regions(
         call, project, detector="artifacts", klass=classes, covered=set(categories),
         work=work, row_keys=lambda row: [art.CLASS_CATEGORY.get(row.get("class"))],
-        pinned=inp.action)
+        pinned=action, automatic=automatic)
     per_category = {}
-    for category, (bar, objs) in per_bar.items():
+    for category, (bar, objs, held) in per_bar.items():
         per_category[category] = {"written": per_key.get(category, {}).get("written", []),
                                   "threshold": bar["value"],
                                   "threshold_source": bar.get("source"),
                                   "offset_steps": bar.get("offset_steps"),
-                                  "n_objects": len(objs)}
+                                  "n_objects": len(objs),
+                                  **({"held_back": held} if min_score is not None else {})}
     return {"receipt": _write_receipt(call, written, kept, removed, receipts, revisions),
             "written": written, "kept": kept, "removed": [r["roi_id"] for r in removed],
             "categories": per_category}
+
+
+# -- Basic QC: the model-free checks on their own ----------------------------------------
+
+
+class BasicQCInput(ProjectInput):
+    force: bool = Field(False, description="Run the checks again even when their results for "
+                        "this image are stored.")
+
+
+#: [cal] The least score an object needs for basic QC to write it unreviewed:
+#: two of the detector's steps (`artifacts.STEP`) above its default bar
+#: (`AUTO_THRESHOLD`). Objects between the bars wait for a review: on
+#: lsp11385 the most-channels rule scored an epidermis -- the image's Ecad and
+#: SOX10 population -- 0.51 as a fold; a margin, not a fitted value.
+BASIC_MIN_SCORE = 0.7
+
+#: What basic QC is, wherever its result is reported.
+BASIC_NOTE = ("Basic QC: Plexora's model-free checks ran -- the "
+              "Artifact Detector (tissue folds, including ones that come or go between "
+              "imaging cycles; tears; debris; saturated pixels) and, where the image has a "
+              "DNA channel per cycle and a segmentation mask, DNA retention -- and the "
+              "artifacts it is sure of (score 0.7 or more) exclude their cells; weaker ones "
+              "are held back for a review. Nobody reviewed it: run QC from the QC panel to "
+              "review these regions and the held-back ones, and to check focus, "
+              "registration and segmentation as well.")
+
+
+def run_basic_qc(call, inp):
+    """The model-free checks on an image nobody has QC'd: the Artifact
+    Detector's objects written at their default thresholds as automatic
+    regions (`region_write.AUTOMATIC_BY`), DNA retention where it can run,
+    and the cells' calls derived -- in a result of origin
+    `results.BASIC_ORIGIN`. An image with another QC result is left alone."""
+    from plexora.plugins.qc.server import region_write, results
+    from plexora.plugins.qc.server.cells import calls
+
+    project = inp.project
+    found = results.active(results.load(project))
+    if found is not None and found.get("origin") != results.BASIC_ORIGIN:
+        return {"project": project, "ran": [], "skipped": {
+            "all": "this image has a QC result already; basic QC never writes over one"},
+            "regions": {}, "cells": None, "note": BASIC_NOTE}
+    ran, skipped, regions, held = [], {}, {}, {}
+    art = _artifacts()
+    state = art.availability(call.session, project)
+    if state.get("available"):
+        try:
+            art.load_or_run(call.session, project, force=inp.force, progress=call.progress,
+                            check_cancelled=call.check_cancelled)
+            written = _write_artifacts(call, project, action="exclude", automatic=True,
+                                       min_score=BASIC_MIN_SCORE)
+            ran.append("artifacts")
+            regions = {c: len(v["written"]) for c, v in written["categories"].items()}
+            held = {c: v["held_back"] for c, v in written["categories"].items()
+                    if v.get("held_back")}
+        except AgentError as exc:
+            skipped["artifacts"] = exc.message
+    else:
+        skipped["artifacts"] = state.get("message") or state.get("reason") or "unavailable"
+    try:
+        _dna().load_or_run(call.session, project, force=inp.force,
+                           progress=lambda **k: call.progress(**k) if call.progress else None,
+                           check_cancelled=call.check_cancelled)
+        ran.append("dna_retention")
+    except AgentError as exc:
+        skipped["dna_retention"] = exc.message
+    cells = None
+    if ran and call.session.project(project).has_table:
+        with results.lock(project):
+            document = results.load(project)
+            if results.active(document) is None:
+                region_write.basic_result(document, project)
+                results.save(project, document)
+        cells = calls.write_for_active(call, project)
+    return {"project": project, "ran": ran, "skipped": skipped, "regions": regions,
+            "held_back": held, "min_score": BASIC_MIN_SCORE, "cells": cells,
+            "note": BASIC_NOTE}
 
 
 # -- Registration regions ---------------------------------------------------------------
@@ -1498,6 +1603,18 @@ def capabilities(free):
              permission="reversible_write", input_model=ArtifactWriteInput,
              handler=write_artifact_regions, writes=("qc", "rois"), persistent=True,
              reads=("qc", "rois", "table"), tags=ART_TAGS),
+        free(name="qc.basic_run", tool_name="run_basic_qc",
+             purpose="Basic QC on an image nobody has QC'd, without a model: the Artifact "
+                     "Detector (tissue folds -- also ones that come or go between imaging "
+                     "cycles -- tears, debris, saturated pixels) written at its default "
+                     "thresholds as automatic, unreviewed regions, and DNA retention where "
+                     "the image has a DNA channel per cycle and a mask; the cells inside "
+                     "are excluded. A job (job_wait). An image with a QC result already is "
+                     "left alone; the full QC (qc_session_start, or the QC panel) reviews "
+                     "these regions.",
+             permission="reversible_write", input_model=BasicQCInput, handler=run_basic_qc,
+             execution="job", writes=("qc", "rois"), persistent=True,
+             reads=("image", "mask", "qc", "rois", "table"), tags=ART_TAGS),
         free(name="qc.background_write", tool_name="write_qc_background_roi",
              purpose="Write the glass outside the feathered tissue (the tissue grown 25 "
                      "microns) as one \"QC: Background\" ROI, the tissue a hole in it. Its "

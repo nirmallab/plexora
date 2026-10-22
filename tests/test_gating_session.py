@@ -56,6 +56,7 @@ class Oracle:
         self.info = info
         self.style = style
         self.rng = np.random.default_rng(seed)
+        self.index = {c["id"]: i for i, c in enumerate(info["cells"])}
         # In the table's own units: a log1p'd project's gates are log1p values.
         to_table = np.log1p if info.get("log_transformed") else (lambda v: v)
         self.values = {m: np.asarray(to_table(np.array([c[m] for c in info["cells"]],
@@ -117,6 +118,17 @@ class Oracle:
             return {"kind": kind, "confidence": "fairly_sure",
                     "intervals": interval_verdicts(self.values[marker], self.truth[marker],
                                                    rows)}
+        if kind == "cell_panel":
+            # Engine v2's blind panel, each cell read by its own truth. Which
+            # cell is which is the stored packet's (`_panel`), never sent.
+            from plexora.plugins.gating.server.autogate import engine as engines
+
+            stored, _ = engines.store().read_packet(packet["session_id"], packet["packet_id"])
+            truth = self.truth[marker]
+            return {"kind": kind, "cells": {
+                c["number"]: ("uncertain" if self.style == "lazy" else
+                              "own_stain" if truth[self.index[c["cell_id"]]] else "not_own_stain")
+                for c in stored["_panel"]["cells"]}}
         if kind == "qc_confirm":
             return {"kind": kind, "verdict": "real_signal"}
         if kind == "absence_check":

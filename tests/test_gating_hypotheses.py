@@ -288,6 +288,73 @@ def test_v2_is_the_default_engine_and_the_first_names_still_work(tmp_path):
         assert engine.options["engine"] == expected, sid
 
 
+def test_each_engine_has_the_contrast_check_and_reader_it_was_measured_with(tmp_path):
+    """Left out, the contrast check is off with v2 (its campaign ran so) and
+    vision with v1; a check that is named stands; a session stored before
+    the option completes as v1 did. v2's cell panels are read by the task
+    that chooses between thresholds, and its first worker is that task's."""
+    from types import SimpleNamespace
+
+    from plexora.agent.sessions.store import SessionStore
+    from plexora.ai import tasks
+    from plexora.plugins.gating.capabilities_session import SessionOptions, option_defaults
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    assert SessionOptions().display_check == "off"
+    assert SessionOptions(engine="candidates").display_check == "off"
+    assert SessionOptions(engine="v1").display_check == "vision"
+    assert SessionOptions(engine="classic").display_check == "vision"
+    assert SessionOptions(engine="v2", display_check="vision").display_check == "vision"
+    assert SessionOptions(engine="v1", display_check="rule").display_check == "rule"
+    assert option_defaults()["display_check"] == "off"
+    st = SessionStore("gating", root=tmp_path)
+    st.create({"session_id": "s_old", "options": {}, "units": {}})
+    assert Engine(SimpleNamespace(), "s_old", st=st).options["display_check"] == "vision"
+
+    assert tasks.task_for("gating", "cell_panel") == "gating.threshold_evaluation"
+    assert tasks.task_for("gating", "t4_candidates") == "gating.threshold_evaluation"
+    assert tasks.task_for("gating", "t2_confirm") == "gating.image_inspection"
+    # Basic QC on an image with no QC: on with v2, off with v1, as named when named.
+    assert SessionOptions().basic_qc is True and SessionOptions(engine="v1").basic_qc is False
+    assert SessionOptions(engine="v2", basic_qc=False).basic_qc is False
+    assert Engine(SimpleNamespace(), "s_old", st=st).options["basic_qc"] is False
+
+
+@pytest.mark.paid
+def test_v2_runs_basic_qc_on_an_image_without_qc_and_v1_warns_instead(tmp_path):
+    """No model call: QC's model-free checks run in the bulk pass, before the
+    image is calibrated, and what they are sure of is left out of every fit,
+    window and panel; v1 keeps its warning."""
+    from plexora.agent import jobs
+    from plexora.ai.qc_scenes import cyclic_scene
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from tests.qc_fixtures import make_qc_project
+    from tests.test_gating_session import ok
+
+    registry.discover(["gating", "qc", "roi"])
+    for name in ("cyc", "cyc1"):
+        make_qc_project(tmp_path, name, scene=cyclic_scene, grid=48,
+                        artifacts=("cycle_debris",))
+    session = AgentSession()
+    started = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "cyc", "markers": ["M2a"], "mode": "propose"}))
+    assert "basic_qc" in started and "qc_warning" not in started
+    assert "nobody reviews it" in started["basic_qc"]["message"]
+    jobs.drain(600)
+    record = engines.store().load(started["session_id"])
+    done = record["basic_qc"]["cyc"]
+    assert done["status"] == "done" and done["regions"]["fold"] == 1, done
+    assert record["qc_exclusion"]["cyc"]["origin"] == "basic"
+    assert record["qc_exclusion"]["cyc"]["n_left_out"] > 0 and not record["qc_missing"]
+
+    v1 = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "cyc1", "markers": ["M2a"], "mode": "propose",
+        "engine": "v1"}))
+    assert "qc_warning" in v1 and "basic_qc" not in v1
+    jobs.drain(600)
+    assert not engines.store().load(v1["session_id"]).get("basic_qc")
+
+
 @pytest.mark.paid
 def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
     from plexora.plugins.gating.server.autogate import engine as engines

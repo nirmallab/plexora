@@ -209,15 +209,16 @@ def seg_errors_into(image, labels, cells, channels, errors, seed=0):
 
 def make_qc_project(data_root, name="qcsynth", *, size=1024, grid=40, artifacts=(),
                     seed=0, calibrated=True, mask=True, table=True, levels=4,
-                    shape="square", seg_errors=None):
+                    shape="square", seg_errors=None, scene=None):
+    """`scene`: the scene builder (default `qc_scene`; `qc_scenes.cyclic_scene`
+    for a four-cycle panel)."""
     from scipy import ndimage
 
     data_root = Path(data_root)
     folder = data_root / f"_{name}_files"
     folder.mkdir(parents=True, exist_ok=True)
-    image, labels, cells, channels, truth = qc_scene(size=size, grid=grid,
-                                                     artifacts=artifacts, seed=seed,
-                                                     shape=shape)
+    image, labels, cells, channels, truth = (scene or qc_scene)(
+        size=size, grid=grid, artifacts=artifacts, seed=seed, shape=shape)
     if seg_errors:
         truth["segmentation"], cells = seg_errors_into(image, labels, cells, channels,
                                                        seg_errors, seed=seed)

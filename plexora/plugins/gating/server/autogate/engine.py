@@ -441,10 +441,13 @@ class Engine(BaseEngine):
     def option_defaults(self):
         """What a stored session's missing options are completed with: today's
         defaults, except the engine -- a session stored before the engine
-        option (2026-10-20) ran v1, whatever the default is now."""
+        option (2026-10-20) ran v1, whatever the default is now -- and the
+        contrast check that goes with it."""
         from plexora.plugins.gating.capabilities_session import option_defaults
 
-        return {**option_defaults(), "engine": "v1"}
+        return {**option_defaults(), "engine": "v1",
+                "display_check": schemas.DISPLAY_CHECK_DEFAULT["v1"],
+                "basic_qc": schemas.BASIC_QC_DEFAULT["v1"]}
 
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])

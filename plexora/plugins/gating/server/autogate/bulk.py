@@ -266,6 +266,69 @@ def _check_matrix(call, session_id):
         raise JobCancelled("the expression values changed under the session")
 
 
+#: The longest a basic QC run may take before the pass goes on without it.
+BASIC_QC_TIMEOUT_S = 3600.0
+
+
+def _basic_qc(call, session_id, project):
+    """QC's model-free checks (`qc.basic_run`) on an image with no QC result,
+    before it is calibrated or profiled: what they find is left out of its
+    windows, fits, samples and looks as any QC's is. Once per image and
+    session; a failure is recorded and logged, and the pass goes on."""
+    from plexora.agent import cell_exclusions, jobs, registry
+
+    with engine_for(call, session_id, save=False) as engine:
+        due = project in (engine.record.get("qc_missing") or ()) \
+            and project not in (engine.record.get("basic_qc") or {})
+    if not due:
+        return
+    outcome = {"status": "skipped", "reason": "QC is not installed"}
+    if any(c.name == "qc.basic_run" for c in registry.all_capabilities()):
+        call.progress(message=f"basic QC on {project} (no model calls)")
+        started = registry.invoke(call.session, "qc.basic_run", {"project": project},
+                                  policy=call.policy, audit=call.audit, link=call.link,
+                                  operation_id=f"{call.operation_id}.qc.{project}")
+        if not started.get("ok"):
+            outcome = {"status": "failed",
+                       "reason": (started.get("error") or {}).get("message") or "refused"}
+        else:
+            job_id = started["result"]["job_id"]
+            deadline = time.monotonic() + BASIC_QC_TIMEOUT_S
+            record = None
+            while time.monotonic() < deadline:
+                record = jobs.store().wait(job_id, timeout_s=5.0)
+                if record is None or record.get("status") in jobs.TERMINAL:
+                    break
+                try:
+                    call.check_cancelled()
+                except Exception:
+                    jobs.store().cancel(job_id)
+                    raise
+            status = (record or {}).get("status")
+            if status == "done":
+                result = record.get("result") or {}
+                outcome = {"status": "done", "job_id": job_id,
+                           **{k: result.get(k) for k in ("ran", "skipped", "regions",
+                                                         "held_back", "note")}}
+            else:
+                outcome = {"status": "failed", "job_id": job_id,
+                           "reason": ((record or {}).get("error") or {}).get("message")
+                           or f"the job ended {status or 'out of time'}"}
+    block = cell_exclusions.describe(call.session.data(project))
+    with engine_for(call, session_id) as engine:
+        engine.record.setdefault("basic_qc", {})[project] = outcome
+        engine.record.setdefault("qc_exclusion", {})[project] = {
+            k: block[k] for k in ("mode", "applied", "reason", "n_left_out", "n_cells",
+                                  "fraction", "result_id", "origin", "n_exclude", "n_warn",
+                                  "n_marker", "warning") if k in block}
+        if block.get("applied"):
+            engine.record["qc_missing"] = [p for p in engine.record.get("qc_missing") or ()
+                                           if p != project]
+        engine.log(event="basic_qc", project=project, status=outcome["status"],
+                   ran=outcome.get("ran"), regions=outcome.get("regions"),
+                   reason=outcome.get("reason"), n_left_out=block.get("n_left_out"))
+
+
 def run(call, inp):
     """The bulk job's handler."""
     from plexora.plugins.gating.server.autogate import biology, context
@@ -287,6 +350,8 @@ def run(call, inp):
     announce = _progress_announcer(call, session_id)
     for project in images:
         call.check_cancelled()
+        if options["basic_qc"]:
+            _basic_qc(call, session_id, project)
         if project not in calibrations:
             calibrations[project] = calibrate_image(call, project, session_id)
             with engine_for(call, session_id) as engine:

@@ -3154,8 +3154,9 @@ deliberately left out and what should be built next.
   (it waits on the bulk pass's calibration), `settle_display` rolls the
   per-image states (`schemas.DISPLAY_STATES`) up, and `struck_out` →
   `transitions.strike_display` keeps the rule after two unusable answers.
-  `SessionOptions.display_check` (`vision` default | `rule` | `off`,
-  `schemas.DISPLAY_CHECKS`) — `rule` skips the look and keeps the
+  `SessionOptions.display_check` (`vision` | `rule` | `off`,
+  `schemas.DISPLAY_CHECKS`; left out, `schemas.DISPLAY_CHECK_DEFAULT` by
+  engine: `vision` for v1, `off` for v2) — `rule` skips the look and keeps the
   calibration's own window, `off` leaves the step out (`DISPLAY_STATES` has
   `off`); session tests that expect a look
   first pass `display_check="rule"`. The task is `gating.display` in
@@ -3594,10 +3595,22 @@ deliberately left out and what should be built next.
   `global_blur` flag warns when even the sharpest cells lack fine detail, where
   an in-image reference cannot see it. `settings.json` holds the channel,
   threshold and minimum region size. **Artifact Detector** (`artifacts.py`,
-  `VERSION = "1"`, `CATEGORIES` fold/tear/debris/saturation, across every
+  `VERSION = "3"`, `CATEGORIES` fold/tear/debris/saturation, across every
   channel, coarse to fine: stage 1 reads each channel once at a level of at
   most 4096 px into a pan image, agreement counters and saturation seeds
-  against a per-channel effective ceiling; an attribution pass gathers each
+  against a per-channel effective ceiling, and -- where QC knows the cycles
+  (`cycle_groups`: `cycles.resolved`, 2-20 channels each) -- per-cycle maps
+  (`_CycleMaps`) for the cycle rule (`cycle_hits`: a run of consecutive
+  cycles with markers raised and their own nuclear stain off the cycles'
+  median is a fold seed, `metrics.rule == "cycle"`, written as a `scope:
+  "cycle"` region); without cycles the most-channels fold rule stands alone.
+  `run_basic_qc` (`qc.basic_run`, a job) writes the objects scoring
+  `BASIC_MIN_SCORE` (0.7) or more as automatic, unapproved regions
+  (`region_write.AUTOMATIC_BY`) in a `results.BASIC_ORIGIN` result, runs DNA
+  retention where it can, and derives the cells' calls; it never writes over
+  another QC result. Gating v2 runs it on an image with no QC
+  (`SessionOptions.basic_qc`, `autogate/bulk._basic_qc`, before calibration).
+  An attribution pass gathers each
   object's per-channel evidence; stage 2 re-reads each merged box at the
   finest level a pixel budget allows). Objects carry soft 0..1 scores and are
   cached under `<QC store dir>/artifacts/` (`<fp>.json|.npz`, `current.json`,

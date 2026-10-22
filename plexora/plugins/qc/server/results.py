@@ -216,6 +216,11 @@ def get_result(datasource, document, result_id):
     return found
 
 
+#: A result QC's model-free checks made on their own (`run_basic_qc`, which a
+#: gating session runs on an image with no QC): nobody reviewed it.
+BASIC_ORIGIN = "basic"
+
+
 def ensure_active(document, project) -> dict:
     """The active result, or a new manual one (a user drawing QC regions
     without a session) made active."""

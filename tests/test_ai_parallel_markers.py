@@ -75,12 +75,20 @@ def _call(session, name="gating.answer"):
 
 
 def start(session, project, **options):
-    # Parallel looks are the subject here: the contrast check is not.
+    # Parallel looks are the subject here: the contrast check is not. Engine
+    # v1 unless named: these tests set a parallel run beside a serial one on
+    # a second copy of the scene, and v2 seeds its panels by the image's name
+    # (`hypotheses._unit_seed`), so two copies draw different cells.
     options.setdefault("display_check", "rule")
+    options.setdefault("engine", "v1")
     started = ok(invoke(session, "gating_session_start", {"scope": "project",
                                                           "project": project, **options}))
     jobs.drain(120)
     return started["session_id"]
+
+
+#: The harness's start for the parity runs (`start` says why v1).
+V1 = {"engine": "v1"}
 
 
 def finals(session, session_id):
@@ -452,10 +460,12 @@ def test_the_harness_gates_with_parallel_markers_and_writes_the_prefix_once(tmp_
     infos = {name: scene(tmp_path, name) for name in ("gser", "gpar")}
     summaries = {}
     with FakeGateway(oracle_brain(infos["gser"])) as gateway:
-        summaries["gser"] = GatingRun(GatingOptions(project="gser"), gateway=client(gateway),
+        summaries["gser"] = GatingRun(GatingOptions(project="gser", start_options=V1),
+                                      gateway=client(gateway),
                                       trace=TraceStore(tmp_path / "s.sqlite")).run()
     with FakeGateway(oracle_brain(infos["gpar"])) as gateway:
-        summaries["gpar"] = GatingRun(GatingOptions(project="gpar", parallel_markers=3),
+        summaries["gpar"] = GatingRun(GatingOptions(project="gpar", parallel_markers=3,
+                                                    start_options=V1),
                                       gateway=client(gateway),
                                       trace=TraceStore(tmp_path / "p.sqlite")).run()
         calls = list(gateway.calls)

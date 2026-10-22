@@ -341,6 +341,19 @@ def engine_name(value) -> str:
     """The engine `value` names (`ENGINES`), a first name mapped to it."""
     return ENGINE_ALIASES.get(value, value)
 
+
+#: The contrast check (`DISPLAY_CHECKS`) of a session that names none, by
+#: engine. v2 was measured without it (the 2026-10-22 dev campaign), and its
+#: blind panels are drawn at the windows the check would choose, which the
+#: reader audit found move its reader more than any wording does; v1 keeps
+#: the check it has always run with.
+DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v2": "off"}
+#: Whether a session that names no `basic_qc` runs QC's model-free checks on
+#: an image with no QC result before gating it, by engine: v2 does (its
+#: windows, fits and panels then leave folds and debris out); v1 keeps what
+#: it always did.
+BASIC_QC_DEFAULT = {"v1": False, "v2": True}
+
 #: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
 PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")
 

@@ -691,6 +691,36 @@ brightfield (`unsupported_modality`). Four categories, each with its class:
 `saturation` (`saturation_or_clipping`, one channel each). Defocus is Blur
 QC's; the script's haze is not kept.
 
+*The cycle rule* (VERSION 3, 2026-10-22). A fold, bubble or debris can come or
+go between imaging cycles, so it is raised in a run of consecutive channels
+rather than in most of them. Where QC knows the cycles (`cycle_groups`:
+`cycles.resolved`, the user's `set_qc_cycles` override first, every cycle 2-20
+channels), stage 1 also keeps per cycle, on a grid of about 10 µm, the share
+of its markers raised and its nuclear stain (`_CycleMaps`). A cycle is hit
+where at least `cycle_agree` (0.5) of its markers are raised and its nuclear
+stain stands `cycle_nuclear_z` (2.5) robust SDs above the median of every
+cycle's nuclear stain there; a run of consecutive hit cycles holding
+`cycle_min_channels` (3) or more is a fold seed (`cycle_hits`), where the
+most-channels rule has none. Nuclei do not change between cycles: cells
+really bright in one cycle's markers (a dense T-cell infiltrate in a cycle of
+CD45, Ki67, CD3e) keep the same nuclei and are not hit. A cycle seed keeps
+its coarse outline (`refine_reason: "cycle_rule"`), carries `metrics.rule`
+and `metrics.cycles`, and is written as a `scope: "cycle"` region over its
+cycles' channels. Without resolved cycles, the most-channels rule stands
+alone, as before. A table-only version (cells bright in three consecutive
+channels) was tried first and rejected: on real panels it flagged 6-27 % of
+cells, dense immune infiltrates among them.
+
+*Basic QC* (`run_basic_qc`, `qc.basic_run`, a job). An image nobody has
+QC'd gets the detector and DNA retention without a model: objects scoring
+`BASIC_MIN_SCORE` (0.7, two steps over the default bar) or more are written
+as automatic regions (`origin: "automatic"`, `created_by: "basic_qc"`, not
+approved, so a QC session may decide them again and a later write replaces
+them) in a result of origin `basic`; weaker objects are counted as
+`held_back` (on lsp11385 the most-channels rule scores the epidermis 0.51 as
+a fold). It never writes over another QC result. Gating v2 runs it before
+calibrating such an image (`SessionOptions.basic_qc`).
+
 *Stage 1* reads each channel once, whole, at the finest level whose longer
 side is <= 4096 px (and <= 2e7 px): the smoothed log intensity (10 µm) is a
 robust z against the provisional tissue (the first nuclear channel's

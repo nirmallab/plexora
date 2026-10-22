@@ -298,7 +298,9 @@ mostly in crowded tissue: dense immune aggregates, packed tumour nests.
   confidence.
 - **What the readers saw and said:** they described haze and an edge band, but
   the whole-image check answered `cannot_tell` rather than naming an artifact.
-- **No QC:** the image had no QC run, and the session warned of this.
+- **No QC:** the image had no QC run, and the session warned of this. Since
+  2026-10-22 v2 runs basic QC on such an image first (see "Artifacts and the
+  display window" below); whether it catches these folds is not yet measured.
 - **What the person expects:** the whole-slide view should catch it and fail
   the marker.
 - **The absence check** (shared with v1) is off by default: on held-out images
@@ -324,22 +326,66 @@ mostly in crowded tissue: dense immune aggregates, packed tumour nests.
 - **Text and model:** old and new partner text made no difference. Sonnet is
   more lenient than Opus on lsp (+0.37).
 
+**Artifacts and the display window (2026-10-22).** The window a cell panel is
+drawn at is measured once per marker per image from its cells: black from the
+30th–50th percentile band, the bright end from 16 cells of the 97th–99.5th.
+Cells QC excludes are never used. Without QC an artifact brighter than the real
+positives fills that bright band once it covers about 1–2 % of cells:
+- **Synthetic:** a fold twice as bright over 2 % of a scene lifted every
+  marker's white 2.1–2.3× and drew real positives at 0.12–0.31 instead of
+  0.40–0.75. The vision contrast check cannot undo it: its grid shows the
+  cells nearest that same bright reference, and its brightest column is 1.6×.
+- **Tried and rejected: a cell-table screen** (cells bright in 3 or more
+  consecutive channels, the person's cyclic-imaging idea, with a spatial patch
+  condition). Clean on synthetic tables, but on real ones it flagged 6–27 % of
+  cells: on lsp11385 a dense T-cell infiltrate, because panels place related
+  markers side by side (CD45, Ki67, CD3e; PDL1, PD1, CD4, FOXP3), and it would
+  have drawn immune markers 20–50 % too bright.
+- **Built instead, on pixels: the Artifact Detector's cycle rule**
+  (`artifacts.cycle_hits`). Where QC knows the cycles (`cycles.resolved`, each
+  2–20 channels; otherwise the most-channels rule alone, as before), a place is
+  a fold seed when a run of consecutive cycles has half its markers raised
+  and its own nuclear stain differs from the median of every cycle's there.
+  Nuclei do not change between cycles; cells really bright in one cycle's
+  markers keep the same nuclei, so the lsp11385 infiltrate is not flagged.
+  A bright one-cycle artifact over 12 % of a synthetic image drew that cycle's
+  marker at 2.6–2.7× its window; after basic QC, 1.00×. QC bench unchanged.
+- **Basic QC (`run_basic_qc`, gating option `basic_qc`, on for v2):** on an
+  image with no QC result the bulk pass runs the detector and DNA retention
+  before calibrating, with no model calls, writes the objects scoring 0.7 or
+  more as automatic, unapproved regions in a `basic` result, and the cells
+  inside are left out everywhere. Weaker objects are held back: on lsp11385
+  the most-channels rule scores the epidermis (the Ecad and SOX10 population)
+  0.51 as a fold. A full QC session reviews and supersedes it.
+- **Not caught:** an artifact raised in a cycle's markers but not in its
+  nuclear stain, and folds present in every cycle that cover under half the
+  channels.
+
 **F7. The validation base is thin.**
 - **What was measured:** four dev images plus lsp11385_2, all multiplexed
   immunofluorescence (PCA melanoma and p193 colon).
 - **Not run yet:** the 12 held-out PCA images (E3, run once only, frozen).
 - **Not available:** non-LSP hand gates for IMC, CODEX-LN and CRC.
 - **Not done:** a blind re-gate by the person, which would set the spread band.
-- **Defaults never run live with v2.** The campaign ran with `display_check`
-  off, `classifier` off, combined Opus workers and propose mode. The new
-  defaults have never been run live together with v2:
-  - `display_check: "vision"`;
-  - `classifier: "layer"`;
-  - dataset scope;
-  - `tiles`;
-  - the user's models file routing `image_inspection` (cell panels) to Sonnet.
+- **Defaults brought to what was measured (2026-10-22).** The campaign ran
+  with `display_check` off, `classifier` off, combined Opus workers and
+  propose mode. Since then:
+  - `display_check` left out is `off` with v2 (`vision` with v1), because the
+    cell panels are drawn at the windows the check chooses and the window
+    moves the reader (F6). An image that already had auto contrast keeps
+    its choice either way.
+  - Cell panels are the `threshold_evaluation` task, not `image_inspection`,
+    so they go to the model that chooses gates (Opus in the campaign).
+  - `classifier: "layer"` stays the default. It runs after a gate is written
+    and never moves it, so v2's gates are the same with it on or off.
 
-  Run one live session with the defaults before relying on them.
+  - `basic_qc` is on with v2: an image with no QC gets QC's model-free checks
+    first (see "Artifacts and the display window").
+
+  Still never run live with v2: the classifier layer, basic QC, dataset scope, `tiles`,
+  and whatever model the Plexora AI admin page routes `threshold_evaluation`
+  to for the app's own runs. Run one live session with the defaults before
+  relying on them.
 
 **F8. Operational traps found during the campaign.**
 - **One table per node:** a data node holds one cell table at a time.
@@ -410,8 +456,8 @@ Ordered by expected value per unit of cost. Each says how to test it.
    marker class, with multi-lineage markers like CD4 broken out. Change the
    text only if per-cell balanced accuracy does not drop on any class in any
    of the four label sets.
-7. **Cost (F3, section 3).** The panel task is `image_inspection` (effort
-   medium).
+7. **Cost (F3, section 3).** The panel task is `threshold_evaluation` (effort
+   high) since 2026-10-22; it was `image_inspection` (effort medium) before.
    - If a cheaper model matched Opus per cell, the loop would cost far less.
      The reader audit found Sonnet lenient on lsp, so validate per marker class
      before routing.

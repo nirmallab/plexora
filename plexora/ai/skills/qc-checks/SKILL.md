@@ -31,7 +31,10 @@ works without a licence, with a narrower look.
 
 - A whole QC of the image, every channel and every kind of artifact: qc-image
   (its session runs these same checks first).
-- Reviewing or loosening QC already written: review-qc.
+- Reviewing or loosening QC already written: review-qc. Regions made by
+  `run_basic_qc` (automatic, unreviewed; a gating session runs it on an image
+  with no QC) are reviewed here too: they are not approved, so a QC session
+  may decide them again.
 - Looking at the tissue without a QC question: visual-inspection.
 
 ## Required features

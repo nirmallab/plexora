@@ -69,15 +69,18 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: medium
-        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm, absence_check, cell_panel]
+        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm, absence_check]
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.
+        # Engine v2's cell panels are its only looks: their labels choose the
+        # gate, so they are read by the model that chooses between candidates
+        # (the 2026-10-22 dev campaign read them with the same model as these).
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
         effort: high
-        kinds: [t4_candidates]
+        kinds: [t4_candidates, cell_panel]
       classifier_check:
         label: Classifier check
         blurb: Judges whether the cells the Single Cell Classifier calls the other way from a gate carry their own stain, beside cells it agrees on.

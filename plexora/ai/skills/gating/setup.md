@@ -56,13 +56,18 @@ the markers it cannot place in the panel context.
   - `display_setup`: how bright each marker is drawn, once per image (the
     choice outlives the session): per row, the columns where the background
     reads as a faint floor (`background_ok`) and where the row's `pattern`
-    shows with detail (`structure_ok`); code picks. `display_check: "rule"`
-    at the start skips it, `"off"` drops it; for brightness alone,
+    shows with detail (`structure_ok`); code picks. Engine `v2` leaves it
+    out unless `display_check: "vision"` is passed; with `v1`, `"rule"` at
+    the start skips it and `"off"` drops it; for brightness alone,
     `contrast_session_start`.
 
 ## Options worth knowing
 
 - `qc`: which QC calls leave cells out (gating/qc-cells).
+- `basic_qc`: on with `v2`. An image with no QC result gets QC's model-free
+  checks before it is gated (`run_basic_qc`, no model calls); the start
+  output's `basic_qc` note says so. Pass it on to the user, with the advice
+  to run the full QC from the QC panel to review what it left out.
 - `reuse_answers`: answers are kept under a hash of each packet (per `agent`)
   and reused by an identical later packet (status `replayed`). Pass false to
   be asked afresh.
