@@ -234,6 +234,12 @@ class FigureCaptureDock {
                         Everything you take is kept here until you put it in a figure.</p>
                     <div class="fb-strip-foot">
                         <div class="fb-strip-bulk" data-role="bulk">
+                            <button class="fb-strip-link fb-strip-filter" type="button"
+                                    data-role="onlyBookmarked" aria-pressed="false"
+                                    title="Show only the bookmarked views (K in the viewer bookmarks one)">
+                                <span class="fas fa-bookmark" aria-hidden="true"></span>
+                                <span class="fb-visually-hidden">Bookmarked only</span>
+                            </button>
                             <button class="fb-strip-link" type="button" data-role="checkAll"
                                     title="Tick every capture">All</button>
                             <button class="fb-strip-link" type="button" data-role="checkNone"
@@ -423,6 +429,8 @@ class FigureCaptureDock {
         } else if (role === "select") {
             const captureId = id();
             if (captureId) this.handlers.onSelectCapture?.(captureId);
+        } else if (role === "onlyBookmarked") {
+            this.handlers.onToggleBookmarked?.();
         } else if (role === "checkAll") {
             this.handlers.onCheckAll?.(true);
         } else if (role === "checkNone") {
@@ -519,11 +527,24 @@ class FigureCaptureDock {
         if (edit) edit.hidden = !editing;
         if (editing) this.renderEdit(editing);
 
-        const captures = state.captures || [];
+        const all = state.captures || [];
+        // The Bookmarked filter shows only those; each keeps its number,
+        // which is the tag on its box out on the image.
+        const captures = state.onlyBookmarked ? all.filter((capture) => capture.bookmarked) : all;
         const count = this.el("count");
         if (count) count.textContent = String(captures.length);
         const empty = this.el("empty");
-        if (empty) empty.hidden = captures.length > 0;
+        if (empty) {
+            empty.hidden = captures.length > 0;
+            empty.textContent = state.onlyBookmarked && all.length
+                ? "No bookmarked views of this image. K in the viewer bookmarks one."
+                : "Nothing captured yet. Everything you take is kept here until you put it in a figure.";
+        }
+        const filter = this.el("onlyBookmarked");
+        if (filter) {
+            filter.setAttribute("aria-pressed", String(Boolean(state.onlyBookmarked)));
+            filter.classList.toggle("is-active", Boolean(state.onlyBookmarked));
+        }
 
         const checked = captures.filter((capture) => capture.checked).length;
 
@@ -538,8 +559,13 @@ class FigureCaptureDock {
                 // the only one a reload would lose.
                 if (capture.unsaved) classes.push("is-unsaved");
                 if (capture.id === state.selected) classes.push("is-selected");
-                const title = escape(capture.caption || "")
+                // A bookmark (core's bookmarks tray): badged, and named by its label.
+                if (capture.bookmarked) classes.push("is-bookmarked");
+                const title = escape(capture.bookmarked && capture.label
+                    ? `${capture.label} (bookmarked) · ${capture.caption || ""}` : capture.caption || "")
                     + (capture.unsaved ? " — not saved to your captures bin" : "");
+                const badge = capture.bookmarked
+                    ? '<span class="fb-strip-badge fas fa-bookmark" aria-hidden="true"></span>' : "";
                 const image = capture.url
                     ? `<img src="${escape(capture.url)}" alt="" draggable="false">`
                     : '<span class="fb-strip-pending"></span>';
@@ -558,7 +584,8 @@ class FigureCaptureDock {
                         <span class="fas fa-check" aria-hidden="true"></span>
                         <span class="fb-visually-hidden">Include in the next figure</span>
                     </button>
-                    <span class="fb-strip-index">${index + 1}</span>
+                    <span class="fb-strip-index">${(capture.index ?? index) + 1}</span>
+                    ${badge}
                     <button class="fb-strip-remove" type="button" data-role="remove"
                             title="Discard this capture">
                         <span class="fas fa-xmark" aria-hidden="true"></span>

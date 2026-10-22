@@ -455,6 +455,21 @@ box.sessionStorage.setItem("plexora:canvas-position:junk", '{"x": 2, "y": 0.5}')
 check("a remembered place that is not two fractions is ignored",
       Movable.read("plexora:canvas-position:junk") === null && Movable.read(null) === null);
 
+// -- the lane rises over the bottom-centre dock (the bookmarks tray) ------------------
+{
+    const tray = new HTMLElement("section");
+    Layout.place(tray, { corner: "bottom-center", order: 20, id: "bookmarks" });
+    dock("bottom-center").rect = { left: 0, top: 0, width: 400, height: 90 };
+    layout.measure();
+    const withTray = parseFloat(v("--plx-lane-bottom"));
+    tray.hidden = true;
+    layout.measure();
+    const without = parseFloat(v("--plx-lane-bottom"));
+    check("the chat's lane starts above the bookmarks tray, and comes down when it closes",
+          withTray >= Layout.insets().bottom + 12 + 90 + 12 && withTray > without, `${withTray} ${without}`);
+    tray.remove();
+}
+
 console.log(failures.length ? `\n${failures.length} of ${checks} check(s) failed`
                             : `\nall ${checks} checks passed`);
 if (failures.length) {

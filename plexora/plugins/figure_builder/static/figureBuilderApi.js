@@ -175,11 +175,20 @@ class FigureBuilderApi {
     /** The bin, newest first. `datasource` narrows it to one image, which is
      *  what the in-viewer strip wants -- a capture's outline can only be drawn
      *  over the image it came from. */
-    async listCaptures(datasource) {
-        const query = datasource
-            ? "?" + new URLSearchParams({ datasource: datasource }) : "";
+    async listCaptures(datasource, options) {
+        const params = {};
+        if (datasource) params.datasource = datasource;
+        // The bookmarks only (core's bookmarks tray, figureBookmarkStore.js).
+        if (options && options.bookmarked) params.bookmarked = "1";
+        const query = Object.keys(params).length ? "?" + new URLSearchParams(params) : "";
         const response = await fetch(this._api("captures") + query);
         return this._read(response);
+    }
+
+    /** Bookmark a capture, take its bookmark off, or rename it:
+     *  `{bookmarked?, label?}`. Nothing else about it changes. */
+    async patchCapture(captureId, changes) {
+        return this._json(`captures/${encodeURIComponent(captureId)}`, "PATCH", changes || {});
     }
 
     /** Keep a capture. The id is the CLIENT's, like a panel's, so the strip can
@@ -333,5 +342,56 @@ class FigureBuilderApi {
     async describeSource(datasource) {
         const response = await fetch(this._api("sources/" + encodeURIComponent(datasource)));
         return this._read(response);
+    }
+
+    /**
+     * The physical size of one pixel of `datasource`, `{value, unit, source}`,
+     * or null. Not in the project record -- it lives in the OME metadata,
+     * behind a loader -- so it is read for the datasource on screen, which is
+     * therefore already loaded. Absent stays absent: a capture with no
+     * calibration disables its scale bar rather than inventing one.
+     */
+    async readPixelSize(datasource) {
+        try {
+            const response = await fetch(
+                this.url("get_ome_metadata") + "?" + new URLSearchParams({ datasource: datasource }));
+            if (!response.ok) return null;
+            const metadata = await response.json();
+            // `/get_ome_metadata` returns the pixels dict FLAT -- see local.py's
+            // `from_xml(xml).images[0].pixels`, and core's viewer, which reads
+            // `imgMetadata.physical_size_x` straight off the response. Digging
+            // for `images[0].pixels` found nothing every time, so no figure has
+            // ever auto-calibrated from metadata: every scale bar came from a
+            // number somebody typed. Both shapes are tolerated here rather than
+            // one of them assumed -- the only thing worse than a missing
+            // calibration is a wrong one, and neither shape can invent a value.
+            const pixels = metadata?.images?.[0]?.pixels || metadata || {};
+            const value = Number(pixels.physical_size_x);
+            if (!(value > 0)) return null;
+            return {
+                value: value,
+                unit: pixels.physical_size_x_unit || "µm",
+                // The endpoint now says which of the two this is: a project
+                // calibrated by hand in the viewer serves its value here, and
+                // reporting that as "metadata" would put a claim on the
+                // provenance page that the file never made.
+                source: pixels.pixel_size_source === "manual" ? "manual" : "metadata",
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * `datasource` as a figure source, with its pixel size: what a capture
+     * records about the image it came from (FigureCaptureBin.adoptInto turns
+     * it into a figure's source). Null when it cannot be described.
+     */
+    async describeCaptureSource(datasource) {
+        const described = await this.describeSource(datasource);
+        if (!described.ok) return null;
+        const source = { ...described.data.source };
+        source.pixel_size = await this.readPixelSize(datasource);
+        return source;
     }
 }

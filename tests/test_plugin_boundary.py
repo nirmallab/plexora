@@ -108,6 +108,12 @@ def figure_builder(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def figure_builder_closed(tmp_path_factory):
+    """Figure Builder installed, its tool NOT open (?tool= names nothing installed)."""
+    return _probe("figure_builder", tmp_path_factory.mktemp("figure_builder_closed"), tool="gating")
+
+
+@pytest.fixture(scope="module")
 def transcripts(tmp_path_factory):
     return _probe("transcripts", tmp_path_factory.mktemp("transcripts"))
 
@@ -202,7 +208,7 @@ def _asset_paths(urls):
 
 def test_core_page_loads_no_plugin_scripts(core):
     page = core["pages"]["viewer_tool"]
-    leaked = [p for p in _asset_paths(page["scripts"]) if "gating" in p.lower()]
+    leaked = [p for p in _asset_paths(page["scripts"]) if "gating" in p.lower() or "/plugins/" in p]
     assert leaked == [], f"core viewer page pulled in plugin scripts: {leaked}"
 
 
@@ -450,6 +456,20 @@ def test_figure_builder_page_mounts_its_scripts_and_no_sidebar_panel(figure_buil
     assert page["flask_variables"]["active_tool"] == "figure_builder"
     assert "figure_builder_panel_section" not in page["ids"]
     assert "tool_panel_slot" not in page["flask_variables"]["active_tool_panels"]
+
+
+def test_figure_builder_store_is_on_every_viewer_page_once(figure_builder, figure_builder_closed):
+    """Core's bookmarks tray works with no tool open, so the captures store
+    behind it (Plugin.viewer_scripts) is on the viewer page either way -- and
+    once: it shares figureBuilderApi.js with the tool, and a second <script> of
+    a file that declares a class is a SyntaxError."""
+    closed = _asset_paths(figure_builder_closed["pages"]["viewer_tool"]["scripts"])
+    assert any(s.endswith("figureBookmarkStore.js") for s in closed)
+    assert not any(s.endswith("figureSidebarController.js") for s in closed), \
+        "the tool's own UI waits for the tool to open"
+    opened = _asset_paths(figure_builder["pages"]["viewer_tool"]["scripts"])
+    assert any(s.endswith("figureBookmarkStore.js") for s in opened)
+    assert len(opened) == len(set(opened)), [s for s in opened if opened.count(s) > 1]
 
 
 def test_the_second_workspace_slot_is_gone_from_the_viewer(core, figure_builder):

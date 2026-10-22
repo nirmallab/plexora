@@ -137,8 +137,9 @@ class FigureCaptureBin {
 
         out.panelIds = panels.map((panel) => panel.panel_id);
         // Never fatal: the panels are already in the figure, and the bin rows
-        // are emptied by this call. A preview that did not move leaves a panel
-        // that re-renders from its scene -- slower, never wrong.
+        // are emptied by this call -- except a bookmark's, which stays in the
+        // bin (`kept`; server/captures.py). A preview that did not move leaves
+        // a panel that re-renders from its scene -- slower, never wrong.
         try {
             await api.adoptPreviews(state.figureId, pairs);
         } catch (error) {

@@ -31,7 +31,8 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // `typeof` fallback works rather than that the guard does.
 // viewerScene.js first: FigureSchema/FigureScene delegate their viewport
 // helpers to core's PlexoraViewerScene (loaded by base.html on every page).
-const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureSceneSnapshot.js", "figureCaptureTool.js",
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js",
+                 "../../../client/src/js/services/viewRaster.js", "figureSchema.js", "figureSceneSnapshot.js", "figureCaptureTool.js",
     "figureCaptureBoxes.js", "figureCaptureDock.js", "figureConfirm.js"];
 
 const IMAGE_WIDTH = 4000;

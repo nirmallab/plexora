@@ -810,6 +810,12 @@ class Plugin:
     scripts: tuple[str, ...] = ()
     #: This plugin's stylesheet filenames, resolved the same way as `scripts`.
     styles: tuple[str, ...] = ()
+    #: Scripts loaded on EVERY viewer page this plugin applies to, its tool
+    #: open or not -- for a store or a bridge core's own UI talks to (Figure
+    #: Builder's captures behind core's bookmarks tray), never for UI of the
+    #: plugin's own, which waits for the tool to open. Resolved as `scripts`
+    #: are; one also in `scripts` is loaded once (the same URL).
+    viewer_scripts: tuple[str, ...] = ()
 
     #: What this plugin needs from the project before its tool can open.
     requires: Requires = field(default_factory=Requires)
@@ -967,7 +973,7 @@ class Plugin:
         whatever URL the page was served at and so broke on any page that was
         not exactly one segment deep -- see tests/test_page_assets.py.
         """
-        assets = self.scripts if kind == "scripts" else self.styles
+        assets = {"scripts": self.scripts, "viewer_scripts": self.viewer_scripts}.get(kind, self.styles)
         return [f"{base_url}{self.url_prefix}/static/{name}?v={self.version}" for name in assets]
 
     def describe(self) -> dict:

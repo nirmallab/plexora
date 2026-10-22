@@ -665,6 +665,15 @@ def image_viewer(datasource):
             'modality': (layer.modality or '') if layer else '',
         })
 
+    # Scripts a plugin wants on every viewer page, its tool open or not (a
+    # store core's bookmarks talk to; Plugin.viewer_scripts). First, and once:
+    # a script also in the open tool's list is the same URL, and a second
+    # <script> of a file that declares a class is a SyntaxError.
+    viewer_scripts = [url for plugin in plugin_registry.viewer_scripts_for(app, project)
+                      for url in plugin.asset_urls('viewer_scripts', base_url)]
+    tool_scripts = list(dict.fromkeys(
+        viewer_scripts + (active.asset_urls('scripts', base_url) if active else []) + section_scripts))
+
     return render_template(
         'index.html',
         data=template_data(
@@ -677,8 +686,7 @@ def image_viewer(datasource):
             active_tool=active_tool,
             available_tools=[p.describe() for p in offered if p.menu == 'tools'],
             view_tools=[p.describe() for p in offered if p.menu == 'view'],
-            active_tool_scripts=(active.asset_urls('scripts', base_url)
-                                 if active else []) + section_scripts,
+            active_tool_scripts=tool_scripts,
             active_tool_styles=(active.asset_urls('styles', base_url)
                                 if active else []) + section_styles,
             active_tool_panels=dict(active.panels) if active else {},

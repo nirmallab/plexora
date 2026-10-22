@@ -428,13 +428,17 @@
             const width = this.safe.getBoundingClientRect().width;
             const left = size["bottom-left"];
             const right = size["bottom-right"];
+            // What sits in the middle of the bottom (the bookmarks tray): the
+            // lane starts above it.
+            const middle = size["bottom-center"] || { w: 0, h: 0 };
+            const over = (h) => (h ? h + EDGE : 0);
             const beside = (part) => (part.w ? part.w + EDGE : 0);
             const between = width - 2 * EDGE - beside(left) - beside(right);
             const lane = between >= LANE_MIN
                 ? { left: inset.left + EDGE + beside(left), right: inset.right + EDGE + beside(right),
-                    bottom: inset.bottom + EDGE }
+                    bottom: inset.bottom + EDGE + over(middle.h) }
                 : { left: inset.left + EDGE, right: inset.right + EDGE,
-                    bottom: inset.bottom + EDGE + Math.max(left.h, right.h) + (left.h || right.h ? EDGE : 0) };
+                    bottom: inset.bottom + EDGE + over(Math.max(left.h, right.h, middle.h)) };
             for (const key of ["left", "right", "bottom"]) {
                 style.setProperty(`--plx-lane-${key}`, `${Math.round(lane[key])}px`);
             }

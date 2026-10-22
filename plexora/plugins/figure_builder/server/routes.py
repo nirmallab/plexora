@@ -347,11 +347,14 @@ def list_captures():
 
     Narrowed is what the in-viewer strip asks for: a capture's outline is drawn
     in the coordinates of the image it came from, so captures from another
-    slide have nowhere to be drawn on this one.
+    slide have nowhere to be drawn on this one. `bookmarked=1` keeps the
+    bookmarks only (core's bookmarks tray).
     """
     return api.json_response({
         "success": True,
-        "captures": captures.list_captures(request.args.get('datasource') or None),
+        "captures": captures.list_captures(
+            request.args.get('datasource') or None,
+            bookmarked=request.args.get('bookmarked') in ('1', 'true')),
     })
 
 
@@ -366,9 +369,28 @@ def add_capture():
         body = _payload()
         stored = captures.add(
             body.get('capture_id'), body.get('datasource'),
-            body.get('source'), body.get('scene'), caption=body.get('caption'))
+            body.get('source'), body.get('scene'), caption=body.get('caption'),
+            bookmarked=body.get('bookmarked', False), label=body.get('label') or "")
     except schema.UnreadableFigure as exc:
         return _unreadable(exc)
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return api.json_response({"success": True, "capture": stored})
+
+
+@figure_builder_bp.route('/api/captures/<capture_id>', methods=['PATCH'])
+def patch_capture(capture_id):
+    """Bookmark a capture, take its bookmark off, or rename it: `{bookmarked?,
+    label?}`. Taking a bookmark off leaves the capture in the bin and every
+    figure panel made from it as it was."""
+    try:
+        body = _payload()
+        stored = captures.set_bookmark(capture_id, bookmarked=body.get('bookmarked'),
+                                       label=body.get('label'))
+    except UnknownCapture:
+        return jsonify(success=False, error="unknown_capture"), 404
     except CapturesUnavailable as exc:
         return _bin_unavailable(exc)
     except ValueError as exc:
@@ -448,7 +470,8 @@ def adopt_capture_previews(figure_id):
     well would be a second implementation of the panel defaults to disagree
     with the first. A capture whose raster cannot be found still leaves the
     bin: the panel exists by then, and a bin row for a capture that is already
-    in a figure is the one thing the bin must never show.
+    in a figure is the one thing the bin must never show -- unless it is a
+    bookmark, which stays (`kept`).
     """
     try:
         schema.validate_figure_id(figure_id)

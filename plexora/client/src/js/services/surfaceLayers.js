@@ -614,7 +614,9 @@ window.PlexoraSurfaceLayers = (function () {
         }
     }
 
-    /** The 3-D view as a figure panel records it (`scene.plugins.volume`). */
+    /** The stack's view as a figure panel or a bookmark records it
+     *  (`scene.plugins.volume`): in 3-D the camera, the area, the cut and
+     *  the surfaces; on a plane or a projection, which plane and range. */
     function sceneState() {
         const vs = window.__plexora?.viewState;
         const volume = volumeView()?.renderer;
@@ -631,23 +633,35 @@ window.PlexoraSurfaceLayers = (function () {
                  surfaces: captureState() };
     }
 
-    function applyScene(scene) {
+    /**
+     * Put a recorded view back (`sceneState`). `save: false` by default (a
+     * figure panel reopened changes the picture, never what the image keeps);
+     * `save: true` for a bookmark, which is a place the user went back to. A
+     * scene recorded on a plane or a projection puts that plane back; one
+     * recorded before 2-D views were recorded is 3-D.
+     */
+    function applyScene(scene, { save = false } = {}) {
         const vs = window.__plexora?.viewState;
         if (!scene || !vs?.enabled?.()) return false;
         const volume = vs.get().volume || {};
-        vs.set({ mode: "volume", t: scene.t || 0, slab: scene.slab || undefined,
+        const mode = ["plane", "slab", "volume"].includes(scene.mode) ? scene.mode : "volume";
+        const three = mode === "volume";
+        vs.set({ mode, t: scene.t || 0, slab: scene.slab || undefined,
                  // [inspect] The cut, and how voxels were read.
                  ...(scene.inspect ? { inspect: scene.inspect } : {}),
                  ...(Number.isFinite(scene.z) ? { z: scene.z } : {}),
                  volume: { ...volume, composite: scene.composite || volume.composite,
                            show: scene.show || volume.show,
                            ...(scene.interpolation ? { interpolation: scene.interpolation } : {}),
-                           ...(scene.box !== undefined ? { area: scene.box || null } : {}),
-                           ...(scene.camera ? { camera: scene.camera } : {}) } }, { save: false });
+                           // A square is a 3-D view's; on a plane there is none.
+                           ...(three && scene.box !== undefined ? { area: scene.box || null } : {}),
+                           ...(three ? {} : { area: null }),
+                           ...(three && scene.camera ? { camera: scene.camera } : {}) } }, { save });
+        if (!three) return true;
         const restore = () => {
             const renderer = volumeView()?.renderer;
             if (scene.camera) renderer?.restoreCamera?.(scene.camera);
-            applyState(scene.surfaces || [], { save: false });
+            applyState(scene.surfaces || [], { save });
         };
         if (volumeView()?.renderer) restore();
         else window.addEventListener("plexora:volume-mounted", restore, { once: true });
@@ -675,15 +689,18 @@ window.PlexoraSurfaceLayers = (function () {
         window.addEventListener("plexora:sections-moved", scheduleCuts);
         window.addEventListener("plexora:surface-selected", () => paintCuts());
         // Figure Builder keeps a 3-D panel's camera, what it showed and its
-        // surfaces (`scene.plugins.volume`), and gets them back on reopen.
+        // surfaces (`scene.plugins.volume`), and gets them back on reopen; on
+        // a z-stack seen as a plane or a projection, which one (a bookmark
+        // goes back to its plane). `persist` on a restore: a bookmark's.
         window.addEventListener("plexora:figure-capture-state", (event) => {
-            if (!window.__plexora?.viewState?.isVolume?.()) return;
+            if (!window.__plexora?.viewState?.enabled?.()) return;
             event.detail?.contribute?.("volume", { version: 1, state: sceneState() });
         });
         window.addEventListener("plexora:figure-restore-state", (event) => {
             const part = event.detail?.plugins?.volume;
             if (!part?.state) return;
-            event.detail?.report?.("volume", applyScene(part.state) ? "ok" : "partial");
+            const save = event.detail?.persist === true;
+            event.detail?.report?.("volume", applyScene(part.state, { save }) ? "ok" : "partial");
         });
         sync();
         scheduleCuts();

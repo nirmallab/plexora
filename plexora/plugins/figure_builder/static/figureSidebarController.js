@@ -160,6 +160,10 @@ class FigureBuilderSidebarController {
             onRemoveCapture: (id) => this.removeCapture(id),
             onToggleCheck: (id) => this.toggleCheck(id),
             onCheckAll: (on) => this.checkAll(on),
+            onToggleBookmarked: () => {
+                this.onlyBookmarked = !this.onlyBookmarked;
+                this.renderDock();
+            },
             onDeleteChecked: () => this.removeChecked(),
             onOpenCanvas: () => this.goToCanvas(),
             onUpdatePanel: () => this.updatePanel(),
@@ -380,6 +384,8 @@ class FigureBuilderSidebarController {
                 known.scene = row.scene || known.scene;
                 known.source = row.source || known.source;
                 known.caption = row.caption || known.caption;
+                known.bookmarked = Boolean(row.bookmarked);
+                known.label = row.label || "";
                 // A blob this page already holds beats a refetch of the same
                 // pixels; anything else takes the route.
                 if (!known.objectUrl) known.url = row.url;
@@ -392,6 +398,8 @@ class FigureBuilderSidebarController {
                 scene: row.scene,
                 source: row.source,
                 caption: row.caption,
+                bookmarked: Boolean(row.bookmarked),
+                label: row.label || "",
                 url: row.url,
                 objectUrl: false,
                 checked: false,
@@ -537,19 +545,9 @@ class FigureBuilderSidebarController {
      */
     describeThisImage() {
         if (!this._describing) {
-            this._describing = (async () => {
-                const described = await this.api.describeSource(this.datasource);
-                if (!described.ok) return null;
-                const source = { ...described.data.source };
-                // Physical pixel size is not in the project record -- it lives
-                // in the OME metadata, behind a loader. Read here, for the
-                // datasource that is on screen and therefore already loaded, so
-                // no other source's description can ever cause a load. Absent
-                // stays absent: a capture with no calibration disables its
-                // scale bar rather than inventing one.
-                source.pixel_size = await this.readPixelSize();
-                return source;
-            })().catch(() => null);
+            // With its pixel size, read for the datasource on screen and so
+            // already loaded (FigureBuilderApi.readPixelSize).
+            this._describing = this.api.describeCaptureSource(this.datasource).catch(() => null);
         }
         return this._describing;
     }
@@ -1069,35 +1067,9 @@ class FigureBuilderSidebarController {
     // capture and turned into a figure source by FigureCaptureBin.adoptInto,
     // in the same batch as the panels that use it.
 
-    async readPixelSize() {
-        try {
-            const response = await fetch(
-                this.ctx.url("get_ome_metadata") + "?" + new URLSearchParams({ datasource: this.datasource }));
-            if (!response.ok) return null;
-            const metadata = await response.json();
-            // `/get_ome_metadata` returns the pixels dict FLAT -- see local.py's
-            // `from_xml(xml).images[0].pixels`, and core's viewer, which reads
-            // `imgMetadata.physical_size_x` straight off the response. Digging
-            // for `images[0].pixels` found nothing every time, so no figure has
-            // ever auto-calibrated from metadata: every scale bar came from a
-            // number somebody typed. Both shapes are tolerated here rather than
-            // one of them assumed -- the only thing worse than a missing
-            // calibration is a wrong one, and neither shape can invent a value.
-            const pixels = metadata?.images?.[0]?.pixels || metadata || {};
-            const value = Number(pixels.physical_size_x);
-            if (!(value > 0)) return null;
-            return {
-                value: value,
-                unit: pixels.physical_size_x_unit || "µm",
-                // The endpoint now says which of the two this is: a project
-                // calibrated by hand in the viewer serves its value here, and
-                // reporting that as "metadata" would put a claim on the
-                // provenance page that the file never made.
-                source: pixels.pixel_size_source === "manual" ? "manual" : "metadata",
-            };
-        } catch (error) {
-            return null;
-        }
+    /** This image's pixel size (FigureBuilderApi.readPixelSize). */
+    readPixelSize() {
+        return this.api.readPixelSize(this.datasource);
     }
 
     // -- rendering -------------------------------------------------------
@@ -1142,11 +1114,15 @@ class FigureBuilderSidebarController {
             error: this.failure,
             editing: this.editing ? this.editSession() : null,
             selected: this.selected,
-            captures: this.captures.map((capture) => ({
+            onlyBookmarked: Boolean(this.onlyBookmarked),
+            captures: this.captures.map((capture, index) => ({
                 id: capture.id,
+                index: index,
                 url: capture.url,
                 checked: Boolean(capture.checked),
                 unsaved: Boolean(capture.unsaved),
+                bookmarked: Boolean(capture.bookmarked),
+                label: capture.label || "",
                 caption: capture.caption || this.captionFor(capture),
             })),
         });
@@ -1250,6 +1226,18 @@ window.Plexora.registerPlugin({
 // scope and registered once per page; the live controller is looked up when
 // the event arrives, so with the tool closed there is nothing to refresh and
 // the next open reads the bin anyway.
+// A bookmark is a capture (core's bookmarks tray, figureBookmarkStore.js):
+// one made, renamed or taken off there is a change of the bin, and the strip
+// reads it again the same way.
+window.addEventListener("plexora:bookmarks-changed", (event) => {
+    const reason = event.detail?.reason;
+    if (reason === "preview" || reason === "active" || reason === "inactive" || reason === "added") return;
+    const live = window.__plexora?.plugins?.get(FigureBuilderSidebarController.TOOL)?.sidebarController;
+    live?.loadCaptures?.()?.catch?.((error) => {
+        console.error("figure builder: could not re-read the captures bin", error);
+    });
+});
+
 window.addEventListener("plexora:agent-state-changed", (event) => {
     const detail = event.detail || {};
     if (detail.plugin !== FigureBuilderSidebarController.TOOL || detail.kind !== "captures") return;

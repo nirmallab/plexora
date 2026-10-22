@@ -3713,6 +3713,364 @@ body.sidebar-collapsed .viewer-shell,
     animation: none;
 }
 
+/* Bookmarks (views/bookmarkTray.js): a glass tray in the bottom-centre dock,
+   the same glass as the magic bar. A row of thumbnails that scrolls
+   sideways; hovering one enlarges it by a transform, from its foot, so its
+   neighbours never move (the row keeps room above for it). The one on screen
+   is ringed. */
+.plx-bookmark-tray {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    align-items: center;
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    color: var(--text-primary);
+    display: flex;
+    gap: 6px;
+    max-width: min(100%, 920px);
+    min-width: 0;
+    padding: 4px 6px 6px 8px;
+}
+
+.plx-bookmark-tray[hidden] {
+    display: none;
+}
+
+.plx-bookmark-save {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    white-space: nowrap;
+}
+
+.plx-bookmark-save:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.plx-bookmark-save:focus-visible,
+.plx-bookmark-open:focus-visible,
+.plx-bookmark-close:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.plx-bookmark-list {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 10px;
+    list-style: none;
+    margin: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Room above and at the ends for an enlarged thumbnail. */
+    padding: 14px 12px 2px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+}
+
+.plx-bookmark-list[hidden] {
+    display: none;
+}
+
+.plx-bookmark-item {
+    flex: 0 0 auto;
+    position: relative;
+    scroll-snap-align: start;
+}
+
+.plx-bookmark-open {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0;
+    width: 96px;
+}
+
+.plx-bookmark-frame {
+    background: #000;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    display: block;
+    height: 64px;
+    overflow: hidden;
+    position: relative;
+    transform-origin: bottom center;
+    transition: transform var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+    width: 96px;
+}
+
+.plx-bookmark-item:hover .plx-bookmark-frame,
+.plx-bookmark-open:focus-visible .plx-bookmark-frame {
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+    transform: scale(1.18);
+}
+
+.plx-bookmark-thumb {
+    display: block;
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+.plx-bookmark-thumb[hidden],
+.plx-bookmark-blank[hidden] {
+    display: none;
+}
+
+.plx-bookmark-blank {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    position: absolute;
+}
+
+.plx-bookmark-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bookmark-item.is-active .plx-bookmark-frame {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 2px var(--accent-channel);
+}
+
+.plx-bookmark-item.is-active .plx-bookmark-label {
+    color: var(--text-primary);
+}
+
+.plx-bookmark-item.is-pending .plx-bookmark-frame {
+    opacity: 0.75;
+}
+
+.plx-bookmark-remove,
+.plx-bookmark-more {
+    align-items: center;
+    background: rgba(12, 16, 22, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font-size: 10px;
+    height: 20px;
+    justify-content: center;
+    opacity: 0;
+    padding: 0;
+    position: absolute;
+    top: -8px;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    width: 20px;
+    z-index: 2;
+}
+
+.plx-bookmark-remove {
+    right: -6px;
+}
+
+.plx-bookmark-more {
+    left: -6px;
+}
+
+.plx-bookmark-item:hover .plx-bookmark-remove,
+.plx-bookmark-item:hover .plx-bookmark-more,
+.plx-bookmark-item:focus-within .plx-bookmark-remove,
+.plx-bookmark-item:focus-within .plx-bookmark-more {
+    opacity: 1;
+}
+
+.plx-bookmark-rename {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 11px;
+    height: 20px;
+    width: 96px;
+}
+
+.plx-bookmark-empty {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 0 8px;
+    white-space: nowrap;
+}
+
+.plx-bookmark-empty[hidden] {
+    display: none;
+}
+
+.plx-bookmark-close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    height: 24px;
+    justify-content: center;
+    width: 24px;
+}
+
+.plx-bookmark-close:hover {
+    color: var(--text-primary);
+}
+
+/* Short of room (canvasLayout folds it): the Save button only. */
+.plx-bookmark-tray.is-compact .plx-bookmark-list,
+.plx-bookmark-tray.is-compact .plx-bookmark-empty {
+    display: none;
+}
+
+.plx-bookmark-menu {
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    background: rgba(18, 22, 30, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+    bottom: calc(100% + 6px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    padding: 4px;
+    position: absolute;
+    z-index: 5;
+}
+
+.plx-bookmark-menu-item {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: 8px;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.plx-bookmark-menu-item:hover,
+.plx-bookmark-menu-item:focus-visible {
+    background: rgba(255, 255, 255, 0.1);
+    outline: none;
+}
+
+/* Saving: a flash over the view and a bookmark mark, then the view's picture
+   flies to where it was kept (bookmarkTray.js fly), which is marked as it
+   lands. Under reduced motion: no flash, no flight, only the mark at the end. */
+.plx-bookmark-flash {
+    animation: plx-bookmark-flash 320ms var(--ease-standard) forwards;
+    background: rgba(255, 255, 255, 0.16);
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: 230;
+}
+
+@keyframes plx-bookmark-flash {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+.plx-bookmark-mark {
+    animation: plx-bookmark-mark 560ms var(--ease-standard) forwards;
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 44px;
+    left: 50%;
+    pointer-events: none;
+    position: absolute;
+    text-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 231;
+}
+
+@keyframes plx-bookmark-mark {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+    35% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -62%) scale(1); }
+}
+
+.plx-bookmark-flight {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    object-fit: cover;
+    pointer-events: none;
+    position: fixed;
+    transform-origin: center;
+    z-index: 10000;
+}
+
+.plx-bookmark-item.is-arrived .plx-bookmark-frame {
+    animation: plx-bookmark-arrive 600ms var(--ease-standard);
+}
+
+@keyframes plx-bookmark-arrive {
+    0% { box-shadow: 0 0 0 3px var(--accent-channel); transform: scale(1.12); }
+    100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+}
+
+#viewer_bookmark_button.is-active {
+    color: var(--accent-channel);
+}
+
+#viewer_bookmark_button.is-arrived {
+    animation: plx-bookmark-pulse 900ms var(--ease-standard);
+}
+
+@keyframes plx-bookmark-pulse {
+    0% { transform: scale(1); }
+    30% { color: var(--accent-channel); transform: scale(1.25); }
+    100% { transform: scale(1); }
+}
+
+.plx-reduced-motion .plx-bookmark-frame,
+.plx-reduced-motion .plx-bookmark-remove,
+.plx-reduced-motion .plx-bookmark-more {
+    transition: none;
+}
+
+.plx-reduced-motion .plx-bookmark-item.is-arrived .plx-bookmark-frame {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--accent-channel);
+}
+
+.plx-reduced-motion #viewer_bookmark_button.is-arrived {
+    animation: none;
+    color: var(--accent-channel);
+}
+
 /* Which tool this is, without a word: the wand, muted. It breathes while an
    outline is on its way. */
 .plx-magic-bar-mark {

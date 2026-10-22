@@ -43,6 +43,11 @@ class FigureCaptureBinGrid {
         this.captures = [];
         this.checked = new Set();
         this.query = "";
+        //: Only the bookmarks (core's bookmarks tray): `?bookmarked=1`, or the chip.
+        this.onlyBookmarked = Boolean(options && options.onlyBookmarked);
+        //: A capture to bring into view once listed: `#cap_...`, where the
+        //: tray's "Show in Figure Builder" points.
+        this.locate = (options && options.locate) || "";
         this.loading = true;
         this.failed = false;
     }
@@ -66,8 +71,18 @@ class FigureCaptureBinGrid {
             /* Private-browsing modes throw; the arrow keeps its default. */
         }
         const api = new FigureBuilderApi();
+        let onlyBookmarked = false;
+        let locate = "";
+        try {
+            onlyBookmarked = new URLSearchParams(window.location.search).get("bookmarked") === "1";
+            locate = decodeURIComponent(String(window.location.hash || "").slice(1));
+        } catch (error) {
+            /* A page without a location: neither. */
+        }
         const grid = new FigureCaptureBinGrid(root, {
             api: api,
+            onlyBookmarked: onlyBookmarked,
+            locate: locate,
             addLabel: "Add to figure…",
             // The library has no figure open, so the destination has to be
             // asked for -- the same picker the dock uses, and the same note
@@ -117,6 +132,11 @@ class FigureCaptureBinGrid {
                            spellcheck="false" placeholder="Search by image"
                            aria-label="Search captures by image">
                 </div>
+                <button class="fb-bin-chip" type="button" data-role="bookmarked" aria-pressed="false"
+                        title="Show only the views bookmarked in the viewer (K)">
+                    <span class="fas fa-bookmark" aria-hidden="true"></span>
+                    <span>Bookmarked</span>
+                </button>
                 <span class="fb-bin-count" data-role="count"></span>
                 <button class="fb-bin-link" type="button" data-role="all">Select all</button>
                 <button class="fb-bin-link" type="button" data-role="none">None</button>
@@ -171,6 +191,9 @@ class FigureCaptureBinGrid {
         if (role === "card") {
             const id = event.target.closest("[data-capture-id]")?.dataset.captureId;
             if (id) this.toggle(id);
+        } else if (role === "bookmarked") {
+            this.onlyBookmarked = !this.onlyBookmarked;
+            this.render();
         } else if (role === "all") {
             this.filtered().forEach((capture) => this.checked.add(capture.capture_id));
             this.render();
@@ -204,10 +227,14 @@ class FigureCaptureBinGrid {
     async removeChecked() {
         const ids = this.orderedChecked();
         if (!ids.length) return;
+        const marked = this.captures.filter((capture) => ids.includes(capture.capture_id)
+            && capture.bookmarked).length;
         const ok = await FigureConfirm.ask({
             title: ids.length === 1 ? "Discard this capture?" : `Discard ${ids.length} captures?`,
             body: "The region and the rendering it recorded are removed from your "
-                + "captures bin. Any panel already made from one is untouched.",
+                + "captures bin. Any panel already made from one is untouched."
+                + (marked ? ` ${marked === 1 ? "One is a bookmark" : `${marked} are bookmarks`}, `
+                    + "and goes from the viewer's bookmarks too." : ""),
             confirm: "Discard",
         });
         if (!ok) return;
@@ -223,10 +250,13 @@ class FigureCaptureBinGrid {
 
     filtered() {
         const query = this.query.trim().toLowerCase();
-        if (!query) return this.captures;
-        return this.captures.filter((capture) =>
+        const shown = this.onlyBookmarked
+            ? this.captures.filter((capture) => capture.bookmarked) : this.captures;
+        if (!query) return shown;
+        return shown.filter((capture) =>
             String(capture.datasource || "").toLowerCase().includes(query)
-            || String(capture.caption || "").toLowerCase().includes(query));
+            || String(capture.caption || "").toLowerCase().includes(query)
+            || String(capture.label || "").toLowerCase().includes(query));
     }
 
     render() {
@@ -240,8 +270,15 @@ class FigureCaptureBinGrid {
                 : FigureSchema.countPhrase(this.captures.length, "capture");
         }
 
+        const chip = this.el("bookmarked");
+        if (chip) {
+            chip.setAttribute("aria-pressed", String(this.onlyBookmarked));
+            chip.classList.toggle("is-active", this.onlyBookmarked);
+        }
+
         const grid = this.el("grid");
         if (grid) grid.innerHTML = list.map((capture) => this.card(capture, escape)).join("");
+        this.bringIntoView();
 
         const state = this.el("state");
         if (state) {
@@ -250,7 +287,10 @@ class FigureCaptureBinGrid {
                     : !this.captures.length
                         ? "Nothing captured yet. Open a project, press C, and drag a frame "
                           + "over anything worth keeping — it lands here."
-                        : !list.length ? "No captures match." : "";
+                        : !list.length && this.onlyBookmarked && !this.query.trim()
+                            ? "No bookmarks yet. In the viewer, press K to bookmark a view — "
+                              + "it lands here, marked."
+                            : !list.length ? "No captures match." : "";
             state.textContent = message;
             state.hidden = !message;
         }
@@ -277,23 +317,43 @@ class FigureCaptureBinGrid {
      * in the corner is feedback, not a control, which is why `aria-pressed` is
      * on the card rather than on a checkbox nobody can reach.
      */
+    /** The capture the page was opened at (`#cap_...`), scrolled to and
+     *  outlined once it is listed. Once: a later render leaves the scroll be. */
+    bringIntoView() {
+        if (!this.locate || this.loading) return;
+        const card = this.host?.querySelector(`[data-capture-id="${CSS.escape(this.locate)}"]`);
+        if (!card) return;
+        this.locate = "";
+        card.classList.add("is-located");
+        card.scrollIntoView?.({ block: "center" });
+    }
+
     card(capture, escape) {
         const id = escape(capture.capture_id);
         const image = escape(capture.datasource || "Unknown image");
+        // A bookmark (core's bookmarks tray): badged, its label first.
+        const badge = capture.bookmarked
+            ? `<span class="fb-bin-badge" title="Bookmarked in the viewer">
+                   <span class="fas fa-bookmark" aria-hidden="true"></span>
+                   <span class="fb-visually-hidden">Bookmarked</span>
+               </span>` : "";
+        const label = capture.bookmarked && capture.label ? escape(capture.label) + " · " : "";
         const when = FigureSchema.timeAgo(capture.created_at);
         const checked = this.checked.has(capture.capture_id);
         const thumbnail = capture.url
             ? `<img src="${escape(capture.url)}" alt="" loading="lazy" draggable="false">`
             : `<span class="fas fa-image fb-bin-thumb-icon" aria-hidden="true"></span>`;
-        return `<button class="fb-bin-card${checked ? " is-checked" : ""}" type="button"
+        return `<button class="fb-bin-card${checked ? " is-checked" : ""}${capture.bookmarked
+                            ? " is-bookmarked" : ""}" type="button"
                         data-role="card" data-capture-id="${id}"
                         aria-pressed="${checked}"
                         title="${image}${when ? " · " + escape(when) : ""}">
             <span class="fb-bin-thumb">${thumbnail}</span>
+            ${badge}
             <span class="fb-bin-tick" aria-hidden="true">
                 <span class="fas fa-check"></span>
             </span>
-            <span class="fb-bin-name">${image}</span>
+            <span class="fb-bin-name">${label}${image}</span>
             <span class="fb-bin-meta">${escape([capture.caption, when]
                 .filter(Boolean).join(" · "))}</span>
         </button>`;

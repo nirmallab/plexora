@@ -4989,6 +4989,48 @@
     background: var(--surface-3, rgba(148, 163, 184, 0.16));
 }
 
+/* Bookmarked only: the views kept from core's bookmarks tray. */
+.fb-bin-chip {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+    border-radius: 999px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    gap: 6px;
+    padding: 3px 10px;
+}
+
+.fb-bin-chip.is-active {
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+/* A bookmarked capture: a mark in the picture's top-left corner, where the
+   tick (top right) is not. */
+.fb-bin-badge {
+    align-items: center;
+    background: rgba(2, 6, 23, 0.72);
+    border-radius: 4px;
+    color: var(--accent-channel);
+    display: inline-flex;
+    font-size: 10px;
+    height: 18px;
+    justify-content: center;
+    left: 12px;
+    position: absolute;
+    top: 12px;
+    width: 18px;
+}
+
+/* Where the viewer's "Show in Figure Builder" pointed. */
+.fb-bin-card.is-located {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
 /* Wider cells than the picker's: a capture is a crop of tissue, and two crops
    of similar tissue at 112px are indistinguishable. */
 .fb-bin-grid {
@@ -5655,6 +5697,20 @@
     min-width: 16px;
     padding: 0 5px;
     text-align: center;
+}
+
+/* A bookmarked capture (core's bookmarks tray), marked at the top left. */
+.fb-strip-badge {
+    color: var(--accent-channel, #38bdf8);
+    font-size: 9px;
+    left: 4px;
+    position: absolute;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    top: 4px;
+}
+
+.fb-strip-filter.is-active {
+    color: var(--accent-channel, #38bdf8);
 }
 
 /* Which capture the strip and the image are both pointing at. */

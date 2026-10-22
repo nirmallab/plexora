@@ -313,6 +313,15 @@ def layer_sections_for(app, project) -> list[Plugin]:
             if p.is_layer_section and p.requires.applies_to(project) and unlocked(p)]
 
 
+def viewer_scripts_for(app, project) -> list[Plugin]:
+    """Installed plugins with scripts for every viewer page of this
+    datasource (`Plugin.viewer_scripts`), tool open or not. The gate is the
+    layer sections': `applies_to`, and a Paid plugin only where the licence
+    unlocks it."""
+    return [p for p in installed(app)
+            if p.viewer_scripts and p.requires.applies_to(project) and unlocked(p)]
+
+
 def ready_tools(app, project) -> list[Plugin]:
     """Installed plugins this datasource can open right now -- everything in
     tools_for() that is not still missing an input.

@@ -264,8 +264,14 @@ const FigureScene = {
      * The project's own saved channel list is NOT touched. That is what
      * `suspendPersistence` is for, and it is the difference between looking at
      * a figure panel and permanently overwriting the settings the user had.
+     *
+     * `persist: true` is the other case: a BOOKMARK restored (core's bookmarks
+     * tray) is a place the user went back to, so what it shows becomes what
+     * the image keeps -- the channel list saved once, after the restore, and
+     * each plugin told the same (`persist` on the restore event).
      */
-    async restore(ctx, scene) {
+    async restore(ctx, scene, options) {
+        const persist = Boolean(options && options.persist);
         const sidebar = window.__plexora?.viewerSidebar;
         const report = { channels: 0, missing_channels: [], plugins: {}, viewport: false };
         if (!scene) return report;
@@ -281,7 +287,7 @@ const FigureScene = {
             }
             this.restoreOverlays(ctx, scene.core_overlays);
             report.viewport = this.restoreViewport(ctx, scene.viewport);
-            report.plugins = this.restorePlugins(scene.plugins);
+            report.plugins = this.restorePlugins(scene.plugins, { persist: persist });
         } finally {
             // In a `finally`, because a restore that throws halfway must not
             // leave the project's channel list permanently unsaveable -- the
@@ -289,6 +295,7 @@ const FigureScene = {
             // anything, hours later, with no way to connect it to this.
             sidebar?.resumePersistence?.();
         }
+        if (persist && report.channels) sidebar?.scheduleSaveChannels?.();
         return report;
     },
 
@@ -355,13 +362,15 @@ const FigureScene = {
      * on the panel rather than an error -- the image and the channels are
      * restored either way, and that is most of the view.
      */
-    restorePlugins(plugins) {
+    restorePlugins(plugins, options) {
         const report = {};
         if (!plugins || !Object.keys(plugins).length) return report;
         try {
             window.dispatchEvent(new CustomEvent("plexora:figure-restore-state", {
                 detail: {
                     plugins: plugins,
+                    // A bookmark's restore: what it shows is kept.
+                    persist: Boolean(options && options.persist),
                     report(name, outcome) { report[String(name)] = String(outcome); },
                 },
             }));

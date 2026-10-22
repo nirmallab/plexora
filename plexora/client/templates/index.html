@@ -52,6 +52,15 @@
                         {% endfor %}
                     </div>
                     {% endif %}
+                    {# Bookmarks (views/bookmarkTray.js): opens and closes the
+                       tray of views kept to come back to, and nothing else; K
+                       saves the view. Shown once a plugin keeps them
+                       (services/bookmarks.js). #}
+                    <button id="viewer_bookmark_button" class="icon-button sidebar-header-tool" type="button"
+                            title="Bookmarks (K bookmarks this view)" aria-label="Bookmarks"
+                            aria-pressed="false" hidden>
+                        <span class="fas fa-bookmark" aria-hidden="true"></span>
+                    </button>
                     {# Plexora AI: with an `ai` licence it opens the launcher
                        (Gate / QC / chat with Plexora AI, views/agentPanel.js);
                        without one it is not here at all. The one coloured
@@ -609,6 +618,10 @@
 <script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewHistory.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/backButton.js?v=20261022_bookmarks" defer></script>
+{# Bookmarks: views kept as captures of the plugin that keeps them, and their
+   tray. The store registers itself (Plugin.viewer_scripts, in <head>). #}
+<script src="{{ data.base_url }}/client/src/js/services/bookmarks.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/bookmarkTray.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261015_display_contrast" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261014_late_mask" defer></script>

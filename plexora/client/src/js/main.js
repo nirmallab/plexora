@@ -805,6 +805,18 @@ async function init(config, savedViewTransform = null) {
         }
     }
 
+    // Bookmarks: the tray along the bottom of the canvas, its icon in the
+    // sidebar header, and K, on every image (views/bookmarkTray.js). Kept by
+    // whichever plugin registered a store (services/bookmarks.js); none, and
+    // the icon stays hidden.
+    try {
+        __plexora.bookmarkTray = window.PlexoraBookmarkTray?.attach?.({
+            imageViewer: seaDragonViewer, viewState: viewState?.enabled() ? viewState : null,
+        }) || null;
+    } catch (error) {
+        console.error("main: the bookmarks tray could not be set up", error);
+    }
+
     // HD for a stack whose fast tiles cannot draw its default contrast
     // (ViewerSidebar.askForHdIfCoarse): once per page, and after that the
     // toggle is the user's.

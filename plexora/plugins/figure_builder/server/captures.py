@@ -31,6 +31,16 @@ A capture leaves the bin only by being adopted into a figure -- see
 `transfer_previews`, which is the one path that moves the raster across and
 deletes the row -- or by being deleted outright. Nothing else ages it out: a
 bin that quietly emptied itself would be a bin nobody could leave anything in.
+
+**A bookmark is a capture with `bookmarked` set** (core's bookmarks tray,
+client/src/js/services/bookmarks.js, through static/figureBookmarkStore.js),
+under a `label`. There is no second store of views: the scene that restores a
+bookmark is the capture's scene, the thumbnail its preview. Adopting a
+bookmarked capture into a figure copies its raster and KEEPS the row -- the
+bookmark is still a place to go back to -- and taking the bookmark off
+(`set_bookmark(..., bookmarked=False)`) touches nothing else: not the row, not
+any figure panel made from it. Both columns are added to an older bin on open
+(`_ensure_columns`), so a bin from before bookmarks reads as having none.
 """
 
 from __future__ import annotations
@@ -145,10 +155,30 @@ CREATE TABLE IF NOT EXISTS captures (
     height      INTEGER NOT NULL DEFAULT 0,
     format      TEXT NOT NULL DEFAULT 'webp',
     preview     BLOB,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    bookmarked  INTEGER NOT NULL DEFAULT 0,
+    label       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS captures_by_datasource ON captures (datasource);
 """
+
+#: Columns a bin made before them lacks, added on open: name -> definition.
+_ADDED_COLUMNS = {
+    "bookmarked": "INTEGER NOT NULL DEFAULT 0",
+    "label": "TEXT NOT NULL DEFAULT ''",
+}
+
+#: A bookmark's label, as long as a tray item can say.
+MAX_LABEL_LENGTH = 64
+
+
+def _ensure_columns(connection):
+    """Add the columns an older bin lacks. Idempotent: a bin that has them
+    is left alone, so this runs on every open as the DDL does."""
+    have = {row[1] for row in connection.execute("PRAGMA table_info(captures)").fetchall()}
+    for name, definition in _ADDED_COLUMNS.items():
+        if name not in have:
+            connection.execute(f"ALTER TABLE captures ADD COLUMN {name} {definition}")
 
 
 def _connect(create=True):
@@ -180,6 +210,7 @@ def _connect(create=True):
     try:
         with connection:
             connection.executescript(_DDL)
+            _ensure_columns(connection)
     except sqlite3.Error as exc:
         connection.close()
         raise CapturesUnavailable(f"the captures store cannot be read: {exc}") from exc
@@ -189,7 +220,8 @@ def _connect(create=True):
 # -- writing ------------------------------------------------------------
 
 
-def add(capture_id, datasource, source, scene, caption="", created_at=None) -> dict:
+def add(capture_id, datasource, source, scene, caption="", created_at=None,
+        bookmarked=False, label="") -> dict:
     """Record a capture. Returns its summary row.
 
     The scene and the source are normalised HERE rather than trusted, so a
@@ -200,8 +232,14 @@ def add(capture_id, datasource, source, scene, caption="", created_at=None) -> d
 
     Re-adding an id that is already there replaces it. That is what makes the
     client's retry-after-a-failed-preview safe, and there is nothing to merge:
-    a capture is written once, whole, at the moment the shutter closes.
+    a capture is written once, whole, at the moment the shutter closes -- except
+    that a re-add never takes a bookmark off, nor blanks its label (that is
+    `set_bookmark`'s, and only on purpose).
+
+    `bookmarked` must be a real bool: a bookmark is a thing the user did.
     """
+    if not isinstance(bookmarked, bool):
+        raise ValueError("bookmarked must be true or false")
     validate_capture_id(capture_id)
     scene_clean = schema.normalize_scene(scene if isinstance(scene, dict) else {})
     raw_source = dict(source) if isinstance(source, dict) else {}
@@ -220,6 +258,8 @@ def add(capture_id, datasource, source, scene, caption="", created_at=None) -> d
         "scene_json": json.dumps(scene_clean, separators=(",", ":")),
         "caption": schema.clean_text(caption),
         "created_at": stamp,
+        "bookmarked": 1 if bookmarked else 0,
+        "label": schema.clean_text(label, MAX_LABEL_LENGTH),
     }
     with _LOCK:
         connection = _connect()
@@ -227,12 +267,51 @@ def add(capture_id, datasource, source, scene, caption="", created_at=None) -> d
             with connection:
                 connection.execute(
                     "INSERT INTO captures (capture_id, datasource, source_json, scene_json, "
-                    "caption, created_at) VALUES (:capture_id, :datasource, :source_json, "
-                    ":scene_json, :caption, :created_at) "
+                    "caption, created_at, bookmarked, label) VALUES (:capture_id, :datasource, "
+                    ":source_json, :scene_json, :caption, :created_at, :bookmarked, :label) "
                     "ON CONFLICT(capture_id) DO UPDATE SET datasource = excluded.datasource, "
                     "source_json = excluded.source_json, scene_json = excluded.scene_json, "
-                    "caption = excluded.caption",
+                    "caption = excluded.caption, "
+                    "bookmarked = MAX(captures.bookmarked, excluded.bookmarked), "
+                    "label = CASE WHEN excluded.label != '' THEN excluded.label ELSE captures.label END",
                     row)
+        finally:
+            connection.close()
+    return get(capture_id)
+
+
+def set_bookmark(capture_id, bookmarked=None, label=None) -> dict:
+    """Bookmark a capture, take its bookmark off, or rename it. Returns its
+    summary row; UnknownCapture when it is not in the bin.
+
+    Only the fields given change. Taking a bookmark off is exactly that: the
+    capture stays in the bin, and a figure panel made from it is its own copy
+    of the scene and is never touched. `bookmarked` must be a real bool.
+    """
+    validate_capture_id(capture_id)
+    if bookmarked is not None and not isinstance(bookmarked, bool):
+        raise ValueError("bookmarked must be true or false")
+    if label is not None and not isinstance(label, str):
+        raise ValueError("label must be text")
+    changes = {}
+    if bookmarked is not None:
+        changes["bookmarked"] = 1 if bookmarked else 0
+    if label is not None:
+        changes["label"] = schema.clean_text(label, MAX_LABEL_LENGTH)
+    if not changes:
+        return get(capture_id)
+    assignments = ", ".join(f"{name} = :{name}" for name in changes)
+    with _LOCK:
+        connection = _connect(create=False)
+        if connection is None:
+            raise UnknownCapture(capture_id)
+        try:
+            with connection:
+                cursor = connection.execute(
+                    f"UPDATE captures SET {assignments} WHERE capture_id = :capture_id",
+                    {**changes, "capture_id": capture_id})
+                if cursor.rowcount == 0:
+                    raise UnknownCapture(capture_id)
         finally:
             connection.close()
     return get(capture_id)
@@ -345,18 +424,26 @@ def _row(row) -> dict:
         "format": row["format"] or "webp",
         "has_preview": bool(row["has_preview"]),
         "created_at": row["created_at"] or "",
+        "bookmarked": bool(row["bookmarked"]),
+        "label": row["label"] or "",
         "source": source,
         "scene": scene,
     }
 
 
-def list_captures(datasource=None) -> list[dict]:
+#: What a listing reads of a row: everything but the raster.
+_COLUMNS = ("capture_id, datasource, source_json, scene_json, caption, width, height, format, "
+            "created_at, bookmarked, label, preview IS NOT NULL AS has_preview")
+
+
+def list_captures(datasource=None, bookmarked=None) -> list[dict]:
     """The bin, newest first, without the rasters.
 
     `datasource` filters to one image, which is what the in-viewer strip wants:
     a capture's outline is drawn in the coordinates of the image it came from,
     so captures from another slide have nowhere to be drawn and nothing to say
     on this one. The bin grid passes nothing and gets everything.
+    `bookmarked=True` keeps the bookmarks only (core's tray).
     """
     try:
         connection = _connect(create=False)
@@ -368,12 +455,15 @@ def list_captures(datasource=None) -> list[dict]:
         return []
     if connection is None:
         return []
-    query = ("SELECT capture_id, datasource, source_json, scene_json, caption, width, "
-             "height, format, created_at, preview IS NOT NULL AS has_preview FROM captures")
-    parameters: tuple = ()
+    query = f"SELECT {_COLUMNS} FROM captures"
+    where, parameters = [], ()
     if datasource:
-        query += " WHERE datasource = ?"
+        where.append("datasource = ?")
         parameters = (str(datasource),)
+    if bookmarked:
+        where.append("bookmarked = 1")
+    if where:
+        query += " WHERE " + " AND ".join(where)
     query += " ORDER BY created_at DESC, capture_id DESC LIMIT ?"
     parameters = parameters + (LIST_LIMIT,)
     try:
@@ -396,9 +486,7 @@ def get(capture_id) -> dict:
         raise UnknownCapture(capture_id)
     try:
         row = connection.execute(
-            "SELECT capture_id, datasource, source_json, scene_json, caption, width, "
-            "height, format, created_at, preview IS NOT NULL AS has_preview "
-            "FROM captures WHERE capture_id = ?", (capture_id,)).fetchone()
+            f"SELECT {_COLUMNS} FROM captures WHERE capture_id = ?", (capture_id,)).fetchone()
     finally:
         connection.close()
     if row is None:
@@ -433,6 +521,10 @@ def transfer_previews(figure_id, pairs) -> dict:
     of a region the user may never be standing over again. So the copy is made
     first, per capture, and only the ones that copied are removed.
 
+    A BOOKMARKED capture is copied and kept: it is still a view to go back to,
+    and it stays in the bin, bookmarked, with its raster (it is listed in
+    `kept` as well as in `moved` or `missing`).
+
     Deliberately NOT the thing that creates the panels. The panel is a document
     edit and belongs in the one batch the client commits -- one undo step for
     "add these captures" -- and duplicating panel construction on the server
@@ -442,7 +534,7 @@ def transfer_previews(figure_id, pairs) -> dict:
     is a slow panel rather than a lost one.
 
     `pairs` is `[{capture_id, panel_id, render_revision}]`. Returns
-    `{moved: [...], missing: [...]}`.
+    `{moved: [...], missing: [...], kept: [...]}`.
     """
     schema.validate_figure_id(figure_id)
     if not isinstance(pairs, list):
@@ -450,7 +542,7 @@ def transfer_previews(figure_id, pairs) -> dict:
     if not repository.exists(figure_id):
         raise repository.UnknownFigure(figure_id)
 
-    moved, missing = [], []
+    moved, missing, kept = [], [], []
     for raw in pairs:
         if not isinstance(raw, dict):
             raise ValueError("each pair must be an object")
@@ -460,23 +552,30 @@ def transfer_previews(figure_id, pairs) -> dict:
         if not isinstance(revision, int) or isinstance(revision, bool):
             revision = 1
 
+        try:
+            stored = get(capture_id)
+        except UnknownCapture:
+            stored = None
+        keep = bool(stored and stored["bookmarked"])
+        if keep:
+            kept.append(capture_id)
         found = get_preview(capture_id)
         if found is None:
             # Either the capture is gone or its raster never arrived. Both are
             # "nothing to copy", and the row still goes: the panel exists now,
             # and a bin row for a capture that is already in a figure is the
-            # one thing the bin must never show.
+            # one thing the bin must never show -- unless it is a bookmark.
             missing.append(capture_id)
-            remove([capture_id])
+            if not keep:
+                remove([capture_id])
+            continue
+        if stored is None:  # pragma: no cover - raced with a delete
+            missing.append(capture_id)
             continue
         data, fmt = found
-        try:
-            stored = get(capture_id)
-        except UnknownCapture:  # pragma: no cover - raced with a delete
-            missing.append(capture_id)
-            continue
         repository.put_preview(figure_id, panel_id, revision, data,
                                width=stored["width"], height=stored["height"], fmt=fmt)
-        remove([capture_id])
+        if not keep:
+            remove([capture_id])
         moved.append(capture_id)
-    return {"moved": moved, "missing": missing}
+    return {"moved": moved, "missing": missing, "kept": kept}

@@ -22,6 +22,10 @@ drawn.
 **Leaving the bin is atomic per capture.** The raster is copied into the figure
 and only then is the row deleted, because the row is the last remaining record
 of a region the user may never be standing over again.
+
+**A bookmark is a capture with a flag**, not a second store: it is listed,
+renamed and taken off through the same rows, adoption copies its raster and
+keeps it, and a bin from before bookmarks reads as having none.
 """
 
 import json
@@ -444,6 +448,127 @@ def test_a_damaged_bin_reads_as_an_empty_one(store, tmp_path):
         connection.execute("DROP TABLE captures")
         connection.execute("CREATE TABLE captures (capture_id TEXT)")
     assert store.list_captures() == []
+
+
+# -- bookmarks ----------------------------------------------------------
+
+
+def bookmark(client, capture_id="cap_mark", label="Germinal centre", preview=b"mark-pixels"):
+    response = client.post(f"{API}/captures", json={
+        "capture_id": capture_id, "datasource": "demo", "source": source(), "scene": scene(),
+        "bookmarked": True, "label": label,
+    })
+    assert response.status_code == 200, response.get_data(as_text=True)
+    if preview is not None:
+        assert client.post(f"{API}/captures/{capture_id}/preview", data=preview,
+                           content_type="image/webp").status_code == 200
+    return response.get_json()["capture"]
+
+
+def test_a_bookmark_is_a_capture_with_a_flag_and_a_label(client):
+    """One store: the bookmark is listed with every capture, and only it with
+    `bookmarked=1`, under its label."""
+    keep(client, "cap_plain")
+    stored = bookmark(client)
+    assert stored["bookmarked"] is True and stored["label"] == "Germinal centre"
+    every = client.get(f"{API}/captures").get_json()["captures"]
+    assert {row["capture_id"]: row["bookmarked"] for row in every} == {"cap_plain": False, "cap_mark": True}
+    marks = client.get(f"{API}/captures?bookmarked=1&datasource=demo").get_json()["captures"]
+    assert [row["capture_id"] for row in marks] == ["cap_mark"]
+    assert client.get(f"{API}/captures?bookmarked=1&datasource=other").get_json()["captures"] == []
+
+
+def test_a_bookmark_is_renamed_taken_off_and_put_back_by_patch(client):
+    bookmark(client)
+    renamed = client.patch(f"{API}/captures/cap_mark", json={"label": "  Follicle\n"}).get_json()
+    assert renamed["capture"]["label"] == "Follicle" and renamed["capture"]["bookmarked"] is True
+    off = client.patch(f"{API}/captures/cap_mark", json={"bookmarked": False}).get_json()["capture"]
+    # Taking the bookmark off takes nothing else: the capture, its label and
+    # its raster are all still there.
+    assert off["bookmarked"] is False and off["label"] == "Follicle" and off["has_preview"] is True
+    assert client.get(f"{API}/captures?bookmarked=1").get_json()["captures"] == []
+    assert [row["capture_id"] for row in client.get(f"{API}/captures").get_json()["captures"]] == ["cap_mark"]
+    keep(client, "cap_plain")
+    on = client.patch(f"{API}/captures/cap_plain", json={"bookmarked": True}).get_json()["capture"]
+    assert on["bookmarked"] is True
+
+
+def test_a_bookmark_must_be_said_plainly(client):
+    bookmark(client)
+    for bad in ({"bookmarked": "yes"}, {"bookmarked": 1}, {"label": 5}):
+        response = client.patch(f"{API}/captures/cap_mark", json=bad)
+        assert response.status_code == 400, bad
+    response = client.post(f"{API}/captures", json={
+        "capture_id": "cap_bad", "datasource": "demo", "source": source(), "scene": scene(),
+        "bookmarked": "true"})
+    assert response.status_code == 400
+    assert client.patch(f"{API}/captures/cap_gone", json={"bookmarked": True}).status_code == 404
+    assert client.patch(f"{API}/captures/not-an-id", json={"bookmarked": True}).status_code == 400
+
+
+def test_a_label_is_cut_to_what_a_tray_can_say(store):
+    stored = store.add("cap_long", "demo", source(), scene(), bookmarked=True, label="x" * 200)
+    assert len(stored["label"]) == captures.MAX_LABEL_LENGTH
+
+
+def test_writing_a_capture_again_never_takes_its_bookmark_off(store):
+    """A retry of the shutter's write is the same capture again; only a
+    deliberate PATCH takes a bookmark off or blanks a label."""
+    store.add("cap_mark", "demo", source(), scene(), bookmarked=True, label="Here")
+    again = store.add("cap_mark", "demo", source(), scene(), caption="again")
+    assert again["bookmarked"] is True and again["label"] == "Here" and again["caption"] == "again"
+
+
+def test_adopting_a_bookmark_copies_its_raster_and_keeps_it(client):
+    """A bookmark is still a view to go back to after a figure uses it: the
+    figure gets the raster, the bin keeps the row, bookmarked, with its own."""
+    figure_id = _figure(client)
+    bookmark(client, preview=b"mark-pixels")
+    keep(client, "cap_plain", preview=b"plain-pixels")
+    body = client.post(f"{API}/figures/{figure_id}/previews/from_captures",
+                       json={"pairs": [{"capture_id": "cap_mark", "panel_id": "pnl_mark"},
+                                       {"capture_id": "cap_plain", "panel_id": "pnl_plain"}]}).get_json()
+    assert sorted(body["moved"]) == ["cap_mark", "cap_plain"] and body["kept"] == ["cap_mark"]
+    assert client.get(f"{API}/figures/{figure_id}/previews/pnl_mark").get_data() == b"mark-pixels"
+    left = client.get(f"{API}/captures").get_json()["captures"]
+    assert [(row["capture_id"], row["bookmarked"], row["has_preview"]) for row in left] == [("cap_mark", True, True)]
+    # Taking the bookmark off afterwards leaves the figure's panel as it was.
+    client.patch(f"{API}/captures/cap_mark", json={"bookmarked": False})
+    assert client.get(f"{API}/figures/{figure_id}/previews/pnl_mark").get_data() == b"mark-pixels"
+
+
+def test_a_bookmark_with_no_raster_stays_through_an_adoption(client):
+    figure_id = _figure(client)
+    bookmark(client, preview=None)
+    body = client.post(f"{API}/figures/{figure_id}/previews/from_captures",
+                       json={"pairs": [{"capture_id": "cap_mark", "panel_id": "pnl_mark"}]}).get_json()
+    assert body["missing"] == ["cap_mark"] and body["kept"] == ["cap_mark"]
+    assert [row["capture_id"] for row in client.get(f"{API}/captures?bookmarked=1").get_json()["captures"]] \
+        == ["cap_mark"]
+
+
+def test_a_bin_from_before_bookmarks_gains_them_and_has_none(store):
+    """An old bin -- the table as it was before bookmarks -- is opened, given
+    the two columns, and read as it was: every capture there, none bookmarked."""
+    path = store.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(path)) as connection:
+        connection.executescript("""
+            CREATE TABLE captures (capture_id TEXT PRIMARY KEY, datasource TEXT NOT NULL DEFAULT '',
+                source_json TEXT NOT NULL DEFAULT '{}', scene_json TEXT NOT NULL DEFAULT '{}',
+                caption TEXT NOT NULL DEFAULT '', width INTEGER NOT NULL DEFAULT 0,
+                height INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT 'webp',
+                preview BLOB, created_at TEXT NOT NULL);
+        """)
+        connection.execute("INSERT INTO captures (capture_id, datasource, source_json, scene_json, created_at) "
+                           "VALUES ('cap_old', 'demo', ?, ?, '2026-01-01T00:00:00Z')",
+                           (json.dumps(source()), json.dumps(scene())))
+    listed = store.list_captures()
+    assert [(row["capture_id"], row["bookmarked"], row["label"]) for row in listed] == [("cap_old", False, "")]
+    assert store.list_captures(bookmarked=True) == []
+    assert store.set_bookmark("cap_old", bookmarked=True)["bookmarked"] is True
+    # And again: the columns are there now, and opening adds nothing twice.
+    assert [row["capture_id"] for row in store.list_captures(bookmarked=True)] == ["cap_old"]
 
 
 # -- the page -----------------------------------------------------------

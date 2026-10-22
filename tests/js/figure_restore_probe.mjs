@@ -288,6 +288,22 @@ if (!events.includes("plexora:figure-restore-state")) {
     problems.push("the restore bridge event was never dispatched");
 }
 
+// -- a bookmark's restore is kept ------------------------------------------
+// `persist: true` (core's bookmarks tray): the same restore, then the channel
+// list saved ONCE, after persistence is handed back. Kept apart from
+// `saveAttempts`, which pins that a figure panel's restore never saves.
+const before = saveAttempts.length;
+await runInContext(`(async () => {
+    await FigureScene.restore(__ctx, ${JSON.stringify(captured)}, { persist: true });
+})()`, ctx);
+const persistAttempts = saveAttempts.splice(before);
+check("a bookmark's restore saves the channel list once, after resuming",
+    persistAttempts.filter((attempt) => attempt.suspended <= 0).length, 1);
+check("and the last thing it does is that save", persistAttempts.at(-1)?.suspended, 0);
+await runInContext(`(async () => { await FigureScene.restore(__ctx, ${JSON.stringify(captured)}); })()`, ctx);
+check("a panel's restore, after it, still saves nothing",
+    saveAttempts.slice(before).filter((attempt) => attempt.suspended <= 0), []);
+
 console.error(JSON.stringify(
-    { problems, events, saveAttempts, restoreReport }, null, 2));
+    { problems, events, saveAttempts, persistAttempts, restoreReport }, null, 2));
 process.exit(problems.length ? 1 : 0);

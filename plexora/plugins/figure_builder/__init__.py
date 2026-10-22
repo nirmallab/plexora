@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20261011_surfaces"
+VERSION = "20261022_bookmarks"
 
 
 def _blueprint():
@@ -72,6 +72,17 @@ PLUGIN = Plugin(
     # close the tool with -- so the dock carries one and it removes the plugin
     # outright.
     panels={},
+    # On every viewer page, the tool open or not: the captures store behind
+    # core's bookmarks tray (client/src/js/services/bookmarks.js). A bookmark
+    # IS a capture, so the scene it records and puts back is this plugin's
+    # (figureSceneSnapshot.js), and the store is the only code that knows this
+    # plugin's routes. No UI: the tray is core's.
+    viewer_scripts=(
+        "figureSchema.js",
+        "figureSceneSnapshot.js",
+        "figureBuilderApi.js",
+        "figureBookmarkStore.js",
+    ),
     # Order is for reading, not for the browser: every cross-file reference is
     # inside a method or a constructor, and both the tool loader and
     # DOMContentLoaded run after all of them have arrived. What matters is that

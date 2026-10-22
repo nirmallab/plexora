@@ -133,7 +133,7 @@ class FigureCaptureTool {
 
     /** Longest edge of a preview raster. A preview is not the master, and a
      *  hundred of them at full resolution is a document nobody can open. */
-    static get MAX_PREVIEW_EDGE() { return 1400; }
+    static get MAX_PREVIEW_EDGE() { return PlexoraViewRaster.MAX_PREVIEW_EDGE; }
 
     /** The frame capture mode opens with, as a fraction of the shorter side of
      *  the viewer, and its height as a fraction of its width. A frame that is
@@ -1116,88 +1116,20 @@ class FigureCaptureTool {
     }
 
     /**
-     * Crop what the viewer has already drawn.
-     *
-     * Every canvas inside the viewer's own element, in DOM order: the tile
-     * drawer first, then each overlay. Their backing stores can be at different
-     * scales -- an overlay is sized in CSS pixels, the drawer in device pixels
-     * -- so each one's crop is computed from its own bounding box rather than
-     * from a shared devicePixelRatio, which is what makes this correct on a
-     * mixed-DPI setup and on a browser mid-zoom.
+     * Crop what the viewer has already drawn: core's picture of the screen
+     * (services/viewRaster.js), which a bookmark's thumbnail is too.
      */
     grabPreview(screenRect) {
-        const container = this.viewer?.canvas;
-        if (!container) return null;
-        const containerRect = container.getBoundingClientRect();
-
-        const cssWidth = Math.max(1, screenRect.width);
-        const cssHeight = Math.max(1, screenRect.height);
-        const ratio = window.devicePixelRatio || 1;
-        // In 3-D the picture is the volume renderer's own canvas, and it is
-        // what a 3-D panel exports from (the server has no 3-D renderer): so
-        // it is drawn again at print size rather than cropped from the screen.
-        const volume = FigureCaptureTool.volumeCanvas();
-        const scale = volume
-            ? Math.min(3, FigureCaptureTool.MAX_VOLUME_EDGE / Math.max(cssWidth, cssHeight))
-            : Math.min(ratio, FigureCaptureTool.MAX_PREVIEW_EDGE / Math.max(cssWidth, cssHeight));
-
-        const out = document.createElement("canvas");
-        out.width = Math.max(1, Math.round(cssWidth * scale));
-        out.height = Math.max(1, Math.round(cssHeight * scale));
-        const context = out.getContext("2d");
-        // Black, not transparent: the viewer composites channels additively over
-        // black, and a preview with an alpha hole in it would look like a hole
-        // rather than like the dark tissue it is.
-        context.fillStyle = "#000000";
-        context.fillRect(0, 0, out.width, out.height);
-
-        for (const element of container.querySelectorAll("canvas")) {
-            const rect = element.getBoundingClientRect();
-            if (!element.width || !element.height || !rect.width || !rect.height) continue;
-            const scaleX = element.width / rect.width;
-            const scaleY = element.height / rect.height;
-            const sx = (screenRect.x - (rect.left - containerRect.left)) * scaleX;
-            const sy = (screenRect.y - (rect.top - containerRect.top)) * scaleY;
-            try {
-                // drawImage clips a source rectangle that runs off the edge and
-                // scales the destination to match, so a capture that overlaps
-                // the edge of an overlay needs no special case.
-                context.drawImage(element, sx, sy, cssWidth * scaleX, cssHeight * scaleY,
-                    0, 0, out.width, out.height);
-            } catch (error) {
-                // A canvas that cannot be read must not cost the user their
-                // capture: the scene snapshot is the master, and a panel with a
-                // partial preview still re-renders correctly at export.
-                console.error("figure_builder: a layer could not be previewed", error);
-            }
-        }
-        if (volume) {
-            try {
-                const rect = volume.canvas.getBoundingClientRect();
-                const drawn = volume.renderer.snapshot({ width: Math.round(rect.width * scale),
-                                                         height: Math.round(rect.height * scale) });
-                const sx = (screenRect.x - (rect.left - containerRect.left)) * scale;
-                const sy = (screenRect.y - (rect.top - containerRect.top)) * scale;
-                context.drawImage(drawn, sx, sy, cssWidth * scale, cssHeight * scale,
-                    0, 0, out.width, out.height);
-            } catch (error) {
-                console.error("figure_builder: the 3-D view could not be previewed", error);
-            }
-        }
-        return out;
+        return PlexoraViewRaster.grab(this.viewer, screenRect);
     }
 
     /** The 3-D view when it is the picture on screen: `{renderer, canvas}`, or null. */
     static volumeCanvas() {
-        const renderer = window.__plexora?.volumeView?.renderer;
-        const state = window.__plexora?.viewState;
-        if (!renderer?.canvas || renderer.canvas.hidden || !state?.isVolume?.()) return null;
-        if (typeof renderer.snapshot !== "function") return null;
-        return { renderer, canvas: renderer.canvas };
+        return PlexoraViewRaster.volumeCanvas();
     }
 
     /** A 3-D capture's longest side: what its panel exports from. */
-    static get MAX_VOLUME_EDGE() { return 2400; }
+    static get MAX_VOLUME_EDGE() { return PlexoraViewRaster.MAX_VOLUME_EDGE; }
 
     /** The preview as a WebP blob, or null. */
     previewBlob(screenRect) {

@@ -48,6 +48,16 @@ def test_asset_urls_respect_a_mounted_base_url():
     ]
 
 
+def test_viewer_scripts_resolve_like_scripts():
+    """Scripts for every viewer page, the tool open or not: the same URLs a
+    tool's own scripts get, so one in both lists is one <script>."""
+    plugin = Plugin(name="roi", label="ROI", version="7", scripts=("a.js", "b.js"),
+                    viewer_scripts=("b.js",))
+    assert plugin.asset_urls("viewer_scripts") == ["/plugins/roi/static/b.js?v=7"]
+    assert plugin.asset_urls("viewer_scripts")[0] in plugin.asset_urls("scripts")
+    assert Plugin(name="roi", label="ROI").asset_urls("viewer_scripts") == []
+
+
 def test_describe_is_what_the_navbar_gets():
     assert Plugin(name="roi", label="ROI").describe() == {
         "name": "roi", "label": "ROI", "icon": "", "shortcut": ""}
@@ -635,3 +645,21 @@ def test_a_layer_section_a_sample_cannot_use_does_not_mount(fake_registry):
     registry.install(app, None)
 
     assert registry.layer_sections_for(app, NO_TABLE) == []
+
+
+# --------------------------------------------------------------------------
+# Viewer scripts: a plugin's store on every viewer page, its tool open or not
+# --------------------------------------------------------------------------
+
+def test_viewer_scripts_load_where_the_plugin_applies(fake_registry):
+    """Figure Builder's captures store sits behind core's bookmarks tray, which
+    works with no tool open; a plugin that declares none, or that the sample
+    cannot use, adds nothing to the page."""
+    fake_registry["figures"] = _fake_plugin("figures", viewer_scripts=("store.js",))
+    fake_registry["roi"] = _fake_plugin("roi", scripts=("roi.js",))
+    fake_registry["layers"] = _fake_plugin("layers", viewer_scripts=("x.js",),
+                                           requires=Requires(layers=("transcripts",)))
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert [p.name for p in registry.viewer_scripts_for(app, NO_TABLE)] == ["figures"]
