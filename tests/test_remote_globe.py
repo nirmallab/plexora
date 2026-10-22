@@ -243,22 +243,18 @@ def test_the_tooltip_gets_out_of_the_way_once_the_panel_is_open():
     """Two popups off one icon, otherwise.
 
     The pointer is still over the button after the click that opened the
-    panel, so `[data-tooltip]:hover` keeps the label up -- hanging in front of
-    the list it just introduced. The panel is the answer to the question the
-    tooltip was asking; once it is open the tooltip has nothing left to say.
+    panel, so a hover tooltip would stay up -- hanging in front of the list it
+    just introduced. The panel is the answer to the question the tooltip was
+    asking; once it is open the tooltip has nothing left to say.
 
-    Pinned because the rule works by ORDER: it and `[data-tooltip]:hover` have
-    equal specificity, so the later one wins and moving this block above the
-    tooltip section would silently stop suppressing anything.
+    The tooltip is services/tooltip.js now, not CSS: it goes down on press and
+    will not show for a control that says it is expanded, and it watches
+    aria-expanded so a panel opened from the keyboard takes it down too.
     """
-    main = source("src", "css", "main.css")
-    suppress = main.index('.remote-globe[aria-expanded="true"]::before')
-    hover = main.index("[data-tooltip]:hover::before")
-    assert hover < suppress, (
-        "the suppression must come AFTER the hover rule it has to beat"
-    )
-    block = main[suppress:suppress + 200]
-    assert "content: none" in block
+    tooltip = source("src", "js", "services", "tooltip.js")
+    assert 'getAttribute("aria-expanded") === "true"' in tooltip
+    assert '"aria-expanded"' in tooltip.split("attributeFilter", 1)[1][:80]
+    assert '"pointerdown", onDown' in tooltip
 
 
 def test_a_row_cannot_say_disconnected_about_a_machine_it_calls_healthy():

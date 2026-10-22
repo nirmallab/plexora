@@ -7,8 +7,8 @@
     <link rel="alternate icon" href="{{ data.base_url }}/client/src/img/favicon.ico">
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261021_pro">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261022_glass_tooltip">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261022_glass_tooltip">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -209,6 +209,11 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    {# The fast `data-tooltip` bubble, on every page because HD Mode, the
+       Local/Remote switch and the navbar globe are on several. One glass
+       element through PopoverPortal, placed inside the window, so no overflow
+       box can clip it. #}
+    <script src="{{ data.base_url }}/client/src/js/services/tooltip.js?v=20261022_glass_tooltip" defer></script>
     {# The Pro-feature modal and badge (PlexoraPro). After confirmDialog,
        which it opens. Inert until a locked feature is asked for: no banner,
        no timer, no request at load. #}

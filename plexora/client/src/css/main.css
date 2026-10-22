@@ -339,118 +339,101 @@ input[type="number"]::-webkit-inner-spin-button {
     display: block;
 }
 
-/* Fast custom tooltip -- the native `title` attribute has a browser-enforced
-   ~1s hover delay with no CSS way to shorten it. Opt in per-element with
-   data-tooltip="..." wherever that delay actually matters (e.g. HD Mode,
-   both navbar and sidebar); everywhere else keeps using plain `title`. */
-[data-tooltip] {
-    position: relative;
+/* Fast custom tooltip (services/tooltip.js) -- the native `title` attribute
+   has a browser-enforced ~1s hover delay with no CSS way to shorten it. Opt
+   in per-element with data-tooltip="..." wherever that delay actually matters
+   (e.g. HD Mode, both navbar and sidebar); everywhere else keeps using plain
+   `title`.
+
+   The bubble is one element portaled onto <body> and placed in window
+   coordinates, not a pseudo-element on the control: a pseudo-element is
+   clipped by every overflow box it sits in, which cut HD Mode's in half at the
+   sidebar's edge. tooltip.js keeps it inside the window and flips it to the
+   other side of the control when its own side has no room.
+
+   Liquid glass, the magic bar's recipe: whatever is under it blurred and
+   lifted, a dark tint so white text reads over bright tissue as well as over
+   the panels, and a light rim along the top edge. The tail is a sibling of
+   the bubble rather than part of it, so it is the same glass rather than a
+   painted triangle. */
+.plx-tooltip {
+    height: 0;
+    left: 0;
+    pointer-events: none;
+    position: fixed;
+    top: 0;
+    width: 0;
+    z-index: 2147483002;
 }
 
-/* Two pseudo-elements, moving together: ::after is the bubble and ::before is
-   the tail that ties it to what it explains. The tail is what makes a floating
-   rectangle read as belonging to the control under it rather than to whatever
-   it happens to be covering. */
-[data-tooltip]::before,
-[data-tooltip]::after {
+.plx-tooltip-bubble,
+.plx-tooltip-tail {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
     opacity: 0;
     pointer-events: none;
-    position: absolute;
+    position: fixed;
     /* It rises the last few pixels into place, which is the whole of the
        animation: enough to read as arriving, not enough to wait for.
        --duration-fast is 0ms under prefers-reduced-motion. */
     transition: opacity var(--duration-fast) var(--ease-standard),
-                transform var(--duration-fast) var(--ease-standard);
-    z-index: 400;
+                translate var(--duration-fast) var(--ease-standard);
+    translate: 0 4px;
 }
 
-[data-tooltip]::after {
-    background: var(--tooltip-bg);
+.plx-tooltip[data-side="bottom"] .plx-tooltip-bubble,
+.plx-tooltip[data-side="bottom"] .plx-tooltip-tail {
+    translate: 0 -4px;
+}
+
+.plx-tooltip.is-shown .plx-tooltip-bubble,
+.plx-tooltip.is-shown .plx-tooltip-tail {
+    opacity: 1;
+    translate: 0 0;
+}
+
+.plx-tooltip-bubble {
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.72), rgba(12, 16, 22, 0.68) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 14px;
-    bottom: calc(100% + 10px);
-    box-shadow: var(--shadow-md);
-    color: var(--tooltip-text);
-    content: attr(data-tooltip);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    box-sizing: border-box;
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 500;
-    /* Reset, not inherit: these hang off buttons and chips that are variously
-       uppercase, letter-spaced and 10px, and a tooltip that inherited any of
-       that would be a different tooltip on every control. */
     letter-spacing: 0;
     line-height: 1.45;
-    text-transform: none;
-    left: 50%;
-    max-width: 260px;
-    padding: 9px 13px;
+    /* The window's width less the 8px tooltip.js keeps clear on each side, so
+       on a narrow window it wraps instead of being slid half off. */
+    max-width: min(260px, calc(100vw - 16px));
+    overflow-wrap: anywhere;
+    padding: 8px 12px;
     text-align: left;
-    transform: translate(-50%, 4px);
+    text-transform: none;
     white-space: normal;
     /* Shrink-to-fit up to max-width, so a three-word tooltip is three words
        wide instead of a 260px slab with one line in it. */
     width: max-content;
 }
 
-[data-tooltip]::before {
-    background: var(--tooltip-bg);
-    bottom: calc(100% + 3px);
-    /* A triangle cut out of a box, rather than the border trick: the border
-       trick cannot take a background, so it would have to repeat the colour
-       in a place that does not look like a colour. */
+/* A triangle cut out of a box, rather than the border trick: the border
+   trick cannot take a backdrop. Pulled 2px into the bubble, a shade denser
+   than the glass, so the rim does not draw a seam across its root.
+   tooltip.js sets left to the point it aims at and top to the bubble's edge. */
+.plx-tooltip-tail {
+    background: rgba(12, 16, 22, 0.86);
     clip-path: polygon(50% 100%, 0 0, 100% 0);
-    content: "";
-    height: 8px;
-    left: 50%;
-    transform: translate(-50%, 4px);
-    width: 14px;
+    height: 10px;
+    margin: -2px 0 0 -8px;
+    width: 16px;
 }
 
-[data-tooltip]:hover::before,
-[data-tooltip]:hover::after,
-[data-tooltip]:focus-visible::before,
-[data-tooltip]:focus-visible::after {
-    opacity: 1;
-    transform: translate(-50%, 0);
-}
-
-/* Below instead of above, for anything anchored to the top of the window --
-   the navbar, where "above" is off the page. */
-[data-tooltip-placement="bottom"]::after {
-    bottom: auto;
-    top: calc(100% + 10px);
-    transform: translate(-50%, -4px);
-}
-
-[data-tooltip-placement="bottom"]::before {
-    bottom: auto;
+.plx-tooltip[data-side="bottom"] .plx-tooltip-tail {
+    background: rgba(34, 40, 52, 0.9);
     clip-path: polygon(50% 0, 0 100%, 100% 100%);
-    top: calc(100% + 3px);
-    transform: translate(-50%, -4px);
-}
-
-/* Anchored by its right edge, for a control near the right of the window,
-   where a centred bubble would run off it. */
-[data-tooltip-align="right"]::after {
-    left: auto;
-    right: -4px;
-    transform: translate(0, 4px);
-}
-
-[data-tooltip-align="right"]::before {
-    left: auto;
-    right: 9px;
-    transform: translate(0, 4px);
-}
-
-[data-tooltip-align="right"][data-tooltip-placement="bottom"]::after,
-[data-tooltip-align="right"][data-tooltip-placement="bottom"]::before {
-    transform: translate(0, -4px);
-}
-
-[data-tooltip-align="right"]:hover::before,
-[data-tooltip-align="right"]:hover::after,
-[data-tooltip-align="right"]:focus-visible::before,
-[data-tooltip-align="right"]:focus-visible::after {
-    transform: translate(0, 0);
+    margin: -8px 0 0 -8px;
 }
 
 /*LOADING SPINNER SECTION*/
@@ -2732,9 +2715,9 @@ dialog .file-source .data-location-place {
 .data-location-toggle {
     display: inline-flex;
     align-items: stretch;
-    /* The tooltip is what carries the meaning of the two letters to a mouse.
-       `position: relative` comes from [data-tooltip] above; this is here so
-       the flex context does not squash the pseudo-element's anchor. */
+    /* The tooltip (services/tooltip.js) is what carries the meaning of the
+       two letters to a mouse, and it is placed from this box, so the flex
+       context must not squash it. */
     flex: 0 0 auto;
     /* The inset is what reads as "one of these two" rather than "a button".
        `--dl-inset` is shared with the chip's radius below so the two curves
@@ -4259,9 +4242,7 @@ dialog .file-source .data-location-place {
     display: flex;
     align-items: center;
     justify-content: center;
-    /* The status dot hangs off the corner of the glyph, and the tooltip hangs
-       off the button. Stated here rather than borrowed from [data-tooltip],
-       which is only present once the first snapshot has arrived. */
+    /* The status dot hangs off the corner of the glyph. */
     position: relative;
     width: 30px;
     height: 30px;
@@ -4306,18 +4287,6 @@ dialog .file-source .data-location-place {
 .remote-globe[aria-expanded="true"] {
     background: var(--surface-2);
     border-color: var(--border-subtle);
-}
-
-/* ...and the tooltip goes away while it is. The pointer is still over the
-   button after the click that opened the panel, so the hover tooltip stays up
-   and hangs in front of the very thing it just introduced -- two popups off
-   one icon, the label overlapping the list. The panel is the answer to what
-   the tooltip was asking; once it is open the tooltip has nothing left to
-   say. Later in this file than the [data-tooltip]:hover rules it has to beat,
-   which is what settles the tie between two selectors of equal weight. */
-.remote-globe[aria-expanded="true"]::before,
-.remote-globe[aria-expanded="true"]::after {
-    content: none;
 }
 
 .remote-globe.is-live {
