@@ -223,7 +223,7 @@ def support(state, to_fit, params) -> dict | None:
                 "rho": float(params.get("resolve_p", 0.8)),
                 "draws": int(params.get("draws") or evidence.DRAWS),
                 "seed": int(state.get("seed") or 0), "eligible": eligible(state, params),
-                "key": key}
+                "key": key, "leader": params.get("leader") or "prior"}
     s = evidence.support(bounds, n_cells, valid, prior=prior, to_fit=to_fit,
                          tolerance=params["tolerance"],
                          resolve_within=params.get("resolve_within"),

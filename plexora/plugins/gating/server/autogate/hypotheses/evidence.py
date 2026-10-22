@@ -341,16 +341,24 @@ def equivalence(fits, n_cells, positives, tolerance, min_between, share):
     return out
 
 
-def plateau_leader(p, fits, prior, eligible, tau) -> tuple:
+def plateau_leader(p, fits, prior, eligible, tau, same=None, rho=None) -> tuple:
     """(leader, plateau): the plateau is every eligible candidate with
     P >= `tau`, and the most probable one always; the leader is the plateau
-    member nearest the prior by value (ties to the lower)."""
+    member nearest the prior by value (ties to the lower).
+
+    With `same` (`equivalence`) and `rho`, a plateau member the reads put
+    within the tolerance with P >= `rho` leads instead (the nearest the prior
+    of those): the prior only breaks ties the reads leave, and a member that
+    would resolve is not passed over for one they all but rule out."""
     p = np.asarray(p)
     allowed = [j for j in range(len(p)) if eligible is None or eligible[j]]
     best = max(allowed, key=lambda j: (p[j], -j))
     plateau = sorted({j for j in allowed if p[j] >= tau - 1e-12} | {best})
     target = fits[prior]
-    leader = min(plateau, key=lambda j: (abs(fits[j] - target), j))
+    pool = plateau
+    if same is not None and rho is not None:
+        pool = [j for j in plateau if float(same[j] @ p) >= rho - 1e-12] or plateau
+    leader = min(pool, key=lambda j: (abs(fits[j] - target), j))
     return leader, plateau
 
 
@@ -404,8 +412,9 @@ def support(bounds, n_cells, observations, *, prior, to_fit, tolerance,
     `rule="posterior"` decides by the posterior over candidates instead
     (`posterior_opts`: `tau`, `rho`, `draws`, `seed`, `eligible` per bound,
     `key` -- a cell field to stratify on, with `strata` its sizes per
-    interval): the leader is the plateau member nearest the prior, resolved
-    when P(within the tolerance of it, or the same gate in effect) >= `rho`.
+    interval; `leader` -- "prior" or "resolving", `plateau_leader`): the
+    leader is the plateau member nearest the prior, resolved when P(within
+    the tolerance of it, or the same gate in effect) >= `rho`.
     The rivals' Wilson intervals are still reported."""
     resolve_within = tolerance if resolve_within is None else resolve_within
     opts = dict(posterior_opts or {})
@@ -426,7 +435,10 @@ def support(bounds, n_cells, observations, *, prior, to_fit, tolerance,
                                  draws=int(opts.get("draws") or DRAWS))
         same = equivalence(fits, n_cells, positives, tolerance, min_between,
                            min_between_share)
-        leader, plateau = plateau_leader(p, fits, prior, eligible, float(opts.get("tau", 0.1)))
+        resolving = opts.get("leader") == "resolving"
+        leader, plateau = plateau_leader(p, fits, prior, eligible, float(opts.get("tau", 0.1)),
+                                         same=same if resolving else None,
+                                         rho=float(opts.get("rho", 0.8)) if resolving else None)
         within = float(same[leader] @ p)
         best = min(mean_loss[j] for j in plateau)
         block = {"p": [round(float(v), 4) for v in p], "within": round(within, 4),

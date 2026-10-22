@@ -825,6 +825,21 @@ def test_the_plateau_leader_is_nearest_the_start_by_value_ties_to_the_lower():
     assert plateau == [1] and leader == 1
 
 
+def test_a_resolving_leader_is_not_passed_over_for_the_start():
+    # FOXP3, seed 3 (2026-10-21): the start's neighbour held P 0.15 and the
+    # candidate the reads favoured 0.81; `prior` writes the first.
+    p, fits = [0.15, 0.81, 0.04], [5.78, 6.13, 6.42]
+    same = np.eye(3, dtype=bool)
+    leader, plateau = evidence.plateau_leader(p, fits, 0, None, 0.1)
+    assert plateau == [0, 1] and leader == 0
+    leader, _ = evidence.plateau_leader(p, fits, 0, None, 0.1, same=same, rho=0.8)
+    assert leader == 1
+    # Nothing resolves: the start breaks the tie as before.
+    leader, _ = evidence.plateau_leader([0.35, 0.65, 0.0], fits, 0, None, 0.1, same=same,
+                                        rho=0.8)
+    assert leader == 0
+
+
 def test_candidates_that_change_almost_no_cell_count_as_one_gate_in_the_posterior():
     bounds = [1.0, 1.5, 3.0]
     s = _posterior(bounds, [5, 300], [_obs([1.8] * 12, ["own_stain"] * 12)], prior=0)

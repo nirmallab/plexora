@@ -612,6 +612,463 @@ wider than the tolerance) and is fixed after this run: such a marker takes its
 third look. The five-read floor stands (set before any run; lsp11385_2 picks
 no constant).
 
+### Replicates, VERSION 6, lsp11385_2 seeds 1 to 3 (2026-10-21)
+
+Seeds 2 and 3 (gs_20261021T232324_e75828, gs_20261021T233422_047b07) ran on
+012710e0 with the options of seed 1; Opus workers throughout.
+
+| arm (3 runs) | MAE | within 0.2 | 0.4 or more off | accepted (MAE) | review MAE | spread | one gate | packets/marker |
+|---|---|---|---|---|---|---|---|---|
+| classic | 0.291 | 47 % | 33 % | 0.317 | 0.267 | 0.126 | 6 | 2.59 |
+| v5 | 0.237 | 53 % | 22 % | 0.190 | 0.251 | 0.334 | 0 | 2.69 |
+| **v6** | **0.226** | **55 %** | 24 % | 0.186 | 0.235 | 0.285 | 4 | 2.73 |
+
+Per run: v6 0.166 / 0.270 / 0.241. Seed 1 was the good draw. No marker more than
+0.30 worse than v5 (worst CD8a +0.14). Against the E2 bars, on this one image:
+MAE passes (below classic and v5); spread 0.285 fails (bar 0.25, provisional);
+0.4 or more off 24 % fails (bar 20 %); packets 2.73 fails (bar 2.2).
+
+Where the spread is: five markers wrote the same gate in all three runs (Ecad,
+Ki67, SMA, SOX10 and CD11c within 0.05). The spread comes from CD163 (range 1.24),
+CD8a (0.80), CD4 (0.50), FOXP3 (0.45) and CD20L (0.41). There are three mechanisms:
+
+1. **The reader disagrees with itself between runs, and each run is sure of
+   itself.** CD8a resolved at 5.99 (P(within) 0.86) in seed 2 and at 6.79 (0.96)
+   in seed 3. Of the 20 units with P(within) at least 0.9 (mean 0.97), 13 were
+   within 0.2 of the user's gate. The misses are a stable reader standard (Ecad
+   +0.56, CD3e -0.30 to -0.41, PDL1 -0.30 in two or three runs each) and reader
+   variance (CD8a, CD163). The posterior sees only the reads within one run, so
+   P(within) says whether more reads by this reader would move the gate. It does
+   not say whether the reader agrees with the user. The controller finds the
+   reader's gate, and what is left is the reader (R4, R6). Do not report
+   P(within) as confidence until it is calibrated.
+2. **The prior tie-break can write a candidate that the reads all but rule
+   out.** FOXP3 seed 3 wrote 5.78 (P 0.15, -0.52) beside 6.13 (P 0.81, -0.17).
+   CD4 seed 3 wrote 7.21 (P 0.31) beside 7.99 (P 0.65); there the tie-break
+   helped. A rule to try (logic, not a constant): a plateau member whose
+   P(within) reaches `resolve_p` leads (`PARAMS["leader"] = "resolving"`).
+   Measured and **not adopted**; the default stays `prior`:
+
+   | test | rule | MAE | spread | 0.4 or more off | accepted (MAE) |
+   |---|---|---|---|---|---|
+   | replay, v6 live reads (16 x 3) | prior | 0.235 | 0.302 | 25 % | 17 (0.200) |
+   | | resolving | 0.222 | 0.332 | 23 % | 20 (0.210) |
+   | replay, v5 live reads (16 x 3) | prior | 0.214 | 0.232 | 15 % | 6 (0.168) |
+   | | resolving | 0.214 | 0.233 | 19 % | 6 (0.168) |
+   | bench `noisy:0.32` (18 x 5) | prior | 0.328 | 0.591 | 34 % | 22 (0.297) |
+   | | resolving | 0.328 | 0.630 | 33 % | 22 (0.299) |
+   | bench `noisy:0.1:0.3:0.15` | prior | 0.195 | 0.354 | 18 % | 31 (0.260) |
+   | | resolving | 0.190 | 0.359 | 15 % | 32 (0.260) |
+
+   It fixes FOXP3, PD1 and MART1 and moves CD3e, PDL1 and CD45 the wrong way.
+   Spread rises everywhere it moves at all. Following the reads more closely
+   follows the reader's run-to-run variance more closely, so the start's
+   tie-break is part of what keeps the spread down. Nothing is worse than 0.30.
+3. **An early `looks_uninformative` close after one look.** CD20L seed 2 wrote
+   6.11 (-0.46) after one look; seeds 1 and 3 accepted 6.52 (-0.05).
+
+### E0.5, the reader audit, first round (2026-10-21)
+
+Run with `tools/bench_gates/reader_audit.py`. The renders, briefs, answers and
+score are in `runs/2026-10-21-reader-audit/` (gitignored).
+- **Panels:** one panel per marker, built as a live look builds it (2 x 2
+  blocks, `partner_plan` partners, context, guide text, 4 clear negatives,
+  shuffled). The cells are the person's near-gate labels, repeats left out:
+  lsp11385_2, 12 markers, 288 cells (223 crowded); CRC, 11 markers, 264 cells.
+- **Readers:** each pass is one fresh conversation per image, reading
+  through the Read tool. Passes A and B have identical panels.
+- **Scoring:** the person's `own` against `glow` and `none`; their `unsure`
+  is left out.
+
+| pass | reader | text | lsp bal acc | answered | leniency | CRC bal acc | answered | leniency |
+|---|---|---|---|---|---|---|---|---|
+| A | Opus | new | 0.53 | 56 % | -0.03 | 0.61 | 58 % | +0.02 |
+| B | Opus (repeat of A) | new | 0.49 | 53 % | -0.06 | 0.69 | 44 % | -0.13 |
+| C | Sonnet | new | 0.50 | 61 % | +0.37 | 0.61 | 73 % | +0.02 |
+| D | Opus | old (partners decisive) | 0.54 | 52 % | -0.15 | 0.67 | 60 % | -0.04 |
+
+1. **Opus never contradicts itself on a picture.** A and B both committed on
+   305 cells and none flipped between own and not own (kappa 1.00).
+   Between conversations, what moves is how often the reader abstains: on CRC it
+   answered 58 % of cells in one and 44 % in the other. Abstaining depends on
+   the person's word: `uncertain` takes 56 to 72 % of the cells they call glow,
+   against 33 to 46 % of the cells they call own. Where one pass was
+   uncertain, the other pass's committed words were at chance (0.43 to 0.54).
+   So a second reader of the same cells adds nothing, and forcing a word on an
+   uncertain cell adds noise. A conversation's caution changes which cells
+   count, which biases the whole run. This is a mechanism for the
+   run-to-run spread that the within-run posterior cannot see.
+2. **On the near-gate cells the reader does not carry the person's
+   standard.** On lsp11385_2 balanced accuracy is at chance (0.49 to 0.54); on
+   CRC it is 0.61 to 0.69. Some markers are wrong in every pass and model. CRC
+   CD45 is 8 to 14 % right: the reader says not own where the person says own,
+   and the panels show almost no CD45 on those cells in either window, with no
+   expected partner. lsp MART1 is lenient in every pass (+9 to +13 cells) and
+   CD163 strict (-4 to -8). These are the hardest cells by design, and the
+   person's own gate agrees with their labels 59 % of the time there.
+3. **The partner text makes no measurable difference.** A and D agree with
+   kappa 0.95 to 0.96, and the A and D accuracies differ by no more than A
+   and B, which are the same condition. The old text is a little stricter on
+   lsp. The new text stays, since it follows principle 4.
+4. **Sonnet is not a drop-in.** It matches Opus on CRC with fewer
+   uncertain calls, but on lsp it calls far more cells own (+0.37).
+
+The controller is not the bottleneck: the reader's per-cell standard near
+the gate is. Repeat reads, a second reader and text changes will not move it.
+The one presentation lever still untested is the display window (R5).
+Earlier, the window and not the wording moved PCNAL and p193 CD8a. The CRC
+CD45 panels draw dim CD45 at almost nothing. Window variants, especially a
+morphology tile stretched past `MORPHOLOGY_FLOOR` and a window anchored on
+negatives (both blind), are the next audit arm.
+
+### E0.5, second round: the display window (2026-10-21)
+
+The same cells as round 1, and numbered the same (`render --seed-name`).
+Each variant was read by one Opus conversation covering both sets, lsp first.
+- **E, `--window floor:0.2`:** the morphology tile's floor is 0.2 instead of 0.5.
+- **F, `--window span:0.5`:** the marker's white sits at half its calibrated
+  span; black stays at the negatives.
+
+| pass | lsp bal acc | answered | leniency | CRC bal acc | answered | leniency | sentinels own |
+|---|---|---|---|---|---|---|---|
+| A, B (calibrated) | 0.53, 0.49 | 56 %, 53 % | -0.03, -0.06 | 0.61, 0.69 | 58 %, 44 % | +0.02, -0.13 | 0 |
+| E (floor 0.2) | 0.57 | 57 % | +0.25 | 0.68 | 54 % | +0.14 | 0 |
+| F (span 0.5) | **0.60** | 57 % | +0.13 | 0.66 | 62 % | +0.10 | 0 |
+
+- **The window moves the per-cell calls more than the text or the model did.**
+  CRC CD45, wrong in every round-1 pass (8 to 14 % right), reads 64 % (E) and
+  53 % (F) right. lsp FOXP3 goes from 0.36-0.43 to 0.62 (F). lsp balanced
+  accuracy is above chance for the first time (0.60, F). No clear negative
+  was called own.
+- **Brightening converts `uncertain` cells; it does not change committed
+  words.** A against E or F flips only 3 or 4 of about 108 cells both
+  committed on, all of them towards own. The cells it converts lean own, so
+  the reader turns more lenient (+0.10 to +0.25), and that would lower gates.
+- **It hurts some markers.** CRC CD20 drops from 0.64-0.82 to 0.38 (E, F),
+  CRC CD8a to 0.38 (E), and lsp CD4 to 0.36 (E). CRC membrane markers as a
+  class: 0.53 to 0.56 against 0.57 to 0.65. Under the E0.5 bar (not lower on
+  any class on any label set) neither variant is adopted.
+- One pass a variant with 8 to 17 answered cells per marker is noisy: A and
+  B, the same condition, differ by up to 0.24 on one marker.
+
+Next, if this is pursued: F (or a milder span, 0.7) repeated one conversation
+per set, and read on the IMC and CODEX-LN label sets, before any live run.
+
+### E0.5, third round: F confirmed or not, four label sets, a wider field (2026-10-21)
+
+One Opus conversation per set, except G (both sets in one conversation).
+IMC (`imc-immucan-example`, 12 markers) and CODEX-LN (`codex-hubmap-lymphnode`,
+12 markers) were read for the first time in this format. Their Ecad, Ki67,
+MPO, SMA and CD21 panels have no partners, so they are two-tile panels with
+the `collage_panel` text.
+
+| set | calibrated (A, B, D) | brighter, span 0.5 (F, F2) | wider field, 36 um (G) |
+|---|---|---|---|
+| lsp11385_2 | 0.53, 0.49, 0.54 | 0.60, 0.64 | 0.39 |
+| CRC | 0.61, 0.69, 0.67 | 0.66, 0.60 | 0.59 |
+| IMC | 0.61 | 0.55 (answered 57 % to 44 %) | |
+| CODEX-LN | 0.69 | 0.66 (leniency +0.06 to +0.21) | |
+
+(Balanced accuracy on answered cells against the person's labels.)
+
+- **The brighter window helps lsp11385_2 only.** The gain is repeated (0.60, 0.64
+  against 0.49 to 0.54). It is neutral on CRC, worse on IMC (more `uncertain`
+  calls), and slightly worse and more lenient on CODEX-LN. It is not adopted as
+  a global setting. Within an image the effect also varies by marker (CRC
+  CD45 fixed, CD20 broken). If the window is to change, it should change per
+  marker on a blind, measured property, such as how dark the calibrated
+  window draws the cells being judged. That property has to be chosen with
+  each label set left out in turn, so lsp11385_2 never picks it.
+- **A wider field is worse everywhere.** At the same tile size it draws each
+  cell smaller: answered falls to 44 to 48 %, and lsp is below chance (0.39).
+
+### Can the brighter window be applied per marker? (2026-10-21, no model calls)
+
+`runs/2026-10-21-reader-audit/code/darkness.py`. Each calibrated panel now
+records how it drew the marker (`reader_audit.py render`, `drawn`): per
+judged cell, the level its own disc p99 is drawn at, and whether the
+morphology tile floored it. All of this is readable before any look.
+- **Outcome:** per (set, marker), the gain is the change in correct minus wrong
+  among answered cells, bright (F, F2) against calibrated (A, B). Over 47
+  markers on four sets, the same condition repeated differs by a median of 1
+  and at most 7 per marker.
+- **Prediction:** the guess was "brighten where the cells are drawn dark".
+  The data run the other way: the gain rises with the drawn level (Spearman
+  +0.81 lsp, +0.72 CODEX-LN, +0.57 IMC, -0.18 CRC) and falls with the share
+  floored. Brightening a panel whose cells are near black brings up glow,
+  which the person calls not own.
+- **Leave one set out**, with the feature, the direction and the threshold
+  each chosen on the other three sets. The rule found is "brighten when
+  fewer than about 90 % of the judged cells are floored". Held-out gain:
+  lsp +9.5 (always +20.5), CRC +8.0 (+11.5), IMC -1.0 (-35), CODEX-LN -5.0
+  (-46); in total +11.5 against -49 for always and 0 for never.
+
+The rule avoids the losses but finds no gain on the sets where brightening
+lost. +11.5 correct-minus-wrong over about 1,100 labelled cells is about 1 %,
+which is within the noise of 47 markers. **Not built.** A per-marker window
+rule needs more label sets than four before it can be told from noise.
+
+### E2, the dev campaign on O2: VERSION 6 against classic (2026-10-22)
+
+**Setup.**
+- **Code and engine:** code 012710e0, plus the `leader` param at its default
+  `prior`, so v6 runs as committed.
+- **Where:** the PCA images served by the HMS-O2 node; propose mode.
+- **Images and markers:** the 17 PCA markers on LSP11321, LSP11361 and
+  LSP11761, and 10 markers on p193. Six of the p193 markers have the person's
+  gates.
+- **Runs:** seeds 1 to 3, arms classic and v6. The v5 arm was not run, to save
+  model calls; the lsp11385_2 replicates above stand apart.
+- **Workers:** Opus `plexora-gating-worker`s, each given all six gating tasks.
+  v6 used two readers (gating-1 and gating-3), classic one.
+- **Options:** classifier off, display_check off, on_limit extend,
+  reuse_answers false, panel_looks 3.
+- **Truth:** the person's dev gates (PCA `user_gates`, p193 hand gates). That
+  gives 57 image-marker pairs, 171 scored units an arm.
+- **Files:** the session map, truth, scores and replays are in
+  `runs/2026-10-22-e2-dev/` (gitignored: `campaign.json`, `truth_dev.json`,
+  `dev_score.json`, `replay_*.json`); `dev_score.sh` runs
+  `score_gap.py --baseline classic --oracle`.
+
+| session | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| LSP11321 v6 | 013305_03a476 | 023500_558e6b | 040720_8d65f3 |
+| LSP11321 classic | 013308_b4ef5e | 040750_049a7e | 040753_e808ba |
+| LSP11361 v6 | 015202_1f9d86 | 025258_7558ad | 031513_e19598 |
+| LSP11361 classic | 015808_6697ab | 025427_769df3 | 031516_49f1d9 |
+| LSP11761 v6 | 020417_0fe78a | 033726_d68aab | 033759_db26f0 |
+| LSP11761 classic | 021518_e965b2 | 033756_4d4d12 | 033802_61b507 |
+| p193 v6 | 021801_0dfd1f | 042739_9e9dd6 | 042815_874b1a |
+| p193 classic | 022535_10444a | 042812_da1152 | 042818_8d35d1 |
+
+(All `gs_20261022T...`. The first LSP11321 classic seed 2,
+gs_20261022T025253_6d0621, was cancelled at 0 packets: see the operations notes.)
+
+| arm (3 runs, 4 images) | MAE | within 0.2 | 0.4 or more off | accepted share (MAE) | review MAE | spread | packets/marker | oracle MAE |
+|---|---|---|---|---|---|---|---|---|
+| classic | **0.273** | 58.5 % | 21.1 % | 83 % (0.213) | 0.315 | **0.252** | 2.84 | 0.079 |
+| v6 | 0.277 | 55.0 % | 20.5 % | 33 % (0.140) | 0.296 | 0.288 | **2.63** | 0.096 |
+
+classic minus v6, paired over 57 markers: -0.005 (95 % CI -0.035 to +0.040).
+Spread is the mean over markers of the range across the three runs. The
+accepted share for each arm is the share of its units in an accepted state.
+The accepted MAE is `score_gap`'s, counting resolved units only; over every
+accepted or accepted_low_confidence unit it is v6 0.171, classic 0.242.
+
+| image | v6 MAE | classic MAE | v6 spread | classic spread | v6 within 0.2 | classic within 0.2 |
+|---|---|---|---|---|---|---|
+| LSP11321 | 0.249 | **0.210** | 0.236 | 0.214 | 47 % | 63 % |
+| LSP11361 | 0.270 | **0.241** | 0.286 | 0.304 | 51 % | 61 % |
+| LSP11761 | **0.320** | 0.363 | 0.345 | 0.297 | 55 % | 43 % |
+| p193 (6 gated) | **0.256** | 0.287 | 0.275 | 0.083 | 67 % | 67 % |
+
+**The E2 bars**, pre-registered in the unified plan. The v5 comparisons are
+replaced by classic, since v5 was not run.
+
+| bar | v6 | verdict |
+|---|---|---|
+| spread <= 0.25 (provisional) | 0.288 (classic 0.252) | fails |
+| MAE not worse than classic | 0.277 against 0.273, CI spans zero | tie |
+| 0.4 or more off <= 20 % | 20.5 % | fails, narrowly |
+| packets <= 2.2 a marker | 2.63 | fails |
+| accepted MAE <= 0.20 at coverage >= 50 % | 0.232 at 50 % (P(within) >= 0.8); 0.140 at the 33 % it accepts | fails |
+| review gates farther than accepted | 0.296 against 0.140 | passes |
+| no marker worse than the comparator by > 0.30 | 3 markers (below) | fails |
+
+**Decision gate 1 fails for v6 on the dev images.** Classic stays the default
+and the candidates engine stays opt-in.
+
+What the campaign shows:
+1. **v6 ties classic on gate error and splits the images two and two.** It is
+   better on LSP11761, the image with the edge band, and on p193. It is worse
+   on LSP11321 and LSP11361. lsp11385_2 alone had v6 ahead (0.226 against
+   0.291). That was one image, and it is the high-SNR image no constant may be
+   chosen on.
+2. **v6 trades coverage for precision.** It accepts a third of the markers at
+   MAE 0.14 and sends two thirds to review. Classic accepts 83 % at 0.21. Both
+   arms put the farther gates in review. Classic's review is less selective.
+3. **P(within 0.2) is not calibrated:**
+
+   | P(within) | n | within 0.2 |
+   |---|---|---|
+   | >= 0.9 | 61 | 51 % |
+   | 0.8 to 0.9 | 21 | 71 % |
+   | 0.5 to 0.8 | 44 | 45 % |
+   | < 0.5 | 38 | 53 % |
+
+   Risk does not fall as coverage narrows: 0.252 at 37 % coverage, 0.232 at
+   50 %. This repeats lsp11385_2, where 13 of 20 units at >= 0.9 were within
+   0.2. The posterior sees one run's reads by one reader. It cannot see the
+   reader's own standard for each marker (R4). Fitting `calibration.py` on
+   these records maps P to an honest rate. It cannot make the gates move.
+4. **The worst markers are stable reader standards, not spread.** v6 wrote the
+   same far gate in every run:
+   - **LSP11361 SOX10:** 5.49 against the person's 4.00. Dim tumour nuclei
+     beside bright ones were read as a neighbour's light. Classic wrote 3.87
+     and 4.04 in two runs.
+   - **LSP11321 Ecad:** 6.66 against 6.25. This is the same direction as
+     lsp11385_2's Ecad +0.56. Classic accepted 6.27 to 6.39 at T1.
+   - **LSP11761 CD163:** 8.07 to 8.47 against 7.8.
+
+   v6 is better than classic by more than 0.3 on five markers: LSP11321 CD45,
+   LSP11361 CD4, LSP11761 CD11c and PD1, and p193 CD3E.
+5. **Spread is close to the person's own variation between sittings.**
+   Classic's spread on the dev images (0.252) is twice its lsp11385_2 figure
+   (0.126); its p193 spread is 0.083. v6's is 0.288. The person's regate of
+   lsp11385_2 two weeks after the first moved 17 gates by 0.28 on average
+   (median 0.22). The blind re-gate (question 3) is still what sets the band.
+6. **Cost:** v6 used 2.63 packets a marker against classic's 2.84. Half of v6's
+   reads are `uncertain` (0.48), mostly crowded cells.
+7. **The `resolving` leader rule**, replayed on these v6 reads with zero model
+   calls, is not better. MAE and spread are prior / resolving:
+
+   | image | MAE prior / resolving | spread prior / resolving |
+   |---|---|---|
+   | LSP11321 | 0.239 / 0.246 | 0.268 / 0.299 |
+   | LSP11361 | 0.270 / 0.282 | 0.286 / 0.264 |
+   | LSP11761 | 0.394 / 0.393 | 0.278 / 0.247 |
+
+   v6 often writes the plateau member nearest the start over a rival at
+   P 0.6 to 0.8 (LSP11361 CD31 6.45 over 6.7 at P 0.76). Choosing the
+   probable member instead does not lower the error. The default stays
+   `prior`. The v5 decision replayed on the same reads is worse on LSP11361
+   (0.325) and LSP11761 (0.411) and better on LSP11321 (0.229).
+
+**The person's rechecks (2026-10-22).** The person reviewed 17 markers in two
+rounds. Their verdict: "overall it is doing a good job".
+- **Round 1:** the 10 markers farthest from the person's gate under v6. The list
+  is `runs/2026-10-22-e2-dev/gates_comparison_v6_vs_classic_vs_human.csv`,
+  sorted by v6's distance.
+- **Round 2:** the 8 farthest under classic where v6 was close; LSP11761 PDL1
+  appears in both rounds, so 17 distinct markers.
+- **Where they are:** `truth_rechecks_2026-10-22.json`; `rescore.py` in the same
+  folder rescores and refreshes the CSV.
+- **How they are scored:** most rechecks accept a range. A gate inside the range
+  scores 0; outside it scores its distance to the nearer end.
+
+| marker | range accepted | the person's words |
+|---|---|---|
+| LSP11361 SOX10 | 4.00 to 5.49 | either is fine: a wide plateau between the two peaks |
+| LSP11761 PDL1 | 6.98 to 8.00 | 6.98 is fine |
+| p193 CD31 | 5.1 | around 5.1 |
+| LSP11761 PD1 | 8.84 or higher | no positive cells; the bright regions are tissue folds; a failed marker the whole-slide view should have caught |
+| LSP11321 SMA | 6.53 to 7.00 | 6.53 is acceptable |
+| LSP11321 CD20L | 7.1 to 7.3 | down to 7.1, not below (false positives elsewhere) |
+| LSP11321 Ecad | 6.25 to 6.66 | 6.66 is fine |
+| LSP11361 CD68 | 6.4 | 6.4 is good |
+| LSP11761 CD4 | 7.2 to 7.3 | around 7.2 to 7.3 |
+| LSP11321 FOXP3 | 6.93 to 6.99 | 6.99 is the highest |
+| LSP11761 CD11c | 7.1 | probably 7.1, to balance false positives and negatives |
+| LSP11361 CD4 | 7.3 | around 7.3, same reason |
+| LSP11321 CD45 | 7.80 to 7.90 | 7.9 is the highest |
+| LSP11321 CD163 | 7.5 to 7.8 | 7.5 to 7.8 is fine |
+| LSP11361 PDL1 | 6.5 to 6.8 | subjective; 6.5 to 6.8 all looks fine |
+| LSP11761 CD68 | 5.88 | would go down to around 5.88 |
+| p193 CD3E | 5.08 to 5.10 | 5.1 is the highest |
+
+| truth | arm | MAE | within 0.2 | 0.4 or more off | accepted MAE | review MAE |
+|---|---|---|---|---|---|---|
+| original | v6 | 0.278 | 53 % | 20 % | 0.171 | 0.329 |
+| original | classic | 0.273 | 57 % | 21 % | 0.242 | 0.426 |
+| round 1 only | v6 | 0.197 | 61 % | 10 % | 0.126 | 0.231 |
+| round 1 only | classic | 0.232 | 64 % | 16 % | 0.199 | 0.394 |
+| **both rounds** | v6 | 0.203 | 63 % | 11 % | 0.130 | 0.238 |
+| **both rounds** | classic | 0.208 | 68 % | 12 % | 0.165 | 0.419 |
+
+Round 1 alone favoured v6 by construction, since only v6's misses were
+rechecked. With both rounds, the two engines tie:
+- **Paired over 57 markers:** classic minus v6 is +0.005 (95 % CI -0.039 to
+  +0.053).
+- **Per image:** v6 is ahead on LSP11361 and p193, classic on LSP11321 and
+  LSP11761.
+
+  | image | v6 | classic |
+  |---|---|---|
+  | LSP11321 | 0.168 | 0.146 |
+  | LSP11361 | 0.175 | 0.206 |
+  | LSP11761 | 0.285 | 0.277 |
+  | p193 | 0.148 | 0.195 |
+
+- **Large differences:** v6 is worse than classic by more than 0.3 on one
+  marker, LSP11761 CD163 (+0.39, not rechecked). It is better by more than 0.3
+  on four: LSP11361 CD68, p193 CD3E, LSP11761 PD1 and LSP11321 CD45.
+- **Both engines too high:** LSP11761 CD68, which the person moved from 7.00
+  to 5.88 (v6 off by 0.90, classic by 0.69).
+
+**The person's own gates move as much as the engines miss.** Five of the 17
+rechecks moved the person's gate by more than 0.3:
+
+| marker | how far the gate moved | direction |
+|---|---|---|
+| LSP11761 CD68 | 1.12 | down |
+| LSP11361 CD68 | 0.70 | up |
+| p193 CD31 | 0.69 | down |
+| LSP11761 CD11c | 0.50 | up |
+| LSP11361 CD4 | 0.40 | up |
+
+The mean move over the 17 is 0.21. Several markers are a range by the person's
+own account; PDL1, for one, is "pretty subjective". So a single human gate is
+not a 0.2-tight truth.
+
+**The E2 bars on the rechecked truth:**
+
+| bar | result on the rechecked truth | verdict |
+|---|---|---|
+| MAE not worse than classic | 0.203 against 0.208 | passes |
+| 0.4 or more off <= 20 % | 11 % | passes |
+| accepted MAE <= 0.20 at coverage >= 50 % | 0.193 at 50 % | passes |
+| review gates farther than accepted | 0.238 against 0.130 | passes |
+| spread <= 0.25 | 0.288; classic 0.252 also misses | fails; the bar is independent of truth |
+| packets <= 2.2 a marker | 2.63 | fails |
+| no marker worse than classic by > 0.30 | LSP11761 CD163, +0.39 | fails, pending a recheck |
+
+P(within 0.2) is still not calibrated. Units at P >= 0.9 are 62 % within, and
+units below 0.5 are 68 %.
+
+In round 1, two rechecks moved v6's worst cases:
+- **SOX10 on LSP11361:** v6 wrote 5.49 in every run. The person accepts it,
+  because the plateau between the peaks is wide.
+- **Ecad on LSP11321:** v6's 6.66 is accepted.
+
+Three rechecks keep v6 wrong:
+- **LSP11321 FOXP3:** 7.30 against at most 6.99.
+- **LSP11321 CD20L:** 6.71 against a floor of 7.1.
+- **LSP11361 CD68:** 5.92 to 6.40 against 6.4. Classic's 5.03 to 5.82 is
+  farther still.
+
+**LSP11761 PD1 is a failed marker that both engines gated.** It has no positive
+cells, and its bright regions are tissue folds.
+- **What the engines did:** classic wrote 7.69 in all three runs and kept it for
+  review. v6 wrote 7.69, 7.91 and 8.65, and accepted run 3 at low confidence.
+- **What the readers saw:** a haze over the Ecad-bright tumour, an edge band,
+  and almost no membrane rings. The whole-image check answered `cannot_tell`.
+- **No QC on this image:** LSP11761 has no QC result, so the session warned
+  that folds reach every marker.
+- **What the person expects:** the whole-slide view catches it and fails the
+  marker.
+- **What to look at next:** that marker's whole-image packets, to see why the
+  fold read as `cannot_tell` and not as an artifact. The absence check is off
+  by default, because it closed real populations on held-out images.
+
+**Operations, for the next campaign on a node:**
+- **The data node holds one cell table at a time.** Run concurrent sessions on
+  one image only, for example both arms of one image. A second image's start
+  loads its table over the first; the first session's `gating_next` then fails
+  with `data node ... had not loaded table`.
+- **A reconnect strands a separate `plexora mcp serve` process.**
+  `nodes.address_generation` is only bumped in the process that reconnected.
+  The MCP keeps the old port in two caches keyed without the endpoint: the
+  AgentSession table cache (`agent/session.py:150`, 2 entries) and
+  `source_image.SHELF` (4 entries). The symptom is a bulk job that fails at
+  once with `cannot reach data node ... <old port>`, while
+  `get_resource_status` reads fine.
+  - Workaround: read the tables of two local projects and render four tiny
+    local regions, then `gating_session_bulk`.
+  - Fix, not built: notice nodes.json's endpoint or token change in
+    `address_generation`, or re-resolve on a refused connection.
+- `remotes.json` HMS-O2 walltime was raised to 6 h for the campaign and
+  restored to 2 h after.
+
 ### What waits on the person or on live runs
 
 - Questions 1 to 4 of the plan: re-showing an `uncertain` cell; the classifier
@@ -620,8 +1077,10 @@ no constant).
 - E0.5, the reader audit on the labelled cells (the partner text, positive
   sentinels, window, panel size, Opus vs Sonnet): the S3 renders and scorer
   exist (`runs/2026-10-1x-hybrid`), the reads are model calls.
-- E2, the dev campaign (lsp11385_2, LSP11321, LSP11761, LSP11361, p193; 3 runs;
-  classic / v5 from 283fbb92 / v6), then calibration and E3 once.
+- E2 has run (above) as v6 against classic on LSP11321, LSP11361, LSP11761 and
+  p193, 3 runs each. Decision gate 1 fails for v6. Calibration can now be fitted
+  on the 171 v6 units, which maps P(within) to an honest rate; it cannot move a
+  gate. E3 waits on a version that passes E2.
 
 ## Not done in this branch
 

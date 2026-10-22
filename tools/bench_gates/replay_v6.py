@@ -15,7 +15,9 @@ have spent them elsewhere (`sampling="voi"`), so this replays the decision,
 not the session; a VERSION 6 status of None means it would have looked
 again. `--common-prior` gives every run the lattice point nearest the mean
 of the runs' starts as its prior (the start drifts with the partner gates a
-run decided first).
+run decided first). `--set KEY=VALUE` (repeatable) adds a third rule, `alt`:
+VERSION 6 with those `PARAMS` changed (`--set leader=resolving`). A session
+VERSION 6 recorded keeps its unit seed, so its replay is its own decision.
 
 Summary per rule: mean |gap|, the run-to-run spread per marker (max - min),
 the share 0.4 or more off, and the accepted (resolved) gates' count and mean
@@ -60,7 +62,7 @@ def _without_close_split(state):
     return state
 
 
-def prepared(h, rules, seed):
+def prepared(h, rules, seed, overrides=None):
     state = copy.deepcopy(h)
     for key, value in (("n_finite", 0), ("grown", {"up": 0, "down": 0}), ("split", [])):
         state.setdefault(key, value)
@@ -70,10 +72,18 @@ def prepared(h, rules, seed):
     else:
         state = _without_close_split(state)
         fresh = {k: v for k, v in hypotheses.PARAMS.items() if k not in stored}
-        params = {**stored, **fresh, "split_at_close": False}
-        state["seed"] = seed
+        params = {**stored, **fresh, "split_at_close": False, **(overrides or {})}
+        state["seed"] = state.get("seed") or seed
     state["params"] = params
     return state
+
+
+def _jsonish(value):
+    try:
+        json.loads(value)
+        return True
+    except ValueError:
+        return False
 
 
 def decide(state):
@@ -87,8 +97,14 @@ def main(argv=None) -> int:
     parser.add_argument("image")
     parser.add_argument("sessions", nargs="+")
     parser.add_argument("--common-prior", action="store_true")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     parser.add_argument("--json")
     args = parser.parse_args(argv)
+    overrides = {}
+    for item in args.set:
+        key, value = item.split("=", 1)
+        overrides[key] = json.loads(value) if _jsonish(value) else value
+    names = ("v5", "v6", "alt") if overrides else ("v5", "v6")
     truth = json.load(open(args.truth))[args.image]
     sessions = [json.load(open(p)) for p in args.sessions]
     by_marker = {}
@@ -110,9 +126,11 @@ def main(argv=None) -> int:
         for run in sorted(runs):
             unit, h, seed = runs[run]
             out = {"run": run, "stored": unit.get("final"), "stored_status": h.get("status")}
-            for rules in ("v5", "v6"):
+            for rules in names:
                 key = f"{unit['project']}::{marker}".encode()
-                state = prepared(h, rules, (seed * 100_003 + zlib.crc32(key)) & 0x7FFFFFFF)
+                state = prepared(h, "v6" if rules == "alt" else rules,
+                                 (seed * 100_003 + zlib.crc32(key)) & 0x7FFFFFFF,
+                                 overrides if rules == "alt" else None)
                 if args.common_prior and common is not None:
                     state["prior"] = min(range(len(state["points"])),
                                          key=lambda i: abs(state["points"][i]["low"] - common))
@@ -129,12 +147,14 @@ def main(argv=None) -> int:
         print(f"{marker:6} user {row['user']:.2f} | v5 "
               + " ".join(f"{r['v5']['low'] - row['user']:+.2f}{'*' if r['v5']['resolved'] else ''}"
                          for r in row["runs"])
-              + " | v6 "
-              + " ".join(f"{r['v6']['low'] - row['user']:+.2f}{'*' if r['v6']['resolved'] else ''}"
-                         f"({r['v6'].get('within', 0):.2f})" for r in row["runs"]))
+              + "".join(f" | {rules} "
+                        + " ".join(f"{r[rules]['low'] - row['user']:+.2f}"
+                                   f"{'*' if r[rules]['resolved'] else ''}"
+                                   f"({r[rules].get('within', 0):.2f})" for r in row["runs"])
+                        for rules in names[1:]))
     print("\n(* resolved; v6 in brackets: P within the tolerance of the leader)")
     summary = {}
-    for rules in ("v5", "v6"):
+    for rules in names:
         gaps = [abs(r[rules]["low"] - row["user"]) for row in rows for r in row["runs"]]
         acc = [abs(r[rules]["low"] - row["user"]) for row in rows for r in row["runs"]
                if r[rules]["resolved"]]

@@ -134,6 +134,12 @@ PARAMS = {
     "plateau": 0.1,
     "resolve_p": 0.8,
     "draws": 400,
+    # Which plateau member leads: `prior` (the nearest the start) or
+    # `resolving` (a member the reads put within the tolerance with
+    # P >= `resolve_p` first, then the nearest the start). `prior` until the
+    # replay and the bench say otherwise (CANDIDATES_PLAN.md, "Replicates,
+    # VERSION 6"); changing it is a VERSION bump.
+    "leader": "prior",
     # A point a step or a split added may lead once each side of it in the
     # range has this many cells read either way (a fifth of a look).
     "added_min_reads": 5,

@@ -11,7 +11,8 @@ seed for both arms; their streams part as soon as their packets differ) and
 the session seed r, so cells drawn differ between repeats as on live runs.
 An arm is a set of `hypotheses.PARAMS` overrides: `v5` is
 `hypotheses.V5_RULES`, `v6` the defaults, and `v6-<abl>` drops one VERSION 6
-part (`novoi`, `noelig`, `nostrata`, `noearly`, as in `ablate.py`).
+part (`novoi`, `noelig`, `nostrata`, `noearly`, as in `ablate.py`) or tries
+one change (`resolving`: `leader="resolving"`).
 
 Per (scene, marker, arm, repeat): the gate written (or proposed), its gap
 to the truth's best single cut in log1p units, F1 against the per-cell
@@ -36,7 +37,8 @@ from collections import Counter, defaultdict
 import numpy as np
 
 ABLATIONS = {"novoi": {"sampling": "survey_refine"}, "noelig": {"added_min_reads": 0},
-             "nostrata": {"strata": None}, "noearly": {"voi_epsilon": 0.0}}
+             "nostrata": {"strata": None}, "noearly": {"voi_epsilon": 0.0},
+             "resolving": {"leader": "resolving"}}
 
 
 def arm_params(name):
