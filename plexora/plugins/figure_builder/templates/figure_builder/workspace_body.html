@@ -424,15 +424,24 @@
                 <button type="button" id="fb_tray_add" class="fb-button fb-tray-add-button">
                     <span class="fas fa-plus" aria-hidden="true"></span> Add panels
                 </button>
-                <button type="button" id="fb_tray_bin" class="fb-icon-button"
-                        title="Add from your captures" aria-label="Add from your captures">
-                    <span class="fas fa-inbox" aria-hidden="true"></span>
-                </button>
                 <button type="button" id="fb_tray_file" class="fb-icon-button"
                         title="Add an image file" aria-label="Add an image file">
                     <span class="fas fa-file-image" aria-hidden="true"></span>
                 </button>
                 <input type="file" id="fb_add_image_input" accept="image/*" multiple hidden>
+            </div>
+            {# What is already kept, one press away: the views saved in the
+               viewer (K) -- to go back to, or straight onto the page -- and
+               the captures, into the tray. #}
+            <div class="fb-tray-kept">
+                <button type="button" id="fb_tray_bookmarks" class="fb-button fb-tray-kept-button"
+                        title="Views saved in the viewer (K): go back to one, or add it to the figure">
+                    <span class="fas fa-bookmark" aria-hidden="true"></span> Bookmarks
+                </button>
+                <button type="button" id="fb_tray_bin" class="fb-button fb-tray-kept-button"
+                        title="Your captures: add them to the panels">
+                    <span class="fas fa-inbox" aria-hidden="true"></span> Captures
+                </button>
             </div>
             {# Shown only once the tray is long enough for finding something in
                it to be work -- which is sooner now that the names are behind a

@@ -534,11 +534,12 @@
                     + "or press 0, for the three-quarter view. With the pointer over the 3-D "
                     + "view, X, Y or Z turns the stack about that axis of the image only; the "
                     + "same key or Esc lets go.",
-                    "The strip's Area button arms a square of a fixed size (300 µm by "
-                    + "default, under the gear): a click on the image, or V, opens that part "
-                    + "of the stack in 3-D at the finest level it allows. In 3-D, Shift+drag "
-                    + "slides it across the tissue and any cut moves with it; Alt+drag or the "
-                    + "middle button pans. V goes back to the plane, the area outlined there.",
+                    "The strip's Area button arms a square of a fixed size on screen "
+                    + "(under the gear): a click on the image, or V, opens the stack in 3-D "
+                    + "cropped to it, at the plane's magnification, with the Crop panel out. "
+                    + "Drag the crop's grips to move or resize it, O shows the whole tissue "
+                    + "and back, and B returns to the plane, the square outlined there until "
+                    + "the Area tool is turned off. Alt+drag or the middle button pans.",
                 ],
                 shortcuts: [
                     { keys: ["]", "["], label: "Next / previous plane (with Shift, ten)" },

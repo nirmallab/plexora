@@ -19,10 +19,15 @@ view a square or Crop to area came from (`services/viewHistory.js`); the area ha
 the square keeps its size on screen; and saved areas were retired for bookmarks, which are
 Figure Builder captures (`services/bookmarks.js`).
 
+Later on 2026-10-22 a placed square stopped loading an area at all: it is a Crop of the WHOLE
+stack (`areaTool.place`/`cropFor`), so moving it is a shader change and fetches nothing. The 3-D
+view opens at the plane's magnification (`VolumeRenderer.frameRegion`) and turns about the
+middle of what the crop keeps (the pivot). `volume.area` is now made only by Crop to area.
+
 ## What it does
 
-The 3-D view draws an area of the stack (the whole stack, or the Area tool's square) and can be
-cut inside it with one tool at a time:
+The 3-D view draws an area of the stack (the whole stack, or the area Crop to area made) and can
+be cut inside it with one tool at a time (the Area tool's square is a Crop):
 
 | Tool (`inspect.mode`) | What is drawn | Axes | Starts on |
 |---|---|---|---|
@@ -59,7 +64,7 @@ inspect: {
   face,
 }
 volume.interpolation: "linear" | "nearest"
-volume.area:  {x, y, width, height} | null      // full-res px; null = the whole stack
+volume.area:  {x, y, width, height} | null      // full-res px; null = the whole stack (Crop to area only)
 ```
 
 (`volume.saved`, the saved areas, is gone: a stored one is dropped on read.)
@@ -157,12 +162,14 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
   3-D it hides the plane and the sections' sizes.
 - **The handles** (`views/volumeHandles.js`) are an SVG over the canvas, z-index 204. Each face the
   cut puts in the stack is outlined in its axis's gizmo colour with a grip at its centre: both
-  faces of a crop plus its body, a cutaway's cut. An area has its own, white and dashed, shown
-  with no cut too: a grip on each of its four sides resizes it (`inspectState.resizeArea`: the
-  cut stays where it is in the image, clamped into the new area; never under 16 px) and one in
-  its middle slides it exactly as Shift+drag does (`volumeRenderer.dragArea`, the same
-  SLIDE_MS throttle, one undo entry, the cut carried). A crop's grips win where they meet the
-  area's on screen (Crop to area puts the crop on the area's sides).
+  faces of a crop plus its body, a cutaway's cut. A placed square is a crop, so these are its
+  grips: the body moves it, a face resizes it, and nothing is fetched. An area (Crop to area
+  only) has its own, white and dashed, shown with no cut too: a grip on each of its four sides
+  resizes it (`inspectState.resizeArea`: the cut stays where it is in the image, clamped into
+  the new area; never under 16 px) and one in its middle slides it exactly as Shift+drag does
+  (`volumeRenderer.dragArea`, the same SLIDE_MS throttle, one undo entry, the cut carried). A
+  crop's grips win where they meet the area's on screen (Crop to area puts the crop on the
+  area's sides).
   - A press on a grip is stopped and captured before the canvas sees it. It never turns the stack.
   - The pointer's travel is measured along the axis as the screen shows it at the grip's depth,
     so perspective is included. The body moves along the two axes the screen shows best.
@@ -238,7 +245,8 @@ surfaces are wound outward; an imported mesh wound inward would show caps everyw
 ## The area (2026-10-21)
 
 The view state's `volume.area` is what the 3-D view loads and frames; the cut decides what is
-drawn inside it. Moving the area downloads; changing a cut never does.
+drawn inside it. Moving the area downloads; changing a cut never does. Since the later
+2026-10-22 change only Crop to area makes an area; the Area tool's square is a crop.
 
 - **Placing it.** The Area tool (`views/areaTool.js`, the strip's Area button, plane and
   projection only): a dashed square follows the pointer, the viewer pref `area` (`{screen: 320}`)
@@ -246,14 +254,30 @@ drawn inside it. Moving the area downloads; changing a cut never does.
   tissue and out more; the wheel zooms and a drag pans while it is armed, and `onViewportChange`
   keeps the square under a still pointer at the new zoom. A readout under it says how much tissue
   (`inspectGeometry.label`: µm where the spacing is trusted, else px). A click, or V with the
-  pointer on the image, pushes the view onto the history and is ONE
-  `viewState.enterVolume({area})`. From a fixed projection the cut becomes a Z crop of its planes
-  (`viewState._bandCrop`); a following one never does.
+  pointer on the image, pushes the view onto the history and is ONE `PlexoraInspect.set` (one
+  undo entry, one step of Back): mode `volume`, `volume.area: null`, and the Crop tool's cut for
+  the square (`cropFor`: x and y the square's; z a fixed projection's planes,
+  `viewState._bandCrop`, else every plane). The cut panel comes out (`PlexoraVolumeDock.open`).
+  Nothing is loaded for the square: the whole stack's textures are drawn through the crop, and
+  the detail refinement fetches a finer level of the part kept once the camera rests.
+- **Framing it.** Before the plane goes, `place` reads what an image pixel is on screen
+  (`viewerScene.scaleOf`) and hands `{box, perPixel, height}` to `frameNext`;
+  `VolumeRenderer.frameRegion` sets the camera looking straight down (`VIEWS.xy`) at that
+  magnification, centred on the square, then `turnTo`s the way the stack was last seen. It
+  never fits the square to the screen. `MIN_DIST` went from 0.15 to 0.03 of the stack's longest
+  side so a far-zoomed plane can be matched.
+- **The pivot.** The camera turns about the middle of what a crop keeps (`pivot()`), not the
+  stack's centre, so a cropped square turns in place (`turnAboutPivot`). Pan and distance take
+  up the move; the stored camera is still `{q, dist, pan}`, so saved views, Video Studio and the
+  history read it unchanged. The named views (xy/xz/yz/iso, the axis buttons, a double-click)
+  centre on the pivot.
+- **O** hides the crop (the whole tissue) and shows it again, settings kept.
 - **It is temporary.** The mode buttons' `viewControls.transition` and `viewState.toggleVolume`
-  set `volume.area: null` (the 3-D button is always the whole stack); `enterVolume()` with no
-  area does the same. A square let go puts the cut back on the whole stack's places, mode `full`,
-  its tool and axes kept (`viewState._wholeCut`), unless the patch says where the cut is (a
-  restore, Back). Nothing of the square is drawn on the plane once 3-D is left.
+  set `volume.area: null` and, entering 3-D, `inspect: {mode: "full"}`: the 3-D button is always
+  the whole stack, the crop hidden with its settings kept for O. `enterVolume()` with no area
+  does the same. An area let go puts the cut back on the whole stack's places, mode `full`, its
+  tool and axes kept (`viewState._wholeCut`), unless the patch says where the cut is (a restore,
+  Back).
 - **Back** (`services/viewHistory.js`, `views/backButton.js`): the Area tool's `place` and
   `cropToArea` push where the view was -- mode, plane, range, area, cut, the 3-D camera or the
   2-D view (`viewerScene.viewOf`), never channels or anything rendered. `back()` is one
@@ -261,14 +285,17 @@ drawn inside it. Moving the area downloads; changing a cut never does.
   `viewerScene.glideTo` (a 2-D one), instant under reduced motion. The pill sits in the
   top-center dock while there is history; B is Back's in the capture phase while there is
   history (preventDefault; `datasetNav.onKeyDown` stands aside for a taken key), else the
-  dataset chip's. Going back to 2-D any other way ends the trail.
+  dataset chip's. Going back to 2-D any other way ends the trail. Back on the plane draws the
+  placed square again (`placed`, a solid outline) while the Area tool stays armed; disarming it
+  (its button or Esc) lets it go.
 - **V** toggles 2-D and 3-D on any z-stack (`viewState.toggleVolume`: back to the projection when
   it was entered from one). It yields to the ROI tool, typing and open dialogs.
 - **The cut moves with it.** `viewState.set` with a new `volume.area` and no `inspect` shifts the
   cut by the area's move (`inspectGeometry.shift`); a patch that says where the cut is (a restore,
   a Video Studio frame, Crop to area, an undo) is never shifted.
-- **Sliding it.** In 3-D, Shift+drag slides the area under a fixed frame (the tissue follows the
-  hand); Alt+drag or the middle button pans the camera (Shift+drag pans when there is no area).
+- **Sliding it.** In 3-D, Shift+drag slides an area (Crop to area's; a placed square has none)
+  under a fixed frame (the tissue follows the hand); Alt+drag or the middle button pans the
+  camera (Shift+drag pans when there is no area).
   `onSlide` at most every `SLIDE_MS` (40 ms), the last on release; a slide is one undo entry with
   the cut it carried (`inspectState.slideArea`). Under the hand, a fetch waits while two loads a
   channel are in flight (`setArea`), so a fast slide asks for where it is.
@@ -278,6 +305,11 @@ drawn inside it. Moving the area downloads; changing a cut never does.
   its bricks (absolute) keep drawing. The area's own texture dissolves in at the same camera.
 - **Crop to area** (`cut.toArea`, while the crop is narrower than the area in x or y): one change,
   the area the crop's x and y, the crop the area — fetched at the finest level that box allows.
+  Unchanged by the square becoming a crop: it is the only way to a `volume.area`, with its area
+  grips and Shift+drag slide, and Back returns from it.
+- **Measured** (live, same build, software GPU): dragging a placed square's crop grip, 0 level
+  fetches and ~16.7 ms frames; dragging the old area grip, 27-28 level fetches and a mean frame
+  of 330-460 ms.
 - **Bookmarks** replaced saved areas (2026-10-22): `services/bookmarks.js` keeps views as
   Figure Builder captures (`bookmarked`, `label`), 2-D and 3-D; in 3-D the capture's
   `scene.plugins.volume` (services/surfaceLayers.js `sceneState`) carries the camera, the area,

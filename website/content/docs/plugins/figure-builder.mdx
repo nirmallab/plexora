@@ -69,7 +69,9 @@ the viewer and opens the Figure Canvas.
 ### Arrange the page
 
 On the canvas, each capture is a panel you can move, resize and re-crop.
-Add scale bars, text, shapes and arrows from the tools around the page.
+More can be added from the page itself, under **Add panels** (see
+[Controls](#controls)). Add scale bars, text, shapes and arrows from the tools
+around the page.
 Everything is placed in millimetres, so the page prints true to size
 whatever panel it holds.
 
@@ -86,7 +88,8 @@ the panel's own source image, its exact region and its display settings,
 and re-renders it from the original pixels at export time — at whatever
 resolution you ask for, not the resolution the preview happened to be
 drawn at. Moving the source file or changing its channels afterwards is
-the one thing that breaks the link.
+the one thing that breaks the link. A panel of a 3-D view is the exception:
+it uses the picture saved when the view was captured.
 </Callout>
 
 
@@ -111,6 +114,13 @@ the one thing that breaks the link.
 
 - **Panels** — each holds one captured view; drag to move, drag a handle to
   resize or re-crop.
+- **Add panels** — two buttons in the Panels section:
+  - **Bookmarks** lists the views bookmarked in the viewer (**K**). On each,
+    **Go to view** opens the viewer on that image at that view, and **Add to
+    figure** puts it straight onto the current page, in free space, as one
+    step you can undo. The card then says **Add again**, and the list stays
+    open so you can add several.
+  - **Captures** opens your captures, to add to the Panels tray as before.
 - **Scale bar** (per panel, in the image panel's own controls) — length and
   unit (nanometres, micrometres, millimetres, centimetres or pixels),
   corner or edge position, colour, thickness, margin and label size, and an
@@ -142,7 +152,8 @@ source images and their layers need to stay where Figure Builder can reach
 them for it to re-render or export.
 
 A capture waits in its image's own bin — kept with the sample, independent
-of any figure — until you put it into one from the **Figure Canvas** button.
+of any figure — until you put it into one from the **Figure Canvas** button,
+or from **Bookmarks** or **Captures** on the figure's page.
 A bookmarked capture stays in the bin after it is put in a figure, because it
 is still a view to come back to; removing its bookmark never changes a figure
 that uses it.
@@ -157,7 +168,7 @@ The export dialog offers three formats:
 
 Resolution is 150, 300, 600 or 1200 DPI. Panels are re-rendered from their
 source images at the resolution you ask for, not from whatever is on
-screen, and an optional provenance page can be appended recording what went
+screen (a 3-D view's panel uses its saved picture), and an optional provenance page can be appended recording what went
 into the figure. Transparency is kept only in PNG — a transparent page
 renders white in PDF and TIFF.
 

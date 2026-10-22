@@ -548,6 +548,9 @@ class FigureWorkspace {
         // nothing to offer here -- an unassigned capture lived in the viewer
         // page's memory and died with it.
         this.el("fb_tray_bin")?.addEventListener("click", () => this.openCaptureBin());
+        // And the views saved in the viewer (K): to go back to, or straight
+        // onto the page.
+        this.el("fb_tray_bookmarks")?.addEventListener("click", () => this.openBookmarks());
 
         this.el("fb_add_image_input")?.addEventListener("change", (event) => {
             const files = Array.from(event.target.files || []);
@@ -775,18 +778,28 @@ class FigureWorkspace {
      * or deleted them in between, and a silent no-op is the right answer to
      * "add these" when there is nothing left to add.
      */
-    async adoptCaptures(captureIds) {
+    async adoptCaptures(captureIds, { place = false } = {}) {
         const bin = new FigureCaptureBin({ api: this.api });
         const rows = await bin.list();
         if (!rows) {
             this.toast("Your captures bin could not be read, so nothing was added.");
-            return;
+            return false;
         }
         const wanted = new Set(captureIds);
         const entries = rows.filter((row) => wanted.has(row.capture_id));
-        if (!entries.length) return;
+        if (!entries.length) return false;
 
-        const result = await FigureCaptureBin.adoptInto(this.state, this.api, entries);
+        const onPage = place && this.canvas?.page;
+        const result = await FigureCaptureBin.adoptInto(this.state, this.api, entries,
+            onPage ? { place: (panels) => this.placementsFor(panels) } : {});
+        if (onPage) {
+            if (result.panelIds.length) {
+                this.toast(`${FigureSchema.countPhrase(result.panelIds.length, "view")} added to the figure.`);
+            } else if (result.failed) {
+                this.toast("That view could not be added to the figure.");
+            }
+            return result.panelIds.length > 0;
+        }
         if (result.panelIds.length) {
             // Into the tray, where they can be seen: composition is a separate
             // decision from capture, so nothing is placed on the page. The
@@ -806,6 +819,68 @@ class FigureWorkspace {
               + "still in your captures bin."
             : "";
         if (added || lost) this.toast([added, lost].filter(Boolean).join(" "));
+        return result.panelIds.length > 0;
+    }
+
+    /** Where new panels go on the page: free places, the size a tray panel
+     *  is placed at (FigureCanvas.traySizes), above everything there. */
+    placementsFor(panels) {
+        const page = this.canvas?.page;
+        if (!page) return null;
+        const width = Math.min(60, page.size_mm.w / 3);
+        const sizes = panels.map((panel) => {
+            const viewport = panel.scene && panel.scene.viewport;
+            const frame = viewport && FigureSchema.frameSize(viewport);
+            const aspect = (frame && frame.w) ? frame.h / frame.w : 1;
+            return { w_mm: width, h_mm: width * (aspect || 1) };
+        });
+        const boxes = FigureCanvas.freePlacements(
+            sizes, page, this.canvas.occupiedBoxes(),
+            this.state.document.settings.style.gutter_mm, null);
+        let z = this.canvas.nextZ();
+        return boxes.map((box) => ({ page_id: page.page_id, ...box, z: z++ }));
+    }
+
+    /**
+     * The views saved in the viewer (K), without going through the captures:
+     * each one can be gone back to -- the viewer opens at it -- or put
+     * straight onto this figure's page. The dialog stays open, so several can
+     * be added in a row; each says it was.
+     */
+    openBookmarks() {
+        const dialog = document.createElement("dialog");
+        dialog.className = "fb-dialog fb-bin-dialog";
+        dialog.innerHTML = `
+            <div class="fb-bin-head">
+                <h2>Bookmarks</h2>
+                <button class="fb-picker-close" type="button" data-role="close"
+                        title="Close" aria-label="Close">
+                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div data-role="host"></div>`;
+        (this.root || document.body).appendChild(dialog);
+
+        const grid = new FigureCaptureBinGrid(dialog.querySelector('[data-role="host"]'), {
+            api: this.api,
+            bookmarks: true,
+            onGo: (capture) => {
+                dialog.close();
+                this.api.openViewAt(capture.datasource, capture.capture_id);
+            },
+            onAddOne: (capture) => this.adoptCaptures([capture.capture_id], { place: true }),
+        });
+        grid.setup();
+
+        dialog.addEventListener("click", (event) => {
+            if (event.target.closest?.('[data-role="close"]')) dialog.close();
+        });
+        dialog.addEventListener("close", () => dialog.remove());
+        if (typeof dialog.showModal !== "function") {
+            dialog.remove();
+            return;
+        }
+        dialog.showModal();
     }
 
     /**
@@ -825,7 +900,7 @@ class FigureWorkspace {
         dialog.className = "fb-dialog fb-bin-dialog";
         dialog.innerHTML = `
             <div class="fb-bin-head">
-                <h2>Add from your captures</h2>
+                <h2>Captures</h2>
                 <button class="fb-picker-close" type="button" data-role="close"
                         title="Close" aria-label="Close">
                     <span class="fas fa-xmark" aria-hidden="true"></span>

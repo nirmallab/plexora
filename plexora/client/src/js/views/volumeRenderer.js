@@ -119,8 +119,10 @@
     const REGION_LATTICE = 16;
     //: Bytes of a detail uploaded to the GPU per display frame.
     const UPLOAD_PER_FRAME = 4 * 2 ** 20;
-    //: How close the camera may come (the stack's longest side is 1).
-    const MIN_DIST = 0.15;
+    //: How close the camera may come (the stack's longest side is 1): near
+    //: enough that a square placed on a zoomed-in plane opens at the plane's
+    //: magnification (frameRegion); a detail brings the finer levels in.
+    const MIN_DIST = 0.03;
     //: What the textures may hold on the GPU in all, switched-off channels,
     //: details and other areas included; past it details go first, then the
     //: least recently drawn.
@@ -1116,7 +1118,7 @@ ${sample}`;
             const C = Camera();
             const near = C.viewAlong(name);
             const already = C.quat.angleBetween(this.tween?.to.q || this.camera.q, near) < 0.02;
-            this.turnTo({ q: C.viewAlong(name, { reverse: reverse || already }), panX: 0, panY: 0 });
+            this.turnTo(this.centred(C.viewAlong(name, { reverse: reverse || already })));
         }
 
         lost() {
@@ -1707,9 +1709,9 @@ ${sample}`;
                 const C = Camera();
                 const { axis, rate } = this.autoRotate;
                 const angle = rate * dt;
-                camera.q = axis === "screen"
+                this.turnAboutPivot(axis === "screen"
                     ? C.quat.normalize(C.quat.multiply(C.quat.axisAngle([0, 1, 0], angle), camera.q))
-                    : C.turnAbout(camera.q, axis, angle);
+                    : C.turnAbout(camera.q, axis, angle));
             }
             if (this.spin) {
                 // Exponential decay, integrated exactly over dt: the same
@@ -1719,14 +1721,14 @@ ${sample}`;
                 const C = Camera();
                 const spin = this.spin;
                 if (spin.axis) {
-                    camera.q = C.turnAbout(camera.q, spin.axis, spin.rate * travel);
+                    this.turnAboutPivot(C.turnAbout(camera.q, spin.axis, spin.rate * travel));
                     spin.rate *= decay;
                     if (Math.abs(spin.rate) < SPIN_STOP) this.spin = null;
                 } else {
                     const [wx, wy] = spin.screen;
                     const rate = Math.hypot(wx, wy);
-                    camera.q = C.quat.normalize(C.quat.multiply(
-                        C.quat.axisAngle([wx, wy, 0], rate * travel), camera.q));
+                    this.turnAboutPivot(C.quat.normalize(C.quat.multiply(
+                        C.quat.axisAngle([wx, wy, 0], rate * travel), camera.q)));
                     spin.screen = [wx * decay, wy * decay];
                     if (rate * decay < SPIN_STOP) this.spin = null;
                 }
@@ -1734,19 +1736,21 @@ ${sample}`;
             if (this.zoomTarget !== null) {
                 const k = 1 - Math.exp(-dt / ZOOM_TAU_MS);
                 camera.dist += (this.zoomTarget - camera.dist) * k;
-                if (Math.abs(this.zoomTarget - camera.dist) < this.zoomTarget * 0.002) {
+                // Close enough, against the distance to the pivot (`dist`
+                // itself may be below zero with a crop off the stack's centre).
+                if (Math.abs(this.zoomTarget - camera.dist) < Math.max(1e-5, this.pivotDistance() * 0.002)) {
                     camera.dist = this.zoomTarget;
                     this.zoomTarget = null;
                 }
             }
             if (this.tween) {
-                const { from, to, start, ms } = this.tween;
+                const { from, to, start, ms, pivot } = this.tween;
                 const f = Math.min(1, Math.max(0, (time - start) / ms));
                 const eased = f < 0.5 ? 4 * f ** 3 : 1 - (-2 * f + 2) ** 3 / 2;
                 for (const key of Object.keys(to)) {
-                    camera[key] = key === "q"
-                        ? Camera().quat.slerp(from.q, to.q, eased)
-                        : from[key] + (to[key] - from[key]) * eased;
+                    if (key !== "q") camera[key] = from[key] + (to[key] - from[key]) * eased;
+                    else if (pivot) this.turnAboutPivot(Camera().quat.slerp(from.q, to.q, eased));
+                    else camera.q = Camera().quat.slerp(from.q, to.q, eased);
                 }
                 if (f >= 1) this.tween = null;
             }
@@ -1797,15 +1801,18 @@ ${sample}`;
         }
 
         /** Turn (and pan) to `target` -- `{q, panX, panY, dist}`, any of
-         *  them -- the short way round. */
+         *  them -- the short way round. A turn alone (no pan, no distance)
+         *  turns about the pivot, as a drag does. */
         turnTo(target) {
             this.spin = null;
             this.setAutoRotate(false);
             const to = { ...target };
             if (to.q) to.q = to.q.slice();
+            const pivot = Boolean(to.q) && !("panX" in to) && !("panY" in to) && !("dist" in to);
             if (!this.smooth()) {
                 this.tween = null;
-                Object.assign(this.camera, to);
+                if (pivot) this.turnAboutPivot(to.q);
+                else Object.assign(this.camera, to);
                 this.invalidate();
                 return;
             }
@@ -1814,7 +1821,7 @@ ${sample}`;
                 from[key] = key === "q" ? this.camera.q.slice() : this.camera[key];
             }
             const start = now();
-            this.tween = { from, to, start, ms: TURN_MS };
+            this.tween = { from, to, start, ms: TURN_MS, pivot };
             if (!this.lastStep) this.lastStep = start;
             this.invalidate();
         }
@@ -1822,9 +1829,12 @@ ${sample}`;
         /** Zoom by `factor`, eased unless motion is off. */
         zoomBy(factor) {
             const base = this.zoomTarget ?? this.camera.dist;
-            // Close enough to look inside the stack: a detail (considerDetail)
-            // brings the finer levels in as the part seen gets smaller.
-            const target = Math.max(MIN_DIST, Math.min(8, base * factor));
+            // Closer to the pivot, or further: `factor` times the distance to
+            // it, which is `dist` itself with no crop. Close enough to look
+            // inside the stack: a detail (considerDetail) brings the finer
+            // levels in as the part seen gets smaller.
+            const along = this.pivotAlong();
+            const target = along + Math.max(MIN_DIST, Math.min(8, (base - along) * factor));
             if (!this.smooth()) {
                 this.zoomTarget = null;
                 this.camera.dist = target;
@@ -2324,15 +2334,19 @@ ${sample}`;
             this.gizmo.setActive(fast);
         }
 
-        /** Where the stack's centre is on the canvas, in CSS pixels. */
+        /** Where the stack turns about on the canvas, in CSS pixels: its
+         *  centre, or a crop's (pivot). */
         centreOnScreen() {
             const canvas = this.canvas;
             const width = canvas?.clientWidth || 1;
             const height = canvas?.clientHeight || 1;
             const f = 1 / Math.tan(FOV_Y / 2);
-            const { dist, panX, panY } = this.camera;
-            return { x: width / 2 + ((-panX * f) / (dist * (width / height))) * (width / 2),
-                     y: height / 2 - ((-panY * f) / dist) * (height / 2) };
+            const { dist, panX, panY, q } = this.camera;
+            const point = this.pivot();
+            const r = point ? Camera().quat.rotate(q, point) : [0, 0, 0];
+            const away = Math.max(1e-6, dist - r[2]);
+            return { x: width / 2 + (((r[0] - panX) * f) / (away * (width / height))) * (width / 2),
+                     y: height / 2 - (((r[1] - panY) * f) / away) * (height / 2) };
         }
 
         async refresh() {
@@ -2396,7 +2410,105 @@ ${sample}`;
         /** A named view (volumeCamera.VIEWS): xy, xz, yz or iso. */
         preset(name) {
             const views = Camera().VIEWS;
-            this.turnTo({ q: views[name] || views.iso, panX: 0, panY: 0 });
+            this.turnTo(this.centred(views[name] || views.iso));
+        }
+
+        // -- the pivot ---------------------------------------------------------
+
+        /**
+         * What the camera turns about, in the box's space (its centre the
+         * origin, `extent()`): the middle of what a crop keeps, so a square
+         * cropped out of the whole stack turns in place rather than swinging
+         * round the stack's centre; null with no crop (the box's centre).
+         * The camera itself stays `{q, dist, panX, panY}` -- what Video
+         * Studio, the history and the saved view keep -- and a turn moves
+         * the pan and the distance with it (turnAboutPivot).
+         */
+        pivot() {
+            const G = global.PlexoraInspectGeometry;
+            const resolved = G ? this.inspectNow() : null;
+            if (resolved?.mode !== "crop") return null;
+            const cut = this.cutUniforms();
+            const extent = this.extent();
+            return [0, 1, 2].map((i) => ((cut.lo[i] + cut.hi[i]) / 2 - 0.5) * extent[i]);
+        }
+
+        /** Turn to `q` with the pivot held where it is on screen. */
+        turnAboutPivot(q) {
+            const camera = this.camera;
+            const point = this.pivot();
+            if (point) {
+                const C = Camera();
+                const was = C.quat.rotate(camera.q, point);
+                const now = C.quat.rotate(q, point);
+                camera.panX += now[0] - was[0];
+                camera.panY += now[1] - was[1];
+                camera.dist += now[2] - was[2];
+            }
+            camera.q = q;
+        }
+
+        /** The pivot's depth in the turned box, toward the camera: what
+         *  `dist` counts beyond the distance to it (0 with no crop). */
+        pivotAlong() {
+            const point = this.pivot();
+            return point ? Camera().quat.rotate(this.camera.q, point)[2] : 0;
+        }
+
+        /** How far the camera is from the pivot, along its view. */
+        pivotDistance() {
+            return Math.max(MIN_DIST / 4, this.camera.dist - this.pivotAlong());
+        }
+
+        /** The camera facing `q` with the pivot in the middle of the view,
+         *  as far from it as it is now. */
+        centred(q) {
+            const point = this.pivot();
+            if (!point) return { q, panX: 0, panY: 0 };
+            const away = this.pivotDistance();
+            const [x, y, z] = Camera().quat.rotate(q, point);
+            return { q, panX: x, panY: y, dist: away + z };
+        }
+
+        /** The pivot in the middle of the view, at once (a new frame). */
+        recentre() {
+            this.tween = null;
+            Object.assign(this.camera, this.centred(this.camera.q.slice()));
+            this.invalidate();
+        }
+
+        /**
+         * Frame image region `box` ([x0, y0, x1, y1], full-resolution pixels)
+         * at `perPixel` screen pixels per image pixel -- what the plane showed
+         * it at -- centred, through the middle of the stack: looking straight
+         * down first, as the plane did, then turning to the way the stack was
+         * last seen. `height`, the view's height, while the canvas has none.
+         */
+        frameRegion({ box, perPixel, height = 0 } = {}) {
+            const h = this.canvas?.clientHeight || Number(height) || 0;
+            if (!Array.isArray(box) || !(perPixel > 0) || !(h > 0)) return false;
+            const C = Camera();
+            const info = this.viewState?.info || {};
+            const covered = this.frameCovered() || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const extent = this.extent();
+            const spanX = Math.max(1e-9, covered[2] - covered[0]);
+            const spanY = Math.max(1e-9, covered[3] - covered[1]);
+            const point = this.pivot() || [
+                (((box[0] + box[2]) / 2 - covered[0]) / spanX - 0.5) * extent[0],
+                (((box[1] + box[3]) / 2 - covered[1]) / spanY - 0.5) * extent[1], 0];
+            // A screen pixel at distance d spans 2 d tan(fov / 2) / h of the
+            // box; an image pixel spans extent / span of it.
+            const away = (h * (extent[0] / spanX)) / (2 * Math.tan(FOV_Y / 2) * perPixel);
+            const goal = this.camera.q.slice();
+            const down = C.VIEWS.xy.slice();
+            const [x, y, z] = C.quat.rotate(down, point);
+            this.stopMotion();
+            this.zoomTarget = null;
+            Object.assign(this.camera, { q: down, panX: x, panY: y,
+                                         dist: Math.max(MIN_DIST, Math.min(8, away)) + z });
+            this.invalidate();
+            if (C.quat.angleBetween(goal, down) > 0.02) this.turnTo({ q: goal });
+            return true;
         }
 
         /** An image point (x, y pixels, z planes, continuous) on screen,
@@ -2554,16 +2666,16 @@ ${sample}`;
                 }
                 const C = Camera();
                 if (drag.pan) {
-                    const scale = this.camera.dist / Math.max(1, canvas.clientHeight);
+                    const scale = this.pivotDistance() / Math.max(1, canvas.clientHeight);
                     this.camera.panX -= dx * scale;
                     this.camera.panY += dy * scale;
                 } else if (drag.locked) {
                     const pointer = { x: event.clientX - drag.box.left, y: event.clientY - drag.box.top };
                     const angle = drag.locked.angle(dx, dy, pointer, drag.centre);
-                    this.camera.q = C.turnAbout(this.camera.q, this.lock, angle);
+                    this.turnAboutPivot(C.turnAbout(this.camera.q, this.lock, angle));
                     drag.a += angle;
                 } else {
-                    this.camera.q = C.turnFree(this.camera.q, dx, dy);
+                    this.turnAboutPivot(C.turnFree(this.camera.q, dx, dy));
                     drag.a += dy * C.ROTATE_PER_PX;
                     drag.b += dx * C.ROTATE_PER_PX;
                 }
@@ -3066,7 +3178,9 @@ ${sample}`;
             if (!Array.isArray(q) || q.length !== 4 || !q.every(Number.isFinite)) return false;
             this.setAutoRotate(false);
             this.camera.q = q.slice();
-            if (Number.isFinite(stored.dist)) this.camera.dist = Math.max(MIN_DIST, Math.min(8, stored.dist));
+            // Not clamped to MIN_DIST: turned about a crop's middle, `dist`
+            // (to the stack's centre) may rightly be less, or below zero.
+            if (Number.isFinite(stored.dist)) this.camera.dist = Math.max(-8, Math.min(8, stored.dist));
             if (Array.isArray(stored.pan) && stored.pan.every(Number.isFinite)) {
                 [this.camera.panX, this.camera.panY] = stored.pan;
             }
@@ -3090,6 +3204,13 @@ ${sample}`;
         let lastT = null;
         let wasOn = false;
         let lastCut = "";
+        //: A region to frame when 3-D opens next, if it opens soon
+        //: (frameNext), and what the frame last drawn was: going between the
+        //: whole stack and an area (Crop to area, Back from it) centres the
+        //: pivot again; a slide or a resize of the area does not.
+        let pendingFrame = null;
+        let lastFrameKind = "";
+        const FRAME_WAIT_MS = 3000;
         // [surfaces] The camera, remembered per project like the plane
         // (`volume.camera` of the view state), once it has rested a moment.
         let savedCamera = "";
@@ -3157,8 +3278,17 @@ ${sample}`;
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
                 // The area the view state says (`volume.area`), or the whole
-                // stack: the Area tool's (views/areaTool.js).
+                // stack: Crop to area's (services/inspectState.js).
                 const moved = renderer.setArea(state.volume?.area || null, { refresh: false });
+                const kind = state.volume?.area ? "area" : "whole";
+                if (!entering && lastFrameKind && kind !== lastFrameKind) renderer.recentre();
+                lastFrameKind = kind;
+                // A square placed on the plane (views/areaTool.js): at the
+                // plane's magnification, not the whole view.
+                if (entering && pendingFrame && now() - pendingFrame.at < FRAME_WAIT_MS) {
+                    renderer.frameRegion(pendingFrame.request);
+                }
+                pendingFrame = null;
                 // Only what is missing is fetched (ensureTextures): entering
                 // again over the same area, with the same channels, is a draw.
                 if (entering || lastT !== state.t || moved) {
@@ -3168,6 +3298,16 @@ ${sample}`;
                     renderer.invalidate();
                 }
                 lastCut = JSON.stringify(renderer.cutUniforms());
+            },
+            /** The next time 3-D opens, frame `request` (`{box, perPixel,
+             *  height}`, VolumeRenderer.frameRegion) rather than keep the
+             *  camera; dropped if 3-D does not open with it. */
+            frameNext(request) {
+                pendingFrame = request ? { request, at: now() } : null;
+                if (pendingFrame && renderer && viewState.isVolume() && wasOn) {
+                    renderer.frameRegion(request);
+                    pendingFrame = null;
+                }
             },
             /** [inspect] The cut changed -- the dock, the strip, a handle, an
              *  undo, the agent: drawn again from uniforms in the next frame

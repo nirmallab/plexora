@@ -3,11 +3,15 @@
  *
  * On a z-stack, from a plane or a projection: arm the tool (the depth
  * strip's Area button), and a dashed square follows the pointer over the
- * image. A click -- or V with the pointer there --
- * PLACES it: the view state's `volume.area` becomes that square and the view
- * goes 3-D, drawing just that part of the stack at the finest level the
- * budget allows (views/volumeRenderer.js). In 3-D, Shift+drag slides the
- * area across the tissue, and the cut moves with it (services/viewState.js).
+ * image. A click -- or V with the pointer there -- PLACES it, as a way into
+ * the Crop tool: the view goes 3-D over the whole stack, cropped to the
+ * square in x and y (from a fixed projection, to its planes in z too), with
+ * the Crop panel out. Nothing is fetched for it: the crop is the shader's
+ * (services/inspectState.js), so its grips, O (whole tissue / the crop) and
+ * the rest of the Crop tool work on it at once, and a finer detail of the
+ * part kept comes in once the camera rests (views/volumeRenderer.js).
+ * The 3-D view opens at the plane's magnification, centred on the square
+ * (VolumeRenderer.frameRegion), and turns about the crop's middle.
  *
  *     the square    `area` of the viewer prefs (services/viewerPrefs.js):
  *                   its side ON SCREEN. Zoom in and it takes less tissue,
@@ -16,13 +20,15 @@
  *                   readout under it says how much tissue it takes (microns
  *                   where the image states its spacing, else pixels)
  *
- * The placed square is temporary: leaving 3-D lets it go (the mode buttons
- * always mean the whole stack, services/viewControls.js `transition`), and
- * Back -- B -- returns to the view it was placed from (services/viewHistory.js).
+ * The mode buttons always mean the whole stack (services/viewControls.js
+ * `transition`: the crop is hidden, kept for O), and Back -- B -- returns to
+ * the view the square was placed from (services/viewHistory.js), where the
+ * square is drawn again, solid, while the tool stays armed.
  *
  * The tool stays armed after placing, so V can go back and forth; Esc, or
- * the button again, disarms it. It never takes a click it did not arm for:
- * with the tool off, the image's own gestures are untouched.
+ * the button again, disarms it and lets the placed square go. It never takes
+ * a click it did not arm for: with the tool off, the image's own gestures
+ * are untouched.
  *
  * Classic script, `window.PlexoraAreaTool`.
  */
@@ -53,9 +59,15 @@
     }
 
     class AreaTool {
-        constructor({ viewState, imageViewer = null, prefs = null } = {}) {
+        constructor({ viewState, imageViewer = null, prefs = null, volume = null } = {}) {
             this.viewState = viewState;
             this.imageViewer = imageViewer;
+            //: The 3-D view's controller (views/volumeRenderer.js attach), to
+            //: open at the plane's magnification.
+            this.volume = volume;
+            //: The square last placed, `{x, y, width, height}` image pixels:
+            //: drawn on the plane while the tool is armed (after Back).
+            this.placed = null;
             this.prefs = prefs || global.PlexoraViewerPrefs || null;
             this._armed = false;
             //: The image point under the pointer while armed on the plane,
@@ -141,6 +153,7 @@
             if (!this._armed) return;
             this._armed = false;
             this.hover = null;
+            this.placed = null;
             this.cursor();
             announce(false);
             this.repaint();
@@ -236,21 +249,46 @@
             this.repaint();
         }
 
+        /** The Crop tool's cut for `square`: x and y the square's, z the
+         *  fixed projection's planes, else every plane. */
+        cropFor(square) {
+            const vs = this.viewState;
+            const band = typeof vs._bandCrop === "function" ? vs._bandCrop() : null;
+            const inspect = {
+                mode: "crop", axes: { x: true, y: true, z: Boolean(band) },
+                crop: { x: [square.x, square.x + square.width], y: [square.y, square.y + square.height] },
+            };
+            if (band) inspect.crop.z = band.crop.z.slice();
+            return inspect;
+        }
+
         /**
          * Place the square at `point` (`{x, y}`, image pixels; the hover by
-         * default) and open it in 3-D: one change of the view state. From a
-         * fixed projection, the 3-D view is cut to its range
-         * (viewState.enterVolume).
+         * default): 3-D over the whole stack, cropped to it, in one change
+         * of the view state (one undo entry with the cut, one step of Back),
+         * at the plane's magnification, the Crop panel out.
          */
         place(point = this.hover) {
             if (!point) return null;
-            const area = this.squareAt(point.x, point.y);
-            if (!area) return null;
+            const square = this.squareAt(point.x, point.y);
+            if (!square) return null;
             const vs = this.viewState;
+            // Read before the plane goes: what an image pixel is on screen now.
+            const perPixel = global.PlexoraViewerScene?.scaleOf?.(this.imageViewer) || 0;
             // Where the user was, for Back (services/viewHistory.js).
             global.PlexoraViewHistory?.push?.();
-            const out = typeof vs.enterVolume === "function" ? vs.enterVolume({ area })
-                : vs.set({ mode: "volume", volume: { area } });
+            this.placed = { ...square };
+            this.volume?.frameNext?.({
+                box: [square.x, square.y, square.x + square.width, square.y + square.height],
+                perPixel, height: this.viewer?.canvas?.clientHeight || 0,
+            });
+            const inspect = this.cropFor(square);
+            const extra = { mode: "volume", volume: { area: null } };
+            const cutter = global.PlexoraInspect;
+            const out = cutter?.viewState === vs && typeof cutter.set === "function"
+                ? cutter.set({ inspect }, { extra })
+                : vs.set({ ...extra, inspect });
+            global.PlexoraVolumeDock?.open?.();
             this.hover = null;
             this.repaint();
             return out;
@@ -265,6 +303,17 @@
         draw(context, px = 1) {
             if (!context || !this.onPlane()) return;
             context.save();
+            // The square last placed (Back came here from it): solid, quiet.
+            const placed = this._armed ? this.placed : null;
+            if (placed) {
+                context.setLineDash([]);
+                context.lineWidth = 3 * px;
+                context.strokeStyle = "rgba(0, 0, 0, 0.45)";
+                context.strokeRect(placed.x, placed.y, placed.width, placed.height);
+                context.lineWidth = 1.5 * px;
+                context.strokeStyle = "rgba(255, 255, 255, 0.85)";
+                context.strokeRect(placed.x, placed.y, placed.width, placed.height);
+            }
             const square = this._armed && this.hover ? this.squareAt(this.hover.x, this.hover.y) : null;
             if (square) {
                 context.setLineDash(DASH.map((v) => v * px));
@@ -312,6 +361,8 @@
         toggle: () => Boolean(api.instance?.toggle()),
         /** The image point under the pointer while armed on the plane, or null. */
         hover: () => api.instance?.hover || null,
+        /** The square last placed, while the tool is armed, or null. */
+        placed: () => (api.instance?.armed() ? api.instance.placed : null),
         place: (point) => api.instance?.place(point) || null,
         sizePx: () => api.instance?.sizePx() || null,
     };

@@ -36,6 +36,10 @@
     const BUTTON_ID = "viewer_bookmark_button";
     const FLIGHT_MS = 420;
     const FLASH_MS = 320;
+    //: Pixels a press may travel along the row and still be a click.
+    const DRAG_SLOP = 5;
+    //: The row's gap (viewer.css .plx-bookmark-list), for paging.
+    const THUMB_GAP = 12;
 
     function el(tag, className, attrs = {}) {
         const node = document.createElement(tag);
@@ -48,8 +52,8 @@
         return node;
     }
 
-    function icon(name) {
-        return el("span", `fas fa-${name}`, { "aria-hidden": "true" });
+    function icon(name, style = "fas") {
+        return el("span", `${style} fa-${name}`, { "aria-hidden": "true" });
     }
 
     function typing() {
@@ -113,19 +117,41 @@
             const wrapper = document.getElementById("openseadragon_wrapper");
             if (this.root || !wrapper || !this.bookmarks) return false;
             const root = el("section", "plx-bookmark-tray", {
-                role: "region", "aria-label": "Bookmarks", "data-viewer-furniture": "true" });
+                role: "region", "aria-label": "Saved views", "data-viewer-furniture": "true" });
             root.hidden = true;
+            // The head: what this is and how many, then Save and Close.
+            const head = el("div", "plx-bookmark-head");
+            const title = el("div", "plx-bookmark-title");
+            this.count = el("span", "plx-bookmark-count");
+            title.append(icon("bookmark", "far"), el("span", null, { text: "Saved views" }), this.count);
             this.saveButton = el("button", "plx-bookmark-save", {
-                type: "button", title: "Bookmark this view (K)", "aria-keyshortcuts": "K" });
-            this.saveButton.append(icon("plus"), el("span", null, { text: "Save View" }));
+                type: "button", title: "Save this view (K)", "aria-keyshortcuts": "K" });
+            this.saveButton.append(icon("plus"), el("span", null, { text: "Save view" }),
+                                   el("kbd", "plx-bookmark-kbd", { text: "K" }));
             this.saveButton.addEventListener("click", () => this.save());
-            this.list = el("ul", "plx-bookmark-list", { "aria-label": "Bookmarks" });
-            this.empty = el("p", "plx-bookmark-empty", { text: "No bookmarks yet. Press K to keep this view." });
             const close = el("button", "plx-bookmark-close", {
-                type: "button", title: "Close bookmarks", "aria-label": "Close bookmarks" });
+                type: "button", title: "Close saved views", "aria-label": "Close saved views" });
             close.appendChild(icon("xmark"));
             close.addEventListener("click", () => this.setOpen(false, { focus: true }));
-            root.append(this.saveButton, this.list, this.empty, close);
+            head.append(title, this.saveButton, close);
+            // The row: no scrollbar; the wheel, a swipe or a drag moves it,
+            // and a chevron shows on a side only while there is more there.
+            this.body = el("div", "plx-bookmark-body");
+            this.list = el("ul", "plx-bookmark-list", { "aria-label": "Saved views" });
+            this.empty = el("p", "plx-bookmark-empty", { text: "No saved views yet. Press K to save this one." });
+            this.prev = el("button", "plx-bookmark-nav is-prev", {
+                type: "button", title: "Earlier saved views", "aria-label": "Earlier saved views", tabindex: "-1" });
+            this.prev.appendChild(icon("chevron-left"));
+            this.next = el("button", "plx-bookmark-nav is-next", {
+                type: "button", title: "More saved views", "aria-label": "More saved views", tabindex: "-1" });
+            this.next.appendChild(icon("chevron-right"));
+            this.prev.hidden = true;
+            this.next.hidden = true;
+            this.prev.addEventListener("click", () => this.page(-1));
+            this.next.addEventListener("click", () => this.page(1));
+            this.body.append(this.list, this.empty, this.prev, this.next);
+            root.append(head, this.body);
+            this.bindScroll();
             root.addEventListener("keydown", (event) => {
                 if (event.key !== "Escape" || typing()) return;
                 event.preventDefault();
@@ -234,6 +260,9 @@
             const entries = this.bookmarks.cached();
             const active = this.bookmarks.active();
             const seen = new Set();
+            // A row at its start stays there as new ones come in before the
+            // first: snapping would otherwise follow the item it was on.
+            const atStart = (this.list.scrollLeft || 0) < 2;
             let before = null;
             // Newest first, each node made once and moved only when its place
             // changes: a hundred bookmarks repaint as a hundred class flips.
@@ -259,6 +288,111 @@
             }
             this.empty.hidden = entries.length > 0;
             this.list.hidden = entries.length === 0;
+            this.count.textContent = entries.length ? String(entries.length) : "";
+            if (atStart && this.list.scrollLeft) this.list.scrollLeft = 0;
+            this.edges();
+        }
+
+        // -- moving along the row ------------------------------------------------
+
+        bindScroll() {
+            const list = this.list;
+            let frame = 0;
+            list.addEventListener("scroll", () => {
+                if (frame) return;
+                const raf = global.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+                frame = raf(() => { frame = 0; this.edges(); });
+            });
+            // A mouse wheel turns into sideways travel; a sideways swipe and
+            // a pinch are the browser's own.
+            list.addEventListener("wheel", (event) => {
+                if (event.ctrlKey || !this.overflows()) return;
+                const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientWidth : 1;
+                if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+                event.preventDefault();
+                list.scrollLeft += event.deltaY * unit;
+            }, { passive: false });
+            // Click and drag: past a few pixels it is a drag, not a click, and
+            // the row snaps to a thumbnail when let go. Touch scrolls natively.
+            list.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0 || event.pointerType === "touch" || !this.overflows()) return;
+                if (event.target?.closest?.(".plx-bookmark-remove, .plx-bookmark-more, .plx-bookmark-rename")) return;
+                this._drag = { id: event.pointerId, x: event.clientX, left: list.scrollLeft, moved: false };
+            });
+            list.addEventListener("pointermove", (event) => {
+                const drag = this._drag;
+                if (!drag || drag.id !== event.pointerId) return;
+                const dx = event.clientX - drag.x;
+                if (!drag.moved) {
+                    if (Math.abs(dx) < DRAG_SLOP) return;
+                    drag.moved = true;
+                    list.setPointerCapture?.(event.pointerId);
+                    list.classList.add("is-dragging");
+                }
+                list.scrollLeft = drag.left - dx;
+            });
+            const release = (event) => {
+                const drag = this._drag;
+                if (!drag || drag.id !== event.pointerId) return;
+                this._drag = null;
+                if (!drag.moved) return;
+                list.classList.remove("is-dragging");
+                this._dragged = true;
+                setTimeout(() => { this._dragged = false; }, 0);
+                this.snap();
+            };
+            list.addEventListener("pointerup", release);
+            list.addEventListener("pointercancel", release);
+            // The click that ends a drag opens nothing.
+            list.addEventListener("click", (event) => {
+                if (!this._dragged) return;
+                this._dragged = false;
+                event.preventDefault();
+                event.stopPropagation();
+            }, true);
+            if (typeof global.ResizeObserver === "function") {
+                const observer = new global.ResizeObserver(() => this.edges());
+                observer.observe(list);
+                this._off.push(() => observer.disconnect());
+            }
+        }
+
+        overflows() {
+            return (this.list.scrollWidth || 0) - (this.list.clientWidth || 0) > 1;
+        }
+
+        /** The fades and chevrons: on a side only while there is more there. */
+        edges() {
+            if (!this.body) return;
+            const list = this.list;
+            const max = Math.max(0, (list.scrollWidth || 0) - (list.clientWidth || 0));
+            const at = list.scrollLeft || 0;
+            const before = !list.hidden && at > 1;
+            const after = !list.hidden && at < max - 1;
+            this.body.classList.toggle("has-before", before);
+            this.body.classList.toggle("has-after", after);
+            this.prev.hidden = !before;
+            this.next.hidden = !after;
+        }
+
+        /** A page along the row: what shows, less one thumbnail kept in view. */
+        page(direction) {
+            const list = this.list;
+            const step = this.list.firstChild?.offsetWidth || 0;
+            const by = Math.max(step, (list.clientWidth || 0) - step - THUMB_GAP);
+            list.scrollBy?.({ left: direction * by, behavior: smooth() ? "smooth" : "auto" });
+        }
+
+        /** After a drag, settle on the nearest thumbnail's edge. */
+        snap() {
+            const list = this.list;
+            const items = [...list.children];
+            if (!items.length) return;
+            const pad = items[0].offsetLeft || 0;
+            const near = items.reduce((best, node) => (
+                Math.abs(node.offsetLeft - pad - list.scrollLeft) < Math.abs(best.offsetLeft - pad - list.scrollLeft)
+                    ? node : best));
+            list.scrollTo?.({ left: near.offsetLeft - pad, behavior: smooth() ? "smooth" : "auto" });
         }
 
         item(entry) {
@@ -377,7 +511,12 @@
         save() {
             const made = this.bookmarks.bookmark();
             if (!made) return null;
-            if (this.open) this.paint();
+            if (this.open) {
+                this.paint();
+                // The new one is first: the row goes to it, to land there.
+                this.list.scrollLeft = 0;
+                this.edges();
+            }
             this.celebrate(made);
             return made;
         }
@@ -395,7 +534,7 @@
             const target = this.open ? this.items.get(made.id)?.node : this.button;
             if (!this.open) {
                 global.PlexoraToast?.show?.({ title: `${made.entry.label} bookmarked`,
-                                              note: "Press the bookmark icon to see your bookmarks.",
+                                              note: "The pin beside the AI button shows your saved views.",
                                               timeout: 2200 });
             }
             const picture = moving ? await made.preview.catch(() => null) : null;

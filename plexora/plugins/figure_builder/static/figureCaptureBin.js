@@ -97,7 +97,7 @@ class FigureCaptureBin {
      * @param {Array} entries bin rows, as `listCaptures` returns them.
      * @returns {Promise<{panelIds: string[], failed: number}>}
      */
-    static async adoptInto(state, api, entries) {
+    static async adoptInto(state, api, entries, { place = null } = {}) {
         const out = { panelIds: [], failed: 0 };
         if (!state || !state.document || !Array.isArray(entries) || !entries.length) {
             out.failed = Array.isArray(entries) ? entries.length : 0;
@@ -125,6 +125,14 @@ class FigureCaptureBin {
                          render_revision: 1 });
         }
         if (!panels.length) return out;
+        // Straight onto the page (the Bookmarks dialog's "Add to figure"):
+        // placed in the same commit, so adding is one undo step, not two.
+        const placements = typeof place === "function" ? place(panels) : null;
+        if (Array.isArray(placements)) {
+            panels.forEach((panel, index) => {
+                if (placements[index]) panel.placement = placements[index];
+            });
+        }
 
         const stored = await state.commit(operations, (draft) => {
             for (const source of Object.values(added)) draft.sources[source.source_id] = source;
@@ -186,8 +194,8 @@ class FigureCaptureBin {
             return true;
         } catch (error) {
             // Private-browsing modes throw. The navigation is still worth
-            // making: the captures are in the bin, and "From captures…" on the
-            // canvas is the way to reach them without a note.
+            // making: the captures are in the bin, and "Captures" in the
+            // canvas's panel tray is the way to reach them without a note.
             return false;
         }
     }

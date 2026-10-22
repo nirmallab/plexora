@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261022_bookmarks">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261022_views2">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -57,9 +57,9 @@
                        saves the view. Shown once a plugin keeps them
                        (services/bookmarks.js). #}
                     <button id="viewer_bookmark_button" class="icon-button sidebar-header-tool" type="button"
-                            title="Bookmarks (K bookmarks this view)" aria-label="Bookmarks"
+                            title="Saved views (K saves this view)" aria-label="Saved views"
                             aria-pressed="false" hidden>
-                        <span class="fas fa-bookmark" aria-hidden="true"></span>
+                        <span class="fas fa-location-dot" aria-hidden="true"></span>
                     </button>
                     {# Plexora AI: with an `ai` licence it opens the launcher
                        (Gate / QC / chat with Plexora AI, views/agentPanel.js);
@@ -580,7 +580,7 @@
    its `inspect` with it), and the controller every control changes it
    through. #}
 <script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261022_bookmarks" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
@@ -589,10 +589,10 @@
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
 <script src="{{ data.base_url }}/client/src/js/services/channelFade.js?v=20261013_znav" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261022_bookmarks" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewControls.js?v=20261022_views2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261022_bookmarks" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261021_area" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261021_area" defer></script>
@@ -609,19 +609,19 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261012_merge_main" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261022_views2" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
 <script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261022_bookmarks" defer></script>
 {# The Area tool (a square on the image, opened in 3-D), and Back (B) to the
    view it was opened from. #}
-<script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewHistory.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/backButton.js?v=20261022_bookmarks" defer></script>
 {# Bookmarks: views kept as captures of the plugin that keeps them, and their
    tray. The store registers itself (Plugin.viewer_scripts, in <head>). #}
-<script src="{{ data.base_url }}/client/src/js/services/bookmarks.js?v=20261022_bookmarks" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/bookmarkTray.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/bookmarks.js?v=20261022_views2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/bookmarkTray.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261015_display_contrast" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261014_late_mask" defer></script>
@@ -643,7 +643,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_views2" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

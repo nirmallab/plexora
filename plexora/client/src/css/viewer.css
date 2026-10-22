@@ -3674,9 +3674,11 @@ body.sidebar-collapsed .viewer-shell,
     cursor: pointer;
     display: inline-flex;
     font-size: 12px;
-    gap: 8px;
+    gap: 6px;
     height: 30px;
-    padding: 0 6px 0 12px;
+    /* The key sits as a smaller pill inside this one, the same clearance
+       (5px) above, below and to its right: (30 - 2 border - 18) / 2. */
+    padding: 0 5px 0 12px;
 }
 
 .plx-view-back:hover {
@@ -3692,16 +3694,24 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
-.plx-view-back-key {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: var(--radius-sm);
+/* A key inside a pill (Back, Save view): a pill itself, concentric with it. */
+.plx-view-back-key,
+.plx-bookmark-kbd {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    box-sizing: border-box;
     color: var(--text-secondary);
+    display: inline-flex;
     font-family: inherit;
     font-size: 10px;
-    line-height: 16px;
+    font-weight: 600;
+    height: 18px;
+    justify-content: center;
+    line-height: 1;
     min-width: 18px;
-    text-align: center;
+    padding: 0 5px;
 }
 
 @keyframes plx-view-back-in {
@@ -3713,79 +3723,186 @@ body.sidebar-collapsed .viewer-shell,
     animation: none;
 }
 
-/* Bookmarks (views/bookmarkTray.js): a glass tray in the bottom-centre dock,
-   the same glass as the magic bar. A row of thumbnails that scrolls
-   sideways; hovering one enlarges it by a transform, from its foot, so its
-   neighbours never move (the row keeps room above for it). The one on screen
-   is ringed. */
+/* Saved views (views/bookmarkTray.js): a compact glass tray across the
+   bottom-centre dock, the same glass as the magic bar. A head -- the mark,
+   "Saved views" and how many, then Save view (K) and Close -- over a row of
+   same-size thumbnails as wide as the dock allows. The row has no scrollbar:
+   the wheel, a swipe or a drag moves it, it snaps to a thumbnail, and each
+   side fades and shows a chevron only while there is more that way. */
+#openseadragon_wrapper .plx-canvas-dock.is-bottom-center {
+    /* As wide as the middle column, so the tray can be. */
+    align-self: stretch;
+}
+
 .plx-bookmark-tray {
     -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
     backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
-    align-items: center;
-    background: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 18px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    background: linear-gradient(180deg, rgba(30, 36, 48, 0.7), rgba(10, 14, 20, 0.66) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
                 inset 0 -1px 0 rgba(255, 255, 255, 0.03),
-                0 8px 24px rgba(0, 0, 0, 0.32);
+                0 10px 28px rgba(0, 0, 0, 0.36);
+    box-sizing: border-box;
     color: var(--text-primary);
     display: flex;
+    flex-direction: column;
     gap: 6px;
-    max-width: min(100%, 920px);
+    max-width: 100%;
     min-width: 0;
-    padding: 4px 6px 6px 8px;
+    padding: 8px 8px 10px;
+    width: 960px;
 }
 
 .plx-bookmark-tray[hidden] {
     display: none;
 }
 
-.plx-bookmark-save {
+.plx-bookmark-head {
     align-items: center;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 999px;
-    color: var(--text-primary);
-    cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    font-size: 12px;
-    gap: 6px;
-    height: 30px;
-    padding: 0 12px;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    padding: 0 0 0 6px;
+}
+
+.plx-bookmark-title {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    font-size: 13px;
+    font-weight: 500;
+    gap: 8px;
+    min-width: 0;
     white-space: nowrap;
 }
 
+.plx-bookmark-title .fa-bookmark {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.plx-bookmark-count {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+}
+
+/* Save is there but quiet: the row is what the tray is for. */
+.plx-bookmark-save {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-family: inherit;
+    font-size: 12px;
+    gap: 8px;
+    height: 28px;
+    /* The key's pill as far from the edge as from the top: (28 - 2 - 18) / 2. */
+    padding: 0 4px 0 10px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-bookmark-save .fa-plus {
+    font-size: 14px;
+}
+
 .plx-bookmark-save:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
+}
+
+
+.plx-bookmark-close {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    height: 28px;
+    justify-content: center;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-bookmark-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
 }
 
 .plx-bookmark-save:focus-visible,
 .plx-bookmark-open:focus-visible,
-.plx-bookmark-close:focus-visible {
+.plx-bookmark-close:focus-visible,
+.plx-bookmark-nav:focus-visible {
     outline: 2px solid var(--accent-channel);
     outline-offset: 2px;
 }
 
+.plx-bookmark-body {
+    --plx-fade-before: 0px;
+    --plx-fade-after: 0px;
+    min-width: 0;
+    position: relative;
+}
+
+.plx-bookmark-body.has-before {
+    --plx-fade-before: 40px;
+}
+
+.plx-bookmark-body.has-after {
+    --plx-fade-after: 40px;
+}
+
 .plx-bookmark-list {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--plx-fade-before),
+                                        #000 calc(100% - var(--plx-fade-after)), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 var(--plx-fade-before),
+                                #000 calc(100% - var(--plx-fade-after)), transparent 100%);
     display: flex;
-    flex: 1 1 auto;
-    gap: 10px;
+    gap: 12px;
     list-style: none;
     margin: 0;
     min-width: 0;
     overflow-x: auto;
     overflow-y: hidden;
-    /* Room above and at the ends for an enlarged thumbnail. */
-    padding: 14px 12px 2px;
-    /* Snapping keeps that room, so the first item's buttons are never cut. */
-    scroll-padding-inline: 12px;
+    overscroll-behavior-x: contain;
+    /* Room for a hovered thumbnail's lift and ring. */
+    padding: 4px 4px 2px;
+    position: relative;
+    scroll-padding-inline: 4px;
     scroll-snap-type: x proximity;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+    user-select: none;
+}
+
+.plx-bookmark-list::-webkit-scrollbar {
+    display: none;
 }
 
 .plx-bookmark-list[hidden] {
     display: none;
+}
+
+/* Under the hand the row follows it exactly; it snaps when let go. */
+.plx-bookmark-list.is-dragging {
+    cursor: grabbing;
+    scroll-snap-type: none;
+}
+
+.plx-bookmark-list.is-dragging .plx-bookmark-open {
+    cursor: grabbing;
 }
 
 .plx-bookmark-item {
@@ -3798,40 +3915,43 @@ body.sidebar-collapsed .viewer-shell,
     align-items: center;
     background: none;
     border: 0;
-    border-radius: 8px;
+    border-radius: 10px;
     color: inherit;
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    font-family: inherit;
+    gap: 6px;
     padding: 0;
-    width: 96px;
+    width: 136px;
 }
 
 .plx-bookmark-frame {
     background: #000;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
     display: block;
-    height: 64px;
+    height: 85px;
     overflow: hidden;
     position: relative;
-    transform-origin: bottom center;
     transition: transform var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard),
                 box-shadow var(--duration-fast) var(--ease-standard);
-    width: 96px;
+    width: 136px;
 }
 
 .plx-bookmark-item:hover .plx-bookmark-frame,
 .plx-bookmark-open:focus-visible .plx-bookmark-frame {
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
-    transform: scale(1.18);
+    border-color: rgba(255, 255, 255, 0.32);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
 }
 
 .plx-bookmark-thumb {
     display: block;
     height: 100%;
     object-fit: cover;
+    pointer-events: none;
     width: 100%;
 }
 
@@ -3850,9 +3970,9 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .plx-bookmark-label {
-    color: var(--text-secondary);
-    font-size: 11px;
-    max-width: 96px;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
+    max-width: 136px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3860,7 +3980,7 @@ body.sidebar-collapsed .viewer-shell,
 
 .plx-bookmark-item.is-active .plx-bookmark-frame {
     border-color: var(--accent-channel);
-    box-shadow: 0 0 0 2px var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel);
 }
 
 .plx-bookmark-item.is-active .plx-bookmark-label {
@@ -3871,33 +3991,34 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 0.75;
 }
 
+/* ⋯ and ×, inside the thumbnail's top corners, on hover or focus. */
 .plx-bookmark-remove,
 .plx-bookmark-more {
     align-items: center;
-    background: rgba(12, 16, 22, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(10, 14, 20, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 999px;
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
     font-size: 10px;
-    height: 20px;
+    height: 22px;
     justify-content: center;
     opacity: 0;
     padding: 0;
     position: absolute;
-    top: -8px;
+    top: 6px;
     transition: opacity var(--duration-fast) var(--ease-standard);
-    width: 20px;
+    width: 22px;
     z-index: 2;
 }
 
 .plx-bookmark-remove {
-    right: -6px;
+    right: 6px;
 }
 
 .plx-bookmark-more {
-    left: -6px;
+    left: 6px;
 }
 
 .plx-bookmark-item:hover .plx-bookmark-remove,
@@ -3907,49 +4028,71 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 1;
 }
 
+.plx-bookmark-list.is-dragging .plx-bookmark-remove,
+.plx-bookmark-list.is-dragging .plx-bookmark-more {
+    opacity: 0;
+}
+
 .plx-bookmark-rename {
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     height: 20px;
-    width: 96px;
+    width: 136px;
 }
 
 .plx-bookmark-empty {
     color: var(--text-secondary);
     font-size: 12px;
-    margin: 0 8px;
-    white-space: nowrap;
+    margin: 4px 6px 2px;
 }
 
 .plx-bookmark-empty[hidden] {
     display: none;
 }
 
-.plx-bookmark-close {
+/* A chevron floats over the fade on a side with more to see. */
+.plx-bookmark-nav {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
     align-items: center;
-    background: transparent;
-    border: 0;
+    background: rgba(24, 30, 40, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 999px;
-    color: var(--text-secondary);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    color: var(--text-primary);
     cursor: pointer;
     display: flex;
-    flex: 0 0 auto;
-    height: 24px;
+    height: 32px;
     justify-content: center;
-    width: 24px;
+    position: absolute;
+    top: 30px;
+    transition: background var(--duration-fast) var(--ease-standard);
+    width: 32px;
+    z-index: 3;
 }
 
-.plx-bookmark-close:hover {
-    color: var(--text-primary);
+.plx-bookmark-nav:hover {
+    background: rgba(40, 48, 62, 0.92);
 }
 
-/* Short of room (canvasLayout folds it): the Save button only. */
-.plx-bookmark-tray.is-compact .plx-bookmark-list,
-.plx-bookmark-tray.is-compact .plx-bookmark-empty {
+.plx-bookmark-nav[hidden] {
+    display: none;
+}
+
+.plx-bookmark-nav.is-prev {
+    left: 2px;
+}
+
+.plx-bookmark-nav.is-next {
+    right: 2px;
+}
+
+/* Short of room (canvasLayout folds it): the head only. */
+.plx-bookmark-tray.is-compact .plx-bookmark-body {
     display: none;
 }
 
@@ -4039,7 +4182,7 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 @keyframes plx-bookmark-arrive {
-    0% { box-shadow: 0 0 0 3px var(--accent-channel); transform: scale(1.12); }
+    0% { box-shadow: 0 0 0 3px var(--accent-channel); transform: scale(1.06); }
     100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
 }
 
@@ -4059,7 +4202,10 @@ body.sidebar-collapsed .viewer-shell,
 
 .plx-reduced-motion .plx-bookmark-frame,
 .plx-reduced-motion .plx-bookmark-remove,
-.plx-reduced-motion .plx-bookmark-more {
+.plx-reduced-motion .plx-bookmark-more,
+.plx-reduced-motion .plx-bookmark-save,
+.plx-reduced-motion .plx-bookmark-close,
+.plx-reduced-motion .plx-bookmark-nav {
     transition: none;
 }
 
@@ -4254,6 +4400,31 @@ body.sidebar-collapsed .viewer-shell,
     transform: translateY(-50%);
     width: 36px;
     z-index: 230;
+}
+
+/* A band coming or going outside them (a plugin's panel taking the edge, as
+   Figure Builder's does beside the strip): the strip, the YZ pane, its
+   divider and its gutter step across together, as the safe area's docks do.
+   Never while a pane edge is under the hand, nor under reduced motion. */
+.viewer-depth-strip,
+.viewer-section-pane.is-yz,
+.viewer-section-divider.is-yz {
+    transition: right var(--duration-fast) var(--ease-standard);
+}
+
+#openseadragon_wrapper.has-sections::after {
+    transition: width var(--duration-fast) var(--ease-standard);
+}
+
+#openseadragon_wrapper[class*="is-resizing"] .viewer-depth-strip,
+#openseadragon_wrapper[class*="is-resizing"] .viewer-section-pane.is-yz,
+#openseadragon_wrapper[class*="is-resizing"] .viewer-section-divider.is-yz,
+#openseadragon_wrapper[class*="is-resizing"]::after,
+.plx-reduced-motion .viewer-depth-strip,
+.plx-reduced-motion .viewer-section-pane.is-yz,
+.plx-reduced-motion .viewer-section-divider.is-yz,
+.plx-reduced-motion #openseadragon_wrapper.has-sections::after {
+    transition: none;
 }
 
 .depth-strip-modes {

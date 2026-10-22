@@ -720,7 +720,7 @@ async function init(config, savedViewTransform = null) {
             if (volume) {
                 try {
                     __plexora.areaTool = window.PlexoraAreaTool?.attach?.({
-                        viewState, imageViewer: seaDragonViewer,
+                        viewState, imageViewer: seaDragonViewer, volume,
                     }) || null;
                 } catch (error) {
                     console.error("main: the Area tool could not be set up", error);

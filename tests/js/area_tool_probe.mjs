@@ -6,8 +6,11 @@
  * a readout says how much tissue (microns over a stated spacing, else
  * pixels); at an edge it keeps its size, moved inside; on an image smaller
  * than it, the image. Armed, the pointer is followed and drawn on the plane
- * (never in 3-D); a click places it in ONE change of the view state and opens
- * 3-D, OSD's own click-to-zoom held back; unarmed, a click is the image's.
+ * (never in 3-D); a click places it in ONE change of the view state: 3-D over
+ * the whole stack, CROPPED to the square (the Crop tool, its panel out),
+ * framed at the plane's magnification, OSD's own click-to-zoom held back;
+ * back on the plane the placed square is drawn while armed, and goes when
+ * disarmed; unarmed, a click is the image's.
  * V places the square under the pointer when armed, else goes to 3-D and
  * back; it yields to the ROI tool, to typing and to an open dialog. Esc
  * disarms.
@@ -97,7 +100,8 @@ const vs = {
     get: () => JSON.parse(JSON.stringify(state)),
     set(patch) {
         sets.push(patch);
-        state = { ...state, ...patch, volume: { ...state.volume, ...(patch.volume || {}) } };
+        state = { ...state, ...patch, volume: { ...state.volume, ...(patch.volume || {}) },
+                  inspect: patch.inspect ? { ...state.inspect, ...patch.inspect } : state.inspect };
         for (const fn of subscribers) fn(state);
         return state;
     },
@@ -109,7 +113,11 @@ const vs = {
 let prefs = { screen: 300 };
 box.PlexoraViewerPrefs = { area: () => ({ ...prefs }) };
 
-const tool = box.PlexoraAreaTool.attach({ viewState: vs, imageViewer });
+const frames = [];
+const volume = { frameNext: (request) => frames.push(request) };
+let docked = 0;
+box.PlexoraVolumeDock = { open: () => { docked += 1; } };
+const tool = box.PlexoraAreaTool.attach({ viewState: vs, imageViewer, volume });
 check("the tool draws on the image's overlay, follows the pointer and the zoom", overlays.length === 1
       && overlays[0].kind === "shapes" && trackers.length === 1 && (handlers["canvas-click"] || []).length === 1
       && viewportFns.length === 1);
@@ -167,9 +175,17 @@ zoom = 2;
 viewportFns[0]();
 sets.length = 0;
 const placing = click(1000, 700);
-check("a click places it: ONE change, 3-D on that square, OSD's zoom held back",
-      sets.length === 1 && sets[0].mode === "volume" && same(sets[0].volume.area, { x: 1700, y: 1100, width: 600, height: 600 })
+check("a click places it: ONE change, 3-D on the whole stack cropped to that square, OSD's zoom held back",
+      sets.length === 1 && sets[0].mode === "volume" && sets[0].volume.area === null
+      && same(sets[0].inspect, { mode: "crop", axes: { x: true, y: true, z: false },
+                                  crop: { x: [1700, 2300], y: [1100, 1700] } })
       && placing.preventDefaultAction === true, JSON.stringify(sets));
+check("framed at the plane's magnification: the square, and half a screen pixel an image pixel",
+      frames.length === 1 && same(frames[0].box, [1700, 1100, 2300, 1700]) && frames[0].perPixel === 0.5,
+      JSON.stringify(frames));
+check("the Crop tool's panel comes out, so its controls are there at once", docked === 1);
+check("the square is remembered as placed", same(box.PlexoraAreaTool.placed(),
+                                                 { x: 1700, y: 1100, width: 600, height: 600 }));
 drawn.length = 0;
 overlays[0].draw({ context: context2d, px: 2 });
 check("in 3-D nothing is drawn on the plane", drawn.length === 0);
@@ -188,17 +204,25 @@ strip.toggleVolume = Strip.prototype.toggleVolume;
 sets.length = 0;
 key();
 check("V in 3-D goes back to the plane", state.mode === "plane" && sets.length === 1);
+drawn.length = 0;
+overlays[0].draw({ context: context2d, px: 2 });
+check("back on the plane, the placed square is drawn again while the tool is armed",
+      drawn.filter((args) => same(args, [1700, 1100, 600, 600])).length === 2, JSON.stringify(drawn));
 trackers[0].options.moveHandler({ position: { x: 200, y: 200 } });
 sets.length = 0;
 const placed = key();
-check("V armed, the pointer on the image: the square placed there, in 3-D", state.mode === "volume"
-      && same(state.volume.area, { x: 100, y: 100, width: 600, height: 600 }) && placed.prevented, JSON.stringify(state.volume));
+check("V armed, the pointer on the image: the square placed there, cropped, in 3-D", state.mode === "volume"
+      && state.volume.area === null && same(state.inspect.crop, { x: [100, 700], y: [100, 700] })
+      && placed.prevented, JSON.stringify(state));
 key();
 check("V again: back to the plane, the square let go", state.mode === "plane" && state.volume.area === null);
 box.PlexoraAreaTool.disarm();
 key();
 check("V unarmed: 3-D on the whole stack", state.mode === "volume" && state.volume.area === null && sets.length === 3);
 key();
+drawn.length = 0;
+overlays[0].draw({ context: context2d, px: 2 });
+check("disarmed, the placed square is let go", drawn.length === 0 && box.PlexoraAreaTool.placed() === null);
 sets.length = 0;
 box.PlexoraToolLoader = { activeTool: () => "roi" };
 const yielded = key();

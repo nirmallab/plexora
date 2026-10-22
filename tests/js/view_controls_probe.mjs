@@ -153,9 +153,10 @@ check("a colour stack's popover offers no projection",
 
 // -- switching modes ---------------------------------------------------------------
 
-check("into 3-D is the mode and the whole stack: the 3-D view keeps its own cut, the projection its range",
-      same(R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume"), { mode: "volume", volume: { area: null } })
-      && same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), { mode: "volume", volume: { area: null } }));
+const whole = { mode: "volume", volume: { area: null }, inspect: { mode: "full" } };
+check("into 3-D is the mode and the WHOLE stack: no area, the cut hidden (kept, for O), the projection its range",
+      same(R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume"), whole)
+      && same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), whole));
 check("back to a plane is the mode, and the placed square goes",
       same(R.transition(R.context(stack({ mode: "volume" }), page), "plane"), { mode: "plane", volume: { area: null } }));
 

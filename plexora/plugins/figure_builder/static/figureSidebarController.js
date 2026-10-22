@@ -729,7 +729,7 @@ class FigureBuilderSidebarController {
      * document already open. Nothing is written here, so nothing here can fail
      * in a way that loses a capture -- the worst case is a trip to a figure
      * with the captures still sitting in the bin, which is exactly the state
-     * "From captures…" on the canvas exists for.
+     * "Captures" in the canvas's panel tray exists for.
      */
     async goToCanvas() {
         const travelling = this.checked();

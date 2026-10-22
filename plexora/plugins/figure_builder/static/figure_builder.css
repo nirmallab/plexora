@@ -2299,6 +2299,20 @@
     min-width: 0;
 }
 
+/* Bookmarks and Captures: what is already kept, side by side, the same
+   weight -- neither is a detour through the other. */
+.fb-tray-kept {
+    display: grid;
+    gap: var(--space-1);
+    grid-template-columns: 1fr 1fr;
+    padding: 0 var(--space-3) var(--space-2);
+}
+
+.fb-tray-kept-button {
+    justify-content: center;
+    min-width: 0;
+}
+
 /* Bordered, unlike the icon buttons in a heading: it stands beside a control
    with a box, and an icon on bare card next to one reads as decoration. */
 .fb-tray-add > .fb-icon-button {
@@ -5064,6 +5078,64 @@
     box-shadow: var(--fb-float, 0 6px 18px rgba(0, 0, 0, 0.28));
 }
 
+/* A bookmark in the Bookmarks dialog: not a toggle, two actions of its own,
+   so a card is wide enough for both side by side. */
+.fb-bookmark-grid {
+    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+}
+
+.fb-bookmark-card {
+    cursor: default;
+}
+
+.fb-bookmark-actions {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 2px;
+}
+
+.fb-bookmark-go,
+.fb-bookmark-add {
+    align-items: center;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: 12px;
+    gap: 6px;
+    justify-content: center;
+    min-height: 28px;
+    min-width: 0;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+.fb-bookmark-go {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.fb-bookmark-go:hover {
+    border-color: var(--border-strong);
+}
+
+.fb-bookmark-go:focus-visible,
+.fb-bookmark-add:focus-visible {
+    box-shadow: var(--fb-focus-ring, 0 0 0 2px rgba(56, 189, 248, 0.34));
+    outline: none;
+}
+
+.fb-bookmark-add:disabled {
+    cursor: progress;
+    opacity: 0.6;
+}
+
+.fb-bookmark-card.is-added {
+    border-color: var(--accent-channel);
+}
+
 .fb-bin-card:focus-visible {
     border-color: var(--accent-channel);
     box-shadow: var(--fb-focus-ring, 0 0 0 2px rgba(56, 189, 248, 0.34));
@@ -5264,6 +5336,26 @@
     right: 12px;
     top: 12px;
     z-index: 240;
+}
+
+/* Beside a band on the right edge (core's depth strip): the dock holds the
+   outermost band itself (FigureCaptureDock.reserveEdge), so the image's own
+   controls stay next to the image and the builder goes to the edge. Placed
+   by the band's offset, between the bands along the top and the bottom. */
+.fb-dock.is-edge {
+    /* The list as wide as the head over it: nothing between it and the strip. */
+    align-items: stretch;
+    max-height: calc(100% - var(--plx-inset-top, 0px) - var(--plx-inset-bottom, 0px) - 24px);
+    right: calc(var(--plx-band-figure_builder-dock, 0px) + 12px);
+    top: calc(var(--plx-inset-top, 0px) + 12px);
+}
+
+.fb-dock.is-edge > .fb-dock-head {
+    align-self: flex-end;
+}
+
+.fb-dock.is-edge .fb-strip {
+    width: auto;
 }
 
 /* Capturing is off while a panel's view is on loan to the live viewer, so the
@@ -5483,15 +5575,89 @@
    The height is whatever the dock has left rather than a fixed slice of the
    window: `.fb-dock` is already capped at the viewer's height, and a second cap
    here would scroll a list that still had room in a short window. */
+/* The list's frame: the arrows float over its ends (figureCaptureDock.js
+   `edges`), and each end fades while there is more that way. */
+.fb-strip-scroll {
+    --fb-fade-above: 0px;
+    --fb-fade-below: 0px;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+}
+
+.fb-strip-scroll.has-above {
+    --fb-fade-above: 32px;
+}
+
+.fb-strip-scroll.has-below {
+    --fb-fade-below: 32px;
+}
+
 .fb-strip-items {
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 var(--fb-fade-above),
+                                        #000 calc(100% - var(--fb-fade-below)), transparent 100%);
+    mask-image: linear-gradient(180deg, transparent 0, #000 var(--fb-fade-above),
+                                #000 calc(100% - var(--fb-fade-below)), transparent 100%);
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
     gap: 6px;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0 8px 8px;
-    scrollbar-width: thin;
+    /* No scrollbar: the wheel, a trackpad and the arrows move it. */
+    scrollbar-width: none;
+}
+
+.fb-strip-items::-webkit-scrollbar {
+    display: none;
+}
+
+.fb-strip-nav {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    align-items: center;
+    background: rgba(24, 30, 40, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    color: rgba(226, 232, 240, 0.95);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    height: 26px;
+    justify-content: center;
+    left: 50%;
+    padding: 0;
+    position: absolute;
+    transform: translateX(-50%);
+    transition: background var(--duration-fast, 120ms) ease;
+    width: 26px;
+    z-index: 3;
+}
+
+.fb-strip-nav:hover {
+    background: rgba(40, 48, 62, 0.95);
+}
+
+.fb-strip-nav:focus-visible {
+    outline: 2px solid var(--accent-channel, #38bdf8);
+    outline-offset: 2px;
+}
+
+.fb-strip-nav[hidden] {
+    display: none;
+}
+
+.fb-strip-nav.is-up {
+    top: 2px;
+}
+
+.fb-strip-nav.is-down {
+    bottom: 10px;
 }
 
 .fb-strip-item {

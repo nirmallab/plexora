@@ -63,8 +63,10 @@ PlexoraViewControls.register({
 - `resolve(ctx, {surface})` returns `[{id, group, config}]` in order.
 - `visible(id, ctx)` and `configOf(id, ctx)` answer for a single entry.
 - `transition(ctx, mode)` is the view-state patch for a mode button: `{mode, volume: {area:
-  null}}`. The 3-D button always opens the whole stack (a placed square is the Area tool's own
-  view, and Back returns from it), and leaving 3-D lets the square go.
+  null}}`, plus `inspect: {mode: "full"}` when it enters 3-D. The 3-D button always opens the
+  whole stack: any area is let go and the cut hidden, its settings kept so `O` brings it back (a
+  placed square is the Area tool's own view, a crop of the whole stack, and Back returns from
+  it).
 - Resolving never calls `viewState.set`, and `tests/js/view_controls_probe.mjs` spies to
   check this. A mode change only repaints. A plane stepper whose kind no longer applies
   stops with `persist: false`, because nobody chose the plane it stopped on.
@@ -81,7 +83,7 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Control | P | S | F | V | Needs |
 |---|---|---|---|---|---|
 | Mode buttons plane / projection / 3-D | ✓ | ✓ | ✓ | ✓ | depth, not colour; 3-D also WebGL2 |
-| Area (`tool.area`: a square to place, opened in 3-D; V) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2 |
+| Area (`tool.area`: a square to place, opened in 3-D as a crop of the whole stack; V) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2 |
 | Sections | ✓ | ✓ | ✓ | – | the panes exist, not colour |
 | Cut, Crop (open the cut panel) | – | – | – | ✓ | depth, cut |
 | Play | planes | slides the range | planes | **turns the stack** | depth or frames (single plane: frames) |
@@ -129,7 +131,7 @@ tool's (`cutTool`: the tool cutting, or else the one last chosen):
 | Solid cut faces | ✓ | ✓ | volumeDrawn |
 | Handles shown (eye) | ✓ | ✓ | prefs |
 | Reset, Undo (Cmd/Ctrl+Z; Shift redoes) | ✓ | ✓ | |
-| Crop to area (`cut.toArea`: the area becomes the crop) | – | while narrower than the area (`crop.narrower`) | |
+| Crop to area (`cut.toArea`: the crop becomes an area of its own, `volume.area`) | – | while narrower than the area (`crop.narrower`) | |
 | Voxels: smooth or blocks | ✓ | ✓ | volumeDrawn |
 | Handles' strength | ✓ | ✓ | prefs |
 | `O` Show/Hide (the cut hidden or shown, the panel left out) | ✓ | ✓ | |

@@ -36,6 +36,12 @@
  * `plexora:bookmarks-changed` (and to `onChange` listeners); the same event
  * from anyone else -- Figure Builder's own bin -- reads the list again.
  *
+ * OPENING AT ONE from another page ("Go to view", Figure Builder's
+ * Bookmarks): that page leaves a note in sessionStorage under OPEN_KEY,
+ * `{datasource, id}`, and goes to the viewer; here it is read once -- when a
+ * store registers, and whenever the viewer is shown again -- and, on that
+ * image, restored as soon as the image is open.
+ *
  * Classic script, `window.PlexoraBookmarks`.
  */
 (function (global) {
@@ -43,6 +49,10 @@
 
     const READY = "plexora:bookmarks-ready";
     const CHANGED = "plexora:bookmarks-changed";
+    //: The note a page leaves to open the viewer at a bookmark.
+    const OPEN_KEY = "plexora:bookmark-open";
+    //: How long to wait for the image to open before giving up on a note (ms).
+    const OPEN_WAIT_MS = 20000;
     //: After a restore, how long view changes are the restore's own (the
     //: camera's turn, a glide) before one means the user moved on (ms).
     const SETTLE_MS = 900;
@@ -115,7 +125,52 @@
         cache = null;
         loadedFor = null;
         emit({ reason: "store" });
+        openNoted();
         return true;
+    }
+
+    /** The note another page left (OPEN_KEY), when it is for this image:
+     *  taken, so a reload does not open it again. */
+    function takeNote() {
+        try {
+            const raw = global.sessionStorage?.getItem(OPEN_KEY);
+            if (!raw) return null;
+            const note = JSON.parse(raw);
+            if (!note?.id || note.datasource !== datasource()) return null;
+            global.sessionStorage.removeItem(OPEN_KEY);
+            return note;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /** Resolves true once the image is open in the viewer (false on timeout). */
+    function imageOpen() {
+        const open = () => (global.__plexora?.seaDragonViewer?.viewer?.world?.getItemCount?.() || 0) > 0;
+        if (open()) return Promise.resolve(true);
+        return new Promise((resolve) => {
+            const started = now();
+            const poll = () => {
+                if (open()) resolve(true);
+                else if (now() - started > OPEN_WAIT_MS) resolve(false);
+                else setTimeout(poll, 100);
+            };
+            setTimeout(poll, 100);
+        });
+    }
+
+    /** Open at the bookmark a note names, if there is one for this image. */
+    async function openNoted() {
+        if (!available()) return null;
+        const note = takeNote();
+        if (!note) return null;
+        if (!await imageOpen()) return null;
+        await list({ refresh: true });
+        if (!find(note.id)) {
+            warn("That saved view is no longer bookmarked.");
+            return null;
+        }
+        return restore(note.id);
     }
 
     /** Whether bookmarks can be kept here: a store, and an image open. */
@@ -300,8 +355,8 @@
     }
 
     const api = {
-        READY, CHANGED,
-        registerStore, available, list, cached, find, bookmark, restore, unbookmark, rename,
+        READY, CHANGED, OPEN_KEY,
+        registerStore, openNoted, available, list, cached, find, bookmark, restore, unbookmark, rename,
         locateUrl, active, viewMoved, onChange, context,
     };
     global.PlexoraBookmarks = api;
@@ -314,6 +369,8 @@
             for (const fn of [...listeners]) fn({ reason: "reloaded" });
         });
     });
+    // Back in the viewer from another page that left a note.
+    global.addEventListener?.("plexora:viewer-shown", () => { openNoted(); });
     // A store whose script ran before this one waits for this.
     try {
         global.dispatchEvent?.(new CustomEvent(READY, { detail: { registerStore } }));

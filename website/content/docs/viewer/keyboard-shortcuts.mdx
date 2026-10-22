@@ -57,8 +57,8 @@ name elsewhere.
 | `0` | Return to the home view |
 | `W` `A` `S` `D` | Pan, once the canvas has focus |
 | `T` | Show or hide whatever is drawn over the image — the mask, or a plugin's coloured cells |
-| `K` | Bookmark this view ([Bookmarks](/docs/viewer/bookmarks)) |
-| `B` | Back to the previous view, while there is one (after a square's 3-D view or Crop to area) |
+| `K` | Save this view ([Bookmarks](/docs/viewer/bookmarks)); ignored while you are typing |
+| `B` | Back to the previous view, while there is one (after placing a square, back to the plane it was placed on; after Crop to area) |
 | `B` / Page Up | Previous sample in this dataset, when there is no view to go back to |
 | `N` / Page Down | Next sample in this dataset |
 
@@ -70,28 +70,33 @@ planes.
 | Key | Action |
 | --- | --- |
 | `]` / `[` | Next / previous plane (with Shift, ten; with Alt, the last / first) |
-| `V` | Into the 3-D view and back. With the Area tool armed and the pointer on the image, the square is placed there first |
-| `Esc` | Disarm the Area tool (on the plane) |
+| `V` | Into the 3-D view of the whole stack and back. With the Area tool armed and the pointer on the image, the square is placed there first |
+| `Esc` | Disarm the Area tool (on the plane), which also clears the square you placed |
 
 ### In the 3-D view
 
 | Key or gesture | Action |
 | --- | --- |
-| Drag | Turn the stack |
-| Shift+drag, or drag the area's centre grip | Slide the area across the tissue; any cut moves with it |
-| Drag a side grip of the area | Resize the area; the cut stays where it is |
+| Drag | Turn the stack — about the middle of the crop when there is one, so a cropped square turns in place |
+| Drag a crop's centre grip | Move the crop across the tissue, at once — nothing has to load |
+| Drag a crop's face grip | Resize the crop along that axis |
+| Shift+drag, or drag the area's centre grip | After **Crop to area** only: slide that area across the tissue; the cut moves with it |
+| Drag a side grip of the area | After **Crop to area** only: resize the area; the cut stays where it is |
 | Alt+drag, or the middle button | Pan the camera (Shift+drag too, when the whole stack is drawn) |
 | `X` `Y` `Z` | With the pointer over it: turn about that axis only; again, or `Esc`, to let go |
-| `O` | Show or hide the cut |
+| `O` | Show or hide the cut — after placing a square, the whole tissue and back to the square |
 
 The **Area** button on the strip arms a square that keeps its size on screen
 (set it under the strip's gear), so zooming in selects less tissue; a readout
-under it says how much. Click the image to open that square in 3-D, drawn at
-the finest level it allows, and press **B** to go back. The strip's 3-D button
-always opens the whole stack. A **Cut** takes a side off along one axis — X, Y
-or Z; a **Crop** keeps a box along any of them, and **Crop to area** makes that
-box the area, fetched finer. To keep a view to come back to, bookmark it with
-**K** ([Bookmarks](/docs/viewer/bookmarks)).
+under it says how much. Click the image to open the whole stack in 3-D,
+cropped to that square, at the magnification the plane had, and press **B** to
+go back to the plane. Moving or resizing the crop needs nothing loaded; once
+you stop turning, a finer picture of the part kept arrives by itself. The
+strip's 3-D button always opens the whole stack. A **Cut** takes a side off
+along one axis — X, Y or Z; a **Crop** keeps a box along any of them, and
+**Crop to area** makes that box an area of its own, fetched at the finest
+level. To keep a view to come back to, save it with **K**
+([Bookmarks](/docs/viewer/bookmarks)).
 
 <Callout type="info" title="A tool's own keys">
 [ROI](/docs/plugins/roi) and [Figure Builder](/docs/plugins/figure-builder)

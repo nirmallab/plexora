@@ -431,8 +431,10 @@
         enterVolume(volume = null, options = {}) {
             if (!this.enabled()) return this.get();
             const patch = { mode: "volume" };
-            // Without a square, the whole stack: one left placed is let go.
+            // Without an area, the whole stack: an area is let go, and the
+            // cut hidden (its settings kept, for O; viewControls.transition).
             patch.volume = volume || { area: null };
+            if (!volume && Geometry()) patch.inspect = { mode: "full" };
             const band = this._bandCrop();
             if (band) {
                 // An explicit cut is never shifted (set), so the area's move

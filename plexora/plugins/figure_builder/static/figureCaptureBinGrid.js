@@ -7,10 +7,14 @@
  * rather than a side effect: come back on Thursday, look at what you collected
  * on Tuesday, send four of them to a figure and throw the rest away.
  *
- * One component, two hosts:
+ * One component, three uses:
  *
- *   - a dialog on the figure canvas ("From captures…" in the panel tray),
- *     where `onAdd` puts the selection into the figure that is already open;
+ *   - a dialog on the figure canvas ("Captures" in the panel tray), where
+ *     `onAdd` puts the selection into the figure that is already open;
+ *   - the same dialog as BOOKMARKS ("Bookmarks" in the panel tray,
+ *     `bookmarks: true`): only the views saved in the viewer (K), each with
+ *     its own two actions -- Go to view (`onGo`) and Add to figure
+ *     (`onAddOne`, straight onto the page) -- and nothing to tick or delete;
  *   - the Captures tab on the Figures page, where `onAdd` asks which figure
  *     through FigureDestinationPicker and then navigates.
  *
@@ -27,7 +31,8 @@ class FigureCaptureBinGrid {
 
     /**
      * @param {Element} host where the grid is drawn.
-     * @param {object} options api, onAdd(ids), addLabel, emptyAction.
+     * @param {object} options api, onAdd(ids), addLabel, emptyAction;
+     *        bookmarks, onGo(capture), onAddOne(capture) for the bookmarks.
      */
     constructor(host, options) {
         this.host = host;
@@ -43,8 +48,14 @@ class FigureCaptureBinGrid {
         this.captures = [];
         this.checked = new Set();
         this.query = "";
+        //: The Bookmarks dialog: bookmarks only, each with its own actions.
+        this.bookmarks = Boolean(options && options.bookmarks);
+        this.onGo = (options && options.onGo) || null;
+        this.onAddOne = (options && options.onAddOne) || null;
+        //: Bookmarks added to the figure from this dialog, marked as such.
+        this.added = new Set();
         //: Only the bookmarks (core's bookmarks tray): `?bookmarked=1`, or the chip.
-        this.onlyBookmarked = Boolean(options && options.onlyBookmarked);
+        this.onlyBookmarked = this.bookmarks || Boolean(options && options.onlyBookmarked);
         //: A capture to bring into view once listed: `#cap_...`, where the
         //: tray's "Show in Figure Builder" points.
         this.locate = (options && options.locate) || "";
@@ -124,6 +135,10 @@ class FigureCaptureBinGrid {
 
     setup() {
         if (!this.host) return;
+        if (this.bookmarks) {
+            this.setupBookmarks();
+            return;
+        }
         this.host.innerHTML = `
             <div class="fb-bin-bar">
                 <div class="fb-bin-search">
@@ -164,6 +179,29 @@ class FigureCaptureBinGrid {
         this.refresh();
     }
 
+    /** The Bookmarks dialog's body: a search and the cards, no foot. */
+    setupBookmarks() {
+        this.host.innerHTML = `
+            <div class="fb-bin-bar">
+                <div class="fb-bin-search">
+                    <span class="fas fa-magnifying-glass" aria-hidden="true"></span>
+                    <input type="search" data-role="search" autocomplete="off"
+                           spellcheck="false" placeholder="Search by name or image"
+                           aria-label="Search bookmarks by name or image">
+                </div>
+                <span class="fb-bin-count" data-role="count"></span>
+            </div>
+            <div class="fb-bin-grid fb-bookmark-grid" data-role="grid"></div>
+            <p class="fb-bin-state" data-role="state"></p>`;
+        this.host.addEventListener("click", (event) => this.clicked(event));
+        const search = this.el("search");
+        search?.addEventListener("input", () => {
+            this.query = search.value || "";
+            this.render();
+        });
+        this.refresh();
+    }
+
     el(role) {
         return this.host?.querySelector(`[data-role="${role}"]`) || null;
     }
@@ -188,6 +226,11 @@ class FigureCaptureBinGrid {
     clicked(event) {
         const target = event.target.closest?.("[data-role]");
         const role = target?.dataset.role;
+        if (role === "go" || role === "addOne") {
+            const capture = this.captures.find((row) => row.capture_id === target.dataset.captureId);
+            if (capture) this.act(role, capture, target);
+            return;
+        }
         if (role === "card") {
             const id = event.target.closest("[data-capture-id]")?.dataset.captureId;
             if (id) this.toggle(id);
@@ -206,6 +249,20 @@ class FigureCaptureBinGrid {
             const ids = this.orderedChecked();
             if (ids.length && this.onAdd) this.onAdd(ids);
         }
+    }
+
+    /** A bookmark's own action: go to it in the viewer, or put it on the
+     *  figure's page and say so on its card. */
+    async act(role, capture, button) {
+        if (role === "go") {
+            this.onGo?.(capture);
+            return;
+        }
+        if (!this.onAddOne) return;
+        button.disabled = true;
+        const ok = await this.onAddOne(capture);
+        if (ok) this.added.add(capture.capture_id);
+        this.render();
     }
 
     toggle(id) {
@@ -267,7 +324,8 @@ class FigureCaptureBinGrid {
         const count = this.el("count");
         if (count) {
             count.textContent = this.loading ? ""
-                : FigureSchema.countPhrase(this.captures.length, "capture");
+                : this.bookmarks ? FigureSchema.countPhrase(this.filtered().length, "bookmark")
+                    : FigureSchema.countPhrase(this.captures.length, "capture");
         }
 
         const chip = this.el("bookmarked");
@@ -277,13 +335,19 @@ class FigureCaptureBinGrid {
         }
 
         const grid = this.el("grid");
-        if (grid) grid.innerHTML = list.map((capture) => this.card(capture, escape)).join("");
+        if (grid) {
+            grid.innerHTML = list.map((capture) => (this.bookmarks
+                ? this.bookmarkCard(capture, escape) : this.card(capture, escape))).join("");
+        }
         this.bringIntoView();
 
         const state = this.el("state");
         if (state) {
             const message = this.loading ? "Loading…"
                 : this.failed ? "Your captures could not be read."
+                    : this.bookmarks && !list.length && !this.query.trim()
+                        ? "No bookmarks yet. In the viewer, press K to save a view — "
+                          + "it shows here, ready to go back to or to add to a figure."
                     : !this.captures.length
                         ? "Nothing captured yet. Open a project, press C, and drag a frame "
                           + "over anything worth keeping — it lands here."
@@ -326,6 +390,37 @@ class FigureCaptureBinGrid {
         this.locate = "";
         card.classList.add("is-located");
         card.scrollIntoView?.({ block: "center" });
+    }
+
+    /** A bookmark: its picture, its name, its image and when, and its two
+     *  actions. Not a toggle -- each action is its own button. */
+    bookmarkCard(capture, escape) {
+        const id = escape(capture.capture_id);
+        const image = escape(capture.datasource || "Unknown image");
+        const name = escape(capture.label || "Saved view");
+        const when = FigureSchema.timeAgo(capture.created_at);
+        const added = this.added.has(capture.capture_id);
+        const thumbnail = capture.url
+            ? `<img src="${escape(capture.url)}" alt="" loading="lazy" draggable="false">`
+            : `<span class="fas fa-bookmark fb-bin-thumb-icon" aria-hidden="true"></span>`;
+        return `<div class="fb-bin-card fb-bookmark-card${added ? " is-added" : ""}"
+                     data-capture-id="${id}">
+            <span class="fb-bin-thumb">${thumbnail}</span>
+            <span class="fb-bin-name" title="${name}">${name}</span>
+            <span class="fb-bin-meta">${escape([capture.datasource, when].filter(Boolean).join(" · "))}</span>
+            <span class="fb-bookmark-actions">
+                <button class="fb-bookmark-go" type="button" data-role="go" data-capture-id="${id}"
+                        title="Open ${image} at this view">
+                    <span class="fas fa-arrow-up-right-from-square" aria-hidden="true"></span>
+                    Go to view
+                </button>
+                <button class="fb-bookmark-add fb-button-primary" type="button" data-role="addOne"
+                        data-capture-id="${id}" title="Put this view on the figure's page">
+                    <span class="fas fa-${added ? "check" : "plus"}" aria-hidden="true"></span>
+                    ${added ? "Add again" : "Add to figure"}
+                </button>
+            </span>
+        </div>`;
     }
 
     card(capture, escape) {

@@ -1284,6 +1284,42 @@ if (booted) {
         problems.push(`adopting captures threw: ${error.message}`);
     }
 
+    // A bookmark added to the figure from the Bookmarks dialog: straight onto
+    // the page, placed in the SAME commit -- one undo step, not an adoption
+    // and then a move.
+    try {
+        runInContext(
+            "globalThis.__placed = (() => {"
+            + " const commits = [];"
+            + " const document_ = { revision: 1, sources: {}, panels: {} };"
+            + " const state = { figureId: 'fig_abc', document: document_,"
+            + "   sourceForDatasource: () => null,"
+            + "   commit: (operations, mutate) => { commits.push(operations);"
+            + "     mutate(document_); return Promise.resolve(true); } };"
+            + " const api = { adoptPreviews: async () => ({ ok: true }) };"
+            + " const entry = { capture_id: 'cap_b', datasource: 'demo', bookmarked: true,"
+            + "   source: { kind: 'plexora_project', datasource: 'demo', display_name: 'demo',"
+            + "             pixel_size: null },"
+            + "   scene: { source_id: '', viewport: { x: 0, y: 0, w: 10, h: 8 } } };"
+            + " const asked = [];"
+            + " const place = (panels) => { asked.push(panels.length);"
+            + "   return panels.map(() => ({ page_id: 'pg_1', x_mm: 10, y_mm: 12, w_mm: 60, h_mm: 48, z: 3 })); };"
+            + " return FigureCaptureBin.adoptInto(state, api, [entry], { place })"
+            + "   .then((result) => ({ result, asked, commits: commits.length,"
+            + "     placement: Object.values(document_.panels)[0]?.placement || null })); })();",
+            ctx);
+        const placed = await ctx.__placed;
+        if (placed.commits !== 1 || placed.asked.join() !== "1") {
+            problems.push(`adding a bookmark to the page was ${placed.commits} commits`);
+        }
+        if (placed.placement?.page_id !== "pg_1" || placed.placement?.x_mm !== 10) {
+            problems.push(`the bookmark did not land on the page: ${JSON.stringify(placed.placement)}`);
+        }
+        report.adoptPlaced = { commits: placed.commits, placed: Boolean(placed.placement) };
+    } catch (error) {
+        problems.push(`adding a bookmark to the page threw: ${error.message}`);
+    }
+
     // The destination picker's pure parts. The dialog itself needs a browser,
     // but what it SAYS and the order it offers figures in do not -- and the
     // remembered figure coming first is the whole of what makes the round trip

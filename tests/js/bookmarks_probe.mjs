@@ -303,6 +303,59 @@ tray.saveButton.fire("click");
 check("+ Save View bookmarks too, into the open tray", box.__captured.length === 2
       && tray.items.has(B.cached()[0].id));
 
+// -- the row: its count, the wheel, a drag, the chevrons ---------------------------------------
+const list = tray.list;
+check("the head counts the saved views", tray.count.textContent === String(B.cached().length),
+      tray.count.textContent);
+// Two more thumbnails' worth of row, to scroll along and snap between.
+list.append(new Node("li"), new Node("li"));
+list.children.forEach((node, i) => { node.offsetLeft = i * 148; });
+Object.assign(list, { scrollLeft: 0, scrollWidth: 1000, clientWidth: 400 });
+list.scrollBy = ({ left }) => { list.scrollLeft += left; };
+list.scrollTo = ({ left }) => { list.scrollLeft = left; };
+tray.edges();
+check("more to the right: a chevron and a fade there, none on the left", !tray.next.hidden && tray.prev.hidden
+      && tray.body.classList.contains("has-after") && !tray.body.classList.contains("has-before"));
+const wheel = list.fire("wheel", { deltaY: 120, deltaX: 0, deltaMode: 0, ctrlKey: false,
+                                   preventDefault() { this.prevented = true; } });
+check("a mouse wheel moves the row sideways", list.scrollLeft === 120 && wheel.prevented === true);
+const swipe = list.fire("wheel", { deltaY: 4, deltaX: 60, deltaMode: 0, ctrlKey: false,
+                                   preventDefault() { this.prevented = true; } });
+check("a sideways swipe is the browser's own", list.scrollLeft === 120 && !swipe.prevented);
+tray.edges();
+check("moved along: a chevron on each side", !tray.next.hidden && !tray.prev.hidden);
+list.fire("pointerdown", { button: 0, pointerType: "mouse", pointerId: 7, clientX: 300 });
+list.fire("pointermove", { pointerId: 7, clientX: 298 });
+check("a press that barely moves is still a click", list.scrollLeft === 120);
+list.fire("pointermove", { pointerId: 7, clientX: 250 });
+check("past a few pixels it drags the row", list.scrollLeft === 170);
+list.fire("pointerup", { pointerId: 7, clientX: 250 });
+check("let go, it snaps to the nearest thumbnail", list.scrollLeft === 148, String(list.scrollLeft));
+const ending = list.fire("click", { stopPropagation() { this.stopped = true; } });
+check("and the click that ends a drag opens nothing", ending.stopped === true);
+tray.next.fire("click");
+check("the chevron pages along", list.scrollLeft > 148, String(list.scrollLeft));
+tray.saveButton.fire("click");
+check("saving goes back to the start, where the new one is", list.scrollLeft === 0);
+
+// -- opened at one from another page ("Go to view") ------------------------------------------------
+const stored = new Map();
+box.sessionStorage = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)),
+                       removeItem: (k) => stored.delete(k) };
+imageViewer.viewer.world = { getItemCount: () => 1 };
+runInContext(`__rows.push({ capture_id: "cap_far", label: "Far", created_at: "2026-10-02", has_preview: false,
+                           scene: { viewport: { x: 9 } } });`, context);
+stored.set(B.OPEN_KEY, JSON.stringify({ datasource: "elsewhere", id: "cap_far" }));
+check("a note for another image is not this one's", await B.openNoted() === null && stored.has(B.OPEN_KEY));
+stored.set(B.OPEN_KEY, JSON.stringify({ datasource: "demo", id: "cap_far" }));
+box.__restored.length = 0;
+box.dispatchEvent(new box.CustomEvent("plexora:viewer-shown"));
+for (let i = 0; i < 6; i += 1) await settle();
+check("back in the viewer with a note for it: that bookmark is put back, kept, and the note taken",
+      box.__restored.length === 1 && box.__restored[0].scene.viewport.x === 9
+      && box.__restored[0].options.persist === true && !stored.has(B.OPEN_KEY) && B.active() === "cap_far",
+      JSON.stringify(box.__restored));
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

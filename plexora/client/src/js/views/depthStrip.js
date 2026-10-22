@@ -222,7 +222,7 @@
 
             // On a plane or a projection, the Area tool: a square that opens
             // as 3-D where it is placed (views/areaTool.js).
-            const areaWords = "Area: place a square and see it in 3-D (V)";
+            const areaWords = "Area: place a square and see it in 3-D, cropped (V)";
             this.areaButton = el("button", "depth-strip-button", {
                 type: "button", title: areaWords, "aria-label": areaWords, "aria-pressed": "false",
                 "data-area-tool": "",

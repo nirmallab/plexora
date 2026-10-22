@@ -34,8 +34,8 @@
  * surfaces, the prefs, whether rotation is running). Resolving never changes
  * the view state. No DOM, no text, no icons: those belong to the views.
  *
- * The 3-D view's area (`volume.area`, placed with the Area tool,
- * views/areaTool.js) and its cut (the view state's `inspect`,
+ * The 3-D view's area (`volume.area`, Crop to area,
+ * services/inspectState.js) and its cut (the view state's `inspect`,
  * services/inspectGeometry.js) are part of the context too: `area`, `cut`
  * (full, cutaway, crop), the tool last chosen (`cutTool`) and its axes, and
  * whether a crop is narrower than the area (`cropNarrower`). The strip offers
@@ -330,15 +330,18 @@
     }
 
     /**
-     * The view-state patch that switches to `mode` from `ctx`. The 3-D view
-     * keeps its own cut (`inspect`), so the projection's range is left as it
-     * was and comes back with the projection. A placed square (`volume.area`)
-     * is a view of its own, never a mode's: the mode buttons always open the
-     * whole stack, and leaving 3-D lets the square go (views/areaTool.js; Back
-     * returns to it, services/viewHistory.js).
+     * The view-state patch that switches to `mode` from `ctx`. The mode
+     * buttons always open the WHOLE stack: an area (`volume.area`, Crop to
+     * area) is let go, and into 3-D the cut is hidden -- `mode: "full"`, its
+     * tool and settings kept, so O brings a square's crop back
+     * (views/areaTool.js; Back returns to where the square was placed,
+     * services/viewHistory.js). The projection's range is left as it was
+     * and comes back with the projection.
      */
     function transition(ctx, mode) {
-        return { mode, volume: { area: null } };
+        const patch = { mode, volume: { area: null } };
+        if (mode === "volume") patch.inspect = { mode: "full" };
+        return patch;
     }
 
     /** Call `fn` whenever an entry comes or goes; returns the undo. */
@@ -365,7 +368,7 @@
         // area (views/areaTool.js). V opens it under the pointer.
         { id: "tool.area", surfaces: ["strip"], modes: ["plane", "slab"],
           needs: ["depth", "colourless", "webgl2"], group: "mode", order: 40,
-          doc: "Area: place a square on the image and see that part of the stack in 3-D (V)." },
+          doc: "Area: place a square on the image and see the stack in 3-D cropped to it (V)." },
         // In 3-D, the two ways to cut the stack open; each opens the panel
         // beside the strip (views/volumeDock.js).
         { id: "tool.cutaway", surfaces: ["strip"], modes: ["volume"], needs: ["depth", "cut"], group: "cut",

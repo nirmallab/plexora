@@ -833,6 +833,67 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
           heard.length === 2 && heard[1].area.x === 400 && heard[1].final === true, JSON.stringify(heard));
 }
 
+// -- the pivot and the framing (a square placed on the plane) -----------------------
+{
+    const C = box.PlexoraVolumeCamera;
+    const info = { width: 2000, height: 1000,
+                   spacing: { x: { value: 0.5, unit: "µm", source: "metadata" },
+                              z: { value: 2, unit: "µm", source: "metadata" } } };
+    const d = G.dims(info, 40);
+    let state = { t: 0, z: 12, slab: { z0: 0, z1: 39 }, inspect: G.clean({}, d), volume: {} };
+    const vs = { depth: 40, info, get: () => state };
+    const view = new VolumeRenderer({ viewState: vs, datasource: "vol", fetchImpl });
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600 };
+    view.prefs = { smoothMotion: () => false };
+    check("with no crop there is no pivot: the stack turns about its centre", view.pivot() === null);
+    state = { ...state, inspect: G.clean({ mode: "crop", axes: { x: true, y: true },
+                                           crop: { x: [1400, 1600], y: [600, 800] } }, d) };
+    const middle = () => view.projectImage([1500, 700, 20]);
+    const before = middle();
+    view.turnAboutPivot(C.turnFree(view.camera.q, 120, -60));
+    const after = middle();
+    check("a crop turns in place: its middle stays where it was on screen",
+          Math.hypot(after.x - before.x, after.y - before.y) < 0.5, JSON.stringify([before, after]));
+    const turned = view.camera.q.slice();
+    check("the frame asked for is taken", view.frameRegion({ box: [1400, 600, 1600, 800], perPixel: 1.5 }));
+    const framed = middle();
+    check("framed: the square's middle in the middle of the view, turned the way the stack was",
+          Math.abs(framed.x - 400) < 0.5 && Math.abs(framed.y - 300) < 0.5
+          && C.quat.angleBetween(view.camera.q, turned) < 1e-6, JSON.stringify(framed));
+    view.preset("xy");
+    const left = view.projectImage([1400, 700, 20]);
+    const right = view.projectImage([1600, 700, 20]);
+    check("looking straight down, at the plane's magnification: 200 pixels at 1.5 is 300 on screen",
+          Math.abs(right.x - left.x - 300) < 3, `${(right.x - left.x).toFixed(1)}`);
+    view.preset("xz");
+    const side = middle();
+    check("a named view centres the crop", Math.abs(side.x - 400) < 0.5 && Math.abs(side.y - 300) < 0.5,
+          JSON.stringify(side));
+    check("the pivot is on screen where the stack turns about", Math.abs(view.centreOnScreen().x - 400) < 0.5
+          && Math.abs(view.centreOnScreen().y - 300) < 0.5, JSON.stringify(view.centreOnScreen()));
+    check("no frame without the plane's scale", !view.frameRegion({ box: [0, 0, 10, 10], perPixel: 0 }));
+
+    // A crop far off the stack's centre, turned: `dist` (to the centre) is not
+    // the distance to what is looked at, and zoom must be about the latter.
+    state = { ...state, inspect: G.clean({ mode: "crop", axes: { x: true, y: true },
+                                           crop: { x: [1800, 1900], y: [850, 950] } }, d) };
+    view.preset("iso");
+    const corner = () => view.projectImage([1850, 900, 20]);
+    const away = view.pivotDistance();
+    view.zoomBy(0.5);
+    const zoomed = corner();
+    check("zooming halves the distance to the crop, not to the stack's centre, the crop held in the middle",
+          Math.abs(view.pivotDistance() - away / 2) < 1e-9 && Math.abs(zoomed.x - 400) < 0.5
+          && Math.abs(zoomed.y - 300) < 0.5, `${away} -> ${view.pivotDistance()}`);
+    for (let i = 0; i < 40; i += 1) view.zoomBy(0.5);
+    check("zoomed all the way in, the camera stops short of the crop, never past it",
+          view.pivotDistance() >= 0.03 - 1e-9 && corner() !== null, String(view.pivotDistance()));
+    const kept = view.cameraState();
+    view.camera.dist = 1;
+    check("a camera kept that close comes back as it was, below zero or not",
+          view.restoreCamera(kept) && view.camera.dist === kept.dist, `${kept.dist} -> ${view.camera.dist}`);
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

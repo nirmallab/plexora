@@ -5192,13 +5192,32 @@ deliberately left out and what should be built next.
   frame is not in it; the picture (`viewRaster.blob`) and the write follow
   behind. `restore` persists (`{persist: true}`), because going back to a
   bookmark is going somewhere. Changes are announced as
-  `plexora:bookmarks-changed`.
-- `views/bookmarkTray.js` — `window.PlexoraBookmarkTray`, the tray along the
+  `plexora:bookmarks-changed`. Another page opens the viewer at a bookmark
+  by leaving a sessionStorage note under `OPEN_KEY`
+  (`"plexora:bookmark-open"`, `{datasource, id}`) — Figure Builder's
+  `FigureBuilderApi.openViewAt`, from its Bookmarks dialog — which
+  `openNoted()` takes once, on a store registering and on
+  `plexora:viewer-shown`, and restores when the image is open; the note is
+  removed when taken, so a reload does not open it again. Figure Builder's
+  panel tray has `#fb_tray_bookmarks` (`FigureWorkspace.openBookmarks`: a
+  `FigureCaptureBinGrid` with `bookmarks: true`, each card's Go to view
+  `onGo` and Add to figure `onAddOne`) beside `#fb_tray_bin` (Captures);
+  Add to figure goes through `FigureCaptureBin.adoptInto(state, api,
+  entries, {place})` with `FigureWorkspace.placementsFor`, so the panel is
+  made and placed on the page in one commit, one undo step.
+- `views/bookmarkTray.js` — `window.PlexoraBookmarkTray`, the "Saved views"
+  tray along the
   bottom of the canvas (canvasLayout's `bottom-center` dock;
   `canvasLayout.measure` starts the bottom lane above that dock, so the
   chat's lane rises over the tray rather than under it), newest first; a
   click restores, × takes the bookmark off (the capture stays in Figure
-  Builder), a double-click renames. `#viewer_bookmark_button` in the sidebar
+  Builder), a double-click renames. Its head holds the count, Save view
+  with a K chip (`.plx-bookmark-kbd`, the same concentric key as the Back
+  pill's `.plx-view-back-key`) and close. The row has no scrollbar: the
+  wheel moves it sideways, a drag past `DRAG_SLOP` scrolls and snaps to a
+  thumbnail (`snap`), and a chevron and fade show on a side only while
+  there is more there (`edges`, `page`, `bindScroll`).
+  `#viewer_bookmark_button` (`fa-location-dot`, titled "Saved views") in the sidebar
   header only opens and closes the tray, and is hidden until a store
   registers; bare K bookmarks the view from anywhere on the viewer, tray
   open or not, unless another handler took it first. A save flies the
@@ -6268,15 +6287,26 @@ axes opens on its first, x before y before z.
   `main.js` on a z-stack the 3-D view can draw): the strip's Area button
   (`tool.area`, plane and projection only) arms a dashed square that follows
   the pointer; a click, or V with the pointer on the image, `push()`es
-  `viewHistory` and places it as ONE `viewState.enterVolume({area})`. The
+  `viewHistory` and places it as a way into the Crop tool, NOT as an area:
+  `place` sets no `volume.area` but the whole stack cropped to the square
+  (`cropFor(square)`: inspect `{mode: "crop"}` on x and y, on z only the
+  planes of a fixed projection, `_bandCrop`), applied as ONE
+  `PlexoraInspect.set({inspect}, {extra: {mode: "volume", volume: {area:
+  null}}})` — one undo entry, one step of Back — then asks the volume
+  controller (`AreaTool.attach` takes `volume`) to `frameNext({box,
+  perPixel, height})` and opens the cut panel (`PlexoraVolumeDock.open`).
+  Nothing is fetched for it, because the crop is the shader's, so the Crop
+  tool's grips and O work on it at once. The
   viewer pref `area` is the square's side ON SCREEN, so `sizePx()` is
   `screen / viewerScene.scaleOf(viewer)`: zooming in takes less tissue, the
   square follows a zoom or pan under a still pointer (`zoomed()`, on
   `onViewportChange`), and a readout under it says how much tissue it takes
-  (microns where the image states its spacing, else pixels). The placed
-  square is a view of its own, not a mode's: leaving 3-D lets it go, and
+  (microns where the image states its spacing, else pixels). The mode
+  buttons always mean the whole stack, the crop hidden (kept for O), and
   Back (B, `services/viewHistory.js`) returns to the view it was placed
-  from; no outline of it is left on the plane. Keys: V toggles 2-D and 3-D on any z-stack
+  from, where the square last placed (`placed`, `{x, y, width, height}`) is
+  drawn solid on the plane while the tool stays armed; disarming lets it
+  go. Keys: V toggles 2D and 3D on any z-stack
   (`depthStrip.onKey` → `toggleVolume`), yielding to the ROI tool (whose V is
   its own), typing and open dialogs; in 3-D Shift+drag slides the area under a
   fixed frame and Alt+drag or the middle button pans (Shift+drag pans when
@@ -6289,13 +6319,15 @@ axes opens on its first, x before y before z.
   chosen, kept while off; `axes`, the current tool's; `axesBy`, each tool's
   own, Cut starting on X and Crop on X/Y/Z, a Cut's exactly one; `crop`, `cutaway`, `face`),
   `volume.interpolation`, `volume.area` (`{x, y, width, height}` in
-  full-resolution pixels, or null for the whole stack); there is no
+  full-resolution pixels, or null for the whole stack; only Crop to area,
+  `inspectState.cropToArea`, makes one now); there is no
   `section` any more, and no `volume.saved` (saved areas were retired for
   bookmarks; `viewState._migrate` and the server both drop a stored one).
   `viewState._migrate` opens a 3-D view saved with a narrowed projection
   range as a Z crop. `enterVolume(volume)` (from a fixed projection the cut
   becomes a Z crop of its planes, `_bandCrop`; with no `volume`, the whole
-  stack, `{area: null}`), `toggleVolume()` (back to the projection when
+  stack, `{area: null}`, and the cut hidden, `inspect {mode: "full"}`, its
+  tool and settings kept for O), `toggleVolume()` (back to the projection when
   entered from one, the area cleared either way), and `_areaShift`: a `set`
   with a new `volume.area` and no `inspect` shifts the cut with it, while a
   patch that says where the cut is (a restore, a Video Studio frame, Crop to
@@ -6333,7 +6365,23 @@ axes opens on its first, x before y before z.
   one swap (a cut face in front of or behind the nearest translucent
   surface), and its mesh shader is cut by the same box, with flat
   caps on back faces. `volumeAtlas.js` plans only the bricks the cut keeps
-  (`view.box`).
+  (`view.box`). The pivot: with a crop the camera turns about the crop's
+  middle (`pivot()`, in the box's space; null with no crop), so a square
+  cropped out of the whole stack turns in place rather than swinging round
+  the stack's centre. The camera stays `{q, dist, pan}` (what Video Studio,
+  the history and the view state keep); `turnAboutPivot(q)` moves the pan
+  and `dist` with the turn, and drag, spin, auto-rotate and a turn-only
+  `turnTo` go through it, `centred(q)` (presets, `lookAlong`) puts the pivot
+  mid-view, `recentre()` does so at once, `pivotAlong()`/`pivotDistance()`
+  measure toward it, and `zoomBy` scales the distance to the pivot, not
+  `dist`. `MIN_DIST` is 0.03 (was 0.15), near enough to open at a zoomed-in
+  plane's magnification. `frameRegion({box, perPixel, height})` frames an
+  image region at `perPixel` screen pixels per image pixel, looking straight
+  down first, as the plane did, then turning to the orientation last seen;
+  the controller's `frameNext(request)` holds one for the next entry into
+  3D (`FRAME_WAIT_MS` 3 s, else dropped), and the controller `recentre()`s
+  when the frame's kind (whole stack or area) changes, never on a slide or
+  resize of the area.
 - Registry: `services/viewControls.js` CAPS `cut`, `volumeDrawn`; FLAGS
   `cut.full`, `cut.on`, `cut.cutaway`, `cut.crop`, `axis.*`, `crop.narrower`;
   the strip's `tool.area` (plane and slab) and
@@ -6345,8 +6393,9 @@ axes opens on its first, x before y before z.
   (group `toggle`), shown in 3-D whether the cut is on or hidden (no `when`;
   they follow `ctx.cutTool`, the live tool or else the one last chosen). The
   rail, band, thumb and hover are plane/slab only. `transition()` no longer rewrites the slab on entering
-  3-D, and returns `{mode, volume: {area: null}}`: the mode buttons always
-  mean the whole stack, because a placed square is a view of its own.
+  3D, and returns `{mode, volume: {area: null}}`, with `inspect {mode:
+  "full"}` added on the way into 3D: the mode buttons always mean the whole
+  stack, the cut hidden but kept, so O brings a placed square's crop back.
 - Agent: `viewer_set_inspect` (`agent/core/viewer.py` `InspectInput`: `mode`
   full/cutaway/crop, `axes`, `crop`, `cutaway`, `face` only; a cutaway named
   with more than one axis is refused, here and in
@@ -6364,21 +6413,33 @@ axes opens on its first, x before y before z.
   (wrapped in `tests/test_view_state_client.py`, with the script-order and
   `node --check` tests; floors view_state 70, inspect_geometry 69,
   volume_dock 60, volume_handles 35 (the area's grips), area_tool 25 (the
-  side on screen, the square let go), view_history 27 (spatial only, the
-  trail's end, B's precedence over the dataset chip), depth_strip 41), cut and area checks in the view_state, volume_renderer,
+  side on screen, a placed square a crop of the whole stack framed at the
+  plane's magnification with the panel out, drawn again after Back and let
+  go on disarm), view_history 27 (spatial only, the
+  trail's end, B's precedence over the dataset chip), depth_strip 41), cut and area checks in the view_state, volume_renderer
+  (also the pivot, `frameRegion`, zoom toward the crop and a `dist` below
+  zero restored as it was),
   view_controls, depth_strip, section_panes (nothing of the 3-D cut left in
   the panes) and video_studio_scene probes (`surface_renderer`'s floor is 29 in
   `test_viewer_3d_client.py`);
   `test_volume_routes`, `test_agent_viewer_api`, `test_figure_builder_volume`,
   `test_video_schema`. Bookmarks: `tests/test_bookmarks.py` (wraps
-  `tests/js/bookmarks_probe.mjs`, floor 30, and pins the load order and the
-  hidden icon), `test_figure_builder_captures` (the bookmark columns,
+  `tests/js/bookmarks_probe.mjs`, floor 30 — the tray's count, chevrons,
+  wheel, drag and snap, and the `OPEN_KEY` note — and pins the load order
+  and the hidden `fa-location-dot` icon), `test_figure_builder_boot` (a
+  bookmark added from the Bookmarks dialog is placed in the same commit),
+  `test_figure_builder_capture` (the capture strip with no scrollbar, the
+  dock taking the outer edge beside the depth strip),
+  `test_figure_builder_captures` (the bookmark columns,
   `set_bookmark`, `kept`), `canvas_layout_probe` (the lane rises over the
   bottom-center dock), `figure_restore_probe` (`persist`),
   `test_plugins` (`viewer_scripts`) and `test_plugin_boundary`
   (`figure_builder_closed`: the store on a viewer page with the tool closed,
   and once with it open). Bench scenarios `clip` and `area_slide` (an area slid
   as Shift+drag does; black and flash frames, landing time, GPU bytes) in `tools/bench3d`.
+  A full-suite run with the placed-square crop, the pivot and the saved
+  views redesign (`feature/views2`, 2026-10-22): **9199 passed**, the known
+  failures unchanged.
 
 **Surface Studio** (branch `feature/surface-studio`; the full write-up —
 licence split, renderer passes, measurements, merge notes — is
@@ -8897,6 +8958,16 @@ in **5.6 s**.
   the picture in front of the user, not a layer in the stack; each carries its
   own close button and marks its dock `data-viewer-furniture` so core's canvas
   popups keep off it without naming a plugin's class.
+- **Figure Builder's dock takes the outermost right band only while open
+  beside one.** `FigureCaptureDock.settle()` puts it in core's top-right
+  corner (`PlexoraCanvasLayout.place`) unless it is open, unfolded, and
+  another band holds the canvas's right edge (the depth strip, a section
+  pane); then it reserves its own band, `"figure_builder-dock"` (order -10,
+  as wide as its head, `.fb-dock.is-edge`), outside it, so the image's own
+  controls stay next to the image. Folded, it gives the edge back. It is
+  moved, never rebuilt, and glides between the two (`glideFrom`, none
+  under reduced motion), while core's depth strip, YZ pane and divider
+  transition `right`/`width` to step across with it.
 - **A whole plugin is Paid only through `Plugin.entitlement`.** Video Studio
   (`plugin:video_studio`), segmentation (`volume:segmentation`), transcripts
   (`transcriptomics:xenium`) and Visium HD (`transcriptomics:visium`) are the
@@ -9514,14 +9585,24 @@ in **5.6 s**.
   area with no `inspect` in the same patch moves the cut with it
   (`viewState._areaShift`); a patch that names the cut is never shifted,
   because a restore, a Video Studio frame or an undo already says where the
-  cut is and shifting it again would move it twice. A placed square is a
-  view of its own, never a mode's: the mode buttons and V always mean the
-  whole stack, letting the square go resets the cut's places to the whole
-  stack's (`_wholeCut`) unless the patch says where the cut is, and Back
-  (`viewHistory`, spatial only) is the way back into it. A Cut is one axis — the
+  cut is and shifting it again would move it twice. **A placed square is a
+  crop of the whole stack; only Crop to area makes `volume.area`.** The Area
+  tool sets `inspect` (a crop) with `volume.area` null, because then nothing
+  is fetched for it and the whole Crop tool works on it at once. The mode
+  buttons and V always mean the whole stack, entering 3D with the cut hidden
+  (`inspect {mode: "full"}`, kept for O); letting an area go resets the
+  cut's places to the whole stack's (`_wholeCut`) unless the patch says
+  where the cut is, and Back (`viewHistory`, spatial only) is the way back
+  to where the square was placed. A Cut is one axis — the
   multi-axis corner (`hole`) is gone from the renderers, the handles and the
   geometry, the server's `normalize_inspect` keeps a cutaway's first axis,
   and the agent refuses a cutaway over more than one.
+- **The camera's `dist` may be below `MIN_DIST`, or negative; never clamp it
+  to `MIN_DIST` on restore.** With a crop the camera turns about the crop's
+  middle (`volumeRenderer.pivot()`), and `dist` still counts to the stack's
+  centre, so a crop off that centre rightly brings it under 0.03 or below
+  zero. `restoreCamera` clamps to [-8, 8] only, and the closeness limits
+  (`zoomBy`, `pivotDistance`) are measured to the pivot, not on `dist`.
 - **The plane fade's ghost is opaque.** OSD's canvas is transparent wherever
   a channel is dim (the ground is CSS), so a ghost copied from it alone let
   the next plane show through and the sum overshot both — the brightness

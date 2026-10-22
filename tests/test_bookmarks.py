@@ -59,7 +59,7 @@ def test_the_viewer_page_loads_the_bookmarks_and_their_icon():
         "js/services/bookmarks.js?v=", "js/views/bookmarkTray.js?v=", "js/main.js?v=")]
     assert order == sorted(order)
     button = page[page.index('id="viewer_bookmark_button"') - 200:page.index('id="viewer_bookmark_button"') + 400]
-    assert "hidden" in button and "fa-bookmark" in button
+    assert "hidden" in button and "fa-location-dot" in button
     assert page.index('id="viewer_bookmark_button"') < page.index('id="plexora_ai_button"')
     base = (CLIENT / "templates" / "base.html").read_text(encoding="utf-8")
     assert base.index("js/services/viewerScene.js?v=") < base.index("js/services/viewRaster.js?v=")

@@ -303,6 +303,20 @@ def test_the_way_to_more_panels_is_one_press_and_remembers_this_figure():
     assert 'this.el("fb_add_image_input")?.click()' in workspace, \
         "the image-file button opens nothing"
 
+    # What is already kept, side by side and named: the views saved in the
+    # viewer (K), and the captures -- not one behind the other's icon.
+    assert 'id="fb_tray_bookmarks"' in body and "</span> Bookmarks" in body, \
+        "the bookmarks have no button of their own in the panel tray"
+    assert 'id="fb_tray_bin"' in body and "</span> Captures" in body, \
+        "the captures button is not named"
+    assert 'this.el("fb_tray_bookmarks")?.addEventListener("click", () => this.openBookmarks())' \
+        in workspace, "the Bookmarks button opens nothing"
+    bookmarks = re.search(r"    openBookmarks\(\) \{(.*?)\n    \}", workspace, re.S)
+    assert bookmarks and "bookmarks: true" in bookmarks.group(1) \
+        and "this.api.openViewAt(capture.datasource, capture.capture_id)" in bookmarks.group(1) \
+        and "{ place: true }" in bookmarks.group(1), \
+        "a bookmark cannot be gone back to, or added straight onto the page"
+
 
 def test_the_dock_ships_with_the_plugin():
     """A file that exists and is not declared is a tool that renders and does
@@ -706,3 +720,47 @@ def test_opening_the_builder_closes_the_dataset_strip():
     dock = (STATIC / "figureCaptureDock.js").read_text(encoding="utf-8")
     mount = dock[dock.index("    mount() {"):dock.index("    unmount()")]
     assert "window.PlexoraDatasetStrip?.close?.()" in mount
+
+
+def test_the_capture_strip_scrolls_without_a_scrollbar():
+    """The strip over the image has no scrollbar: the wheel and a trackpad
+    move it, it stops at its ends, and an arrow floats at an end -- with a
+    fade -- only while there is more that way (figureCaptureDock.js `edges`)."""
+    dock = (STATIC / "figureCaptureDock.js").read_text(encoding="utf-8")
+    styles = (STATIC / "figure_builder.css").read_text(encoding="utf-8")
+    assert 'data-role="scrollUp"' in dock and 'data-role="scrollDown"' in dock
+    assert 'role === "scrollUp" || role === "scrollDown"' in dock
+    edges = re.search(r"    edges\(\) \{(.*?)\n    \}", dock, re.S)
+    assert edges and "up.hidden = !above" in edges.group(1) and "down.hidden = !below" in edges.group(1)
+    items = styles[styles.index(".fb-strip-items {"):]
+    items = items[:items.index("}")]
+    assert "scrollbar-width: none;" in items and "overscroll-behavior: contain;" in items
+    assert ".fb-strip-items::-webkit-scrollbar {\n    display: none;" in styles
+
+
+def test_beside_the_depth_strip_the_dock_takes_the_outer_edge():
+    """Open beside a band down the canvas's right edge (core's depth strip on
+    a z-stack), the dock holds the OUTERMOST band itself -- ordered before the
+    strip's, as wide as its head, the list stretched to it -- so the image's
+    own controls stay next to the image. Folded to its head, or with nothing on
+    that edge, it is in core's top-right corner and gives the band back. It is
+    moved between the two, never rebuilt, and glides unless motion is reduced."""
+    dock = (STATIC / "figureCaptureDock.js").read_text(encoding="utf-8")
+    styles = (STATIC / "figure_builder.css").read_text(encoding="utf-8")
+    assert "insets.right - (own || 0) > 0" in dock
+    settle = re.search(r"    settle\(\) \{(.*?)\n    \}", dock, re.S)
+    assert settle, "nothing decides where the dock goes"
+    body = settle.group(1)
+    assert "this.open && !this.folded" in body, "folded, the dock still holds the edge"
+    assert "this.releaseEdge();" in body and 'layout?.place?.(root, { corner: "top-right", order: 5 })' in body
+    assert "this.glideFrom(before)" in body
+    assert '{ edge: "right", size, order: -10 }' in dock
+    assert 'window.addEventListener("plexora:canvas-layout", this._onLayout);' in dock
+    apply = re.search(r"    applyOpen\(\) \{(.*?)\n    \}", dock, re.S)
+    assert apply and "this.settle();" in apply.group(1), "folding the strip does not give the edge back"
+    glide = re.search(r"    glideFrom\(before\) \{(.*?)\n    \}", dock, re.S)
+    assert glide and "prefers-reduced-motion" in glide.group(1) and "plx-reduced-motion" in glide.group(1)
+    edge = styles[styles.index(".fb-dock.is-edge {"):]
+    edge = edge[:edge.index("}")]
+    assert "right: calc(var(--plx-band-figure_builder-dock, 0px) + 12px);" in edge
+    assert "align-items: stretch;" in edge

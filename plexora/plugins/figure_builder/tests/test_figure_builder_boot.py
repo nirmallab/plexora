@@ -357,6 +357,14 @@ def test_adopting_captures_is_one_undo_step(report):
     assert data["adopt"]["commits"] == 1
 
 
+def test_a_bookmark_added_to_the_figure_lands_on_the_page_in_one_step(report):
+    """The Bookmarks dialog's Add to figure: the panel is made AND placed on
+    the page in the same commit, so adding it is one undo step and never a
+    trip through the Panels tray."""
+    _, data = report
+    assert data["adoptPlaced"] == {"commits": 1, "placed": True}
+
+
 def test_captures_from_one_image_share_one_source(report):
     """Three captures from two images make two sources, not three. A second
     source for one slide is two provenance rows for one thing and two places

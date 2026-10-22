@@ -52,6 +52,22 @@ class FigureBuilderApi {
         return this.url("plugins/figure_builder/captures");
     }
 
+    /** Open the viewer on `datasource` at bookmark `captureId`: a note left
+     *  for core's bookmarks (client/src/js/services/bookmarks.js, OPEN_KEY),
+     *  read once there when the image is open. */
+    openViewAt(datasource, captureId) {
+        if (!datasource || !captureId) return;
+        try {
+            window.sessionStorage.setItem("plexora:bookmark-open",
+                JSON.stringify({ datasource: datasource, id: captureId }));
+        } catch (error) {
+            /* Private-browsing modes throw: the viewer still opens, at its last view. */
+        }
+        const href = this.url(encodeURIComponent(datasource));
+        if (typeof PlexoraRouter !== "undefined") PlexoraRouter.go(href);
+        else window.location.assign(href);
+    }
+
     async _read(response) {
         let data = {};
         try {

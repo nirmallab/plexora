@@ -149,6 +149,16 @@ class FigureCaptureDock {
      * cores" toggles capture mode four times) or a modal dialog, which traps
      * focus but not keydown. See FigureCaptureTool.standDown.
      */
+    /** The band the dock holds beside the depth strip (canvasLayout's
+     *  `--plx-band-<id>`, which figure_builder.css places it by). */
+    static get EDGE_BAND() { return "figure_builder-dock"; }
+
+    /** Its margin from the canvas's edge. */
+    static get EDGE_MARGIN() { return 12; }
+
+    /** How long it glides between the corner and the edge (ms). */
+    static get GLIDE_MS() { return 220; }
+
     static isShortcut(event) {
         if (!event || event.metaKey || event.ctrlKey || event.altKey) return false;
         if (typeof event.key !== "string") return false;
@@ -179,6 +189,25 @@ class FigureCaptureDock {
         //: Watches the wrapper's children, for core furniture that mounts
         //: after the dock (the dataset chip waits on a fetch).
         this._arrivals = null;
+        //: Where the dock is (settle): "corner", core's top-right dock; or
+        //: "edge" -- open beside a band down the right edge (core's depth
+        //: strip on a z-stack, a section pane), the OUTERMOST band itself, so
+        //: the image's own controls stay next to the image and the builder is
+        //: at the edge. Folded to its head it gives the edge back.
+        //: `_edgeSize` is the band it holds.
+        this.where = null;
+        this._edgeSize = 0;
+        this._releaseEdge = null;
+        this._edgeWatch = null;
+        this._unplace = null;
+        this._onLayout = () => this.settle();
+    }
+
+    /** Whether something other than the dock (`own` px of it) holds a band
+     *  on the canvas's right edge (core's canvasLayout). */
+    static besideBand(own = 0) {
+        const insets = window.PlexoraCanvasLayout?.insets?.();
+        return Boolean(insets) && insets.right - (own || 0) > 0;
     }
 
     // -- lifecycle -------------------------------------------------------
@@ -192,10 +221,9 @@ class FigureCaptureDock {
         // Core's canvas popups (the dataset thumbnail grid) read this to keep
         // off the dock without core naming a plugin class.
         root.setAttribute("data-viewer-furniture", "");
-        // Docked by core's canvas layout, where there is one: the top-right
-        // corner, just after core's own dataset chip (order 0).
-        root.setAttribute("data-canvas-dock", "top-right");
-        root.setAttribute("data-canvas-order", "5");
+        // Placed by core's canvas layout, where there is one (settle): the
+        // top-right corner, just after core's own dataset chip (order 0), or
+        // open beside a band down the right edge, a band of its own outside it.
         // Folded to its head when the corner runs out of room (a short
         // window, a tall section pane), opened again when the room returns;
         // the user's own open/closed choice is kept apart from this.
@@ -229,7 +257,17 @@ class FigureCaptureDock {
                     <span class="fb-strip-count" data-role="count">0</span>
                 </button>
                 <div class="fb-strip-body">
-                    <div class="fb-strip-items" data-role="items"></div>
+                    <div class="fb-strip-scroll" data-role="scroll">
+                        <div class="fb-strip-items" data-role="items"></div>
+                        <button class="fb-strip-nav is-up" type="button" data-role="scrollUp"
+                                title="Earlier captures" aria-label="Earlier captures" tabindex="-1" hidden>
+                            <span class="fas fa-chevron-up" aria-hidden="true"></span>
+                        </button>
+                        <button class="fb-strip-nav is-down" type="button" data-role="scrollDown"
+                                title="More captures" aria-label="More captures" tabindex="-1" hidden>
+                            <span class="fas fa-chevron-down" aria-hidden="true"></span>
+                        </button>
+                    </div>
                     <p class="fb-strip-empty" data-role="empty">Nothing captured yet.
                         Everything you take is kept here until you put it in a figure.</p>
                     <div class="fb-strip-foot">
@@ -279,6 +317,9 @@ class FigureCaptureDock {
         root.addEventListener("click", (event) => this.clicked(event));
         host.appendChild(root);
         this.root = root;
+        this.bindScroll();
+        this.settle();
+        window.addEventListener("plexora:canvas-layout", this._onLayout);
         this.applyOpen();
         this.layout();
         // Opening the builder closes core's dataset thumbnail strip if it is
@@ -301,6 +342,12 @@ class FigureCaptureDock {
     }
 
     unmount() {
+        window.removeEventListener("plexora:canvas-layout", this._onLayout);
+        this.releaseEdge();
+        this._unplace = null;
+        this.where = null;
+        this._scrollWatch?.disconnect();
+        this._scrollWatch = null;
         document.removeEventListener("keydown", this._onKeyDown);
         window.removeEventListener("resize", this._onResize);
         this._watch?.disconnect();
@@ -313,6 +360,91 @@ class FigureCaptureDock {
 
     destroy() {
         this.unmount();
+    }
+
+    // -- where it is ------------------------------------------------------
+
+    /**
+     * Put the dock where it belongs now, gliding there from where it was:
+     * open beside a band down the right edge, the edge (a band of its own);
+     * otherwise -- folded, or nothing on that edge -- core's top-right
+     * corner. Moved, never built again.
+     */
+    settle() {
+        const root = this.root;
+        if (!root) return;
+        const layout = window.PlexoraCanvasLayout;
+        const edge = Boolean(layout?.reserve) && this.open && !this.folded
+            && FigureCaptureDock.besideBand(this.where === "edge" ? this._edgeSize : 0);
+        const where = edge ? "edge" : "corner";
+        if (where === this.where) {
+            if (edge) this.reserveEdge();
+            return;
+        }
+        const before = this.where ? root.getBoundingClientRect() : null;
+        this.where = where;
+        root.classList.toggle("is-edge", edge);
+        if (edge) {
+            const unplace = this._unplace;
+            this._unplace = null;
+            unplace?.();
+            this.reserveEdge();
+        } else {
+            this.releaseEdge();
+            this._unplace = layout?.place?.(root, { corner: "top-right", order: 5 }) || null;
+        }
+        this.layout();
+        if (before) this.glideFrom(before);
+    }
+
+    /** From `before` (its last box) to where it is now, hung by its top-right
+     *  corner, as it is in both places. Still under reduced motion. */
+    glideFrom(before) {
+        const root = this.root;
+        if (!root || typeof root.animate !== "function") return;
+        if (document.documentElement.classList.contains("plx-reduced-motion")
+                || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+        const now = root.getBoundingClientRect();
+        const dx = before.right - now.right;
+        const dy = before.top - now.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        root.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
+            { duration: FigureCaptureDock.GLIDE_MS, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+    }
+
+    /** The outermost band on the right edge, as wide as the dock and its
+     *  margin: the depth strip and the section pane step in beside it. */
+    reserveEdge() {
+        // As wide as its head (the caption, the orb, the close): the list
+        // below is stretched to it, so it is set, not measured from the list,
+        // which takes whatever width it is given.
+        const head = this.el("caption")?.parentElement || null;
+        // Its own width, not the one the last setting held it to.
+        if (this.root) this.root.style.width = "";
+        const width = Math.ceil(head?.getBoundingClientRect?.().width || 0) || 180;
+        if (this.root) this.root.style.width = `${width}px`;
+        const size = width + FigureCaptureDock.EDGE_MARGIN;
+        if (size === this._edgeSize && this._releaseEdge) return;
+        this._edgeSize = size;
+        this._releaseEdge = window.PlexoraCanvasLayout?.reserve?.(FigureCaptureDock.EDGE_BAND,
+            { edge: "right", size, order: -10 }) || null;
+        // Again when the head changes (its caption is redrawn on arming).
+        if (!this._edgeWatch && typeof ResizeObserver === "function" && head) {
+            this._edgeWatch = new ResizeObserver(() => {
+                if (this.where === "edge" && this.root) this.reserveEdge();
+            });
+            this._edgeWatch.observe(head);
+        }
+    }
+
+    /** The edge given back: the strip and the pane step out again. */
+    releaseEdge() {
+        if (this.root) this.root.style.width = "";
+        this._edgeWatch?.disconnect();
+        this._edgeWatch = null;
+        this._releaseEdge?.();
+        this._releaseEdge = null;
+        this._edgeSize = 0;
     }
 
     get mounted() {
@@ -344,8 +476,9 @@ class FigureCaptureDock {
     layout() {
         const host = this.host();
         if (!this.root || !host?.getBoundingClientRect) return;
-        // Placed by core's canvas layout: its dock decides where and how tall.
-        if (this.docked()) {
+        // Placed by core's canvas layout -- its dock, or the band it holds --
+        // which decides where and how tall.
+        if (this.docked() || this.where === "edge") {
             this.root.style.top = "";
             this.root.style.maxHeight = "";
             return;
@@ -395,13 +528,69 @@ class FigureCaptureDock {
         return this.root?.querySelector(`[data-role="${role}"]`) || null;
     }
 
+    // -- the list's scroll -------------------------------------------------
+
+    /**
+     * No scrollbar on the list -- in a strip 158px wide over the image it was
+     * the loudest thing in it. The wheel and a trackpad scroll it as ever
+     * (and stop at its ends rather than passing on to the page); each end
+     * fades and shows an arrow only while there is more that way, the same
+     * as core's saved views tray.
+     */
+    bindScroll() {
+        const items = this.el("items");
+        if (!items) return;
+        let frame = 0;
+        items.addEventListener("scroll", () => {
+            if (frame) return;
+            frame = requestAnimationFrame(() => {
+                frame = 0;
+                this.edges();
+            });
+        });
+        if (typeof ResizeObserver === "function") {
+            this._scrollWatch = new ResizeObserver(() => this.edges());
+            this._scrollWatch.observe(items);
+        }
+        this.edges();
+    }
+
+    /** The arrows and the fades: at an end only while there is more there. */
+    edges() {
+        const items = this.el("items");
+        const scroll = this.el("scroll");
+        if (!items || !scroll) return;
+        const max = Math.max(0, items.scrollHeight - items.clientHeight);
+        const above = items.scrollTop > 1;
+        const below = items.scrollTop < max - 1;
+        scroll.classList.toggle("has-above", above);
+        scroll.classList.toggle("has-below", below);
+        const up = this.el("scrollUp");
+        const down = this.el("scrollDown");
+        if (up) up.hidden = !above;
+        if (down) down.hidden = !below;
+    }
+
+    /** A page along the list: what shows, less one capture kept in view. */
+    page(direction) {
+        const items = this.el("items");
+        if (!items) return;
+        const step = items.firstElementChild?.offsetHeight || 0;
+        const reduced = document.documentElement.classList.contains("plx-reduced-motion")
+            || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+        items.scrollBy({ top: direction * Math.max(step, items.clientHeight - step),
+                         behavior: reduced ? "auto" : "smooth" });
+    }
+
     // -- events ----------------------------------------------------------
 
     clicked(event) {
         const target = event.target.closest("[data-role]");
         const role = target?.dataset.role;
         const id = () => event.target.closest("[data-capture-id]")?.dataset.captureId;
-        if (role === "orb") {
+        if (role === "scrollUp" || role === "scrollDown") {
+            this.page(role === "scrollUp" ? -1 : 1);
+        } else if (role === "orb") {
             this.handlers.onToggleCapture?.();
         } else if (role === "close") {
             this.handlers.onClose?.();
@@ -472,6 +661,8 @@ class FigureCaptureDock {
         const shown = this.open && !this.folded;
         this.root.classList.toggle("is-collapsed", !shown);
         this.el("collapse")?.setAttribute("aria-expanded", String(shown));
+        // Open beside the depth strip it takes the edge; folded it gives it back.
+        this.settle();
     }
 
     // -- rendering -------------------------------------------------------
@@ -594,6 +785,8 @@ class FigureCaptureDock {
                 </figure>`;
             }).join("");
         }
+
+        this.edges();
 
         // The bulk row is about a list, so it goes when there is no list.
         const bulk = this.el("bulk");
