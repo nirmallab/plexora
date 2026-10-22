@@ -121,7 +121,7 @@ box.window = box;
 box.globalThis = box;
 const context = createContext(box);
 for (const file of ["views/slider.js", "services/inspectGeometry.js", "services/inspectState.js",
-                    "services/viewControls.js", "views/volumeDock.js", "services/savedAreas.js"]) {
+                    "services/viewControls.js", "views/volumeDock.js"]) {
     runInContext(readFileSync(join(JS, file), "utf8"), context);
 }
 const G = box.PlexoraInspectGeometry;
@@ -407,49 +407,6 @@ cutter.undo();
 check("a slide after the last one ended is its own entry",
       JSON.stringify(state.volume.area) === JSON.stringify({ x: 150, y: 0, width: 500, height: 500 }),
       JSON.stringify(state.volume.area));
-
-// -- saved areas ------------------------------------------------------------------------
-check("no Save area on a page that keeps none", !shown().includes("area.save"));
-volume.renderer.cameraState = () => ({ q: [0, 0, 0, 1], dist: 2, pan: [0.1, 0] });
-volume.renderer.snapshot = () => ({ toDataURL: () => "data:image/jpeg;base64,AAAA" });
-let restoredCamera = null;
-volume.renderer.restoreCamera = (camera) => { restoredCamera = camera; return true; };
-const savedAreas = box.PlexoraSavedAreas.attach({ viewState: vs, volume, cutter });
-vs.set({ volume: { area: { x: 100, y: 100, width: 500, height: 500 } },
-         inspect: { mode: "crop", axes: { x: true, y: false, z: false }, crop: { x: [200, 300] } } });
-dock.paint();
-check("Save area on a page that keeps them; no list before one is saved",
-      shown().includes("area.save") && !shown().includes("area.list"), shown().join());
-asked.length = 0;
-dock.controls.get("area.save").node.fire("click");
-const kept = state.volume.saved || [];
-check("Save area: one change, the area, the cut and the camera under a name",
-      asked.length === 1 && kept.length === 1 && kept[0].name === "Area 1"
-      && JSON.stringify(kept[0].area) === JSON.stringify({ x: 100, y: 100, width: 500, height: 500 })
-      && JSON.stringify(kept[0].inspect.crop.x) === "[200,300]" && kept[0].camera?.dist === 2, JSON.stringify(kept));
-dock.paint();
-const list = dock.controls.get("area.list").node;
-const items = () => list.querySelectorAll(".volume-dock-area");
-check("the list shows it, its thumbnail this page's only", shown().includes("area.list") && items().length === 1
-      && items()[0].querySelector(".volume-dock-area-thumb").getAttribute("src") === "data:image/jpeg;base64,AAAA"
-      && !JSON.stringify(state).includes("base64"));
-vs.set({ volume: { area: { x: 0, y: 0, width: 200, height: 200 } }, inspect: { mode: "full" } });
-asked.length = 0;
-items()[0].querySelector(".volume-dock-area-open").fire("click");
-check("a click goes back: area, cut and camera in one change",
-      asked.length === 1 && JSON.stringify(state.volume.area) === JSON.stringify({ x: 100, y: 100, width: 500, height: 500 })
-      && state.inspect.mode === "crop" && JSON.stringify(state.inspect.crop.x) === "[200,300]"
-      && restoredCamera?.dist === 2, JSON.stringify(asked));
-items()[0].querySelector(".volume-dock-area-open").fire("dblclick");
-const renaming = list.querySelector(".volume-dock-area-rename");
-renaming.value = "Germinal centre";
-renaming.fire("keydown", { key: "Enter" });
-check("a double-click renames it", state.volume.saved[0].name === "Germinal centre");
-dock.paint();
-items()[0].querySelector(".volume-dock-area-remove").fire("click");
-dock.paint();
-check("× forgets it, and the list goes", (state.volume.saved || []).length === 0 && !shown().includes("area.list")
-      && savedAreas.thumb(kept[0].id) === null);
 
 vs.set({ mode: "plane" });
 check("back in 2-D the panel goes", !isOpen() && dock.root.inert === true);

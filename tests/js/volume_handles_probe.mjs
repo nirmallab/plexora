@@ -9,7 +9,10 @@
  * before the canvas (it can never turn the stack); that a drag previews and
  * commits once, Esc puts it back, and arrows nudge a focused grip in steps
  * that make one undo entry; and that a face cannot be dragged outside the
- * area the 3-D view draws.
+ * area the 3-D view draws. An area (a square opened in 3-D) has its own
+ * grips, shown with no cut: its body slides it the way Shift+drag does (the
+ * tissue follows the hand, one undo entry), a side resizes it without moving
+ * the cut, Esc puts it back, and they give way to a crop's on the same spot.
  *
  * Run directly:  node tests/js/volume_handles_probe.mjs
  */
@@ -201,6 +204,78 @@ body.group.fire("pointerdown", event(0, 0));
 const ax = handles.drag.axes.map((a) => a.axis).sort().join();
 body.group.fire("pointerup", event(0, 0));
 check("the body moves along the two axes the screen shows best", ax === "x,z", ax);
+
+// -- the area's grips -----------------------------------------------------------------
+const AREA = { x: 500, y: 250, width: 1000, height: 500 };
+state = { ...state, volume: { area: { ...AREA } }, inspect: G.clean({ mode: "full" }, DIMS) };
+renderer.setArea(state.volume.area, { refresh: false });
+renderer.onSlide = (area, options) => cutter.slideArea(area, options);
+laid = handles.layout(vs.get());
+check("an area drawn: its four sides and a body, nothing of the cut",
+      laid.grips.map((g) => g.key).join() === "area:x:lo,area:x:hi,area:y:lo,area:y:hi,area-body"
+      && laid.faces.length === 4 && laid.faces.every((f) => f.area), laid.grips.map((g) => g.key).join());
+check("its sides are the area's", laid.grips.slice(0, 4).map((g) => g.at).join() === "500,1500,250,750",
+      laid.grips.map((g) => g.at).join());
+handles.paint();
+check("shown with no cut: there is an area to move", handles.root.getAttribute("hidden") === null);
+const areaBody = handles.grips.get("area-body");
+check("the area's grips are its own look, named for what they do",
+      areaBody.group.getAttribute("class").includes("is-area")
+      && areaBody.group.getAttribute("aria-label") === "Slide the area across the tissue"
+      && handles.faces.get("area:x:lo").getAttribute("class") === "handle-face is-area");
+asked.length = 0;
+stopped = 0;
+let past = cutter.past.length;
+const camBefore = JSON.stringify(renderer.camera);
+areaBody.group.fire("pointerdown", event(300, 300));
+check("a press on the area's body is taken before the canvas",
+      stopped === 1 && renderer.interacting === true && Boolean(handles.drag?.session));
+const slideX = renderer.slideSteps().find((s) => s.axis === "x").step;
+areaBody.group.fire("pointermove", event(300 + slideX.x * 100, 300 + slideX.y * 100));
+areaBody.group.fire("pointerup", event(0, 0));
+check("the body slides the area as Shift+drag does: the tissue follows the hand",
+      near(state.volume.area.x, 400, 1) && near(state.volume.area.y, 250, 1)
+      && state.volume.area.width === 1000, JSON.stringify(state.volume.area));
+check("one undo entry, the camera untouched, the hand let go",
+      cutter.past.length === past + 1 && JSON.stringify(renderer.camera) === camBefore
+      && renderer.interacting === false && handles.drag === null);
+renderer.setArea(state.volume.area, { refresh: false });
+const areaWas = JSON.stringify(state.volume.area);
+areaBody.group.fire("pointerdown", event(300, 300));
+areaBody.group.fire("pointermove", event(300 + slideX.x * 150, 300 + slideX.y * 150));
+documentListeners.keydown.forEach((fn) => fn({ key: "Escape", preventDefault() {}, stopPropagation() {} }));
+check("Esc puts a slide back", JSON.stringify(state.volume.area) === areaWas && handles.drag === null,
+      JSON.stringify(state.volume.area));
+state.inspect = G.clean({ mode: "crop", axes: { x: true, y: false, z: false }, crop: { x: [600, 900] } }, DIMS);
+renderer.setArea(state.volume.area, { refresh: false });
+handles.paint();
+const sideHi = handles.grips.get("area:x:hi");
+past = cutter.past.length;
+sideHi.group.fire("pointerdown", event(50, 50));
+const sideStep = handles.screenStep("x", handles.centre(sideHi.grip));
+sideHi.group.fire("pointermove", event(50 + sideStep.x * 200, 50 + sideStep.y * 200));
+sideHi.group.fire("pointerup", event(0, 0));
+check("a side's grip resizes the area along its axis",
+      near(state.volume.area.x, 400, 1) && near(state.volume.area.width, 1200, 1), JSON.stringify(state.volume.area));
+check("...the cut left where it was in the image, one undo entry",
+      JSON.stringify(state.inspect.crop.x) === "[600,900]" && cutter.past.length === past + 1,
+      JSON.stringify(state.inspect.crop.x));
+check("a side never makes the area narrower than a few pixels",
+      handles.resized(sideHi.grip, { x: 400, y: 0, width: 100, height: 100 }, { x: -5000 }).width === 16);
+renderer.setArea(state.volume.area, { refresh: false });
+const was = state.volume.area.x;
+areaBody.group.fire("keydown", { key: "ArrowRight", shiftKey: false, preventDefault() {}, stopPropagation() {} });
+check("an arrow slides a focused area body", state.volume.area.x === was + 10, JSON.stringify(state.volume.area));
+const a = state.volume.area;
+state.inspect = G.clean({ mode: "crop", axes: { x: true, y: true, z: false },
+                          crop: { x: [a.x, a.x + a.width], y: [a.y, a.y + a.height] } }, DIMS);
+renderer.setArea(a, { refresh: false });
+handles.paint();
+const hiddenOf = (key) => handles.grips.get(key)?.group.getAttribute("display") === "none";
+check("a crop on the area's sides: the area's grips give way to the crop's",
+      hiddenOf("area:x:hi") && hiddenOf("area-body") && !hiddenOf("x:hi") && !hiddenOf("body"));
+state = { ...state, volume: { area: null }, inspect: G.clean({ mode: "full" }, DIMS) };
+renderer.setArea(null, { refresh: false });
 
 // -- visibility ---------------------------------------------------------------------
 box.PlexoraViewerPrefs = { handles: () => ({ visible: false, opacity: 0.55 }) };

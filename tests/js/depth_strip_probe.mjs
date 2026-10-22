@@ -219,6 +219,15 @@ strip.areaButton.fire("click");
 strip.paint();
 check("again disarms it", strip.areaButton.getAttribute("aria-pressed") === "false");
 
+// The 3-D button is the whole stack, whatever square was placed last.
+state = { ...state, volume: { ...state.volume, area: { x: 10, y: 10, width: 100, height: 100 } } };
+asked.length = 0;
+strip.modeButtons.volume.fire("click");
+check("the 3-D button opens the whole stack: a square left placed goes",
+      state.mode === "volume" && state.volume.area === null && asked.length === 1, JSON.stringify(asked));
+strip.modeButtons.plane.fire("click");
+check("...and back to the plane is the plane", state.mode === "plane" && state.volume.area === null);
+
 // Stepping planes, then 3-D: the stepper stops, and nobody's plane is saved.
 strip.play();
 const stepping = intervals.size;

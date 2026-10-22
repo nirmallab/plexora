@@ -163,6 +163,9 @@ window.PlexoraDatasetNav = (function () {
 
     function onKeyDown(event) {
         if (!keysArmed || !place) return;
+        // Taken already: B is Back while there is a view to go back to
+        // (views/backButton.js, which listens first).
+        if (event.defaultPrevented) return;
         if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
         // Lower-cased when it is one character, so Caps Lock's "B" still walks.
         const raw = event.key || "";

@@ -2,18 +2,23 @@
  * areaTool.js - the Area tool: a square on the image that opens as 3-D.
  *
  * On a z-stack, from a plane or a projection: arm the tool (the depth
- * strip's Area button), and a dashed square of a fixed physical size follows
- * the pointer over the image. A click -- or V with the pointer there --
+ * strip's Area button), and a dashed square follows the pointer over the
+ * image. A click -- or V with the pointer there --
  * PLACES it: the view state's `volume.area` becomes that square and the view
  * goes 3-D, drawing just that part of the stack at the finest level the
  * budget allows (views/volumeRenderer.js). In 3-D, Shift+drag slides the
  * area across the tissue, and the cut moves with it (services/viewState.js).
  *
  *     the square    `area` of the viewer prefs (services/viewerPrefs.js):
- *                   its side in microns where the image states its spacing,
- *                   in pixels where it does not (inspectGeometry.spacing)
- *     the outline   the placed area, drawn faintly on the plane after 3-D is
- *                   left, so where it was is never a guess
+ *                   its side ON SCREEN. Zoom in and it takes less tissue,
+ *                   out and it takes more; the wheel zooms and a drag pans
+ *                   while it is armed, the square keeping its size, and a
+ *                   readout under it says how much tissue it takes (microns
+ *                   where the image states its spacing, else pixels)
+ *
+ * The placed square is temporary: leaving 3-D lets it go (the mode buttons
+ * always mean the whole stack, services/viewControls.js `transition`), and
+ * Back -- B -- returns to the view it was placed from (services/viewHistory.js).
  *
  * The tool stays armed after placing, so V can go back and forth; Esc, or
  * the button again, disarms it. It never takes a click it did not arm for:
@@ -56,6 +61,9 @@
             //: The image point under the pointer while armed on the plane,
             //: `{x, y}` full-resolution pixels, or null.
             this.hover = null;
+            //: Where the pointer is on the canvas (element pixels), so a
+            //: zoom or a pan under a still pointer moves the square with it.
+            this.pointer = null;
             this.overlay = null;
             this._off = [];
         }
@@ -91,6 +99,9 @@
                 };
                 viewer.addHandler("canvas-click", click);
                 this._off.push(() => viewer.removeHandler("canvas-click", click));
+            }
+            if (typeof this.imageViewer?.onViewportChange === "function") {
+                this._off.push(this.imageViewer.onViewportChange(() => this.zoomed()));
             }
             const onKey = (event) => {
                 if (event.key !== "Escape" || !this._armed || typing()) return;
@@ -161,14 +172,23 @@
                     depth: vs.depth || 1, area: null };
         }
 
-        /** The square's side in full-resolution pixels: the prefs' microns
-         *  over the stated spacing, else their pixels. */
+        /** The square's side in full-resolution pixels: the prefs' side on
+         *  screen over how many screen pixels an image pixel is drawn at now
+         *  (viewerScene.scaleOf), so it covers the same part of the screen
+         *  at every zoom. */
         sizePx() {
-            const pref = this.prefs?.area?.() || { um: 300, px: 1024 };
-            const space = G()?.spacing?.(this.viewState.info) || {};
-            const step = space.x?.value;
-            if (step > 0 && pref.um > 0) return Math.max(1, Math.round(pref.um / step));
-            return Math.max(1, Math.round(pref.px || 1024));
+            const pref = this.prefs?.area?.() || { screen: 320 };
+            const screen = Number(pref.screen) > 0 ? Number(pref.screen) : 320;
+            const scale = global.PlexoraViewerScene?.scaleOf?.(this.imageViewer);
+            return Math.max(1, Math.round(screen / (scale > 0 ? scale : 1)));
+        }
+
+        /** How much tissue the square takes now, in words: "150 µm", or
+         *  "300 px" where the image states no spacing. */
+        sizeLabel(side = this.sizePx()) {
+            const g = G();
+            const space = g?.spacing?.(this.viewState.info) || null;
+            return g?.label ? g.label("x", side, space) : `${Math.round(side)} px`;
         }
 
         /** The square centred on image point (`x`, `y`), inside the image. */
@@ -193,13 +213,23 @@
 
         moved(position) {
             if (!this._armed || !this.onPlane()) return;
+            this.pointer = position ? { x: position.x, y: position.y } : null;
             this.hover = this.imagePoint(position);
             this.repaint();
         }
 
         left() {
+            this.pointer = null;
             if (!this.hover) return;
             this.hover = null;
+            this.repaint();
+        }
+
+        /** The view zoomed or panned under a still pointer: the square is
+         *  where the pointer is now, at its size for the new zoom. */
+        zoomed() {
+            if (!this._armed || !this.pointer || !this.onPlane()) return;
+            this.hover = this.imagePoint(this.pointer);
             this.repaint();
         }
 
@@ -214,6 +244,8 @@
             const area = this.squareAt(point.x, point.y);
             if (!area) return null;
             const vs = this.viewState;
+            // Where the user was, for Back (services/viewHistory.js).
+            global.PlexoraViewHistory?.push?.();
             const out = typeof vs.enterVolume === "function" ? vs.enterVolume({ area })
                 : vs.set({ mode: "volume", volume: { area } });
             this.hover = null;
@@ -229,15 +261,7 @@
 
         draw(context, px = 1) {
             if (!context || !this.onPlane()) return;
-            const placed = this.viewState.get()?.volume?.area || null;
             context.save();
-            if (placed) {
-                // Where the 3-D view was: faint, so it never reads as a selection.
-                context.setLineDash([]);
-                context.lineWidth = 1.5 * px;
-                context.strokeStyle = "rgba(255, 255, 255, 0.45)";
-                context.strokeRect(placed.x, placed.y, placed.width, placed.height);
-            }
             const square = this._armed && this.hover ? this.squareAt(this.hover.x, this.hover.y) : null;
             if (square) {
                 context.setLineDash(DASH.map((v) => v * px));
@@ -247,6 +271,21 @@
                 context.lineDashOffset = DASH[0] * px;
                 context.strokeStyle = "rgba(255, 255, 255, 0.95)";
                 context.strokeRect(square.x, square.y, square.width, square.height);
+                // How much tissue it takes, under its middle.
+                if (typeof context.fillText === "function") {
+                    context.setLineDash([]);
+                    context.font = `${12 * px}px system-ui, sans-serif`;
+                    context.textAlign = "center";
+                    context.textBaseline = "top";
+                    const text = this.sizeLabel(Math.max(square.width, square.height));
+                    const x = square.x + square.width / 2;
+                    const y = square.y + square.height + 6 * px;
+                    context.lineWidth = 3 * px;
+                    context.strokeStyle = "rgba(0, 0, 0, 0.6)";
+                    context.strokeText(text, x, y);
+                    context.fillStyle = "rgba(255, 255, 255, 0.95)";
+                    context.fillText(text, x, y);
+                }
             }
             context.restore();
         }

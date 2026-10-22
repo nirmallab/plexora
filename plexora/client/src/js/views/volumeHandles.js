@@ -8,6 +8,14 @@
  *     crop      both faces along each axis cut, and a grip in the box's
  *               middle that moves the box whole
  *     cutaway   the cut, along its one axis
+ *     area      where a square opened the view (`volume.area`): its four
+ *               sides, dashed, a grip on each that resizes it, and one in
+ *               its middle that slides it across the tissue -- the same
+ *               slide as Shift+drag (volumeRenderer.dragArea), so the cut
+ *               moves with it. A resize leaves the cut where it is.
+ *
+ * A crop's grips come first where they meet the area's on screen (a crop
+ * made with Crop to area IS the area): the area's give way.
  *
  * DRAGGING A GRIP NEVER TURNS THE STACK. A press on a grip is taken before
  * the canvas sees it (stopped and captured, as the gizmo's are), so the
@@ -20,7 +28,7 @@
  * A grip double-clicked puts its axis back. Focused (Tab), the arrow keys
  * move it a voxel, Shift ten.
  *
- * Shown while a tool cuts and the viewer prefs say so (`handles`: visible,
+ * Shown while a tool cuts or an area is drawn, and the viewer prefs say so (`handles`: visible,
  * opacity; the cut panel, views/volumeDock.js, sets them). Redrawn after every
  * frame the renderer draws (`addDrawListener`).
  *
@@ -32,6 +40,10 @@
     const SVG = "http://www.w3.org/2000/svg";
     const AXES = ["x", "y", "z"];
     const GRIP_R = 7;
+    //: The narrowest an area grip may make the area (full-resolution px).
+    const AREA_MIN = 16;
+    //: How far an arrow key moves an area grip (px; Shift ten times).
+    const AREA_STEP = 10;
 
     function svg(tag, attrs = {}) {
         const node = document.createElementNS(SVG, tag);
@@ -152,11 +164,22 @@
             return { x: (nx * 0.5 + 0.5) * canvas.clientWidth, y: (0.5 - ny * 0.5) * canvas.clientHeight, w };
         }
 
+        /** The whole image's extent, not the area's. */
+        plainDims() {
+            return this.G.dims(this.viewState.info, this.viewState.depth, null);
+        }
+
+        /** Whether the state draws an area (a square opened in 3-D). */
+        hasArea(state) {
+            return Boolean(state?.mode === "volume" && state.volume?.area);
+        }
+
         /**
          * What to draw: faces `{key, axis, at, span}` (span: the ranges of
          * the other two axes) and grips `{key, axis, kind, at}` in
          * continuous image coordinates. `kind`: "lo" / "hi" (a crop's face),
-         * "cut" (a cutaway's), "body".
+         * "cut" (a cutaway's), "body"; "area-lo" / "area-hi" / "area-body"
+         * (the area's, `area: true`).
          */
         layout(state) {
             const inspect = state.inspect;
@@ -166,6 +189,19 @@
             const faces = [];
             const grips = [];
             const other = (axis, ranges) => AXES.filter((a) => a !== axis).map((a) => [a, ranges[a]]);
+            if (this.hasArea(state)) {
+                const c = this.covered();
+                const sides = { x: [c[0], c[2]], y: [c[1], c[3]], z: [0, Math.max(1, this.viewState.depth)] };
+                for (const axis of ["x", "y"]) {
+                    for (const [kind, at] of [["area-lo", sides[axis][0]], ["area-hi", sides[axis][1]]]) {
+                        const key = `area:${axis}:${kind.slice(5)}`;
+                        faces.push({ key, axis, at, span: other(axis, sides), area: true });
+                        grips.push({ key, axis, kind, at, span: other(axis, sides), area: true });
+                    }
+                }
+                grips.push({ key: "area-body", axis: null, kind: "area-body", at: null, area: true,
+                             centre: AXES.map((a) => (sides[a][0] + sides[a][1]) / 2) });
+            }
             if (resolved.mode === "crop") {
                 for (const axis of resolved.axes) {
                     for (const [kind, at] of [["lo", box[axis][0]], ["hi", box[axis][1]]]) {
@@ -217,8 +253,9 @@
 
         visible(state) {
             const renderer = this.renderer;
+            const cutting = Boolean(state?.inspect && state.inspect.mode !== "full");
             return Boolean(renderer?.canvas && !renderer.canvas.hidden && state?.mode === "volume"
-                && state.inspect && state.inspect.mode !== "full" && this.prefs().visible !== false);
+                && (cutting || this.hasArea(state)) && this.prefs().visible !== false);
         }
 
         paint() {
@@ -248,7 +285,7 @@
                     this.faces.set(face.key, path);
                 }
                 seen.add(face.key);
-                path.setAttribute("class", `handle-face is-${face.axis}`);
+                path.setAttribute("class", `handle-face ${face.area ? "is-area" : `is-${face.axis}`}`);
                 if (points.some((p) => !p)) {
                     path.setAttribute("d", "");
                     continue;
@@ -277,11 +314,21 @@
             // A crop's body grip gives way to a face's when they meet on
             // screen (looking straight along an axis puts both its faces'
             // grips at the box's middle): the faces are what a hand reaches for.
+            const near = (a, b) => a.at && b.at && Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) < GRIP_R * 2.5;
+            const shown = (key) => kept.has(key) && this.grips.get(key).group.getAttribute("display") !== "none";
             const body = this.grips.get("body");
             if (body && kept.has("body") && body.at) {
-                const crowded = [...this.grips.entries()].some(([key, node]) => key !== "body" && kept.has(key)
-                    && node.at && Math.hypot(node.at.x - body.at.x, node.at.y - body.at.y) < GRIP_R * 2.5);
+                const crowded = [...this.grips.entries()].some(([key, node]) => key !== "body" && !node.grip.area
+                    && kept.has(key) && near(node, body));
                 if (crowded) body.group.setAttribute("display", "none");
+            }
+            // The area's grips give way to the cut's (a crop made with Crop
+            // to area has its faces on the area's), its body to any grip.
+            for (const [key, node] of this.grips) {
+                if (!node.grip.area || !kept.has(key) || !node.at) continue;
+                const crowded = [...this.grips.entries()].some(([other, them]) => other !== key && shown(other)
+                    && (!them.grip.area || key === "area-body") && near(node, them));
+                if (crowded) node.group.setAttribute("display", "none");
             }
         }
 
@@ -289,11 +336,13 @@
         gripNode(grip) {
             let node = this.grips.get(grip.key);
             if (node) return node;
-            const group = svg("g", { class: `handle-grip ${grip.axis ? `is-${grip.axis}` : "is-body"}`,
+            const look = grip.area ? `is-area${grip.axis ? "" : " is-body"}`
+                : (grip.axis ? `is-${grip.axis}` : "is-body");
+            const group = svg("g", { class: `handle-grip ${look}`,
                                      tabindex: "0", role: "slider",
                                      "aria-label": this.gripLabel(grip) });
             const disc = svg("circle", { class: "grip-disc", r: GRIP_R });
-            const dot = svg("circle", { class: "grip-dot", r: grip.kind === "body" ? 2 : 2.5 });
+            const dot = svg("circle", { class: "grip-dot", r: grip.axis ? 2.5 : 2 });
             group.append(disc, dot);
             this.gripLayer.appendChild(group);
             node = { group, disc, dot, grip };
@@ -304,6 +353,7 @@
             group.addEventListener("dblclick", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (node.grip.area) return;
                 if (node.grip.axis) this.cutter.reset("axis", { axis: node.grip.axis });
                 else this.cutter.reset("mode");
             });
@@ -314,7 +364,9 @@
 
         gripLabel(grip) {
             if (grip.kind === "body") return "Move the crop";
+            if (grip.kind === "area-body") return "Slide the area across the tissue";
             const name = grip.axis.toUpperCase();
+            if (grip.area) return `Resize the area, ${grip.kind === "area-lo" ? "near" : "far"} ${name} side`;
             return { lo: `${name} crop, near face`, hi: `${name} crop, far face`,
                      cut: `${name} cut` }[grip.kind] || name;
         }
@@ -353,6 +405,10 @@
             const grip = node.grip;
             const state = this.viewState.get();
             const centre = this.centre(grip);
+            if (grip.area) {
+                this.startAreaDrag(event, node, state, centre);
+                return;
+            }
             const axes = grip.kind === "body"
                 ? this.G.active(state.inspect).map((axis) => ({ axis, step: this.screenStep(axis, centre) }))
                     .filter((entry) => entry.step && Math.hypot(entry.step.x, entry.step.y) > 1e-4)
@@ -375,6 +431,62 @@
             };
         }
 
+        /**
+         * An area grip pressed: the renderer's area drag (dragArea) -- its
+         * slide for the body, the side moved along its axis for a face --
+         * heard by the cut's controller, so either is one undo entry.
+         */
+        startAreaDrag(event, node, state, centre) {
+            const renderer = this.renderer;
+            const grip = node.grip;
+            let session = null;
+            if (grip.kind === "area-body") {
+                session = renderer?.dragArea?.() || null;
+            } else {
+                const step = this.screenStep(grip.axis, centre);
+                const inspect = state.inspect;
+                if (step) {
+                    session = renderer?.dragArea?.({
+                        to: (start, dx, dy) => this.resized(grip, start,
+                                                            this.travel([{ axis: grip.axis, step }], dx, dy)),
+                        send: (area, options) => this.cutter.resizeArea(area, { ...options, inspect }),
+                    }) || null;
+                }
+            }
+            if (!session) return;
+            this.drag = { node, grip, x: event.clientX, y: event.clientY, session, start: state,
+                          pointerId: event.pointerId };
+            node.group.classList.add("is-dragging");
+            renderer.interacting = true;
+            const move = (e) => this.moveDrag(e);
+            const up = (e) => this.endDrag(e, move, up);
+            node.group.addEventListener("pointermove", move);
+            node.group.addEventListener("pointerup", up);
+            node.group.addEventListener("pointercancel", up);
+            this.drag.release = () => {
+                node.group.removeEventListener("pointermove", move);
+                node.group.removeEventListener("pointerup", up);
+                node.group.removeEventListener("pointercancel", up);
+            };
+        }
+
+        /** The area `start` with the side of `grip` moved by `moved` image
+         *  pixels along its axis, inside the image, never narrower than
+         *  AREA_MIN. */
+        resized(grip, start, moved) {
+            const d = this.plainDims();
+            const x = grip.axis === "x";
+            const size = x ? "width" : "height";
+            const max = x ? d.width : d.height;
+            const min = Math.min(AREA_MIN, max);
+            const delta = Math.round(moved[grip.axis] || 0);
+            let lo = x ? start.x : start.y;
+            let hi = lo + start[size];
+            if (grip.kind === "area-lo") lo = clamp(lo + delta, 0, hi - min);
+            else hi = clamp(hi + delta, lo + min, max);
+            return x ? { ...start, x: lo, width: hi - lo } : { ...start, y: lo, height: hi - lo };
+        }
+
         /** Image units moved along each axis for a pointer travel `(dx, dy)`:
          *  along one axis its projection; along two (a crop's body) the pair
          *  whose screen steps add up to the travel. */
@@ -395,6 +507,10 @@
             const drag = this.drag;
             if (!drag) return;
             event.stopPropagation();
+            if (drag.session) {
+                drag.session.move(event.clientX - drag.x, event.clientY - drag.y);
+                return;
+            }
             const moved = this.travel(drag.axes, event.clientX - drag.x, event.clientY - drag.y);
             const patch = this.patchFor(drag.grip, drag.start, moved);
             if (patch) this.cutter.preview(patch);
@@ -443,14 +559,22 @@
             if (!drag) return;
             event?.stopPropagation?.();
             this.finish();
-            if (event?.type === "pointercancel") this.cutter.cancel();
-            else this.cutter.commit();
+            if (drag.session) {
+                if (event?.type === "pointercancel") drag.session.cancel();
+                else drag.session.end();
+            } else if (event?.type === "pointercancel") {
+                this.cutter.cancel();
+            } else {
+                this.cutter.commit();
+            }
         }
 
         cancelDrag() {
-            if (!this.drag) return;
+            const drag = this.drag;
+            if (!drag) return;
             this.finish();
-            this.cutter.cancel();
+            if (drag.session) drag.session.cancel();
+            else this.cutter.cancel();
         }
 
         finish() {
@@ -479,6 +603,19 @@
             event.stopPropagation();
             const step = sign * (event.shiftKey ? 10 : 1);
             const state = this.viewState.get();
+            if (grip.area) {
+                const area = state.volume?.area;
+                if (!area) return;
+                const by = step * AREA_STEP;
+                if (grip.kind === "area-body") {
+                    const along = event.key === "ArrowUp" || event.key === "ArrowDown" ? "y" : "x";
+                    const next = { ...area, [along]: area[along] + (along === "y" ? -by : by) };
+                    this.cutter.slideArea(this.G.inside(next, this.plainDims()), { final: true });
+                } else {
+                    this.cutter.resizeArea(this.resized(grip, area, { [grip.axis]: by }), { final: true });
+                }
+                return;
+            }
             const moved = grip.kind === "body"
                 ? Object.fromEntries(this.G.active(state.inspect).slice(0, 1).map((axis) => [axis, step]))
                 : { [grip.axis]: step };

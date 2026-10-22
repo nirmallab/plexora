@@ -168,11 +168,13 @@
          * `history: false` to leave the history alone; `gesture` to fold
          * repeated edits of one control into one undo entry; `extra`, more
          * of the view state changed in the same step (`{volume: {area}}`:
-         * the cut then says where it is, and is not moved with the area).
+         * the cut then says where it is, and is not moved with the area);
+         * `exact`, a whole cut put back as it was (Back,
+         * services/viewHistory.js): no tool's axes traded (`withTool`).
          */
-        set(patch, { save = true, history = true, gesture = null, extra = null } = {}) {
+        set(patch, { save = true, history = true, gesture = null, extra = null, exact = false } = {}) {
             if (!this.enabled || !patch?.inspect) return this.viewState.get();
-            const applied = this.withTool(patch, this.viewState.get());
+            const applied = exact ? patch : this.withTool(patch, this.viewState.get());
             this.previewPatch = null;
             if (history) this._remember(gesture);
             this._sliding = false;
@@ -210,7 +212,8 @@
 
         /**
          * Move the area the 3-D view draws to `area` (`{x, y, width,
-         * height}`), the cut moving with it (viewState.set). A slide is one
+         * height}`), the cut moving with it (viewState.set): the
+         * renderer's Shift+drag, and the area's body grip. A slide is one
          * undo entry from its first move to its `final` one, saved once, at
          * the end.
          */
@@ -223,6 +226,29 @@
             this._sliding = !final;
             this.previewPatch = null;
             const out = this.viewState.set({ volume: { area } }, { save: final });
+            this._changed(false);
+            return out;
+        }
+
+        /**
+         * Resize the area the 3-D view draws to `area` (an area grip,
+         * views/volumeHandles.js). Unlike a slide the cut does not move: it
+         * stays where it is in the image, kept inside the new area -- from
+         * `inspect`, the cut as the drag began, so a face pulled in and out
+         * again gives the cut back. One undo entry from the first move to
+         * the `final` one, saved once, at the end.
+         */
+        resizeArea(area, { final = true, inspect = null } = {}) {
+            if (!this.viewState?.enabled?.()) return this.viewState?.get?.() || null;
+            if (!this._sliding) {
+                this._last = null;
+                this._remember(null);
+            }
+            this._sliding = !final;
+            this.previewPatch = null;
+            const keep = inspect || this.viewState.get()?.inspect;
+            const out = this.viewState.set({ volume: { area }, ...(keep ? { inspect: copy(keep) } : {}) },
+                                           { save: final });
             this._changed(false);
             return out;
         }
@@ -253,6 +279,8 @@
          * The area becomes the crop's x and y: the stack is fetched again at
          * the finest level that box allows, and the camera frames it (the
          * box's longest side is always 1). One undo entry, area and crop.
+         * A view of its own: Back returns to the one it was made from
+         * (services/viewHistory.js).
          */
         cropToArea() {
             if (!this.enabled) return this.viewState.get();
@@ -261,6 +289,7 @@
             const area = this.G.cleanArea({ x: xy.x[0], y: xy.y[0], width: xy.x[1] - xy.x[0],
                                              height: xy.y[1] - xy.y[0] }, this.dims(null));
             if (!area) return this.viewState.get();
+            global.PlexoraViewHistory?.push?.();
             const crop = { x: [area.x, area.x + area.width], y: [area.y, area.y + area.height] };
             return this.set({ inspect: { crop } }, { extra: { volume: { area } } });
         }

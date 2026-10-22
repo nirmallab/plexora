@@ -116,8 +116,6 @@ check("one plane: the operation (to make a projection), the Area tool's size and
 check("a projection: the operation, the planes, Follow; the Area's size; Motion",
       same(popover(stack({ mode: "slab" })), ["projection.op", "projection.range", "projection.follow",
                                               "area.size", "view.motion"]));
-check("the Area's size is in pixels where the image states no spacing",
-      R.configOf("area.size", R.context(stack(), page)).unit === "px");
 check("...and the percentile only when it is one",
       popover(stack({ mode: "slab", op: "pct" })).includes("projection.percentile")
       && !popover(stack({ mode: "slab", op: "mean" })).includes("projection.percentile"));
@@ -155,11 +153,11 @@ check("a colour stack's popover offers no projection",
 
 // -- switching modes ---------------------------------------------------------------
 
-check("into 3-D is just the mode: the 3-D view keeps its own cut, the projection its range",
-      same(R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume"), { mode: "volume" })
-      && same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), { mode: "volume" }));
-check("back to a plane is just the mode",
-      same(R.transition(R.context(stack({ mode: "volume" }), page), "plane"), { mode: "plane" }));
+check("into 3-D is the mode and the whole stack: the 3-D view keeps its own cut, the projection its range",
+      same(R.transition(R.context(stack({ mode: "slab", follow: true }), page), "volume"), { mode: "volume", volume: { area: null } })
+      && same(R.transition(R.context(stack({ mode: "slab", follow: false }), page), "volume"), { mode: "volume", volume: { area: null } }));
+check("back to a plane is the mode, and the placed square goes",
+      same(R.transition(R.context(stack({ mode: "volume" }), page), "plane"), { mode: "plane", volume: { area: null } }));
 
 // -- the 3-D cut: the strip's tools and the panel (views/volumeDock.js) ----------------
 
@@ -210,12 +208,6 @@ check("...not when it keeps the area, nor along Z only, nor in a Cut",
       !dock(cutIn(narrow, { area: { x: 200, y: 0, width: 400, height: 1000 } })).includes("cut.toArea")
       && !dock(cutIn({ ...narrow, crop: { x: [0, 2000], y: [0, 1000], z: [4, 9] } })).includes("cut.toArea")
       && !dock(cutIn({ ...narrow, mode: "cutaway" })).includes("cut.toArea"));
-const keeps = { ...page, savedAreasSupported: true };
-check("saved areas: Save area on a page that keeps them, the list once one is saved",
-      same(dock(cutIn({}), keeps).slice(-3), ["cut.handleOpacity", "area.save", "cut.toggle"])
-      && dock(cutIn({}, { saved: [{ id: "a", name: "A", area: { x: 0, y: 0, width: 5, height: 5 } }] }), keeps)
-          .includes("area.list")
-      && !dock(cutIn({})).includes("area.save"), dock(cutIn({}), keeps).join());
 const surfacesOnly = { volume: false, surfaces: true };
 check("surfaces only: nothing about voxels -- no faces, no Voxels",
       !dock(cutIn({ mode: "crop" }, { show: surfacesOnly })).some((id) => ["cut.face", "cut.interpolation"].includes(id))

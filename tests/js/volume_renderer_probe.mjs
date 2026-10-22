@@ -812,6 +812,25 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     fire("pointermove", { shiftKey: true, clientX: 450, clientY: 300 });
     fire("pointerup", { shiftKey: true, clientX: 450, clientY: 300 });
     check("with no area to slide, Shift+drag pans as it did", view.camera.panX !== before && slides.length === 0);
+    // The same drag, for the area's grips (views/volumeHandles.js).
+    check("no area, no area drag", view.dragArea() === null);
+    view.box = { x: 400, y: 400, width: 100, height: 100 };
+    const heard = [];
+    const grow = view.dragArea({ to: (start, dx) => ({ ...start, width: start.width + dx }),
+                                 send: (area, { final }) => heard.push({ area, final }) });
+    grow.move(30, 0);
+    grow.move(60, 0);
+    grow.end();
+    check("an area drag takes its own shape and its own ear, the last move final",
+          heard.length === 2 && heard[0].area.width === 130 && heard[1].area.width === 160
+          && heard[1].final === true && slides.length === 0, JSON.stringify(heard));
+    heard.length = 0;
+    const undone = view.dragArea({ to: (start, dx) => ({ ...start, x: start.x + dx }),
+                                   send: (area, { final }) => heard.push({ area, final }) });
+    undone.move(50, 0);
+    undone.cancel();
+    check("cancelled, the area goes back where it started",
+          heard.length === 2 && heard[1].area.x === 400 && heard[1].final === true, JSON.stringify(heard));
 }
 
 if (failures.length) {

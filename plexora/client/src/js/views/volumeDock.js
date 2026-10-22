@@ -152,7 +152,6 @@
                 zStep: () => vs.zStep?.() } : vs;
             return controls.context(source, () => ({
                 cutSupported: Boolean(this.cutter),
-                savedAreasSupported: Boolean(this.saved()),
                 volumeSupported: Boolean(this.volume),
                 prefs: global.PlexoraViewerPrefs || null,
                 ...(this.extras ? this.extras() : {}),
@@ -193,8 +192,6 @@
                 "cut.interpolation": this.interpolationControl(),
                 "cut.handleOpacity": this.handleOpacityControl(),
                 "cut.toggle": this.toggleControl(),
-                "area.save": this.saveAreaControl(),
-                "area.list": this.areaListControl(),
             };
             for (const [id, control] of Object.entries(made)) {
                 control.node.setAttribute("data-control", id);
@@ -204,7 +201,7 @@
                 .map((id) => made[id].node));
             grid.append(axes.node, actions);
             root.append(head, grid, made["cut.interpolation"].node, made["cut.handleOpacity"].node,
-                        made["area.save"].node, made["area.list"].node, made["cut.toggle"].node);
+                        made["cut.toggle"].node);
             root.addEventListener("keydown", (event) => {
                 if (event.key !== "Escape") return;
                 event.preventDefault();
@@ -389,81 +386,6 @@
                 node,
                 update: () => {
                     say(node, "Crop to area: draw only the crop, fetched finer, filling the view");
-                },
-            };
-        }
-
-        /** The saved areas (services/savedAreas.js), when the page has them. */
-        saved() {
-            const api = global.PlexoraSavedAreas;
-            const saved = api?.instance;
-            return saved && saved.viewState === this.viewState ? saved : null;
-        }
-
-        /** "Save area": the area, the cut and the camera, kept by name. */
-        saveAreaControl() {
-            const node = button("volume-dock-save", { title: "Save area", glyph: "bookmark", text: "Save area" });
-            node.addEventListener("click", () => this.saved()?.save());
-            return {
-                node,
-                update: () => say(node, "Save area: keep the area, the cut and the camera, to come back to"),
-            };
-        }
-
-        /** The saved areas: a thumbnail and a name each; a click restores,
-         *  × forgets, a double-click on the name renames. */
-        areaListControl() {
-            const node = el("ul", "volume-dock-areas", { "aria-label": "Saved areas" });
-            const rename = (entry, label) => {
-                const input = el("input", "volume-dock-area-rename", { type: "text", value: entry.name,
-                                                                        "aria-label": "Name" });
-                input.maxLength = 64;
-                let done = false;
-                const finish = (keep) => {
-                    if (done) return;
-                    done = true;
-                    if (keep) this.saved()?.rename(entry.id, input.value);
-                    this.paint();
-                };
-                input.addEventListener("keydown", (event) => {
-                    event.stopPropagation();
-                    if (event.key === "Enter") finish(true);
-                    else if (event.key === "Escape") finish(false);
-                });
-                input.addEventListener("blur", () => finish(true));
-                label.replaceWith(input);
-                input.focus();
-                input.select?.();
-            };
-            return {
-                node,
-                update: () => {
-                    const saved = this.saved();
-                    const list = saved ? saved.list() : [];
-                    const key = JSON.stringify(list.map((entry) => [entry.id, entry.name, Boolean(saved.thumb(entry.id))]));
-                    if (node._key === key) return;
-                    node._key = key;
-                    node.replaceChildren();
-                    for (const entry of list.slice().reverse()) {
-                        const item = el("li", "volume-dock-area");
-                        const open = el("button", "volume-dock-area-open", { type: "button" });
-                        say(open, `Go back to ${entry.name}`);
-                        const url = saved.thumb(entry.id);
-                        const picture = url ? el("img", "volume-dock-area-thumb", { src: url, alt: "" })
-                            : el("span", "volume-dock-area-thumb is-empty", { "aria-hidden": "true" });
-                        const label = el("span", "volume-dock-area-name", { text: entry.name });
-                        open.append(picture, label);
-                        open.addEventListener("click", () => saved.restore(entry.id));
-                        open.addEventListener("dblclick", (event) => {
-                            event.preventDefault();
-                            rename(entry, label);
-                        });
-                        const remove = button("volume-dock-area-remove", { title: `Forget ${entry.name}`,
-                                                                            glyph: "xmark" });
-                        remove.addEventListener("click", () => saved.remove(entry.id));
-                        item.append(open, remove);
-                        node.appendChild(item);
-                    }
                 },
             };
         }

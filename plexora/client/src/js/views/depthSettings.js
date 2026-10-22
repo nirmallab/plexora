@@ -273,27 +273,26 @@
                 update() { choice.set(vs.get().volume?.composite === "additive" ? "additive" : "mip"); },
             };
         },
-        // The Area tool's square (views/areaTool.js): its side in microns
-        // where the image states its spacing, in pixels where it does not.
+        // The Area tool's square (views/areaTool.js): its side on screen,
+        // so a zoom changes how much tissue it takes, not its size.
         "area.size"(ctx, config, popover) {
             const prefs = ctx.prefs;
-            const microns = config.unit === "µm";
-            const input = number("depth_settings_area", {
-                min: microns ? 1 : 16, max: microns ? 100000 : 65536,
-                label: `Area side, ${microns ? "microns" : "pixels"}` });
+            const input = number("depth_settings_area", { min: 64, max: 4096,
+                                                          label: "Area side on screen, pixels" });
             input.addEventListener("change", () => {
                 const value = Number(input.value);
                 if (!(value > 0)) return;
-                prefs.set({ area: microns ? { um: value } : { px: Math.round(value) } });
+                prefs.set({ area: { screen: Math.round(value) } });
             });
-            const unit = el("span", "plx-popover-unit", { text: microns ? "µm" : "px" });
+            const unit = el("span", "plx-popover-unit", { text: "px on screen" });
             return {
                 node: field("Area", [input, unit], { id: input.id }),
                 update() {
                     if (editing(input)) return;
-                    const area = prefs.area?.() || { um: 300, px: 1024 };
-                    input.value = String(microns ? area.um : area.px);
-                    input.title = "The side of the Area tool's square (V places it)";
+                    const area = prefs.area?.() || { screen: 320 };
+                    input.value = String(area.screen);
+                    input.title = "The side of the Area tool's square on screen: zoom in to take less "
+                        + "tissue, out to take more (V places it)";
                 },
             };
         },

@@ -207,20 +207,6 @@ check("shift moves the crop and the cut by the area's move",
       same(moved.crop.x, [600, 1600]) && same(moved.crop.y, [250, 350]) && moved.cutaway.x.at === 600
       && moved.cutaway.y.at === inA.cutaway.y.at - 50, JSON.stringify(moved));
 check("no move, no shift", G.shift(inA, { dx: 0, dy: 0 }) === null);
-const saved = G.cleanSaved([
-    { id: "a", name: "first", area: { x: 0, y: 0, width: 100, height: 100 },
-      inspect: { mode: "crop", crop: { x: [0, 5000] } }, camera: { q: [0, 0, 0, 1], dist: 2, pan: [0, 0] } },
-    { id: "a", name: "again", area: { x: 0, y: 0, width: 10, height: 10 } },
-    { id: "b", name: "x".repeat(99), area: null },
-    { id: "c", name: "no camera", area: { x: 10, y: 10, width: 20, height: 20 }, camera: { q: [1, 2] } },
-], d);
-check("saved areas: ids once, an area each, names cut",
-      same(saved.map((s) => s.id), ["a", "c"]) && saved[0].name === "first", JSON.stringify(saved));
-check("a saved cut is kept inside its area", same(saved[0].inspect.crop.x, [0, 100]));
-check("a saved camera is a pose or null", same(saved[0].camera, { q: [0, 0, 0, 1], dist: 2, pan: [0, 0] })
-      && saved[1].camera === null);
-check("at most SAVED_MAX saved", G.cleanSaved(Array.from({ length: 60 }, (_, i) => ({
-    id: `s${i}`, area: { x: 0, y: 0, width: 5, height: 5 } })), d).length === G.SAVED_MAX);
 
 console.log(`\n${checks - failures.length}/${checks} checks passed`);
 if (failures.length) {

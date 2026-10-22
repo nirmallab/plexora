@@ -415,52 +415,10 @@
         return `${MODE_WORDS[mode] || mode} ${parts.join(", ")}`.trim();
     }
 
-    //: How many saved areas a stack keeps.
-    const SAVED_MAX = 50;
-
-    function cleanCamera(raw) {
-        if (!isObject(raw)) return null;
-        const q = Array.isArray(raw.q) && raw.q.length === 4 ? raw.q.map(Number) : null;
-        const pan = Array.isArray(raw.pan) && raw.pan.length === 2 ? raw.pan.map(Number) : [0, 0];
-        const dist = Number(raw.dist);
-        if (!q || !q.every(Number.isFinite) || !pan.every(Number.isFinite)) return null;
-        if (!(dist > 0) || !Number.isFinite(dist)) return null;
-        return { q, dist, pan };
-    }
-
-    /**
-     * Saved areas (`volume.saved`) repaired: at most SAVED_MAX entries of
-     * `{id, name, area, inspect, camera}`, an id of at most 32 characters
-     * met once, a name of at most 64, the area cleaned (an entry without one
-     * is dropped), the cut cleaned inside that area, the camera a pose or null.
-     */
-    function cleanSaved(raw, d) {
-        if (!Array.isArray(raw)) return [];
-        const out = [];
-        const seen = new Set();
-        for (const entry of raw) {
-            if (out.length >= SAVED_MAX) break;
-            if (!isObject(entry)) continue;
-            const id = String(entry.id ?? "").slice(0, 32);
-            if (!id || seen.has(id)) continue;
-            const area = cleanArea(entry.area, d);
-            if (!area) continue;
-            seen.add(id);
-            out.push({
-                id,
-                name: String(entry.name ?? "").slice(0, 64),
-                area,
-                inspect: clean(entry.inspect, { ...d, area }),
-                camera: cleanCamera(entry.camera),
-            });
-        }
-        return out;
-    }
-
     global.PlexoraInspectGeometry = {
-        MODES, TOOLS, TOOL_AXES, AXES, CUT, SAVED_MAX,
+        MODES, TOOLS, TOOL_AXES, AXES, CUT,
         dims, spacing, defaults, merge, clean, active, resolve, whole, shift,
-        cleanArea, areaCovered, squareAt, inside, cleanSaved,
+        cleanArea, areaCovered, squareAt, inside,
         toTexture, sameTexture, keptPlanes, label, describe,
     };
     if (typeof module !== "undefined" && module.exports) {

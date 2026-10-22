@@ -2454,22 +2454,63 @@ ${sample}`;
             return G ? G.inside(next, this.plainDims()) : next;
         }
 
-        bindPointer(canvas) {
-            let drag = null;
-            //: A slide of the area under way: {start, steps, x0, y0, last,
-            //: sent, timer}; `onSlide(area, {final})` hears it.
-            let slide = null;
-            const sendSlide = (final) => {
-                if (!slide) return;
-                clearTimeout(slide.timer);
-                slide.timer = 0;
-                slide.sent = now();
-                const area = slide.last;
-                if (area && (final || slide.lastSent !== JSON.stringify(area))) {
-                    slide.lastSent = JSON.stringify(area);
-                    this.onSlide?.(area, { final });
+        /**
+         * A drag of the area under way, for whichever hand moves it --
+         * Shift+drag on the canvas, the area's grips (views/volumeHandles.js).
+         * `move(dx, dy)` with the pointer's travel since the press: at most
+         * one change every SLIDE_MS, since each is a fetch; `end()` sends the
+         * last one as final; `cancel()` puts the area back where it started.
+         * `to(start, dx, dy)` makes the area from the travel (a slide's by
+         * default: the tissue follows the hand), `send(area, {final})` hears
+         * each (`onSlide` by default). Null with no area to drag.
+         */
+        dragArea({ to = null, send = null } = {}) {
+            const area = this.box;
+            const hear = send || this.onSlide;
+            if (!area || typeof hear !== "function") return null;
+            const steps = this.slideSteps();
+            if (!steps.length) return null;
+            const start = { ...area };
+            const make = to || ((from, dx, dy) => this.slidTo(from, steps, dx, dy));
+            let last = null;
+            let lastSent = JSON.stringify(start);
+            let sent = 0;
+            let timer = 0;
+            const flush = (final) => {
+                clearTimeout(timer);
+                timer = 0;
+                sent = now();
+                if (last && (final || lastSent !== JSON.stringify(last))) {
+                    lastSent = JSON.stringify(last);
+                    hear(last, { final });
                 }
             };
+            return {
+                start,
+                steps,
+                move: (dx, dy) => {
+                    last = make(start, dx, dy);
+                    const wait = SLIDE_MS - (now() - sent);
+                    if (wait <= 0) flush(false);
+                    else if (!timer) timer = setTimeout(() => flush(false), wait);
+                },
+                end: () => {
+                    if (last) flush(true);
+                    else clearTimeout(timer);
+                },
+                cancel: () => {
+                    clearTimeout(timer);
+                    timer = 0;
+                    if (lastSent !== JSON.stringify(start)) hear(start, { final: true });
+                },
+            };
+        }
+
+        bindPointer(canvas) {
+            let drag = null;
+            //: A slide of the area under way (`dragArea`), and where the
+            //: press was: {session, x0, y0}.
+            let slide = null;
             //: The hand's turn so far and when, for the release's speed:
             //: {t, a, b} -- about the screen's x and y for a free drag, the
             //: locked axis's angle in `a` for a locked one.
@@ -2483,13 +2524,8 @@ ${sample}`;
                 // a fixed frame); Alt, or the middle button, pans the camera
                 // (Shift too, with no area to slide).
                 const area = this.box;
-                const sliding = event.button === 0 && event.shiftKey && Boolean(area)
-                    && typeof this.onSlide === "function";
-                const steps = sliding ? this.slideSteps() : [];
-                if (sliding && steps.length) {
-                    slide = { start: { ...area }, steps, x0: event.clientX, y0: event.clientY,
-                              last: null, lastSent: JSON.stringify(area), sent: 0, timer: 0 };
-                }
+                const session = event.button === 0 && event.shiftKey ? this.dragArea() : null;
+                if (session) slide = { session, x0: event.clientX, y0: event.clientY };
                 const pan = !slide && (event.button === 1 || (event.button === 0 && event.altKey)
                     || (event.button === 0 && event.shiftKey && !area));
                 const box = canvas.getBoundingClientRect();
@@ -2513,12 +2549,7 @@ ${sample}`;
                 drag.y = event.clientY;
                 if (!dx && !dy) return;
                 if (slide) {
-                    slide.last = this.slidTo(slide.start, slide.steps, event.clientX - slide.x0,
-                                             event.clientY - slide.y0);
-                    // At most one move every SLIDE_MS: each is a fetch.
-                    const wait = SLIDE_MS - (now() - slide.sent);
-                    if (wait <= 0) sendSlide(false);
-                    else if (!slide.timer) slide.timer = setTimeout(() => sendSlide(false), wait);
+                    slide.session.move(event.clientX - slide.x0, event.clientY - slide.y0);
                     return;
                 }
                 const C = Camera();
@@ -2559,8 +2590,7 @@ ${sample}`;
                 if (slide) {
                     // At rest before the last move is heard: it fetches.
                     this.interacting = false;
-                    if (slide.last) sendSlide(true);
-                    else clearTimeout(slide.timer);
+                    slide.session.end();
                     slide = null;
                     drag = null;
                     samples = [];

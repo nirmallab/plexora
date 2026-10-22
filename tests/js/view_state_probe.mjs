@@ -289,15 +289,12 @@ function check(condition, message) {
     check(JSON.stringify(vs.get().inspect.crop.x) === "[10,20]",
           "a change that says where the cut is is not moved with the area");
     vs.set({ volume: { area: null } });
-    check(vs.get().volume.area === null && JSON.stringify(vs.get().inspect.crop.x) === "[10,20]",
-          "back to the whole stack the cut stays where it was");
-    vs.set({ volume: { saved: [{ id: "a", name: "here", area: { x: 0, y: 0, width: 10, height: 10 } },
-                                { id: "b", area: null }] } });
-    check(vs.get().volume.saved.length === 1 && vs.get().volume.saved[0].inspect?.mode === "full",
-          "saved areas are cleaned: one without an area is dropped, its cut repaired");
+    check(vs.get().volume.area === null && vs.get().inspect.mode === "full"
+          && JSON.stringify(vs.get().inspect.crop.x) === "[0,2000]",
+          `back to the whole stack the cut goes back to the whole stack's places (${JSON.stringify(vs.get().inspect.crop.x)})`);
     await settle(60);
     const body = puts.at(-1)?.body;
-    check(body && "area" in body.volume && Array.isArray(body.volume.saved), "the area and the saved areas are saved");
+    check(body && "area" in body.volume && !("saved" in body.volume), "the area is saved, and nothing else of it");
 }
 
 // -- V: to 3-D and back to what it was entered from ------------------------------------
@@ -323,6 +320,21 @@ function check(condition, message) {
     check(vs.get().mode === "plane", "from a plane, back to the plane");
     vs.enterVolume({ area: { x: 10, y: 10, width: 100, height: 100 } });
     check(vs.get().mode === "volume" && vs.get().volume.area?.width === 100, "the Area tool enters 3-D on its area");
+    vs.set({ inspect: { mode: "crop", tool: "crop", crop: { x: [20, 60] } } });
+    vs.toggleVolume();
+    check(vs.get().mode === "plane" && vs.get().volume.area === null, "leaving 3-D lets the square go");
+    const whole = vs.get().inspect;
+    check(whole.mode === "full" && whole.tool === "crop" && whole.crop.x[0] === 0,
+          `and the cut made inside it goes back to the whole stack's places, its tool kept (${JSON.stringify(whole.crop)})`);
+    vs.toggleVolume();
+    check(vs.get().mode === "volume" && vs.get().volume.area === null, "V again is the whole stack, not the square");
+    vs.enterVolume({ area: { x: 10, y: 10, width: 100, height: 100 } });
+    vs.enterVolume();
+    check(vs.get().volume.area === null, "3-D entered with no square is the whole stack");
+    vs.enterVolume({ area: { x: 10, y: 10, width: 100, height: 100 } });
+    vs.set({ volume: { area: null }, inspect: { mode: "crop", crop: { x: [30, 40] } } });
+    check(vs.get().inspect.mode === "crop" && JSON.stringify(vs.get().inspect.crop.x) === "[30,40]",
+          "a patch that says where the cut is still says so as the square goes (a restore, Back)");
 }
 
 console.log(`view state probe OK (${checks} checks)`);

@@ -725,6 +725,19 @@ async function init(config, savedViewTransform = null) {
                 } catch (error) {
                     console.error("main: the Area tool could not be set up", error);
                 }
+                // Back (B) to the view a square or Crop to area came from
+                // (services/viewHistory.js, views/backButton.js).
+                try {
+                    __plexora.viewHistory = window.PlexoraViewHistory?.attach?.({
+                        viewState, cutter: window.PlexoraInspect || null, volume,
+                        imageViewer: seaDragonViewer, config,
+                    }) || null;
+                    __plexora.backButton = window.PlexoraBackButton?.attach?.({
+                        history: __plexora.viewHistory,
+                    }) || null;
+                } catch (error) {
+                    console.error("main: Back could not be set up", error);
+                }
             }
             // A small pill on the plane and on each section while it loads,
             // from `plexora:surface-status` (views/paneStatus.js). Mounts
@@ -754,9 +767,6 @@ async function init(config, savedViewTransform = null) {
                         viewState, volume, cutter: window.PlexoraInspect, extras: depthControlExtras, strip,
                     }) || null;
                     __plexora.volumeHandles = window.PlexoraVolumeHandles?.attach?.({
-                        viewState, volume, cutter: window.PlexoraInspect,
-                    }) || null;
-                    __plexora.savedAreas = window.PlexoraSavedAreas?.attach?.({
                         viewState, volume, cutter: window.PlexoraInspect,
                     }) || null;
                 } catch (error) {

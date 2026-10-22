@@ -3657,6 +3657,62 @@ body.sidebar-collapsed .viewer-shell,
     to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* Back (views/backButton.js): the same glass as the magic bar, at the top
+   centre of the canvas while a derived view has somewhere to go back to. */
+.plx-view-back {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    align-items: center;
+    animation: plx-view-back-in var(--duration-fast) var(--ease-standard);
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 8px;
+    height: 30px;
+    padding: 0 6px 0 12px;
+}
+
+.plx-view-back:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.plx-view-back:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.plx-view-back[hidden] {
+    display: none;
+}
+
+.plx-view-back-key {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 16px;
+    min-width: 18px;
+    text-align: center;
+}
+
+@keyframes plx-view-back-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.plx-reduced-motion .plx-view-back {
+    animation: none;
+}
+
 /* Which tool this is, without a word: the wand, muted. It breathes while an
    outline is on its way. */
 .plx-magic-bar-mark {
@@ -4744,83 +4800,6 @@ html.plx-moving-control * {
     min-width: 0;
 }
 
-/* Save area, and the areas saved above Show/Hide: a thumbnail and a name
-   each, the newest first (services/savedAreas.js). */
-.volume-dock-save {
-    align-items: center;
-    background: var(--surface-2);
-    border-color: var(--border-subtle);
-    display: flex;
-    font-size: 11px;
-    gap: 6px;
-    height: 26px;
-    justify-content: center;
-    width: 100%;
-}
-
-.volume-dock-areas {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    list-style: none;
-    margin: 0;
-    max-height: 168px;
-    overflow-y: auto;
-    padding: 0;
-}
-
-.volume-dock-area {
-    align-items: center;
-    display: flex;
-    gap: 2px;
-}
-
-.volume-dock-area-open {
-    align-items: center;
-    display: flex;
-    flex: 1 1 auto;
-    gap: 6px;
-    justify-content: flex-start;
-    min-width: 0;
-    padding: 2px;
-    text-align: left;
-}
-
-.volume-dock-area-thumb {
-    background: var(--surface-2);
-    border-radius: var(--radius-sm);
-    flex: 0 0 auto;
-    height: 36px;
-    object-fit: cover;
-    width: 48px;
-}
-
-.volume-dock-area-name {
-    font-size: 11px;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.volume-dock-area-remove {
-    flex: 0 0 20px;
-    font-size: 10px;
-    height: 20px;
-}
-
-.volume-dock-area-rename {
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    flex: 1 1 auto;
-    font-family: inherit;
-    font-size: 11px;
-    height: 22px;
-    min-width: 0;
-}
-
 /* Show/Hide (`O`) at the foot: the cut on and off while looking, the panel
    left out. Centred under its rule, as much room above as below. A hidden
    cut quietens the controls above it (using one shows the cut again), and
@@ -4917,6 +4896,20 @@ html.plx-moving-control * {
     stroke: currentColor;
 }
 
+/* The area's sides and grips (a square opened in 3-D): the Area tool's own
+   look, white and dashed, so they never read as a cut. */
+.volume-handles .is-area {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.volume-handles .handle-face.is-area {
+    stroke-dasharray: 6 4;
+}
+
+.volume-handles .handle-grip.is-area .grip-disc {
+    stroke-dasharray: 3 2;
+}
+
 .volume-handles .handle-grip {
     cursor: grab;
     outline: none;
@@ -4951,6 +4944,10 @@ html.plx-moving-control * {
 .volume-handles .handle-grip.is-body {
     color: var(--text-secondary);
     cursor: move;
+}
+
+.volume-handles .handle-grip.is-area.is-body {
+    color: rgba(255, 255, 255, 0.9);
 }
 
 .plx-reduced-motion .volume-handles .handle-grip .grip-disc {

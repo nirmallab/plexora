@@ -308,9 +308,8 @@
                 layout: "single",
                 aux: null,
                 // `area`: the part of the image the 3-D view draws, or null
-                // for the whole stack (inspectGeometry.cleanArea); `saved`:
-                // areas kept to come back to (services/savedAreas.js).
-                volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto", area: null, saved: [] },
+                // for the whole stack (inspectGeometry.cleanArea).
+                volume: { composite: "mip", opacity: {}, camera: {}, quality: "auto", area: null },
                 // [inspect] How the 3-D view is cut (inspectGeometry.js).
                 ...(Geometry() ? { inspect: Geometry().defaults(this._dims()) } : {}),
             };
@@ -369,12 +368,13 @@
             out.slab = slab;
             delete out.__recentre;
             out.volume = { ...defaults.volume, ...(raw.volume || {}) };
+            // Saved areas were retired for bookmarks (services/bookmarks.js).
+            delete out.volume.saved;
             if (Geometry()) {
                 // The area first: the cut is kept inside it.
                 const G = Geometry();
                 const plain = this._dims(null);
                 out.volume.area = G.cleanArea(out.volume.area, plain);
-                out.volume.saved = G.cleanSaved(out.volume.saved, plain);
                 out.inspect = G.clean(raw.inspect, this._dims(out.volume.area));
             }
             return out;
@@ -394,6 +394,15 @@
             const b = G.cleanArea(next, plain);
             if (!a || !b) return null;
             return G.shift(inspect, { dx: b.x - a.x, dy: b.y - a.y });
+        }
+
+        /** [inspect] `inspect` with the whole stack's crop and cut-away
+         *  places, not cutting (`full`); its tool and axes kept. */
+        _wholeCut(inspect) {
+            const whole = Geometry().defaults(this._dims(null));
+            if (!inspect) return whole;
+            return { ...whole, tool: inspect.tool || whole.tool, axes: { ...(inspect.axes || whole.axes) },
+                     axesBy: Geometry().merge(whole, { axesBy: inspect.axesBy || {} }).axesBy };
         }
 
         /**
@@ -422,7 +431,8 @@
         enterVolume(volume = null, options = {}) {
             if (!this.enabled()) return this.get();
             const patch = { mode: "volume" };
-            if (volume) patch.volume = volume;
+            // Without a square, the whole stack: one left placed is let go.
+            patch.volume = volume || { area: null };
             const band = this._bandCrop();
             if (band) {
                 // An explicit cut is never shifted (set), so the area's move
@@ -437,12 +447,13 @@
         /**
          * 3-D, or back to what it was entered from: the projection when it
          * was a projection, the plane otherwise (after a reload, the plane:
-         * `load`).
+         * `load`). Either way the whole stack: a placed square goes.
          */
         toggleVolume(options = {}) {
             if (!this.enabled()) return this.get();
             if (this.state.mode === "volume") {
-                return this.set({ mode: this._frozen?.mode === "slab" ? "slab" : "plane" }, options);
+                return this.set({ mode: this._frozen?.mode === "slab" ? "slab" : "plane",
+                                  volume: { area: null } }, options);
             }
             return this.enterVolume(null, options);
         }
@@ -608,10 +619,18 @@
                 slab: { ...before.slab, ...(patch.slab || {}) },
                 volume: { ...before.volume, ...(patch.volume || {}) },
             };
-            if (patch.inspect && Geometry()) merged.inspect = Geometry().merge(before.inspect, patch.inspect);
+            // [inspect] A square let go is the whole stack again: a cut made
+            // inside the square is about the square, so the cut's places go
+            // back to the whole stack's (its tool and axes stay). A patch
+            // that says where the cut is still says so (a restore, Back).
+            const left = Geometry() && before.volume?.area && patch.volume
+                && "area" in patch.volume && !patch.volume.area;
+            const base = left ? this._wholeCut(before.inspect) : before.inspect;
+            if (left) merged.inspect = base;
+            if (patch.inspect && Geometry()) merged.inspect = Geometry().merge(base, patch.inspect);
             // [inspect] A new area moves the cut with it, unless the patch
             // says where the cut is (a restore, a frame, Crop to area).
-            if (!patch.inspect && patch.volume && "area" in patch.volume) {
+            if (!left && !patch.inspect && patch.volume && "area" in patch.volume) {
                 const moved = this._areaShift(before.inspect, before.volume?.area, patch.volume.area);
                 if (moved) merged.inspect = Geometry().merge(before.inspect, moved);
             }

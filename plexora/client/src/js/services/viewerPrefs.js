@@ -43,23 +43,20 @@
     //: The 3-D view's plane handles (server/routes/volume_routes.py HANDLES_DEFAULTS).
     const HANDLES = { visible: true, opacity: 0.55 };
     const HANDLE_OPACITY = [0.15, 1];
-    //: The Area tool's square (server/routes/volume_routes.py AREA_DEFAULTS).
-    const AREA = { um: 300, px: 1024 };
-    const AREA_UM = [1, 1e5];
-    const AREA_PX = [16, 65536];
+    //: The Area tool's square (server/routes/volume_routes.py AREA_DEFAULTS):
+    //: its side ON SCREEN, CSS pixels, so zooming in selects less tissue.
+    const AREA = { screen: 320 };
+    const AREA_SCREEN = [64, 4096];
     const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID,
                        rotate: ROTATE, handles: HANDLES, area: AREA };
 
     /** The Area tool's square, repaired over `base` (the server's
      *  `normalize_area` keeps the same bounds). */
     function mergeArea(base, patch) {
-        const out = { ...base };
+        const out = { screen: Number(base?.screen) > 0 ? base.screen : AREA.screen };
         if (!patch || typeof patch !== "object") return out;
-        if (typeof patch.um === "number" && Number.isFinite(patch.um)) {
-            out.um = Math.min(AREA_UM[1], Math.max(AREA_UM[0], patch.um));
-        }
-        if (typeof patch.px === "number" && Number.isFinite(patch.px)) {
-            out.px = Math.min(AREA_PX[1], Math.max(AREA_PX[0], Math.round(patch.px)));
+        if (typeof patch.screen === "number" && Number.isFinite(patch.screen)) {
+            out.screen = Math.min(AREA_SCREEN[1], Math.max(AREA_SCREEN[0], Math.round(patch.screen)));
         }
         return out;
     }
@@ -178,9 +175,9 @@
             return { ...this.prefs.handles };
         }
 
-        /** The Area tool's square: `{um, px}`. */
+        /** The Area tool's square: `{screen}`, its side in CSS pixels. */
         area() {
-            return { ...(this.prefs.area || AREA) };
+            return mergeArea(this.prefs.area || AREA, null);
         }
 
         /** Whether planes may fade and the 3-D view may coast. */

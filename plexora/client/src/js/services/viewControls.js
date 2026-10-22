@@ -74,8 +74,6 @@
         grid: (ctx) => Boolean(ctx.grid),
         // The 3-D view can be cut (services/inspectState.js on the page).
         cut: (ctx) => Boolean(ctx.cutSupported),
-        // Areas can be saved and restored (services/savedAreas.js on the page).
-        savedAreas: (ctx) => Boolean(ctx.savedAreasSupported),
         // The volume is drawn: not "surfaces only". A row about voxels --
         // the cut faces, how voxels are read -- needs it.
         volumeDrawn: (ctx) => ctx.showVolume !== false,
@@ -103,8 +101,6 @@
         "axis.z": (ctx) => ctx.mode === "volume" && ctx.cut !== "full" && Boolean(ctx.cutAxes?.z),
         // A crop narrower than the area in x or y: "Crop to area" tightens it.
         "crop.narrower": (ctx) => ctx.mode === "volume" && ctx.cut === "crop" && Boolean(ctx.cropNarrower),
-        // At least one area saved (services/savedAreas.js).
-        "areas.saved": (ctx) => ctx.savedCount > 0,
     };
 
     /** Where each group sits, strip top to bottom, popover top to bottom. */
@@ -113,7 +109,7 @@
         projection: 100, volume: 110, rotate: 130, grid: 140, surfaces: 150,
         // The cut panel beside the strip, top to bottom (views/volumeDock.js):
         // the axes, the actions to their right, then a row each.
-        axes: 200, actions: 210, voxels: 220, handles: 230, areas: 235, toggle: 240,
+        axes: 200, actions: 210, voxels: 220, handles: 230, toggle: 240,
         plugins: 800,
     };
 
@@ -201,8 +197,6 @@
         const width = Math.max(1, Number(info.width) || 1);
         const height = Math.max(1, Number(info.height) || 1);
         const area = state.volume?.area || null;
-        // Lengths in microns only where the image states its spacing.
-        const space = global.PlexoraInspectGeometry?.spacing?.(info) || {};
         return {
             mode: MODES.includes(state.mode) ? state.mode : "plane",
             layout: state.layout || "single",
@@ -223,10 +217,7 @@
             area,
             width,
             height,
-            areaUnit: space.x ? "µm" : "px",
             cropNarrower: cropNarrower(inspect, area, width, height),
-            savedCount: Array.isArray(state.volume?.saved) ? state.volume.saved.length : 0,
-            savedAreasSupported: false,
             showVolume: state.volume?.show?.volume !== false,
             cutSupported: false,
             t: Number.isFinite(state.t) ? state.t : 0,
@@ -341,10 +332,13 @@
     /**
      * The view-state patch that switches to `mode` from `ctx`. The 3-D view
      * keeps its own cut (`inspect`), so the projection's range is left as it
-     * was and comes back with the projection.
+     * was and comes back with the projection. A placed square (`volume.area`)
+     * is a view of its own, never a mode's: the mode buttons always open the
+     * whole stack, and leaving 3-D lets the square go (views/areaTool.js; Back
+     * returns to it, services/viewHistory.js).
      */
     function transition(ctx, mode) {
-        return { mode };
+        return { mode, volume: { area: null } };
     }
 
     /** Call `fn` whenever an entry comes or goes; returns the undo. */
@@ -420,8 +414,7 @@
           group: "volume", order: 10, doc: "Render: maximum intensity or additive." },
         { id: "area.size", surfaces: ["popover"], modes: ["plane", "slab"],
           needs: ["depth", "colourless", "webgl2", "prefs"], group: "volume", order: 15,
-          config: (ctx) => ({ unit: ctx.areaUnit }),
-          doc: "The Area tool's square: its side, in microns where the image states its spacing." },
+          doc: "The Area tool's square: its side on screen, so a zoom changes how much tissue it takes." },
         // How the viewer moves, for every image: in every mode, as it is
         // the plane fades' and the 3-D view's coasting alike.
         { id: "view.motion", surfaces: ["popover"], needs: ["depthOrFrames", "prefs"],
@@ -468,13 +461,6 @@
           group: "handles", doc: "How strongly the handles are drawn." },
         { id: "cut.toggle", surfaces: ["dock"], modes: ["volume"], needs: ["cut"],
           group: "toggle", doc: "Show or hide the cut (O), the panel left out." },
-        // Areas kept to come back to (services/savedAreas.js): the area, the
-        // cut and the camera, under a name, with a thumbnail.
-        { id: "area.save", surfaces: ["dock"], modes: ["volume"], needs: ["savedAreas"],
-          group: "areas", order: 10, doc: "Save what is shown: the area, the cut and the camera." },
-        { id: "area.list", surfaces: ["dock"], modes: ["volume"], needs: ["savedAreas"],
-          when: ["areas.saved"], group: "areas", order: 20,
-          doc: "The areas saved: a click goes back to one, × forgets it, a double-click renames it." },
     ];
     for (const entry of CORE) register(entry, { announce: false });
 

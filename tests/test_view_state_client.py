@@ -68,7 +68,7 @@ def test_the_depth_strip_probe_passes():
     (tests/js/depth_strip_probe.mjs)."""
     out = _run("depth_strip_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 39
+    assert out.count("ok - ") >= 41
 
 
 def test_the_inspect_geometry_probe_passes():
@@ -78,7 +78,7 @@ def test_the_inspect_geometry_probe_passes():
     (tests/js/inspect_geometry_probe.mjs)."""
     out = _run("inspect_geometry_probe.mjs")
     assert "checks passed" in out
-    assert out.count("ok - ") >= 73
+    assert out.count("ok - ") >= 69
 
 
 def test_the_volume_dock_probe_passes():
@@ -87,26 +87,39 @@ def test_the_volume_dock_probe_passes():
     image's units, undoes (tests/js/volume_dock_probe.mjs)."""
     out = _run("volume_dock_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 67
+    assert out.count("ok - ") >= 60
 
 
 def test_the_volume_handles_probe_passes():
     """The cut's handles follow the hand along their axis, perspective and
     all, never turn the stack, preview and commit, and stay inside the area
-    drawn (tests/js/volume_handles_probe.mjs)."""
+    drawn; the area's own grips slide it (as Shift+drag) and resize it without
+    moving the cut (tests/js/volume_handles_probe.mjs)."""
     out = _run("volume_handles_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 22
+    assert out.count("ok - ") >= 35
 
 
 def test_the_area_tool_probe_passes():
-    """The Area tool's square -- microns over a stated spacing, kept inside
-    the image -- placed by a click or V in one change of the view state, V to
-    3-D and back, yielding to the ROI tool, typing and dialogs
+    """The Area tool's square -- a side on screen, so a zoom changes the
+    tissue it takes (said under it), kept inside the image -- placed by a
+    click or V in one change of the view state, V to 3-D and back (the square
+    let go), yielding to the ROI tool, typing and dialogs
     (tests/js/area_tool_probe.mjs)."""
     out = _run("area_tool_probe.mjs")
     assert "all " in out and "checks passed" in out
-    assert out.count("ok - ") >= 22
+    assert out.count("ok - ") >= 25
+
+
+def test_the_view_history_probe_passes():
+    """Back: an entry is spatial only, so a channel changed in the child view
+    survives it; one change and one undo entry; the camera turns back only
+    into 3-D, the 2-D view glides only into 2-D; the trail ends when 2-D comes
+    back another way; B is Back's only while there is history, in the capture
+    phase, so the dataset chip's B stands aside (tests/js/view_history_probe.mjs)."""
+    out = _run("view_history_probe.mjs")
+    assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 27
 
 
 def test_the_viewer_page_loads_the_cut_scripts_in_order():
@@ -118,7 +131,7 @@ def test_the_viewer_page_loads_the_cut_scripts_in_order():
         "js/services/inspectGeometry.js?v=", "js/services/viewState.js?v=",
         "js/services/inspectState.js?v=", "js/views/volumeRenderer.js?v=",
         "js/views/volumeDock.js?v=", "js/views/volumeHandles.js?v=", "js/views/areaTool.js?v=",
-        "js/services/savedAreas.js?v=", "js/main.js?v=")]
+        "js/services/viewHistory.js?v=", "js/views/backButton.js?v=", "js/main.js?v=")]
     assert order == sorted(order)
 
 
@@ -127,7 +140,8 @@ def test_the_cut_scripts_parse():
     if node is None:
         pytest.skip("node is not installed")
     for path in ("services/inspectGeometry.js", "services/inspectState.js", "views/volumeDock.js",
-                 "views/volumeHandles.js", "views/areaTool.js", "services/savedAreas.js"):
+                 "views/volumeHandles.js", "views/areaTool.js",
+                 "services/viewHistory.js", "views/backButton.js"):
         proc = subprocess.run([node, "--check", str(CLIENT / "src" / "js" / path)],
                               capture_output=True, text=True, timeout=30)
         assert proc.returncode == 0, path + proc.stderr

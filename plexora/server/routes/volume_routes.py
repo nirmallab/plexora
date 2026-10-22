@@ -285,7 +285,6 @@ def normalize_view_state(value, depth=None, frames=None):
     # (client inspectGeometry.cleanArea, which also clamps it to the image:
     # the server knows only the depth and the frames).
     out["volume"]["area"] = _area(volume.get("area"))
-    out["volume"]["saved"] = _saved_areas(volume.get("saved"), depth)
     # How the 3-D view is cut (client services/inspectGeometry.js). Kept only
     # when one was saved: a state without it opens whole, or -- saved before
     # the view could be cut -- cut to its old clip range (viewState._migrate).
@@ -306,44 +305,6 @@ def _area(value):
     if width <= 0 or height <= 0:
         return None
     return {"x": max(0.0, x), "y": max(0.0, y), "width": width, "height": height}
-
-
-#: How many saved areas a stack keeps (client inspectGeometry.SAVED_MAX).
-SAVED_AREAS_MAX = 50
-
-
-def _saved_areas(value, depth=None):
-    """Areas kept to come back to (client inspectGeometry.cleanSaved): at
-    most SAVED_AREAS_MAX `{id, name, area, inspect, camera}`, each id met
-    once, an entry without an area dropped."""
-    if not isinstance(value, list):
-        return []
-    out, seen = [], set()
-    for entry in value:
-        if len(out) >= SAVED_AREAS_MAX:
-            break
-        if not isinstance(entry, dict):
-            continue
-        ident = str(entry.get("id") or "")[:32]
-        area = _area(entry.get("area"))
-        if not ident or ident in seen or area is None:
-            continue
-        seen.add(ident)
-        camera = entry.get("camera") if isinstance(entry.get("camera"), dict) else {}
-        q = _numbers(camera.get("q"), 4)
-        pan = _numbers(camera.get("pan"), 2)
-        dist = _float(camera.get("dist"), 0.0)
-        pose = None
-        if q is not None and dist > 0:
-            pose = {"q": q, "dist": dist, "pan": pan if pan is not None else [0.0, 0.0]}
-        out.append({
-            "id": ident,
-            "name": str(entry.get("name") or "")[:64],
-            "area": area,
-            "inspect": normalize_inspect(entry.get("inspect"), depth),
-            "camera": pose,
-        })
-    return out
 
 
 def _float(value, default=0.0, low=None, high=None):
@@ -586,33 +547,25 @@ def normalize_handles(value):
     }
 
 
-#: The Area tool's square (views/areaTool.js): its side in microns where the
-#: image states its spacing, in pixels where it does not.
-AREA_DEFAULTS = {"um": 300.0, "px": 1024}
-AREA_UM = (1.0, 1e5)
-AREA_PX = (16, 65536)
+#: The Area tool's square (views/areaTool.js): its side ON SCREEN, CSS
+#: pixels, so zooming in selects less tissue and zooming out more.
+AREA_DEFAULTS = {"screen": 320}
+AREA_SCREEN = (64, 4096)
 
 
 def normalize_area(value):
-    """The Area tool's square, repaired field by field (viewerPrefs.js's
-    `mergeArea` keeps the same bounds)."""
+    """The Area tool's square, repaired (viewerPrefs.js's `mergeArea` keeps
+    the same bounds). A side saved in microns or image pixels, before the
+    square kept its size on screen, reads as the default."""
     area = value if isinstance(value, dict) else {}
-    um = area.get("um")
-    px = area.get("px")
+    screen = area.get("screen")
     try:
-        um = None if isinstance(um, bool) or um is None else float(um)
+        screen = None if isinstance(screen, bool) or screen is None else float(screen)
     except (TypeError, ValueError):
-        um = None
-    if um is not None and not math.isfinite(um):
-        um = None
-    try:
-        px = None if isinstance(px, bool) or px is None else int(round(float(px)))
-    except (TypeError, ValueError, OverflowError):
-        px = None
-    return {
-        "um": min(AREA_UM[1], max(AREA_UM[0], um)) if um is not None else AREA_DEFAULTS["um"],
-        "px": min(AREA_PX[1], max(AREA_PX[0], px)) if px is not None else AREA_DEFAULTS["px"],
-    }
+        screen = None
+    if screen is None or not math.isfinite(screen):
+        return dict(AREA_DEFAULTS)
+    return {"screen": int(round(min(AREA_SCREEN[1], max(AREA_SCREEN[0], screen))))}
 
 
 def normalize_viewer_prefs(value):

@@ -931,16 +931,14 @@ window.PlexoraAgentBridge = (function () {
             spacing: (vs.info && vs.info.spacing) || null,
             // The 3-D view: how it is cut (image units; services/inspectGeometry.js),
             // the same in words, its camera, what it draws, the area of the
-            // image it draws (null: the whole stack; the Area tool's) and the
-            // areas saved to come back to. `box` is `area` under its old name,
-            // kept for one release.
+            // image it draws (null: the whole stack; the Area tool's). `box`
+            // is `area` under its old name, kept for one release.
             inspect: state.inspect || null,
             cut: typeof vs.cutLabel === "function" ? vs.cutLabel() : "",
             camera: renderer ? renderer.cameraState() : ((state.volume && state.volume.camera) || null),
             show: (state.volume && state.volume.show) || null,
             area: (state.volume && state.volume.area) || null,
             box: (state.volume && state.volume.area) || null,
-            saved: ((state.volume && state.volume.saved) || []).map((entry) => ({ id: entry.id, name: entry.name })),
         };
     }
 

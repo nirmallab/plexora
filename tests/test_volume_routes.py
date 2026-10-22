@@ -376,31 +376,33 @@ def test_the_3d_cut_is_kept_and_repaired(tmp_path, client):
     assert nothing["inspect"]["axes"] == {"x": True, "y": False, "z": False}
 
 
-def test_the_area_preference_is_merged_and_clamped(client):
-    """The Area tool's square: its side in microns and in pixels, the
-    user's, for every image, merged field by field and kept in bounds."""
+def test_the_area_preference_is_a_side_on_screen_kept_in_bounds(client):
+    """The Area tool's square: its side on screen, CSS pixels, the user's,
+    for every image, kept in bounds; a side saved in microns or image pixels
+    (before the square kept its size on screen) reads as the default."""
     from plexora import paths
 
     paths.write_settings({})
-    assert client.get("/viewer_prefs").get_json()["area"] == {"um": 300.0, "px": 1024}
-    stored = client.put("/viewer_prefs", json={"area": {"um": 150}}).get_json()["prefs"]
-    assert stored["area"] == {"um": 150.0, "px": 1024}
-    stored = client.put("/viewer_prefs", json={"area": {"px": 2.5}}).get_json()["prefs"]
-    assert stored["area"] == {"um": 150.0, "px": 16}
-    stored = client.put("/viewer_prefs", json={"area": {"um": "lots", "px": True}}).get_json()["prefs"]
-    assert stored["area"] == {"um": 300.0, "px": 1024}
-    stored = client.put("/viewer_prefs", json={"area": {"um": 1e9}}).get_json()["prefs"]
-    assert stored["area"]["um"] == 1e5
+    assert client.get("/viewer_prefs").get_json()["area"] == {"screen": 320}
+    stored = client.put("/viewer_prefs", json={"area": {"screen": 200.4}}).get_json()["prefs"]
+    assert stored["area"] == {"screen": 200}
+    stored = client.put("/viewer_prefs", json={"area": {"screen": 2}}).get_json()["prefs"]
+    assert stored["area"] == {"screen": 64}
+    stored = client.put("/viewer_prefs", json={"area": {"screen": 1e9}}).get_json()["prefs"]
+    assert stored["area"] == {"screen": 4096}
+    for bad in ({"screen": "lots"}, {"screen": True}, {"um": 150, "px": 1024}, "everything"):
+        stored = client.put("/viewer_prefs", json={"area": bad}).get_json()["prefs"]
+        assert stored["area"] == {"screen": 320}, bad
 
 
-def test_the_3d_area_and_the_saved_areas_are_kept(tmp_path, client):
+def test_the_3d_area_is_kept_and_saved_areas_are_not(tmp_path, client):
     """`volume.area` -- the part of the image the 3-D view draws -- round-trips,
     its corner never negative and its sides more than nothing (the browser cuts
-    it to the image); `volume.saved` keeps each id once, drops an entry with no
-    area, and repairs each one's cut and camera."""
+    it to the image). Saved areas were retired for bookmarks (Figure Builder
+    captures): a stored `volume.saved` is dropped."""
     _register_volume(tmp_path)
     plain = client.put("/view_state/vol", json={"mode": "volume"}).get_json()["state"]
-    assert plain["volume"]["area"] is None and plain["volume"]["saved"] == []
+    assert plain["volume"]["area"] is None and "saved" not in plain["volume"]
     stored = client.put("/view_state/vol", json={"mode": "volume", "volume": {
         "area": {"x": -5, "y": 10.5, "width": 300, "height": 200}}}).get_json()["state"]
     assert stored["volume"]["area"] == {"x": 0.0, "y": 10.5, "width": 300.0, "height": 200.0}
@@ -409,22 +411,9 @@ def test_the_3d_area_and_the_saved_areas_are_kept(tmp_path, client):
                 {"x": 0, "y": 0, "width": float("nan"), "height": 5}, [1, 2, 3, 4], "everything"):
         state = client.put("/view_state/vol", json={"mode": "volume", "volume": {"area": bad}}).get_json()
         assert state["state"]["volume"]["area"] is None, bad
-    saved = client.put("/view_state/vol", json={"mode": "volume", "volume": {"saved": [
-        {"id": "a", "name": "first", "area": {"x": 0, "y": 0, "width": 10, "height": 10},
-         "inspect": {"mode": "cutaway", "axes": {"x": True, "y": True}},
-         "camera": {"q": [0, 0, 0, 1], "dist": 2, "pan": [0.1, 0]}},
-        {"id": "a", "area": {"x": 0, "y": 0, "width": 5, "height": 5}},
-        {"id": "b", "area": None},
-        {"id": "c" * 40, "name": "n" * 100, "area": {"x": 1, "y": 1, "width": 2, "height": 2},
-         "camera": {"q": [1, 2]}},
-    ]}}).get_json()["state"]["volume"]["saved"]
-    assert [entry["id"] for entry in saved] == ["a", "c" * 32]
-    assert saved[0]["inspect"]["axes"] == {"x": True, "y": False, "z": False}
-    assert saved[0]["camera"] == {"q": [0.0, 0.0, 0.0, 1.0], "dist": 2.0, "pan": [0.1, 0.0]}
-    assert saved[1]["name"] == "n" * 64 and saved[1]["camera"] is None
-    many = client.put("/view_state/vol", json={"mode": "volume", "volume": {"saved": [
-        {"id": f"s{i}", "area": {"x": 0, "y": 0, "width": 5, "height": 5}} for i in range(60)]}}).get_json()
-    assert len(many["state"]["volume"]["saved"]) == 50
+    old = client.put("/view_state/vol", json={"mode": "volume", "volume": {"saved": [
+        {"id": "a", "name": "first", "area": {"x": 0, "y": 0, "width": 10, "height": 10}}]}}).get_json()
+    assert "saved" not in old["state"]["volume"]
 
 
 def test_a_cutaway_is_along_one_axis(tmp_path, client):
