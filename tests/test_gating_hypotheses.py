@@ -320,7 +320,7 @@ def test_each_engine_has_the_contrast_check_and_reader_it_was_measured_with(tmp_
     assert Engine(SimpleNamespace(), "s_old", st=st).options["basic_qc"] is False
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_v2_runs_basic_qc_on_an_image_without_qc_and_v1_warns_instead(tmp_path):
     """No model call: QC's model-free checks run in the bulk pass, before the
     image is calibrated, and what they are sure of is left out of every fit,
@@ -355,7 +355,7 @@ def test_v2_runs_basic_qc_on_an_image_without_qc_and_v1_warns_instead(tmp_path):
     assert not engines.store().load(v1["session_id"]).get("basic_qc")
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
     from plexora.plugins.gating.server.autogate import engine as engines
     from tests.test_gating_session import Oracle, ok

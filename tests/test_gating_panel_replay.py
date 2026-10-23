@@ -28,7 +28,7 @@ import pytest
 
 from plexora.agent import AgentSession, artifacts, jobs, registry
 
-pytestmark = pytest.mark.paid
+pytestmark = pytest.mark.pro
 
 MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 

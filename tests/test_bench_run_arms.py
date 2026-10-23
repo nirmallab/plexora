@@ -230,7 +230,7 @@ def test_a_session_that_did_not_start_as_planned_is_named():
 # -- end to end ----------------------------------------------------------------------------
 
 
-@pytest.mark.paid
+@pytest.mark.pro
 def test_a_campaign_runs_each_arm_through_the_harness_and_writes_no_gate(tmp_path):
     from plexora.agent import registry
     from plexora.ai.bench import TruthAgent
