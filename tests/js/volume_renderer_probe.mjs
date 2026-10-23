@@ -28,7 +28,13 @@
  *   draws a blank frame; an area the same size keeps the level; Shift+drag
  *   slides it (at most one move per SLIDE_MS, the camera untouched), Alt or
  *   the middle button pans;
- * - MIP keeps its samples while moving; the jitter is on a fixed grid.
+ * - MIP keeps its samples while moving; the jitter is on a fixed grid;
+ * - a detail is drawn at the base's brightness: one gain per channel from
+ *   its columns' maxima against the base's over the same footprint, or what
+ *   the same two levels measured when it is too small to say;
+ * - close up -- nearer than a lattice step -- the part seen is still found,
+ *   as tight as the view; the camera stops in front of the box, by zoom or
+ *   by a far-zoomed plane opened in 3-D.
  *
  * Run directly:  node tests/js/volume_renderer_probe.mjs
  */
@@ -228,6 +234,93 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
     const asked = detailRequests.length;
     await view.considerDetail();
     check("and is not asked for again while the view stays", detailRequests.length === asked);
+}
+
+// -- brightness across levels: a finer piece at the base's brightness -------------
+{
+    const B = VolumeRenderer.brightness;
+    check("half floats read as their values, a negative one as 0",
+          B.halfValue(0x3c00) === 1 && B.halfValue(0x3800) === 0.5 && B.halfValue(0xbc00) === 0
+          && B.halfValue(0x7c00) === 0);
+    // Two planes of 2 x 4: the column maxima, every second row and column.
+    const voxels = new Uint8Array([1, 9, 3, 4, 5, 6, 7, 8, 2, 1, 8, 1, 9, 1, 1, 1]);
+    const peaks = B.foldPeaks(B.peaksFor(2, 4, 2, false), voxels, [2, 2, 4], { stride: 2 });
+    const every = B.foldPeaks(B.peaksFor(2, 4, 1, false), voxels, [2, 2, 4]);
+    check("a fold keeps each sampled column's largest value",
+          Array.from(peaks).join() === "2,8" && Array.from(every).join() === "2,9,8,4,9,6,7,8",
+          `${Array.from(peaks).join()} / ${Array.from(every).join()}`);
+    const halves = B.foldPeaks(B.peaksFor(1, 1, 1, true), new Uint16Array([0xbc00, 0x3800]), [2, 1, 1], { half: true });
+    check("a negative half never wins the fold", halves[0] === 0x3800);
+    const big = B.brightnessSummary(new Uint8Array(64 * 512 * 512), [64, 512, 512], false);
+    check("a base's summary keeps every plane and at most 2^20 samples",
+          big.shape[0] === 64 && big.data.length <= 2 ** 20 && big.stride === 4, JSON.stringify(big.shape));
+    check("a gain is clamped, and none from a dark piece",
+          B.brightnessGain({ sum: 1, n: 1 }, { sum: 100, n: 1 }) === B.GAIN_RANGE[0]
+          && B.brightnessGain({ sum: 0, n: 4 }, { sum: 1, n: 4 }) === null);
+
+    // A base of 2 planes, 8 x 8 voxels over 8 x 8 pixels: 64 everywhere but
+    // 192 in its top-left 2 x 2.
+    const plane = (z) => Array.from({ length: 64 }, (_, i) => (z === 0 && i % 8 < 2 && i < 16 ? 192 : 64));
+    const baseVoxels = new Uint8Array([...plane(0), ...plane(1)]);
+    const base = { shape: [2, 8, 8], covered: [0, 0, 8, 8], level: 1, format: "u8",
+                   summary: B.brightnessSummary(baseVoxels, [2, 8, 8], false) };
+    const view = new VolumeRenderer({ viewState: { depth: 2, info: { width: 8, height: 8 }, get: () => ({ t: 0 }) },
+                                      datasource: "vol", fetchImpl });
+    const finer = (side, value) => B.peakSum(B.foldPeaks(B.peaksFor(side, side, 1, false),
+                                                         new Uint8Array(2 * side * side).fill(value), [2, side, side]), false);
+    const whole = view.detailGain({ name: "DNA" }, base, { covered: [0, 0, 8, 8], z: [0, 1], level: 0 }, finer(16, 128));
+    check("a detail is brought to the base's brightness over its own footprint", Math.abs(whole - 72 / 128) < 1e-6,
+          String(whole));
+    const small = view.detailGain({ name: "DNA" }, base, { covered: [0, 0, 2, 2], z: [0, 1], level: 0 }, finer(4, 128));
+    check("one too small to match on its own takes what the same levels measured, not its own few samples",
+          Math.abs(small - 5376 / 8704) < 1e-6, String(small));
+    check("a detail with no base to match is drawn as it is",
+          view.detailGain({ name: "DNA" }, null, { covered: [0, 0, 8, 8], level: 0 }, finer(16, 128)) === 1);
+
+    const detail = VolumeRenderer.fragmentSource(2, true, false);
+    check("the shader scales a detail's samples by its channel's gain, the base's not",
+          detail.includes("uniform float u_detail_gain[NCH];")
+          && detail.includes("texture(u_detail1, q).r * u_detail_gain[1] : baseRead(u_volume1, p)")
+          && !VolumeRenderer.fragmentSource(2, false, false).includes("u_detail_gain"));
+}
+
+// -- close up: the part seen, and the camera kept out of the box ------------------
+{
+    // A thin stack (2 planes of 512 x 512): closer than a lattice step, no
+    // lattice point is on screen.
+    const thin = new VolumeRenderer({ viewState: { depth: 2, info: { width: 512, height: 512 }, get: () => ({ t: 0 }) },
+                                      datasource: "vol", fetchImpl });
+    thin.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    thin.camera.q = box.PlexoraVolumeCamera.VIEWS.xy.slice();
+    Object.assign(thin.camera, { dist: 0.02, panX: 0.03, panY: 0 });
+    const region = thin.visibleRegion();
+    const share = region ? region.hi.reduce((p, v, i) => p * (v - region.lo[i]), 1) : null;
+    check("zoomed in closer than a lattice step, the part seen is still found, as tight as the view",
+          region && share < 0.001 && region.lo[0] < 0.53 && region.hi[0] > 0.53 && region.lo[1] < 0.5
+          && region.hi[1] > 0.5, JSON.stringify({ region, share }));
+
+    // The probe's stack: 4 planes of 32 x 32, its box 0.125 deep.
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl });
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    view.camera.q = box.PlexoraVolumeCamera.VIEWS.xy.slice();
+    view.camera.dist = 1;
+    for (let i = 0; i < 40; i += 1) view.zoomBy(0.5);
+    const closest = view.zoomTarget ?? view.camera.dist;
+    check("zoomed all the way in, the camera stops in front of the box, not inside it",
+          closest > 0.0625 + 0.01 && closest < 0.0625 + 0.02, String(closest));
+    // Turned, the eye stops just outside the box -- not as far back as the
+    // box's farthest corner (half a side away here).
+    Object.assign(view.camera, { q: box.PlexoraVolumeCamera.VIEWS.iso.slice(), dist: 1, panX: 0, panY: 0 });
+    view.zoomTarget = null;
+    for (let i = 0; i < 40; i += 1) view.zoomBy(0.5);
+    view.camera.dist = view.zoomTarget ?? view.camera.dist;
+    const eye = view.cameraMatrices().eye;
+    const gap = Math.hypot(...eye.map((v, a) => Math.max(0, Math.abs(v) - [0.5, 0.5, 0.0625][a])));
+    check("turned, the camera comes as close as just outside the box",
+          gap > 0.01 && gap < 0.03 && view.camera.dist < 0.3, JSON.stringify({ eye, gap, dist: view.camera.dist }));
+    check("a far-zoomed plane opens at the closest outside the box",
+          view.frameRegion({ box: [10, 10, 12, 12], perPixel: 400 }) && view.camera.dist > 0.0625 + 0.01,
+          String(view.camera.dist));
 }
 
 // -- the 3-D view asks for no contrast of its own ----------------------------------

@@ -89,17 +89,18 @@ def test_the_3d_view_keeps_its_textures():
     at rest, the part seen is fetched finer, once; a channel switched on for the
     first time is fetched under its window and drawn; a channel new to the
     picture fades in, at once with motion off or for a capture; the reference
-    grid's steps, units, numbers on screen, preference and uniforms
-    (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 104)
+    grid's steps, units, numbers on screen, preference and uniforms; a detail
+    at the base's brightness; the part seen found however close; the camera
+    kept in front of the box (tests/js/volume_renderer_probe.mjs)."""
+    _passed(_run("volume_renderer_probe.mjs"), 138)
 
 
 def test_the_3d_view_draws_finer_bricks_where_the_camera_needs_them():
     """The atlas: levels finer than the base, the cut (fine near, coarse far,
     within the atlas's room), the page table, slot reuse, batched requests,
-    gzip only on a slow link, and the shader's walk
-    (tests/js/volume_atlas_probe.mjs)."""
-    _passed(_run("volume_atlas_probe.mjs"), 37)
+    gzip only on a slow link, each level's bricks at the base's brightness,
+    and the shader's walk (tests/js/volume_atlas_probe.mjs)."""
+    _passed(_run("volume_atlas_probe.mjs"), 43)
 
 
 def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():

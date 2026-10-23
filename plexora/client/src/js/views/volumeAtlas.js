@@ -57,6 +57,13 @@
     const IN_FLIGHT = 2;
     //: The cut may fill this share of the atlas; past it, it is made coarser.
     const FILL = 0.85;
+    //: Columns of a brick its brightness is measured over at most (gains).
+    const BRICK_COLUMNS = 256;
+    //: Base samples under a level's bricks past which its gain is settled
+    //: and no more bricks are measured.
+    const GAIN_SETTLED = 4096;
+    //: Room per level in the gains for this many channels (two vec4s).
+    const GAIN_CHANNELS = 8;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -111,6 +118,8 @@
             .map((entry) => ({
                 level: entry.level,
                 pool: entry.pool,
+                // Its voxels (x, y, z): an edge brick is padded past them.
+                shape: entry.shape ? [entry.shape[2], entry.shape[1], entry.shape[0]] : null,
                 vox: [2 ** entry.level, 2 ** entry.level, entry.pool],
                 brickFull: [entry.brick_full[2], entry.brick_full[1], entry.brick_full[0]],
                 grid: [entry.grid[2], entry.grid[1], entry.grid[0]],
@@ -180,19 +189,22 @@ uniform ivec3 u_page_off[MAXL];
 uniform ivec3 u_page_grid[MAXL];
 uniform vec3 u_brick_tex;          // a brick in the atlas, apron included
 uniform vec3 u_atlas_dim;
+uniform vec4 u_atlas_gain[MAXL * 2]; // per level, channels 0-3 then 4-7 (gains)
 
 // Where the walk for full-resolution point 'full' ends: the brick box
 // [lo, hi) it stopped in, and how to draw inside it -- state 0 the base
 // texture, 1 the atlas from the deepest resident brick on the way (its
-// texel origin 'base', voxel size 'vox', box origin 'anchor'), 2 empty.
+// texel origin 'base', voxel size 'vox', box origin 'anchor', atlas level
+// 'level'), 2 empty.
 void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
-            out vec3 vox, out vec3 anchor) {
+            out vec3 vox, out vec3 anchor, out int level) {
     state = 0;
     lo = vec3(-1e9);
     hi = vec3(1e9);
     base = vec3(0.0);
     vox = vec3(1.0);
     anchor = vec3(0.0);
+    level = 0;
     for (int i = 0; i < MAXL; i++) {
         int k = u_top - i;
         if (k < 0) break;
@@ -212,23 +224,37 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             base = vec3(e.xyz) * u_brick_tex + 1.0;
             vox = u_vox_full[k];
             anchor = lo;
+            level = k;
         }
         if (!refined) return;
     }
 }`,
+            // A brick at the base's brightness: its level's gains (gains),
+            // read once per brick the walk enters (cGain0/1), not per sample.
             sample: Array.from({ length: count }, (_, c) =>
-                `        v[${c}] = cState == 1 ? texture(u_atlas${c}, a).r : baseRead(u_volume${c}, p);`)
+                `        v[${c}] = cState == 1 ? texture(u_atlas${c}, a).r * cGain${c >> 2}[${c & 3}] : baseRead(u_volume${c}, p);`)
                 .join("\n"),
         };
     }
 
     class VolumeAtlas {
-        constructor({ gl, datasource, maxTexture, fetchImpl = null, onChange = null } = {}) {
+        constructor({ gl, datasource, maxTexture, fetchImpl = null, onChange = null, reference = null } = {}) {
             this.gl = gl;
             this.datasource = datasource;
             this.maxTexture = maxTexture || 2048;
             this.fetch = fetchImpl || ((...args) => global.fetch(...args));
             this.onChange = onChange;
+            //: `(c, lo, hi)` -> `{sum, n}` of the base's column maxima under
+            //: full-resolution box [lo, hi) for channel `c`, or null: what a
+            //: level's bricks are brought to (gains).
+            this.reference = reference;
+            //: Per level, then channel: what the shader scales a brick by
+            //: (u_atlas_gain), and the sums it comes from -- the base's and
+            //: the bricks' means, each weighted by the base's samples, and
+            //: those samples.
+            this.gains = new Float32Array(MAXL * GAIN_CHANNELS).fill(1);
+            this.gainSums = new Float64Array(MAXL * GAIN_CHANNELS * 2);
+            this.gainSamples = new Float64Array(MAXL * GAIN_CHANNELS);
             //: "idle" | "loading" | "ready" | "unavailable"
             this.status = "idle";
             this.manifest = null;
@@ -374,6 +400,9 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             this.bytes = 0;
             this.finest = null;
             this.key = "";
+            this.gains.fill(1);
+            this.gainSums.fill(0);
+            this.gainSamples.fill(0);
             this.generation += 1;
             this.pagesVersion += 1;
         }
@@ -644,6 +673,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             const half = header.format === "f16";
             const size = header.bytes_per_brick;
             const [bz, by, bx] = header.brick;
+            const measure = this.reference ? global.PlexoraVolumeRenderer?.brightness : null;
             let changed = false;
             for (const brick of header.bricks) {
                 const [z, y, x] = brick.at;
@@ -667,6 +697,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
                     gl.texSubImage3D(gl.TEXTURE_3D, 0, at[0] * bx, at[1] * by, at[2] * bz,
                                      bx, by, bz, gl.RED, half ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE,
                                      data);
+                    if (measure) this.measure(measure, k, c, brick.at, data, header);
                 }
                 this.mirror[entry] = at[0];
                 this.mirror[entry + 1] = at[1];
@@ -675,8 +706,64 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
                 changed = true;
             }
             if (changed) {
+                if (measure) this.updateGains(measure);
                 this.uploadPages();
                 this.onChange?.();
+            }
+        }
+
+        /**
+         * One brick of level `k`, channel `c`, against the base under it
+         * (`reference`): the mean of every few of its columns' maxima, over
+         * the voxels inside the image, added to the level's sums -- until
+         * GAIN_SETTLED base samples have been.
+         */
+        measure(B, k, c, at, data, header) {
+            const i = k * GAIN_CHANNELS + c;
+            const level = this.levels[k];
+            if (!level?.shape || c >= GAIN_CHANNELS || this.gainSamples[i] >= GAIN_SETTLED) return;
+            const apron = header.apron || 0;
+            const shape = header.brick;                                   // (z, y, x)
+            const core = [shape[2] - 2 * apron, shape[1] - 2 * apron, shape[0] - 2 * apron];
+            const place = [at[2], at[1], at[0]];
+            const n = [0, 1, 2].map((a) => Math.max(0, Math.min(core[a], level.shape[a] - place[a] * core[a])));
+            if (!(n[0] > 0 && n[1] > 0 && n[2] > 0)) return;
+            const lo = place.map((p, a) => p * level.brickFull[a]);
+            const base = this.reference(c, lo, lo.map((v, a) => v + n[a] * level.vox[a]));
+            if (!(base?.n > 0)) return;
+            const half = header.format === "f16";
+            const stride = Math.max(1, Math.ceil(Math.sqrt((n[0] * n[1]) / BRICK_COLUMNS)));
+            const peaks = B.peaksFor(n[1], n[0], stride, half);
+            B.foldPeaks(peaks, data, shape, { z0: apron, z1: apron + n[2], y0: apron, y1: apron + n[1],
+                                              x0: apron, x1: apron + n[0], stride, half });
+            const finer = B.peakSum(peaks, half);
+            this.gainSums[2 * i] += base.sum;
+            this.gainSums[2 * i + 1] += base.n * (finer.sum / finer.n);
+            this.gainSamples[i] += base.n;
+        }
+
+        /**
+         * The gain of each level and channel (brightnessGain in the
+         * renderer): measured once its bricks have MATCH_MIN_SAMPLES of the
+         * base under them; until then the next coarser level's, stepped on
+         * by the ratio between that one and the one above it -- a pyramid's
+         * levels differ alike, level to level -- the base's being 1.
+         */
+        updateGains(B) {
+            const [floor, ceiling] = B.GAIN_RANGE;
+            for (let c = 0; c < Math.min(this.textures.length, GAIN_CHANNELS); c += 1) {
+                let coarser = 1;
+                let above = 1;
+                for (let k = this.levels.length - 1; k >= 0; k -= 1) {
+                    const i = k * GAIN_CHANNELS + c;
+                    const samples = this.gainSamples[i];
+                    const measured = samples >= B.MATCH_MIN_SAMPLES ? B.brightnessGain(
+                        { sum: this.gainSums[2 * i], n: samples }, { sum: this.gainSums[2 * i + 1], n: samples }) : null;
+                    const gain = measured ?? Math.min(ceiling, Math.max(floor, (coarser * coarser) / above));
+                    this.gains[i] = gain;
+                    above = coarser;
+                    coarser = gain;
+                }
             }
         }
 
@@ -734,6 +821,7 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             gl.uniform3iv(uniform("u_page_grid"), pad(this.levels.map((l) => l.grid), 3, 1));
             gl.uniform3fv(uniform("u_brick_tex"), this.brickTex);
             gl.uniform3fv(uniform("u_atlas_dim"), this.layout.size);
+            gl.uniform4fv(uniform("u_atlas_gain"), this.gains);
         }
 
         /** The finest voxel the cut draws, in full-resolution units (x, y, z). */

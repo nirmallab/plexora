@@ -17,8 +17,11 @@
  *   origin, and its entry names the slot; slots are reused least recently
  *   wanted first, never one the cut draws;
  * - a request carries one level's bricks for every channel, with windows;
- * - the shader walks REFINED before EMPTY, and the renderer's atlas program
- *   marches by its own t.
+ * - each level's bricks are drawn at the base's brightness: a gain per level
+ *   and channel from the bricks against the base under them, a level not
+ *   measured yet stepping on from the coarser ones;
+ * - the shader walks REFINED before EMPTY and says the level it stopped at,
+ *   and the renderer's atlas program marches by its own t.
  *
  * Run directly:  node tests/js/volume_atlas_probe.mjs
  */
@@ -302,6 +305,37 @@ check("a new channel set starts the atlas again",
     box.performance = realPerformance;
 }
 
+// -- bricks at the base's brightness -----------------------------------------------
+{
+    // The base under any brick: 64 samples of 0.5. Bricks of level 2 (the
+    // coarsest the atlas holds) all 1.0: twice as bright.
+    const asked = [];
+    const atlas = new Atlas({ gl: fakeGl(), datasource: "vol", maxTexture: 2048, fetchImpl,
+                              reference: (c, lo, hi) => (asked.push({ c, lo, hi }), { sum: 32, n: 64 }) });
+    atlas.manifest = manifest;
+    atlas.status = "ready";
+    atlas.configure([{ name: "DNA", stamp: "" }], 0, "u8", 3);
+    const voxels = new Uint8Array(brickBytes).fill(255).buffer;
+    const header = { brick: [34, 66, 66], apron: 1, format: "u8", bytes_per_brick: brickBytes,
+                     bricks: [{ at: [1, 3, 2], offset: 0 }] };
+    atlas.store(2, header, voxels, new Set());
+    check("a brick is measured against the base over its own place, in full-resolution pixels and planes",
+          asked.length === 1 && JSON.stringify(asked[0]) === JSON.stringify({ c: 0, lo: [512, 768, 32], hi: [768, 1024, 64] }),
+          JSON.stringify(asked));
+    const gain = (k) => atlas.gains[k * 8];
+    check("its level is brought to the base's brightness", Math.abs(gain(2) - 0.5) < 1e-6, String(gain(2)));
+    check("a finer level not measured yet steps on by the same ratio, within the range",
+          Math.abs(gain(1) - 0.25) < 1e-6 && gain(0) === 0.25, `${gain(1)} ${gain(0)}`);
+    const sent = {};
+    atlas.bind(new Proxy({}, { get: (t, name) => (typeof name !== "string" ? undefined
+        : (/^[A-Z_0-9]+$/.test(name) ? name : (...args) => { if (name.startsWith("uniform")) sent[args[0]] = args[1]; })) }),
+               (name) => name, 1, { fullLo: [0, 0, 0], fullSpan: [1024, 1024, 64] });
+    check("the gains go to the shader, two vec4s a level", sent.u_atlas_gain?.length === Atlas.MAXL * 8
+          && Math.abs(sent.u_atlas_gain[16] - 0.5) < 1e-6);
+    atlas.reset();
+    check("and start again at 1 with the atlas", atlas.gains.every((g) => g === 1));
+}
+
 // -- the shader ------------------------------------------------------------------
 
 const chunk = Atlas.shaderChunk(2);
@@ -315,8 +349,13 @@ const source = box.PlexoraVolumeRenderer.fragmentSource(2, false, true);
 check("the atlas program marches by its own t and leaves empty bricks",
       /float t = t0 \+ jitter \* stepLength;/.test(source) && /t \+= stepLength;/.test(source)
       && /hitBox\(A, B, cLo, cHi\)/.test(source) && /locate\(full,/.test(source));
-check("and samples the atlas where the walk found a brick, the base (through the frame) elsewhere",
-      /cState == 1 \? texture\(u_atlas1, a\)\.r : baseRead\(u_volume1, p\)/.test(source));
+check("and samples the atlas where the walk found a brick, at its level's gain, the base (through the frame) elsewhere",
+      source.includes("cState == 1 ? texture(u_atlas1, a).r * cGain0[1] : baseRead(u_volume1, p)"));
+check("the walk says the level it stopped at, and its gains are read once per brick, in the march and at a cut face",
+      /out int level\)/.test(walk) && /level = k;/.test(walk)
+      && /locate\(full, cLo, cHi, cState, cBase, cVox, cAnchor, cLevel\);\s*cGain0 = u_atlas_gain\[cLevel \* 2\];\s*cGain1 = u_atlas_gain\[cLevel \* 2 \+ 1\];/.test(source)
+      && source.includes("locate(full, b.lo, b.hi, b.state, b.base, b.vox, b.anchor, b.level);")
+      && source.includes("vec4 cGain0 = u_atlas_gain[b.level * 2];"));
 const plain = box.PlexoraVolumeRenderer.fragmentSource(2, false, false);
 check("the plain program is unchanged by it", !/u_pages/.test(plain) && /for \(int i = 0; i < 4096; i\+\+\)/.test(plain));
 

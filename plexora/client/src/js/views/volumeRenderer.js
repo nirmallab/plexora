@@ -128,6 +128,22 @@
     //: details and other areas included; past it details go first, then the
     //: least recently drawn.
     const GPU_BUDGET = 1024 * 2 ** 20;
+    //: The camera's near plane; the camera stays this far, and a little
+    //: more, in front of the box (minDistance).
+    const NEAR_PLANE = 0.01;
+    //: Rays per screen side, plus one, the part seen is also found with:
+    //: closer than a lattice step no lattice point is on screen at all.
+    const REGION_RAYS = 4;
+    //: A finer level is brought to the base's brightness (brightnessGain)
+    //: by no less and no more than this.
+    const GAIN_RANGE = [0.25, 4];
+    //: Samples of a base texture its brightness summary keeps at most.
+    const SUMMARY_SAMPLES = 2 ** 20;
+    //: Columns a detail's brightness is measured over at most.
+    const DETAIL_COLUMNS = 2 ** 16;
+    //: Base samples a footprint needs to be matched on its own; fewer, and
+    //: what earlier details at the same levels measured stands in.
+    const MATCH_MIN_SAMPLES = 64;
 
     const Camera = () => global.PlexoraVolumeCamera;
 
@@ -141,6 +157,111 @@
         const size = (r) => (r.x1 - r.x0) * (r.y1 - r.y0) * (r.z1 - r.z0 + 1);
         const union = size(a) + size(b) - inter;
         return union > 0 ? inter / union : 0;
+    }
+
+    // -- brightness across levels ------------------------------------------------
+    //
+    // A pyramid's coarser levels are averages of the finer ones (an Imaris
+    // file's in x, y and z alike), and the brightest voxel along a ray through
+    // averaged voxels is dimmer: a quarter to a third a level. So a detail or
+    // a level's bricks landing would light up the part they cover, and every
+    // zoom that reaches a finer level would brighten the picture. The base
+    // level is the reference: a finer piece is brought to it by one gain per
+    // channel, measured once as it lands from its own bytes -- the mean of its
+    // columns' maxima over its footprint against the base's over the same
+    // footprint and planes. The picture sharpens as finer data lands and keeps
+    // its brightness; a frame costs one multiply per sample.
+
+    /** A half float's value from its bits; a negative or non-finite one 0
+     *  (texture values are 0..1). */
+    function halfValue(bits) {
+        if (bits >= 0x7c00) return 0;
+        const exponent = bits >> 10;
+        const mantissa = bits & 0x3ff;
+        return exponent ? (1 + mantissa / 1024) * 2 ** (exponent - 15) : mantissa * 2 ** -24;
+    }
+
+    /**
+     * Fold planes [z0, z1) of `voxels` -- shape (depth, height, width), u8
+     * bytes or f16 bits -- into `peaks`: the largest value of every sampled
+     * column, every `stride`th of rows [y0, y1) and columns [x0, x1), laid
+     * out row by row. Bits compare as their values for the non-negative
+     * halves a texture holds; anything else counts as 0.
+     */
+    function foldPeaks(peaks, voxels, shape, { z0 = 0, z1 = shape[0], y0 = 0, y1 = shape[1],
+                                               x0 = 0, x1 = shape[2], stride = 1, half = false } = {}) {
+        const height = shape[1];
+        const width = shape[2];
+        for (let z = z0; z < z1; z += 1) {
+            let k = 0;
+            for (let y = y0; y < y1; y += stride) {
+                const row = (z * height + y) * width;
+                for (let x = x0; x < x1; x += stride, k += 1) {
+                    let v = voxels[row + x];
+                    if (half && v >= 0x7c00) v = 0;
+                    if (v > peaks[k]) peaks[k] = v;
+                }
+            }
+        }
+        return peaks;
+    }
+
+    /** Room for the peaks of every `stride`th column of rows x columns. */
+    function peaksFor(rows, columns, stride, half) {
+        const size = Math.ceil(rows / stride) * Math.ceil(columns / stride);
+        return half ? new Uint16Array(size) : new Uint8Array(size);
+    }
+
+    /** `{sum, n}` of `peaks` as texture values. */
+    function peakSum(peaks, half) {
+        let sum = 0;
+        for (let i = 0; i < peaks.length; i += 1) sum += half ? halfValue(peaks[i]) : peaks[i] / 255;
+        return { sum, n: peaks.length };
+    }
+
+    /** What a finer piece of a base texture is matched against: every
+     *  `stride`th column of every plane, raw, at most SUMMARY_SAMPLES. */
+    function brightnessSummary(voxels, shape, half) {
+        const [depth, height, width] = shape;
+        const stride = Math.max(1, Math.ceil(Math.sqrt((depth * height * width) / SUMMARY_SAMPLES)));
+        const rows = Math.ceil(height / stride);
+        const columns = Math.ceil(width / stride);
+        const data = half ? new Uint16Array(depth * rows * columns) : new Uint8Array(depth * rows * columns);
+        let k = 0;
+        for (let z = 0; z < depth; z += 1) {
+            for (let y = 0; y < height; y += stride) {
+                const row = (z * height + y) * width;
+                for (let x = 0; x < width; x += stride) data[k++] = voxels[row + x];
+            }
+        }
+        return { data, shape: [depth, rows, columns], stride, half };
+    }
+
+    /** `{sum, n}` of the summary's column maxima over planes [z0, z1), for
+     *  the base voxels whose middle is in [x0, x1) x [y0, y1). */
+    function summarySum(summary, { x0, x1, y0, y1, z0, z1 }) {
+        const { data, shape, stride, half } = summary;
+        const first = (v) => Math.max(0, Math.ceil((v - 0.5) / stride));
+        const i0 = first(x0);
+        const i1 = Math.min(shape[2], first(x1));
+        const j0 = first(y0);
+        const j1 = Math.min(shape[1], first(y1));
+        const k0 = Math.max(0, z0);
+        const k1 = Math.min(shape[0], z1);
+        if (!(i1 > i0 && j1 > j0 && k1 > k0)) return { sum: 0, n: 0 };
+        const peaks = peaksFor(j1 - j0, i1 - i0, 1, half);
+        foldPeaks(peaks, data, shape, { z0: k0, z1: k1, y0: j0, y1: j1, x0: i0, x1: i1, half });
+        return peakSum(peaks, half);
+    }
+
+    /** The gain that brings `finer`'s mean ({sum, n}) to `base`'s, within
+     *  GAIN_RANGE; null when either is too dark or empty to say. */
+    function brightnessGain(base, finer) {
+        if (!(base?.n > 0 && finer?.n > 0)) return null;
+        const b = base.sum / base.n;
+        const f = finer.sum / finer.n;
+        if (!(b > 1e-4 && f > 1e-4)) return null;
+        return Math.min(GAIN_RANGE[1], Math.max(GAIN_RANGE[0], b / f));
     }
 
     /** A number as Python's `f"{x:g}"` writes it, for the plain integers and
@@ -302,10 +423,11 @@ void main() {
             samplers.push(`uniform sampler3D u_volume${c};`);
             if (atlas) continue;
             if (detail) {
-                // The detail sub-volume where the sample falls in it, the
-                // whole level everywhere else (see `detail` in the renderer).
+                // The detail sub-volume where the sample falls in it, at the
+                // base's brightness (brightnessGain), the whole level
+                // everywhere else (see `detail` in the renderer).
                 samplers.push(`uniform sampler3D u_detail${c};`);
-                sample.push(`        v[${c}] = inDetail ? texture(u_detail${c}, q).r : baseRead(u_volume${c}, p);`);
+                sample.push(`        v[${c}] = inDetail ? texture(u_detail${c}, q).r * u_detail_gain[${c}] : baseRead(u_volume${c}, p);`);
             } else {
                 sample.push(`        v[${c}] = baseRead(u_volume${c}, p);`);
             }
@@ -338,7 +460,7 @@ uniform int u_grid_faces;      // 0 every far face, 1 the far z face only
 uniform vec3 u_grid_scale;     // grid lines per box unit, per axis
 uniform vec3 u_grid_offset;    // grid lines from the origin to the box's centre
 uniform vec2 u_jitter_res;     // the full-quality target's size, in its pixels
-${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;" : ""}
+${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;\nuniform float u_detail_gain[NCH];" : ""}
 ${chunk ? chunk.declarations : ""}
 in vec2 v_ndc;
 out vec4 outColor;
@@ -486,7 +608,7 @@ ${GRID_UNDER}
         if (atlasSample) {
             body = `    vec3 full = u_full_lo + p * u_full_span;
     if (any(lessThan(full, b.lo)) || any(greaterThanEqual(full, b.hi))) {
-        locate(full, b.lo, b.hi, b.state, b.base, b.vox, b.anchor);
+        locate(full, b.lo, b.hi, b.state, b.base, b.vox, b.anchor, b.level);
     }
     if (b.state == 2) {
         for (int c = 0; c < NCH; c++) v[c] = 0.0;
@@ -494,16 +616,18 @@ ${GRID_UNDER}
     }
     vec3 a = (b.base + (full - b.anchor) / b.vox) / u_atlas_dim;
     int cState = b.state;
+    vec4 cGain0 = u_atlas_gain[b.level * 2];
+    vec4 cGain1 = u_atlas_gain[b.level * 2 + 1];
 ${atlasSample}`;
         } else {
             body = `${locate}
 ${sample.join("\n")}`;
         }
         return `
-struct Brick { vec3 lo; vec3 hi; vec3 base; vec3 vox; vec3 anchor; int state; };
+struct Brick { vec3 lo; vec3 hi; vec3 base; vec3 vox; vec3 anchor; int state; int level; };
 
 Brick noBrick() {
-    return Brick(vec3(1.0), vec3(0.0), vec3(0.0), vec3(1.0), vec3(0.0), 0);
+    return Brick(vec3(1.0), vec3(0.0), vec3(0.0), vec3(1.0), vec3(0.0), 0, 0);
 }
 
 // One point of the stack, texture space; 'b' remembers the brick it was in.
@@ -553,6 +677,8 @@ vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, o
     B = mix(B, vec3(1e-9), equal(B, vec3(0.0)));
     vec3 cLo = vec3(1.0), cHi = vec3(0.0), cBase = vec3(0.0), cVox = vec3(1.0), cAnchor = vec3(0.0);
     int cState = 0;
+    int cLevel = 0;
+    vec4 cGain0 = vec4(1.0), cGain1 = vec4(1.0);
     float t = t0 + jitter * stepLength;
     for (int i = 0; i < 8192; i++) {
         if (t > hit.y) break;
@@ -560,7 +686,9 @@ vec4 cutFace(vec3 origin, vec3 dir, vec3 lo, vec3 hi, float tNear, float tFar, o
         vec3 p = world / u_extent + 0.5;
         vec3 full = A + B * t;
         if (any(lessThan(full, cLo)) || any(greaterThanEqual(full, cHi))) {
-            locate(full, cLo, cHi, cState, cBase, cVox, cAnchor);
+            locate(full, cLo, cHi, cState, cBase, cVox, cAnchor, cLevel);
+            cGain0 = u_atlas_gain[cLevel * 2];
+            cGain1 = u_atlas_gain[cLevel * 2 + 1];
         }
         if (cState == 2) {
             t = max(t + stepLength * 0.5, hitBox(A, B, cLo, cHi).y + stepLength * 0.01);
@@ -954,6 +1082,10 @@ ${sample}`;
             this._missed = new Map();
             this._textureIds = 0;
             this._detailIds = 0;
+            //: What the details at each pair of levels measured so far, for
+            //: a detail too small to be matched on its own (detailGain):
+            //: "name|stamp|format|base level|detail level" -> {base, finer, n}.
+            this._gainsLearnt = new Map();
             //: The camera and the composition the last frame was drawn with
             //: (cameraKey, draw), and the crossfade between two compositions.
             this._lastCam = null;
@@ -1521,6 +1653,7 @@ ${sample}`;
                 const covered = String(response.headers.get("X-Plexora-Box") || "")
                     .split(",").map(Number);
                 const window = String(stamp || "").split(",").map(Number);
+                const level = Number(response.headers.get("X-Plexora-Level") || 0);
                 const entry = {
                     texture, t, format, box: area, name, stamp,
                     id: ++this._textureIds,
@@ -1528,7 +1661,10 @@ ${sample}`;
                     levelWindow: window.length === 2 && window.every(Number.isFinite) ? window : null,
                     shape: [depth, height, width],
                     covered: covered.length === 4 && covered.every(Number.isFinite) ? covered : null,
-                    level: Number(response.headers.get("X-Plexora-Level") || 0),
+                    level,
+                    //: What a finer level is matched against (brightnessGain);
+                    //: none at level 0, which nothing is finer than.
+                    summary: level > 0 ? brightnessSummary(voxels, [depth, height, width], half) : null,
                     bytes: voxels.byteLength,
                     used: now(),
                 };
@@ -1839,11 +1975,12 @@ ${sample}`;
         zoomBy(factor) {
             const base = this.zoomTarget ?? this.camera.dist;
             // Closer to the pivot, or further: `factor` times the distance to
-            // it, which is `dist` itself with no crop. Close enough to look
-            // inside the stack: a detail (considerDetail) brings the finer
-            // levels in as the part seen gets smaller.
+            // it, which is `dist` itself with no crop. Close enough to see a
+            // plane's finest pixels, never into the box (minDistance): a
+            // detail (considerDetail) brings the finer levels in as the part
+            // seen gets smaller.
             const along = this.pivotAlong();
-            const target = along + Math.max(MIN_DIST, Math.min(8, (base - along) * factor));
+            const target = Math.max(this.minDistance(), along + Math.min(8, (base - along) * factor));
             if (!this.smooth()) {
                 this.zoomTarget = null;
                 this.camera.dist = target;
@@ -1930,7 +2067,7 @@ ${sample}`;
             const shift = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
                                             -panX, -panY, -dist, 1]);
             const view = mat4Multiply(shift, Camera().quat.toMat4(q));
-            const projection = mat4Perspective(FOV_Y, aspect, 0.01, 20);
+            const projection = mat4Perspective(FOV_Y, aspect, NEAR_PLANE, 20);
             const forward = mat4Multiply(projection, view);
             const back = mat4Invert(view);
             return { view, forward, inverse: mat4Invert(forward),
@@ -2172,6 +2309,7 @@ ${sample}`;
                 });
                 gl.uniform3fv(uniform("u_detail_lo"), detail.lo);
                 gl.uniform3fv(uniform("u_detail_hi"), detail.hi);
+                gl.uniform1fv(uniform("u_detail_gain"), details.map((entry) => entry.gain ?? 1));
             }
             const atlasView = withAtlas ? this.atlasView(lead) : null;
             if (withAtlas) this.atlas.bind(gl, uniform, channels.length, atlasView);
@@ -2363,7 +2501,11 @@ ${sample}`;
             if (!this.atlas && global.PlexoraVolumeAtlas) {
                 this.atlas = new global.PlexoraVolumeAtlas({
                     gl: this.gl, datasource: this.datasource, maxTexture: this.maxTexture,
-                    fetchImpl: this.fetch, onChange: () => this.invalidate() });
+                    fetchImpl: this.fetch, onChange: () => this.invalidate(),
+                    // A brick's brightness is matched to the base its channel
+                    // is drawn from (brightnessGain).
+                    reference: (c, lo, hi) => this.baseUnder(
+                        this.textures.get(this._shownKey.get(this.atlas?.channels?.[c]?.name)), lo, hi) });
                 this.atlas.load().then(() => this.scheduleDetail());
             }
             try {
@@ -2469,6 +2611,44 @@ ${sample}`;
             return Math.max(MIN_DIST / 4, this.camera.dist - this.pivotAlong());
         }
 
+        /**
+         * The closest `dist` may come facing `q` with the pan at `pan`:
+         * MIN_DIST from the pivot, and the eye outside the box drawn (the
+         * cut's) by more than the near plane. Inside a thin stack the rays
+         * would start past most of the tissue, and the picture fade to black
+         * at the closest zoom. A zoom moves the eye along one line, so this
+         * is where that line leaves the box; a line that misses it (the view
+         * panned off the stack) has no floor but MIN_DIST.
+         */
+        minDistance(q = this.camera.q, pan = [this.camera.panX, this.camera.panY]) {
+            const C = Camera();
+            const point = this.pivot();
+            const floor = (point ? C.quat.rotate(q, point)[2] : 0) + MIN_DIST;
+            const extent = this.extent();
+            const cut = this.cutUniforms();
+            const margin = NEAR_PLANE * 1.5;
+            // The eye in the box's space is (pan, dist) turned back by q:
+            // `from` + dist * `along`, through the columns of the turn.
+            const columns = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((axis) => C.quat.rotate(q, axis));
+            const from = columns.map((c) => c[0] * pan[0] + c[1] * pan[1]);
+            const along = columns.map((c) => c[2]);
+            let enter = -Infinity;
+            let leave = Infinity;
+            for (let a = 0; a < 3; a += 1) {
+                const lo = (cut.lo[a] - 0.5) * extent[a] - margin;
+                const hi = (cut.hi[a] - 0.5) * extent[a] + margin;
+                if (Math.abs(along[a]) < 1e-9) {
+                    if (from[a] < lo || from[a] > hi) return floor;
+                    continue;
+                }
+                const t0 = (lo - from[a]) / along[a];
+                const t1 = (hi - from[a]) / along[a];
+                enter = Math.max(enter, Math.min(t0, t1));
+                leave = Math.min(leave, Math.max(t0, t1));
+            }
+            return enter <= leave ? Math.max(floor, leave) : floor;
+        }
+
         /** The camera facing `q` with the pivot in the middle of the view,
          *  as far from it as it is now. */
         centred(q) {
@@ -2513,8 +2693,11 @@ ${sample}`;
             const [x, y, z] = C.quat.rotate(down, point);
             this.stopMotion();
             this.zoomTarget = null;
+            // As close as the plane was, unless that is inside the box: a
+            // far-zoomed plane of a thin stack opens at the closest outside.
             Object.assign(this.camera, { q: down, panX: x, panY: y,
-                                         dist: Math.max(MIN_DIST, Math.min(8, away)) + z });
+                                         dist: Math.max(this.minDistance(down, [x, y]),
+                                                        Math.max(MIN_DIST, Math.min(8, away)) + z) });
             this.invalidate();
             if (C.quat.angleBetween(goal, down) > 0.02) this.turnTo({ q: goal });
             return true;
@@ -2812,8 +2995,11 @@ ${sample}`;
          * The part of the stack the camera sees, in texture space ([0,1]^3 of
          * the whole-level texture), within the clip range: a lattice of points
          * through the clipped box projected into the view, the ones on screen
-         * and in front of the camera kept, their box grown by one lattice step.
-         * Null when it sees nothing.
+         * and in front of the camera kept, their box grown by one lattice step;
+         * and where a grid of rays across the screen enters and leaves the
+         * clipped box, as the shader's do. Close up -- the view narrower than
+         * a lattice step -- the rays alone find it, and keep it as tight as
+         * the view. Null when it sees nothing.
          */
         visibleRegion() {
             const inverse = this.matrices();
@@ -2851,11 +3037,53 @@ ${sample}`;
                     }
                 }
             }
-            if (!Number.isFinite(min[0])) return null;
             const step = [(xy.x[1] - xy.x[0]) / n, (xy.y[1] - xy.y[0]) / n, (clip[1] - clip[0]) / n];
+            for (let a = 0; a < 3; a += 1) {
+                min[a] -= step[a];
+                max[a] += step[a];
+            }
+            // The rays: near plane to far, entry and exit through the
+            // clipped box (box space), or from the near plane when the
+            // camera is inside it.
+            const lo = bounds.map(([v], a) => (v - 0.5) * extent[a]);
+            const hi = bounds.map(([, v], a) => (v - 0.5) * extent[a]);
+            const unproject = (x, y, z) => {
+                const w = inverse[3] * x + inverse[7] * y + inverse[11] * z + inverse[15];
+                return [0, 1, 2].map((i) => (inverse[i] * x + inverse[4 + i] * y + inverse[8 + i] * z
+                                             + inverse[12 + i]) / w);
+            };
+            const reach = (point) => {
+                for (let a = 0; a < 3; a += 1) {
+                    const p = point[a] / extent[a] + 0.5;
+                    if (p < min[a]) min[a] = p;
+                    if (p > max[a]) max[a] = p;
+                }
+            };
+            for (let i = 0; i <= REGION_RAYS; i += 1) {
+                for (let j = 0; j <= REGION_RAYS; j += 1) {
+                    const x = -1 + (2 * i) / REGION_RAYS;
+                    const y = -1 + (2 * j) / REGION_RAYS;
+                    const from = unproject(x, y, -1);
+                    const to = unproject(x, y, 1);
+                    const dir = to.map((v, a) => v - from[a]);
+                    let enter = -Infinity;
+                    let leave = Infinity;
+                    for (let a = 0; a < 3; a += 1) {
+                        const t0 = (lo[a] - from[a]) / dir[a];
+                        const t1 = (hi[a] - from[a]) / dir[a];
+                        enter = Math.max(enter, Math.min(t0, t1));
+                        leave = Math.min(leave, Math.max(t0, t1));
+                    }
+                    if (!(enter <= leave && leave >= 0)) continue;
+                    const start = Math.max(enter, 0);
+                    reach(from.map((v, a) => v + dir[a] * start));
+                    reach(from.map((v, a) => v + dir[a] * leave));
+                }
+            }
+            if (!Number.isFinite(min[0])) return null;
             return {
-                lo: min.map((v, a) => Math.max(bounds[a][0], v - step[a])),
-                hi: max.map((v, a) => Math.min(bounds[a][1], v + step[a])),
+                lo: min.map((v, a) => Math.max(bounds[a][0], v)),
+                hi: max.map((v, a) => Math.min(bounds[a][1], v)),
             };
         }
 
@@ -3063,12 +3291,14 @@ ${sample}`;
             this._detailRequest = request;
             let level = null;
             let arrived = null;
+            let gains = "";
             try {
                 const answers = await Promise.all(channels.map((channel) => this.loadDetail(channel, request)));
                 if (this._detailRequest !== request) return;
                 if (answers.some((answer) => !answer)) return;
                 level = answers[0].level;
                 arrived = answers[0];
+                gains = answers.map((answer) => (answer.gain ?? 1).toFixed(2)).join(",");
             } catch (error) {
                 console.error("volumeRenderer: the detail could not be read", error);
                 return;
@@ -3102,7 +3332,8 @@ ${sample}`;
                     if (old !== this.detailKey(channel, request)) this.dropTexture(old);
                 }
             }
-            global.PlexoraViewPerf?.mark?.("volume", "detail", null, level);
+            // The level and each channel's gain (brightnessGain): "2|0.74,0.81".
+            global.PlexoraViewPerf?.mark?.("volume", "detail", null, `${level}|${gains}`);
             this.invalidate();
         }
 
@@ -3110,7 +3341,7 @@ ${sample}`;
         async loadDetail(channel, request) {
             const key = this.detailKey(channel, request);
             const held = this.textures.get(key);
-            if (held) return { level: held.level, covered: held.covered, z: held.z };
+            if (held) return { level: held.level, covered: held.covered, z: held.z, gain: held.gain };
             const r = request.region;
             const ds = encodeURIComponent(this.datasource);
             const count = Math.max(1, this.channels().length);
@@ -3145,6 +3376,11 @@ ${sample}`;
             gl.texStorage3D(gl.TEXTURE_3D, 1, half ? gl.R16F : gl.R8, width, height, depth);
             const planeBytes = width * height * (half ? 2 : 1);
             const slab = Math.max(1, Math.floor(UPLOAD_PER_FRAME / Math.max(1, planeBytes)));
+            // Its brightness, measured on the way up (brightnessGain): the
+            // largest value of every few columns, slab by slab.
+            const stride = Math.max(1, Math.ceil(Math.sqrt((width * height) / DETAIL_COLUMNS)));
+            const peaks = peaksFor(height, width, stride, half);
+            const dims = [depth, height, width];
             for (let z = 0; z < depth; z += slab) {
                 if (z) await new Promise((resolve) => global.requestAnimationFrame(resolve));
                 if (!this.gl || this._detailRequest !== request) {
@@ -3156,21 +3392,76 @@ ${sample}`;
                 gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, z, width, height, count, gl.RED,
                                  half ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE,
                                  voxels.subarray(z * width * height, (z + count) * width * height));
+                foldPeaks(peaks, voxels, dims, { z0: z, z1: z + count, stride, half });
             }
             const covered = String(response.headers.get("X-Plexora-Box") || "").split(",").map(Number);
             const z = String(response.headers.get("X-Plexora-Z") || "").split(",").map(Number);
             const entry = {
                 texture, name: channel.name, t: request.t, format: request.format, box: "detail",
-                shape: [depth, height, width], detail: true,
+                shape: dims, detail: true,
                 covered: covered.length === 4 && covered.every(Number.isFinite) ? covered : null,
                 z: z.length === 2 && z.every(Number.isFinite) ? z : null,
                 level: Number(response.headers.get("X-Plexora-Level") || 0),
                 bytes: voxels.byteLength, used: now(),
             };
+            //: What its samples are scaled by in the shader (u_detail_gain).
+            entry.gain = this.detailGain(channel, this.textureOf(channel)
+                || this.textures.get(this._shownKey.get(channel.name)), entry, peakSum(peaks, half));
             this.textures.set(key, entry);
             this.textureBytes += entry.bytes;
             this.evict(new Set([key, ...this.keepKeys()]));
-            return { level: entry.level, covered: entry.covered, z: entry.z };
+            return { level: entry.level, covered: entry.covered, z: entry.z, gain: entry.gain };
+        }
+
+        /**
+         * The gain that brings a detail of `channel` -- `piece` ({covered, z,
+         * level}), `finer` its columns' maxima ({sum, n}) -- to the brightness
+         * of base texture `base` (brightnessGain): measured on its own
+         * footprint when the base has MATCH_MIN_SAMPLES under it, else what
+         * the details at the same two levels measured so far; 1 with nothing
+         * to go by.
+         */
+        detailGain(channel, base, piece, finer) {
+            const box = piece.covered;
+            if (!base || !box) return 1;
+            const z = piece.z || [0, Math.max(1, Number(this.viewState?.depth) || 1) - 1];
+            const under = this.baseUnder(base, [box[0], box[1], z[0]], [box[2], box[3], z[1] + 1]);
+            if (!under) return 1;
+            const key = [channel.name, channel.stamp || "", base.format, base.level, piece.level].join("|");
+            const learnt = this._gainsLearnt.get(key) || { base: 0, finer: 0, n: 0 };
+            if (under.n > 0 && finer.n > 0) {
+                // Each detail's two means weighted alike, by the base's samples.
+                learnt.base += under.sum;
+                learnt.finer += under.n * (finer.sum / finer.n);
+                learnt.n += under.n;
+                this._gainsLearnt.set(key, learnt);
+            }
+            const own = under.n >= MATCH_MIN_SAMPLES ? brightnessGain(under, finer) : null;
+            return own ?? brightnessGain({ sum: learnt.base, n: learnt.n },
+                                         { sum: learnt.finer, n: learnt.n }) ?? 1;
+        }
+
+        /** `{sum, n}` of base texture `base`'s column maxima under the
+         *  full-resolution box [lo, hi) -- pixels, pixels, planes -- from its
+         *  summary (brightnessGain); null without one. */
+        baseUnder(base, lo, hi) {
+            const summary = base?.summary;
+            const c = base?.covered;
+            if (!summary || !c) return null;
+            const [depth, height, width] = base.shape;
+            const planes = Math.max(depth, Number(this.viewState?.depth) || depth);
+            const sx = width / Math.max(1e-9, c[2] - c[0]);
+            const sy = height / Math.max(1e-9, c[3] - c[1]);
+            const sz = depth / planes;
+            // The base planes whose middle is in [lo, hi); one at least.
+            let z0 = Math.max(0, Math.ceil(lo[2] * sz - 0.5));
+            let z1 = Math.min(depth, Math.ceil(hi[2] * sz - 0.5));
+            if (z1 <= z0) {
+                z0 = Math.min(depth - 1, Math.max(0, Math.floor(((lo[2] + hi[2]) / 2) * sz)));
+                z1 = z0 + 1;
+            }
+            return summarySum(summary, { x0: (lo[0] - c[0]) * sx, x1: (hi[0] - c[0]) * sx,
+                                         y0: (lo[1] - c[1]) * sy, y1: (hi[1] - c[1]) * sy, z0, z1 });
         }
 
         dropTexture(key) {
@@ -3488,6 +3779,8 @@ ${sample}`;
                               TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS,
                               ROTATE_DEFAULT_DPS, ROTATE_MIN_DPS, ROTATE_MAX_DPS };
     VolumeRenderer.fragmentSource = fragmentSource;
+    VolumeRenderer.brightness = { halfValue, foldPeaks, peaksFor, peakSum, brightnessSummary, summarySum,
+                                  brightnessGain, GAIN_RANGE, MATCH_MIN_SAMPLES };
     VolumeRenderer.grid = { DEFAULTS: GRID_DEFAULTS, prefs: gridPrefs, niceStep, niceNeighbour,
                             axes: gridAxes, labels: gridLabels, project, formatTick };
     VolumeRenderer.mat4 = { multiply: mat4Multiply, invert: mat4Invert,

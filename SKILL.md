@@ -6022,7 +6022,20 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   (RESIDENT | REFINED | EMPTY), greedy cut by screen-space size, a shader walk
   per brick crossed -- and the finer detail sub-volume (`z=` + `box=`) stands
   in for node-backed images. `volumeAtlas.LINK` asks `/level` and `/bricks`
-  for `z=gzip` once the link measures under 30 MB/s. The tile scheduler
+  for `z=gzip` once the link measures under 30 MB/s. A finer piece (a detail,
+  or one level's atlas bricks) is drawn at the base's brightness by one gain
+  per channel, because a mean-pooled coarser level is dimmer and each finer
+  landing used to flash brighter: the mean of its columns' maxima over its
+  footprint against the base's (`brightnessGain`; the base keeps a `summary`
+  from `loadChannel`, at most 2^20 samples, none at level 0), measured once
+  from the piece's own bytes as it lands -- never on the server, never per
+  frame. Detail: `detailGain`, `baseUnder`, `u_detail_gain[NCH]`; atlas:
+  the `reference` option, `measure`, `updateGains`, `u_atlas_gain[MAXL*2]`
+  (read once per brick the walk enters; `locate` now outs its `level`). The
+  helpers are `PlexoraVolumeRenderer.brightness`. The perf mark
+  `volume/detail` is `"<level>|<gain per channel>"`. `visibleRegion()` also
+  casts a 5 x 5 grid of rays (`REGION_RAYS`), so the part seen is still found
+  nearer than a lattice step. The tile scheduler
   batches a volume's tiles (`/generated/batch`, `/node/v1/batch`;
   `server/tile_batch.py`) when a server's least first-byte wait, less
   `Server-Timing`, is over 60 ms.
@@ -6280,7 +6293,8 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `tests/js/{plane_flash,gl_init,nav_revision,section_panes,pane_status,tile_fetch,volume_renderer,volume_windows}_probe.mjs`
   (wrapped in `tests/test_viewer_3d_client.py`; `pane_status_probe.mjs` is
   `test_each_pane_says_when_it_is_loading`, floor 14; the floors are now
-  nav_revision 35, section_panes 48, tile_fetch 47), `test_volume_level_cache.py`,
+  nav_revision 35, section_panes 48, tile_fetch 47, volume_renderer 138,
+  and `volume_atlas_probe.mjs` 43), `test_volume_level_cache.py`,
   `test_volume_window_provisional.py`, `test_volume_chunk_cache.py`,
   `test_volume_sections.py`, `test_volume_depth_levels.py`, node level
   parity in `test_volume_backend.py`, and `test_volume_fluid_planes.py`
@@ -6296,7 +6310,7 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   volume mode), and `/volume/<ds>/info`'s `table_z`.
   The fade has `tests/js/channel_fade_probe.mjs` wrapped by
   `test_channel_fade_client.py`; `section_panes_probe.mjs` and
-  `volume_renderer_probe.mjs` carry its hook checks (floors 48 and 104 in the
+  `volume_renderer_probe.mjs` carry its hook checks (floors 48 and 138 in the
   `test_viewer_3d_client.py` wrapper).
   The depth controls have `tests/js/view_controls_probe.mjs` and
   `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`,
@@ -6466,7 +6480,11 @@ axes opens on its first, x before y before z.
   mid-view, `recentre()` does so at once, `pivotAlong()`/`pivotDistance()`
   measure toward it, and `zoomBy` scales the distance to the pivot, not
   `dist`. `MIN_DIST` is 0.03 (was 0.15), near enough to open at a zoomed-in
-  plane's magnification. `frameRegion({box, perPixel, height})` frames an
+  plane's magnification. `zoomBy` and `frameRegion` stop the camera at
+  `minDistance(q, pan)`: where its zoom line leaves the box drawn, by 1.5
+  near planes (`NEAR_PLANE`), never under `MIN_DIST` from the pivot, because
+  `MIN_DIST` alone let the eye inside a thin stack and the picture went
+  black. `frameRegion({box, perPixel, height})` frames an
   image region at `perPixel` screen pixels per image pixel, looking straight
   down first, as the plane did, then turning to the orientation last seen;
   the controller's `frameNext(request)` holds one for the next entry into

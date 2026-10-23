@@ -273,6 +273,19 @@ main. Design and the full list: `SLICE_CLIP.md`. Plan:
 | Oblique planes | not done (seams kept) |
 | A 3-D mask in 3-D: the Cells control's Outlines/Filled as cell surfaces (`services/maskSurfaces.js`, preview → standard, Pro `volume:surfaces`, hidden without it); one-pass surface nets (`surface/nets.py`) | done 2026-10-13 (SURFACES.md §4) |
 
+## Brightness across levels, close-up detail, the camera outside the box (2026-10-23)
+
+Plan: `~/.claude/plans/when-in-3d-there-nested-neumann.md`; measurements in PERF.md.
+
+| Item | State |
+|---|---|
+| A detail drawn at the base's brightness: one gain per channel from its columns' maxima against the base summary's, once as it lands (`brightnessGain`, `u_detail_gain`) | done |
+| The atlas's bricks likewise, per level and channel (`gains`, `u_atlas_gain`), a level not measured yet stepping on from the coarser ones | done |
+| The part seen also found with a grid of rays: the detail kept close up | done |
+| The camera stops where its zoom line leaves the box (`minDistance`), by zoom and by a far-zoomed plane opened in 3-D | done |
+| What is left of a first landing (+11 % on the reporter's view; how the GPU samples, not the data) | open |
+| A turn while close can still bring the eye into the box | open |
+
 ## The cog popover, compact (2026-10-13)
 
 Plan: `~/.claude/plans/pasted-content-id-2dc6-redesign-keen-frost.md`. Measured live on a

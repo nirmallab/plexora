@@ -456,6 +456,89 @@ Live (headless Chrome on the GPU, whole-canvas luminance read after every draw):
 through a Shift+drag and its landing, luminance 4.0-6.4, none below 20 % of the brightest.
 The `u_tex_lo/span` read costs no measurable frame time here, so it shipped (plan step 6).
 
+## Brightness across levels: a finer level never lights up the picture (2026-10-23, Windows)
+
+Reported live (an Imaris stack on a data node, 51 channels, 8432 x 5668 x 256, four HD
+channels, MIP): "a camera flash within tiles as the data loads", and "the image gets
+progressively brighter as I zoom in". Plan: `~/.claude/plans/when-in-3d-there-nested-neumann.md`.
+
+### What was wrong (measured in a second headless Chrome on the same server, writes stubbed)
+
+- **A coarser level is dimmer.** The file's own pyramid is mean-pooled in x, y and z (level 4
+  equals level 3 mean-pooled to 0.17 grey levels), and the brightest voxel along a ray through
+  averaged voxels is lower: Hoechst's z-MIP mean 61 at level 4, 79 at level 3. The base is the
+  whole stack at level 4; at rest `considerDetail` reads the part seen one or more levels finer,
+  drawn inside its box over the base. At one camera and the same 1024 steps the picture went
+  55.9 → 72.6 (canvas mean) as a detail landed, dissolved in by the ghost, and back as one was
+  dropped: the flash. Each zoom that reached a finer level was another step up. The atlas does
+  the same per batch of bricks on local images. Step count, window and opacity never changed.
+- **The detail was lost close up.** `visibleRegion` found the part seen with a 16-per-side
+  lattice; nearer than a lattice step no lattice point was on screen, it returned null, and the
+  closest views were drawn from the coarsest data.
+- **The camera could enter a thin stack.** `MIN_DIST` 0.03 is below this stack's half
+  thickness (0.032): the eye went inside the slab, the rays started past most of the tissue and
+  the picture faded to black at the closest zoom. A far-zoomed plane opened in 3-D did the same.
+
+### What changed
+
+- **One gain per channel, measured once as a finer piece lands** (`brightnessGain`,
+  volumeRenderer.js): the mean of its columns' maxima over its footprint against the base's
+  over the same footprint and planes, within 0.25-4. The base keeps a summary for this as it
+  loads (every few columns of every plane, at most 2^20 samples, a few ms, none at level 0); a
+  detail folds its maxima into the slab-per-frame upload it already did. A detail too small to
+  match on its own (under 64 base samples) takes what earlier details at the same two levels
+  measured. The shader multiplies a detail sample by `u_detail_gain[c]`. The atlas does the same
+  per level and channel (`gains` in volumeAtlas.js): `locate` says the level it stopped at, the
+  gains are read once per brick the walk enters, and a level not measured yet steps on from the
+  coarser ones by the ratio between them.
+- **The part seen is also found with a 5 x 5 grid of rays** entering and leaving the clipped
+  box as the shader's do, so it stays as tight as the view at any distance.
+- **`minDistance()`**: a zoom moves the eye along one line; the floor is where that line leaves
+  the box drawn (the cut's), by 1.5 near planes, never under `MIN_DIST` from the pivot. Turned,
+  the eye comes as close as just outside the box; a line that misses the box (panned off) has no
+  box floor. `frameRegion` opens a far-zoomed plane at the closest outside.
+
+### Decisions
+
+- **The base is the reference, matched on the client.** No server work, no fetch, nothing per
+  frame or per navigation step (the stack's one contrast stands); a frame costs one multiply per
+  sample. The alternative -- a level route that serves every level at the finest level's
+  brightness -- would need the finest data read for every coarse level.
+- **Raw means, not display space.** Matching the windowed means instead moved the gains by
+  under 0.03 and closed a third of the gap, and would have to be solved again on every contrast
+  change. What is left is how the GPU samples (trilinear between voxel centres, a step longer
+  than a fine plane, rays across columns when turned), which a per-column statistic cannot see;
+  a high window floor (Hoechst's at 0.24 of the texture range) magnifies a 2-3 % gain error
+  about five times.
+
+### Results (live, the reporter's dataset, same camera before and after)
+
+| Moment | Before | After |
+|---|---|---|
+| first detail over the base (oblique camera, canvas mean) | 55.9 → 72.6 (+30 %) | 26.0 → 28.8 (+11 %) |
+| one detail to the next at rest (level 3 → 3, 3 → 2) | (stepped like the first) | +1.3 %, −2.0 % |
+| additive, detail over the base | 7.9 → 10.3 (+30 %) | 2.96 → 2.88 (−3 %) |
+| gains measured (level 3 / level 2 over level 4) | -- | 0.87-0.94 / 0.81-0.85 |
+| closest zoom, oblique | eye inside the slab, black | stops at 0.0965, level 2 detail drawn |
+
+(Something in the live session changed between the two runs -- the base alone drew 55.9 then
+and 26.0 now at the same camera -- so compare within a column, frames of one run.)
+
+**Frame time** (`volume`, `volume_flash`; `small`, `medium`; 3 reps; RTX 3080, D3D11; before a
+detached worktree of `d8ca0545`, after the same plus this change; records kept out of `perf/`):
+
+| Metric (p50) | small before → after | medium before → after |
+|---|---|---|
+| rotate fps / frame P99 | 60.0 / 16.9 → 60.0 / 17.0 ms | 60.0 / 17.5 → 60.0 / 16.9 ms |
+| coast fps, dropped | 60.0, 0 → 60.0, 0 | 60.0, 0 → 60.0, 0 |
+| detail fps | 60.0 → 60.0 | 60.0 → 60.0 |
+| fill / handover flash, black frames | 0 → 0 | 0 → 0 |
+| rest jump (luminance) | 1.73 → 1.42 | 4.31 → 3.61 |
+
+`enter_first` (one sample a run) read 37 → 1054 ms on `small`; run again in the other order it
+was 1070 (before) and 836 ms (after): noise, not this change. Compiling the atlas program costs
+about 20 ms more (200 → 220 ms, two channels; ANGLE/D3D11), once.
+
 ## Beyond 2 TB: what is left
 
 - **Direct routing for levels.** Node tiles can be fetched by the browser straight off the node;
