@@ -71,6 +71,14 @@ window.PlexoraDataLocation = (function () {
     //: case where the answer differs.
     let lastPlace = null;
 
+    //: Which side somebody last set a field to on this page, by hand. A user
+    //: who chose This computer once has answered for the next field too, so
+    //: a connected machine is not pressed on them again.
+    let lastSide = null;
+
+    //: The connected machine last chosen by hand, kept for the next page.
+    const PLACE_KEY = "plexora.location.remote";
+
     //: Each attached field's handle, by its input. For code that is handed
     //: only the box -- browsePicker.js's drop target, which has to move a
     //: field set to Remote back to This computer before a file dropped from
@@ -108,6 +116,74 @@ window.PlexoraDataLocation = (function () {
         if (className) node.className = className;
         if (text !== undefined && text !== null) node.textContent = text;
         return node;
+    }
+
+    /** Note a side chosen by hand, and the machine when it is a remote one. */
+    function chosenByHand(where, place) {
+        lastSide = where;
+        if (where !== REMOTE || !place || !place.id || place.kind === "server") return;
+        try {
+            localStorage.setItem(PLACE_KEY, place.id);
+        } catch (e) { /* storage refused: this page still remembers lastPlace */ }
+    }
+
+    /**
+     * The connected machine a new, empty field should open on, out of the
+     * live list -- or null. Connected means a file could be named on it now:
+     * a data node that is up, or a files-only server's open SFTP connection.
+     * The server itself is not one: when it is elsewhere, This computer is
+     * still the machine somebody is sitting at.
+     *
+     * Several connected: the one the caller remembers (`prefer`), then the
+     * last one chosen on this page, then on the last page, then the first.
+     */
+    function connectedPlace(places, prefer) {
+        const live = (places || []).filter(
+            (place) => place && place.kind !== "server"
+                       && (Boolean(place.node) || Boolean(place.files)));
+        if (!live.length) return null;
+        let stored = null;
+        try {
+            stored = localStorage.getItem(PLACE_KEY);
+        } catch (e) { stored = null; }
+        const found = [prefer, lastPlace && lastPlace.id, stored]
+            .filter(Boolean)
+            .map((id) => live.find((place) => place.id === id))
+            .find(Boolean) || live[0];
+        return { id: found.id, kind: found.kind, label: found.label,
+                 node: found.node || null, files: found.files || null };
+    }
+
+    /**
+     * @function whenConnected - hand `apply` the connected machine a new,
+     *   empty field should open on, once the list of machines is known.
+     *
+     * Called at most once, and never on a page that has chosen This computer
+     * by hand or that has no live list. Never synchronously: `attach` must
+     * return its handle before the field changes under its caller. Whether
+     * the field is still untouched by then is the caller's to check.
+     *
+     * @param prefer - the id of a machine the caller remembers, tried first.
+     */
+    function whenConnected(apply, prefer) {
+        const remotes = window.PlexoraRemotes;
+        if (lastSide === LOCAL || !remotes || typeof remotes.subscribe !== "function") return;
+        let done = false;
+        let stop = null;
+        const answer = (snapshot) => {
+            if (done) return;
+            done = true;
+            if (stop) stop();
+            if (lastSide === LOCAL) return;
+            const place = connectedPlace(snapshot && snapshot.places, prefer);
+            if (place) apply(place);
+        };
+        const now = typeof remotes.snapshot === "function" ? remotes.snapshot() : null;
+        if (now && now.loaded) {
+            Promise.resolve().then(() => answer(now));
+            return;
+        }
+        stop = remotes.subscribe((snapshot) => Promise.resolve().then(() => answer(snapshot)));
     }
 
     async function ask(url, options) {
@@ -274,9 +350,10 @@ window.PlexoraDataLocation = (function () {
         const arriving = input.value.trim();
         const state = {
             // Otherwise This computer, because it is the machine somebody is
-            // sitting at and knows the paths on. Switching away is an explicit
-            // act, and it clears the box, which is honest: nothing here knows
-            // what that file is called on another machine.
+            // sitting at and knows the paths on -- until the list of machines
+            // says one is connected, which moves an untouched field there (see
+            // `whenConnected`). Switching by hand clears the box, which is
+            // honest: nothing here knows what that file is called elsewhere.
             where: arriving && serverIsRemote() ? REMOTE : LOCAL,
             place: arriving && serverIsRemote() ? serverPlace() : null,
             resourceId: null,
@@ -295,6 +372,10 @@ window.PlexoraDataLocation = (function () {
         };
         let pollTimer = null;
         let shareToken = 0;
+        //: Whether this field's machine has been settled -- by a stored value,
+        //: by a hand on the switch, by a caller, or by something typed. Until
+        //: it has, a connected machine may still be adopted (`whenConnected`).
+        let decided = Boolean(arriving);
 
         function serverPlace() {
             return { id: "server", kind: "server", label: "the server",
@@ -494,9 +575,11 @@ window.PlexoraDataLocation = (function () {
          * it had forgotten.
          */
         function press(where) {
+            decided = true;
             if (where === REMOTE && !(state.where === REMOTE && state.place)) {
                 return choosePlace();
             }
+            if (where === LOCAL) chosenByHand(LOCAL, null);
             if (where !== state.where) choose(where, null);
         }
 
@@ -516,11 +599,13 @@ window.PlexoraDataLocation = (function () {
          * - **More than one.** The picker, as before.
          */
         async function choosePlace(force) {
+            decided = true;
             if (!window.PlexoraPlacePicker) return;
             if (!force) {
                 const shortcut = await onlyPlace();
                 if (shortcut) {
                     lastPlace = shortcut;
+                    chosenByHand(REMOTE, shortcut);
                     choose(REMOTE, shortcut);
                     return;
                 }
@@ -536,6 +621,7 @@ window.PlexoraDataLocation = (function () {
                                         node: opened.node || null,
                                         files: opened.files || null };
                         lastPlace = place;
+                        chosenByHand(REMOTE, place);
                         choose(REMOTE, place);
                         return;
                     }
@@ -555,6 +641,7 @@ window.PlexoraDataLocation = (function () {
                 return;
             }
             lastPlace = picked;
+            chosenByHand(REMOTE, picked);
             choose(REMOTE, picked);
         }
 
@@ -806,7 +893,18 @@ window.PlexoraDataLocation = (function () {
              * the switch has to say so, or the box would hold a locator while
              * this computer tried to hand it to a node as a path.
              */
-            setWhere: (where, place) => choose(where, place),
+            setWhere: (where, place) => {
+                decided = true;
+                // A remote machine is remembered for the next field. This
+                // computer is not: the callers moving a field here are mostly
+                // a file dropped from this computer, which says where that one
+                // file is rather than where everything is.
+                if (where === REMOTE && place) {
+                    lastPlace = place;
+                    chosenByHand(REMOTE, place);
+                }
+                choose(where, place);
+            },
             /**
              * Put the field into whichever mode posts the box unchanged.
              *
@@ -818,6 +916,7 @@ window.PlexoraDataLocation = (function () {
              * immediately afterwards, because switching modes clears the box.
              */
             setVerbatim: () => {
+                decided = true;
                 if (serverIsRemote()) choose(REMOTE, serverPlace());
                 else choose(LOCAL, null);
             },
@@ -837,6 +936,22 @@ window.PlexoraDataLocation = (function () {
             statusElement: status,
         };
         HANDLES.set(input, handle);
+
+        // An empty field opens on a machine that is already connected, not on
+        // This computer: connecting one is how somebody says where their data
+        // is. Anything typed first, or any hand on the switch, wins.
+        input.addEventListener("input", () => {
+            if (input.value.trim()) decided = true;
+        });
+        if (!decided && options.connectedDefault !== false) {
+            const prefer = typeof options.preferPlace === "function"
+                ? options.preferPlace() : options.preferPlace;
+            whenConnected((place) => {
+                if (decided || state.where !== LOCAL || input.value.trim()) return;
+                lastPlace = lastPlace || place;
+                choose(REMOTE, place);
+            }, prefer);
+        }
         return handle;
     }
 
@@ -845,5 +960,5 @@ window.PlexoraDataLocation = (function () {
         return (input && HANDLES.get(input)) || null;
     }
 
-    return { attach, available, clientNode, serverIsRemote, handleOf };
+    return { attach, available, clientNode, serverIsRemote, handleOf, whenConnected };
 })();

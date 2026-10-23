@@ -172,13 +172,13 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261021_native_drop" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261023_connected_default" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
        dataLocation, all of which it calls into, and after browsePicker, whose
        attachBrowseButton it wires to its Browse button. #}
-    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20261023_connected_default" defer></script>
     {# THE slider, and the number box beside it. Every range input in Plexora
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,

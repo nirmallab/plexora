@@ -530,10 +530,96 @@ async function main() {
     ];
     context.flaskVariables = { client_node: "laptop" };
 
+    await connectedMachineIsTheDefault();
+
     if (failures.length) {
         console.error(`\n${failures.length} failed`);
         process.exit(1);
     }
+}
+
+/**
+ * A field that arrives empty opens on a machine that is already connected.
+ *
+ * Connecting a server is how somebody says where their data is; a form that
+ * still opens every box on This computer makes them say it again per field.
+ * A fresh page each time, because a hand on Local is remembered for the page.
+ */
+async function connectedMachineIsTheDefault() {
+    function freshPage(places, storage = new Map()) {
+        const page = { ...context, flaskVariables: {} };
+        page.window = page;
+        page.PlexoraRemotes = {
+            snapshot: () => ({ loaded: true, places }),
+            subscribe: () => () => {},
+        };
+        page.localStorage = {
+            getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+            setItem: (key, value) => storage.set(key, String(value)),
+        };
+        createContext(page);
+        runInContext(readFileSync(SOURCE, "utf-8"), page);
+        return page.window.PlexoraDataLocation;
+    }
+    const hpc = { id: "hpc", kind: "remote", label: "hpc", node: "hpc-data" };
+    const o2 = { id: "o2", kind: "remote", label: "o2", node: null,
+                 files: { base: "sftp://aj@o2", home: "/home/aj" } };
+    const saved = { id: "eris", kind: "remote", label: "eris", node: null };
+
+    let page = freshPage([saved, hpc]);
+    const empty = page.attach(fieldRow().input, { kind: "image" });
+    check("a field opens on This computer until the list of machines is known",
+          empty.isLocal() === true);
+    await settle();
+    check("...then on the one connected machine, not on a saved one that is down",
+          empty.isLocal() === false && empty.place().id === "hpc"
+          && empty.browseNode() === "hpc-data");
+
+    page = freshPage([saved]);
+    const none = page.attach(fieldRow().input, { kind: "image" });
+    await settle();
+    check("with nothing connected it stays on This computer",
+          none.isLocal() === true);
+
+    page = freshPage([hpc]);
+    const stored = fieldRow();
+    stored.input.value = "/Users/aj/study/cells.h5ad";
+    const arrived = page.attach(stored.input, { kind: "table" });
+    await settle();
+    check("a field that arrived with a value keeps it, on This computer",
+          arrived.isLocal() === true && stored.input.value === "/Users/aj/study/cells.h5ad");
+
+    page = freshPage([hpc]);
+    const typed = fieldRow();
+    const typing = page.attach(typed.input, { kind: "table" });
+    typed.input.value = "/Users/aj/x.csv";
+    typed.input.dispatchEvent({ type: "input" });
+    await settle();
+    check("a path typed before the list arrives is not cleared by it",
+          typing.isLocal() === true && typed.input.value === "/Users/aj/x.csv");
+
+    page = freshPage([hpc]);
+    const pressed = page.attach(fieldRow().input, { kind: "image" });
+    optionOf(pressed, "local").click();
+    const next = page.attach(fieldRow().input, { kind: "image" });
+    await settle();
+    check("a hand on This computer holds, for that field and the next on the page",
+          pressed.isLocal() === true && next.isLocal() === true);
+
+    const storage = new Map([["plexora.location.remote", "o2"]]);
+    page = freshPage([hpc, o2], storage);
+    const several = page.attach(fieldRow().input, { kind: "image" });
+    await settle();
+    check("with several connected, the one chosen last time wins",
+          several.place() && several.place().id === "o2"
+          && several.browseNode() === "sftp://aj@o2");
+
+    page = freshPage([hpc, o2]);
+    const preferred = page.attach(fieldRow().input, { kind: "image", preferPlace: "o2" });
+    const optedOut = page.attach(fieldRow().input, { kind: "image", connectedDefault: false });
+    await settle();
+    check("...a caller's remembered machine comes first, and a caller can opt out",
+          preferred.place() && preferred.place().id === "o2" && optedOut.isLocal() === true);
 }
 
 main().catch((error) => {

@@ -111,7 +111,9 @@ window.PlexoraFileSourceRow = (function () {
      * @returns `{element, reset, focus, busy}`
      */
     function create(options = {}) {
-        const state = { where: LOCAL, place: null, path: "", busy: false };
+        //: `decided`: the machine has been set by hand or something typed, so
+        //: a connected machine is no longer adopted for it.
+        const state = { where: LOCAL, place: null, path: "", busy: false, decided: false };
 
         const wrap = el("div", "file-source");
         if (options.label) {
@@ -236,6 +238,7 @@ window.PlexoraFileSourceRow = (function () {
          * though it had forgotten.
          */
         function press(where) {
+            state.decided = true;
             if (where === REMOTE && !(state.where === REMOTE && state.place)) {
                 return choosePlace(false);
             }
@@ -250,6 +253,7 @@ window.PlexoraFileSourceRow = (function () {
          * one is the picker.
          */
         async function choosePlace(force) {
+            state.decided = true;
             if (!window.PlexoraPlacePicker) return;
             if (!force) {
                 const reachable = await reachablePlaces();
@@ -424,6 +428,7 @@ window.PlexoraFileSourceRow = (function () {
         let checkId = 0;
         input.addEventListener("input", async () => {
             const value = input.value.trim();
+            if (value) state.decided = true;
             input.classList.remove("is-invalid");
             load.disabled = true;
             if (!value) return;
@@ -458,6 +463,13 @@ window.PlexoraFileSourceRow = (function () {
         });
 
         paint();
+
+        // Opens on a machine that is already connected, as every data field
+        // does (dataLocation.js, `whenConnected`).
+        window.PlexoraDataLocation?.whenConnected?.((place) => {
+            if (state.decided || state.where !== LOCAL || input.value.trim()) return;
+            settle(REMOTE, place);
+        });
 
         return {
             element: wrap,
