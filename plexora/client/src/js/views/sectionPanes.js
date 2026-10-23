@@ -619,6 +619,56 @@
             return promise;
         }
 
+        /**
+         * Channels turned on or off, the cut unchanged: the items of the
+         * channels still on stay as they are -- their tiles are per channel
+         * (tileSource), so nothing of theirs is stale -- one turned off goes,
+         * and one turned on comes in (faded in, as a channel new to a show()
+         * does). False when a handover is under way or nothing is on screen:
+         * the caller reloads the cut instead.
+         */
+        syncChannels() {
+            if (!this.osd || !this.geometry || !this.token || this.loading || this.after) return false;
+            const world = this.osd.world;
+            const channels = this.owner.channels();
+            const on = (srcIdx) => this.owner.channels().some(([idx]) => idx === srcIdx);
+            for (const [srcIdx, item] of [...this.items]) {
+                if (on(srcIdx)) continue;
+                if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
+                this.items.delete(srcIdx);
+            }
+            const token = this.token;
+            const generation = this.generation;
+            const Fade = global.PlexoraChannelFade;
+            for (const [srcIdx, channel] of channels) {
+                if (this.items.has(srcIdx)) continue;
+                this.osd.addTiledImage({
+                    tileSource: this.tileSource(srcIdx, channel, token),
+                    compositeOperation: "lighter",
+                    opacity: Fade ? 0 : 1,
+                    preload: true,
+                    success: (event) => {
+                        // A handover since (it brought every channel), or the
+                        // channel off again or already here: not wanted.
+                        if (generation !== this.generation || token !== this.token
+                                || !on(srcIdx) || this.items.has(srcIdx)) {
+                            world.removeItem(event.item);
+                            return;
+                        }
+                        this.items.set(srcIdx, event.item);
+                        if (Fade) Fade.fadeIn([event.item]);
+                        else event.item.setOpacity(1);
+                        event.item.addHandler("fully-loaded-change", () => {
+                            if (generation === this.generation) requestAnimationFrame(() => this.redraw());
+                        });
+                        this.align();
+                    },
+                });
+            }
+            this.redraw();
+            return true;
+        }
+
         /** Wait behind `loading` (a new frame's handover) to show `token`;
          *  a pan queued before is superseded by this one. */
         queue(token, options, loading) {
@@ -1750,13 +1800,18 @@
             }
         }
 
+        /** A channel on or off: only its own item comes or goes (Pane.syncChannels);
+         *  a pane mid-handover reloads its cut with the new channels instead. */
         channelsChanged() {
             if (!this.enabled || !this.panes) return;
+            let reload = false;
             for (const pane of Object.values(this.panes)) {
+                if (pane.syncChannels()) continue;
                 pane.token = "";
                 pane.refresh = true;
+                reload = true;
             }
-            this.follow(true);
+            if (reload) this.follow(true);
         }
     }
 

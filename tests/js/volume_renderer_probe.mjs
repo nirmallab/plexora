@@ -204,6 +204,18 @@ check("and their GPU memory is given back", counts.deleteTexture === 6);
         detailRequests.length === 1 && view.detail?.lo && view.detail.hi[0] > view.detail.lo[0]);
     await view.considerDetail();
     check("the same view again asks nothing", detailRequests.length === 1);
+    // A second channel switched on, the camera still: the same region again.
+    slots[1].enabled = true;
+    await view.refresh();
+    await view.considerDetail();
+    check("a channel switched on while zoomed in fetches only its own detail",
+        detailRequests.length === 2, String(detailRequests.length));
+    check("...and keeps every channel's, the new one's included",
+        view.detail && view.channels().every((c) => view.textures.has(view.detailKey(c, view.detail))));
+    await view.considerDetail();
+    check("...so the next rest asks nothing again", detailRequests.length === 2, String(detailRequests.length));
+    slots[1].enabled = false;
+    await view.refresh();
     view.camera.dist = 0.3;           // another part: nothing of it held
     view.detail = null;
     view._noFiner = null;

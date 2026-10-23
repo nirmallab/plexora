@@ -406,6 +406,44 @@ function poll(ms) {
     box.requestAnimationFrame = () => 0;
 }
 
+// -- a channel on or off, the cut unchanged: only its item comes or goes ------------
+
+{
+    const { pane, owner, osd } = makePane(1);
+    const on = (...indices) => {
+        owner.channels = () => indices.map((i) => [i, { url: `/t/${i}/` }]);
+        owner.channelCount = () => indices.length;
+    };
+    pane.show("xzy10");
+    const [first] = osd.land();
+    first.ready();
+    await tick();
+    on(0, 1);
+    check("a channel switched on, the cut unchanged, is added on its own", pane.syncChannels() === true);
+    const added = osd.land();
+    check("...one new item, for that channel; the one there stays",
+          added.length === 1 && added[0].token === "xzy10" && !first.removed
+          && pane.items.get(0) === first && pane.items.get(1) === added[0]);
+    check("...and the cut on screen is still current (no reload)", pane.token === "xzy10" && !pane.refresh);
+    on(1);
+    pane.syncChannels();
+    check("a channel switched off takes only its own item away",
+          first.removed && !added[0].removed && pane.items.size === 1 && osd.land().length === 0);
+    on(0, 1);
+    pane.syncChannels();
+    on(1);
+    pane.syncChannels();
+    const late = osd.land();
+    check("a channel switched off again before its item arrives never joins",
+          late.length === 1 && late[0].removed && pane.items.size === 1);
+    on(0, 1);
+    pane.show("xzy11");
+    check("mid-handover a pane does not add on its own: the cut reloads",
+          pane.syncChannels() === false);
+    osd.land().forEach((item) => item.ready());
+    await tick();
+}
+
 // -- each pane reveals on its own, as it covers ------------------------------------
 
 {

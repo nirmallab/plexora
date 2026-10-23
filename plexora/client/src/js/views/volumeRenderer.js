@@ -3058,7 +3058,14 @@ ${sample}`;
             const previous = this.detail;
             this.detail = request;
             if (previous && previous !== request) {
-                for (const channel of channels) this.dropTexture(this.detailKey(channel, previous));
+                // Keys are by region: a request for the region already shown
+                // (a channel turned on, the camera still) holds the very
+                // textures it just reused -- dropping those would lose them
+                // and ask for every channel's detail again at the next rest.
+                for (const channel of channels) {
+                    const old = this.detailKey(channel, previous);
+                    if (old !== this.detailKey(channel, request)) this.dropTexture(old);
+                }
             }
             global.PlexoraViewPerf?.mark?.("volume", "detail", null, level);
             this.invalidate();
