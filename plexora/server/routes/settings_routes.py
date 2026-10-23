@@ -59,15 +59,7 @@ def settings_page():
     # memory boxes on this page's own "add a server" form. That form is gone --
     # the preset catalogue asks those three, and gets the same constants from
     # `/settings/recipes` with the rest of the recipe.
-    #
-    # `pro_words` is the License lead's "Pro adds ..." from the manifest's
-    # Pro default, and its sentence on what is off by default, so the page
-    # cannot describe a plan the manifest no longer has. Data only: no
-    # licence is resolved for it.
-    from plexora.licensing import manifest
-
-    return render_template('settings.html', data=template_data(),
-                           sections=SECTIONS, pro_words=manifest.pro_words())
+    return render_template('settings.html', data=template_data(), sections=SECTIONS)
 
 
 def _resolve(raw):

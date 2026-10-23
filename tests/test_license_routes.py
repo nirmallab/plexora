@@ -46,20 +46,15 @@ def test_settings_offers_the_pricing_page_and_says_where_the_key_goes(client):
     assert "licence key comes by email" in page
 
 
-def test_settings_says_what_pro_adds_from_the_manifest(client):
-    """The License lead is built from the Pro default's labels, so it names
-    every root and plugin the plan carries and what is off by default -- and
-    goes on doing so when one is added."""
-    from plexora.licensing import manifest
-
+def test_settings_license_lead_says_ai_is_invite_only(client):
+    """The License lead says one thing: Plexora AI is by invitation, and where
+    to ask. What Free and Pro each include is the pricing page's to say."""
     page = client.get("/settings").get_data(as_text=True)
-    words = manifest.pro_words()
-    assert words["included"] == "Plexora AI, Plexora 3D, Spatial transcriptomics and Video Studio"
-    assert words["off_by_default"] == ("External MCP access is off by default; "
-                                       "an administrator can turn it on.")
-    assert f"{words['included']}. {words['off_by_default']}" in page
-    for name in manifest.pro_default():
-        assert manifest.label(name) in words["included"]
+    assert "Plexora AI is currently invite only" in page
+    assert 'href="mailto:support@biocognia.com"' in page
+    assert "Plexora <strong>Free</strong> is everything" not in page
+    assert "External MCP access is off by default" not in page
+    assert "everything Free keeps working" not in page
 
 
 def test_status_on_pro(client, pro_license):

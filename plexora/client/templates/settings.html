@@ -621,24 +621,15 @@
                one switch, so the page shows one form at a time. Nothing here
                is needed for Free, the page never asks the BioCognia platform
                anything until a button does, and Plexora never sees a
-               password: signing in happens in the browser.
-               What Pro adds is `pro_words` (manifest.pro_words, passed by
-               settings_routes.settings_page): the Pro default's own labels,
-               and what is off by default, so the sentence cannot fall behind
-               the manifest. #}
+               password: signing in happens in the browser. #}
             <section class="settings-panel" id="settings_panel_license"
                      data-section="license" aria-label="License">
 
                 <h2 class="settings-panel-title">License</h2>
                 <p class="settings-panel-lead">
-                    Plexora <strong>Free</strong> is everything Plexora does without a
-                    licence: every image, table and modality, every tool's manual
-                    features, remote and HPC viewing, notebooks and export &mdash;
-                    with no account and no network. <strong>Pro</strong> adds
-                    {{ pro_words.included }}. {{ pro_words.off_by_default }} Licences, devices and AI credits
-                    are managed at <a href="https://account.biocognia.com" target="_blank"
-                    rel="noopener">account.biocognia.com</a>; Plexora itself
-                    holds no account.
+                    Plexora AI is currently invite only. If you would like to be
+                    considered, email
+                    <a href="mailto:support@biocognia.com">support@biocognia.com</a>.
                 </p>
 
                 {# The plan. `data-tone` (settingsPage.js LicenseSection.draw)
@@ -798,8 +789,7 @@
                     <span>
                         Your data never leaves this machine: a licence check sends the
                         certificate and a hash that identifies this device, nothing
-                        else. When a licence ends, everything Free keeps working and
-                        everything you made with Pro features stays yours.
+                        else.
                     </span>
                 </p>
             </section>
