@@ -163,16 +163,17 @@ def write_prefs(**changes) -> dict | None:
     try:
         from plexora import paths
 
-        data = paths.read_settings()
-        block = data.get(SETTINGS_KEY)
-        block = dict(block) if isinstance(block, dict) else {}
-        for key, value in changes.items():
-            if value is None:
-                block.pop(key, None)
-            else:
-                block[key] = value
-        data[SETTINGS_KEY] = block
-        paths.write_settings(data)
+        with paths.settings_lock():
+            data = paths.read_settings()
+            block = data.get(SETTINGS_KEY)
+            block = dict(block) if isinstance(block, dict) else {}
+            for key, value in changes.items():
+                if value is None:
+                    block.pop(key, None)
+                else:
+                    block[key] = value
+            data[SETTINGS_KEY] = block
+            paths.write_settings(data)
         return block
     except Exception:
         return None

@@ -92,9 +92,10 @@ def _record(path):
 
     Deliberately does NOT call `paths.reset()` -- see the module docstring.
     """
-    settings = paths.read_settings()
-    settings["data_dir"] = str(path)
-    paths.write_settings(settings)
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        settings["data_dir"] = str(path)
+        paths.write_settings(settings)
 
 
 def _env_override():

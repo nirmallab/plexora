@@ -665,6 +665,35 @@ def test_a_pinned_folder_survives_and_can_be_let_go(client):
     assert client.get("/picker_prefs").get_json()["pinned"] == []
 
 
+def test_pins_sent_at_the_same_moment_are_all_kept():
+    """A pin and the explorer closing (or a view change) land together. Each
+    request used to read the file, merge, and write it back with no lock and
+    one temporary name per process, so the later write threw the pin away --
+    or both failed outright -- while the star stayed drawn. On Windows this
+    lost nearly every change of eight at once."""
+    import threading
+
+    pins = [f"/n/scratch/aj/study{index}" for index in range(8)]
+    barrier = threading.Barrier(len(pins))
+    statuses = []
+
+    def pin(path):
+        with plexora.app.test_client() as each:
+            barrier.wait()
+            statuses.append(each.post("/picker_prefs",
+                                      json={"node": "hpc", "pin": path}).status_code)
+
+    threads = [threading.Thread(target=pin, args=(path,)) for path in pins]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert statuses == [200] * len(pins)
+    kept = plexora.app.test_client().get("/picker_prefs?node=hpc").get_json()["pinned"]
+    assert sorted(kept) == sorted(pins)
+
+
 def test_each_machine_is_remembered_separately(client):
     """The point of keying this by node: /n/scratch/aj means nothing on the
     laptop, and the same user browses both in one session."""

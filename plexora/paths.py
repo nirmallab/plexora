@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -218,6 +219,34 @@ def settings_path() -> Path:
     return Path(user_config_dir(APP_NAME, appauthor=False, roaming=False)) / SETTINGS_FILENAME
 
 
+#: Held across every read-modify-write of the settings file in this process.
+#: Without it two requests that land together -- a pin and the explorer
+#: closing, a view change and a viewer pane resize -- each read the old file
+#: and the second write throws away the first one's change. Re-entrant, so a
+#: caller holding it can still call `read_settings` and `write_settings`.
+_settings_lock = threading.RLock()
+
+#: How long a write keeps retrying a rename Windows refuses because something
+#: has the file open (another process reading it, an antivirus scan).
+_REPLACE_ATTEMPTS = 20
+_REPLACE_PAUSE_S = 0.025
+
+
+def settings_lock() -> threading.RLock:
+    """The lock to hold around a read-modify-write of the settings file:
+
+        with paths.settings_lock():
+            settings = paths.read_settings()
+            settings["key"] = value
+            paths.write_settings(settings)
+
+    In-process only. A second Plexora process writing the same file can
+    still interleave with this one; the rename in `write_settings` keeps
+    each write whole, not the two merged.
+    """
+    return _settings_lock
+
+
 def read_settings() -> dict:
     """The settings file, or {} when there is not one yet.
 
@@ -227,7 +256,8 @@ def read_settings() -> dict:
     """
     path = settings_path()
     try:
-        text = path.read_text(encoding="utf-8")
+        with _settings_lock:
+            text = path.read_text(encoding="utf-8")
     except (OSError, ValueError):
         return {}
     if not text.strip():
@@ -245,18 +275,31 @@ def write_settings(data: dict) -> None:
     Same temp-file-and-rename as the project config, and for the same reason:
     a reader in another process sees the whole previous file or the whole new
     one, never the empty window that `open(path, "w")` leaves open.
+
+    The temporary name carries the thread as well as the process: two threads
+    sharing one used to truncate each other's half-written file and rename it
+    out from under each other. A rename Windows refuses because the file is
+    open elsewhere is retried briefly before it is allowed to fail.
     """
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    try:
-        with tmp.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=4)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    with _settings_lock:
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=4)
+                handle.flush()
+                os.fsync(handle.fileno())
+            for attempt in range(_REPLACE_ATTEMPTS):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == _REPLACE_ATTEMPTS - 1:
+                        raise
+                    time.sleep(_REPLACE_PAUSE_S)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 # -- the user's writable root --------------------------------------------
@@ -384,7 +427,8 @@ def _reconcile_suggestion(resolution: Resolution) -> None:
         # settings file, and it is what stops the next `plexora dataset create`
         # on this account from landing somewhere the viewer will not look.
         try:
-            write_settings({**read_settings(), "data_dir": str(resolution.path)})
+            with _settings_lock:
+                write_settings({**read_settings(), "data_dir": str(resolution.path)})
         except OSError as exc:
             # A quota'd home directory on a cluster is the realistic cause.
             # The suggestion still governs this process; it just will not

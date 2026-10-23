@@ -751,12 +751,24 @@ def save_picker_prefs():
         if order is not None and (not isinstance(order, list) or not all(
                 isinstance(item, str) for item in order)):
             raise ValueError("pinned_order must be a list of paths")
-        view = None
-        if payload.get('view') is not None:
-            view = _clean_view(payload['view'], _view_record())
+        raw_view = payload.get('view')
+        if raw_view is not None:
+            _clean_view(raw_view, _fresh_view())   # refuse a bad key before writing
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
 
+    # Read, merge and write as one step: a pin and the explorer closing land
+    # together, and merging into a record read before the other's write
+    # landed dropped the pin.
+    with paths.settings_lock():
+        view = None if raw_view is None else _clean_view(raw_view, _view_record())
+        record = _update_picker_record(node, last_dir, add_recent, pin, unpin,
+                                       order, view)
+    return jsonify(**record, view=view if view is not None else _view_record())
+
+
+def _update_picker_record(node, last_dir, add_recent, pin, unpin, order, view):
+    """Apply one request's changes to one machine's record and store it."""
     record = _picker_record(node)
     if last_dir:
         record["last_dir"] = last_dir
@@ -777,4 +789,4 @@ def save_picker_prefs():
         record["pinned"] = ordered + [p for p in pinned if p not in ordered]
 
     _store_picker_record(node, record, view=view)
-    return jsonify(**record, view=view if view is not None else _view_record())
+    return record
