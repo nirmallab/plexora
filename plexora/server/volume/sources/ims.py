@@ -34,8 +34,8 @@ memory rather than decompressed again -- 120 ms a tile became a few.
 DECOMPRESSED OUTSIDE THE LOCK. h5py serializes every HDF5 call behind one
 process-wide lock, and gzip inflate runs inside H5Dread -- so two channels,
 a section and a 3-D level, read at once, were one inflate at a time. Where a
-dataset's filters are ones this reads itself (deflate, optionally after
-shuffle), only the raw chunk bytes are read under the lock
+dataset's filters are ones this reads itself (deflate or LZ4, optionally
+after shuffle), only the raw chunk bytes are read under the lock
 (`read_direct_chunk`, a few ms for a plane's chunks); they are inflated on
 `chunk_cache.DECODE_POOL` with the lock released, and the decoded chunks kept
 in the process-wide `chunk_cache.CACHE` instead of h5py's per-dataset one. Any
@@ -46,14 +46,19 @@ filesystem the raw bytes are the slow part -- 16 chunks under a 1024 px tile,
 an 8-plane block of a 70-channel stack, measured at 50-300 ms a tile on HMS
 O2 -- and every tile of every channel took its turn at them under the one
 lock: a node with 16 cores answered about 21 cold tiles a second however many
-were asked for. So under the lock HDF5 is asked only WHERE each chunk is
-(`get_chunk_info_by_coord`: its offset and size, out of the chunk index HDF5
-keeps cached), and the bytes are read from the file by offset (`_RawFile`:
-`os.pread`, or a handle per thread where there is none) on the decode pool,
-in parallel, then inflated there as before. The first chunk read this way
-from each dataset is compared with h5py's own `read_direct_chunk` of it; a
-file where they differ (a driver that is not a plain file, say) reads that
-dataset the old way.
+were asked for. Asking HDF5 only WHERE each chunk is, under the lock, and
+reading the bytes by offset outside it (`_RawFile`, on the decode pool) looks
+like the cure and is not, for a file on a disk: `get_chunk_info_by_coord`
+walks the dataset's whole chunk index on every call -- linear in the chunks,
+~10 ms a call on a 24,000-chunk Imaris channel even with the index cached --
+so a tile spent longer finding its chunks than h5py took to read them.
+Measured on HMS O2 scratch, 16 cold 1024 px tiles: 213-763 ms a tile that
+way, 60-110 through h5py, 34-45 with `read_direct_chunk` (a B-tree lookup and
+the read) under the lock and the decode outside it. So a file on a disk is
+read that last way; only a file at a web address, below, is located and read
+by offset. There the first chunk read by offset from each dataset is compared
+with h5py's own `read_direct_chunk` of it; a stream where they differ reads
+that dataset the old way.
 
 AT A WEB ADDRESS. An .ims at an https/s3/gs/az/sftp address is the same
 file, read through `remote_store.RemoteFile`: h5py opens that stream (its
@@ -71,6 +76,7 @@ rather than one round trip after another.
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import os
 import threading
 from collections import OrderedDict
@@ -439,8 +445,8 @@ class ImsVolumeSource(VolumeSource):
             dataset = self._dataset(level, t, channel)
             plist = dataset.id.get_create_plist()
             filters = [plist.get_filter(i)[0] for i in range(plist.get_nfilters())]
-            # 2 = shuffle, 1 = deflate; in the order HDF5 applies them on write.
-            if dataset.chunks and filters in ([], [1], [2, 1], [2]):
+            # Shuffle then one codec, in the order HDF5 applies them on write.
+            if dataset.chunks and _readable(filters):
                 layout = {"chunks": tuple(int(c) for c in dataset.chunks),
                           "dtype": np.dtype(dataset.dtype),
                           "fill": dataset.fillvalue,
@@ -462,6 +468,7 @@ class ImsVolumeSource(VolumeSource):
         dtype = layout["dtype"]
         dataset = layout["dataset"]
         filters = layout["filters"]
+        codec = next((f for f in filters if f != _SHUFFLE), None)
         keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
                 for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
                 for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
@@ -473,9 +480,9 @@ class ImsVolumeSource(VolumeSource):
                 return np.full((cz, cy, cx), layout["fill"] or 0, dtype=dtype)
             data = raw
             # A set bit in the mask is a filter this chunk skipped.
-            if 1 in filters and not (mask >> filters.index(1)) & 1:
-                data = _inflate(data)
-            if 2 in filters and dtype.itemsize > 1 and not (mask >> filters.index(2)) & 1:
+            if codec is not None and not (mask >> filters.index(codec)) & 1:
+                data = _decoder(codec)(data)
+            if _SHUFFLE in filters and dtype.itemsize > 1 and not (mask >> filters.index(_SHUFFLE)) & 1:
                 data = np.frombuffer(data, np.uint8).reshape(dtype.itemsize, -1).T.tobytes()
             return np.frombuffer(data, dtype=dtype, count=cz * cy * cx).reshape(cz, cy, cx)
 
@@ -511,7 +518,9 @@ class ImsVolumeSource(VolumeSource):
 
         def load_many(missing):
             dkey = (int(level), int(t), int(channel))
-            direct = self._direct.get(dkey, True)
+            # By offset only at a web address: on a disk, finding a chunk
+            # costs more than reading it (the module docstring).
+            direct = self._direct.get(dkey, self._stream is not None)
             located = []
             with self._io:
                 for key in missing:
@@ -624,6 +633,44 @@ class ImsVolumeSource(VolumeSource):
         self._direct.clear()
         self._raw.close()
         _close_file(self._file, self._stream)
+
+
+#: HDF5 filter ids: byte shuffle, deflate, and LZ4 -- the registered id of
+#: hdf5plugin's LZ4 filter, which Imaris 10 can write.
+_SHUFFLE, _DEFLATE, _LZ4 = 2, 1, 32004
+
+
+def _readable(filters) -> bool:
+    """Whether `_read_chunks` decodes a dataset with this filter pipeline
+    itself: nothing, shuffle, a codec, or shuffle then a codec."""
+    codecs = [_DEFLATE] + ([_LZ4] if _lz4_available() else [])
+    return filters in ([], [_SHUFFLE], *([c] for c in codecs), *([_SHUFFLE, c] for c in codecs))
+
+
+def _decoder(codec):
+    """The function that decompresses a chunk written through `codec`."""
+    return _inflate if codec == _DEFLATE else _unlz4
+
+
+@functools.cache
+def _lz4_available() -> bool:
+    """Whether imagecodecs here decodes HDF5's LZ4 framing; without it an LZ4
+    dataset reads through h5py (and hdf5plugin) instead."""
+    try:
+        import imagecodecs
+
+        return bool(imagecodecs.LZ4H5.available)
+    except (ImportError, AttributeError):
+        return False
+
+
+def _unlz4(raw: bytes) -> bytes:
+    """A chunk through HDF5's LZ4 filter, decompressed: its 12-byte header
+    (original size, block size) and length-prefixed LZ4 blocks, decoded by
+    imagecodecs, which releases the GIL."""
+    import imagecodecs
+
+    return imagecodecs.lz4h5_decode(raw)
 
 
 def _inflate(raw: bytes) -> bytes:
@@ -983,6 +1030,15 @@ class ImsLabels:
                 "not whole numbers, so they are not cell ids.")
         return block.astype(np.uint32)
 
+    def _warm(self, data, z0, z1, rows, cols) -> None:
+        """At a web address, fetch the chunks under the read a batch at a time
+        first (`_warm`). On a disk, nothing -- not even finding the chunks:
+        `_chunk_spans` asks HDF5 where each one is, which costs about as much
+        as reading it (a whole plane of a 46,000-chunk mask: 0.67 s, for a
+        0.74 s read)."""
+        if self._stream is not None:
+            _warm(self._stream, _chunk_spans(data, z0, z1, rows, cols))
+
     def plane(self, t: int, z: int, rows: slice = slice(None),
               cols: slice = slice(None)) -> np.ndarray:
         """Frame `t`, plane `z`, `[rows, cols]` of the real extent."""
@@ -991,7 +1047,7 @@ class ImsLabels:
         whole = (rows == slice(0, self.height) and cols == slice(0, self.width))
         if not whole:
             data = self._data(t)
-            _warm(self._stream, _chunk_spans(data, z, z, rows, cols))
+            self._warm(data, z, z, rows, cols)
             return self._ids(np.asarray(data[int(z), rows, cols]))
         data = self._data(t)
         depth = int((data.chunks or data.shape)[0])
@@ -999,11 +1055,11 @@ class ImsLabels:
             z0 = int(z) // depth * depth
             if self._slab is None or self._slab[:2] != (int(t), z0):
                 z1 = min(self.depth, z0 + depth)
-                _warm(self._stream, _chunk_spans(data, z0, z1 - 1, rows, cols))
+                self._warm(data, z0, z1 - 1, rows, cols)
                 block = np.asarray(data[z0:z1, :self.height, :self.width])
                 self._slab = (int(t), z0, block)
             return self._ids(self._slab[2][int(z) - z0])
-        _warm(self._stream, _chunk_spans(data, z, z, rows, cols))
+        self._warm(data, z, z, rows, cols)
         return self._ids(np.asarray(data[int(z), :self.height, :self.width]))
 
     def __getitem__(self, index):

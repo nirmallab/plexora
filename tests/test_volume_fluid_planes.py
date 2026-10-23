@@ -6,9 +6,11 @@ were asked for, a far jump through the planes took seconds, and switching a
 channel on took ~10 s the first time. Pinned here, as the work done rather
 than as wall-clock time:
 
-- An Imaris file's chunks are read BY OFFSET, outside the file's lock and in
-  parallel (server/volume/sources/ims.py `_RawFile`), and a file whose offsets
-  do not read back as h5py's own bytes reads the old way.
+- An Imaris file at a web address has its chunks read BY OFFSET, outside the
+  file's lock and in parallel (server/volume/sources/ims.py), and one whose
+  offsets do not read back as h5py's own bytes reads the old way. A file on a
+  disk does not: finding a chunk's offset costs more there than reading it
+  (tests/test_volume_chunk_cache.py).
 - Background work -- a window scan, a read ahead -- reads in the chunk cache's
   background lane, never in front of a tile.
 - The block of planes ahead of a plane tile is read in the background
@@ -24,6 +26,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
+import types
 from concurrent.futures import Future
 from pathlib import Path
 
@@ -61,12 +64,19 @@ def _stored(path, level, channel, z0, z1, rows, cols):
 # -- chunks by offset ------------------------------------------------------------
 
 
+def _as_if_remote(source):
+    """Read `source` the way a file at a web address is read -- by offset --
+    while its bytes still come from the local file through `_RawFile`."""
+    source._stream = types.SimpleNamespace(close=lambda: None)
+    return source
+
+
 @pytest.mark.parametrize("compression,shuffle", [(None, False), ("gzip", False), ("gzip", True)])
 def test_chunks_are_read_by_offset_outside_the_lock(tmp_path, fresh_cache, monkeypatch,
                                                     compression, shuffle):
     path, _ = vf.write_ims(tmp_path / "s.ims", channels=1, depth=8, height=64, width=64,
                            compression=compression, shuffle=shuffle, chunks=(4, 16, 16))
-    source = ims_source.open_ims_volume(path)
+    source = _as_if_remote(ims_source.open_ims_volume(path))
     held = []
     real = ims_source._RawFile.read
 
@@ -89,7 +99,7 @@ def test_a_file_whose_offsets_do_not_read_back_reads_the_old_way(tmp_path, fresh
     read through h5py, and the picture is still exactly the file's."""
     path, _ = vf.write_ims(tmp_path / "s.ims", channels=1, depth=8, height=64, width=64,
                            compression="gzip", chunks=(4, 16, 16))
-    source = ims_source.open_ims_volume(path)
+    source = _as_if_remote(ims_source.open_ims_volume(path))
     monkeypatch.setattr(ims_source._RawFile, "read", lambda self, offset, size: b"\0" * size)
     got = source.read_block(0, 0, 0, 0, 7, slice(0, 64), slice(0, 64))
     assert np.array_equal(got, _stored(path, 0, 0, 0, 7, slice(0, 64), slice(0, 64)))
