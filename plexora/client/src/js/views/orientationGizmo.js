@@ -14,6 +14,11 @@
  * views/volumeRenderer.js) wears a ring, the other two fade, and a short
  * line under the gizmo says how to let go.
  *
+ * Grabbed anywhere and dragged, it turns the view as a drag on the canvas
+ * does -- freely, or about the locked axis -- at a rate that keeps its ends
+ * under the hand, and a release while moving coasts on. A press that does
+ * not travel GRAB_PX is still the click on an end.
+ *
  * Drawn in SVG: a few elements rewritten per frame, nothing on the GPU, and
  * crisp at any zoom of the page.
  */
@@ -25,6 +30,10 @@
     const REACH = 21;                      // px from the centre to an axis end
     const COLOURS = { x: "#e5484d", y: "#46a758", z: "#4c7cf0" };
     const VIEWS = { x: "the YZ plane", y: "the XZ plane", z: "the XY plane" };
+    //: Travel before a press is a drag rather than a click on an end.
+    const GRAB_PX = 3;
+    //: A drag's turn per pixel: an end at REACH keeps up with the hand.
+    const TURN_PER_PX = 1 / REACH;
 
     function svg(tag, attrs = {}) {
         const node = document.createElementNS(NS, tag);
@@ -35,9 +44,13 @@
     class OrientationGizmo {
         /**
          * @param onAxis - (axis, {reverse}) when an end is pressed
+         * @param onTurn - ({perPx, centre}) when a drag starts, returning
+         *                 {move(dx, dy, pointer), end(release)}; pointer and
+         *                 centre in client pixels
          */
-        constructor({ onAxis = null } = {}) {
+        constructor({ onAxis = null, onTurn = null } = {}) {
             this.onAxis = onAxis;
+            this.onTurn = onTurn;
             this.locked = null;
             this.root = document.createElement("div");
             this.root.className = "viewer-orientation-gizmo";
@@ -45,6 +58,9 @@
             this.root.setAttribute("aria-label", "Orientation");
             this.svg = svg("svg", { viewBox: `${-SIZE / 2} ${-SIZE / 2} ${SIZE} ${SIZE}`,
                                     width: SIZE, height: SIZE, "aria-hidden": "false" });
+            // Something to grab between the axes.
+            this.svg.appendChild(svg("circle", { r: SIZE / 2 - 2, fill: "transparent",
+                                                 class: "gizmo-pad" }));
             this.axes = {};
             for (const name of ["x", "y", "z"]) {
                 const group = svg("g", { class: `gizmo-axis is-${name}` });
@@ -72,8 +88,6 @@
                     event.stopPropagation();
                     this.onAxis?.(name, { reverse });
                 };
-                end.addEventListener("pointerdown", (event) => event.stopPropagation());
-                back.addEventListener("pointerdown", (event) => event.stopPropagation());
                 end.addEventListener("click", press(false));
                 back.addEventListener("click", press(true));
                 for (const [node, reverse] of [[end, false], [back, true]]) {
@@ -82,10 +96,71 @@
                     });
                 }
             }
+            this.svg.addEventListener("pointerdown", (event) => this.press(event));
+            // The click that ends a drag is not a press on the end under it.
+            this.root.addEventListener("click", (event) => {
+                if (!this._dragged) return;
+                this._dragged = false;
+                event.preventDefault();
+                event.stopPropagation();
+            }, true);
             this.hint = document.createElement("div");
             this.hint.className = "viewer-orientation-hint";
             this.hint.hidden = true;
             this.root.append(this.svg, this.hint);
+        }
+
+        /**
+         * A press on the gizmo: the click on an end, unless it travels
+         * GRAB_PX first -- then a turn (`onTurn`) until it lets go. Followed
+         * on the window, so a quick first move off the gizmo is not lost.
+         */
+        press(event) {
+            // Nothing underneath acts on a press here.
+            event.stopPropagation();
+            this._dragged = false;
+            if (event.button !== 0 || !this.onTurn || this._grab) return;
+            const id = event.pointerId;
+            const grab = { x: event.clientX, y: event.clientY, turn: null };
+            const stop = (e) => {
+                if (e?.pointerId !== undefined && e.pointerId !== id) return;
+                global.removeEventListener("pointermove", move);
+                global.removeEventListener("pointerup", stop);
+                global.removeEventListener("pointercancel", stop);
+                this._grab = null;
+                this.root.classList.remove("is-grabbing");
+                grab.turn?.end(e?.type === "pointerup");
+            };
+            const move = (e) => {
+                if (e.pointerId !== id) return;
+                if (!grab.turn) {
+                    if (Math.hypot(e.clientX - grab.x, e.clientY - grab.y) < GRAB_PX) return;
+                    const box = this.svg.getBoundingClientRect();
+                    grab.turn = this.onTurn({ perPx: TURN_PER_PX,
+                                              centre: { x: box.left + box.width / 2,
+                                                        y: box.top + box.height / 2 } });
+                    if (!grab.turn) {
+                        stop();
+                        return;
+                    }
+                    this._dragged = true;
+                    this.root.classList.add("is-grabbing");
+                    try {
+                        this.svg.setPointerCapture?.(id);
+                    } catch (error) {
+                        // The pointer is already gone; the window still hears it.
+                    }
+                }
+                const dx = e.clientX - grab.x;
+                const dy = e.clientY - grab.y;
+                grab.x = e.clientX;
+                grab.y = e.clientY;
+                if (dx || dy) grab.turn.move(dx, dy, { x: e.clientX, y: e.clientY });
+            };
+            this._grab = grab;
+            global.addEventListener("pointermove", move);
+            global.addEventListener("pointerup", stop);
+            global.addEventListener("pointercancel", stop);
         }
 
         /**
@@ -140,6 +215,8 @@
     }
 
     OrientationGizmo.COLOURS = COLOURS;
+    OrientationGizmo.GRAB_PX = GRAB_PX;
+    OrientationGizmo.TURN_PER_PX = TURN_PER_PX;
     global.PlexoraOrientationGizmo = OrientationGizmo;
     if (typeof module !== "undefined" && module.exports) {
         module.exports = OrientationGizmo;

@@ -5592,8 +5592,16 @@ html.plx-moving-control * {
 }
 
 .viewer-orientation-gizmo svg {
+    cursor: grab;
     display: block;
     overflow: visible;
+    touch-action: none;
+}
+
+.viewer-orientation-gizmo.is-grabbing svg,
+.viewer-orientation-gizmo.is-grabbing .gizmo-end,
+.viewer-orientation-gizmo.is-grabbing .gizmo-back {
+    cursor: grabbing;
 }
 
 .viewer-orientation-gizmo .gizmo-end,

@@ -19,6 +19,9 @@
  *                     Play's turn keeps its speed at any frame rate, never
  *                     ends on its own, and stops on a press, a preset, a
  *                     lock, a restored camera, a rendered frame, leaving 3-D.
+ *   orientationGizmo.js  grabbed and dragged, it turns the view (about the
+ *                     lock when there is one) and coasts as the canvas does;
+ *                     a press that does not travel is still an end's click.
  *   sectionPanes.js   a pane is the size chosen, either way: past its stack's
  *                     height z is stretched to fill it; it never covers the
  *                     plane's last MIN_XY_PX; a drag reloads nothing until it
@@ -786,6 +789,99 @@ function runFrames(box, renderer, ms, hz) {
     renderer.setLock("x");
     renderer.setLock("z");
     check("another axis key switches the lock at once", renderer.lock === "z");
+}
+
+{
+    // The orientation gizmo, grabbed: a drag turns the view with its ends
+    // under the hand, coasts on a moving release, follows a lock; a press
+    // that does not move is still the click on an end.
+    const box = sandbox();
+    box.PlexoraViewerPrefs = { smoothMotion: () => true };
+    const windowListeners = {};
+    box.addEventListener = (name, fn) => { (windowListeners[name] ||= []).push(fn); };
+    box.removeEventListener = (name, fn) => {
+        windowListeners[name] = (windowListeners[name] || []).filter((f) => f !== fn);
+    };
+    const onWindow = (name, event) => {
+        for (const fn of [...(windowListeners[name] || [])]) fn({ type: name, pointerId: 1, ...event });
+    };
+    box.document.createElementNS = (ns, tag) => fakeElement(tag);
+    load(box, "views/volumeCamera.js", "views/orientationGizmo.js", "views/volumeRenderer.js");
+    const C = box.PlexoraVolumeCamera;
+    const Gizmo = box.PlexoraOrientationGizmo;
+    const renderer = new box.PlexoraVolumeRenderer({ viewState: null, datasource: "d",
+                                                     wrapper: fakeElement("div") });
+    // Wired as mount() wires it (mount itself needs WebGL).
+    const gizmo = new Gizmo({ onAxis: (name, options) => renderer.lookAlong(name, options),
+                              onTurn: (options) => renderer.grabTurn(options) });
+    gizmo.svg.getBoundingClientRect = () => ({ left: 900, top: 20, width: 64, height: 64 });
+    let captured = null;
+    gizmo.svg.setPointerCapture = (id) => { captured = id; };
+    let looked = [];
+    renderer.lookAlong = (name, options) => looked.push([name, options.reverse]);
+    const clickEnd = (name) => {
+        const event = { type: "click", stopped: false, preventDefault() {},
+                        stopPropagation() { this.stopped = true; } };
+        for (const fn of gizmo.root.listeners.click || []) fn(event);
+        if (!event.stopped) gizmo.axes[name].end.fire("click");
+    };
+    const drag = (points, { up = true } = {}) => {
+        gizmo.svg.fire("pointerdown", { button: 0, pointerId: 1, clientX: 932, clientY: 52 });
+        for (const [x, y] of points) {
+            box.clock.now += 16;
+            onWindow("pointermove", { clientX: x, clientY: y });
+        }
+        if (up) onWindow("pointerup", { clientX: points.at(-1)[0], clientY: points.at(-1)[1] });
+    };
+
+    gizmo.svg.fire("pointerdown", { button: 0, pointerId: 1, clientX: 932, clientY: 52 });
+    onWindow("pointermove", { clientX: 933, clientY: 53 });
+    onWindow("pointerup", { clientX: 933, clientY: 53 });
+    clickEnd("x");
+    check("a press on an end that does not travel is still its click",
+        looked.length === 1 && looked[0][0] === "x" && captured === null);
+    check("...and leaves nothing listening on the window",
+        !(windowListeners.pointermove || []).length && !(windowListeners.pointerup || []).length);
+
+    renderer.camera.q = C.VIEWS.xy.slice();
+    const start = renderer.camera.q.slice();
+    const xBefore = C.axisOnScreen(start, "x");
+    looked = [];
+    drag([[934, 52], [938, 52], [942, 52], [946, 52]]);
+    clickEnd("x");
+    check("a drag on the gizmo turns the view, at the gizmo's rate",
+        near(C.quat.angleBetween(start, renderer.camera.q), 14 * Gizmo.TURN_PER_PX, 1e-9)
+        && Gizmo.TURN_PER_PX > C.ROTATE_PER_PX);
+    check("...capturing the pointer once it is a drag", captured === 1);
+    check("...and the click that ends it is not a press on the end", looked.length === 0);
+    // Looking along z, the z end faces the viewer (or away): dragged right,
+    // the near side goes right with the hand, the far side the other way.
+    const zBefore = C.axisOnScreen(start, "z");
+    const zAfter = C.axisOnScreen(renderer.camera.q, "z");
+    check("the end nearer the viewer follows the hand",
+        Math.abs(zBefore[2]) > 0.9 && Math.sign(zAfter[0] - zBefore[0]) === Math.sign(zBefore[2])
+        && near(xBefore[1], C.axisOnScreen(renderer.camera.q, "x")[1], 1e-9),
+        JSON.stringify({ zBefore, zAfter }));
+    check("let go while moving, it coasts as a canvas drag does", renderer.spin && renderer.spin.screen);
+    check("...and the view is no longer held as moving by hand", renderer.interacting === false);
+
+    renderer.spin = null;
+    renderer.camera.q = C.VIEWS.xy.slice();
+    renderer.setLock("z");
+    drag([[936, 52], [940, 56], [944, 60]]);
+    runFrames(box, renderer, 500, 60);
+    const z = C.axisOnScreen(renderer.camera.q, "z");
+    const zStart = C.axisOnScreen(C.VIEWS.xy, "z");
+    check("locked, a drag on the gizmo turns about that image axis only",
+        zStart.every((v, i) => near(v, z[i], 1e-9))
+        && C.quat.angleBetween(C.VIEWS.xy, renderer.camera.q) > 0.05);
+    renderer.setLock(null);
+
+    renderer.setAutoRotate(true, { speed: 30 });
+    drag([[940, 52]], { up: false });
+    check("a grab stops Play's turn", renderer.autoRotate === null && renderer.interacting === true);
+    onWindow("pointercancel", {});
+    check("a cancelled grab does not coast", renderer.spin === null && renderer.interacting === false);
 }
 
 {

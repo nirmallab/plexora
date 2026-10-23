@@ -86,7 +86,8 @@
  * which match the plane viewer and the section panes). X, Y or Z locks the
  * turn to that axis of the IMAGE -- pressed again, or Esc, lets go -- and the
  * orientation gizmo in a corner (views/orientationGizmo.js) shows the axes,
- * the lock, and turns to look along an axis when one is pressed.
+ * the lock, and turns to look along an axis when one is pressed; dragged,
+ * it turns the view as the canvas does, its ends following the hand.
  * Let go while it is moving and it keeps turning, slowing the way a
  * real object does: the speed decays exponentially, per millisecond rather
  * than per frame (the same coast at 60 Hz and 120 Hz), so a flick carries as
@@ -1025,7 +1026,8 @@ ${sample}`;
                 ? new global.PlexoraSurfaceRenderer(this) : null;
             if (global.PlexoraOrientationGizmo) {
                 this.gizmo = new global.PlexoraOrientationGizmo({
-                    onAxis: (name, options) => this.lookAlong(name, options) });
+                    onAxis: (name, options) => this.lookAlong(name, options),
+                    onTurn: (options) => this.grabTurn(options) });
                 // Placed by the shared canvas layout (services/canvasLayout.js)
                 // in a corner no other control holds; the wrapper otherwise.
                 const placed = global.PlexoraCanvasLayout?.place?.(this.gizmo.root,
@@ -2625,15 +2627,76 @@ ${sample}`;
             };
         }
 
+        /**
+         * A turn by hand under way, for whichever hand turns it -- a drag on
+         * the canvas, or on the orientation gizmo at its own `perPx`.
+         * `move(dx, dy, pointer)` turns by the pointer's travel since the
+         * last move: freely, or about the locked axis by the rule fixed as
+         * the turn starts (volumeCamera's lockedDrag; `centre` is what a
+         * locked axis facing the viewer sweeps round, in the pointer's
+         * coordinates). `end(release)` coasts on at the hand's speed when
+         * the hand let go while still moving.
+         */
+        turnByHand({ perPx = Camera().ROTATE_PER_PX, centre = null } = {}) {
+            const C = Camera();
+            const axis = this.lock;
+            const rule = axis ? C.lockedDrag(this.camera.q, axis, perPx) : null;
+            //: The hand's turn so far and when, for the release's speed:
+            //: {t, a, b} -- about the screen's x and y for a free drag, the
+            //: locked axis's angle in `a` for a locked one.
+            let a = 0;
+            let b = 0;
+            const samples = [{ t: now(), a, b }];
+            return {
+                move: (dx, dy, pointer) => {
+                    if (rule) {
+                        const angle = rule.angle(dx, dy, pointer, centre);
+                        this.turnAboutPivot(C.turnAbout(this.camera.q, axis, angle));
+                        a += angle;
+                    } else {
+                        this.turnAboutPivot(C.turnFree(this.camera.q, dx, dy, perPx));
+                        a += dy * perPx;
+                        b += dx * perPx;
+                    }
+                    const at = now();
+                    samples.push({ t: at, a, b });
+                    while (samples.length > 2 && at - samples[0].t > VELOCITY_WINDOW_MS * 2) {
+                        samples.shift();
+                    }
+                    this.invalidate();
+                },
+                end: (release) => {
+                    const speed = release && this.smooth() ? releaseSpeed(samples, now()) : null;
+                    if (!speed) return;
+                    // A locked turn coasts about the same axis; a free one
+                    // about the screen axes it was turning on.
+                    this.spin = axis ? { axis, rate: speed.a } : { screen: [speed.a, speed.b] };
+                    this.lastStep = now();
+                },
+            };
+        }
+
+        /** A drag on the orientation gizmo: the canvas's turn, at its rate. */
+        grabTurn(options) {
+            this.stopMotion();
+            clearTimeout(this._settleTimer);
+            this.interacting = true;
+            const turn = this.turnByHand(options);
+            return {
+                move: turn.move,
+                end: (release) => {
+                    this.interacting = false;
+                    turn.end(release);
+                    this.invalidate();
+                },
+            };
+        }
+
         bindPointer(canvas) {
             let drag = null;
             //: A slide of the area under way (`dragArea`), and where the
             //: press was: {session, x0, y0}.
             let slide = null;
-            //: The hand's turn so far and when, for the release's speed:
-            //: {t, a, b} -- about the screen's x and y for a free drag, the
-            //: locked axis's angle in `a` for a locked one.
-            let samples = [];
             canvas.addEventListener("pointerdown", (event) => {
                 canvas.setPointerCapture?.(event.pointerId);
                 // A press stops a spin or a turn where it is.
@@ -2648,13 +2711,9 @@ ${sample}`;
                 const pan = !slide && (event.button === 1 || (event.button === 0 && event.altKey)
                     || (event.button === 0 && event.shiftKey && !area));
                 const box = canvas.getBoundingClientRect();
-                drag = { x: event.clientX, y: event.clientY, a: 0, b: 0, pan, box,
+                drag = { x: event.clientX, y: event.clientY, pan, box,
                          x0: event.clientX, y0: event.clientY,
-                         // A locked drag's rule is fixed as it starts (volumeCamera).
-                         locked: !pan && this.lock
-                             ? Camera().lockedDrag(this.camera.q, this.lock) : null,
-                         centre: this.centreOnScreen() };
-                samples = [{ t: now(), a: 0, b: 0 }];
+                         turn: pan || slide ? null : this.turnByHand({ centre: this.centreOnScreen() }) };
                 this.interacting = true;
                 // Probe back up a little each time, in case the last slow
                 // frames were the machine being busy rather than this view.
@@ -2671,27 +2730,13 @@ ${sample}`;
                     slide.session.move(event.clientX - slide.x0, event.clientY - slide.y0);
                     return;
                 }
-                const C = Camera();
                 if (drag.pan) {
                     const scale = this.pivotDistance() / Math.max(1, canvas.clientHeight);
                     this.camera.panX -= dx * scale;
                     this.camera.panY += dy * scale;
-                } else if (drag.locked) {
-                    const pointer = { x: event.clientX - drag.box.left, y: event.clientY - drag.box.top };
-                    const angle = drag.locked.angle(dx, dy, pointer, drag.centre);
-                    this.turnAboutPivot(C.turnAbout(this.camera.q, this.lock, angle));
-                    drag.a += angle;
                 } else {
-                    this.turnAboutPivot(C.turnFree(this.camera.q, dx, dy));
-                    drag.a += dy * C.ROTATE_PER_PX;
-                    drag.b += dx * C.ROTATE_PER_PX;
-                }
-                if (!drag.pan) {
-                    const at = now();
-                    samples.push({ t: at, a: drag.a, b: drag.b });
-                    while (samples.length > 2 && at - samples[0].t > VELOCITY_WINDOW_MS * 2) {
-                        samples.shift();
-                    }
+                    drag.turn.move(dx, dy, { x: event.clientX - drag.box.left,
+                                             y: event.clientY - drag.box.top });
                 }
                 this.invalidate();
             });
@@ -2712,23 +2757,13 @@ ${sample}`;
                     slide.session.end();
                     slide = null;
                     drag = null;
-                    samples = [];
                     this.invalidate();
                     return;
                 }
-                const turning = !drag.pan && event?.type === "pointerup";
-                const locked = drag.locked ? this.lock : null;
+                const turn = drag.turn;
                 drag = null;
                 this.interacting = false;
-                const speed = turning && this.smooth() ? releaseSpeed(samples, now()) : null;
-                samples = [];
-                if (speed) {
-                    // A locked turn coasts about the same axis; a free one
-                    // about the screen axes it was turning on.
-                    this.spin = locked ? { axis: locked, rate: speed.a }
-                        : { screen: [speed.a, speed.b] };
-                    this.lastStep = now();
-                }
+                turn?.end(event?.type === "pointerup");
                 this.invalidate();
             };
             canvas.addEventListener("pointerup", end);

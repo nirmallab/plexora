@@ -187,7 +187,10 @@ channel re-levels and nothing is fetched for contrast while you drag or after yo
 top-right corner (x red, y green, z blue), faint until you hover it, move the view or lock an
 axis. It follows every turn. Click X, Y or Z to look along that axis at the plane across it --
 X gives the YZ plane, Y the XZ plane, Z the XY plane, oriented exactly as the section panes show
-them -- and click it again (or the small dot at the far end) for the far side. With the pointer
+them -- and click it again (or the small dot at the far end) for the far side. Grab the gizmo
+anywhere (an end, or between them; the cursor is a hand) and drag: the view turns with it, as a
+drag on the image does but quicker, the end nearest you keeping up with the pointer; let go
+while moving and it coasts. A press that does not move is still the click. With the pointer
 over the 3-D view, press X, Y or Z: dragging (and its coast) then turns the stack about that axis
 of the image only, the gizmo rings it and says "Turning about X · Esc"; the same key again or Esc
 lets go, another axis key switches. Elsewhere on the page those letters keep doing what they did

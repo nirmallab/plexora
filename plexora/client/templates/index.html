@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261022_views2">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261023_gizmodrag">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -594,7 +594,7 @@
 <script src="{{ data.base_url }}/client/src/js/views/depthSettings.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261023_gizmodrag" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeAtlas.js?v=20261021_area" defer></script>
 {# Surfaces (plexora/server/surface): the meshes drawn in the 3-D view, the
    service that loads and styles them, their card, Surface Studio's dock, the
@@ -609,7 +609,7 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261022_channel_sync" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261023_gizmodrag" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
 <script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261022_bookmarks" defer></script>
