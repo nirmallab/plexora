@@ -1628,7 +1628,7 @@ $ python -m plexora --desktop
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Projects | the same data directory as `plexora` ([§1](#where-your-data-lives)) | same | same |
-| Logs (`server.log`, `shell.log`) | `%LOCALAPPDATA%\org.nirmallab.plexora\logs` | `~/Library/Logs/org.nirmallab.plexora` | `~/.local/share/org.nirmallab.plexora/logs` |
+| Logs (`server.log`, `shell.log`) | `%LOCALAPPDATA%\com.biocognia.plexora\logs` | `~/Library/Logs/com.biocognia.plexora` | `~/.local/share/com.biocognia.plexora/logs` |
 | The app | `%LOCALAPPDATA%\Plexora` | `/Applications/Plexora.app` | `/usr/lib/Plexora` (the .deb) |
 
 **Help → Show Logs** and **Help → Show Data Folder** open them.

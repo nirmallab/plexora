@@ -2,7 +2,7 @@
 name = "plexora-desktop"
 version = "0.0.28"
 description = "The Plexora desktop app: a native window around the Plexora server."
-authors = ["Nirmal Lab"]
+authors = ["BioCognia"]
 license-file = "../../LICENSE"
 edition = "2021"
 rust-version = "1.80"

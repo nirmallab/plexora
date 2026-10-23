@@ -68,7 +68,7 @@ A denser stack (90 nuclei, 16 touching another; 25 scored):
 
 ## Through planes: real nuclei, no ground truth
 
-Twelve nuclei on plane 95 of the Imaris confocal stack in `nirmal lab/temp/3D/F8IIc-smallchunk.ims`
+Twelve nuclei on plane 95 of the Imaris confocal stack in `F8IIc-smallchunk.ims`
 (190 planes, 0.14 / 0.28 um), boxed from a threshold of the plane and carried by both engines:
 
 | Engine | Planes per nucleus (median, range) | Time per nucleus |

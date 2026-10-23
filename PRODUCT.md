@@ -147,7 +147,7 @@ https://nirmallab.github.io/plexora/ (`plexora/links.py` `DOCS_URL`). Settings,
   (22 West Ave, Brockton, MA 02301, USA); the code is at
   `github.com/nirmallab/plexora`.
   Commercial seats are bought self-serve, like academic ones; contact for
-  licensing questions: Ajit Johnson Nirmal.
+  licensing questions: support@biocognia.com.
 - **Existing assets:** `plexora/client/src/img/logo.svg` and
   `logo_with_text.svg`, with `.ai` sources beside them; `favicon.ico`,
   `apple-touch-icon.png`; `icon.icns` and `icon.ico` at the repository root.

@@ -9,6 +9,7 @@ name = "plexora"
 version = "0.0.28"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
+authors = [{ name = "BioCognia", email = "support@biocognia.com" }]
 requires-python = ">=3.12,<3.14"
 # Not an SPDX-listed license, so it is carried as a LicenseRef- custom
 # identifier (PEP 639). The Plexora End User Licence Agreement: Free for any
