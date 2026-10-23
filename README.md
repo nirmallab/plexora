@@ -156,7 +156,7 @@ package — is yours. You may distribute and sell your plugin under whatever lic
 you like, and you do not need our permission. Extending Plexora through the plugin
 API is the supported way to change what it does; editing its source is not.
 
-For licensing questions, contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
+For licensing questions, contact support@biocognia.com.
 
 Some bundled components carry their own licenses, which are unaffected by the above —
 see section 13 of [LICENSE](./LICENSE).

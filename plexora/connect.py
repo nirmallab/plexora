@@ -310,7 +310,7 @@ def split_target(target):
 
     The user half matters beyond politeness: in `--srun` mode the second hop
     is built here rather than by ssh's own config lookup, and on Windows the
-    local account name ("Ajit Nirmal", with a space) is almost never the
+    local account name ("Jane Doe", with a space) is almost never the
     cluster account name.
     """
     if "@" in target:

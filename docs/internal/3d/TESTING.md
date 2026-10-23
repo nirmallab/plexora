@@ -353,7 +353,7 @@ size does on `main`. Pinning a 4-plane MIP took about a minute and matched numpy
 
 Two real stacks, opened through the browser (screenshots sent 2026-10-10):
 
-- `nirmal lab/temp/3D/F8IIc-smallchunk.ims` (Imaris, 6 channels, 190 planes of 1538×763,
+- `F8IIc-smallchunk.ims` (Imaris, 6 channels, 190 planes of 1538×763,
   0.14/0.28 µm, gzip chunks 64 planes deep): registers in 0.25 s; the first tiles of three
   channels, brightness scan included, 2.5 s; a 190-plane MIP of the view about 3 s; section
   tiles 0.06–0.8 s; the 3-D view about 1 s. Imaris's "(name not specified)" reads as Channel 1–6.
