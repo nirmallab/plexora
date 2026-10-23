@@ -192,10 +192,21 @@ def usage() -> dict:
     summary = index.usage()
     projects = _projects_by_root()
     jobs = layer_jobs.tasks(PIN_SAMPLE)
+    listed = []
     for row in summary["stores"]:
-        row["projects"] = projects.get(row["url"] or "", [])
         job = jobs.get(f"{REMOTE_PIN_ID}:{row['id']}")
+        # A store evicted or cleared down to nothing is not listed. Its row
+        # stays in the index -- an open store registered it once and goes on
+        # recording entries against it -- so it reappears with its first byte.
+        # Kept while pinned, or while a pin job is filling it or failed on it:
+        # those cards carry a button or an error that has nowhere else to go.
+        if not row["bytes"] and not row["pinned"] and not (
+                job and job.get("status") in ("pending", "failed")):
+            continue
+        row["projects"] = projects.get(row["url"] or "", [])
         row["job"] = job
+        listed.append(row)
+    summary["stores"] = listed
     summary.update({
         "cache_dir": str(remote_store.cache_root()),
         "env_override": bool(os.environ.get(paths.ENV_REMOTE_CACHE_BYTES)),

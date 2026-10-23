@@ -638,7 +638,16 @@
      */
     function WebDataSection() {
         this.polling = null;
+        // How many store cards are drawn. Kept across refreshes, so the poll
+        // that runs while a store fills does not fold a list somebody opened.
+        this.storesShown = STORES_SHOWN;
     }
+
+    /** Store cards drawn before "Show more", and how many each press adds. A
+     *  cache that has been used for a while holds dozens; the most recently
+     *  opened (the server's order) are the ones anybody comes here about. */
+    const STORES_SHOWN = 3;
+    const STORES_MORE = 10;
 
     WebDataSection.prototype.start = function () {
         const budgetSave = el("settings_webdata_budget_save");
@@ -772,12 +781,48 @@
         if (!stores.length) {
             const empty = document.createElement("div");
             empty.className = "settings-meta";
-            empty.textContent = "Nothing cached yet. It fills the first time a "
-                + "project opens an image from a web address.";
+            // Also what a cleared cache looks like: the server leaves out a
+            // store with nothing in it.
+            empty.textContent = "Nothing cached. It fills when a project opens "
+                + "an image from a web address.";
             list.appendChild(empty);
             return;
         }
-        stores.forEach((row) => list.appendChild(this.storeCard(row)));
+        const shown = Math.min(this.storesShown, stores.length);
+        stores.slice(0, shown).forEach((row) => list.appendChild(this.storeCard(row)));
+        if (stores.length <= STORES_SHOWN) return;
+
+        const more = document.createElement("div");
+        more.className = "settings-webdata-stores-more";
+        const count = document.createElement("span");
+        count.className = "settings-meta";
+        count.textContent = `${shown} of ${stores.length}`;
+        more.appendChild(count);
+        const hidden = stores.length - shown;
+        if (hidden > 0) {
+            const next = Math.min(STORES_MORE, hidden);
+            const showMore = document.createElement("button");
+            showMore.type = "button";
+            showMore.className = "btn btn-outline-light";
+            showMore.textContent = `Show ${next} more`;
+            showMore.addEventListener("click", () => {
+                this.storesShown = shown + next;
+                this.renderStores(stores);
+            });
+            more.appendChild(showMore);
+        }
+        if (shown > STORES_SHOWN) {
+            const fewer = document.createElement("button");
+            fewer.type = "button";
+            fewer.className = "btn btn-outline-light";
+            fewer.textContent = "Show fewer";
+            fewer.addEventListener("click", () => {
+                this.storesShown = STORES_SHOWN;
+                this.renderStores(stores);
+            });
+            more.appendChild(fewer);
+        }
+        list.appendChild(more);
     };
 
     WebDataSection.prototype.storeCard = function (row) {

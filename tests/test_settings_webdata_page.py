@@ -5,6 +5,10 @@ unrelated: that one runs Plexora elsewhere, this one reads bytes from
 elsewhere into this Plexora.
 """
 
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from plexora import app, paths
@@ -70,6 +74,28 @@ def test_stores_are_listed_with_their_projects_and_can_be_cleared(
 
     cleared = client.post("/settings/webdata/clear", json={}).get_json()
     assert cleared["used_bytes"] == 0
+    # The row is still in the index at 0 bytes; the page is not shown it.
+    assert cleared["stores"] == []
+
+
+def test_a_store_with_nothing_in_it_is_not_listed_unless_pinned(client):
+    index = remote_store.cache_index()
+    index.register_store("emptied", "https://example.org/emptied.zarr")
+    index.register_store("kept", "https://example.org/kept.zarr")
+    index.pin("kept")
+    listed = client.get("/settings/webdata").get_json()["stores"]
+    assert [row["id"] for row in listed] == ["kept"]
+
+
+def test_the_page_shows_three_stores_and_a_button_for_more():
+    """tests/js/settings_webdata_probe.mjs, against the shipped settingsPage.js."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    repo = Path(__file__).resolve().parent.parent
+    proc = subprocess.run([node, str(repo / "tests" / "js" / "settings_webdata_probe.mjs")],
+                          capture_output=True, text=True, cwd=repo, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_pin_route_refuses_over_budget_with_the_numbers(tmp_path, client, http_store,
