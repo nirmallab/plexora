@@ -213,18 +213,19 @@ def test_the_kinds_of_one_task_are_sent_one_schema():
     # On Anthropic the schema is part of the cached prefix: a t2 and a t3
     # packet with two schemas were two prefixes, and a worker moving from one
     # to the other re-wrote its whole history (2026-10-03 benchmark).
-    task = "gating.image_inspection"
-    kinds = [k for k in tasks.tasks()[task].kinds if k in schema._models("gating")]
-    sent = {json.dumps(schema.for_packet(k, task), sort_keys=True) for k in kinds}
-    assert len(sent) == 1
-    shared = schema.for_packet("t2_confirm", task)
-    assert set(shared["properties"]["kind"]["enum"]) == set(kinds)
-    assert set(shared["required"]) <= {"kind"} | set.intersection(
-        *(set(schema.model_schema(k)["required"]) for k in kinds))
-    for kind in kinds:                         # every kind's own fields can be said
-        assert set(schema.model_schema(kind)["properties"]) <= set(shared["properties"])
+    for task in ("gating.image_inspection", "gating.threshold_evaluation"):
+        kinds = [k for k in tasks.tasks()[task].kinds if k in schema._models("gating")]
+        assert len(kinds) > 1, task
+        sent = {json.dumps(schema.for_packet(k, task), sort_keys=True) for k in kinds}
+        assert len(sent) == 1, task
+        shared = schema.for_packet(kinds[0], task)
+        assert set(shared["properties"]["kind"]["enum"]) == set(kinds)
+        assert set(shared["required"]) <= {"kind"} | set.intersection(
+            *(set(schema.model_schema(k)["required"]) for k in kinds))
+        for kind in kinds:                     # every kind's own fields can be said
+            assert set(schema.model_schema(kind)["properties"]) <= set(shared["properties"])
     # A task with one kind, or no task, keeps the kind's own schema.
-    assert schema.for_packet("t4_candidates", "gating.threshold_evaluation") == schema.for_kind("t4_candidates")
+    assert schema.for_packet("display_setup", "gating.display") == schema.for_kind("display_setup")
     assert schema.for_packet("t2_confirm", None) == schema.for_kind("t2_confirm")
 
 

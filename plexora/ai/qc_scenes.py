@@ -273,3 +273,95 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
             if truth["channels"][name] == "clean":
                 truth["channels"][name] = "flagged"
     return (np.clip(image, 0, 65535).astype(np.uint16), labels, cells, channels, truth)
+
+
+#: A cyclic panel for the Artifact Detector's cycle rule (`cyclic_scene`):
+#: four cycles, each a nuclear stain and three markers.
+CYCLIC_CHANNELS = tuple(name for k in range(1, 5)
+                        for name in (f"DNA_{k}", f"M{k}a", f"M{k}b", f"M{k}c"))
+#: What `cyclic_scene` can paint. `dense_aggregate` is biology, not an
+#: artifact: no region of the truth holds it.
+CYCLIC_ARTIFACTS = ("cycle_fold", "cycle_debris", "fold", "dense_aggregate")
+
+
+def cyclic_scene(*, size=1024, grid=48, artifacts=(), seed=0, margin=0.06, shape="square"):
+    """(image, labels, cells, channels, truth) as `qc_scene`'s, on a panel of
+    four imaging cycles (`CYCLIC_CHANNELS`). Artifacts: `cycle_fold`, a fold
+    that appears in cycle 3 and stays (cycles 3 and 4 doubled and blurred,
+    nuclei included); `cycle_debris`, debris lying on the tissue in cycle 2
+    only; `fold`, a fold in every cycle. `dense_aggregate` paints biology: a
+    dense patch of cells bright in all three of cycle 1's markers, with the
+    same nuclei in every cycle -- what the cycle rule must not call a fold
+    (`truth["biology"]` holds its mask)."""
+    del shape
+    rng = np.random.default_rng(seed)
+    channels = CYCLIC_CHANNELS
+    image = np.full((len(channels), size, size), BACKGROUND, dtype=np.float32)
+    image += rng.normal(0, 4, size=image.shape).astype(np.float32)
+    band = int(size * margin)
+    tissue = np.zeros((size, size), dtype=bool)
+    tissue[band:size - band, band:size - band] = True
+    spacing = size / grid
+    radius = max(3, int(spacing * 0.38))
+    labels, present = _disc_labels(size, grid, spacing, radius, tissue)
+    for index in range(len(channels)):
+        image[index][tissue] += 80.0
+    lo, hi = band, size - band
+    span = hi - lo
+    aggregate = _disc(size, lo + 0.25 * span, lo + 0.3 * span, 0.13 * span) & tissue \
+        if "dense_aggregate" in artifacts else np.zeros((size, size), dtype=bool)
+    per_label = np.zeros((len(channels), present.size + 1), dtype=np.float32)
+    cells = []
+    for new_id, old in enumerate(present, start=1):
+        row, column = divmod(int(old) - 1, grid)
+        cx, cy = (column + 0.5) * spacing, (row + 0.5) * spacing
+        packed = bool(aggregate[int(cy), int(cx)])
+        dna = float(DNA_LEVEL * rng.uniform(0.9, 1.1)) * (1.3 if packed else 1.0)
+        values = {}
+        for name in channels:
+            if name.startswith("DNA_"):
+                values[name] = dna * float(rng.uniform(0.95, 1.05))
+                continue
+            positive = rng.random() < 0.2 or (packed and name.startswith("M1"))
+            values[name] = float((3000.0 if positive else 250.0) * rng.uniform(0.85, 1.15))
+        for index, name in enumerate(channels):
+            per_label[index, new_id] = values[name]
+        cells.append({"id": new_id, "x": float(cx), "y": float(cy), **values})
+    inside = labels > 0
+    for index in range(len(channels)):
+        image[index][inside] = per_label[index][labels[inside]]
+    truth = {"regions": [], "channels": {c: "clean" for c in channels}, "cells": {},
+             "biology": {"dense_aggregate": aggregate} if aggregate.any() else {}}
+    c = {name: i for i, name in enumerate(channels)}
+
+    def cycle(k):
+        return [f"DNA_{k}", f"M{k}a", f"M{k}b", f"M{k}c"]
+
+    for artifact in artifacts:
+        if artifact == "cycle_fold":
+            mask = _disc(size, lo + 0.7 * span, lo + 0.65 * span, 0.14 * span) & tissue
+            touched = cycle(3) + cycle(4)
+            for name in touched:
+                boosted = _gaussian(image[c[name]], 2.0) * 2.2
+                image[c[name]][mask] = boosted[mask]
+            truth["regions"].append({"name": "cycle_fold", "class": "tissue_fold",
+                                     "channels": touched, "mask": mask, "cycles": [3, 4]})
+        elif artifact == "cycle_debris":
+            mask = _disc(size, lo + 0.7 * span, lo + 0.25 * span, 0.11 * span) & tissue
+            soft = np.clip(_gaussian(mask.astype(np.float32), 4.0) * 1.5, 0.0, 1.0)
+            for name in cycle(2):
+                image[c[name]] += 2600.0 * soft
+            truth["regions"].append({"name": "cycle_debris", "class": "tissue_fold",
+                                     "channels": cycle(2), "mask": mask, "cycles": [2]})
+        elif artifact == "fold":
+            mask = _disc(size, lo + 0.3 * span, lo + 0.75 * span, 0.12 * span) & tissue
+            for index in range(len(channels)):
+                boosted = _gaussian(image[index], 2.0) * 2.2
+                image[index][mask] = boosted[mask]
+            truth["regions"].append({"name": "fold", "class": "tissue_fold",
+                                     "channels": list(channels), "mask": mask,
+                                     "cycles": [1, 2, 3, 4]})
+    for entry in truth["regions"]:
+        for name in entry["channels"]:
+            truth["channels"][name] = "flagged"
+    return (np.clip(image, 0, 65535).astype(np.uint16), labels, cells, channels, truth)

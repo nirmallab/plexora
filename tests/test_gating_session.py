@@ -56,6 +56,7 @@ class Oracle:
         self.info = info
         self.style = style
         self.rng = np.random.default_rng(seed)
+        self.index = {c["id"]: i for i, c in enumerate(info["cells"])}
         # In the table's own units: a log1p'd project's gates are log1p values.
         to_table = np.log1p if info.get("log_transformed") else (lambda v: v)
         self.values = {m: np.asarray(to_table(np.array([c[m] for c in info["cells"]],
@@ -117,6 +118,17 @@ class Oracle:
             return {"kind": kind, "confidence": "fairly_sure",
                     "intervals": interval_verdicts(self.values[marker], self.truth[marker],
                                                    rows)}
+        if kind == "cell_panel":
+            # Engine v2's blind panel, each cell read by its own truth. Which
+            # cell is which is the stored packet's (`_panel`), never sent.
+            from plexora.plugins.gating.server.autogate import engine as engines
+
+            stored, _ = engines.store().read_packet(packet["session_id"], packet["packet_id"])
+            truth = self.truth[marker]
+            return {"kind": kind, "cells": {
+                c["number"]: ("uncertain" if self.style == "lazy" else
+                              "own_stain" if truth[self.index[c["cell_id"]]] else "not_own_stain")
+                for c in stored["_panel"]["cells"]}}
         if kind == "qc_confirm":
             return {"kind": kind, "verdict": "real_signal"}
         if kind == "absence_check":
@@ -171,7 +183,9 @@ def unlooked_closes(session_id):
 
 
 def start(session, **options):
-    started = ok(invoke(session, "gating_session_start", {"scope": "project",
+    """A session on the synthetic project, engine v1 unless `options` names
+    another: `Oracle` answers v1's looks."""
+    started = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "project",
                                                           "project": "gsynth", **options}))
     jobs.drain(120)
     return started
@@ -432,7 +446,7 @@ def test_a_dataset_is_gated_from_its_reference_image(tmp_path):
             project = packet["units"][0]["project"] if packet["units"] else "cohort_1"
             return agents[project].answer(packet)
 
-    started = ok(invoke(session, "gating_session_start", {"scope": "dataset",
+    started = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "dataset",
                                                           "dataset": "cohort"}))
     jobs.drain(180)
     reference = started["reference_image"]
@@ -646,7 +660,7 @@ def test_an_artifact_flag_lowers_confidence_but_never_reroutes(tmp_path):
     for name, extra in (("plainp", {}), ("flagp", {"artifact_flags": ["image_quality"]})):
         info = make_gating_project(tmp_path, name=name, grid=32, size=1280, markers=HARD)
         session = AgentSession()
-        sid = ok(invoke(session, "gating_session_start", {
+        sid = ok(invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": name, "markers": ["CD4"]}))["session_id"]
         jobs.drain(120)
         agent = Oracle(info)
@@ -955,7 +969,7 @@ def test_an_unclear_matrix_is_asked_before_the_bulk_pass(tmp_path):
 
     cs._expression_check = ask
     try:
-        started = ok(invoke(session, "gating_session_start", {
+        started = ok(invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD3"]}))
     finally:
         cs._expression_check = real
@@ -1014,7 +1028,7 @@ def test_a_run_from_the_viewer_waits_for_the_set_up_form(tmp_path):
     make_gating_project(tmp_path)
     _unconfirm(ROLES)
     session = AgentSession()
-    started = ok(invoke(session, "gating_session_start", {
+    started = ok(invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
     assert started["state"] == "needs_setup" and started["job_id"] is None
     assert "packet" not in started
@@ -1046,12 +1060,12 @@ def test_a_column_not_set_is_refused_unless_the_run_can_wait(tmp_path):
         dataset=dataclasses.replace(p.dataset, single_image=False)))
     session = AgentSession()
     for setup in ("ask", "fail"):
-        refused = invoke(session, "gating_session_start", {
+        refused = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": setup})
         assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
         assert "Image ID column is not set" in refused["error"]["message"]
         assert refused["error"]["detail"]["setup"]["missing"] == ["role:image_id"]
-    waited = ok(invoke(session, "gating_session_start", {
+    waited = ok(invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
     # Nothing planned without it: the plan is made once the form has it.
     assert waited["state"] == "needs_setup" and waited["n_units"] == 0
@@ -1065,12 +1079,12 @@ def test_a_command_line_run_says_how_to_name_a_matrix_it_cannot_settle(tmp_path,
     _unconfirm(("features",))
     monkeypatch.setattr(cs, "_expression_check", _pending_matrix)
     session = AgentSession()
-    refused = invoke(session, "gating_session_start", {
+    refused = invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "fail"})
     assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
     assert "--matrix" in refused["error"]["message"] and "--log1p" in refused["error"]["message"]
     # Waiting, the matrix is one more thing the form asks.
-    waited = ok(invoke(session, "gating_session_start", {
+    waited = ok(invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD3"], "setup": "wait"}))
     assert waited["state"] == "needs_setup" and "features" in waited["setup"]["keys"]
     assert "packet" not in waited
@@ -1088,7 +1102,7 @@ def test_a_named_matrix_is_applied_and_a_model_reading_never_overrides_a_confirm
         "features_layer": "X", "features_log": False, "basis": "inferred"})
     assert not inferred["expression"].get("applied")
     assert session.project("gsynth").log_transformed
-    refused = invoke(session, "gating_session_start", {
+    refused = invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD3"],
         "expression": {"features_layer": "layer:nope", "features_log": False}})
     assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
@@ -1553,9 +1567,10 @@ def test_gating_can_leave_auto_contrast_out(tmp_path):
     assert status["display"]["status"] == "off"
 
 
-def test_a_panel_answer_is_learned_for_the_next_panel(tmp_path, monkeypatch):
+def test_a_panel_answer_is_not_learned_until_confirmed(tmp_path, monkeypatch):
     """What the model said about a marker the vocabulary does not know is
-    kept: a project with another panel that has it is not asked again."""
+    used by the session and listed as unconfirmed; another panel that has
+    the marker is asked again, until a person confirms it."""
     from tests import autogate_fixtures
 
     from plexora.ai import vocabulary
@@ -1574,15 +1589,18 @@ def test_a_panel_answer_is_learned_for_the_next_panel(tmp_path, monkeypatch):
             "marker": "Mystery1", "role": "lineage_other", "compartment": "membrane",
             "lineage": "b_cell", "binary": True,
             "partners": [{"marker": "CD3", "relation": "exclusive", "confidence": "moderate"}]}]})
-    assert outcome["outcome"]["learned"] == ["Mystery1"]
-    assert vocabulary.origin("Mystery1") == "learned"
+    assert outcome["outcome"]["unconfirmed"] == ["Mystery1"]
+    assert vocabulary.origin("Mystery1") != "learned"
+    status = ok(invoke(session, "gating_session_status",
+                       {"session_id": started["session_id"]}))
+    assert status["unconfirmed_context"] == ["Mystery1"]
     ok(invoke(session, "gating_session_finish",
               {"session_id": started["session_id"], "action": "close"}))
     make_gating_project(tmp_path, name="gother", markers=("CD3", "Mystery1"))
-    other = ok(invoke(session, "gating_session_start", {"scope": "project",
+    other = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "project",
                                                         "project": "gother"}))
     jobs.drain(120)
-    assert not other.get("unresolved_markers")
+    assert other.get("unresolved_markers") == ["Mystery1"]
     del info
 
 

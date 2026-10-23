@@ -50,8 +50,7 @@ plugin licensed as a whole, `plugin:video_studio`).
 
 ## Tools
 
-`inspect_project`, `inspect_volume`, `list_channels`, `list_viewers`, `create_video`,
-`get_video`, `list_videos`, `edit_video`, `preview_video`, `export_video`, `job_wait`.
+{{tools}}
 
 ## Evidence
 

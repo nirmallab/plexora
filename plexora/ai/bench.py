@@ -145,18 +145,55 @@ def rows_for(direction, evidence) -> dict:
     return {"rows": {k: words[k] for k in keys if k in words}, "pattern": patterns[0]}
 
 
+def reader_style(style) -> tuple:
+    """(kind, P, U, L) of an agent style: `noisy` alone turns words with
+    probability 0.2; `noisy:P` with P and nothing else; `noisy:P:U` also
+    calls a panel cell `uncertain` with probability U; `noisy:P:U:L` also
+    gives the reader a standard of its own per marker (`TruthAgent`). Until
+    2026-10-21 a bare `noisy:P` set U to 0.2 by accident."""
+    if not style.startswith("noisy"):
+        return style, 0.0, 0.0, 0.0
+    parts = style.split(":")
+    p = float(parts[1]) if len(parts) > 1 else 0.2
+    u = float(parts[2]) if len(parts) > 2 else 0.0
+    lenient = float(parts[3]) if len(parts) > 3 else 0.0
+    return parts[0], p, u, lenient
+
+
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring);
-    `noisy:P` turns a word with probability P."""
+    `noisy:P` turns a word with probability P; `noisy:P:U` also calls a
+    panel cell (not a sentinel) `uncertain` with probability U, twice that
+    on a cell a brighter neighbour crowds (`crowded`, when the panel
+    recorded it); `noisy:P:U:L` also reads each marker by a standard of its
+    own: a shift of the cut drawn once per marker from N(0, L) in log1p
+    units -- positive, a stricter reader calls the dimmest stained cells
+    unstained; negative, a lenient one calls the brightest unstained cells
+    stained. Live readers' leniency is per marker and stable across methods
+    (2026-10-21, lsp11385_2: Ecad +0.56, CD3e -0.52 survived pooling three
+    runs), which slips cell by cell do not model."""
 
-    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0):
+    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0, ids=None):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
+        # Cell id -> row, when known: a panel's cells are then read by their
+        # own truth, not by the truth's best single cut.
+        self.rows = None if ids is None else {int(i): r for r, i in enumerate(ids)}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
-        self.style, self.p = (style.split(":") + ["0.2"])[:2] if style.startswith("noisy") \
-            else (style, "0")
-        self.p = float(self.p)
+        self.style, self.p, self.u, self.lenient = reader_style(style)
         self.rng = np.random.default_rng(seed)
+        # The standard's shift per marker: its own stream, so a reader
+        # without one reads exactly as before.
+        self._shift_rng = np.random.default_rng([int(seed), 104_729])
+        self._shift = {}
         self._best = {}
+
+    def shift(self, marker) -> float:
+        """This reader's cut for `marker` minus the truth's (log1p units)."""
+        if not self.lenient:
+            return 0.0
+        if marker not in self._shift:
+            self._shift[marker] = float(self._shift_rng.normal(0.0, self.lenient))
+        return self._shift[marker]
 
     def _errors(self, marker, low):
         called = self.values[marker] > np.float32(low)
@@ -179,6 +216,40 @@ class TruthAgent:
         if excess <= max(2, 0.01 * self.values[marker].size):
             return "about_right"
         return "too_low" if low < best else "too_high"
+
+    def panel_labels(self, marker, packet) -> dict:
+        """A blind panel read by each cell's own truth (the scene's, by cell
+        id), or, without ids, against the truth's best single cut; `noisy:P`
+        turns each cell's word with probability P, `lazy` cannot tell any.
+        The cells are the stored packet's (`_panel`), which the reader never
+        sees."""
+        cells = (packet.get("_panel") or {}).get("cells") or []
+        if self.style == "lazy":
+            return {c["number"]: "uncertain" for c in cells}
+        cut, _errors = self.best(marker)
+        shift = self.shift(marker)
+        fit_cut = float(np.log1p(max(cut, 0.0)))
+        out = {}
+        for c in cells:
+            row = None if self.rows is None else self.rows.get(int(c["cell_id"]))
+            own = bool(self.truth[marker][row]) if row is not None \
+                else float(c["value"]) > cut
+            if shift:
+                fit = float(np.log1p(max(float(c["value"]), 0.0)))
+                # Between the truth's cut and the reader's own, the reader
+                # calls by its standard.
+                if shift > 0 and own and fit <= fit_cut + shift:
+                    own = False
+                elif shift < 0 and not own and fit > fit_cut + shift:
+                    own = True
+            if self.style == "noisy" and self.rng.random() < self.p:
+                own = not own
+            rate = self.u * (2.0 if c.get("crowded") else 1.0)
+            if self.u and not c.get("sentinel") and self.rng.random() < min(rate, 1.0):
+                out[c["number"]] = "uncertain"
+                continue
+            out[c["number"]] = "own_stain" if own else "not_own_stain"
+        return out
 
     def answer(self, packet):
         kind = packet["kind"]
@@ -208,6 +279,8 @@ class TruthAgent:
                 self.values[marker], self.truth[marker], rows,
                 flip=(lambda _row: self.rng.random() < self.p) if noisy else None)
             return {"kind": kind, "intervals": verdicts, "confidence": "fairly_sure"}
+        if kind == "cell_panel":
+            return {"kind": kind, "cells": self.panel_labels(marker, packet)}
         if kind == "qc_confirm":
             real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
@@ -249,8 +322,16 @@ class TruthAgent:
 
 #: The ablation's variants: what each sets of a session's options. `tiles`
 #: draws every look as the 2 x 2 multi-view block (`SessionOptions.tiles`).
+#: A variant that names no engine runs on `BASE` (the ablations are v1's,
+#: whatever the session default); `candidates` and `candidates_2` are v2's
+#: first names, kept for the campaigns recorded under them.
 VARIANTS = {"baseline": {}, "tiles": {"tiles": True}, "absence": {"absence_check": True},
-            "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"}}
+            "check": {"classifier": "check"}, "no_classifier": {"classifier": "off"},
+            "v2": {"engine": "v2"}, "v2_2": {"engine": "v2", "panel_looks": 2},
+            "candidates": {"engine": "v2"},
+            "candidates_2": {"engine": "v2", "panel_looks": 2}}
+#: What every variant starts from.
+BASE = {"engine": "v1"}
 
 
 def variant_arm(variant, variants) -> str:
@@ -338,6 +419,13 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
         sent["pixels"] += sum(int(i.get("width") or 0) * int(i.get("height") or 0)
                               for i in packet.get("images") or [])
         packet = packet_views.resolve_as_in(packet, held)
+        if packet.get("kind") == "cell_panel":
+            # The panel's cells as code holds them (never sent to a reader):
+            # a simulated reader answers from their truth.
+            from plexora.plugins.gating.server.autogate import engine as engines
+
+            stored, _ = engines.store().read_packet(sid, packet["packet_id"])
+            packet = {**packet, "_panel": stored.get("_panel")}
         result = _ok(invoke(session, "gating_answer", {
             "session_id": sid, "packet_id": packet["packet_id"],
             "answer": agent.answer(packet)}))["next"]
@@ -385,7 +473,7 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
     if "session" in arms:
         for variant in check_variants(variants):
             arm = variant_arm(variant, variants)
-            started = {**(options or {}), **VARIANTS[variant],
+            started = {**BASE, **(options or {}), **VARIANTS[variant],
                        "agent": f"bench:{variant}", "reuse_answers": False}
             units, status, seconds, sid = run_session(session, project, markers, agent,
                                                       mode="propose", options=started)
@@ -473,7 +561,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,
                                           seed=seed + index, markers=markers)
                 agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                   seed=seed + index)
+                                   seed=seed + index, ids=made.get("ids"))
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
                                                variants=variants)
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
@@ -515,7 +603,7 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
         try:
             registry.discover(["gating"])
             session = AgentSession(table_limit=4)
-            options = dict(VARIANTS[check_variants((variant,))[0]])
+            options = {**BASE, **VARIANTS[check_variants((variant,))[0]]}
             for index, scenario in enumerate(scenarios):
                 name = f"bench_{scenario}"
                 made = _register_scenario(root, name, scenario, grid=grid, size=size,
@@ -523,13 +611,13 @@ def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, gr
                 runs = []
                 for repeat in range(int(repeats)):
                     agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                       seed=seed + 1000 * repeat + index)
+                                       seed=seed + 1000 * repeat + index, ids=made.get("ids"))
                     units, _status, _s, _sid = run_session(
                         session, name, markers, agent, mode="propose",
                         options={**options, "agent": f"{agent_style}#{repeat}"})
                     runs.append(units)
                 replay_agent = TruthAgent(made["values"], made["truth"], agent_style,
-                                          seed=seed + index)
+                                          seed=seed + index, ids=made.get("ids"))
                 replay, _status, _s, _sid = run_session(
                     session, name, markers, replay_agent, mode="propose",
                     options={**options, "agent": f"{agent_style}#0"})
@@ -666,6 +754,7 @@ def expert_truth(session, project, table=TRUTH_TABLE, column=None):
 def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, seed=0,
                  markers=None, variants=("baseline",), truth_column=None) -> list:
     from plexora.agent import AgentSession, registry
+    from plexora.plugins.gating.server.autogate import profile as profmod
 
     registry.discover(["gating"])
     session = AgentSession(table_limit=4)
@@ -677,11 +766,15 @@ def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, s
         gates, extra = gates_for_arms(session, project, wanted, agent, arms,
                                       variants=variants)
         gates["expert"] = {m: expert[m] for m in wanted}
+        ds = session.data(project)
         for row in score_image(project, values, truth, gates, extra):
             if row["arm"] != "expert" and row.get("gate") is not None \
                     and row["marker"] in expert:
-                row["delta_log1p"] = float(np.log1p(max(row["gate"], 0))
-                                           - np.log1p(max(expert[row["marker"]], 0)))
+                # In the marker's fit space (log1p of raw intensities; a
+                # table already in log space is used as it is, not logged twice).
+                col = profmod.column(ds, row["marker"])
+                row["delta_log1p"] = float(col.to_fit(row["gate"])
+                                           - col.to_fit(expert[row["marker"]]))
             rows.append(row)
     return rows
 
@@ -761,7 +854,7 @@ def answer_direction(answer):
 
 #: The fields of an answer that decide what happens next: per-row verdicts
 #: (compared row by row) and single verdicts.
-_DECIDING_ROWS = ("verdicts", "intervals", "per_image")
+_DECIDING_ROWS = ("verdicts", "intervals", "per_image", "cells")
 _DECIDING = ("verdict",)
 
 
@@ -786,8 +879,13 @@ def _agreement(stored, replayed):
     return None
 
 
-def _rerender_image(session, image):
-    """{artifact_id, rerendered, identical} for one of a packet's pictures."""
+def _rerender_image(session, image, panel=None):
+    """{artifact_id, rerendered, identical} for one of a packet's pictures.
+
+    With `panel` (a `cell_panel` packet's `_panel`, which the reader never
+    sees), also `numbers_match`: whether each number captioned in the
+    picture is the cell code holds under that number -- the labels a reader
+    gives are scored by it."""
     from plexora.agent import artifacts
     from plexora.agent.evidence import collage
 
@@ -800,7 +898,13 @@ def _rerender_image(session, image):
     if manifest.get("kind") != collage.MANIFEST_KIND:
         return {"artifact_id": art, "rerendered": False, "why": manifest.get("kind")}
     drawn = collage.rerender(session, session.data(manifest["project"]), manifest)
-    return {"artifact_id": art, "rerendered": True, "identical": drawn["png"] == png}
+    out = {"artifact_id": art, "rerendered": True, "identical": drawn["png"] == png}
+    if panel is not None:
+        captioned = {cell.get("caption"): int(cell["cell_id"])
+                     for row in manifest.get("rows") or [] for cell in row.get("cells") or []}
+        held = {c["number"]: int(c["cell_id"]) for c in panel.get("cells") or []}
+        out["numbers_match"] = captioned == held
+    return out
 
 
 def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
@@ -808,9 +912,11 @@ def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
 
     Rows of {packet_id, kind, marker, stored (the answer the session got),
     replayed (the agent's), agreement}; with `rerender`, also `images`: each
-    collage drawn again from its manifest, and whether its bytes match the
-    stored picture. `agent` is anything with `answer(packet)`: `TruthAgent`
-    answering from an expert's gates, or a model behind a client."""
+    collage drawn again from its manifest -- a look's rows or a blind cell
+    panel -- and whether its bytes match the stored picture (a panel's also
+    whether its numbers are the cells code scored, `_rerender_image`).
+    `agent` is anything with `answer(packet)`: `TruthAgent` answering from an
+    expert's gates, or a model behind a client."""
     from plexora.agent import AgentSession, registry
     from plexora.plugins.gating.server.autogate import engine
     from plexora.plugins.gating.server.autogate import packets as packet_views
@@ -833,7 +939,7 @@ def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
                    "marker": units[0]["marker"] if units else None,
                    "stored": answers.get(packet["packet_id"])}
             if rerender:
-                row["images"] = [_rerender_image(session, image)
+                row["images"] = [_rerender_image(session, image, packet.get("_panel"))
                                  for image in packet.get("images") or []]
             row["replayed"] = agent.answer(packet)
             row["agreement"] = _agreement(row["stored"], row["replayed"])
@@ -882,22 +988,35 @@ def run_replay(session_id, agent_style, *, truth_table=TRUTH_TABLE, rerender=Fal
 
 
 def replay_markdown(rows, *, title) -> str:
+    redrawn = any("images" in r for r in rows)
     lines = [f"# {title}", "",
              "Per packet kind: how often the stored answer agreed with the replayed one "
-             "(direction for a look, rows for a look at candidates).", "",
-             "| kind | packets | compared | agreement |", "|---|---|---|---|"]
+             "(direction for a look, rows for a look at candidates, cells for a panel)"
+             + ("; and how many of the kind's collages, drawn again from their "
+                "manifests, came out byte-identical." if redrawn else "."), "",
+             "| kind | packets | compared | agreement |"
+             + (" redrawn | identical |" if redrawn else ""),
+             "|---|---|---|---|" + ("---|---|" if redrawn else "")]
     kinds = {}
     for row in rows:
         kinds.setdefault(row["kind"], []).append(row)
     for kind, members in kinds.items():
         scored = [r["agreement"] for r in members if r.get("agreement") is not None]
-        lines.append(f"| {kind} | {len(members)} | {len(scored)} | "
-                     f"{(f'{np.mean(scored):.3f}' if scored else '-')} |")
-    drawn = [i for r in rows for i in r.get("images") or [] if i.get("rerendered")]
-    if any("images" in r for r in rows):
+        line = (f"| {kind} | {len(members)} | {len(scored)} | "
+                f"{(f'{np.mean(scored):.3f}' if scored else '-')} |")
+        if redrawn:
+            drawn = [i for r in members for i in r.get("images") or [] if i.get("rerendered")]
+            line += f" {len(drawn)} | {sum(1 for i in drawn if i.get('identical'))} |"
+        lines.append(line)
+    if redrawn:
+        drawn = [i for r in rows for i in r.get("images") or [] if i.get("rerendered")]
         same = sum(1 for i in drawn if i.get("identical"))
         lines += ["", f"Collages drawn again from their manifests: {len(drawn)}; "
                       f"byte-identical: {same}."]
+        panels = [i for i in drawn if "numbers_match" in i]
+        if panels:
+            lines.append(f"Cell panels whose numbers are the cells code scored: "
+                         f"{sum(1 for i in panels if i['numbers_match'])} of {len(panels)}.")
     return "\n".join(lines) + "\n"
 
 
@@ -1102,6 +1221,16 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
     if truth and truth.startswith(("json:", "csv:")):
         table = truth
     against = table if table.startswith(("json:", "csv:")) else f"uns[{table!r}]"
+    if table.startswith("json:"):
+        try:
+            kind = json.loads(Path(table[5:]).read_text(encoding="utf-8")).get("kind")
+        except (OSError, ValueError, AttributeError):
+            kind = None
+        if kind == "model_gates":
+            # A model's earlier gates measure agreement with that run, not
+            # accuracy against a person's gates.
+            emit(f"warning: {table[5:]} holds a model's gates, not a person's")
+            against += " (a model's gates)"
     if replay:
         rows = run_replay(replay, agent, truth_table=table, rerender=rerender, seed=seed,
                           truth_column=truth_column)

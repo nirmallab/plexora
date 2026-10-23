@@ -42,8 +42,7 @@ None. Every project has at least a reference frame; this skill reports what else
 
 ## Tools
 
-`server_info`, `list_datasets`, `get_dataset`, `list_projects`, `inspect_project`,
-`get_resource_status`, `list_channels`, `list_markers`, `validate_scope`.
+{{tools}}
 
 ## Evidence
 

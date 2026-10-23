@@ -50,6 +50,15 @@ SCENARIOS = {
     "gradient": {"gradient": ("CD8",)},
     "saturated": {"saturated": ("CD3",)},
     "shifted": {"shift": 0.5},
+    # VERSION 6 scenes (2026-10-21): a marker two cell types carry, one far
+    # dimmer (CD4 on helper T cells and on myeloid cells): both positive.
+    "dim_lineage": {"levels": {"CD4": (4.05, 6.4, 4.05, 5.15)}, "sd": {"CD4": 0.3}},
+    # A rare population of about ten cells (FOXP3 on one helper T cell in
+    # seventeen).
+    "rare_small": {"treg_every": 17},
+    # A population of middling brightness that is not the marker's own (a
+    # sticky background stain): the gate lies above it, near the top.
+    "edge_high": {"levels": {"CD20": (4.0, 4.1, 7.3, 5.6)}, "truth_above": {"CD20": 6.4}},
 }
 
 
@@ -57,8 +66,8 @@ def phenotype(row, column):
     return PHENOTYPES[(row * 7 + column * 3) % 4]
 
 
-def is_treg(row, column, kind):
-    return kind == "cd4_t" and (row * 31 + column * 17) % 7 == 0
+def is_treg(row, column, kind, every=7):
+    return kind == "cd4_t" and (row * 31 + column * 17) % every == 0
 
 
 def truth_positive(marker, cell, scenario):
@@ -67,7 +76,8 @@ def truth_positive(marker, cell, scenario):
     if marker == "FOXP3":
         return bool(cell["treg"])
     levels = SCENARIOS[scenario].get("levels", {}).get(marker, LEVELS[marker])
-    return levels[PHENOTYPES.index(cell["kind"])] > 4.5
+    above = SCENARIOS[scenario].get("truth_above", {}).get(marker, 4.5)
+    return levels[PHENOTYPES.index(cell["kind"])] > above
 
 
 def scene(*, grid=24, size=1024, seed=0, markers=("CD3", "CD8", "CD20", "CD4", "FOXP3"),
@@ -88,7 +98,7 @@ def scene(*, grid=24, size=1024, seed=0, markers=("CD3", "CD8", "CD20", "CD4", "
             label += 1
             cx, cy = (column + 0.5) * spacing, (row + 0.5) * spacing
             kind = phenotype(row, column)
-            treg = is_treg(row, column, kind)
+            treg = is_treg(row, column, kind, spec.get("treg_every", 7))
             values = {}
             for name in markers:
                 levels = spec.get("levels", {}).get(name, LEVELS[name])

@@ -172,7 +172,7 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
     make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD8", "CD20", "CD4"))
     session = AgentSession()
     with FakeTab(project="gsynth") as tab:
-        started = invoke(session, "gating_session_start", {
+        started = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)
         assert started["ok"], started
@@ -218,7 +218,7 @@ def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(serv
     make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
     session = AgentSession()
     with FakeTab(project="gsynth") as tab:
-        started = invoke(session, "gating_session_start", {
+        started = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         sid = started["session_id"]
@@ -261,7 +261,7 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
     session = AgentSession()
     shown = {"hd_mode": True, "cell_mode": "outlines", "tools_open": ["gating"]}
     with FakeTab(project="gsynth", state=shown) as tab:
-        started = invoke(session, "gating_session_start", {
+        started = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         jobs.drain(60)
@@ -288,7 +288,7 @@ def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
     for slow, expected in (("set_hd_mode", "ok"), ("set_channels", "ok"),
                            ("set_active_marker", "degraded")):
         with FakeTab(project="gsynth", delays={slow: 1.0}):
-            started = invoke(session, "gating_session_start", {
+            started = invoke(session, "gating_session_start", {"engine": "v1", 
                 "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
                 "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
             jobs.drain(60)
@@ -324,7 +324,7 @@ def test_a_viewer_that_predates_agent_control_says_restart(tmp_path):
                          link=link)
         assert refused["error"]["code"] == "capability_unavailable"
         assert "restart" in refused["error"]["message"]
-        started = invoke(session, "gating_session_start", {
+        started = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True},
             link=link)["result"]
         assert started["mirror"]["status"] == "off"
@@ -345,7 +345,7 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
     make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
     session = AgentSession()
     with FakeTab(project="gsynth", state={"hd_mode": True}) as tab:
-        started = invoke(session, "gating_session_start", {
+        started = invoke(session, "gating_session_start", {"engine": "v1", 
             "scope": "project", "project": "gsynth", "markers": ["CD3", "CD4"], "mirror": True,
             "mirror_delay_ms": 0}, link=served)["result"]
         sid = started["session_id"]
@@ -383,7 +383,7 @@ def test_a_mirror_with_no_viewer_turns_itself_off_and_the_session_goes_on(served
 
     make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
     session = AgentSession()
-    started = invoke(session, "gating_session_start", {
+    started = invoke(session, "gating_session_start", {"engine": "v1", 
         "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True},
         link=served)
     jobs.drain(60)

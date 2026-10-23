@@ -82,7 +82,10 @@ def test_prompts_are_the_manifests():
 
     server = Server()
     registered = prompts.register(server, runtime=None)
-    wanted = [s["prompt"] for s in skills.manifest()["skills"] if s.get("prompt")]
+    wanted = [s["prompt"] for s in skills.prompt_entries()]
+    # An old skill name kept as an alias keeps its prompt (gate-dataset,
+    # diagnose-marker), reading what replaced it.
+    assert {"gate_dataset", "diagnose_marker"} <= set(wanted)
     assert registered == server.names == wanted
     with pytest.raises(ValueError):
         prompts._mode("sometimes")

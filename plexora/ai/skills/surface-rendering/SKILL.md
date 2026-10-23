@@ -62,11 +62,7 @@ licence with `volume` (`volume:surfaces`); over MCP also `mcp`. A refusal's
 
 ## Tools
 
-`inspect_volume`, `surface_list`, `surface_suggest_threshold`, `surface_create`,
-`surface_inspect`, `surface_refine`, `surface_measure`, `surface_objects`,
-`surface_neighbours`, `surface_update`, `surface_export`, `surface_delete`,
-`viewer_set_volume_mode`, `viewer_set_camera`, `viewer_set_inspect`, `viewer_set_surface`,
-`viewer_capture`, `measure_objects`.
+{{tools}}
 
 ## Evidence
 

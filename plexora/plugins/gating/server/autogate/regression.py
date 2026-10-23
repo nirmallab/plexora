@@ -76,8 +76,11 @@ def tile_residuals(ds, marker, low, high=None):
     return outliers, int(ok.sum()), ratio
 
 
-def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
-    """The seven checks for `final` against the GMM gate `gmm`."""
+def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), guard=None) -> dict:
+    """The seven checks for `final` against the GMM gate `gmm`. `guard`
+    ([low, high], table units) is the band the unit's lattice walks
+    (`lattice.build`, widened to its scored candidates); without it, the
+    mixture's own band."""
     from plexora.plugins.gating.server.autogate import bivariate, candidates
 
     t = THRESHOLDS
@@ -149,7 +152,10 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
                              for k, v in purity.items()}})
     check("partners", not worse if judged else None, worse or None, t["partner_tolerance"],
           "impure share among the gate's positives minus among their brightest tenth")
-    inside = candidates.inside_guard(ds, marker, final)
+    if guard is not None:
+        inside = bool(float(guard[0]) - 1e-9 <= float(final) <= float(guard[1]) + 1e-9)
+    else:
+        inside = candidates.inside_guard(ds, marker, final)
     check("guard_band", inside, None, None)
     failed = [c["name"] for c in checks if c["ok"] is False]
     return {"marker": marker, "final": float(final), "gmm": float(gmm),

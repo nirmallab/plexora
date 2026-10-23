@@ -101,15 +101,20 @@ def test_a_panel_keeps_its_stored_context_when_a_marker_is_learned():
     assert context.panel_hash(panel) == before
 
 
-def test_a_panel_answer_teaches_every_later_panel():
+def test_a_confirmed_panel_answer_teaches_every_later_panel():
     from plexora.plugins.gating.server.autogate import context
 
     first = context.build(["PanCK", "CDX2", "Mystery1"])
     assert first["unresolved"] == ["CDX2", "Mystery1"]
-    context.apply_entry(first, "CDX2", {"role": "tumour_stromal", "compartment": "nuclear",
-                                        "partners": [{"marker": "PanCK", "relation": "subset",
-                                                      "confidence": "moderate"}]}, source="ai")
-    assert context.learn_from(first, ["CDX2", "Mystery1"], source="ai") == ["CDX2"]
+    fields = {"role": "tumour_stromal", "compartment": "nuclear",
+              "partners": [{"marker": "PanCK", "relation": "subset",
+                            "confidence": "moderate"}]}
+    context.apply_entry(first, "CDX2", dict(fields), source="ai")
+    # A reader's account stays with its project ...
+    assert context.learn_from(first, ["CDX2", "Mystery1"], source="ai") == []
+    # ... until a person confirms it.
+    context.apply_entry(first, "CDX2", dict(fields), source="user")
+    assert context.learn_from(first, ["CDX2", "Mystery1"], source="user") == ["CDX2"]
     # Another panel: CDX2 is known now (from the learned layer), its partner
     # named by the panel's own column.
     other = context.build(["CDX2_c2", "PanCK", "CD3"])
@@ -144,8 +149,11 @@ def test_a_marker_says_whether_its_stain_is_fibrous():
     assert panel["entries"]["CDX2"]["morphology"] == "fibrous"
     with pytest.raises(ValueError):
         context.apply_entry(panel, "CDX2", {"morphology": "stringy"}, source="user")
-    # ... and teaches it to the learned layer.
-    assert context.learn_from(panel, ["CDX2"], source="ai") == ["CDX2"]
+    # ... and, once a person confirms it, teaches it to the learned layer.
+    assert context.learn_from(panel, ["CDX2"], source="ai") == []
+    context.apply_entry(panel, "CDX2", {"role": "tumour_stromal", "morphology": "fibrous"},
+                        source="user")
+    assert context.learn_from(panel, ["CDX2"], source="user") == ["CDX2"]
     assert vocabulary.load()["entries"]["CDX2"]["morphology"] == "fibrous"
     # An agent's word on a marker the vocabulary knows is not used.
     context.apply_entry(panel, "aSMA", {"role": "tumour_stromal", "morphology": "cell"},

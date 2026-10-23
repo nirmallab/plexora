@@ -503,6 +503,10 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         # Everything else `rerender` needs to draw the same picture again.
         "request": {"title": title, "to_log": bool(to_log), "half_width": half_width,
                     "a": a, "b": b,
+                    # The pixel size the caller drew at (a session's estimate
+                    # for an uncalibrated image): it sets the centre ticks'
+                    # radius and the morphology panel's disc.
+                    **({"pixel": dict(pixel)} if pixel is not None else {}),
                     **({"partners": {"co": partners.get("co"), "anti": partners.get("anti"),
                                      "gates": {k: float(v) for k, v in
                                                (partners.get("gates") or {}).items()
@@ -524,7 +528,10 @@ def rerender(session, data, manifest, *, fmt="png"):
     windows from the same calibration, the same title. A change to the
     renderer (or to the calibration it reads) shows here as different bytes
     before any model is asked about the new picture. Manifests written before
-    `request` was recorded draw with the layout's default title."""
+    `request` was recorded draw with the layout's default title; those written
+    before it kept `pixel` draw at the image's own calibration, which differs
+    from the picture stored for an uncalibrated image a session drew at its
+    estimated pixel size."""
     if manifest.get("kind") != MANIFEST_KIND:
         raise AgentError("invalid_input", "only a gating collage can be drawn again from "
                                           "its manifest")
@@ -546,7 +553,8 @@ def rerender(session, data, manifest, *, fmt="png"):
         tile_px=manifest.get("tile_px") or TILE_PX,
         crop_px=(manifest.get("crop") or {}).get("side_px"), fmt=fmt,
         title=request.get("title"), store=False, to_log=bool(request.get("to_log", True)),
-        half_width=request.get("half_width"), partners=request.get("partners"))
+        half_width=request.get("half_width"), partners=request.get("partners"),
+        pixel=request.get("pixel"))
 
 
 def render_overview(session, data, *, marker, points, low, high=None, size=512, fmt="webp",

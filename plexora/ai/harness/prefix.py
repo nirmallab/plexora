@@ -110,8 +110,8 @@ HOUSE_RULES = (
     "9. To gate markers -- all of them or just the ones named (\"gate CD3 and Ecad\") -- read skill "
     "gate-image and run a gating session: gating_session_start, with `markers` for the named ones. The "
     "viewer shows that session in its sidebar card, with Pause and Stop. QC an image the same way: "
-    "skill qc-image, qc_session_start. Set gates yourself with set_gate (skill visual-gating) only when "
-    "the user asks to set a threshold by eye together with you.\n"
+    "skill qc-image, qc_session_start. Set gates yourself with set_gate (read_skill "
+    "gating/visual-gating) only when the user asks to set a threshold by eye together with you.\n"
     "10. Several writes in one response may all carry the revision you last read: Plexora carries each "
     "one forward past your own earlier writes."
 )

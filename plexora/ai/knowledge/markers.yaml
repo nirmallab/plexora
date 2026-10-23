@@ -35,7 +35,7 @@ markers:
     compartment: nuclear
     lineage: all nucleated cells
     binary: false
-    caveats: [a structural stain; used for tissue, focus and segmentation checks]
+    caveats: ["a structural stain; used for tissue, focus and segmentation checks"]
 
   - canonical: Autofluorescence
     synonyms: [AF, Blank, Background, Empty, Autofluor]
@@ -106,7 +106,9 @@ markers:
       - {marker: CD3, relation: coexpressed, confidence: moderate}
       - {marker: CD8, relation: exclusive, confidence: moderate}
       - {marker: CD20, relation: exclusive, confidence: high}
-    caveats: [CD4+CD3- cells are usually macrophages, not a wrong gate]
+    caveats: ["CD4+CD3- cells are usually macrophages, not a wrong gate",
+              "monocytes and macrophages carry it far dimmer than T cells; a gate above
+              them misses a real population"]
 
   - canonical: CD8
     synonyms: [CD8a, CD8A, CD8b, CD8B, CD8alpha]
@@ -216,8 +218,8 @@ markers:
     partners:
       - {marker: CD45, relation: subset, confidence: high}
       - {marker: PanCK, relation: exclusive, confidence: moderate}
-    caveats: [also on some neural and neuroendocrine cells, so in tissue it is often
-              positive only within CD45-positive cells]
+    caveats: ["also on some neural and neuroendocrine cells, so in tissue it is often
+              positive only within CD45-positive cells"]
 
   - canonical: ELANE
     synonyms: [Neutrophil elastase, NeutrophilElastase, ELA2]
@@ -321,7 +323,7 @@ markers:
     compartment: membrane
     lineage: tumour cells, macrophages, dendritic cells
     binary: false
-    caveats: [graded; scored clinically by fraction at a fixed cut-off, not by a valley]
+    caveats: ["graded; scored clinically by fraction at a fixed cut-off, not by a valley"]
 
   - canonical: GZMB
     synonyms: [Granzyme B, GranzymeB, GZM-B]
@@ -348,7 +350,9 @@ markers:
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
       - {marker: PanCK, relation: exclusive, confidence: moderate}
-    caveats: [fibres between cells are assigned to whichever mask they cross]
+    caveats: ["fibres between cells are assigned to whichever mask they cross",
+              "pericytes and myofibroblasts beside vessels are often round in section:
+              stain hugging their outline is theirs, as for spindle cells"]
     morphology: fibrous
 
   - canonical: CD31
@@ -404,8 +408,8 @@ markers:
     binary: false
     partners:
       - {marker: B2M, relation: coexpressed, confidence: high}
-    caveats: [most cells are positive; the gate marks where expression leaves background,
-              and the negatives (often tumour cells that lost MHC-I) are the finding]
+    caveats: ["most cells are positive; the gate marks where expression leaves background,
+              and the negatives (often tumour cells that lost MHC-I) are the finding"]
 
   - canonical: B2M
     synonyms: [beta2-microglobulin, beta-2-microglobulin, B2-microglobulin, b2-m, beta2m]
@@ -470,7 +474,7 @@ markers:
     partners:
       - {marker: CD45, relation: subset, confidence: high}
       - {marker: CD3, relation: subset, confidence: moderate}
-    caveats: [largely intracellular vesicles, dotty rather than a ring]
+    caveats: ["largely intracellular vesicles, dotty rather than a ring"]
 
   - canonical: TCF1
     synonyms: [TCF-1, TCF7, TCF 1]

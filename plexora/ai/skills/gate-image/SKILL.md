@@ -1,227 +1,91 @@
 # Gate an image automatically
 
-Gate every marker of one image, end to end. Plexora does everything code can
-decide: display calibration, technical QC, the mixture fit, candidate
-thresholds, whole-image checks, the writes and their receipts. The agent is
-asked only what code cannot settle, one small decision packet at a time.
-**Nobody types a threshold.**
-
-This skill is the coordinator's: plan, start, hand the packets out, finish,
-report. Answering packets is skill gate-packets. The session's
-`reading_guide` says how to read every picture and holds every answer schema;
-neither skill restates it. A start that delegates does not send it (workers
-fetch their own); `gating_session_status` without `known_guide` does.
+A gating session gates every marker of an image: Plexora does every step code
+can decide and asks the rest as small decision packets. **Nobody types a
+threshold**: a reader judges what the pictures show, in the words a packet
+allows, never which way a gate should move. You coordinate; skill
+gate-packets answers packets. Read each reference named here (gating/...)
+with `read_skill`.
 
 ## When to use
 
-- "Gate this image", "threshold all markers", "call positives for every
-  marker".
-- One marker the user wants done rather than walked through:
-  `gating_session_start` with `markers` holding just that marker.
+"Gate this image", "threshold all markers", "call positives". One marker done
+for the user: `markers` holding only it.
 
 ## When not to use
 
-- Several images of one cohort: gate-dataset.
-- Reviewing existing gates: review-gating. Why one marker is hard:
-  diagnose-marker. Setting the number by eye: visual-gating.
+A cohort: this loop plus gating/dataset. Reviewing gates, or why a marker is
+hard: gate-review. A gate set by eye with the user: gating/visual-gating.
 
 ## Required features
 
-A cell table with markers and cell-id/x/y roles (`inspect_project` says). An
-image channel per marker for the looks (a column without one is gated from its
-numbers alone, at capped confidence). A segmentation mask makes the looks much
-better.
-
-## QC-passed cells only
-
-When QC has been run on the image, every estimate is made on the cells QC
-passed, and those cells are not called: a cell in a QC region (or flagged
-unreliable for a marker) is neither positive nor negative for it -- grey in
-the viewer, left out of counts, and written as `obsm` beside the gates
-(`write_gates_to_source`). The gate's value is unchanged. The session option `qc` is
-`strict` (the default: cells QC called exclude or warn, and per marker the
-cells QC flagged that marker unreliable in), `exclude` (warn calls kept) or
-`off` (only when the user asks, or QC is wrong -- say which). The start's
-`qc_exclusion` says per image how many cells were left out (`n_not_called`
-per marker) and, per marker, QC's own line about it (`digest`) and its word
-on the channel (`channel_verdict`: `usable`, `failed`, `unknown`); report
-them with the gates. Above {{qc_exclusion.heavy_percent}}% left out it carries a `warning`
-and confidence is capped: tell the user. No QC on the image: offer qc-image
-first when the tissue looks damaged; do not block on it. QC changed after a
-gate was decided: `gating_qc` lists the marker under `stale_qc`.
-
-## Which channels are gated
-
-- **Never a structural channel**: a nuclear counterstain or an
-  autofluorescence or blank channel, recognised by name pattern, is listed in
-  `skipped_markers` and never gated, not even when named in `markers`. Do not
-  report them as failures.
-- **Always a continuously expressed marker** (`binary` false: `HLA-ABC`,
-  `B2M`, `PD-L1`): gated where expression rises out of background, never
-  skipped.
-
-## Where a look starts: scored candidates
-
-Before a marker's first look the session scores candidate thresholds on the
-numbers and the biology (`evidence.scored`) and starts from the proposal,
-`score`: the Auto mixture gate `gmm`; `onset`, where background stops
-explaining the cells (local false-discovery rate below
-{{scoring.onset_percent}}%); `ceiling`, the background peak plus
-{{scoring.ceiling_sd}} core sds; `bio:<partner>`, where a subset or
-co-expressed partner's share has done most of its rise (`robust` false when it
-only follows the partner's own gate); `anti:<partner>` for an exclusive one;
-`sens:<partner>`, the {{scoring.sens_percent}}th percentile among a subset
-marker's positives. The strictest robust partner curve leads. The numbers
-choose where to look; the cells decide. Partners are evidence, so fill the
-panel context with care: give each unresolved marker the lineage-specific
-partners you know (`HLA-DR` for a dendritic or macrophage marker, `CD163` for
-`CD68`, `SOX10` for a melanocytic marker) and the exclusive ones; a wrong
-partner misleads the start, so skip what you do not know.
-
-## The sample's biology and the evidence graph
-
-Plan before the first look: what the user said about the sample, the panel,
-the marker tree, then the numbers and the looks.
-
-- **Tissue and disease.** When the user names the sample's biology, pass it to
-  `gating_session_start` as `biology` (`tissue`, `disease`, `notes`, in their
-  words). Its relations are laid over the panel, and each look carries
-  `evidence.biology`. It is a prior: it never moves a gate and never makes a
-  population exist. Without it the session takes it from metadata or infers
-  it from the panel (`source`): say an inferred context as inferred, ask the
-  user to confirm it, never report it as the diagnosis.
-- **The marker tree.** `get_marker_hierarchy` shows each marker's `stage`,
-  `parents` and `children`. Gating follows it, broad markers first; it guides
-  and never blocks. Describe unplaced markers in the panel context.
-- **Reliable references only.** Each gate earns a grade as evidence; a
-  failed one is never used, and a low one only when nothing better exists. A
-  parent whose own distribution is weak waits for its children
-  (`defer_parents`). A marker that leaned on a reference which later failed
-  carries `stood_on_failed`: say so in the report.
+A cell table with cell-id/x/y roles; image channels and a mask for the looks.
 
 ## Decision logic
 
-1. `inspect_project`, `get_panel_context`, `get_marker_hierarchy`. Fill only
-   what you know of `unresolved` markers with `set_panel_context`
-   (`source: "ai"`); never invent partners.
-2. `gating_session_start` with `scope: "project"`, the project, `mode:
-   "apply"` (each gate written as decided, undoable) unless the user asked to
-   review first (`"propose"`), `biology`, and `agent` (your model's name).
-   `mirror: true` when the user watches in a viewer. Plexora AI (`ai.run_session`)
-   collects the same set-up itself before any model call. A start refused with
-   `detail.setup` names a column the project does not have (a cell id, the
-   coordinates, an image id): tell the user which, and that the viewer's
-   set-up form (opening Thresholding) or Edit project sets it; start again
-   once they have, or start with `setup: "wait"` when they are about to
-   answer the form in the viewer (the session then waits in `needs_setup`
-   with no packet until they have). `unconfirmed_setup` in the start output
-   lists columns the predictor picked and nobody confirmed: tell the user.
-   Set-up packets come first and are yours to answer:
-   - `expression_setup` (`needs_setup`): which matrix to gate. When
-     `ask_user_required` is true, put the options to the user in plain words
-     and answer with their choice (`inspect_expression_sources`,
-     `set_expression_source`); never guess.
-   - `pixel_setup`: the snapshots' ring against the nuclei. Answer
-     `estimate_confirmed`, `adjusted` with your `microns_per_pixel`, or
-     `user_stated` with the user's value (only that one is written,
-     `set_pixel_size`).
-   - `panel_context`: as step one.
-   - `display_setup`: how bright each marker is drawn, once per image (the
-     choice outlives the session): per row, the columns where the background
-     is a faint floor (`background_ok`) and where its `pattern` shows with
-     detail (`structure_ok`); code picks. `display_check: "rule"` skips it,
-     `"off"` drops it; brightness alone: `contrast_session_start`.
-3. Hand out the packet loop. The start (and `gating_session_status`) carries
-   `delegate`: the worker's `tier` and `model` (the user's mapping; else
-   `pick` says which of your models), its `tools`, `units_per_worker` and a
-   short `brief`. Launch a fresh worker with that `brief` as its whole prompt,
-   on that model, given only those tools (`agent` names the installed worker
-   where your client has agent files). Never paste skill or guide text into
-   it. Launch it in the foreground (a run_in_background option set false)
-   and wait for the lines it returns: do not schedule wake-ups, message it or
-   poll `gating_session_status` while it runs (each of those is a full turn of
-   your context). Keep only the lines it
-   returns; relaunch until the state is `decided`.
-   A worker that hands back `waiting_for_user`: ask the user, then pass their
-   answer with `gating_session_status` `limits` (each marker `continue` or
-   `stop`); never answer for them. Without workers, answer the packets
-   yourself (`gating_next`, `gating_answer`, skill gate-packets) and start a
-   new conversation every {{ENGINE.markers_per_worker}} markers or so; every
-   later call re-reads every earlier packet.
-   A `delegate` with `workers` means the user's models file assigns tasks to
-   models: launch the entry whose `launch` is `now`, on its `model`, with its
-   own `brief`. One that returns `other_tasks <task>`: launch the worker whose
-   `tasks` hold that task; an `on_demand` worker is launched only then, never
-   up front (it would find nothing ready and stop). A client that cannot set a worker's model
-   answers itself and tells the user which tasks ran on another model; status
-   `models` shows which model answered each task.
-4. Put a question in `ask_user` only for what the data and the panel cannot
-   settle (expected prevalence, which partner to trust, a stain known to be
-   off-target here). Do not ask the user to approve each marker.
+1. Read gating/setup; `inspect_project`, `get_panel_context`,
+   `get_marker_hierarchy`. Give `unresolved` markers (`set_panel_context`)
+   only partners you know; never invent one.
+2. `gating_session_start`: `scope: "project"`, `mode: "apply"`
+   (`"propose"` if the user reviews first), `agent` (your model's name),
+   `biology` when the user named the tissue or disease, `mirror: true` when
+   they watch a viewer. `engine` is `v2` (blind cell panels, `cell_panel`)
+   unless the user asks for `v1` (rows); the loop is the same. Set-up
+   refusals and packets are yours, not a worker's (gating/setup); an
+   `expression_setup` goes to the user, never guessed.
+3. Hand packets out as the start's `delegate` says (`how`). Its `brief` is a
+   worker's whole prompt: add no skill or guide text; keep only the lines it
+   returns. `waiting_for_user`: ask the user, pass their word as
+   `gating_session_status` `limits`; never answer for them. Pass the start's
+   `guide_version` as `known_guide` on every `gating_session_status`, or the
+   guide is sent again. Without workers, answer packets yourself
+   (gate-packets) and start a new conversation
+   every {{ENGINE.markers_per_worker}} markers or so: each call re-reads all
+   earlier packets.
+4. Ask the user (`ask_user`) only what neither numbers nor panel settle:
+   expected prevalence, which partner to trust, an off-target stain. Never
+   ask approval per marker.
 5. `gating_session_finish` (`action: "close"`; `"commit"` for a propose-mode
-   session once the user agrees), then `gating_qc` and `gating_report`.
-   `export_gates` writes CSV files if wanted.
-6. Only if the user explicitly asks to save the gates into their AnnData file:
-   `write_gates_to_source` with `confirm: true`.
+   session once the user agrees), `gating_qc`, `gating_report`.
+6. `write_gates_to_source` (`confirm: true`) only when the user asks for the
+   gates in their own file.
 
 ## Tools
 
-`inspect_project`, `inspect_expression_sources`, `set_expression_source`,
-`set_pixel_size`, `get_panel_context`, `set_panel_context`,
-`get_marker_hierarchy`, `gating_session_start`, `gating_next`,
-`gating_answer`, `gating_session_status`, `gating_session_finish`,
-`gating_qc`, `gating_report`, `export_gates`, `get_all_gates`, `reset_gates`,
-`undo_operation`, `write_gates_to_source`.
+{{tools}}
 
 ## Evidence
 
-Packets carry their numbers in `evidence` and their pictures as artifacts;
-cite the artifact ids a gate rested on (the workers' lines carry them). A
-packet's `mirror` says whether the open viewer shows the same thing.
+Cite the artifact ids each gate rested on.
 
 ## Uncertainty
 
-- Each marker ends in a state the session names (`gating_session_status`
-  `vocabulary`); report the words, never a number for a confidence.
-- A unit that stops short ends `manual_review_recommended`, its gate written
-  at the best the evidence reached and tagged `needs_review`. Every gated
-  marker ends with a value; none is accepted because it ran out. Say which
-  carry the tag and what would settle each.
-- Confidence comes from a fixed rule over the numbers and the answers.
-- Reruns are deterministic: answers are kept under a hash of the packet (per
-  `agent`) and reused by a later identical packet (`reuse_answers`; status
-  counts them as `replayed`). Pass `reuse_answers` false to be asked afresh.
-- `reset_gates` puts a project's gates back at full range (locked ones stay);
-  `undo_operation` reverses it.
+Report states in the session's words (status `vocabulary`), never a number.
+A marker that stopped short ends `manual_review_recommended`, tagged
+`needs_review`: say what would settle it. QC on the image: gating/qc-cells;
+how gates are placed and graded: gating/decisions.
 
 ## Mutation policy
 
-- In `apply` mode each decided gate is written to Plexora's gating state as a
-  child receipt of the session; `gating_session_finish` with
-  `action: "rollback"` undoes them all.
-- A gate is never accepted against the last direction a look gave.
-- `technically_failed` and `no_positive_population` markers are written at the
-  column's maximum, the reason kept beside the gate.
-- Locked and approved gates are never written; hand-set gates are kept unless
-  `overwrite_manual: true`; a gate the user changes during the session wins.
-- The source file is touched only by `write_gates_to_source` on request.
-- A classifier layer decides once adopted.
+Locked, approved and hand-set gates are kept. `rollback`
+(`gating_session_finish`) undoes the session, `undo_operation` one write.
+Status `unconfirmed_context` (what a reader said about the panel): tell the
+user; it is learned once they confirm it (`set_panel_context`,
+`source: "user"`).
 
 ## Provenance
 
-`gating_report` lists per marker the final gate, the GMM proposal, the tier,
-the confidence, the flags and the decisions; `get_all_gates` shows each gate's
-method. Report the session id and the number of writes.
+Session id, number of writes, and per marker gate, method, confidence and
+flags (`gating_report`); markers with `stood_on_failed`; `skipped_markers`
+(never gated, not failures).
 
 ## Done when
 
-Every marker has a final state; the user has the report path and a sentence per
-marker that is not `accepted`; open `questions` are put to the user.
+Every marker has a final state; the user has the report path, a sentence per
+marker not accepted, and the open `questions`.
 
 ## Failure modes
 
-- `bulk_running` for long: `gating_session_status` `bulk` says whether the pass
-  runs (the next `gating_next` resumes it after a restart).
-- `paused`: wait, then go on. `stopped`: `gating_session_finish` with `close`
-  (keeps the gates) or `rollback`, and stop; never start another unasked.
-- `viewer_not_available` while mirroring: the session continues headless.
+`bulk_running` for long: status `bulk` says if it runs. `paused`: wait.
+`stopped`: `gating_session_finish` (`close` keeps the gates, `rollback` undoes
+them), then stop; never start another unasked.

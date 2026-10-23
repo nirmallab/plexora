@@ -255,12 +255,9 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
 
 ## Tools
 
-`inspect_project`, `set_pixel_size`, `qc_session_start`, `qc_next`, `qc_answer`,
-`qc_session_status`, `qc_session_finish`, `qc_report`, `get_qc_results`,
-`get_qc_exclusions`, `set_qc_strictness`, `set_qc_cycles`, `export_qc`,
-`list_rois`, `undo_operation`, `write_qc_to_source`, `approve_qc_roi`,
-`get_dna_retention`, `read_skill`, `render_artifact_overview`,
-`inspect_artifact_channels`, `segment_qc_roi`. `refine_qc_roi` retraces a region
+{{tools}}
+
+`refine_qc_roi` retraces a region
 already written (one, or `all`) -- for a region the user drew by hand, say; a
 registration region retraces to its mismatch map, a blur region to the blur
 trace.

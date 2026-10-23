@@ -22,7 +22,7 @@ skills:
     tier: judgement
     tools: [inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_region,
             render_projection, render_sections, render_object_views, check_volume_quality,
-            measure_objects, track_objects, segment_3d, pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab,
+            object_z_profile, measure_objects, track_objects, segment_3d, pin_projection, viewer_set_view, viewer_set_z, viewer_set_slab,
             carry_roi_through_planes, update_roi]
   - name: surface-rendering
     title: Make, check and show surfaces of a z-stack
@@ -62,24 +62,15 @@ skills:
     tier: judgement
     tools: [list_markers, list_channels, get_marker_distribution, get_gate_distribution,
             render_region]
-  - name: visual-gating
-    title: Gate one marker by hand and check it by eye
-    description: Profile, a starting gate, pixel-budgeted collages, qualitative adjustment, receipts.
-    when: The user wants to gate or check one marker interactively, step by step.
-    tier: judgement
-    tools: [get_gate, profile_marker, score_gate_candidates, get_marker_hierarchy, get_gate_distribution, set_gate, viewer_preview_gate,
-            render_gating_collage, render_gate_validation, render_cell_gallery, explain_cell,
-            adjust_gate, undo_operation, get_gated_summary, write_gates_to_source]
   - name: gate-image
     prompt: gate_image
     title: Gate every marker of an image automatically
-    description: A gating session -- deterministic where the numbers suffice, one small decision packet at a time where they do not.
-    when: The user asks to gate an image, threshold all markers, or call positives for the panel.
+    description: A gating session -- deterministic where the numbers suffice, one small decision packet at a time where they do not; you set it up, hand the packets to workers and report.
+    when: The user asks to gate an image or a dataset, threshold all markers, or call positives for the panel.
     tier: judgement
-    tools: [inspect_project, inspect_expression_sources, set_expression_source,
-            set_pixel_size, get_panel_context, set_panel_context, get_marker_hierarchy, gating_session_start,
-            gating_next, gating_answer, gating_session_status, gating_session_finish, gating_qc,
-            gating_report, export_gates, get_all_gates, reset_gates, undo_operation,
+    tools: [read_skill, inspect_project, get_panel_context, set_panel_context,
+            get_marker_hierarchy, gating_session_start, gating_session_status,
+            gating_session_finish, gating_qc, gating_report, undo_operation,
             write_gates_to_source]
   - name: gate-packets
     title: Answer a gating session's decision packets
@@ -87,6 +78,18 @@ skills:
     when: A brief names a gating session and this skill, or a coordinator without workers reaches the packet loop.
     tier: judgement
     tools: [read_skill, gating_session_status, gating_next, gating_answer]
+  - name: gate-review
+    prompt: review_gating
+    title: Review, approve or lock gates, and find out why a marker is hard
+    description: Provenance and panel-wide consistency first, then the user's decisions -- approve, lock, exclude, undo; for a hard marker, the profile's numbers and flags, then the one picture that settles the question.
+    when: The user asks to review, approve, lock or undo gates, after a gating session, or when a marker ended in review or failed, or looks wrong.
+    tier: judgement
+    tools: [get_all_gates, gating_qc, get_gate_provenance, get_gate, get_marker_hierarchy,
+            profile_marker, score_gate_candidates, render_gating_collage, bivariate_evidence,
+            sample_gating_cells, render_cell_gallery, explain_cell, render_region,
+            get_panel_context, set_gate_status, undo_operation, gating_report,
+            classifier_state, classifier_review, classifier_adopt, classifier_revert,
+            read_skill]
   - name: qc-packets
     title: Answer a QC session's decision packets
     description: The worker's half of qc-image when the user maps QC tasks to models -- judge the packets of the brief's tasks, stop at the quota or on another task's packet, return one line per packet.
@@ -100,34 +103,6 @@ skills:
     tier: judgement
     tools: [read_skill, object_review_start, object_review_status, object_review_next,
             object_review_answer, object_review_finish]
-  - name: gate-dataset
-    prompt: gate_dataset
-    title: Gate every image of a dataset from a reference image
-    description: One session; the reference gated in full, gates carried to the rest through intensity alignment, drift classes and a strategy per marker.
-    when: The user asks to gate a dataset, a cohort, or several slides consistently.
-    tier: judgement
-    tools: [get_dataset, inspect_project, get_panel_context, set_panel_context, get_marker_hierarchy,
-            compare_gates_across_images, job_wait, gating_session_start, gating_next,
-            gating_answer, gating_session_status, gating_session_finish, gating_report,
-            export_gates, set_pixel_size]
-  - name: review-gating
-    prompt: review_gating
-    title: Review, approve or lock gates
-    description: Provenance and panel-wide consistency first, then the user's decisions -- approve, lock, exclude, undo.
-    when: The user asks to review, approve, lock or undo gates, or after a gating session.
-    tier: judgement
-    tools: [get_all_gates, gating_qc, get_gate_provenance, score_gate_candidates, get_marker_hierarchy, render_gating_collage,
-            bivariate_evidence, set_gate_status, undo_operation, gating_report, get_gate,
-            render_cell_gallery, classifier_state, classifier_review, classifier_adopt,
-            classifier_revert]
-  - name: diagnose-marker
-    prompt: diagnose_marker
-    title: Find out why a marker is hard to gate
-    description: The profile's numbers and flags first, then the one picture that settles the question.
-    when: A marker ended in review or failed, or the user asks why a marker is hard or looks wrong.
-    tier: judgement
-    tools: [profile_marker, score_gate_candidates, get_marker_hierarchy, render_gating_collage, bivariate_evidence, sample_gating_cells,
-            render_cell_gallery, explain_cell, render_region, get_panel_context]
   - name: qc-image
     prompt: qc_image
     title: Quality-control an image automatically
@@ -137,7 +112,8 @@ skills:
     tools: [inspect_project, set_pixel_size, qc_session_start, qc_next, qc_answer,
             qc_session_status, qc_session_finish, qc_report, get_qc_results,
             get_qc_exclusions, set_qc_strictness, set_qc_cycles, export_qc, list_rois,
-            undo_operation, write_qc_to_source, refine_qc_roi, read_skill,
+            undo_operation, write_qc_to_source, refine_qc_roi, approve_qc_roi,
+            get_dna_retention, read_skill,
             render_artifact_overview, inspect_artifact_channels, segment_qc_roi]
   - name: qc-checks
     prompt: qc_checks
@@ -151,7 +127,7 @@ skills:
             get_registration_check, write_registration_regions, run_segmentation_qc,
             get_segmentation_qc, write_segmentation_flags, clear_segmentation_qc,
             run_dna_retention, get_dna_retention, clear_dna_retention,
-            write_qc_background_roi,
+            write_qc_background_roi, set_qc_cycles, approve_qc_roi,
             sample_qc_examples, render_region, job_wait, refine_qc_roi, segment_qc_roi,
             refresh_qc, get_qc_results, export_qc, undo_operation]
   - name: qc-visual-artifacts
@@ -175,4 +151,57 @@ skills:
             undo_operation, qc_report, export_qc, sample_qc_examples, set_blur_check,
             write_blur_regions, write_registration_regions, write_segmentation_flags,
             get_blur_check, get_registration_check, get_segmentation_qc, render_region,
-            segment_qc_roi, refine_qc_roi]
+            segment_qc_roi, refine_qc_roi, render_artifact_overview,
+            inspect_artifact_channels]
+# References: material a skill needs only sometimes, read as
+# `read_skill("<group>/<name>")` from `skills/<group>/<name>.md`. `skills`
+# names the skills that point at it (`list_skills` lists it under each);
+# `tools`, when given, is its `## Tools` list, checked like a skill's.
+references:
+  - name: gating/setup
+    title: Set a gating session up
+    when: Before gating_session_start, and for a set-up refusal or a set-up packet (expression, pixel size, panel context, display).
+    skills: [gate-image]
+    tools: [inspect_expression_sources, set_expression_source, set_pixel_size,
+            set_panel_context, get_marker_hierarchy, contrast_session_start]
+  - name: gating/decisions
+    title: How a session places, grades and writes gates
+    when: To explain where a look started, why a reference was or was not used, or how a marker ended.
+    skills: [gate-image, gate-review]
+  - name: gating/qc-cells
+    title: Gating on the cells QC passed
+    when: The image has QC results (the start's qc_exclusion), or QC changed after gating.
+    skills: [gate-image, gate-review]
+  - name: gating/dataset
+    title: Gate every image of a dataset from a reference image
+    when: The user asks to gate a dataset, a cohort, or several slides consistently.
+    skills: [gate-image]
+    tools: [get_dataset, inspect_project, get_panel_context, set_panel_context,
+            get_marker_hierarchy, compare_gates_across_images, job_wait, gating_session_start,
+            gating_next, gating_answer, gating_session_status, gating_session_finish,
+            gating_report, export_gates, set_pixel_size, apply_gate_to_dataset]
+  - name: gating/visual-gating
+    title: Gate one marker by hand and check it by eye
+    when: The user wants to gate or check one marker interactively, step by step.
+    skills: [gate-image, gate-review]
+    tools: [get_gate, profile_marker, score_gate_candidates, get_marker_hierarchy,
+            get_gate_distribution, set_gate, viewer_preview_gate, render_gating_collage,
+            render_gate_validation, render_cell_gallery, explain_cell, adjust_gate,
+            undo_operation, get_gated_summary, write_gates_to_source]
+# Old names: `read_skill` (and an installed brief or agent file) still reads
+# them, as what replaced them. An old name that opened an MCP prompt keeps it.
+aliases:
+  - name: visual-gating
+    to: gating/visual-gating
+  - name: gate-dataset
+    to: gating/dataset
+    prompt: gate_dataset
+    title: Gate every image of a dataset from a reference image
+    description: One session; the reference gated in full, gates carried to the rest through intensity alignment, drift classes and a strategy per marker.
+  - name: review-gating
+    to: gate-review
+  - name: diagnose-marker
+    to: gate-review
+    prompt: diagnose_marker
+    title: Find out why a marker is hard to gate
+    description: The profile's numbers and flags first, then the one picture that settles the question.

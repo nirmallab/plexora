@@ -63,12 +63,12 @@ TERMINAL = schemas.TERMINAL_STATES
 #: The packets a unit's budget pays for: looks. Confirmations -- a technical
 #: check, a whole-image check of a chosen gate, a carried gate -- are bounded
 #: by the state machine itself and never stop a unit short of its answer.
-BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
+BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates", "cell_panel")
 
 #: The packet kind each waiting state asks for.
 ASKS = {"qc_confirm": "qc_confirm", "awaiting_absence": "absence_check",
         "awaiting_t2": "t2_confirm", "awaiting_t3": "t3_biological",
-        "awaiting_t4": "t4_candidates",
+        "awaiting_t4": "t4_candidates", "awaiting_panel": "cell_panel",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
@@ -254,6 +254,10 @@ def confidence_for(unit) -> str:
             level = "moderate"
         else:
             level = "low"
+    elif path == "panel":
+        from plexora.plugins.gating.server.autogate import hypotheses
+
+        level = hypotheses.confidence(unit)
     elif path == "budget":
         level = "low"
     else:
@@ -416,6 +420,9 @@ class Engine(BaseEngine):
             # without one, as it was started.
             record["classifier"] = {"schema": 0}
             options["classifier"] = "off"
+        # Stored under an engine's first name (classic, candidates): it keeps
+        # that engine (one stored before the option is v1, `option_defaults`).
+        options["engine"] = schemas.engine_name(options["engine"])
         if "hybrid" in options:
             if options.pop("hybrid") in ("tiles", "full"):
                 options["tiles"] = True
@@ -432,9 +439,15 @@ class Engine(BaseEngine):
     # -- the workflow's hooks (`BaseEngine`) --
 
     def option_defaults(self):
+        """What a stored session's missing options are completed with: today's
+        defaults, except the engine -- a session stored before the engine
+        option (2026-10-20) ran v1, whatever the default is now -- and the
+        contrast check that goes with it."""
         from plexora.plugins.gating.capabilities_session import option_defaults
 
-        return option_defaults()
+        return {**option_defaults(), "engine": "v1",
+                "display_check": schemas.DISPLAY_CHECK_DEFAULT["v1"],
+                "basic_qc": schemas.BASIC_QC_DEFAULT["v1"]}
 
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])
@@ -675,6 +688,11 @@ class Engine(BaseEngine):
             detail["depends_on"] = depends
         if empty:
             detail["flags"] = sorted(set(unit.get("flags") or []) | {method})
+        if unit.get("hypotheses"):
+            from plexora.plugins.gating.server.autogate import hypotheses
+
+            # The candidates, the looks and why they stopped (`hypotheses`).
+            detail["hypotheses"] = hypotheses.provenance(unit)
         row = {"status": "accepted", "method": method, "tier": tier,
                "confidence": confidence, "state": state, "gmm_proposal": unit.get("gmm"),
                "delta_fit": unit.get("delta_fit"), "delta_fraction": unit.get("delta_fraction"),
@@ -851,13 +869,13 @@ class Engine(BaseEngine):
             return
         from plexora.plugins.gating.server.autogate import cellcalls
 
-        if cellcalls.check(self, unit):
+        if unit.get("path") != "panel" and cellcalls.check(self, unit):
             # The classifier disagrees with this gate beside it: the cells it
             # flags get a look first (once per marker; `cellcalls.check`).
             return
         confidence = confidence_for(unit)
         state = state_for(confidence)
-        tier = {"t1": "T1", "t2": "T2", "t3": "T3", "t4": "T4",
+        tier = {"t1": "T1", "t2": "T2", "t3": "T3", "t4": "T4", "panel": "T2",
                 "transfer": "T1", "budget": "T2"}.get(unit.get("path"), "T2")
         low = unit["candidate"]
         self.write(unit, low, method=method, confidence=confidence, state=state, tier=tier)
@@ -888,7 +906,11 @@ class Engine(BaseEngine):
         anchor = start_low(unit)
         result = tableops.local_or_node(ds, "gating.autogate.regression", {
             "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
-            "prior": prior, "partners": partners})
+            "prior": prior, "partners": partners,
+            # The band the looks walk, so a gate the lattice offered is never
+            # failed for leaving the mixture's narrower one.
+            "guard": (self.lattice_for(unit).get("guard")
+                      if (unit.get("start") or {}).get("source") == "scoring" else None)})
         result = self._with_lineage(unit, result, {p["partner"] for p in partners})
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],
@@ -1060,8 +1082,31 @@ class Engine(BaseEngine):
             return False
         return replan.check_whole_image(self, unit)
 
+    def _to_panel(self, unit):
+        """`cell_panel` for a unit the candidates engine decides (its first
+        look, or a look reopened since its panels closed), None to keep the
+        classic look: a conditional gate, or a lattice with one candidate."""
+        from plexora.plugins.gating.server.autogate import hypotheses
+
+        if not hypotheses.active(self, unit):
+            return None
+        state = unit.get("hypotheses")
+        if state is not None and state.get("status") is not None:
+            unit.setdefault("hypotheses_history", []).append(state)
+            unit.pop("hypotheses")
+        hypotheses.start(self, unit)
+        if not hypotheses.active(self, unit):
+            return None
+        unit["state"] = "awaiting_panel"
+        return "cell_panel"
+
     def settle(self, unit):
         """Advance a unit through every deterministic step it is waiting on."""
+        if unit["state"] == "awaiting_regression" and unit.get("path") == "panel":
+            from plexora.plugins.gating.server.autogate import hypotheses
+
+            hypotheses.settle(self, unit)
+            return
         if unit["state"] == "awaiting_regression":
             result = self.run_regression(unit)
             if "lineage" in result["failed"]:
@@ -1647,10 +1692,12 @@ class Engine(BaseEngine):
         # waits for the cell look: whether any cell carries the stain comes
         # before whose cells the brightest are (LSP11761 PD1, absent to the
         # person, was closed for review by the screen and never shown).
-        first = kind in ("t2_confirm", "absence_check")
+        first = kind in ("t2_confirm", "absence_check", "cell_panel")
         if first and unit.get("scoring") is None:
             self.propose(unit)
-        if kind == "t2_confirm":
+        if kind == "t2_confirm" and schemas.engine_name(self.options["engine"]) == "v2":
+            kind = self._to_panel(unit) or kind
+        if kind in ("t2_confirm", "cell_panel"):
             self.lineage_screen(unit)
         if first and self.defer_for_children(unit):
             return None

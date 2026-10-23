@@ -23,7 +23,7 @@ import dataclasses
 import time
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from plexora.agent import presets
 from plexora.agent.errors import AgentError
@@ -215,15 +215,16 @@ class SessionOptions(AgentModel):
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
     display_check: Literal[schemas.DISPLAY_CHECKS] = Field(
-        "vision", description="Auto contrast -- how bright each marker is drawn in every look: "
-                              "`vision` (the default) puts a contrast grid to the model after "
-                              "the panel context (markers in rows, five brightnesses in "
-                              "columns; code picks the column) for the markers no earlier check "
-                              "settled -- once per image, a choice outlives the session, so an "
-                              "image an auto-contrast run already did is not asked again; "
-                              "`rule` keeps the calibration's own window (black under the "
-                              "background, the bright cells' structure near the top) and shows "
-                              "it; `off` leaves the step out.")
+        schemas.DISPLAY_CHECK_DEFAULT[schemas.DEFAULT_ENGINE],
+        description="Auto contrast -- how bright each marker is drawn in every look: "
+                    "`vision` puts a contrast grid to the model after the panel context "
+                    "(markers in rows, five brightnesses in columns; code picks the column) "
+                    "for the markers no earlier check settled -- once per image, a choice "
+                    "outlives the session, so an image an auto-contrast run already did is not "
+                    "asked again; `rule` keeps the calibration's own window (black under the "
+                    "background, the bright cells' structure near the top) and shows it; `off` "
+                    "leaves the step out. Left out: `off` with engine v2 (the setting it was "
+                    "measured with), `vision` with v1.")
     purpose: Literal[schemas.PURPOSES] = Field(
         "gating", description="gating: decide the markers' gates. contrast: auto contrast on its "
                               "own (contrast_session_start) -- the set-up, the calibration and "
@@ -285,6 +286,46 @@ class SessionOptions(AgentModel):
                             "mixed: the same words, and flagged cells read as mixed count "
                             "as stained. count: the reader counts the cells in each row "
                             "that carry their own stain (unmeasured).")
+    engine: Literal[schemas.ENGINES] = Field(
+        schemas.DEFAULT_ENGINE,
+        description="How a marker that needs a look is decided. v2 (the default): the "
+                    "lattice's candidate gates are competing hypotheses; blind panels of "
+                    "single cells, numbered and shuffled with no value or gate shown, are "
+                    "labelled one cell at a time, and code picks the candidate the labels "
+                    "support, looks again only where the leader has not beaten a rival, and "
+                    "closes for review with a reason when it cannot. v1: rows below, at and "
+                    "above the gate, then candidates beyond it, judged a row at a time. The "
+                    "first names, classic (v1) and candidates (v2), are accepted.")
+    basic_qc: bool = Field(
+        schemas.BASIC_QC_DEFAULT[schemas.DEFAULT_ENGINE],
+        description="On an image with no QC result, run QC's model-free checks before "
+                    "gating it (`run_basic_qc`: folds -- also ones that come or go between "
+                    "imaging cycles -- tears, debris, saturation, lost nuclei; no model "
+                    "calls) and leave out what they find, marked automatic and unreviewed. "
+                    "Left out: on with engine v2, off with v1. Needs the QC plugin.")
+    panel_looks: int = Field(3, ge=1, le=6, description="With engine v2: the most "
+                             "cell panels one marker is shown before it closes for review "
+                             "(fewer when the leading candidate resolves first).")
+
+    @field_validator("engine", mode="before")
+    @classmethod
+    def _engine_first_names(cls, value):
+        return schemas.engine_name(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults_by_engine(cls, data):
+        """A session that names no contrast check, or no basic QC, gets its
+        engine's (`schemas.DISPLAY_CHECK_DEFAULT`, `schemas.BASIC_QC_DEFAULT`)."""
+        if not isinstance(data, dict):
+            return data
+        engine = schemas.engine_name(data.get("engine") or schemas.DEFAULT_ENGINE)
+        for key, table in (("display_check", schemas.DISPLAY_CHECK_DEFAULT),
+                           ("basic_qc", schemas.BASIC_QC_DEFAULT)):
+            if data.get(key) is None and engine in table:
+                data = {**data, key: table[engine]}
+        return data
+
     replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
                          "reordered and rescored without the failed gates, accepted gates that "
                          "only a failed one placed go to review, and what only biology can "
@@ -857,9 +898,9 @@ def start(call, inp):
             "pixel": _pixel_brief(record["pixel"]), "state": record["state"],
             "channels": _channels_brief(record["channel_match"]),
             "qc_exclusion": record["qc_exclusion"],
-            **_qc_warning(record["qc_exclusion"]),
+            **_qc_warning(record["qc_exclusion"], basic=_basic_qc_on(inp.basic_qc)),
             **_unconfirmed_note(call.session, images, inp.setup),
-            **_guide(inp.reading, inp.known_guide),
+            **_guide(inp.reading, inp.known_guide, inp.engine),
             **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
@@ -1021,13 +1062,36 @@ def _qc_missing(blocks) -> list:
                   and block.get("reason") == "no QC result for this image")
 
 
-def _qc_warning(blocks) -> dict:
-    """A warning in the start output for `_qc_missing` images -- never a
-    silent no-op: artifacts there (an edge band, a fold) reach every marker's
-    fit, sample and look."""
+def _basic_qc_on(chosen) -> bool:
+    """Whether basic QC runs: the session asked for it and QC is installed."""
+    from plexora.agent import registry
+
+    return bool(chosen) and any(c.name == "qc.basic_run" for c in registry.all_capabilities())
+
+
+#: What the agent tells the user when basic QC runs (`_qc_warning`).
+BASIC_QC_MESSAGE = (
+    "{images} {verb} no QC result. Before gating, Plexora runs basic QC on {them}: QC's "
+    "model-free checks (tissue folds -- also ones that come or go between imaging cycles "
+    "-- tears, debris, saturated pixels, and lost nuclei where the image has a DNA channel "
+    "per cycle), with no model calls, and leaves out the cells in the artifacts it is sure "
+    "of; weaker ones are held back. Tell the user it is running and that nobody reviews it: "
+    "recommend the full QC from the QC panel, which reviews these regions and the held-back "
+    "ones, and checks focus, registration and segmentation too.")
+
+
+def _qc_warning(blocks, *, basic=False) -> dict:
+    """A note in the start output for `_qc_missing` images -- never a silent
+    no-op: artifacts there (an edge band, a fold) reach every marker's fit,
+    sample and look. With `basic`, the bulk pass runs basic QC on them first
+    (`bulk._basic_qc`), and the note says so."""
     missing = _qc_missing(blocks)
     if not missing:
         return {}
+    if basic:
+        return {"basic_qc": {"images": missing, "message": BASIC_QC_MESSAGE.format(
+            images=", ".join(missing), verb="has" if len(missing) == 1 else "have",
+            them="it" if len(missing) == 1 else "them")}}
     return {"qc_warning": {
         "images": missing,
         "message": (f"{', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no QC "
@@ -1088,7 +1152,7 @@ def _expression_check(call, images):
     return {"status": "confirmed"}, receipts
 
 
-def _guide(reading, known=None):
+def _guide(reading, known=None, engine=schemas.DEFAULT_ENGINE):
     """The reading guide, once per session (`packets.reading_guide`): a
     packet names the entries it relies on (and its answer schema) instead of
     repeating them. Byte-stable for a build, so a client caches it; a caller
@@ -1097,10 +1161,10 @@ def _guide(reading, known=None):
 
     if reading != "once":
         return {}
-    version = packets.guide_version()
+    version = packets.guide_version(engine)
     if known == version:
         return {"guide_version": version, "reading_guide": "unchanged (you hold it)"}
-    return {"guide_version": version, "reading_guide": packets.reading_guide(),
+    return {"guide_version": version, "reading_guide": packets.reading_guide(engine),
             "reading_note": "every packet's `evidence.guide` names the entries of this guide "
                             "it relies on, and `answer_schema.see` its answer schema; keep it "
                             "for the whole session (pass `guide_version` back as "
@@ -1118,6 +1182,10 @@ def _delegate_block(record, session_id, options, packet=None):
         return {}
     contexts = (record.get("biology") or {}).get("contexts") or []
     first = tasks.task_for("gating", packet.get("kind", "")) if isinstance(packet, dict) else None
+    if first is None and schemas.engine_name(options["engine"]) == "v2":
+        # v2's looks are all cell panels: their worker starts, not the one
+        # for v1's first looks (`delegation.ROLES` `first_task`).
+        first = tasks.task_for("gating", "cell_panel")
     return {"delegate": delegation.block("gating_worker", first_task=first, session_id=session_id,
                                          biology=", ".join(contexts) or None)}
 
@@ -1992,7 +2060,8 @@ def status(call, inp):
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         reader = None
-        if engine.options["reading"] == "once" and inp.known_guide != packets.guide_version():
+        if engine.options["reading"] == "once" \
+                and inp.known_guide != packets.guide_version(engine.options["engine"]):
             # A caller without the guide is a new conversation: nothing sent
             # before may be pointed at (`packets.as_in`).
             reader = packets.new_reader(record)
@@ -2020,8 +2089,10 @@ def status(call, inp):
                **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
                "pixel": _pixel_brief(record.get("pixel")),
                "display": _display_brief(record.get("display")),
+               **({"basic_qc": record["basic_qc"]} if record.get("basic_qc") else {}),
                "summary": engines.summary_of(record),
-               **_guide(record["options"]["reading"], inp.known_guide),
+               **_guide(record["options"]["reading"], inp.known_guide,
+                        engine.options["engine"]),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),
@@ -2041,6 +2112,11 @@ def status(call, inp):
         models = engine.models_used()
         if models:
             out["models"] = models
+        if record.get("unconfirmed_context"):
+            # What a reader answered about the panel: used by this session,
+            # learned for later panels only once a person confirms it
+            # (`set_panel_context` with source user).
+            out["unconfirmed_context"] = list(record["unconfirmed_context"])
     if replay and not st.control(inp.session_id).get("viewer_detached"):
         try:
             packet, _ = st.read_packet(inp.session_id, replay)

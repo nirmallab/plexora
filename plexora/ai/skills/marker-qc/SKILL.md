@@ -35,8 +35,7 @@ A cell table with markers. Visual checks need an image channel of the same name.
 
 ## Tools
 
-`list_markers`, `list_channels`, `get_marker_distribution`, `get_gate_distribution`,
-`render_region`.
+{{tools}}
 
 ## Evidence
 

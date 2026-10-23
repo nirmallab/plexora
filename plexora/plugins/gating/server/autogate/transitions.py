@@ -818,8 +818,12 @@ def apply_strip(engine, packet, answer):
             outcomes.append(_outcome(unit))
             continue
         if verdict == "ok":
+            # The audit agrees with the split; the numeric checks every
+            # other write passes still run (`Engine.settle`).
             unit["audited"] = True
-            engine.finalize(unit, method="gmm")
+            unit["method"] = "gmm"
+            unit["state"] = "awaiting_regression"
+            engine.settle(unit)
         else:
             unit["audited"] = False
             unit["state"] = "awaiting_t2"
@@ -854,11 +858,12 @@ def apply_panel(engine, packet, answer):
                                                          "lineage", "binary", "caveats",
                                                          "expected_fraction", "source",
                                                          "partners")}
-    # Known from now on, in every panel: the vocabulary's learned layer.
-    learned = context.learn_from(panel, applied, source="ai", about={
-        "agent": engine.options["agent"], "session": engine.record.get("session_id"),
-        "packet": packet.get("packet_id"), "project": project})
-    return {"applied": applied, "refused": refused, "learned": learned,
+    # A reader's account of the panel is not a fact for every later panel:
+    # the vocabulary learns it only once a person confirms it
+    # (`set_panel_context`, `context.learn_from`).
+    unconfirmed = sorted(set(engine.record.get("unconfirmed_context") or ()) | set(applied))
+    engine.record["unconfirmed_context"] = unconfirmed
+    return {"applied": applied, "refused": refused, "unconfirmed": applied,
             "order": engine.record["order"]}
 
 
@@ -1067,3 +1072,13 @@ APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": app
          "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "display_setup": apply_display}
+
+
+def apply_cell_panel(engine, packet, answer):
+    """A panel's labels (`hypotheses.apply`)."""
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    return hypotheses.apply(engine, packet, answer)
+
+
+APPLY["cell_panel"] = apply_cell_panel

@@ -15,7 +15,11 @@ Coarse to fine, across every channel, without a model (after the standalone
    analysis region (the tissue opened by `tissue_min_width_um`, so peeled
    ribbons fall away, then grown by `feather_um`), and per category:
    `fold` -- broad, bright, inside the tissue and raised in most channels
-   (and in the nuclear one); `tear` -- inside the tissue body at least
+   (and in the nuclear one), or -- the cycle rule, where QC knows the
+   imaging cycles -- raised in a run of consecutive cycles whose own nuclear
+   stain differs there from the other cycles' (a fold, bubble or debris that
+   came or went between cycles; nuclei do not change between cycles, cells
+   that are really bright in a cycle's markers keep the same nuclei); `tear` -- inside the tissue body at least
    `tear_inset_um` from its border, holding under `tear_level` of the
    tissue's signal over the glass; `debris` -- off the tissue only (on it,
    collagen and bright cells look the same): long thin `fiber`s by a white
@@ -64,7 +68,8 @@ import numpy as np
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import plane as qc_plane
 
-VERSION = "2"
+#: 3: the cycle rule for folds (`cycle_groups`, `_cycle_seeds`).
+VERSION = "3"
 CATEGORIES = ("fold", "tear", "debris", "saturation")
 CATEGORY_CLASS = {"fold": "tissue_fold", "tear": "tissue_damage_or_detachment",
                   "debris": "debris_or_foreign_object", "saturation": "saturation_or_clipping"}
@@ -108,6 +113,12 @@ PARAMS_DEFAULT = {
     # `fold_af_z` (a real fold glows in the blank channel).
     "fold_edge_band_um": 100.0, "fold_edge_share": 0.7, "fold_edge_minor_um": 150.0,
     "fold_edge_aspect": 3.0, "fold_af_z": 1.0,
+    # The cycle rule (`_cycle_seeds`), read on a grid of `agree_sigma_um`: a
+    # cycle is hit where at least `cycle_agree` of its markers are raised
+    # (`agree_z`) and its nuclear stain stands `cycle_nuclear_z` robust SDs
+    # above the median of every cycle's there; a seed is a run of
+    # consecutive hit cycles holding `cycle_min_channels` channels or more.
+    "cycle_agree": 0.5, "cycle_nuclear_z": 2.5, "cycle_min_channels": 3,
     # tear: the share of the tissue's signal (over the glass) a place holds
     "tear_level": 0.35, "tear_agree": 0.6, "tear_min_area_um2": 2.0e4,
     "tear_inset_um": 60.0,
@@ -248,6 +259,36 @@ def nuclear_names(names) -> list:
     return presets.nuclear_channels(names)
 
 
+#: The cycle rule reads cycles of this many channels (nuclear included);
+#: cycles QC cannot resolve, or outside these sizes, leave the
+#: most-channels rule alone.
+CYCLE_SIZE = (2, 20)
+
+
+def cycle_groups(project, names) -> tuple:
+    """([{index, channels, nuclear}] or None, why): the image's imaging
+    cycles for the cycle rule -- the user's (`set_qc_cycles`) or inferred
+    from repeated nuclear channels, and only when QC is sure of them
+    (`cycles.resolved`) and every cycle holds `CYCLE_SIZE` channels."""
+    from plexora.plugins.qc.server import cycles, results
+
+    try:
+        override = results.load(project).get("cycles_override")
+    except Exception:  # unreadable results: the names alone
+        override = None
+    found = cycles.infer(names, override=override)
+    ok, why = cycles.resolved(found)
+    if not ok:
+        return None, why
+    groups = found.get("cycles") or []
+    sizes = [len(c.get("channels") or ()) for c in groups]
+    if not sizes or min(sizes) < CYCLE_SIZE[0] or max(sizes) > CYCLE_SIZE[1]:
+        return None, (f"cycles of {min(sizes, default=0)} to {max(sizes, default=0)} channels; "
+                      f"the cycle rule reads cycles of {CYCLE_SIZE[0]} to {CYCLE_SIZE[1]}")
+    return [{"index": int(c["index"]), "channels": list(c["channels"]),
+             "nuclear": c.get("nuclear")} for c in groups], None
+
+
 def pan_subset(names, limit) -> list:
     """The channels averaged into the pan: one nuclear channel per cycle (at
     most three), then the other channels evenly spaced, `limit` in all."""
@@ -362,16 +403,19 @@ def plan(session, project, *, params=None) -> tuple:
     keys = [source_image.channel_key(c) for c in record.image.real_channels]
     level1 = _stage1_level(shapes, params)
     pan = pan_subset(names, params["pan_channels"])
+    groups, cycles_why = cycle_groups(project, names)
     identity = qc_plane.identity(image_data)
     image_stamp = None if str(identity or "").startswith("node://") else _stamp(identity)
     blob = json.dumps({"v": VERSION, "image": identity, "image_stamp": image_stamp,
                        "keys": keys, "shapes": shapes, "level1": level1, "pan": pan,
+                       "cycles": [c["channels"] for c in groups] if groups else None,
                        "params": {k: v for k, v in params.items() if k != "pixel_um"},
                        "pixel_um": pixel_um}, sort_keys=True, default=str)
     fp = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
     return fp, {"record": record, "image_data": image_data, "identity": identity,
                 "image_stamp": image_stamp, "names": names, "keys": keys, "shapes": shapes,
                 "level1": level1, "pan": pan, "nuclear": nuclear_names(names),
+                "cycles": groups, "cycles_why": cycles_why,
                 "params": params, "pixel_um": pixel_um, "pixel_um_source": pixel_source}
 
 
@@ -641,6 +685,7 @@ def _stage1(source, context, job):
     sample = np.flatnonzero(tissue0.ravel())
     if sample.size > 1_000_000:
         sample = sample[::int(math.ceil(sample.size / 1_000_000))]
+    cycle_maps = _CycleMaps(context.get("cycles"), (h, w), params["agree_sigma_um"] / um1)
     for k, name in enumerate(names):
         job.stop_if_asked()
         job.say(f"{PHASES[1]} ({k + 1}/{len(names)})")
@@ -660,6 +705,7 @@ def _stage1(source, context, job):
         z = (g - med) / mad
         agree_bright += (z > params["agree_z"]).astype(np.uint8)
         agree_dark += (z < -params["agree_z"]).astype(np.uint8)
+        cycle_maps.add(name, g, z > params["agree_z"])
         if name in pan_set:
             pan_sum += np.minimum(la / top, PAN_CLIP)
         channel_stats.append({"name": name, "p99_log": round(top, 5), "z_median": med,
@@ -669,7 +715,57 @@ def _stage1(source, context, job):
     del pan_sum
     return {"pan": pan, "agree_bright": agree_bright, "agree_dark": agree_dark,
             "tissue0": tissue0, "channels": channel_stats, "saturation": saturation,
-            "shape": (h, w)}
+            "shape": (h, w), "cycle_maps": cycle_maps.finish()}
+
+
+class _CycleMaps:
+    """Per cycle, on a coarse grid (one cell per `step` level-1 pixels, at
+    most 1024 a side): the share of its markers raised, and its nuclear
+    stain's smoothed log intensity -- what the cycle rule compares
+    (`_cycle_seeds`). Nothing is kept without cycles."""
+
+    def __init__(self, cycles, shape, step):
+        self.cycles = cycles or None
+        if not self.cycles:
+            return
+        h, w = shape
+        step = max(1, int(round(step)), int(math.ceil(max(h, w) / 1024)))
+        self.shape = (int(math.ceil(h / step)), int(math.ceil(w / step)))
+        n = len(self.cycles)
+        self.of = {}
+        self.nuclear = {}
+        for position, cycle in enumerate(self.cycles):
+            for name in cycle["channels"]:
+                self.of[name] = position
+            if cycle.get("nuclear"):
+                self.nuclear[cycle["nuclear"]] = position
+        self.share = np.zeros((n,) + self.shape, dtype=np.float32)
+        self.markers = np.zeros(n, dtype=np.int32)
+        self.dna = np.full((n,) + self.shape, np.nan, dtype=np.float32)
+
+    def _shrink(self, plane):
+        import cv2
+
+        return cv2.resize(plane.astype(np.float32), (self.shape[1], self.shape[0]),
+                          interpolation=cv2.INTER_AREA)
+
+    def add(self, name, smoothed, raised):
+        if not self.cycles or name not in self.of:
+            return
+        position = self.of[name]
+        if self.nuclear.get(name) == position:
+            self.dna[position] = self._shrink(smoothed)
+        else:
+            self.share[position] += self._shrink(raised)
+            self.markers[position] += 1
+
+    def finish(self):
+        if not self.cycles:
+            return None
+        share = self.share / np.maximum(self.markers, 1)[:, None, None]
+        return {"share": share, "dna": self.dna, "markers": self.markers.tolist(),
+                "sizes": [len(c["channels"]) for c in self.cycles],
+                "index": [c["index"] for c in self.cycles], "shape": self.shape}
 
 
 def _regions(pan, context):
@@ -788,6 +884,30 @@ def _seeds(stage, regions, context):
             add("fold", comp, cstats, ok, s, {"agreement": agree[ok - 1], **band})
         stats["fold_median"], stats["fold_mad"] = f_med, f_mad
         maps["fold"] = _to_grid(z_fold, grid)
+        found = cycle_hits(stage.get("cycle_maps"), core, params)
+        if found is not None:
+            # The cycle rule, where the most-channels rule has no seed.
+            h1, w1 = pan.shape
+            up = lambda a, how=cv2.INTER_NEAREST: cv2.resize(  # noqa: E731
+                np.asarray(a, dtype=np.float32), (w1, h1), interpolation=how)
+            z_cycle = up(found["strength"], cv2.INTER_LINEAR)
+            cand = (up(found["seed"]) > 0.5) & filled & roi & (labels == 0)
+            cand = _morph(cand, cv2.MORPH_OPEN, params["fold_scale_um"] / um1 / 8.0)
+            n, comp, cstats = _components(cand)
+            if n > 1:
+                ids = np.flatnonzero(cstats[:, 4] * area_px >= params["fold_min_area_um2"])
+                ids = ids[ids > 0]
+                strength = _label_quantile(z_cycle, comp, n - 1, 0.5)
+                agree = _label_mean(up(found["agreement"], cv2.INTER_LINEAR), comp, n - 1)
+                held = np.stack([_label_mean(up(hit), comp, n - 1) for hit in found["hit"]])
+                ids, s, _ = strongest(ids, strength[ids - 1], params["max_seeds"])
+                cycles_of = np.empty(ids.size, dtype=object)
+                cycles_of[:] = [[int(found["index"][c]) for c in
+                                 np.flatnonzero(held[:, i - 1] >= 0.5)] for i in ids]
+                band = edge_band(comp, cstats, ids, din, um1, params)
+                add("fold", comp, cstats, ids, s,
+                    {"agreement": agree[ids - 1], "rule": "cycle", "cycles": cycles_of, **band})
+            maps["fold"] = _to_grid(np.maximum(z_fold, z_cycle), grid)
     # tear: emptied, well inside the tissue body -- near the glass's level,
     # or lowered in most channels at once -- and well under the tissue
     if "tear" in cats:
@@ -909,6 +1029,50 @@ def _seeds(stage, regions, context):
                                   "mask": comp[y:y + bh, x:x + bw] == cid})
     return {"labels": labels, "seeds": seeds, "saturation": saturated, "stats": stats,
             "maps": maps}
+
+
+def cycle_hits(cycle_maps, core, params):
+    """The cycle rule on the coarse grid (`_CycleMaps.finish`), or None:
+    {seed, strength, agreement, hit (per cycle), index}.
+
+    A cycle is hit where at least `cycle_agree` of its markers are raised
+    and its nuclear stain stands `cycle_nuclear_z` robust SDs above the
+    median of every cycle's nuclear stain there (the spread measured over
+    the tissue's core): an artifact that came or went between cycles. A
+    seed is a run of consecutive hit cycles holding `cycle_min_channels`
+    channels or more; its strength is the hit cycles' strongest nuclear z,
+    its agreement their markers' share raised."""
+    import cv2
+
+    if not cycle_maps:
+        return None
+    share, dna = cycle_maps["share"], cycle_maps["dna"]
+    shape = tuple(cycle_maps["shape"])
+    have = [k for k in range(dna.shape[0]) if np.isfinite(dna[k]).any()]
+    if len(have) < 2:
+        return None
+    core_c = cv2.resize(core.astype(np.uint8), (shape[1], shape[0]),
+                        interpolation=cv2.INTER_NEAREST).astype(bool)
+    if core_c.sum() < 64:
+        return None
+    reference = np.nanmedian(dna[have], axis=0)
+    z = np.full(share.shape, -np.inf, dtype=np.float32)
+    for k in have:
+        difference = dna[k] - reference
+        med, mad = _robust(difference[core_c & np.isfinite(difference)])
+        z[k] = np.nan_to_num((difference - med) / mad, nan=-np.inf)
+    hit = (share >= params["cycle_agree"]) & (z >= params["cycle_nuclear_z"])
+    run = np.zeros(shape, dtype=np.int32)
+    best = np.zeros(shape, dtype=np.int32)
+    for k, size in enumerate(cycle_maps["sizes"]):
+        run = np.where(hit[k], run + int(size), 0)
+        best = np.maximum(best, run)
+    seed = best >= params["cycle_min_channels"]
+    strength = np.where(hit, z, -np.inf).max(axis=0)
+    strength = np.where(np.isfinite(strength), strength, 0.0).astype(np.float32)
+    agreement = np.where(hit, share, 0.0).max(axis=0).astype(np.float32)
+    return {"seed": seed, "strength": strength, "agreement": agreement, "hit": hit,
+            "index": list(cycle_maps["index"])}
 
 
 def glass_spread_floor(pan, glass, tissue_mad, params) -> float:
@@ -1279,7 +1443,10 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
             # only says where to start: the outline is the fine evidence's.
             weak = (frac >= params["fold_grow_frac"]) & bright & search & up["filled"] & \
                 up["roi"]
-            mask = _hysteresis(weak, seed)
+            # A cycle-rule seed is not grown on the pan, which barely sees one
+            # cycle: it keeps its own outline (`lost` below).
+            mask = _hysteresis(weak, np.isin(seed_lab, [m["id"] for m in mine
+                                                        if m.get("rule") != "cycle"]))
             mask = _morph(mask, cv2.MORPH_CLOSE, min(25.0 / um, 16))
             mask = _morph(mask, cv2.MORPH_OPEN, min(10.0 / um, 8))
             min_px = params["fold_min_area_um2"] / (um * um) * 0.25
@@ -1343,9 +1510,11 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
                                offset_xy=(bx0, by0), scale=fl, level=level, um_px=um,
                                context=context, refined=False, field=field,
                                extra={"filled": up["filled"]})
+            by_cycle = {m["id"] for m in mine if m.get("rule") == "cycle"}
             for o in more:
                 o["refine_reason"] = "grew_into_tissue" \
-                    if overgrown & set(o.get("seeds") or ()) else "no_fine_support"
+                    if overgrown & set(o.get("seeds") or ()) else \
+                    "cycle_rule" if set(o.get("seeds") or ()) <= by_cycle else "no_fine_support"
             objs += more
         out += objs
     return out
@@ -1687,6 +1856,9 @@ def _score(raw_objects, sat_objects, seeds, evidence, context):
         if "agreement" in first:
             metrics["agreement"] = round(float(np.dot(
                 weight, [s.get("agreement", 0.0) for _, s in members])), 3)
+        if first.get("rule") == "cycle":
+            metrics["rule"] = "cycle"
+            metrics["cycles"] = sorted({int(c) for _, m in members for c in m.get("cycles") or ()})
         if category == "debris":
             metrics["shape"] = first.get("shape")
             for key in ("length_um", "aspect", "solidity"):
@@ -1808,6 +1980,8 @@ def _finish(objects, seeds, regions, stage, context, field, evidence):
         "pixel_um": context["pixel_um"], "pixel_um_source": context["pixel_um_source"],
         "channels": context["names"], "pan_channels": context["pan"],
         "nuclear": context["nuclear"],
+        "cycle_rule": ({"active": True, "cycles": context["cycles"]} if context.get("cycles")
+                       else {"active": False, "why": context.get("cycles_why")}),
         "levels": {"stage1": context["level1"], "stage1_um_px": round(um1, 4),
                    "shapes": [list(s) for s in context["shapes"]]},
         "field": field, "ceilings": {c["name"]: c["ceiling"] for c in stage["channels"]

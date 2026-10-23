@@ -12,12 +12,19 @@ from __future__ import annotations
 from plexora.agent.receipts import make_receipt
 
 
+#: Who wrote an automatic region (`run_basic_qc`), as its candidate and row say.
+AUTOMATIC_BY = "basic_qc"
+
+
 def check_candidate(detector, version, klass, key, region, *, channels, scope,
                     threshold, action="exclude", cycles=(), extra_metrics=None,
-                    score_key="max", trace="method", cell_um=None, extent=None):
+                    score_key="max", trace="method", cell_um=None, extent=None,
+                    automatic=False):
     """A check's region as a result candidate the user asked to write: its
     action pinned as an approval pins one, so a strictness change never
-    renames it."""
+    renames it. `automatic`: written by QC's model-free checks on their own
+    (`run_basic_qc`) -- nobody approved it, so a QC session may still decide
+    it again, and a later write of the same check replaces it."""
     import hashlib
 
     from plexora.plugins.qc.server import refine, results
@@ -38,10 +45,10 @@ def check_candidate(detector, version, klass, key, region, *, channels, scope,
             "severity": None, "score": region.get(score_key),
             "metrics": {**threshold, **(extra_metrics or {})},
             "measurement": {}, "ai_decision": None, "evidence_artifacts": [],
-            "origin": "check", "fine_grid": True,
-            "created_by": detector, "state": "confirmed", "action": action,
-            "created_at": results.now_iso(),
-            "user_state": {"approved": True, "approved_action": action},
+            "origin": "automatic" if automatic else "check", "fine_grid": True,
+            "created_by": AUTOMATIC_BY if automatic else detector, "state": "confirmed",
+            "action": action, "created_at": results.now_iso(),
+            "user_state": {"approved": not automatic, "approved_action": action},
             # The planes (and frame) of a z-stack the finding is on, or None.
             **({"extent": dict(extent)} if extent else {})}
 
@@ -64,7 +71,8 @@ def replaceable(row, feature, klass, action=None):
 
 
 def write_regions(call, project, *, detector, klass, covered, work, row_keys,
-                  pinned="exclude", result_id=None, cells=True, session_id=None):
+                  pinned="exclude", result_id=None, cells=True, session_id=None,
+                  automatic=False):
     """Write a check's regions as ROIs, replacing the ones it wrote before for
     the same keys (channels, comparisons) unless the user made them theirs.
 
@@ -72,8 +80,10 @@ def write_regions(call, project, *, detector, klass, covered, work, row_keys,
     earlier row covers. The candidates go into the active result, or into
     `result_id`'s (a session writing into its own result before it is
     active); `cells=False` leaves the cells to be derived later (the
-    session derives them when it finishes). Returns (written, kept, removed,
-    receipts, per_key, revisions)."""
+    session derives them when it finishes). `automatic`: QC's model-free checks
+    writing on their own (`run_basic_qc`): with no active result they make a
+    `results.BASIC_ORIGIN` one, and their rows are not approved. Returns
+    (written, kept, removed, receipts, per_key, revisions)."""
     import dataclasses
 
     from plexora.plugins.qc.server import results, roi_link, strictness
@@ -86,6 +96,8 @@ def write_regions(call, project, *, detector, klass, covered, work, row_keys,
         document = results.load(project)
         roi_link.sync(ds, document)
         result = results.get_result(project, document, result_id) if result_id else None
+        if result is None and automatic and results.active(document) is None:
+            result = basic_result(document, project)
         if result is None:
             result = results.ensure_active(document, project)
         meta = results.roi_meta(project)
@@ -144,10 +156,11 @@ def write_regions(call, project, *, detector, klass, covered, work, row_keys,
                 result.setdefault("candidates", {})[record["id"]] = record
                 rows.append({**roi_link.meta_row(record, feature, result=result,
                                                  session_id=session_id, action=action,
-                                                 strictness=None, agent=None,
+                                                 strictness=None,
+                                                 agent=AUTOMATIC_BY if automatic else None,
                                                  operation_id=receipt.operation_id,
                                                  created_by=detector),
-                             "approved": True, "approved_action": action})
+                             "approved": not automatic, "approved_action": action})
                 written.append(feature["id"])
                 mine["written"].append(feature["id"])
         if rows:
@@ -162,6 +175,18 @@ def write_regions(call, project, *, detector, klass, covered, work, row_keys,
 
             calls.write_for_active(call, project)
     return written, kept, removed, receipts, per_key, (revision_before, revision_after)
+
+
+def basic_result(document, project) -> dict:
+    """A new active result of QC's model-free checks (`results.BASIC_ORIGIN`),
+    in `document` (the caller saves it)."""
+    import copy
+
+    from plexora.plugins.qc.server import results
+
+    result = results.new_result(project, strictness=copy.deepcopy(document.get("strictness")))
+    result["origin"] = results.BASIC_ORIGIN
+    return results.put_result(document, result, activate=True)
 
 
 def write_receipt(call, written, kept, removed, receipts, revisions):

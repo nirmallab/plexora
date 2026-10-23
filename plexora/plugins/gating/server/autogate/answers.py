@@ -33,7 +33,8 @@ _ROWS = ("One word per row about the cells around the marked nucleus (the four m
          "or halo around it, a fill inside it, cytoplasm hugging it), `neighbour_only` "
          "(stain in the tile, but around another nucleus or apart from this one), "
          "`unstained` (nothing touches the nucleus), `mixed` (both kinds, about evenly), "
-         "`cannot_tell`. A row is what most of its cells are.")
+         "`cannot_tell`. A row is what most of its cells are; a row with no cells is "
+         "`cannot_tell`.")
 
 
 class Request(AgentModel):
@@ -73,7 +74,8 @@ class QCAnswer(_Base):
         description="real_signal: the stain is real and some cells carry it; "
                     "technical_failure: flat, saturated, background or artifact only; "
                     "no_positive_population: the stain worked and no cell in this image is "
-                    "positive (the gate is put at the maximum).")
+                    "positive (the gate is put at the maximum). A sheet that repeats one "
+                    "already judged (`as_in`) is answered as it was there.")
 
 
 class AbsenceAnswer(_Base):
@@ -121,9 +123,24 @@ class T4Answer(_Base):
     confidence: Confidence = Field(description=_CONFIDENCE)
 
 
+class CellPanelAnswer(_Base):
+    kind: Literal["cell_panel"] = "cell_panel"
+    cells: dict[str, Literal[schemas.PANEL_LABELS]] = Field(
+        description="EVERY numbered cell (the caption under it): `own_stain` -- the marker's "
+                    "stain belongs to this cell, touching the nucleus the ticks mark with no "
+                    "other nucleus inside it; `not_own_stain` -- nothing touches that nucleus, "
+                    "or the stain is a neighbour's or apart by a dark gap; `uncertain` -- the "
+                    "picture cannot say; `artifact` -- debris, a fold, an edge or a smear "
+                    "across cells.")
+
+
 class ConfirmAnswer(_Base):
     kind: Literal["regression_confirm"] = "regression_confirm"
-    verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"]
+    verdict: Literal["holds", "too_low", "too_high", "artifact", "cannot_tell"] = Field(
+        description="`holds` unless a region is clearly wrong at this gate (the failing "
+                    "`checks` say where to look): `too_low` -- cells there are called "
+                    "positive without their own stain; `too_high` -- cells there carry their "
+                    "own stain and are called negative; `artifact`; `cannot_tell`.")
 
 
 class TransferAnswer(_Base):
@@ -187,9 +204,14 @@ class ReplanAnswer(_Base):
     markers: dict[str, Literal[replan.MARKER_VERDICTS]] = Field(
         default_factory=dict,
         description="EVERY marker key in `allowed.markers`: `absent` -- the stain worked and "
-                    "this tissue has no positive population (its positives are artifact); "
-                    "`bleed_through` -- a real population under another channel's light; "
-                    "`technical_failure` -- the stain did not work; `keep_for_review`.")
+                    "this tissue has no positive population: only when its positives are "
+                    "artifact (the whole-image view said so, or `lineage_contamination` puts "
+                    "even the brightest on a lineage that should exclude them) AND no look "
+                    "saw own stain (`own_stain_seen` false); a `whole_image` of `real_signal` "
+                    "means it is not absent, and a lineage the tissue surely holds rarely is "
+                    "(unsure: `keep_for_review`); `bleed_through` -- a real population under "
+                    "another channel's light; `technical_failure` -- the stain did not work; "
+                    "`keep_for_review`.")
     images: dict[str, Literal[replan.IMAGE_VERDICTS]] = Field(
         default_factory=dict,
         description="EVERY image in `allowed.images`: `image_artifact` -- the artifact the looks "
@@ -199,7 +221,7 @@ class ReplanAnswer(_Base):
 
 MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          ReplanAnswer, DisplaySetupAnswer)
+          ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

@@ -43,7 +43,7 @@ measured (`measure_objects`). A licence with `volume`; over MCP also `mcp`.
 
 ## Tools
 
-`read_skill`, `object_review_status`, `object_review_next`, `object_review_answer`.
+{{tools}}
 
 ## Evidence
 

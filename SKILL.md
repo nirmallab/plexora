@@ -3156,10 +3156,13 @@ deliberately left out and what should be built next.
   `hierarchy.select`, so the vocabulary and the session's biology together
   outrank a plain partner list; `SOURCES` is user > metadata > vocabulary >
   learned > ai; `learn_from(context, markers, source, about)` teaches the
-  vocabulary's learned layer what an agent or the user said about a marker it
-  did not know, called from `transitions.apply_panel` (outcome `learned`) and
-  `set_panel_context` (result `learned`), and never raises, because a panel
-  answer applies whether or not the file could be written; `panel_hash` uses
+  vocabulary's learned layer what the user said about a marker it did not
+  know (`source="user"` only: a reader's account returns [] and is never
+  learned), called from `set_panel_context` (result `learned`);
+  `transitions.apply_panel` learns nothing -- it lists the reader's markers in
+  the record's `unconfirmed_context` (outcome `unconfirmed`, surfaced by
+  `gating_session_status`) until a person confirms them; it never raises,
+  because a panel answer applies whether or not the file could be written; `panel_hash` uses
   the shipped layer only, because a marker learned later must not move a
   panel's stored context to a new file and leave the user's entries behind),
   `provenance.py` (the sidecar table: method, status, confidence, locks),
@@ -3224,6 +3227,34 @@ deliberately left out and what should be built next.
   dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
   are never read. Which steps earned their place is
   `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
+  `hypotheses/` is engine `v2` (first called `candidates`; the default since
+  2026-10-22, `schemas.DEFAULT_ENGINE`; `v1`, first called `classic`, is the
+  rows engine, kept as the alternative; `schemas.ENGINES`, the first names in
+  `schemas.ENGINE_ALIASES` are accepted everywhere and a record stored
+  without an engine resumes as v1; `docs/internal/GATING_ENGINE_V2.md` is the
+  architecture and where it fails, `docs/internal/bench/CANDIDATES_PLAN.md`
+  pre-registers its live bars): a marker that needs a look is decided by blind panels of single
+  cells choosing among the frozen lattice's points, instead of rows below,
+  at and above a moving gate, because the gate written must be one of the
+  candidates and a reader shown values or calls is no longer blind.
+  `hypotheses/candidates.py` (the candidates and the surveyed range; not the
+  top-level `candidates.py`), `panel.py` (the `cell_panel` packet: disputed
+  cells plus negative sentinels, shuffled and numbered, no value, call or
+  gate anywhere; sampled through the `gating.autogate.panel_cells` table op,
+  so it runs on data nodes), `evidence.py` (each candidate scored by the
+  cells it would get wrong; a leader beats a rival on a Wilson interval
+  weighed by cells per interval and post-stratified by the classifier's
+  call), `controller.py` (survey, refine, extend, and `tail` for a rare
+  marker, whose leader must have its own cells read stained or the unit ends
+  `positives_not_confirmed`; stop by rule), `classifier_check.py` (reads
+  `classifier_trust.json` beside it, written by
+  `tools/bench_gates/classifier_trust.py`; absent, the check is exploratory),
+  `__init__.py` (`PARAMS`, `start`/`settle`, provenance; `_steps` gives a
+  one-point lattice a step either side). The unit waits in
+  `awaiting_panel`; `cell_panel` is a `LOOK_KINDS` member and in
+  `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader,
+  and a resolved leader passes `run_regression`, a failed check capping its
+  confidence and never moving it.
   `replan.py` re-plans when a marker fails (`docs/internal/GATING_REPLAN_PLAN.md`):
   every close that fails runs `after_close` (reorder the unstarted markers
   without the failed one, rescore dependents, close an accepted gate only the
@@ -3303,8 +3334,9 @@ deliberately left out and what should be built next.
   (it waits on the bulk pass's calibration), `settle_display` rolls the
   per-image states (`schemas.DISPLAY_STATES`) up, and `struck_out` →
   `transitions.strike_display` keeps the rule after two unusable answers.
-  `SessionOptions.display_check` (`vision` default | `rule` | `off`,
-  `schemas.DISPLAY_CHECKS`) — `rule` skips the look and keeps the
+  `SessionOptions.display_check` (`vision` | `rule` | `off`,
+  `schemas.DISPLAY_CHECKS`; left out, `schemas.DISPLAY_CHECK_DEFAULT` by
+  engine: `vision` for v1, `off` for v2) — `rule` skips the look and keeps the
   calibration's own window, `off` leaves the step out (`DISPLAY_STATES` has
   `off`); session tests that expect a look
   first pass `display_check="rule"`. The task is `gating.display` in
@@ -3743,10 +3775,22 @@ deliberately left out and what should be built next.
   `global_blur` flag warns when even the sharpest cells lack fine detail, where
   an in-image reference cannot see it. `settings.json` holds the channel,
   threshold and minimum region size. **Artifact Detector** (`artifacts.py`,
-  `VERSION = "1"`, `CATEGORIES` fold/tear/debris/saturation, across every
+  `VERSION = "3"`, `CATEGORIES` fold/tear/debris/saturation, across every
   channel, coarse to fine: stage 1 reads each channel once at a level of at
   most 4096 px into a pan image, agreement counters and saturation seeds
-  against a per-channel effective ceiling; an attribution pass gathers each
+  against a per-channel effective ceiling, and -- where QC knows the cycles
+  (`cycle_groups`: `cycles.resolved`, 2-20 channels each) -- per-cycle maps
+  (`_CycleMaps`) for the cycle rule (`cycle_hits`: a run of consecutive
+  cycles with markers raised and their own nuclear stain off the cycles'
+  median is a fold seed, `metrics.rule == "cycle"`, written as a `scope:
+  "cycle"` region); without cycles the most-channels fold rule stands alone.
+  `run_basic_qc` (`qc.basic_run`, a job) writes the objects scoring
+  `BASIC_MIN_SCORE` (0.7) or more as automatic, unapproved regions
+  (`region_write.AUTOMATIC_BY`) in a `results.BASIC_ORIGIN` result, runs DNA
+  retention where it can, and derives the cells' calls; it never writes over
+  another QC result. Gating v2 runs it on an image with no QC
+  (`SessionOptions.basic_qc`, `autogate/bulk._basic_qc`, before calibration).
+  An attribution pass gathers each
   object's per-channel evidence; stage 2 re-reads each merged box at the
   finest level a pixel budget allows). Objects carry soft 0..1 scores and are
   cached under `<QC store dir>/artifacts/` (`<fp>.json|.npz`, `current.json`,
@@ -3976,7 +4020,8 @@ deliberately left out and what should be built next.
   -- a file or a folder, so a lab share learns for every install on it),
   written by `learn(entries, source="ai"|"user", about=)` and read back by
   `learned()`/`forget()` (`plexora ai vocabulary [list|path|forget MARKER]`),
-  so a marker a model or the user described once is not asked about again.
+  so a marker the user described once is not asked about again (a model's
+  account is learned only once the user confirms it, `context.learn_from`).
   The shipped layer always wins a name both know, the first account stands and
   only the user's word replaces a model's (`LEARNED_SOURCES`); a malformed
   learned entry is skipped, not fatal. `load()` re-reads the learned file when
@@ -4020,6 +4065,20 @@ deliberately left out and what should be built next.
   `status["sent_to_agent"]` (packets/chars/images/pixels actually sent,
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
+  `--variants v2` runs engine v2 (`candidates` is its first name); the
+  other variants run on `bench.BASE`, engine v1, whatever the default.
+  `tools/bench_gates/run_arms.py` (dev only) is the live campaign driver:
+  it records under `docs/internal/bench/campaigns/<campaign>/` (tracked) and
+  refuses the live data root; `docs/internal/bench/runs/` stays gitignored
+  (the user's labelled cell sets). `tools/bench_gates/classifier_trust.py`
+  writes the classifier trust table from `tools/bench_classifier_wand`
+  results. Tests: `tests/test_gating_panel_replay.py`,
+  `tests/test_bench_run_arms.py`.
+  `tools/bench_gates/score_gap.py` (dev only) scores stored sessions against
+  a person's gates (`--truth`, one `NAME=GLOB` arm each, `--oracle` for how
+  close each unit's lattice came); it refuses a truth file whose `kind` is
+  `model_gates`, because the lsp11385 reference is a model's run, not a
+  person's.
   `tools/transcript_cost.py` (dev only) turns a Claude Code transcript into a
   token/cost table per model, worker, tool and context band
   (`tests/test_transcript_cost.py`).
@@ -4160,14 +4219,17 @@ deliberately left out and what should be built next.
   role (`_install_agents`, `delegation.agent_file`) next to the skills
   directory, Claude Code only. `skills.py`/`skill_manifest.yaml`/`skills/`
   (the runtime scientific skills `dataset-triage`, `visual-inspection`,
-  `marker-qc`, `visual-gating` (rewritten for the session tools), the
-  `gate-image` coordinator skill (plans, starts, hands out and finishes; ~10k
-  characters, half its previous size now that the packet-answering half
-  moved out), `gate-packets` (the `gating_worker` role's skill, ~5k
-  characters: read the guide once, judge each packet, stop at the quota,
-  return one line per marker), `qc-packets` (the `qc_worker` role's skill),
-  `gate-dataset`, `review-gating`,
-  `diagnose-marker` skills, and `qc-image`, `review-qc`,
+  `marker-qc`, three gating skills -- `gate-image` (the coordinator: set up,
+  start, hand out, finish; capped at 4k characters), `gate-packets` (the
+  `gating_worker` role's skill, capped at 2k: read the session's guide once,
+  judge each packet by it, stop at the quota, one line per marker) and
+  `gate-review` (review + diagnose a hard marker) -- with the references
+  `skills/gating/*.md` (setup, decisions, qc-cells, dataset,
+  visual-gating) served as `read_skill("gating/<ref>")`; the manifest's
+  `aliases` keep the old names `visual-gating`, `gate-dataset`,
+  `review-gating`, `diagnose-marker` readable (and the `gate_dataset` and
+  `diagnose_marker` prompts), `qc-packets` (the `qc_worker` role's skill),
+  and `qc-image`, `review-qc`,
   `qc-checks` (the three free image checks, prompt `qc_checks`) and
   `qc-visual-artifacts` (the visual pass — the overview, the channel sheet
   and magic select, standalone or on a session's `visual_scan` packet;
@@ -4188,8 +4250,11 @@ deliberately left out and what should be built next.
   (`vocabulary()` harvests dict keys, `Literal`s, CLI flags, capability and
   tool names and the shipped marker vocabulary from the actual source tree),
   a digit loose in its prose rather than in a placeholder or a code span, or a
-  placeholder that does not render; `plexora ai setup` installs the rendered
-  copy, not the template. `ai/audit.py` — `plexora ai audit [--since --project --limit
+  placeholder that does not render; `validate()` also fails a `## Tools`
+  section that is not `{{tools}}` (the manifest's list, rendered on read) and
+  a skill or reference that repeats a clause of the gating reading guide
+  (`guide_repeats`, six words or more); `plexora ai setup` installs the
+  rendered copy, not the template. `ai/audit.py` — `plexora ai audit [--since --project --limit
   --report PATH --format --json]`, reading `agent/audit.py`'s log back for a
   person, optionally through `agent/report.py` for a written report.
 - CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b

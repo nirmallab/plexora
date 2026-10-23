@@ -216,12 +216,13 @@ def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
                 "  final_validation: judge-model\n")
     info = scene(tmp_path, "gnoscope")
     session = AgentSession()
-    sid = start(session, "gnoscope")
+    sid = start(session, "gnoscope", engine="v2")
     got = drive_scoped(sid, Oracle(info), answer_scope=False)
     for reader, tasks in (("looks", LOOKS), ("judges", JUDGES)):
         for task, _model, kind in got[reader]:
             assert task in tasks, (reader, task, kind)
-    assert any(kind == "t4_candidates" for _t, _m, kind in got["judges"])
+    # v2's cell panels choose its gates: the judges' task reads them.
+    assert any(kind == "cell_panel" for _t, _m, kind in got["judges"])
 
 
 @pytest.mark.pro
@@ -231,7 +232,7 @@ def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
     monkeypatch.setenv(models_config.ENV_PATH, str(tmp_path / "absent.yaml"))
     info = scene(tmp_path, "gplain")
     session = AgentSession()
-    sid = start(session, "gplain")
+    sid = start(session, "gplain", engine="v2")
     drive_serial(session, sid, Oracle(info))
     store = engines.store()
     record = store.load(sid)

@@ -56,11 +56,76 @@ def test_placeholders_are_filled_from_the_code():
 
 def test_the_gating_skills_stay_short():
     """The coordinator reads gate-image once and keeps it for the whole
-    session; every worker reads gate-packets. Both say how to judge and point
-    at the session's reading guide instead of restating it (the live run's
-    gate-image was 31k characters, re-read on every call)."""
-    assert len(skills.read_skill("gate-image")) <= 12_500
-    assert len(skills.read_skill("gate-packets")) <= 6_500
+    session; every worker reads gate-packets. Both point at the session's
+    reading guide instead of restating it, and leave what is needed only
+    sometimes to a gating/... reference (the live run's gate-image was 31k
+    characters, re-read on every call; 12.6k and 6.5k before the seven gating
+    skills became three)."""
+    assert len(skills.read_skill("gate-image")) <= 4_000
+    assert len(skills.read_skill("gate-packets")) <= 2_000
+    assert len(skills.read_skill("gate-review")) <= 9_800
+    gating = {"gate-image", "gate-packets", "gate-review"}
+    listed = {s["name"] for s in skills.list_skills()}
+    assert gating <= listed and not listed & set(skills.aliases())
+
+
+def test_old_names_and_references_are_read():
+    """An old skill name reads what replaced it, so a brief, a prompt or an
+    installed agent file that names it keeps working; `list_skills` notes it
+    under the skill that now holds it, beside that skill's references."""
+    old = {"visual-gating": "gating/visual-gating", "gate-dataset": "gating/dataset",
+           "review-gating": "gate-review", "diagnose-marker": "gate-review"}
+    for name, target in old.items():
+        assert skills.resolve(name) == target
+        assert skills.read_skill(name) == skills.read_skill(target)
+    rows = {s["name"]: s for s in skills.list_skills()}
+    assert {"review-gating", "diagnose-marker"} <= set(rows["gate-review"]["aliases"])
+    assert rows["gate-image"]["aliases"]["gate-dataset"] == "gating/dataset"
+    refs = {r["name"] for r in rows["gate-image"]["references"]}
+    assert {"gating/setup", "gating/dataset", "gating/qc-cells"} <= refs
+    for ref in refs:
+        assert "{{" not in skills.read_skill(ref)
+
+
+@pytest.mark.parametrize("name", ["../gate-image/SKILL", "gating/../gate-image/SKILL",
+                                  "gating/nope", "/etc/passwd", "gating", "gate-image/SKILL",
+                                  "gating\\setup", "GATING/SETUP"])
+def test_a_reference_name_never_becomes_a_path(name):
+    with pytest.raises(KeyError):
+        skills.read_skill(name)
+
+
+def test_the_tools_section_is_the_manifests():
+    """`## Tools` is written from the manifest when a skill is read, so the two
+    cannot drift; a hand-written list, or a note naming a tool the manifest
+    leaves out, is a validation problem."""
+    import re
+
+    for entry in skills.manifest()["skills"]:
+        text = skills.read_skill(entry["name"])
+        body = re.search(r"^## Tools\n\n(.*?)\n\n", text, re.S | re.M).group(1)
+        assert body == skills.tools_line(entry), entry["name"]
+    entry = {"name": "x", "tools": ["get_gate"]}
+    tools = {"get_gate", "set_gate"}
+    hand = "## Tools\n\n`get_gate`.\n\n## Evidence\n"
+    assert any("must open with" in p for p in skills._tools_section("x", entry, hand, tools))
+    note = "## Tools\n\n{{tools}}\n\n`set_gate` too.\n\n## Evidence\n"
+    assert any("set_gate" in p for p in skills._tools_section("x", entry, note, tools))
+    assert skills._tools_section("x", entry, "## Tools\n\n{{tools}}\n", tools) == []
+
+
+def test_a_skill_never_restates_the_reading_guide(monkeypatch):
+    """The session sends its reading guide itself: a guide clause repeated word
+    for word in a skill is a second copy that drifts."""
+    clauses = skills.guide_clauses()
+    assert clauses and skills.guide_repeats(clauses) == []
+    sentence = max(sorted(clauses), key=len)
+    monkeypatch.setattr(skills, "raw_skill", lambda name: "# X\n\nJudge it: " + sentence + ".\n")
+    problems = skills.guide_repeats(clauses)
+    assert problems and all("restates the gating reading guide" in p for p in problems)
+    monkeypatch.setattr(skills, "raw_skill",
+                        lambda name: "# X\n\nRead the session's reading guide.\n")
+    assert skills.guide_repeats(clauses) == []
 
 
 def test_every_skill_names_its_model_tier():

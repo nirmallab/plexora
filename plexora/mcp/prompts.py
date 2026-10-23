@@ -6,7 +6,8 @@ that does not install skill files (Codex, Cursor) still gets the procedure,
 and a user does not have to know which tool starts a gating session.
 
 Which skills have a prompt, and its name, title and description, are the
-skill manifest's (`prompt:`); this module only says what each one asks.
+skill manifest's (`prompt:`, on a skill or on an old skill name kept as an
+alias); this module only says what each one asks.
 """
 
 from __future__ import annotations
@@ -57,12 +58,15 @@ def _gate_image(skill):
 
 
 def _gate_dataset(skill):
+    # `skill` (gate-dataset) reads the dataset reference, which adds to
+    # gate-image's loop: the prompt carries both, the loop first.
     def gate_dataset(dataset: str, reference_image: str = "",
                      mode: str = _default_mode()) -> str:
         return (f"Gate the dataset `{dataset}` in `{_mode(mode)}` mode"
                 + (f", with `{reference_image}` as the reference image" if reference_image
                    else "")
-                + ", following this skill exactly.\n\n" + _skill(skill))
+                + ", following this skill and its dataset reference exactly.\n\n"
+                + _skill("gate-image") + "\n\n" + _skill(skill))
     return gate_dataset
 
 
@@ -75,14 +79,15 @@ def _review_gating(skill):
 
 def _diagnose_marker(skill):
     def diagnose_marker(project: str, marker: str) -> str:
-        return (f"Diagnose `{marker}` in `{project}`, following this skill.\n\n"
-                + _skill(skill))
+        return (f"Diagnose `{marker}` in `{project}`, following this skill's steps for one "
+                "marker.\n\n" + _skill(skill))
     return diagnose_marker
 
 
-#: What each prompting skill asks for, by skill name.
+#: What each prompt asks for, by the manifest name that carries it (a skill,
+#: or an old skill name: `skills.prompt_entries`).
 BUILDERS = {"gate-image": _gate_image, "gate-dataset": _gate_dataset,
-            "review-gating": _review_gating, "diagnose-marker": _diagnose_marker}
+            "gate-review": _review_gating, "diagnose-marker": _diagnose_marker}
 
 
 def plugin_contributions() -> list:
@@ -118,9 +123,7 @@ def register(server, runtime):
 
     known = builders()
     names = []
-    for entry in skills.manifest().get("skills", []):
-        if not entry.get("prompt"):
-            continue
+    for entry in skills.prompt_entries():
         builder = known.get(entry["name"])
         if builder is None:
             raise KeyError(f"skill {entry['name']!r} names prompt {entry['prompt']!r} but "

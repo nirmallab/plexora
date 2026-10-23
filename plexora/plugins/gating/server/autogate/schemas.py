@@ -75,7 +75,7 @@ SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 #: A marker waiting on something: the audit sheet, a look, a check.
 #: `awaiting_replan`: a marker held for the planning task's `replan` answer.
 WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_absence", "awaiting_t2",
-                  "awaiting_t3", "awaiting_t4",
+                  "awaiting_t3", "awaiting_t4", "awaiting_panel",
                   "awaiting_regression", "regression_confirm", "transfer_check",
                   "awaiting_replan")
 
@@ -106,7 +106,7 @@ SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "display_setup
 #: Re-planning after failures (`replan`): the planning task's, out alone,
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
-LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
+LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates", "cell_panel")
 CHECK_KINDS = ("qc_confirm", "absence_check", "regression_confirm", "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
@@ -134,6 +134,8 @@ NARRATION = {
                          "at its threshold.",
     "t2_confirm:within": "Gating {marker} only among {partner}-positive cells, and checking "
                          "that threshold in the tissue.",
+    "cell_panel": "Judging {marker} one cell at a time, from cells across its range in "
+                  "random order, to choose among its candidate thresholds.",
     "t3_biological": "Adding {references} as a complementary marker to check where "
                      "{marker}-positive cells sit.",
     "t4_candidates:up": "The {marker} threshold calls too many cells positive; comparing the "
@@ -160,6 +162,7 @@ EVIDENCE_LABELS = {
     "t2_collage": "Cells around the {marker} threshold",
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
+    "panel_collage": "{marker} cells, numbered, in random order",
     "context_sheet": "{marker} across the tissue",
     "absence_regions": "{marker} in six regions, nothing marked",
     "strip": "Markers at their thresholds",
@@ -318,6 +321,41 @@ ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
 #: once per marker, a look at the cells the classifier disagrees with the
 #: gate on, which may move the gate either way.
 CLASSIFIER_MODES = ("off", "layer", "check")
+
+#: How a marker that needs a look is decided (`SessionOptions.engine`).
+#: v1 (first called "classic"): the look at rows below, at and above the
+#: gate, then the candidates beyond it. v2 (first called "candidates"): blind
+#: panels of single cells choose among the lattice's candidate gates
+#: (`hypotheses`, whose decision rules carry their own revision,
+#: `hypotheses.VERSION`).
+ENGINES = ("v1", "v2")
+#: The engine of a session that names none: v2 since 2026-10-22, after it
+#: tied v1 on four dev images (docs/internal/GATING_ENGINE_V2.md).
+DEFAULT_ENGINE = "v2"
+#: The engines' first names, accepted wherever an engine is named, so a
+#: stored session or an older caller keeps the engine it was started with.
+ENGINE_ALIASES = {"classic": "v1", "candidates": "v2"}
+
+
+def engine_name(value) -> str:
+    """The engine `value` names (`ENGINES`), a first name mapped to it."""
+    return ENGINE_ALIASES.get(value, value)
+
+
+#: The contrast check (`DISPLAY_CHECKS`) of a session that names none, by
+#: engine. v2 was measured without it (the 2026-10-22 dev campaign), and its
+#: blind panels are drawn at the windows the check would choose, which the
+#: reader audit found move its reader more than any wording does; v1 keeps
+#: the check it has always run with.
+DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v2": "off"}
+#: Whether a session that names no `basic_qc` runs QC's model-free checks on
+#: an image with no QC result before gating it, by engine: v2 does (its
+#: windows, fits and panels then leave folds and debris out); v1 keeps what
+#: it always did.
+BASIC_QC_DEFAULT = {"v1": False, "v2": True}
+
+#: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
+PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")
 
 #: How a classifier check's pairs are read (`cellcalls.confirms`), each an
 #: arm of the p193 comparison (2026-10-19): `auto` -- `word` for a marker the

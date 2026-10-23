@@ -31,7 +31,10 @@ works without a licence, with a narrower look.
 
 - A whole QC of the image, every channel and every kind of artifact: qc-image
   (its session runs these same checks first).
-- Reviewing or loosening QC already written: review-qc.
+- Reviewing or loosening QC already written: review-qc. Regions made by
+  `run_basic_qc` (automatic, unreviewed; a gating session runs it on an image
+  with no QC) are reviewed here too: they are not approved, so a QC session
+  may decide them again.
 - Looking at the tissue without a QC question: visual-inspection.
 
 ## Required features
@@ -101,16 +104,7 @@ microns.
 
 ## Tools
 
-`inspect_project`, `detect_nuclear_channels`, `run_blur_check`,
-`get_blur_check`, `set_blur_check`, `write_blur_regions`, `clear_blur_check`,
-`set_registration_check`, `step_registration_comparison`,
-`compute_registration_mismatch`, `get_registration_check`,
-`write_registration_regions`, `run_segmentation_qc`, `get_segmentation_qc`,
-`write_segmentation_flags`, `clear_segmentation_qc`, `run_dna_retention`,
-`get_dna_retention`, `clear_dna_retention`, `write_qc_background_roi`,
-`set_qc_cycles`, `approve_qc_roi`, `sample_qc_examples`,
-`render_region`, `job_wait`, `refine_qc_roi`, `segment_qc_roi`, `refresh_qc`,
-`get_qc_results`, `export_qc`, `undo_operation`.
+{{tools}}
 
 ## Outlining an object
 

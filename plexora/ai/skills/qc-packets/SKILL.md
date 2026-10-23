@@ -36,7 +36,7 @@ A session that exists (`qc_session_status` finds it).
 
 ## Tools
 
-`read_skill`, `qc_session_status`, `qc_next`, `qc_answer`.
+{{tools}}
 
 ## Evidence
 

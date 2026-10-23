@@ -287,6 +287,102 @@ finding becomes a `[cal]` constant by hand, with a VERSION bump and a bench
 on the frozen label sets. Never tuned on the LSP images alone: their signal
 is better than most (the user, 2026-10-19).
 
+## 2f. Engine v2, the candidates engine (2026-10-20; the default since 2026-10-22)
+
+`SessionOptions.engine = "v2"` (first called `candidates`; the rows engine
+is `v1`, first called `classic`, kept as the alternative), in
+`server/autogate/hypotheses/`; plan and bars in
+`docs/internal/bench/CANDIDATES_PLAN.md`, the architecture and where it fails
+in `docs/internal/GATING_ENGINE_V2.md`. Why: on the held-out images the
+frozen lattice held a point within 0.2 of the user's gate for 93 % of
+markers, while the classic looks ended 0.368 MAE away; the error is in
+choosing among candidates, and the classic look asks the least reliable
+question for it (which way a moving gate should go, with each cell's value
+and current call in its caption).
+
+- **Candidates are hypotheses.** The lattice's points, those nearer than
+  0.1 merged; estimators are clustered to describe disagreement, never
+  averaged. The surveyed range runs one point past the lowest and highest
+  estimator, and widens a point at a time when the leader sits at its edge
+  (never resolved there while points lie beyond). A lattice of one point
+  gets steps 0.25 and 0.5 (fit units) either side, so a lone candidate is
+  tested, never accepted unseen. Past the lattice: a leader that beats its
+  rivals on the lattice's own highest or lowest point gets a point 0.25
+  beyond it (`step`, at most two a side, while cells lie there); an
+  interval beside the leader wider than 0.4 whose cells read mixed (own
+  share 0.2 to 0.8 on six definite reads or more) or ordered (its stained
+  reads above its unstained ones: two of each at least, a one-sided rank
+  test at 0.05) is cut into parts about the tolerance wide, once (`split`).
+  A marker out of looks makes that cut on ordered reads in hand, without a
+  look, and closes for review at the leader among the finer points; never
+  on a mixed share alone, which with no look to come may be the reader's
+  slips. All these points are snapped like lattice points, so the gate is
+  still never a number typed by anyone.
+- **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
+  intervals plus 4 negative sentinels from below every candidate, shuffled
+  and numbered; the 2 x 2 multi-view block when the marker has a partner.
+  No value, call, gate, candidate or ranking anywhere in it. One label a
+  cell: `own_stain`, `not_own_stain`, `uncertain`, `artifact`. No
+  confidence word: code's confidence is not the reader's. The reading
+  follows the user's conventions: a faint stain is own stain when the
+  marker's lineage names several cell types (CD4 on myeloid cells); in a
+  crowded field a ring stained on its free sides is own stain, light only
+  on the side facing a brighter neighbour is not; for a fibrous stain shape
+  does not decide -- a spindle cell in a band and a round cell beside a
+  vessel both count when the band hugs their outline (SMA, as the user
+  gates it).
+- **Code chooses.** Each candidate scores the cells it would get wrong
+  (interval own-stain shares, monotone in value, unread intervals neutral);
+  the leader beats a rival when the cells between them -- each interval
+  weighted by the cells it holds, not by the cells read from it -- have a
+  Wilson 95 % interval, at the weighting's effective size, wholly on its
+  side of one half. Rivals within 0.3 (fit units), or whose call differs on
+  fewer than 20 cells and fewer than a quarter of the larger candidate's
+  positives, need not be beaten.
+- **Rare markers** (under 2 % positive at the start, or the `long_tail`
+  class): the leader resolves only once the cells above it are read
+  stained (a `tail` look draws them, up to the brightest); read unstained,
+  the marker closes for review (`positives_not_confirmed`). Panels never
+  declare a population absent. The first look gives every interval an equal share of its cells;
+  later ones go where an unbeaten rival's dispute holds the most cells.
+- **Stopping is by rule.** Resolved when every rival that matters is
+  beaten; otherwise review at the leader for a named reason
+  (`controller.STATUSES`). At most `panel_looks` looks (3); a cell is never
+  shown twice; a look whose sentinels are read stained twice is discarded,
+  two such looks mark the reader unreliable (review at the start). Most
+  labels uncertain closes a marker `unreadable` only after two valid looks:
+  one panel of a crowded immune field is not enough. While a
+  marker is in panels, an answer's outcome says nothing about any gate.
+- **Classifier check (`classifier: check`).** Once a leader resolves, the
+  classifier trained at it may earn one more panel, the marker's last: its
+  disagreements on both sides, at most half the cells, the rest chosen
+  without it; it can make a rival win, never move a gate itself
+  (`classifier_check.py`). Its picks are an enriched sample, so the
+  evidence is post-stratified by its call (each interval's share read per
+  call, weighted by the cells it calls each way). Shown only where a
+  label-set score on record for the marker, from another image, has the
+  classifier beating the gate (`classifier_trust.json`, written by
+  `tools/bench_gates/classifier_trust.py`); without one it runs
+  exploratory -- counted and kept, no look.
+- **Confidence.** A rule tagged `uncalibrated` until a table fitted on dev
+  records by `tools/bench_gates/calibrate.py` is committed
+  (`hypotheses/calibration.py`); then the level of P(|gap| <= 0.2).
+- **Writes as any other.** A resolved leader passes `run_regression`; a
+  failed check caps confidence, never moves it (no purity push, no
+  whole-image confirm, no classifier check on this path). Provenance
+  `detail.hypotheses` holds the candidates, the looks and the status, with
+  `confidence: uncalibrated` until it is fitted.
+- **Unchanged:** QC routing and the whole-image `qc_confirm`, the audit
+  sheet for clean splits (now also through the numeric checks), datasets,
+  the memo.
+- **Not ported, on the stored records:** conditional gates (5 of 543
+  marker-images; on the 3 held-out the conditional gate was the farther
+  one twice -- a `within:` fit stays a candidate); a whole-image look on a
+  failed spatial or edge check (fails on 28 % of markers, whose gates are
+  no farther from the person's: MAE 0.337 vs 0.308); revisiting a partner
+  when a dependent is unresolved (a partner 0.4 or more off left its
+  dependents no farther off, 0.310 vs 0.323, and less often in review).
+
 ## 3. Where things live
 
 ```
@@ -422,7 +518,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   to 7.69 (the user's gate 7.3). The memo keys carry the scale.
 - **A model checks the brightness, code sets it.** `display_setup` (per
   image, after the panel context, before that image's first look;
-  `SessionOptions.display_check`, `vision` by default) shows up to
+  `SessionOptions.display_check`, `vision` by default with engine v1, `off`
+  with v2: `schemas.DISPLAY_CHECK_DEFAULT`) shows up to
   `ENGINE["display_batch"]` markers in rows and the calibration's brightness
   ladder in columns (on the linear scale `calibration.linear_columns`, gains
   over the linear window; on log `columns_for`, every display level times

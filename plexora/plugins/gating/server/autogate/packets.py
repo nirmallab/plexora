@@ -66,15 +66,16 @@ READING_GUIDE = {
              "from this one by a dark gap; `unstained` -- nothing touches the nucleus; "
              "`mixed` -- the row holds both kinds about evenly; `cannot_tell`. A row is what "
              "most of its cells are. Judge the shape, not the brightness: the morphology "
-             "panel brightens a dim cell's own stain on purpose. Plexora places the gate "
-             "from the words"),
+             "panel brightens a dim cell's own stain on purpose, and a marker several cell "
+             "types carry can be far dimmer on some (CD4 on monocytes and macrophages): "
+             "their faint own stain is `own_stain`. Plexora places the gate from the words"),
     "collage_t2": ("each cell is two panels side by side, blue nuclei and the marker in "
                    "yellow. Left, morphology: the marker windowed on this cell's own "
                    "brightest pixels (a cell with no stain stays dark; a brighter neighbour "
                    "saturates). Right, context: the marker at one fixed window for the whole "
                    "marker, cell outlines thin and grey. Four magenta ticks mark the judged "
-                   "cell's nucleus. Caption = value and the current call (+/-). Rows: just "
-                   "below, at and just above the gate; judge the rows nearest the gate most"),
+                   "cell's nucleus. Caption = the cell's place in its row. Rows: just below, "
+                   "at and just above the gate; judge the rows nearest the gate most"),
     "collage_t3": ("as the first look, with a third panel per cell: the reference channel "
                    "alone (white); a subset or co-expressed marker's positives should be "
                    "reference-bright, an exclusive one's reference-dark; the fields add the "
@@ -90,7 +91,7 @@ READING_GUIDE = {
                     "inside the outline supports the cell's own stain; a not-expected partner lit "
                     "inside it says the cell is another type, so marker light on it is likely a "
                     "neighbour's. Partners glow too: read them inside the outline. Caption = "
-                    "value and the current call (+/-). Rows: just below, at and just above the "
+                    "the cell's place in its row. Rows: just below, at and just above the "
                     "gate; judge the rows nearest the gate most"),
     "collage_flips_m": ("each cell is the 2 x 2 block of `collage_t2m`. Rows run from the "
                         "current gate outward: row i1 is the cells between the current gate and "
@@ -116,6 +117,45 @@ READING_GUIDE = {
                 "gated from these "
                 "words: a marker no region shows a clear positive for, in this picture and a "
                 "second of other regions, is closed with no positives, as a person would"),
+    "panel": ("one word per numbered cell (its caption), about the cell around the nucleus "
+              "the four magenta ticks mark: `own_stain` -- the marker's stain belongs to it, "
+              "touching that nucleus with no other nucleus inside it (a ring or halo around "
+              "it, a fill inside it, cytoplasm hugging it); `not_own_stain` -- nothing "
+              "touches the nucleus, or the stain is a neighbour's or apart by a dark gap; "
+              "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge "
+              "or a smear across cells. The cells come from across the marker's range in "
+              "random order, so a row means nothing; judge every cell on its own, by shape, "
+              "not brightness. In a crowded field a ring may be partial: stain on the "
+              "sides that touch no other cell, or all round it inside a cluster of stained "
+              "cells, is `own_stain`; light only on the side facing one brighter neighbour, "
+              "the rest of its outline dark, is that neighbour's (`not_own_stain`). A "
+              "marker several cell types carry can be far dimmer on some "
+              "(`context.lineage`; CD4: bright on helper T cells, dim on monocytes and "
+              "macrophages): a faint stain that is the cell's own is `own_stain`, judged "
+              "against the unstained cells, not the brightest. Say `uncertain` rather than "
+              "guess. Plexora chooses the gate from the words"),
+    "panel_fibrous": ("a fibrous stain (smooth muscle, vessel walls, fibroblasts, "
+                      "pericytes): shape does not decide -- a spindle cell inside a band and "
+                      "a round or oval cell beside a vessel are both `own_stain` when the "
+                      "band hugs that cell's outline on one or more sides; `not_own_stain` "
+                      "when the band passes it with a dark gap, or only crosses its outline "
+                      "without following it"),
+    "collage_panel": ("each cell is two panels side by side, blue nuclei and the marker in "
+                      "yellow. Left, morphology: the marker windowed on this cell's own "
+                      "brightest pixels (a cell with no stain stays dark; a brighter "
+                      "neighbour saturates). Right, context: the marker at one fixed window "
+                      "for the whole marker, outlines thin and grey"),
+    "collage_panel_m": ("each cell is a 2 x 2 block. Top: morphology (the marker windowed on "
+                        "this cell's own brightest pixels) and context (one fixed window for "
+                        "the marker, the judged cell outlined white). Bottom: the expected "
+                        "partner (`partner_panels.expected`) and the not-expected one "
+                        "(`partner_panels.not_expected`) alone in grey, the judged cell "
+                        "outlined magenta, black when there is none. The partners are context: "
+                        "an expected partner lit inside the outline is consistent with the "
+                        "lineage, a not-expected one with another lineage, and neither decides "
+                        "whether the marker's stain is this cell's own -- a marker several cell "
+                        "types carry is own stain on a cell without the expected partner too. "
+                        "Judge the marker tiles"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -167,11 +207,40 @@ READING_GUIDE = {
 SIGNIFICANT = 4
 
 
-def reading_guide() -> dict:
+#: Guide entries and answer kinds only one engine's looks use
+#: (`SessionOptions.engine`): a session is sent its own engine's, and a
+#: packet that needs another's (a v1 look inside a v2 session,
+#: for a marker with one candidate) carries those texts and its answer
+#: schema itself (`_reading`, `lean`).
+ENGINE_ONLY = {
+    "v1": {"entries": ("rows", "collage_t2", "collage_t3", "collage_t2m",
+                            "collage_flips_m", "collage_flips", "sheet_candidates",
+                            "within_partner", "requests"),
+                "kinds": ("t2_confirm", "t3_biological", "t4_candidates")},
+    "v2": {"entries": ("panel", "panel_fibrous", "collage_panel", "collage_panel_m"),
+                   "kinds": ("cell_panel",)},
+}
+
+
+def reading_guide(engine=schemas.DEFAULT_ENGINE) -> dict:
     """The session's reading guide (`gating_session_start`, `_status`): the
     fixed texts, the compartment readings and every answer schema, in a fixed
-    order -- the same bytes for every session of a build, so an agent's
-    client caches it once (`guide_version` says when it changed)."""
+    order -- the same bytes for every session of a build and engine, so an
+    agent's client caches it once (`guide_version` says when it changed).
+    Another engine's looks are left out (`ENGINE_ONLY`)."""
+    engine = schemas.engine_name(engine)
+    guide = _full_guide()
+    for other, parts in ENGINE_ONLY.items():
+        if other == engine:
+            continue
+        for key in parts["entries"]:
+            guide.pop(key, None)
+        guide["answer_schemas"] = {k: v for k, v in guide["answer_schemas"].items()
+                                   if k not in parts["kinds"]}
+    return guide
+
+
+def _full_guide() -> dict:
     guide = dict(READING_GUIDE)
     for name, policy in sorted(schemas.COMPARTMENT_POLICY.items()):
         guide[f"compartment:{name}"] = policy["reading"]
@@ -193,13 +262,13 @@ def reading_guide() -> dict:
     return guide
 
 
-def guide_version() -> str:
-    """A short hash of `reading_guide()`: an agent that holds this version
-    passes it back (`known_guide`) and is not sent the guide again."""
+def guide_version(engine=schemas.DEFAULT_ENGINE) -> str:
+    """A short hash of `reading_guide(engine)`: an agent that holds this
+    version passes it back (`known_guide`) and is not sent the guide again."""
     import hashlib
     import json
 
-    blob = json.dumps(reading_guide(), sort_keys=True, separators=(",", ":"))
+    blob = json.dumps(reading_guide(engine), sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
 
@@ -245,7 +314,12 @@ def lean(packet, options) -> dict:
     stored is what is sent, so a packet fetched again is the same bytes."""
     packet["evidence"] = _lean_value(packet.get("evidence") or {})
     if options["reading"] == "once":
-        packet["answer_schema"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
+        if any(packet["kind"] in parts["kinds"] for name, parts in ENGINE_ONLY.items()
+               if name != schemas.engine_name(options["engine"])):
+            # Not in this session's guide: the schema comes with the packet.
+            packet["answer_schema"] = answers.schema_for(packet["kind"])
+        else:
+            packet["answer_schema"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
         packet.pop("answer_with", None)
     progress = packet.get("progress") or {}
     if progress:
@@ -380,8 +454,13 @@ def _reading(engine, keys, specific=()):
     (with the marker's compartment and the plotted relation among them),
     plus what is specific to it -- or every text in full, when the session
     asked for `reading="every_packet"`."""
-    guide = reading_guide()
+    guide = reading_guide(engine.options["engine"])
+    full = _full_guide()
     specific = [s.strip("; ") for s in specific if s]
+    # An entry this session's guide leaves out (another engine's look) is
+    # sent with the packet.
+    specific = [full[k] for k in dict.fromkeys(keys) if k not in guide and k in full] \
+        + specific
     keys = [k for k in dict.fromkeys(keys) if k in guide]
     if engine.options["reading"] == "every_packet":
         return {"how_to_read": "; ".join([guide[k] for k in keys] + specific)}
@@ -924,8 +1003,11 @@ def t4_candidates(engine, units):
     unit["candidates_reach_edge"] = any(s.startswith("edge:") for s in points[-1]["sources"])
     thresholds = sorted([current] + [p["low"] for p in points])
     condition = unit.get("condition")
+    # As many cells an interval as a row draws: `delta_cells` spreads its
+    # picks over the interval's values, so a larger sample cut to the row
+    # would leave out its brightest cells.
     payload = {"marker": unit["marker"], "candidates": thresholds, "high": unit.get("high"),
-               "seed": _seed(engine)}
+               "seed": _seed(engine), "n_per_interval": views._per_row("flips")}
     if condition:
         payload["within"] = {"marker": condition["within"], "gate": condition["partner_gate"]}
     delta = tableops.local_or_node(ds, "gating.autogate.delta", payload)
@@ -1044,7 +1126,6 @@ def _check_rows(ds, unit, check, names):
     """Two collage rows per interval, `i<k>a` and `i<k>b`: the cells the
     classifier flags and the cells it agrees on, in the order `check_rows`
     drew (which is which is never in the packet)."""
-    from plexora.agent.evidence.collage import compact_number
     from plexora.plugins.gating.server.autogate import cells as cellmod
     from plexora.plugins.gating.server.autogate import profile as profmod
     from plexora.plugins.gating.server.autogate import sampler
@@ -1062,8 +1143,7 @@ def _check_rows(ds, unit, check, names):
                      for r in halves[tag]]
             rows.append({"key": key,
                          "label": f"{key}: {names.get(index) or ''} ({len(cells)} cells)",
-                         "cells": [dict(cell, caption=compact_number(cell["value"]))
-                                   for cell in cells]})
+                         "cells": views.indexed(cells)})
     return rows
 
 
@@ -1598,6 +1678,16 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
             "display_setup": display_setup}
+
+
+def cell_panel(engine, units):
+    """A blind panel of single cells (`hypotheses.packet`)."""
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    return hypotheses.packet(engine, units)
+
+
+BUILDERS["cell_panel"] = cell_panel
 
 
 def narrate(packet) -> str:

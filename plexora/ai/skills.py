@@ -5,6 +5,13 @@ it, the decision logic, which tools it may call, how to pick evidence, what it
 may change and how to report. `skill_manifest.yaml` lists them with the tool
 names each one relies on, and `validate()` checks those names against the live
 capability registry, so a renamed tool breaks a test instead of an agent.
+
+A skill's `## Tools` section is the manifest's list, written in when the
+skill is read (`{{tools}}`), so the two cannot drift. Material a skill needs
+only sometimes is a reference (`skills/<group>/<name>.md`, read as
+`read_skill("<group>/<name>")`), listed in the manifest beside the skills
+that point at it. A skill's old name stays readable through the manifest's
+`aliases`, so a brief or an installed copy that names it keeps working.
 """
 
 from __future__ import annotations
@@ -14,6 +21,14 @@ from pathlib import Path
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 MANIFEST_PATH = Path(__file__).parent / "skill_manifest.yaml"
+
+#: A reference's name, `<group>/<name>`, served from `skills/<group>/<name>.md`.
+#: Only names the manifest lists are ever read, so no caller's string becomes
+#: a path.
+REFERENCE_NAME = re.compile(r"^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$")
+
+#: Where a skill's tool list goes: rendered from its manifest entry.
+TOOLS_PLACEHOLDER = "{{tools}}"
 
 #: Headings every SKILL.md must carry, in this order.
 REQUIRED_SECTIONS = (
@@ -40,37 +55,104 @@ def manifest() -> dict:
         return yaml.safe_load(handle) or {"version": "0", "skills": []}
 
 
+def _entries(section: str, data=None) -> list:
+    return list((manifest() if data is None else data).get(section) or [])
+
+
+def aliases() -> dict:
+    """{old name: the skill or reference that replaced it}."""
+    return {entry["name"]: entry["to"] for entry in _entries("aliases")}
+
+
+def resolve(name) -> str:
+    """The skill or reference `name` reads: itself, or what replaced it."""
+    name = str(name)
+    return aliases().get(name, name)
+
+
+def _source(name: str, data=None):
+    """(manifest entry, path) of a skill or reference by its own name, or
+    None. The path is built from the manifest's name, never the caller's."""
+    for entry in _entries("skills", data):
+        if entry["name"] == name:
+            return entry, SKILLS_DIR / name / "SKILL.md"
+    for entry in _entries("references", data):
+        if entry["name"] == name and REFERENCE_NAME.match(name):
+            return entry, SKILLS_DIR / f"{name}.md"
+    return None
+
+
+def readable_names(data=None) -> list:
+    """Every name `read_skill` answers: skills, references, old names."""
+    return ([e["name"] for e in _entries("skills", data)]
+            + [e["name"] for e in _entries("references", data)]
+            + [e["name"] for e in _entries("aliases", data)])
+
+
 def list_skills() -> list:
+    data = manifest()
+    references = _entries("references", data)
+    replaced = {entry["name"]: entry["to"] for entry in _entries("aliases", data)}
     out = []
-    for entry in manifest().get("skills", []):
-        path = SKILLS_DIR / entry["name"] / "SKILL.md"
-        out.append({
-            "name": entry["name"],
-            "title": entry.get("title", entry["name"]),
+    for entry in _entries("skills", data):
+        name = entry["name"]
+        path = SKILLS_DIR / name / "SKILL.md"
+        mine = [ref for ref in references if name in ref.get("skills", ())]
+        own = {name, *(ref["name"] for ref in mine)}
+        row = {
+            "name": name,
+            "title": entry.get("title", name),
             "description": entry.get("description", ""),
             "when": entry.get("when", ""),
             "tier": entry.get("tier", "judgement"),
             "tools": list(entry.get("tools", [])),
             "available": path.exists(),
-            "uri": f"plexora://skill/{entry['name']}",
-        })
+            "uri": f"plexora://skill/{name}",
+        }
+        if mine:
+            row["references"] = [{"name": ref["name"], "title": ref.get("title", ref["name"]),
+                                  "when": ref.get("when", "")} for ref in mine]
+        old = {alias: to for alias, to in replaced.items() if to in own}
+        if old:
+            row["aliases"] = old
+        out.append(row)
     return out
 
 
+def prompt_entries(data=None) -> list:
+    """The manifest entries that open an MCP prompt (`prompt:`), skills first,
+    then old names kept as prompts (each reads what replaced it)."""
+    return [entry for section in ("skills", "aliases") for entry in _entries(section, data)
+            if entry.get("prompt")]
+
+
+def tools_line(entry) -> str:
+    """A skill's `## Tools` list, from its manifest entry."""
+    return ", ".join(f"`{tool}`" for tool in entry.get("tools", ())) + "."
+
+
 def raw_skill(name: str) -> str:
-    """The SKILL.md as written, placeholders and all. KeyError naming the
-    skills that exist."""
-    names = [entry["name"] for entry in manifest().get("skills", [])]
-    path = SKILLS_DIR / str(name) / "SKILL.md"
-    if name not in names or not path.exists():
-        raise KeyError(f"no skill named {name!r}; available: {', '.join(names)}")
-    return path.read_text(encoding="utf-8")
+    """The skill or reference as written, placeholders and all; an old name
+    reads what replaced it. KeyError naming what can be read."""
+    found = _source(resolve(name))
+    if found is None or not found[1].exists():
+        raise KeyError(f"no skill named {name!r}; available: {', '.join(readable_names())}")
+    return found[1].read_text(encoding="utf-8")
+
+
+def _values(entry, values=None) -> dict:
+    """The placeholders' values for one skill or reference: the constants,
+    and its own tool list."""
+    values = constants() if values is None else values
+    return {**values, "tools": tools_line(entry)} if entry.get("tools") else values
 
 
 def read_skill(name: str) -> str:
-    """The SKILL.md an agent reads: its `{{placeholders}}` filled from the
-    code's own constants (`constants`)."""
-    return render(raw_skill(name))
+    """The skill or reference an agent reads: its `{{placeholders}}` filled
+    from the code's own constants (`constants`) and its `{{tools}}` from the
+    manifest. An old name (`aliases`) reads what replaced it."""
+    text = raw_skill(name)
+    return render(text, _values(_source(resolve(name))[0]))
 
 
 # -- placeholders --------------------------------------------------------------
@@ -226,8 +308,9 @@ def vocabulary() -> set:
     registry.discover()
     for capability in registry.all_capabilities():
         words.update((capability.name, capability.tool_name))
-    for entry in manifest().get("skills", []):
-        words.update((entry["name"], entry.get("prompt") or entry["name"]))
+    for section in ("skills", "references", "aliases"):
+        for entry in _entries(section):
+            words.update((entry["name"], entry.get("prompt") or entry["name"]))
     # Marker names, as the shipped vocabulary knows them: a skill's examples.
     from plexora.ai import vocabulary as markers
 
@@ -251,7 +334,7 @@ def lint(vocab=None) -> list:
     vocab = vocabulary() if vocab is None else vocab
     problems = []
     values = constants()
-    for entry in manifest().get("skills", []):
+    for entry in _entries("skills") + _entries("references"):
         name = entry["name"]
         text = raw_skill(name)
         spans = _CODE_SPAN.findall(_FENCE.sub("", text))
@@ -265,14 +348,97 @@ def lint(vocab=None) -> list:
                 problems.append(f"{name}: a number in prose (make it a placeholder or code): "
                                 f"{line.strip()[:100]!r}")
         try:
-            render(text, values)
+            render(text, _values(entry, values))
         except KeyError as exc:
             problems.append(f"{name}: {exc.args[0]}")
     return problems
 
 
+# -- the guide lint: a skill points at the reading guide, never restates it ------
+
+#: A clause of a gating session's reading guide at least this many words long,
+#: found word for word in a skill or reference, is the guide restated: the
+#: session sends the guide itself (`gating_session_status`), and two copies
+#: drift apart.
+GUIDE_CLAUSE_WORDS = 6
+_CLAUSE_BREAK = re.compile(r"[.;:!?]+(?=\s|$)|\s--\s|[()]")
+_WORD = re.compile(r"[a-z0-9_']+")
+
+
+def _strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _strings(value)
+
+
+def guide_clauses() -> set:
+    """The clauses of every engine's reading guide, as lower-case word runs:
+    `packets.READING_GUIDE`, and what `packets.reading_guide` adds to it (the
+    compartment readings, the answer schemas). Read only, never changed."""
+    try:
+        from plexora.plugins.gating.server.autogate import packets, schemas
+    except ImportError:  # pragma: no cover - the gating plugin is always shipped
+        return set()
+    texts = list(_strings(packets.READING_GUIDE))
+    for engine in schemas.ENGINES:
+        texts.extend(_strings(packets.reading_guide(engine)))
+    out = set()
+    for text in texts:
+        for part in _CLAUSE_BREAK.split(text):
+            words = _WORD.findall(part.lower())
+            if len(words) >= GUIDE_CLAUSE_WORDS:
+                out.add(" ".join(words))
+    return out
+
+
+def guide_repeats(clauses=None) -> list:
+    """Problems, as sentences: each skill or reference that repeats a clause of
+    the reading guide word for word (`GUIDE_CLAUSE_WORDS`). [] when none does."""
+    clauses = guide_clauses() if clauses is None else clauses
+    problems = []
+    for entry in _entries("skills") + _entries("references"):
+        words = " " + " ".join(_WORD.findall(raw_skill(entry["name"]).lower())) + " "
+        hits = sorted(clause for clause in clauses if f" {clause} " in words)
+        if hits:
+            more = f" (and {len(hits) - 1} more)" if len(hits) > 1 else ""
+            problems.append(f"{entry['name']}: restates the gating reading guide, which the "
+                            f"session sends itself: {hits[0]!r}{more}")
+    return problems
+
+
 def _headings(text: str) -> list:
     return [line[3:].strip() for line in text.splitlines() if line.startswith("## ")]
+
+
+def _section(text: str, heading: str):
+    """A `## heading` section's body, stripped; None when there is none."""
+    match = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    return match.group(1).strip() if match else None
+
+
+def _tools_section(name, entry, text, tool_names) -> list:
+    """The `## Tools` section is the manifest's list: it opens with
+    `{{tools}}`, and a note after it names no tool the manifest leaves out."""
+    body = _section(text, "Tools")
+    if body is None:
+        return []
+    problems = []
+    if body.split("\n\n", 1)[0].strip() != TOOLS_PLACEHOLDER:
+        problems.append(f"{name}: its Tools section must open with {TOOLS_PLACEHOLDER} (the "
+                        "manifest's list, rendered), not a list of its own")
+    listed = set(entry.get("tools", ()))
+    extra = sorted({token for span in _CODE_SPAN.findall(body)
+                    for token in _IDENT.findall(span)
+                    if token in tool_names and token not in listed})
+    if extra:
+        problems.append(f"{name}: its Tools section names tools its manifest entry does not "
+                        f"list: {extra}")
+    return problems
 
 
 def validate(tool_names=None) -> list:
@@ -290,7 +456,9 @@ def validate(tool_names=None) -> list:
     from plexora.mcp import SERVER_TOOLS
 
     tool_names = set(tool_names) | set(SERVER_TOOLS)
-    for entry in manifest().get("skills", []):
+    data = manifest()
+    names = [e["name"] for e in _entries("skills", data)]
+    for entry in _entries("skills", data):
         name = entry["name"]
         path = SKILLS_DIR / name / "SKILL.md"
         if not path.exists():
@@ -301,9 +469,40 @@ def validate(tool_names=None) -> list:
         missing = [h for h in REQUIRED_SECTIONS if h not in headings]
         if missing:
             problems.append(f"{name}: missing sections {missing}")
-        for tool in entry.get("tools", []):
-            if tool not in tool_names:
-                problems.append(f"{name}: names tool {tool!r}, which does not exist")
-            elif f"`{tool}`" not in text:
-                problems.append(f"{name}: lists tool {tool!r} but never mentions it")
-    return problems
+        problems += [f"{name}: names tool {tool!r}, which does not exist"
+                     for tool in entry.get("tools", []) if tool not in tool_names]
+        if _section(text, "Tools") is None:
+            continue    # reported as a missing section
+        problems += _tools_section(name, entry, text, tool_names)
+    listed = set()
+    for entry in _entries("references", data):
+        name = entry["name"]
+        listed.add(name)
+        if not REFERENCE_NAME.match(name):
+            problems.append(f"{name}: a reference is named <group>/<name>, in lower case")
+            continue
+        path = SKILLS_DIR / f"{name}.md"
+        if not path.exists():
+            problems.append(f"{name}: {path.name} is missing")
+            continue
+        owners = entry.get("skills") or []
+        if not owners or any(owner not in names for owner in owners):
+            problems.append(f"{name}: names skills {owners}; a reference belongs to skills "
+                            "that exist")
+        problems += [f"{name}: names tool {tool!r}, which does not exist"
+                     for tool in entry.get("tools", []) if tool not in tool_names]
+        problems += _tools_section(name, entry, path.read_text(encoding="utf-8"), tool_names)
+    unlisted = sorted(f"{p.parent.name}/{p.stem}" for p in SKILLS_DIR.glob("*/*.md")
+                      if p.name != "SKILL.md" and f"{p.parent.name}/{p.stem}" not in listed)
+    if unlisted:
+        problems.append(f"references on disk the manifest does not list: {unlisted}")
+    for entry in _entries("aliases", data):
+        if entry["name"] in names or entry["name"] in listed:
+            problems.append(f"{entry['name']}: an old name may not also be a skill or reference")
+        if entry.get("to") not in set(names) | listed:
+            problems.append(f"{entry['name']}: resolves to {entry.get('to')!r}, which is not a "
+                            "skill or reference")
+    prompts = [entry["prompt"] for entry in prompt_entries(data)]
+    if len(prompts) != len(set(prompts)):
+        problems.append(f"a prompt is named twice: {sorted(prompts)}")
+    return problems + guide_repeats()
