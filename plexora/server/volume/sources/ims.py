@@ -138,6 +138,7 @@ def _open_file(path, **options):
     `RemoteFile` h5py reads when `path` is a web address, else None; close
     the file first and the stream after it (`_close_file`)."""
     import h5py
+    import hdf5plugin  # noqa: F401 -- registers LZ4 et al. (Imaris 10 writes LZ4)
 
     if not is_remote_ims(path):
         return h5py.File(str(path), "r", **options), None

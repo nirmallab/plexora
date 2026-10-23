@@ -41,6 +41,13 @@ dependencies = [
     # (plugins/gating/server/anndata_gates.py), so an anndata release that
     # dropped either would break the plugin at import, not at use.
     "h5py>=3.16.0",
+    # The HDF5 compression filters h5py does not carry -- LZ4, Zstd, Blosc,
+    # bitshuffle -- registered with HDF5 on import. Imaris 10 can write LZ4,
+    # and without this such an .ims opens but every pixel read fails
+    # with HDF5's "can't open directory (/usr/local/lib/plugin)". Core rather
+    # than an extra because opening an .ims is core; imported only where an
+    # .ims is opened (server/volume/sources/ims.py), never at startup.
+    "hdf5plugin>=5",
     "imagecodecs",
     "itsdangerous>=2.2",
     "Jinja2>=3.1",
