@@ -253,6 +253,12 @@ Threads that read and decompress z-stack chunks, outside the file locks the read
 
 </Param>
 
+<Param name={"PLEXORA_IMS_INDEX"} default={"1 (on)"}>
+
+Set to 0 to stop Plexora working out, once per file and in the background, where every chunk of a large Imaris file (1 GB or more) on a disk is. With that index kept under the data directory, a cold tile reads 2.5-4x faster from a cluster filesystem; without it the file still reads, as it would on first open.
+
+</Param>
+
 <Param name={"PLEXORA_NODE_TILE_CACHE_MB"} default={"a sixteenth of the allocated memory, 128 to 2048"}>
 
 Memory, in MB, a data node keeps for tiles it has already encoded, so a plane or view stepped back to is answered without a read. Budgeted in bytes because a 16-bit tile is about 2 MB and an 8-bit one about 100 KB.

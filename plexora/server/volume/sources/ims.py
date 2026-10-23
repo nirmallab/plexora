@@ -54,11 +54,14 @@ walks the dataset's whole chunk index on every call -- linear in the chunks,
 so a tile spent longer finding its chunks than h5py took to read them.
 Measured on HMS O2 scratch, 16 cold 1024 px tiles: 213-763 ms a tile that
 way, 60-110 through h5py, 34-45 with `read_direct_chunk` (a B-tree lookup and
-the read) under the lock and the decode outside it. So a file on a disk is
-read that last way; only a file at a web address, below, is located and read
-by offset. There the first chunk read by offset from each dataset is compared
-with h5py's own `read_direct_chunk` of it; a stream where they differ reads
-that dataset the old way.
+the read) under the lock and the decode outside it -- and 13-14 with every
+chunk's offset known beforehand. So a large file on a disk has its chunk
+index walked ONCE, in a process of its own, and saved (ims_index.py); with
+that index its chunks are read by offset, outside the lock and in parallel,
+and until it exists (or for a small file) with `read_direct_chunk`. A file
+at a web address, below, is located and read by offset. Either way the first
+chunk read by offset from each dataset is compared with h5py's own
+`read_direct_chunk` of it; where they differ that dataset reads the old way.
 
 AT A WEB ADDRESS. An .ims at an https/s3/gs/az/sftp address is the same
 file, read through `remote_store.RemoteFile`: h5py opens that stream (its
@@ -86,6 +89,7 @@ from time import perf_counter
 import numpy as np
 
 from plexora.server.volume import chunk_cache
+from plexora.server.volume.sources import ims_index
 from plexora.telemetry import performance as _perf
 from plexora.server.volume.axes import AxisSpacing, Spacing, normalize_unit
 from plexora.server.volume.model import Volume, VolumeSource, level_infos
@@ -405,6 +409,11 @@ class ImsVolumeSource(VolumeSource):
         #: once one read that way matched h5py's own, False when it did not
         #: (or this h5py cannot say where a chunk is); absent until known.
         self._direct = {}
+        #: Where every chunk is, from the file's saved index (ims_index.py):
+        #: None until there is one, looked for every `ims_index.POLL_S`.
+        self._chunk_index = None
+        self._index_looked = float("-inf")
+        self._index_lock = threading.Lock()
         if stream is not None:
             # h5py asked for the length when it opened the stream.
             self.cache_id = ("ims", self.path, stream.known_size)
@@ -433,6 +442,23 @@ class ImsVolumeSource(VolumeSource):
         else:
             self._open.move_to_end(key)
         return dataset
+
+    def _index_grid(self, dkey):
+        """`(offsets, sizes, masks)` of `dkey`'s chunk grid from the file's
+        saved index, or None: a file at a web address, or no index yet."""
+        if self._stream is not None:
+            return None
+        with self._index_lock:
+            index = self._chunk_index
+            if index is None:
+                now = perf_counter()
+                if now - self._index_looked < ims_index.POLL_S:
+                    return None
+                self._index_looked = now
+                index = self._chunk_index = ims_index.load(self.path)
+                if index is None:
+                    return None
+        return index.grid(*dkey)
 
     def _layout(self, level, t, channel):
         """`{chunks, dtype, fill, shuffle, deflate}` when this reads the
@@ -518,28 +544,45 @@ class ImsVolumeSource(VolumeSource):
 
         def load_many(missing):
             dkey = (int(level), int(t), int(channel))
-            # By offset only at a web address: on a disk, finding a chunk
-            # costs more than reading it (the module docstring).
-            direct = self._direct.get(dkey, self._stream is not None)
             located = []
-            with self._io:
+            grid = self._index_grid(dkey) if self._direct.get(dkey, True) else None
+            if grid is not None:
+                # Where each chunk is, from the file's saved index: no lock
+                # and no HDF5 call (ims_index.py).
+                direct = True
+                offsets, sizes, masks = grid
                 for key in missing:
-                    if not direct:
-                        located.append((key, _UNLOCATED))
-                        continue
+                    at = tuple(key[4:7])
                     try:
-                        info = dataset.id.get_chunk_info_by_coord(origin_of(key))
-                    except AttributeError:
-                        # An h5py too old to say where a chunk is.
-                        self._direct[dkey] = direct = False
+                        offset = int(offsets[at])
+                    except IndexError:
                         located.append((key, _UNLOCATED))
                         continue
-                    except Exception:  # noqa: BLE001 -- h5py's own read decides
-                        located.append((key, _UNLOCATED))
-                        continue
-                    offset = getattr(info, "byte_offset", None)
-                    located.append((key, None if offset is None else
-                                    (int(offset), int(info.size), int(info.filter_mask))))
+                    located.append((key, None if offset < 0 else
+                                    (offset, int(sizes[at]), int(masks[at]))))
+            else:
+                # By offset otherwise only at a web address: on a disk,
+                # finding a chunk costs more than reading it (the module
+                # docstring).
+                direct = self._direct.get(dkey, self._stream is not None)
+                with self._io:
+                    for key in missing:
+                        if not direct:
+                            located.append((key, _UNLOCATED))
+                            continue
+                        try:
+                            info = dataset.id.get_chunk_info_by_coord(origin_of(key))
+                        except AttributeError:
+                            # An h5py too old to say where a chunk is.
+                            self._direct[dkey] = direct = False
+                            located.append((key, _UNLOCATED))
+                            continue
+                        except Exception:  # noqa: BLE001 -- h5py's own read decides
+                            located.append((key, _UNLOCATED))
+                            continue
+                        offset = getattr(info, "byte_offset", None)
+                        located.append((key, None if offset is None else
+                                        (int(offset), int(info.size), int(info.filter_mask))))
             if direct and dkey not in self._direct:
                 located = self._check_direct(dkey, located, origin_of, read_locked)
             fetched = {}
@@ -631,6 +674,10 @@ class ImsVolumeSource(VolumeSource):
         self._layouts.clear()
         self._open.clear()
         self._direct.clear()
+        with self._index_lock:
+            if self._chunk_index is not None:
+                self._chunk_index.close()
+                self._chunk_index = None
         self._raw.close()
         _close_file(self._file, self._stream)
 
@@ -810,6 +857,9 @@ def open_ims_volume(path):
     except Exception:
         _close_file(handle, stream)
         raise
+    if stream is None:
+        # A large file's chunk index, walked once in the background.
+        ims_index.ensure(path)
     return ImsVolumeSource(path, handle, levels, volume, stream=stream)
 
 

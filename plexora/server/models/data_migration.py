@@ -63,7 +63,8 @@ def migratable(root: Path) -> list[str]:
     process per thread, so a crashed process can leave one behind, and carrying
     a dead lock file into a new root would be the one thing in it that means
     something and is wrong. The remote chunk cache and the downloaded model
-    weights are skipped too: both only hold copies of bytes still on the web.
+    weights are skipped too: both only hold copies of bytes still on the web;
+    and the .ims chunk indexes, each built again from its file.
     """
     try:
         names = os.listdir(root)
@@ -75,6 +76,8 @@ def migratable(root: Path) -> list[str]:
         # A cache of bytes that can be fetched again, often gigabytes of it.
         # Copying it would make the move slower for nothing.
         and name != paths.REMOTE_CACHE_DIRNAME
+        # Where each large .ims file's chunks are: built again on next open.
+        and name != paths.IMS_INDEX_DIRNAME
         # Downloaded model weights: fetched again on first use.
         and name != paths.MODELS_DIRNAME
     )

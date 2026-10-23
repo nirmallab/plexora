@@ -111,6 +111,12 @@ AGENT_DIRNAME = ".agent"
 #: a data-directory move leaves it behind (`data_migration.migratable`).
 REMOTE_CACHE_DIRNAME = ".remote_cache"
 
+#: Directory under a root holding where every chunk of a large local Imaris
+#: file is (`server/volume/sources/ims_index.py`), worked out once per file.
+#: A cache like the one above: each can be built again from its file, so a
+#: data-directory move leaves it behind too.
+IMS_INDEX_DIRNAME = ".ims_index"
+
 #: How much disk the remote chunk cache may use, in bytes, when neither the
 #: settings file nor the environment says. Ten gigabytes holds several whole
 #: IDR images and every coarse level of hundreds more.
@@ -813,6 +819,15 @@ def remote_cache_root() -> Path:
     theirs, and a site root is often read-only to the people using it.
     """
     return data_root() / REMOTE_CACHE_DIRNAME
+
+
+def ims_index_root() -> Path:
+    """Where the chunk indexes of large local .ims files are kept.
+
+    The user's own root, as the remote cache is: an index is built from what
+    this person opened, and a shared root is often read-only to them.
+    """
+    return data_root() / IMS_INDEX_DIRNAME
 
 
 def remote_cache_budget() -> int:
