@@ -609,27 +609,28 @@ def put_viewer_prefs():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify(success=False, error="expected an object"), 400
-    settings = paths.read_settings()
-    current = settings.get("viewer") if isinstance(settings.get("viewer"), dict) else {}
-    sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
-    if isinstance(payload.get("sections"), dict):
-        sections = {**sections, **payload["sections"]}
-    grid = current.get("grid") if isinstance(current.get("grid"), dict) else {}
-    if isinstance(payload.get("grid"), dict):
-        grid = {**grid, **payload["grid"]}
-    rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
-    if isinstance(payload.get("rotate"), dict):
-        rotate = {**rotate, **payload["rotate"]}
-    handles = current.get("handles") if isinstance(current.get("handles"), dict) else {}
-    if isinstance(payload.get("handles"), dict):
-        handles = {**handles, **payload["handles"]}
-    area = current.get("area") if isinstance(current.get("area"), dict) else {}
-    if isinstance(payload.get("area"), dict):
-        area = {**area, **payload["area"]}
-    stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
-                                     "rotate": rotate, "handles": handles, "area": area})
-    settings["viewer"] = stored
-    paths.write_settings(settings)
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        current = settings.get("viewer") if isinstance(settings.get("viewer"), dict) else {}
+        sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
+        if isinstance(payload.get("sections"), dict):
+            sections = {**sections, **payload["sections"]}
+        grid = current.get("grid") if isinstance(current.get("grid"), dict) else {}
+        if isinstance(payload.get("grid"), dict):
+            grid = {**grid, **payload["grid"]}
+        rotate = current.get("rotate") if isinstance(current.get("rotate"), dict) else {}
+        if isinstance(payload.get("rotate"), dict):
+            rotate = {**rotate, **payload["rotate"]}
+        handles = current.get("handles") if isinstance(current.get("handles"), dict) else {}
+        if isinstance(payload.get("handles"), dict):
+            handles = {**handles, **payload["handles"]}
+        area = current.get("area") if isinstance(current.get("area"), dict) else {}
+        if isinstance(payload.get("area"), dict):
+            area = {**area, **payload["area"]}
+        stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
+                                         "rotate": rotate, "handles": handles, "area": area})
+        settings["viewer"] = stored
+        paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)
 
 

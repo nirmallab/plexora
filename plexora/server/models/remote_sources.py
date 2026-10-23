@@ -213,9 +213,10 @@ def set_budget(nbytes: int) -> int:
     nbytes = int(nbytes)
     if nbytes < paths.REMOTE_CACHE_MIN_BYTES:
         raise ValueError("The remote cache needs at least 1 GB.")
-    settings = paths.read_settings()
-    settings["remote_cache_bytes"] = nbytes
-    paths.write_settings(settings)
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        settings["remote_cache_bytes"] = nbytes
+        paths.write_settings(settings)
     remote_store.cache_index().set_budget(None)
     return paths.remote_cache_budget()
 

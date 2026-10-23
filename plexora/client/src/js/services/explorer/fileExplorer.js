@@ -1018,6 +1018,7 @@ window.PlexoraFileExplorer = (function () {
             paintSidebarLists();
         }
 
+        /** Write one change; true once the server has it. */
         async function savePrefs(change) {
             try {
                 const response = await fetch(plexoraUrl("picker_prefs"), {
@@ -1026,8 +1027,9 @@ window.PlexoraFileExplorer = (function () {
                     body: JSON.stringify({ node, ...change }),
                 });
                 const record = await response.json();
-                if (closed) return;
-                if (response.ok && record && Array.isArray(record.pinned)) {
+                const saved = response.ok && record && Array.isArray(record.pinned);
+                if (closed) return Boolean(saved);
+                if (saved) {
                     state.prefs = {
                         last_dir: typeof record.last_dir === "string" ? record.last_dir : "",
                         recent: strings(record.recent),
@@ -1036,9 +1038,10 @@ window.PlexoraFileExplorer = (function () {
                     paintSidebarLists();
                     paintPin();
                 }
+                return Boolean(saved);
             } catch (error) {
-                // As above. The star is already drawn; it will be right again
-                // the next time this opens.
+                // As above: never fatal. A pin says so itself (togglePin).
+                return false;
             }
         }
 
@@ -1073,7 +1076,12 @@ window.PlexoraFileExplorer = (function () {
             if (Object.keys(change).length) savePrefs(change);
         }
 
-        function togglePin(path) {
+        /**
+         * Drawn at once, and taken back if the server did not keep it: a star
+         * that stays lit over a failed write is a favorite that is gone the
+         * next time this opens, with nothing to say it never landed.
+         */
+        async function togglePin(path) {
             if (!path) return;
             const on = state.prefs.pinned.indexOf(path) >= 0;
             state.prefs.pinned = on
@@ -1081,7 +1089,14 @@ window.PlexoraFileExplorer = (function () {
                 : [...state.prefs.pinned, path];
             paintSidebarLists();
             paintPin();
-            savePrefs(on ? { unpin: path } : { pin: path });
+            const saved = await savePrefs(on ? { unpin: path } : { pin: path });
+            if (saved || closed) return;
+            const pinned = state.prefs.pinned.filter((each) => each !== path);
+            state.prefs.pinned = on ? [...pinned, path] : pinned;
+            paintSidebarLists();
+            paintPin();
+            explain(on ? "Could not unpin that folder. Try again."
+                       : "Could not pin that folder to Favorites. Try again.");
         }
 
         // -- the machine's own dialog ------------------------------------------------

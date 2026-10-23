@@ -141,15 +141,16 @@ def set_models(pairs: dict) -> dict:
     unknown = sorted(set(pairs) - set(TIERS))
     if unknown:
         raise KeyError(f"no tier named {unknown[0]!r}; tiers: {', '.join(TIERS)}")
-    settings = paths.read_settings()
-    mapping = dict(settings.get(SETTINGS_KEY) or {})
-    for tier, model in pairs.items():
-        if model:
-            mapping[tier] = str(model)
-        else:
-            mapping.pop(tier, None)
-    settings[SETTINGS_KEY] = mapping
-    paths.write_settings(settings)
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        mapping = dict(settings.get(SETTINGS_KEY) or {})
+        for tier, model in pairs.items():
+            if model:
+                mapping[tier] = str(model)
+            else:
+                mapping.pop(tier, None)
+        settings[SETTINGS_KEY] = mapping
+        paths.write_settings(settings)
     return mapping
 
 
