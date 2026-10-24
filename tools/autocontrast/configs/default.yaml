@@ -1,0 +1,16 @@
+# The defaults in biological_autocontrast/config.py, written out. Copy and edit,
+# then pass with `--config` (before the command): any key left out keeps its default.
+n_patches: 24
+patch_size: 128
+quotas: {high: 6, intermediate: 6, background: 4, texture: 4, random: 4}
+target_um_per_px: 1.0
+min_distance: 1.0
+overview_min_pixels: 1000000
+overview_max_pixels: 16000000
+max_plane_pixels: 120000000
+dark_norm_max: 0.01
+min_tissue_fraction: 0.01
+saturated_flag: 0.05
+finite_warn: 0.99
+min_confidence: 0.0
+heuristic: percentile

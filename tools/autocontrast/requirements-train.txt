@@ -1,0 +1,6 @@
+# Training only. Prediction, labels, examples and evaluation run in the plexora env.
+torch>=2.5
+onnx>=1.16
+onnxruntime>=1.18
+numpy>=1.26
+pytest
