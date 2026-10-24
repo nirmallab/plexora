@@ -1,0 +1,115 @@
+---
+title: "plan_dataset"
+description: "Work out which images, masks and tables under these folders belong together, without registering anything."
+generated: true
+symbol: "plexora.plan_dataset"
+signature: "plan_dataset(*roots, overrides=None, limits=None) -> dict"
+aliases: ["scan", "folder", "directory", "match masks", "cohort folder"]
+source:
+  end: 564
+  path: "plexora/datasets.py"
+  start: 513
+---
+
+{/* GENERATED from plexora.datasets.plan_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import plan_dataset
+```
+
+```python
+plan_dataset(*roots, overrides=None, limits=None) -> dict
+```
+
+Walks every folder under `roots` (names and file sizes first, then each
+candidate's header), and groups what it finds into one project per image:
+its segmentation mask, its cell table and its channel names, each with a
+confidence and the reasons for it. The same plan the viewer's New Dataset
+dialog shows, so a script and the dialog agree about a folder.
+
+A match is `high` when it is strong and well clear of any other candidate,
+`medium` when it is likely but worth a look, and anything less is left in
+`unassigned` with its best suggestions rather than guessed.
+
+## When to use
+
+Use this to see what [`create_dataset_from_directory`](/docs/python-api/datasets/create-dataset-from-directory) would make, or to
+write the plan out as a spec file and edit it (see
+`plexora dataset create NAME --scan DIR --dry-run --json`). Use
+[`create_dataset`](/docs/python-api/datasets/create-dataset) when you already have the list of projects.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"*roots"}>
+
+One or more folders to scan.
+
+</Param>
+
+<Param name={"overrides"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+Corrections, as the dialog makes them --
+`\{"assign": [\{"path", "project", "slot"\}], "exclude": [path],
+"detach": [path], "new_project": [\{"image", "name"\}],
+"rename": \{project_id: name\}, "learn": [\{"path", "project"\}]\}`.
+
+</Param>
+
+<Param name={"limits"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+`{"max_depth": 8, "max_entries": 200000}`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The plan: `projects` (each with `image`, `mask`, `table`,
+`channels`, `status`), `unassigned`, `unrecognised`, `duplicates`,
+`counts`, `warnings` and `conventions`.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If a root is not a folder.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plan = plexora.plan_dataset("/data/cohort")
+for project in plan["projects"]:
+    print(project["name"], project["status"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"create_dataset_from_directory"} href={"/docs/python-api/datasets/create-dataset-from-directory"} description={"Scan folders and register what they hold as one dataset."} />
+<Card title={"create_dataset"} href={"/docs/python-api/datasets/create-dataset"} description={"Make a dataset, registering its projects if they are not there yet."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+
+</Cards>

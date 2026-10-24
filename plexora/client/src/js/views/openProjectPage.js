@@ -587,6 +587,17 @@
          *  user came through its "New dataset…" box rather than the toolbar
          *  button -- which has nowhere to have asked yet. */
         async function createDataset(withProjects, named) {
+            // Nothing selected and no name yet: the toolbar's New Dataset,
+            // which makes a dataset from a folder (or an empty one, when the
+            // folder is left blank). Grouping a selection stays a name prompt.
+            if (!named && !(withProjects && withProjects.length)
+                && window.PlexoraDatasetBuilder) {
+                window.PlexoraDatasetBuilder.open({
+                    onClose: () => { void reload(); },
+                    onCreated: (dataset) => { void openDataset(dataset.id); },
+                });
+                return null;
+            }
             const name = named || await window.PlexoraConfirm.prompt({
                 title: "New dataset",
                 body: "A dataset groups projects that belong together — a cohort, a TMA series, one imaging run.",
@@ -600,6 +611,12 @@
             state.selection.clear();
             await reload();
             return result.dataset;
+        }
+
+        /** Re-list, then stand in the dataset: where a new one is seen. */
+        async function openDataset(id) {
+            await reload();
+            setFolder(id);
         }
 
         async function renameDataset(id) {
@@ -958,7 +975,10 @@
         // page loads. Hung on the window rather than passed, because the two
         // are bound at different times -- this page is a routed fragment and
         // the dialog is loaded once in base.html.
-        window.PlexoraOpenProject = {refresh: () => { void reload(); }};
+        window.PlexoraOpenProject = {
+            refresh: () => { void reload(); },
+            open: (id) => { void openDataset(id); },
+        };
 
         // Where we were, if this is a reload or a pasted link.
         state.folder = new URL(window.location.href).searchParams.get("dataset") || null;

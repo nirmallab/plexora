@@ -53,6 +53,8 @@ sections:
         description: Group projects that belong together, such as a cohort or a TMA series.
         symbols:
           - plexora.create_dataset
+          - plexora.plan_dataset
+          - plexora.create_dataset_from_directory
           - plexora.list_datasets
           - plexora.dataset
           - plexora.Dataset
@@ -216,6 +218,14 @@ symbols:
     search: [cohort, tma, group projects]
     related: [plexora.Dataset, plexora.list_datasets, plexora.dataset, plexora.create_project]
     guides: [/docs/data/datasets, /docs/python/datasets]
+  plexora.plan_dataset:
+    search: [scan, folder, directory, match masks, cohort folder]
+    related: [plexora.create_dataset_from_directory, plexora.create_dataset]
+    guides: [/docs/data/datasets]
+  plexora.create_dataset_from_directory:
+    search: [scan, folder, directory, cohort folder, mcmicro]
+    related: [plexora.plan_dataset, plexora.create_dataset]
+    guides: [/docs/data/datasets]
   plexora.list_datasets:
     related: [plexora.dataset, plexora.create_dataset]
   plexora.dataset:

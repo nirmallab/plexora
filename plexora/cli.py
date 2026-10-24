@@ -850,6 +850,16 @@ def _build_dataset_parser():
                         help="A JSON file: {name, description, projects: [...]} "
                              "or a bare list of project specs. Command-line "
                              "arguments win over what is in it.")
+    create.add_argument("--scan", nargs="+", metavar="DIR",
+                        help="Folders to scan. Every image under them becomes "
+                             "a project, with the segmentation mask, cell "
+                             "table and channel names matched to it by name "
+                             "and folder. Files that cannot be matched with "
+                             "confidence are listed and left out.")
+    create.add_argument("--dry-run", action="store_true",
+                        help="With --scan: show what would be created and "
+                             "register nothing. With --json, print it as a "
+                             "spec file that --from reads, to edit and rerun.")
     create.add_argument("--description", default="")
     create.add_argument("--node", metavar="NAME",
                         help="The data node these files are on. Every path "
@@ -2183,6 +2193,101 @@ def _wants_detection(paths, args) -> bool:
             or spatial_scene.is_spatialdata_store(candidate))
 
 
+def _create_from_scan(api, args):
+    """`plexora dataset create NAME --scan DIR...`: plan, show, register."""
+    import json
+
+    from plexora.server.models import dataset_build
+
+    if args.images or args.spec_file:
+        print("Use --scan, --images or --from, not more than one.", file=sys.stderr)
+        return 2
+    if args.node:
+        print("--scan reads folders on this machine; --node is not supported "
+              "with it.", file=sys.stderr)
+        return 2
+    plan = api.plan_dataset(*args.scan)
+    if args.dry_run:
+        if args.json:
+            print(json.dumps(dataset_build.spec_document(
+                plan, args.name, args.description), indent=2))
+        else:
+            _print_plan(plan, args.name)
+            print("Nothing was registered (--dry-run).")
+        return 0
+    specs = [spec for _id, spec in dataset_build.specs_for(plan)]
+    if not specs:
+        print(f"No images to register were found under {', '.join(args.scan)}.",
+              file=sys.stderr)
+        return 1
+    dataset = api.create_dataset(args.name, projects=specs,
+                                 description=args.description,
+                                 exist_ok=args.exist_ok)
+    if args.json:
+        _print_json({**_dataset_wire(dataset),
+                     "unassigned": [u["path"] for u in plan["unassigned"]]})
+    else:
+        print(f"{dataset.name}: "
+              f"{len(dataset)} project{'' if len(dataset) == 1 else 's'}")
+        for name in dataset.projects:
+            print(f"  {name}")
+        if plan["unassigned"]:
+            print(f"{len(plan['unassigned'])} file(s) were not matched to an image "
+                  "and were left out; see them with --dry-run.")
+        _say_what_is_converting(api, dataset.projects)
+    return _said_where(args, mutating=True)
+
+
+#: How the dry run shows each status.
+_STATUS_WORDS = {"matched": "matched", "review": "review", "missing_mask": "no mask",
+                 "missing_data": "no data", "image_only": "image only",
+                 "existing": "already imported", "unavailable": "file missing",
+                 "checking": "checking"}
+
+
+def _print_plan(plan, name):
+    """The dry run's table: one row per project, then what was not placed."""
+    counts = plan["counts"]
+    layout = plan["conventions"].get("layout")
+    print(f"{name}: {counts['projects']} project"
+          f"{'' if counts['projects'] == 1 else 's'} from {', '.join(plan['roots'])}"
+          + (f" ({layout})" if layout else ""))
+
+    def cell(slot):
+        if not slot:
+            return "-"
+        text = slot.get("rel") or slot.get("label") or ""
+        if slot.get("subset"):
+            text += f" [{slot['subset']['column']}={slot['subset']['value']}]"
+        if slot.get("confidence") == "medium":
+            text += " ?"
+        return text
+
+    rows = [("PROJECT", "IMAGE", "SEGMENTATION", "DATA", "STATUS")]
+    for project in plan["projects"]:
+        rows.append((project["name"], cell(project["image"]), cell(project["mask"]),
+                     cell(project["table"]),
+                     _STATUS_WORDS.get(project["status"], project["status"])))
+    widths = [min(max(len(row[i]) for row in rows), 48) for i in range(5)]
+    for row in rows:
+        print("  " + "  ".join(_fit(value, widths[i]).ljust(widths[i])
+                               for i, value in enumerate(row)).rstrip())
+    if plan["unassigned"]:
+        print(f"Not matched ({len(plan['unassigned'])}):")
+        for item in plan["unassigned"]:
+            reason = "; ".join(item["reasons"][:2])
+            best = item["suggestions"][0]["name"] if item["suggestions"] else None
+            hint = f" (likely {best})" if best else ""
+            print(f"  {item['rel']}  {item['kind']} -- {reason}{hint}")
+    for warning in plan["warnings"]:
+        print(f"Note: {warning}")
+
+
+def _fit(text, width):
+    text = str(text)
+    return text if len(text) <= width else "…" + text[-(width - 1):]
+
+
 def _load_spec_file(path):
     """`--from spec.json`, as `{name, description, projects}`.
 
@@ -2254,6 +2359,11 @@ def _run_dataset(args):
         return 0
 
     try:
+        if command == "create" and getattr(args, "scan", None):
+            return _create_from_scan(api, args)
+        if command == "create" and getattr(args, "dry_run", False):
+            print("--dry-run goes with --scan.", file=sys.stderr)
+            return 2
         if command == "create":
             document = _load_spec_file(args.spec_file) if args.spec_file else {}
             projects = list(document.get("projects") or [])

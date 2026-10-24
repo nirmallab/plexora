@@ -56,6 +56,10 @@ PROJECT_SPEC_KEYS = (
     "node",
     # Where it goes, and what to do about a name already taken.
     "dataset", "exist_ok",
+    # A run folder or store, read by detection rather than by role: the
+    # entry is registered by `import_sample(*paths)` instead of
+    # `create_project`, and `answers` are its answers. In place of `image`.
+    "paths", "answers",
 )
 
 
@@ -375,7 +379,8 @@ def project_manifest(name) -> dict:
 
 
 def create_dataset(name, images=None, projects=None, *, description="",
-                   node=None, exist_ok=False) -> Dataset:
+                   node=None, exist_ok=False, on_progress=None,
+                   cancel=None) -> Dataset:
     """Make a dataset, registering its projects if they are not there yet.
 
     A dataset is a named group of projects -- a cohort, a TMA series, any set
@@ -414,6 +419,13 @@ def create_dataset(name, images=None, projects=None, *, description="",
             projects -- a spec whose own project already exists is refused
             the same way `create_project` refuses it unless that spec sets
             its own `exist_ok: True`.
+        on_progress (callable, optional): Called as `on_progress(index,
+            total, spec)` before each project is registered, and once more
+            with `index == total` when they all have.
+        cancel (threading.Event, optional): Checked between projects. Once
+            set, no further project is started and the dataset is returned
+            holding what registered so far -- nothing is rolled back, for the
+            reason `DatasetCreateError` gives.
 
     Returns:
         Dataset: The dataset, holding every project this call registered or
@@ -456,16 +468,151 @@ def create_dataset(name, images=None, projects=None, *, description="",
 
     record = existing or registry.create(name, description=description)
     created = []
-    for spec in specs:
+    for index, spec in enumerate(specs):
+        if cancel is not None and cancel.is_set():
+            break
+        if on_progress is not None:
+            on_progress(index, len(specs), spec)
         try:
-            created.append(create_project(**spec, dataset=record.id,
-                                          _checked=checked))
+            created.append(_register_spec(spec, record.id, checked))
         except Exception as exc:
             raise DatasetCreateError(
-                f"{_describe(_locate(spec['image'], 'image', spec.get('node')))}: {exc}",
+                f"{_spec_label(spec)}: {exc}",
                 dataset=Dataset._from_record(registry.get(record.id)),
                 created=created, failed=spec, cause=exc) from exc
+    if on_progress is not None:
+        on_progress(len(specs), len(specs), None)
     return Dataset._from_record(registry.get(record.id))
+
+
+def _register_spec(spec, dataset_id, checked) -> str:
+    """One entry of a batch, by roles or by detection, filed under the dataset."""
+    if spec.get("paths"):
+        from plexora import get_config
+
+        name = spec.get("name")
+        if not (name and spec.get("exist_ok") and name in get_config()):
+            name = import_sample(*spec["paths"], name=name,
+                                 answers=spec.get("answers"), node=spec.get("node"))
+        # Filed here rather than by `import_sample`: a run already registered
+        # is reopened rather than imported twice, and that answer files
+        # nothing.
+        if dataset_id is not None:
+            _assign_to(name, dataset_id)
+        return name
+    return create_project(**spec, dataset=dataset_id, _checked=checked)
+
+
+def _spec_label(spec) -> str:
+    """The file a spec is about, for a message."""
+    if spec.get("paths"):
+        return str(spec["paths"][0])
+    return _describe(_locate(spec["image"], "image", spec.get("node")))
+
+
+def plan_dataset(*roots, overrides=None, limits=None) -> dict:
+    """Work out which images, masks and tables under these folders belong
+    together, without registering anything.
+
+    Walks every folder under `roots` (names and file sizes first, then each
+    candidate's header), and groups what it finds into one project per image:
+    its segmentation mask, its cell table and its channel names, each with a
+    confidence and the reasons for it. The same plan the viewer's New Dataset
+    dialog shows, so a script and the dialog agree about a folder.
+
+    A match is `high` when it is strong and well clear of any other candidate,
+    `medium` when it is likely but worth a look, and anything less is left in
+    `unassigned` with its best suggestions rather than guessed.
+
+    When to use:
+        Use this to see what `create_dataset_from_directory` would make, or to
+        write the plan out as a spec file and edit it (see
+        `plexora dataset create NAME --scan DIR --dry-run --json`). Use
+        `create_dataset` when you already have the list of projects.
+
+    Args:
+        *roots: One or more folders to scan.
+        overrides (dict, optional): Corrections, as the dialog makes them --
+            `{"assign": [{"path", "project", "slot"}], "exclude": [path],
+            "detach": [path], "new_project": [{"image", "name"}],
+            "rename": {project_id: name}, "learn": [{"path", "project"}]}`.
+        limits (dict, optional): `{"max_depth": 8, "max_entries": 200000}`.
+
+    Returns:
+        dict: The plan: `projects` (each with `image`, `mask`, `table`,
+            `channels`, `status`), `unassigned`, `unrecognised`, `duplicates`,
+            `counts`, `warnings` and `conventions`.
+
+    Raises:
+        ValueError: If a root is not a folder.
+
+    Example:
+        ```python
+        import plexora
+
+        plan = plexora.plan_dataset("/data/cohort")
+        for project in plan["projects"]:
+            print(project["name"], project["status"])
+        ```
+    """
+    from plexora.server.models import dataset_plan, dataset_scan
+
+    if not roots:
+        raise ValueError("Name at least one folder to scan.")
+    folders = dataset_scan._check_roots(roots)
+    inventory = dataset_scan.scan(folders, limits=limits)
+    return dataset_plan.verify(dataset_plan.plan(inventory, overrides))
+
+
+def create_dataset_from_directory(name, *roots, overrides=None, description="",
+                                  exist_ok=False) -> Dataset:
+    """Scan folders and register what they hold as one dataset.
+
+    `plan_dataset`, then `create_dataset` with the projects it planned: every
+    image becomes a project, with the mask, table and channel names matched
+    to it. Files are registered where they are, not copied. Files the plan
+    could not place (`unassigned`) are left out; pass `overrides` to place
+    them, or use `plan_dataset` first to see them.
+
+    When to use:
+        Use this for a cohort folder whose files are named consistently --
+        `registration/`, `segmentation/`, `quantification/`, or a folder per
+        sample. Use `create_dataset` with explicit specs when the folder
+        layout does not say which file is which.
+
+    Args:
+        name (str): The dataset's name.
+        *roots: One or more folders to scan.
+        overrides (dict, optional): Corrections -- see `plan_dataset`.
+        description (str, optional): A note about the dataset.
+        exist_ok (bool, optional): Add to an existing dataset of this name
+            instead of raising.
+
+    Returns:
+        Dataset: The dataset, holding every project registered or adopted.
+
+    Raises:
+        ValueError: If a root is not a folder, or nothing to register was found.
+        DatasetCreateError: If registering one of the projects fails; what
+            registered before it is kept.
+
+    Example:
+        ```python
+        import plexora
+
+        cohort = plexora.create_dataset_from_directory("Melanoma", "/data/cohort")
+        print(list(cohort))
+        ```
+    """
+    from plexora.server.models import dataset_build
+
+    plan = plan_dataset(*roots, overrides=overrides)
+    specs = [spec for _id, spec in dataset_build.specs_for(plan)]
+    if not specs:
+        raise ValueError("No images to register were found under "
+                         + ", ".join(str(root) for root in roots))
+    return create_dataset(name, projects=specs, description=description,
+                          exist_ok=exist_ok)
 
 
 def project_from_spec(spec, node=None) -> str:
@@ -494,7 +641,10 @@ def project_from_spec(spec, node=None) -> str:
         name = plexora.project_from_spec({"image": "slide.ome.tif", "data": "cells.csv"})
         ```
     """
-    return create_project(**_as_spec(spec, node))
+    spec = _as_spec(spec, node)
+    if spec.get("paths"):
+        return _register_spec(spec, spec.get("dataset"), {})
+    return create_project(**spec)
 
 
 def import_sample(*paths, name=None, dataset=None, answers=None, node=None,
@@ -1243,8 +1393,12 @@ def _as_spec(entry, default_node=None) -> dict:
         raise ValueError(f"a project is a path or a dict of options, not {entry!r}")
     else:
         spec = dict(entry)
-        if not spec.get("image"):
-            raise ValueError("every project needs an `image`")
+        if spec.get("paths") is not None:
+            _check_paths_spec(spec)
+        elif not spec.get("image"):
+            raise ValueError("every project needs an `image` (or `paths`)")
+        elif "answers" in spec:
+            raise ValueError("`answers` goes with `paths`, not with `image`")
         unknown = [key for key in spec if key not in PROJECT_SPEC_KEYS]
         if unknown:
             raise ValueError(
@@ -1256,6 +1410,29 @@ def _as_spec(entry, default_node=None) -> dict:
         # and that is an answer, not an omission.
         spec.setdefault("node", default_node)
     return spec
+
+
+#: The keys a `paths` entry may carry beside `paths` itself: what
+#: `import_sample` takes. Roles are what detection works out.
+_PATHS_SPEC_KEYS = ("paths", "answers", "name", "node", "dataset", "exist_ok")
+
+
+def _check_paths_spec(spec):
+    paths = spec.get("paths")
+    if (not isinstance(paths, (list, tuple)) or not paths
+            or not all(isinstance(p, (str, Path)) for p in paths)):
+        raise ValueError("`paths` is a list of one or more paths")
+    if spec.get("image"):
+        raise ValueError("a project is defined by `image` or by `paths`, not both")
+    other = [key for key in spec if key in PROJECT_SPEC_KEYS
+             and key not in _PATHS_SPEC_KEYS]
+    if other:
+        raise ValueError(
+            f"{', '.join(sorted(other))} cannot be combined with `paths`: "
+            "detection decides each file's role (use `image` to name roles)")
+    if spec.get("answers") is not None and not isinstance(spec["answers"], Mapping):
+        raise ValueError("`answers` is an object of question ids to answers")
+    spec["paths"] = [str(p) for p in paths]
 
 
 def _validate_batch(specs) -> dict:
@@ -1276,7 +1453,12 @@ def _validate_batch(specs) -> dict:
     taken = set(get_config())
     for spec in specs:
         default_node = spec.get("node")
-        _check_located(_locate(spec["image"], "image", default_node), checked)
+        if spec.get("paths"):
+            if default_node is None:
+                for path in spec["paths"]:
+                    _existing_path(path, "file")
+        else:
+            _check_located(_locate(spec["image"], "image", default_node), checked)
         for key in ("segmentation", "data"):
             if spec.get(key):
                 _check_located(_locate(spec[key], key, default_node), checked)

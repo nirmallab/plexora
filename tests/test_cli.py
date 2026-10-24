@@ -1545,3 +1545,57 @@ def test_mcp_serve_parses_its_permissions():
 def test_ai_setup_parses_scope():
     args = cli.build_parser("ai").parse_args(["setup", "codex", "--global", "--dry-run"])
     assert (args.client, args.scope, args.dry_run) == ("codex", "global", True)
+
+
+def test_dataset_create_scan_dry_run_prints_the_plan(tmp_path, capsys):
+    """`--scan DIR --dry-run`: the table the dialog shows, and nothing made."""
+    import plexora
+    from tests import dataset_fixtures as fx
+
+    root = fx.layout_e(tmp_path / "cohort")
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "Cohort", "--scan", str(root), "--dry-run"])
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "PROJECT" in out and "SEGMENTATION" in out
+    assert "S1_cell.tif" in out and "no mask" in out
+    assert "Not matched (1)" in out and "other/image_mask.ome.tiff" in out
+    assert "Nothing was registered" in out
+    assert plexora.list_datasets() == []
+
+
+def test_dataset_create_scan_spec_round_trips_through_from(tmp_path, capsys):
+    """The dry run's JSON is a spec file: save it, edit it, create from it."""
+    import json
+
+    import plexora
+    from tests import dataset_fixtures as fx
+
+    root = fx.layout_a(tmp_path / "cohort")
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "Cohort", "--scan", str(root), "--dry-run", "--json"])
+    assert cli._run_dataset(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert [p["name"] for p in document["projects"]] == ["A", "B", "C"]
+    spec = tmp_path / "cohort.json"
+    spec.write_text(json.dumps(document), encoding="utf-8")
+
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "Cohort", "--from", str(spec)])
+    assert cli._run_dataset(args) == 0
+    assert sorted(plexora.dataset("Cohort")) == ["A", "B", "C"]
+
+
+def test_dataset_create_scan_registers(tmp_path, capsys):
+    import plexora
+    from tests import dataset_fixtures as fx
+
+    root = fx.layout_b(tmp_path / "cohort")
+    args = cli.build_parser("dataset").parse_args(["create", "Per sample", "--scan", str(root)])
+    assert cli._run_dataset(args) == 0
+    assert sorted(plexora.dataset("Per sample")) == ["Sample01", "Sample02", "Sample03"]
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "Both", "--scan", str(root), "--images", "x.tif"])
+    assert cli._run_dataset(args) == 2
+    args = cli.build_parser("dataset").parse_args(["create", "Alone", "--dry-run"])
+    assert cli._run_dataset(args) == 2

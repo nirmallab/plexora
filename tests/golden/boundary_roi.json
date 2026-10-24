@@ -181,15 +181,16 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261021_pro",
+        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/client/src/js/views/openProjectPage.js?v=20261012_project_title"
+        "/client/src/js/views/openProjectPage.js?v=20261024_dsb"
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261022_glass_tooltip",
-        "/client/src/css/main.css?v=20261022_glass_tooltip",
+        "/client/src/css/tokens.css?v=20261024_dsb",
+        "/client/src/css/main.css?v=20261024_dsb",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
@@ -400,6 +401,7 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261021_pro",
+        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
@@ -463,8 +465,8 @@
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261022_glass_tooltip",
-        "/client/src/css/main.css?v=20261022_glass_tooltip",
+        "/client/src/css/tokens.css?v=20261024_dsb",
+        "/client/src/css/main.css?v=20261024_dsb",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261023_strip_search",
         "/client/src/css/quickView.css?v=20261021_native_drop",
@@ -489,18 +491,18 @@
           "tool_panel_slot": "roi/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/roi/static/roiApi.js?v=20261021_pro",
-          "/plugins/roi/static/roiGeometry.js?v=20261021_pro",
-          "/plugins/roi/static/roiState.js?v=20261021_pro",
-          "/plugins/roi/static/roiRenderer.js?v=20261021_pro",
-          "/plugins/roi/static/roiTools.js?v=20261021_pro",
-          "/plugins/roi/static/roiTree.js?v=20261021_pro",
-          "/plugins/roi/static/roiSidebarController.js?v=20261021_pro",
-          "/plugins/roi/static/roiFigureBridge.js?v=20261021_pro",
-          "/plugins/roi/static/roiAgentBridge.js?v=20261021_pro"
+          "/plugins/roi/static/roiApi.js?v=20261023_roi",
+          "/plugins/roi/static/roiGeometry.js?v=20261023_roi",
+          "/plugins/roi/static/roiState.js?v=20261023_roi",
+          "/plugins/roi/static/roiRenderer.js?v=20261023_roi",
+          "/plugins/roi/static/roiTools.js?v=20261023_roi",
+          "/plugins/roi/static/roiTree.js?v=20261023_roi",
+          "/plugins/roi/static/roiSidebarController.js?v=20261023_roi",
+          "/plugins/roi/static/roiFigureBridge.js?v=20261023_roi",
+          "/plugins/roi/static/roiAgentBridge.js?v=20261023_roi"
         ],
         "active_tool_styles": [
-          "/plugins/roi/static/roi.css?v=20261021_pro"
+          "/plugins/roi/static/roi.css?v=20261023_roi"
         ],
         "available_tools": [
           {
@@ -737,18 +739,19 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261021_pro",
+        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/roi/static/roiApi.js?v=20261021_pro",
-        "/plugins/roi/static/roiGeometry.js?v=20261021_pro",
-        "/plugins/roi/static/roiState.js?v=20261021_pro",
-        "/plugins/roi/static/roiRenderer.js?v=20261021_pro",
-        "/plugins/roi/static/roiTools.js?v=20261021_pro",
-        "/plugins/roi/static/roiTree.js?v=20261021_pro",
-        "/plugins/roi/static/roiSidebarController.js?v=20261021_pro",
-        "/plugins/roi/static/roiFigureBridge.js?v=20261021_pro",
-        "/plugins/roi/static/roiAgentBridge.js?v=20261021_pro",
+        "/plugins/roi/static/roiApi.js?v=20261023_roi",
+        "/plugins/roi/static/roiGeometry.js?v=20261023_roi",
+        "/plugins/roi/static/roiState.js?v=20261023_roi",
+        "/plugins/roi/static/roiRenderer.js?v=20261023_roi",
+        "/plugins/roi/static/roiTools.js?v=20261023_roi",
+        "/plugins/roi/static/roiTree.js?v=20261023_roi",
+        "/plugins/roi/static/roiSidebarController.js?v=20261023_roi",
+        "/plugins/roi/static/roiFigureBridge.js?v=20261023_roi",
+        "/plugins/roi/static/roiAgentBridge.js?v=20261023_roi",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -809,14 +812,14 @@
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261022_glass_tooltip",
-        "/client/src/css/main.css?v=20261022_glass_tooltip",
+        "/client/src/css/tokens.css?v=20261024_dsb",
+        "/client/src/css/main.css?v=20261024_dsb",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261023_strip_search",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/roi/static/roi.css?v=20261021_pro"
+        "/plugins/roi/static/roi.css?v=20261023_roi"
       ],
       "tool_mounts": [
         [
@@ -830,7 +833,7 @@
       ]
     }
   },
-  "route_count": 238,
+  "route_count": 246,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -861,6 +864,9 @@
     "GET /config",
     "GET /data_places",
     "GET /datasets",
+    "GET /datasets/scan/<token>",
+    "GET /datasets/scan/<token>/create",
+    "GET /datasets/scan/<token>/spec",
     "GET /desktop/info",
     "GET /display_contrast",
     "GET /edit_config",
@@ -981,6 +987,11 @@
     "POST /datasets",
     "POST /datasets/<string:dataset_id>",
     "POST /datasets/<string:dataset_id>/delete",
+    "POST /datasets/scan",
+    "POST /datasets/scan/<token>/cancel",
+    "POST /datasets/scan/<token>/create",
+    "POST /datasets/scan/<token>/create/cancel",
+    "POST /datasets/scan/<token>/plan",
     "POST /desktop/open",
     "POST /detect_image_type",
     "POST /display_contrast/compute",

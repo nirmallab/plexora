@@ -243,6 +243,8 @@ def create_app(plugins=None):
     # Volumes (plexora/server/volume): what a z-stack is and where the viewer
     # was in it. Pixels come down the ordinary tile route with `view=`.
     from plexora.server.routes import volume_routes
+    # A dataset from a folder: scan it, match its files, create the projects.
+    from plexora.server.routes import dataset_scan_routes
     # Surfaces (plexora/server/surface): meshes of a volume, kept as layers.
     from plexora.server.routes import surface_routes
     from plexora.server.models import data_model, database_model
@@ -438,6 +440,9 @@ _PUBLIC_API = {
     # core build importing anndata is what test_plugin_boundary.py prevents.
     "create_dataset": "plexora.datasets",
     "create_project": "plexora.datasets",
+    # A dataset from a folder: plan what goes together, then register it.
+    "plan_dataset": "plexora.datasets",
+    "create_dataset_from_directory": "plexora.datasets",
     # Detection-first registration: point at files or a run folder and let
     # Plexora work out what they are. `create_project` is the same thing with
     # the roles named -- see its docstring for when each reads better.

@@ -14,11 +14,12 @@
  * and lands in the viewer with the layer stack already built.
  *
  * What this page deliberately does NOT do is ask questions -- and it does not
- * guess either. It reads the pick first (`uncertainty`): one sample with
+ * guess either. It reads the pick first (`readPick`): one sample with
  * nothing to decide opens in the same press; several samples, any question,
  * a warning or a file it could not read opens the import dialog on what was
  * read, because the POST would otherwise take every default unseen and keep
- * only the first sample. A name or a dataset is a decision too, which is what
+ * only the first sample. A folder that is a whole cohort -- nothing at its
+ * top level, or three samples or more -- opens New Dataset on it instead. A name or a dataset is a decision too, which is what
  * the footer link's dialog is for.
  *
  * The card is one question asked in reading order:
@@ -355,7 +356,7 @@ PlexoraPage.register(function () {
      * the guess and lets it be corrected. A pick with nothing readable in it
      * is not one of these: the POST says why, on this card.
      */
-    async function uncertainty(path) {
+    async function readPick(path) {
         if (!window.PlexoraImportSample?.open) return null;
         try {
             const response = await fetch(plexoraUrl("import/inspect"), {
@@ -364,17 +365,38 @@ PlexoraPage.register(function () {
                 body: JSON.stringify({paths: [path]}),
             });
             if (!response.ok) return null;
-            const proposal = await response.json();
-            const samples = proposal.samples || [];
-            if (!samples.length) return null;
-            const uncertain = samples.length > 1
-                || samples.some((sample) => (sample.questions || []).length > 0)
-                || (proposal.warnings || []).length > 0
-                || (proposal.unrecognised || []).length > 0;
-            return uncertain ? proposal : null;
+            return await response.json();
         } catch (error) {
             return null;
         }
+    }
+
+    function uncertain(proposal) {
+        const samples = proposal?.samples || [];
+        if (!samples.length) return false;
+        return samples.length > 1
+            || samples.some((sample) => (sample.questions || []).length > 0)
+            || (proposal.warnings || []).length > 0
+            || (proposal.unrecognised || []).length > 0;
+    }
+
+    /**
+     * Whether a picked folder is a cohort rather than a sample: nothing to
+     * read at its top level (`Sample01/ ... Sample40/`, or `registration/ +
+     * segmentation/`), or three or more samples side by side. Those are a
+     * dataset to build (views/datasetBuilder.js), not one sample to open.
+     * Folders on this machine only: the builder scans a local folder.
+     */
+    function cohortFolder(path, proposal) {
+        if (!window.PlexoraDatasetBuilder || !proposal) return false;
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return false;
+        const samples = proposal.samples || [];
+        const folder = kind === "directory" || kindOf(path) === "directory"
+            || !/\.[a-z0-9]{2,6}$/i.test(path.replace(/[\\/]+$/, ""));
+        if (!folder) return false;
+        if (samples.length >= 3) return true;
+        const missing = (proposal.warnings || []).some((w) => /does not exist/.test(w));
+        return !samples.length && !missing;
     }
 
     /**
@@ -404,8 +426,14 @@ PlexoraPage.register(function () {
             // samples, a question, a file left out, a flat image needing
             // minutes of pyramid building -- goes to the import dialog, handed
             // what was just read so it opens on it rather than reading again.
-            const proposal = await uncertainty(path);
-            if (proposal) {
+            const proposal = await readPick(path);
+            if (cohortFolder(path, proposal)) {
+                phase = "idle";
+                paint();
+                window.PlexoraDatasetBuilder.open({root: path});
+                return;
+            }
+            if (uncertain(proposal)) {
                 phase = "idle";
                 paint();
                 window.PlexoraImportSample.open({paths: [path], proposal});

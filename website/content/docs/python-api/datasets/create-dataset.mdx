@@ -3,12 +3,12 @@ title: "create_dataset"
 description: "Make a dataset, registering its projects if they are not there yet."
 generated: true
 symbol: "plexora.create_dataset"
-signature: "create_dataset(name, images=None, projects=None, *, description='', node=None, exist_ok=False) -> Dataset"
+signature: "create_dataset(name, images=None, projects=None, *, description='', node=None, exist_ok=False, on_progress=None, cancel=None) -> Dataset"
 aliases: ["cohort", "tma", "group projects"]
 source:
-  end: 468
+  end: 485
   path: "plexora/datasets.py"
-  start: 377
+  start: 381
 ---
 
 {/* GENERATED from plexora.datasets.create_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -26,6 +26,8 @@ create_dataset(
     description='',
     node=None,
     exist_ok=False,
+    on_progress=None,
+    cancel=None,
 ) -> Dataset
 ```
 
@@ -96,6 +98,23 @@ add to it instead of raising. This is about the dataset, not its
 projects -- a spec whose own project already exists is refused
 the same way [`create_project`](/docs/python-api/projects/create-project) refuses it unless that spec sets
 its own `exist_ok: True`.
+
+</Param>
+
+<Param name={"on_progress"} type={"callable"} default={"None"} kind={"keyword-only"}>
+
+Called as `on_progress(index,
+total, spec)` before each project is registered, and once more
+with `index == total` when they all have.
+
+</Param>
+
+<Param name={"cancel"} type={"threading.Event"} default={"None"} kind={"keyword-only"}>
+
+Checked between projects. Once
+set, no further project is started and the dataset is returned
+holding what registered so far -- nothing is rolled back, for the
+reason [`DatasetCreateError`](/docs/python-api/datasets/dataset-create-error) gives.
 
 </Param>
 

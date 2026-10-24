@@ -22,6 +22,10 @@
     "/docs/python-api/datasets/create-dataset",
     "/docs/python-api/datasets/dataset-class"
   ],
+  "cohort folder": [
+    "/docs/python-api/datasets/create-dataset-from-directory",
+    "/docs/python-api/datasets/plan-dataset"
+  ],
   "columns": [
     "/docs/python-api/projects/configure-project"
   ],
@@ -37,8 +41,16 @@
   "detect": [
     "/docs/python-api/projects/import-sample"
   ],
+  "directory": [
+    "/docs/python-api/datasets/create-dataset-from-directory",
+    "/docs/python-api/datasets/plan-dataset"
+  ],
   "display": [
     "/docs/python-api/viewer/view"
+  ],
+  "folder": [
+    "/docs/python-api/datasets/create-dataset-from-directory",
+    "/docs/python-api/datasets/plan-dataset"
   ],
   "gating": [
     "/docs/plugins/thresholding"
@@ -80,6 +92,12 @@
     "/docs/python-api/nodes/attach-segmentation",
     "/docs/python-api/projects/create-project"
   ],
+  "match masks": [
+    "/docs/python-api/datasets/plan-dataset"
+  ],
+  "mcmicro": [
+    "/docs/python-api/datasets/create-dataset-from-directory"
+  ],
   "notebook": [
     "/docs/python-api/viewer/view"
   ],
@@ -119,6 +137,10 @@
   "sample": [
     "/docs/python-api/projects/import-sample",
     "/docs/python-api/projects/create-project"
+  ],
+  "scan": [
+    "/docs/python-api/datasets/create-dataset-from-directory",
+    "/docs/python-api/datasets/plan-dataset"
   ],
   "scanpy": [
     "/docs/python-api/datasources/register-anndata-datasource"

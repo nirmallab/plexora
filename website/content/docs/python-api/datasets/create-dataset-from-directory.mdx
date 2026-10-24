@@ -1,0 +1,131 @@
+---
+title: "create_dataset_from_directory"
+description: "Scan folders and register what they hold as one dataset."
+generated: true
+symbol: "plexora.create_dataset_from_directory"
+signature: "create_dataset_from_directory(name, *roots, overrides=None, description='', exist_ok=False) -> Dataset"
+aliases: ["scan", "folder", "directory", "cohort folder", "mcmicro"]
+source:
+  end: 615
+  path: "plexora/datasets.py"
+  start: 567
+---
+
+{/* GENERATED from plexora.datasets.create_dataset_from_directory. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import create_dataset_from_directory
+```
+
+```python
+create_dataset_from_directory(
+    name,
+    *roots,
+    overrides=None,
+    description='',
+    exist_ok=False,
+) -> Dataset
+```
+
+[`plan_dataset`](/docs/python-api/datasets/plan-dataset), then [`create_dataset`](/docs/python-api/datasets/create-dataset) with the projects it planned: every
+image becomes a project, with the mask, table and channel names matched
+to it. Files are registered where they are, not copied. Files the plan
+could not place (`unassigned`) are left out; pass `overrides` to place
+them, or use [`plan_dataset`](/docs/python-api/datasets/plan-dataset) first to see them.
+
+## When to use
+
+Use this for a cohort folder whose files are named consistently --
+`registration/`, `segmentation/`, `quantification/`, or a folder per
+sample. Use [`create_dataset`](/docs/python-api/datasets/create-dataset) with explicit specs when the folder
+layout does not say which file is which.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The dataset's name.
+
+</Param>
+
+<Param name={"*roots"}>
+
+One or more folders to scan.
+
+</Param>
+
+<Param name={"overrides"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+Corrections -- see [`plan_dataset`](/docs/python-api/datasets/plan-dataset).
+
+</Param>
+
+<Param name={"description"} type={"str"} default={"''"} kind={"keyword-only"}>
+
+A note about the dataset.
+
+</Param>
+
+<Param name={"exist_ok"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+Add to an existing dataset of this name
+instead of raising.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Dataset"}>
+
+The dataset, holding every project registered or adopted.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If a root is not a folder, or nothing to register was found.
+
+</Raise>
+
+<Raise type={"DatasetCreateError"}>
+
+If registering one of the projects fails; what
+registered before it is kept.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+cohort = plexora.create_dataset_from_directory("Melanoma", "/data/cohort")
+print(list(cohort))
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plan_dataset"} href={"/docs/python-api/datasets/plan-dataset"} description={"Work out which images, masks and tables under these folders belong together, without registering anything."} />
+<Card title={"create_dataset"} href={"/docs/python-api/datasets/create-dataset"} description={"Make a dataset, registering its projects if they are not there yet."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+
+</Cards>

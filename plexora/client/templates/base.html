@@ -7,8 +7,8 @@
     <link rel="alternate icon" href="{{ data.base_url }}/client/src/img/favicon.ico">
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261022_glass_tooltip">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261022_glass_tooltip">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261024_dsb">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261024_dsb">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -249,6 +249,9 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261021_pro" defer></script>
+    <!-- New Dataset: a dataset from a folder (scan, match, create). After
+       importSample.js, whose dialog styles it reuses. -->
+    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261024_dsb" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
