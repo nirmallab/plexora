@@ -60,15 +60,17 @@ class RoiInteraction {
         this.renderer = renderer;
         this.viewer = ctx.viewer?.viewer || null;
 
-        // Magic select (Box) from the first frame: drawing is why the
-        // panel is open, and making the user pick a tool before they can draw
-        // is a click that teaches them nothing. Set here rather than through
-        // setTool() in onShow(), which would scold an empty project with "Add
-        // a category first" every time the panel opened -- the first stroke
-        // nudges instead, once there is one with nowhere to go. A server that
-        // cannot run the model falls back to freehand at arm() (magicFallback).
-        this.tool = "magic";
-        this.state = "drawing.magic";
+        // Rectangle from the first frame: drawing is why the panel is open,
+        // and making the user pick a tool before they can draw is a click that
+        // teaches them nothing. Rectangle rather than magic select because it
+        // works at once on every server -- magic select needs a model that may
+        // still be downloading, or may not run there at all. Set here rather
+        // than through setTool() in onShow(), which would scold a project with
+        // no categories with "Add a category first" every time the panel
+        // opened -- the first stroke nudges instead, once there is one with
+        // nowhere to go.
+        this.tool = "rectangle";
+        this.state = "drawing.rectangle";
         this.armed = false;
 
         this.draftPoints = [];
@@ -84,7 +86,7 @@ class RoiInteraction {
         //: tool E goes back to.
         this.magic = null;
         this.magicBusy = false;
-        this.previousTool = "freehand";
+        this.previousTool = "rectangle";
         //: How a click prompts while magic select is on -- the floating bar's
         //: Add / Remove / Box / Scribble (services/magicToolbar.js). Box
         //: first: a drag around the object says "all of this, and nothing
@@ -205,9 +207,9 @@ class RoiInteraction {
         this.applyCursor();
     }
 
-    /** Magic select is the tool in hand when the panel opens. Arming it
+    /** Magic select still in hand when the panel is shown again. Arming it
      *  starts the one-time setup; a server that cannot run the model at all
-     *  gets freehand instead, so the default never leaves a dead pen. */
+     *  gets freehand instead, so it never leaves a dead pen. */
     async magicFallback() {
         const segment = window.PlexoraSegment;
         if (!segment) {

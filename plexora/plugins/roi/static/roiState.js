@@ -41,10 +41,15 @@ class RoiStore {
         this.storedImageSize = [null, null];
 
         this.selectionId = null;
-        // Null until the project has a category. There is no built-in one to
-        // point at, so "nothing to draw into yet" is a state the tools handle
-        // rather than a name invented here.
+        // Null until the project has a category. The panel adds "Undefined" to
+        // a project with none (RoiSidebarController.ensureDefaultCategory), but
+        // the user can still delete every category, so "nothing to draw into
+        // yet" remains a state the tools handle.
         this.activeCategoryId = null;
+        //: True once the server's state has been taken in. Nothing may be
+        //: added on the project's behalf before then: an edit queued against
+        //: revision 0 would conflict with what the load brings back.
+        this.loaded = false;
 
         //: 'saved' | 'saving' | 'dirty' | 'failed' | 'conflict' | 'blocked'
         this.status = "saved";
@@ -133,6 +138,7 @@ class RoiStore {
             // They would render perfectly plausibly in the wrong places, which
             // is the failure mode worth refusing outright.
             this.setStatus(this.dimensionMismatch ? "blocked" : "saved", "");
+            this.loaded = true;
             return true;
         } finally {
             this._suspended = false;
@@ -232,6 +238,19 @@ class RoiStore {
         this.undoStack.push(entry);
         this.redoStack.length = 0;
         this.enqueue(entry.redo);
+        this.changed();
+        return true;
+    }
+
+    /**
+     * Apply and save ops that nobody can undo: the project's starting state,
+     * not something the user did. Ctrl+Z on a fresh project taking away the
+     * category it opened with would leave nothing to draw into.
+     */
+    seed(ops) {
+        if (!this.editable) return false;
+        for (const op of ops) this.applyLocal(op);
+        this.enqueue(ops);
         this.changed();
         return true;
     }

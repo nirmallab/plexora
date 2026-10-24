@@ -71,13 +71,35 @@ def test_a_controller_can_be_built_from_a_plugin_context(report):
     """Loading without throwing is not the same as working: a class can define
     fine and still name something that does not exist when it is used."""
     _, data = report
-    # Magic select, not Select: the panel opens with a drawing tool already in
+    # Rectangle, not Select: the panel opens with a drawing tool already in
     # hand, and a controller built on Select is the regression that puts a
     # click back between opening the panel and drawing anything.
     assert data["controller"] == {
-        "tool": "magic", "state": "drawing.magic", "status": "saved",
+        "tool": "rectangle", "state": "drawing.rectangle", "status": "saved",
         "ready": False,
     }
+
+
+def test_a_project_with_no_categories_is_given_undefined(report):
+    """The first drag on a new project draws a region rather than asking for a
+    category name. "Undefined" is added once the saved state is in, selected,
+    queued for saving, and left off the undo stack so Ctrl+Z cannot take away
+    the only category there is."""
+    _, data = report
+    first = data["firstRun"]
+    assert first["beforeLoad"] == []
+    assert first["labels"] == ["Undefined"]
+    assert first["active"] is True
+    assert first["queued"] == ["category.create"]
+    assert first["undo"] == 0
+
+
+def test_a_project_with_categories_keeps_them(report):
+    """Reopening a project changes nothing: no "Undefined" beside the user's
+    own categories, and the one they had selected stays selected."""
+    _, data = report
+    assert data["firstRun"]["kept"] == ["Tumor", "Stroma"]
+    assert data["firstRun"]["keptActive"] == "b"
 
 
 def test_every_declared_script_exists(report):

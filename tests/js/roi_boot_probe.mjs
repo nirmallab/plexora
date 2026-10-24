@@ -129,6 +129,38 @@ if (!problems.length) {
     } catch (error) {
         problems.push(`a controller could not be built: ${error.message}`);
     }
+
+    // The category a project with none is given: only after the load, once,
+    // selected, saved, and not on the undo stack. A project that already has
+    // categories keeps them, and keeps the one it had selected.
+    try {
+        runInContext(
+            "globalThis.__firstRun = (() => {"
+            + " const make = () => new RoiSidebarController({ url: (p) => p, datasource: 'd',"
+            + "   config: { width: 100, height: 100 }, viewer: { viewer: null },"
+            + "   onCleanup() {} });"
+            + " const labels = (s) => s.categories.map((c) => c.label);"
+            + " const fresh = make();"
+            + " fresh.ensureDefaultCategory();"
+            + " const beforeLoad = labels(fresh.store);"
+            + " fresh.store.loaded = true;"
+            + " fresh.ensureDefaultCategory();"
+            + " fresh.ensureDefaultCategory();"
+            + " const seeded = fresh.store.categories[0] || {};"
+            + " const kept = make();"
+            + " kept.store.loaded = true;"
+            + " kept.store.categories = [{ id: 'a', label: 'Tumor' }, { id: 'b', label: 'Stroma' }];"
+            + " kept.store.activeCategoryId = 'b';"
+            + " kept.ensureDefaultCategory();"
+            + " return { beforeLoad, labels: labels(fresh.store),"
+            + "   active: fresh.store.activeCategoryId === seeded.id,"
+            + "   queued: fresh.store.queue.map((op) => op.op),"
+            + "   undo: fresh.store.undoStack.length,"
+            + "   kept: labels(kept.store), keptActive: kept.store.activeCategoryId }; })();",
+            ctx);
+    } catch (error) {
+        problems.push(`the default category could not be checked: ${error.message}`);
+    }
 }
 
 const report = {
@@ -138,6 +170,7 @@ const report = {
         name: d.name, ownsCellLayer: d.ownsCellLayer, hooks: Object.keys(d),
     })),
     controller: ctx.__built || null,
+    firstRun: ctx.__firstRun || null,
     problems,
 };
 

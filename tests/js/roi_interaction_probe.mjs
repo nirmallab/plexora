@@ -419,19 +419,16 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
     store.features = [];
     const tools = makeTools(store);
 
-    check("a fresh panel is holding magic select", tools.tool, "magic");
-    check("...in the state that draws", tools.state, "drawing.magic");
-    check("...with Box chosen", tools.magicMode, "box");
-    check("...and E going back to Freehand", tools.previousTool, "freehand");
+    check("a fresh panel is holding the rectangle", tools.tool, "rectangle");
+    check("...in the state that draws", tools.state, "drawing.rectangle");
+    check("...and E going back to Rectangle", tools.previousTool, "rectangle");
     check("...and has said nothing about it", tools.said, []);
 
-    // The pen, one press away: draw a square with it.
-    tools.setTool("freehand");
+    // No press on the toolbar first: the first drag draws a square.
     tools.press(at(10, 10));
-    tools.dragging(at(110, 10));
+    tools.dragging(at(60, 60));
     tools.dragging(at(110, 110));
-    tools.dragging(at(10, 110));
-    tools.dragEnd(at(10, 10));
+    tools.dragEnd(at(110, 110));
 
     const drawn = store.features[0];
     check("the first gesture drew a region",
@@ -440,8 +437,8 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
     check("...named after it", drawn?.name, "Tumor 1");
     check("...and was selected, ready to be renamed", store.selectionId, drawn?.id);
     check("...recorded as shown, not as undefined", drawn?.visible, true);
-    check("the pen stays in hand for the next one", tools.tool, "freehand");
-    check("...in the state that draws", tools.state, "drawing.freehand");
+    check("the rectangle stays in hand for the next one", tools.tool, "rectangle");
+    check("...in the state that draws", tools.state, "drawing.rectangle");
 }
 
 // -- default names take the next FREE number ----------------------------

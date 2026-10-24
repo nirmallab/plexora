@@ -99,13 +99,9 @@ class RoiSidebarController {
     applyOrDefault() {
         this.renderer.attach();
         this.render();
-        // An empty project's first act is naming a category -- there is
-        // nothing else this panel can do until one exists -- so the field is
-        // already open and focused rather than behind a button. Escape closes
-        // it for anyone who opened the panel to look rather than to draw.
-        if (this.store.editable && this.store.categories.length === 0) {
-            this.openNewCategory();
-        }
+        // Only while the panel is the one on screen: this is the restore hook,
+        // and it runs for every project opened, ROI panel or not.
+        if (window.PlexoraToolLoader?.activeTool() === "roi") this.ensureDefaultCategory();
     }
 
     /** Called by toolLoader when this panel becomes the selected one. */
@@ -113,15 +109,32 @@ class RoiSidebarController {
         this.renderer.attach();
         this.tools.arm();
         this.render();
-        // applyOrDefault() opens the field on an empty project, but the panel
-        // may not have been on screen yet -- focus() on an unrendered element
-        // does nothing -- so the caret is placed when it becomes visible.
-        // Narrow on purpose: only the first-run state, never a return visit
-        // to a project that already has categories.
-        if (this.store.editable && this.store.categories.length === 0) {
-            const row = this.el("roi_category_new_row");
-            const input = this.el("roi_category_name");
-            if (row && !row.hidden && input && !input.value) input.focus();
+        this.ensureDefaultCategory();
+    }
+
+    /**
+     * A project with no categories gets one called "Undefined", selected, so
+     * the first drag on the image draws a region instead of asking for a name.
+     * It is an ordinary category -- renamed, recoloured or deleted like any
+     * other -- and is saved without an undo entry (RoiStore.seed), because it
+     * is where the project starts rather than something the user did.
+     *
+     * Only on a project with none, and only once the server's state is in:
+     * a project reopened keeps its categories and its active one untouched.
+     */
+    ensureDefaultCategory() {
+        const store = this.store;
+        if (!store.loaded || !store.editable || store.categories.length > 0) return;
+        const category = {
+            id: RoiStore.newId("c"),
+            label: RoiSidebarController.DEFAULT_CATEGORY,
+            color: RoiSidebarController.nextColor(0),
+            visible: true,
+            locked: false,
+            sort_order: 0,
+        };
+        if (store.seed([{ op: "category.create", category }])) {
+            store.setActiveCategory(category.id);
         }
     }
 
@@ -1234,6 +1247,9 @@ RoiSidebarController.PALETTE = [
     "#e05c5c", "#38bdf8", "#34d399", "#f3b845", "#c084fc",
     "#f472b6", "#22d3ee", "#a3e635", "#fb923c", "#94a3b8",
 ];
+
+//: The category a project with none is given (ensureDefaultCategory).
+RoiSidebarController.DEFAULT_CATEGORY = "Undefined";
 
 
 if (window.Plexora) {
