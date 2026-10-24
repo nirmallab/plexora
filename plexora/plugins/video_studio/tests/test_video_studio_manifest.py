@@ -158,8 +158,9 @@ def test_what_made_it_and_what_it_shows():
                                 "spacing": {"z": {"value": 2.0, "unit": "µm"}}}
     out = record["output"]
     assert (out["width"], out["height"], out["format"]) == (640, 480, "png")
-    # Only the overlays actually drawn are listed.
-    assert out["overlays"] == {"scalebar": True}
+    # Only the overlays switched on are listed: the transition tag is on by
+    # default (and this video fades DNA in).
+    assert out["overlays"] == {"scalebar": True, "disclosure": True}
     # The server's own render time wins over the browser's claim.
     assert record["timing"]["render_s"] == 1.25
     assert record["timing"]["per_frame_ms"] == 12.5 and record["timing"]["retries"] == 2

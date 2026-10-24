@@ -20,6 +20,8 @@
  *
  * While a display transition is under way (a channel fading, a window
  * moving) and `disclose` is on, a small "display transition" tag says so.
+ * An export sets `disclose` from `output.overlays.disclosure` (on unless
+ * turned off: a figure wants it, a looping web video may not).
  *
  * Classic script: `window.PlexoraVideoOverlays`.
  */

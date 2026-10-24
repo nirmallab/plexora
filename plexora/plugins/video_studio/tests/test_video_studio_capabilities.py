@@ -1,9 +1,9 @@
-"""Video Studio for an agent: the ten `video.*` capabilities.
+"""Video Studio for an agent: the eleven `video.*` capabilities.
 
 An agent works on the same documents the bar and the timeline do, through the
 same schema, so it cannot make a track the UI would refuse. What is pinned:
 
-* registration -- ten capabilities, tool names unique across everything any
+* registration -- eleven capabilities, tool names unique across everything any
   plugin registers, and each inheriting the plugin's `plugin:video_studio`
   entitlement at discovery (the capabilities themselves name none), so they
   are Pro with the plugin and refused on a licence without it;
@@ -27,7 +27,8 @@ from plexora.plugins.video_studio.server import repository
 from tests.helpers import ALL_CONFIRMED, image_spec, project
 
 NAMES = {"video.list", "video.get", "video.create", "video.add_keyframe", "video.set_track",
-         "video.edit", "video.preview", "video.export", "video.duplicate", "video.delete"}
+         "video.edit", "video.preview", "video.export", "video.duplicate", "video.delete",
+         "video.delete_export"}
 ENTITLEMENT = "plugin:video_studio"
 IGNORED = ("revision", "updated_at")
 
@@ -78,10 +79,10 @@ def _document(video_id):
 # -- registration ------------------------------------------------------------------------
 
 
-def test_the_plugin_declares_ten_capabilities_without_entitlements_of_their_own():
+def test_the_plugin_declares_its_capabilities_without_entitlements_of_their_own():
     caps = video_capabilities.capabilities()
     assert {cap.name for cap in caps} == NAMES
-    assert len({cap.tool_name for cap in caps}) == 10
+    assert len({cap.tool_name for cap in caps}) == len(NAMES)
     assert all(cap.owner == "video_studio" for cap in caps)
     # The plugin's entitlement is applied at discovery, not repeated here.
     assert all(cap.entitlement is None for cap in caps)
@@ -348,3 +349,221 @@ def test_the_preset_choice_offered_to_an_agent_is_the_preset_table():
     from plexora.plugins.video_studio.server import presets as preset_table
 
     assert set(caps.PRESET_NAMES) == set(preset_table.PRESETS)
+
+
+def test_the_camera3d_quaternion_order_is_in_every_description_that_writes_one():
+    for model, field in ((video_capabilities.KeyframeInput, "value"),
+                         (video_capabilities.TrackInput, "track"),
+                         (video_capabilities.EditInput, "operations")):
+        said = model.model_fields[field].description
+        assert "[x, y, z, w]" in said and "[1, 0, 0, 0]" in said, model.__name__
+
+
+def test_the_export_overlays_name_the_disclosure_switch():
+    said = video_capabilities.ExportInput.model_fields["output"].description
+    assert "disclosure" in said and "display transition" in said
+
+
+# -- one export: delete it, find its path ---------------------------------------------------
+
+
+def _record(video_id, export_id, status="done"):
+    path = None
+    if status == "done":
+        folder = repository.exports_dir(video_id) / export_id
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "clip.mp4"
+        path.write_bytes(b"mp4")
+    repository.record_export(video_id, export_id, status=status, output={"format": "mp4"},
+                             path=path, size=3 if path else None)
+    return path
+
+
+def test_get_video_gives_each_export_its_path_on_disk(licensed):
+    video_id = _create(licensed)["video"]["video_id"]
+    path = _record(video_id, "exp_aaaaaaaaaaaa")
+    exports = _ok(_call(licensed, "get_video", {"video_id": video_id}))["exports"]
+    assert exports[0]["path"] == str(path) and exports[0]["name"] == "clip.mp4"
+
+
+def test_one_export_is_deleted_without_the_video_or_its_other_exports(licensed):
+    video_id = _create(licensed)["video"]["video_id"]
+    gone = _record(video_id, "exp_aaaaaaaaaaaa")
+    kept = _record(video_id, "exp_bbbbbbbbbbbb")
+    unconfirmed = _call(licensed, "delete_video_export",
+                        {"video_id": video_id, "export_id": "exp_aaaaaaaaaaaa"})
+    assert not unconfirmed["ok"]
+    assert unconfirmed["error"]["code"] == "permission_required"
+    assert gone.is_file()
+    # No --allow-destructive needed: that switch is for whole videos.
+    deleted = _ok(_call(licensed, "delete_video_export", {
+        "video_id": video_id, "export_id": "exp_aaaaaaaaaaaa", "confirm": True}))
+    assert deleted["deleted"] == "exp_aaaaaaaaaaaa"
+    assert deleted["receipt"]["reversible"] is False
+    assert not gone.parent.exists() and kept.is_file()
+    assert [row["export_id"] for row in repository.list_exports(video_id)] == [
+        "exp_bbbbbbbbbbbb"]
+    assert repository.exists(video_id)
+    again = _call(licensed, "delete_video_export", {
+        "video_id": video_id, "export_id": "exp_aaaaaaaaaaaa", "confirm": True})
+    assert not again["ok"] and again["error"]["code"] == "invalid_input"
+
+
+def test_a_running_export_is_not_deleted(licensed, monkeypatch):
+    video_id = _create(licensed)["video"]["video_id"]
+    _record(video_id, "exp_aaaaaaaaaaaa", status="running")
+    monkeypatch.setattr(video_capabilities, "_job_status",
+                        lambda call, vid, eid: {"status": "running"})
+    answer = _call(licensed, "delete_video_export", {
+        "video_id": video_id, "export_id": "exp_aaaaaaaaaaaa", "confirm": True})
+    assert not answer["ok"] and answer["error"]["code"] == "conflict"
+    assert repository.list_exports(video_id)
+
+
+# -- export and preview, with the page faked -------------------------------------------------
+
+
+class FakeCall:
+    link = None
+    operation_id = "op_test"
+
+    def __init__(self):
+        self.progressed = []
+
+    def cancelled(self):
+        return False
+
+    def check_cancelled(self):
+        pass
+
+    def progress(self, done=None, total=None, message=None):
+        self.progressed.append((done, total, message))
+
+
+def test_export_follows_the_new_row_and_returns_its_path(licensed, monkeypatch):
+    video_id = _create(licensed)["video"]["video_id"]
+    _record(video_id, "exp_000000000000")          # an older export, not this one
+    revision = repository.load(video_id)["revision"]
+    sent = []
+
+    def page(call, view_id, project, command, arguments, *, timeout=None):
+        sent.append((command, arguments))
+        _record(video_id, "exp_cccccccccccc")
+        return {"view_id": "view_1"}, {"status": "done", "result": {"started": True}}
+
+    monkeypatch.setattr(video_capabilities, "_page_command", page)
+    answer = video_capabilities.export_video(
+        FakeCall(), video_capabilities.ExportInput(video_id=video_id))
+    assert answer["export_id"] == "exp_cccccccccccc" and answer["status"] == "done"
+    assert answer["path"] == str(repository.exports_dir(video_id) / "exp_cccccccccccc"
+                                 / "clip.mp4")
+    assert [command for command, _ in sent] == ["export"]
+    assert sent[0][1]["revision"] == revision
+
+
+def test_a_second_export_is_refused_while_one_runs(licensed, monkeypatch):
+    video_id = _create(licensed)["video"]["video_id"]
+    _record(video_id, "exp_aaaaaaaaaaaa", status="running")
+    _record(video_id, "exp_dddddddddddd", status="running")   # a dead server's leftover
+    monkeypatch.setattr(video_capabilities, "_job_status", lambda call, vid, eid: (
+        {"status": "running"} if eid == "exp_aaaaaaaaaaaa" else None))
+    monkeypatch.setattr(video_capabilities, "_page_command",
+                        lambda *a, **k: pytest.fail("the page was asked to export"))
+    with pytest.raises(AgentError) as info:
+        video_capabilities.export_video(FakeCall(),
+                                        video_capabilities.ExportInput(video_id=video_id))
+    assert info.value.code == "conflict"
+    assert info.value.detail["export_id"] == "exp_aaaaaaaaaaaa"
+
+
+def test_an_export_that_stops_before_writing_says_so(licensed, monkeypatch):
+    video_id = _create(licensed)["video"]["video_id"]
+    monkeypatch.setattr(video_capabilities, "_page_command", lambda *a, **k: (
+        {"view_id": "view_1"}, {"status": "done", "result": {"started": True}}))
+    monkeypatch.setattr(video_capabilities, "_page_exporting", lambda call, view_id: False)
+    monkeypatch.setattr(video_capabilities, "EXPORT_PAGE_CHECK_S", 0.0)
+    with pytest.raises(AgentError) as info:
+        video_capabilities.export_video(FakeCall(),
+                                        video_capabilities.ExportInput(video_id=video_id))
+    assert info.value.code == "resource_unavailable"
+    assert "before it wrote anything" in info.value.message
+
+
+def test_preview_names_the_revision_so_a_stale_page_reloads(licensed, monkeypatch):
+    video_id = _create(licensed)["video"]["video_id"]
+    _ok(_call(licensed, "edit_video", {"video_id": video_id,
+                                       "operations": [{"op": "set_loop", "loop": True}]}))
+    sent = []
+    monkeypatch.setattr(video_capabilities, "_page_command",
+                        lambda call, view_id, project, command, arguments, **k: (
+                            sent.append(arguments) or ({"view_id": "v"}, {"status": "done"})))
+    video_capabilities.preview_video(FakeCall(),
+                                     video_capabilities.PreviewInput(video_id=video_id))
+    assert sent[0]["revision"] == 1
+
+
+# -- create_video from the viewer -------------------------------------------------------------
+
+
+class FakeControl:
+    kind = "in_process"
+
+    def __init__(self, sessions, scenes):
+        self.sessions = sessions
+        self.scenes = list(scenes)
+        self.sent = []
+
+    def list_sessions(self, project=None):
+        return self.sessions
+
+    def send(self, view_id, type, arguments=None, **kwargs):
+        self.sent.append(type)
+        if type != "get_state":
+            return {"status": "done"}
+        scene = self.scenes.pop(0) if self.scenes else None
+        plugins = {"video_studio": {"scene": scene}} if scene else {}
+        return {"status": "done", "result": {"plugins": plugins}}
+
+
+@pytest.fixture
+def control(monkeypatch):
+    from plexora.agent import viewer
+
+    def use(sessions, scenes=()):
+        fake = FakeControl(sessions, scenes)
+        monkeypatch.setattr(viewer, "connect", lambda link=None: fake)
+        monkeypatch.setattr(video_capabilities, "SCENE_RETRY_S", 0.0)
+        return fake
+    return use
+
+
+def test_from_viewer_fails_when_an_open_viewer_cannot_be_read(licensed, control):
+    fake = control([{"view_id": "view_1", "status": "live"}])
+    answer = _call(licensed, "create_video", {"project": "demo", "preset": "zoom"})
+    assert not answer["ok"]
+    assert answer["error"]["code"] == "viewer_not_responding"
+    assert "from_viewer: false" in answer["error"]["detail"]["hint"]
+    assert fake.sent.count("get_state") == 2
+    assert repository.list_videos() == []
+
+
+def test_from_viewer_asks_again_once_while_the_tool_opens(licensed, control, monkeypatch):
+    from plexora.plugins.video_studio.server import presets
+
+    control([{"view_id": "view_1", "status": "live"}], scenes=[None, {"view": {}}])
+    seen = []
+    real = presets.build
+
+    def build(name, facts, scene, params, **kwargs):
+        seen.append(scene)
+        return real(name, facts, None, params, **kwargs)
+
+    monkeypatch.setattr(presets, "build", build)
+    _ok(_call(licensed, "create_video", {"project": "demo", "preset": "zoom"}))
+    assert seen == [{"view": {}}]
+
+
+def test_with_no_viewer_open_from_viewer_falls_back_with_a_note(licensed, control):
+    control([])
+    video = _ok(_call(licensed, "create_video", {"project": "demo", "preset": "zoom"}))["video"]
+    assert any("No viewer is open" in note for note in video["notes"])

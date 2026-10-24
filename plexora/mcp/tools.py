@@ -159,7 +159,20 @@ def tool_from_capability(capability, runtime):
         # `job_wait`, in short slices on a worker thread, with a progress
         # notification whenever the job's progress moves. Every slice is its
         # own `invoke`, so nothing here reads the job except through it.
+        # A capability that STARTS a job is called once, never sliced (each
+        # slice would start another), and its job is then followed the same
+        # way through `job.wait`.
         policy = runtime.request_policy()
+        name = capability.name
+        if capability.execution == "job":
+            outcome = await anyio.to_thread.run_sync(
+                functools.partial(runtime.invoke, name, arguments, policy=policy))
+            if not outcome["ok"]:
+                _raise(outcome, _bridge_wire(capability, runtime))
+            job_id = (outcome["result"] or {}).get("job_id")
+            if not job_id:
+                return _answer(mcpserver, outcome, _limit(runtime))
+            name, arguments = "job.wait", {"job_id": job_id}
         timeout = float(arguments.get("timeout_s") or _default_wait_s())
         deadline = anyio.current_time() + timeout
         last = None
@@ -167,7 +180,7 @@ def tool_from_capability(capability, runtime):
             remaining = max(1.0, deadline - anyio.current_time())
             sliced = {**arguments, "timeout_s": min(PROGRESS_SLICE_S, remaining)}
             outcome = await anyio.to_thread.run_sync(
-                functools.partial(runtime.invoke, capability.name, sliced, policy=policy))
+                functools.partial(runtime.invoke, name, sliced, policy=policy))
             if not outcome["ok"]:
                 _raise(outcome, _bridge_wire(capability, runtime))
             result = outcome["result"]

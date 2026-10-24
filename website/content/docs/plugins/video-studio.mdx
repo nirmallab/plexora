@@ -167,7 +167,7 @@ plane you paused on is shown whole; nothing is blended between planes.
 | Frame rate | 24, 30 or 60 fps (GIF: 10, 15 or 25) |
 | Format | MP4 (H.264), WebM (VP9), ProRes (MOV), GIF, PNG frames (zip) |
 | Quality | Draft, Good, High, Max |
-| Overlays | Scale bar, plane and time, dataset name, channel legend, axes (3-D), attribution, captions |
+| Overlays | Scale bar, plane and time, dataset name, channel legend, axes (3-D), attribution, captions, transition tag (marks frames where a channel or window is fading; on by default) |
 
 Every frame is rendered by the viewer at the video's own resolution — a 4K
 video is drawn at 4K, not enlarged — and only once everything in it has
@@ -204,7 +204,7 @@ export writes a `video-manifest.json` beside the file. It records:
 An agent connected to Plexora can make videos too: `create_video` builds a
 preset or storyboard from what the viewer shows, `get_video` describes it,
 `preview_video` plays it in the open viewer, and `export_video` renders it as a
-job. Edits are reversible operations. Over MCP these tools also need external
+job; `delete_video_export` removes one export. Edits are reversible operations. Over MCP these tools also need external
 MCP access, which is off by default; an administrator can turn it on for your
 licence.
 

@@ -159,11 +159,13 @@ def send_command(session_id):
         return jsonify(success=False, error="unknown viewer session",
                        code="viewer_not_available"), 404
     wait_s = min(float(body.get("wait_s", viewer_sessions.DEFAULT_SEND_TIMEOUT_S) or 0),
-                 viewer_sessions.DEFAULT_SEND_TIMEOUT_S)
+                 viewer_sessions.MAX_SEND_TIMEOUT_S)
     if wait_s <= 0:
         return jsonify(success=True, pending=True, command=queued.describe()), 202
     answered = viewer_sessions.wait_for_ack(queued.command_id, wait_s)
-    if answered["status"] in ("pending", "delivered"):
+    if answered["status"] == "pending":
+        answered = viewer_sessions.withdraw(queued.command_id)
+    if answered["status"] in ("withdrawn", "delivered"):
         return jsonify(success=False, pending=True, code="viewer_not_responding",
                        command=answered), 504
     return jsonify(success=True, command=answered)

@@ -325,8 +325,8 @@ def test_an_export_row_is_recorded_updated_and_listed(tmp_path):
                              output={"format": "png", "width": 64})
     rows = repository.list_exports(video_id)
     assert rows == [{"export_id": "exp_000000000001", "status": "running",
-                     "output": {"format": "png", "width": 64}, "name": None, "bytes": None,
-                     "available": False, "created_at": rows[0]["created_at"]}]
+                     "output": {"format": "png", "width": 64}, "name": None, "path": None,
+                     "bytes": None, "available": False, "created_at": rows[0]["created_at"]}]
     assert repository.export_manifest(video_id, "exp_000000000001") is None
 
     target = repository.exports_dir(video_id) / "exp_000000000001"

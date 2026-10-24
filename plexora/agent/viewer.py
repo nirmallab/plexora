@@ -54,6 +54,8 @@ class InProcessViewerControl:
                              detail={"hint": NOT_AVAILABLE_HINT})
         answered = sessions.wait_for_ack(queued.command_id,
                                          timeout or sessions.DEFAULT_SEND_TIMEOUT_S)
+        if answered and answered["status"] == "pending":
+            answered = sessions.withdraw(queued.command_id)
         return _checked(answered)
 
     def notify(self, project, plugin, kind, payload=None):
@@ -120,12 +122,22 @@ class RemoteViewerControl:
 
 def _checked(command):
     status = command.get("status")
-    if status in ("pending", "delivered"):
+    if status in ("pending", "withdrawn"):
+        # Never taken by the tab, and withdrawn: sending it again is safe.
         raise AgentError("viewer_not_responding",
-                         "the viewer did not acknowledge the command in time (a background "
-                         "tab is throttled by the browser; bring it to the front)",
+                         "the viewer did not take the command in time, so it was withdrawn "
+                         "(a background tab is throttled by the browser; bring it to the "
+                         "front, then send it again)",
                          detail={"command_id": command.get("command_id"),
                                  "status": status}, retryable=True)
+    if status == "delivered":
+        # The tab has it and may still run it: sending it again could run it
+        # twice (two exports into one viewer).
+        raise AgentError("viewer_not_responding",
+                         "the viewer took the command but has not finished it; it may still "
+                         "run, so do not send it again -- check its effect first",
+                         detail={"command_id": command.get("command_id"),
+                                 "status": status}, retryable=False)
     if status == "expired":
         raise AgentError("viewer_not_available", command.get("error") or "the viewer went away",
                          detail={"command_id": command.get("command_id")})

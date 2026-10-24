@@ -12,6 +12,7 @@ edit whatever an agent made.
     preview_video                  plays or poses it in the open viewer
     export_video                   a job: the open viewer renders, the server encodes
     duplicate_video / delete_video
+    delete_video_export            one export's file and row (not undoable; confirm)
 
 Rendering needs the live viewer, so `preview_video` and `export_video` need an
 open tab; everything else works from the project record alone. Pro with the
@@ -41,6 +42,11 @@ STATE = "plugin_document"
 PRESET_NAMES = ("orbit", "rock", "tumble", "fly_through", "slice_reveal", "z_sweep", "time_lapse",
                 "zoom", "xy_pan", "channel_reveal", "story_overview", "story_structure",
                 "story_markers", "story_orthogonal", "story_timeseries")
+
+
+#: Said wherever an agent writes a 3-D camera: many libraries put w first.
+CAMERA3D_NOTE = ("A camera3d value's `q` is a unit quaternion in [x, y, z, w] order (w "
+                 "LAST); looking straight down the stack is [1, 0, 0, 0].")
 
 
 class VideoRef(AgentModel):
@@ -78,14 +84,15 @@ class KeyframeInput(VideoRef):
     t: float = Field(ge=0, description="Seconds from the start.")
     value: Any = Field(description="The keyframe's value for the track's kind (a camera "
                        "{q, dist, pan}, a whole plane index, {presence: 0..1}, ...). Acquired "
-                       "planes and timepoints are whole numbers and change in steps.")
+                       "planes and timepoints are whole numbers and change in steps. "
+                       + CAMERA3D_NOTE)
     ease: str = "linear"
     base_revision: int | None = None
 
 
 class TrackInput(VideoRef):
     track: dict[str, Any] = Field(description="A whole track. Replaces the track with the "
-                                  "same track_id, or is added.")
+                                  "same track_id, or is added. " + CAMERA3D_NOTE)
     base_revision: int | None = None
 
 
@@ -93,7 +100,7 @@ class EditInput(VideoRef):
     operations: list[dict[str, Any]] = Field(description=(
         "Operations, applied all or nothing: set_title, set_duration, set_loop, set_output, "
         "add_track, remove_track, update_track, move_track, add_keyframe, update_keyframe, "
-        "remove_keyframe, set_viewpoint, set_target, set_scenes."))
+        "remove_keyframe, set_viewpoint, set_target, set_scenes. " + CAMERA3D_NOTE))
     base_revision: int | None = Field(None, description="Refuse if the video changed since.")
 
 
@@ -107,13 +114,20 @@ class ExportInput(VideoRef):
     output: dict[str, Any] = Field(default_factory=dict, description=(
         "width, height, fps (24/25/30/50/60), format (mp4, webm, mov, gif, png), quality "
         "(draft/good/high/max), overlays {scalebar, label, dataset, legend, axes, "
-        "attribution, captions}."))
+        "attribution, captions, disclosure}. `disclosure` (on by default) tags frames where "
+        "a channel or window is fading with \"display transition\"; turn it off for a "
+        "looping web video."))
     view_id: str | None = None
 
 
 class DeleteInput(VideoRef):
     confirm: bool = Field(False, description="Must be true: deleting a video removes its "
                           "exports with it.")
+
+
+class DeleteExportInput(VideoRef):
+    export_id: str = Field(description="The export, as get_video lists it.")
+    confirm: bool = Field(False, description="Must be true: the file is removed for good.")
 
 
 class DuplicateInput(VideoRef):
@@ -201,9 +215,19 @@ def get_video(call, inp):
 # -- create and edit -----------------------------------------------------------
 
 
+#: How long to give Video Studio to load in the tab before asking it again.
+SCENE_RETRY_S = 1.5
+
+
 def _viewer_scene(call, project, view_id):
     """The open viewer's scene, contributed by Video Studio's own agent bridge
-    once the tool is open (the 3-D camera lives only in the page)."""
+    once the tool is open (the 3-D camera lives only in the page).
+
+    No viewer open at all is the documented fallback (the image's defaults,
+    with a note). A viewer that is open but cannot be read is an error: the
+    agent asked for what the viewer shows, and a video quietly built from
+    something else is the wrong video. The tool is asked twice, because a
+    tab opening it for the first time may not be ready to answer."""
     from plexora.agent import viewer
 
     control = viewer.connect(call.link)
@@ -211,15 +235,33 @@ def _viewer_scene(call, project, view_id):
         return None, "No viewer is open; the video starts from the image's defaults."
     try:
         view = viewer.resolve_view(control, view_id, project)
-        control.send(view["view_id"], "open_tool", {"tool": OWNER})
-        ack = control.send(view["view_id"], "get_state", {})
     except AgentError as exc:
-        return None, f"Could not read the viewer ({exc.code}); started from defaults."
-    state = (ack or {}).get("result") or {}
-    scene = ((state.get("plugins") or {}).get(OWNER) or {}).get("scene")
-    if not isinstance(scene, dict):
-        return None, "The viewer did not report a scene; started from the image's defaults."
-    return scene, None
+        if exc.code != "viewer_not_available":
+            raise
+        return None, "No viewer is open; the video starts from the image's defaults."
+    problem = None
+    for attempt in range(2):
+        if attempt:
+            time.sleep(SCENE_RETRY_S)
+        try:
+            control.send(view["view_id"], "open_tool", {"tool": OWNER})
+            ack = control.send(view["view_id"], "get_state", {})
+        except AgentError as exc:
+            problem = exc
+            continue
+        state = (ack or {}).get("result") or {}
+        scene = ((state.get("plugins") or {}).get(OWNER) or {}).get("scene")
+        if isinstance(scene, dict):
+            return scene, None
+        problem = None
+    reason = (f"{problem.message} ({problem.code})" if problem is not None
+              else "Video Studio did not report the viewer's scene")
+    raise AgentError("viewer_not_responding",
+                     f"could not read what the viewer shows: {reason}",
+                     detail={"view_id": view["view_id"],
+                             "hint": "open Video Studio in that tab and call again, or pass "
+                                     "from_viewer: false to start from the image's defaults"},
+                     retryable=problem is None or problem.retryable)
 
 
 def create_video(call, inp):
@@ -307,6 +349,10 @@ def delete_video(call, inp):
 
 # -- the viewer: preview and export ---------------------------------------------
 
+#: How often an export that has written nothing yet asks the page whether it
+#: is still exporting (it may have stopped before opening a writer).
+EXPORT_PAGE_CHECK_S = 5.0
+
 
 def _page_command(call, view_id, project, command, arguments, *, timeout=None):
     from plexora.agent import viewer
@@ -325,61 +371,154 @@ def _page_command(call, view_id, project, command, arguments, *, timeout=None):
 
 
 def preview_video(call, inp):
+    # The revision goes with the command: a page holding an older copy (a
+    # change notice it missed) reloads before it plays.
     document = _load(inp.video_id)
     view, ack = _page_command(call, inp.view_id, document["source"]["datasource"], "preview",
-                              {"video_id": inp.video_id, "at_s": inp.at_s, "play": inp.play})
+                              {"video_id": inp.video_id, "revision": document["revision"],
+                               "at_s": inp.at_s, "play": inp.play})
     return {"view_id": view["view_id"], "result": (ack or {}).get("result")}
+
+
+def _job_status(call, video_id, export_id):
+    """The server's live record of an export (frames written, error), or None
+    when no server is running it. The encoder runs in the Plexora server,
+    which over MCP is another process, so there it is asked over the link;
+    the export rows on disk are what both processes share."""
+    from plexora.agent.registry import _serving_in_process
+    from plexora.plugins.video_studio.server import encode_jobs
+
+    if _serving_in_process() or call.link is None:
+        return encode_jobs.get(video_id, export_id)
+    try:
+        status, answer = call.link.request(
+            "GET", f"/plugins/{OWNER}/api/videos/{video_id}/exports/{export_id}", timeout=5.0)
+    except OSError:
+        return None
+    return answer if status == 200 and isinstance(answer, dict) else None
+
+
+def _running_exports(call, video_id):
+    """This video's exports a server is running now -- not a row left
+    `running` by a server that has since stopped."""
+    return [row["export_id"] for row in _repo().list_exports(video_id)
+            if row["status"] == "running"
+            and (_job_status(call, video_id, row["export_id"]) or {}).get("status")
+            in ("running", "finishing")]
+
+
+def _page_exporting(call, view_id):
+    """Whether the page says it is still exporting; True when it cannot say."""
+    from plexora.agent import viewer
+
+    try:
+        ack = viewer.require(call.link).send(view_id, "get_state", {})
+    except AgentError:
+        return True
+    plugins = ((ack or {}).get("result") or {}).get("plugins") or {}
+    return bool((plugins.get(OWNER) or {}).get("exporting", True))
+
+
+def _export_answer(video_id, row, job):
+    base = f"/plugins/{OWNER}/api/videos/{video_id}/exports/{row['export_id']}"
+    out = {"export_id": row["export_id"], "status": row["status"], "file": row["name"],
+           "path": row.get("path"), "bytes": row["bytes"],
+           "download": f"{base}/download", "manifest": f"{base}/manifest"}
+    if job is not None:
+        out["frames"] = job.get("frames_written")
+    if not row.get("path"):
+        out["note"] = "encoded in the browser, which saved the file itself; the manifest is kept here"
+    return out
 
 
 def export_video(call, inp):
     """Asks the open viewer to render the video, then follows the export the
     page starts until its file is written. The page renders every frame (only
-    the live viewer can); cancelling this job cancels the page's export."""
-    from plexora.plugins.video_studio.server import encode_jobs
-
+    the live viewer can) and answers as soon as it has started; the export is
+    then found by its row, the one record this process shares with the
+    server. Cancelling this job cancels the page's export."""
     document = _load(inp.video_id)
+    running = _running_exports(call, inp.video_id)
+    if running:
+        raise AgentError("conflict", f"an export of this video is already running "
+                         f"({running[0]}); a second one would share its viewer and mix frames",
+                         detail={"export_id": running[0],
+                                 "hint": "get_video shows when it has finished"})
+    known = {row["export_id"] for row in _repo().list_exports(inp.video_id)}
     started = time.time()
-    view, ack = _page_command(call, inp.view_id, document["source"]["datasource"], "export",
-                              {"video_id": inp.video_id, "output": inp.output,
-                               "prefer": "server"}, timeout=60)
-    export_id = ((ack or {}).get("result") or {}).get("export_id")
+    view, _ack = _page_command(call, inp.view_id, document["source"]["datasource"], "export",
+                               {"video_id": inp.video_id, "revision": document["revision"],
+                                "output": inp.output, "prefer": "server"}, timeout=60)
     total = _schema().frame_count(document["duration_s"],
                                   int(inp.output.get("fps") or document["output"]["fps"]))
     deadline = started + max(600.0, total * 5.0)
+    export_id, checked = None, time.time()
     while time.time() < deadline:
         if call.cancelled():
             _page_command(call, view["view_id"], None, "cancel_export",
                           {"video_id": inp.video_id})
             call.check_cancelled()
-        job = encode_jobs.get(inp.video_id, export_id) if export_id else None
+        rows = {row["export_id"]: row for row in _repo().list_exports(inp.video_id)}
+        if export_id is None:
+            # Newest first, so the last new one is the first this call started.
+            fresh = [each for each in rows if each not in known]
+            export_id = fresh[-1] if fresh else None
+        row = rows.get(export_id)
+        if row is None:
+            call.progress(0, total, "preparing")
+            if time.time() - checked >= EXPORT_PAGE_CHECK_S:
+                checked = time.time()
+                # Asked again after the page: it may have finished between.
+                if not _page_exporting(call, view["view_id"]) and not (
+                        {each["export_id"] for each in _repo().list_exports(inp.video_id)}
+                        - known):
+                    raise AgentError("resource_unavailable",
+                                     "the viewer's export stopped before it wrote anything "
+                                     "(the Video Studio bar in that tab says why)",
+                                     detail={"view_id": view["view_id"]})
+            time.sleep(0.5)
+            continue
+        job = _job_status(call, inp.video_id, export_id)
         if job is not None:
             call.progress(job["frames_written"], job["frames_expected"], "rendering")
-            if job["status"] == "done":
-                return {"export_id": export_id, "status": "done", "file": job["name"],
-                        "bytes": job["bytes"], "frames": job["frames_written"],
-                        "download": f"/plugins/{OWNER}/api/videos/{inp.video_id}/exports/"
-                                    f"{export_id}/download",
-                        "manifest": f"/plugins/{OWNER}/api/videos/{inp.video_id}/exports/"
-                                    f"{export_id}/manifest"}
-            if job["status"] in ("failed", "cancelled"):
-                raise AgentError("resource_unavailable", job.get("error") or job["status"],
-                                 detail={"status": job["status"], "tail": job.get("error_tail")})
-        else:
-            for row in _repo().list_exports(inp.video_id):
-                if row["export_id"] == export_id or (not export_id and row["status"] == "done"
-                                                     and row["created_at"] >= _iso(started)):
-                    return {"export_id": row["export_id"], "status": row["status"],
-                            "file": row["name"], "bytes": row["bytes"],
-                            "note": "encoded in the browser; the file was saved there"}
+        if row["status"] == "done":
+            return _export_answer(inp.video_id, row, job)
+        if row["status"] in ("failed", "cancelled"):
+            raise AgentError("resource_unavailable", (job or {}).get("error") or
+                             f"the export {row['status']}",
+                             detail={"export_id": export_id, "status": row["status"],
+                                     "path": row.get("path"),
+                                     "tail": (job or {}).get("error_tail")})
         time.sleep(0.5)
     raise AgentError("viewer_not_responding", "the export did not finish in time",
                      detail={"export_id": export_id})
 
 
-def _iso(epoch):
-    from datetime import datetime, timezone
-
-    return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
+def delete_export(call, inp):
+    if not inp.confirm:
+        raise AgentError("permission_required", "pass confirm: true to delete this export's "
+                         "file")
+    _load(inp.video_id)
+    row = next((each for each in _repo().list_exports(inp.video_id)
+                if each["export_id"] == inp.export_id), None)
+    if row is None:
+        raise AgentError("invalid_input", f"no export {inp.export_id!r} on this video",
+                         detail={"hint": "get_video lists its exports"})
+    if (_job_status(call, inp.video_id, inp.export_id) or {}).get("status") in (
+            "running", "finishing"):
+        raise AgentError("conflict", f"{inp.export_id} is still running; it can be deleted "
+                         "once it has finished or been cancelled",
+                         detail={"export_id": inp.export_id})
+    try:
+        _repo().delete_export(inp.video_id, inp.export_id)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    receipt = make_receipt(call, changed=True,
+                           before={"video_id": inp.video_id, "export_id": inp.export_id,
+                                   "file": row["name"], "status": row["status"]},
+                           persistent_state=STATE, reversible=False)
+    return {"deleted": inp.export_id, "video_id": inp.video_id,
+            "receipt": receipt.model_dump(mode="json")}
 
 
 def capabilities():
@@ -422,7 +561,10 @@ def capabilities():
             visual_output=True, reads=("plugin_document", "viewer")),
         cap(name="video.export", tool_name="export_video", permission="reversible_write",
             purpose="Render and encode a video in the open viewer (MP4 by default) with a "
-                    "manifest of what every frame shows. A job: job_wait follows it.",
+                    "manifest of what every frame shows. A job: this call reports its "
+                    "progress while it waits, and returns the job if it is still running; "
+                    "job_wait follows it from there. The finished job's result has the "
+                    "file's path on disk. Refused while another export of the video runs.",
             input_model=ExportInput, handler=export_video, viewer_required=True,
             execution="job", streams_progress=True, writes=("plugin_export",),
             reads=("plugin_document", "viewer")),
@@ -430,6 +572,12 @@ def capabilities():
             purpose="Copy a video (not its exports) to try something different.",
             input_model=DuplicateInput, handler=duplicate_video, persistent=True,
             writes=("plugin_document",)),
+        cap(name="video.delete_export", tool_name="delete_video_export",
+            permission="reversible_write",
+            purpose="Delete one export of a video: its file, manifest and row. Cannot be "
+                    "undone; needs confirm: true. The video and its other exports stay.",
+            input_model=DeleteExportInput, handler=delete_export, reversible=False,
+            persistent=True, writes=("plugin_export",)),
         cap(name="video.delete", tool_name="delete_video", permission="destructive",
             purpose="Delete a video and its exports. Needs confirm: true.",
             input_model=DeleteInput, handler=delete_video, reversible=False, persistent=True,

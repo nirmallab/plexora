@@ -97,7 +97,10 @@ FPS_CHOICES = (24, 25, 30, 50, 60)
 MAX_OUTPUT_SIDE = 7680
 MIN_OUTPUT_SIDE = 64
 OVERLAYS = ("scalebar", "label", "dataset", "legend", "axes", "sections", "attribution",
-            "captions")
+            "captions", "disclosure")
+#: On unless an export turns them off. `disclosure` is the "display
+#: transition" tag drawn while a channel or window fades.
+OVERLAYS_ON = ("scalebar", "label", "disclosure")
 
 #: Easing names, mirrored by static/videoEasing.js. "step" holds the value of
 #: the keyframe until the next one.
@@ -670,7 +673,7 @@ def normalize_output(raw) -> dict:
         "quality": _choice(raw.get("quality"), QUALITIES, "good"),
         "bitrate_mbps": _number(raw.get("bitrate_mbps"), 0.0, lo=0.0, hi=400.0) or None,
         "transparent": bool(raw.get("transparent")),
-        "overlays": {name: bool(overlays.get(name, name in ("scalebar", "label")))
+        "overlays": {name: bool(overlays.get(name, name in OVERLAYS_ON))
                      for name in OVERLAYS},
         "attribution": clean_text(raw.get("attribution"), 200),
     }

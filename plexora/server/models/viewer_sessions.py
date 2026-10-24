@@ -47,6 +47,9 @@ MAX_EVENTS = 256
 #: Longest a poll is held, and the default time a sender waits for its ack.
 MAX_WAIT_S = 15.0
 DEFAULT_SEND_TIMEOUT_S = 20.0
+#: Longest a sender may ask to wait for an ack (a held request is a worker
+#: thread, so only a command that names a longer wait gets one).
+MAX_SEND_TIMEOUT_S = 90.0
 
 
 def _max_held() -> int:
@@ -70,7 +73,8 @@ class Command:
     created: float
     expected_revision: int | None = None
     origin: str = "agent"
-    status: str = "pending"          # pending | delivered | done | rejected | unsupported | expired
+    # pending | delivered | done | rejected | unsupported | expired | withdrawn
+    status: str = "pending"
     result: dict | None = None
     error: str | None = None
     warning: str | None = None
@@ -384,6 +388,24 @@ def wait_for_ack(command_id, timeout_s=DEFAULT_SEND_TIMEOUT_S) -> dict | None:
             if remaining <= 0:
                 return found.describe()
             _CHANGED.wait(remaining)
+
+
+def withdraw(command_id) -> dict | None:
+    """The sender stopped waiting. A command the tab has not yet taken is
+    withdrawn, so it cannot run later behind the sender's back (a throttled
+    background tab still polls, and would run it when brought to the front);
+    one already `delivered` is the tab's and is left to finish. Returns the
+    command as it now stands."""
+    with _LOCK:
+        found = _COMMANDS.get(command_id)
+        if found is None:
+            return None
+        if found.status == "pending":
+            found.status = "withdrawn"
+            found.error = "the sender stopped waiting before the viewer took this command"
+            found.acked = _now()
+            _CHANGED.notify_all()
+        return found.describe()
 
 
 def publish(project, plugin, kind, payload=None, *, origin="agent") -> int:

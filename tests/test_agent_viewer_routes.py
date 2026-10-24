@@ -64,6 +64,36 @@ def test_a_silent_tab_is_a_504(client):
     assert answer.get_json()["code"] == "viewer_not_responding"
 
 
+def test_a_command_the_tab_never_took_is_withdrawn_and_never_runs(client):
+    """A throttled background tab still polls; a command its sender gave up
+    on must not run when the tab comes to the front (a resent export would
+    then run twice)."""
+    sid = _register(client)
+    answer = client.post(f"/agent/v1/viewer/sessions/{sid}/commands",
+                         json={"type": "pan_to", "wait_s": 0.05})
+    assert answer.status_code == 504
+    assert answer.get_json()["command"]["status"] == "withdrawn"
+    assert vs.wait_for_work(sid, wait_s=0)["commands"] == []
+
+
+def test_a_command_the_tab_took_is_left_to_finish(client):
+    sid = _register(client)
+    queued = vs.enqueue(sid, "pan_to", {})
+    assert vs.wait_for_work(sid, wait_s=0)["commands"][0]["command_id"] == queued.command_id
+    assert vs.withdraw(queued.command_id)["status"] == "delivered"
+    assert vs.ack(sid, queued.command_id, status="done")["status"] == "done"
+
+
+def test_a_sender_may_wait_longer_than_the_default_up_to_a_cap(client, monkeypatch):
+    sid = _register(client)
+    waited = []
+    monkeypatch.setattr(vs, "wait_for_ack", lambda cid, t: waited.append(t) or vs.command(cid))
+    for asked in (60, 10_000):
+        client.post(f"/agent/v1/viewer/sessions/{sid}/commands",
+                    json={"type": "pan_to", "wait_s": asked})
+    assert waited == [60, vs.MAX_SEND_TIMEOUT_S]
+
+
 def test_unknown_session_is_404(client):
     assert client.post("/agent/v1/viewer/sessions/nope/commands",
                        json={"type": "x"}).status_code == 404

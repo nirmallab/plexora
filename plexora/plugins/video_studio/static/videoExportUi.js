@@ -34,7 +34,7 @@
     const QUALITIES = [["draft", "Draft"], ["good", "Good"], ["high", "High"], ["max", "Max"]];
     const OVERLAYS = [["scalebar", "Scale bar"], ["label", "Plane and time"], ["dataset", "Dataset name"],
                       ["legend", "Channel legend"], ["axes", "Axes (3-D)"], ["attribution", "Attribution"],
-                      ["captions", "Captions"]];
+                      ["captions", "Captions"], ["disclosure", "Transition tag"]];
     const ROUTE_WORDS = { browser: "in this browser", server: "on the server" };
 
     function el(tag, className, text) {
@@ -89,7 +89,7 @@
                 width: output.width || 1920, height: output.height || 1080, fps: output.fps || 30,
                 format: output.format || "mp4", quality: output.quality || "good",
                 transparent: Boolean(output.transparent),
-                overlays: { scalebar: true, label: true, ...(output.overlays || {}) },
+                overlays: { scalebar: true, label: true, disclosure: true, ...(output.overlays || {}) },
                 attribution: output.attribution || "",
             };
             let rows = [];

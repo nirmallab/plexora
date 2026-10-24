@@ -437,10 +437,31 @@ def list_exports(video_id) -> list[dict]:
             output = None
         path = Path(row["path"]) if row["path"] else None
         out.append({"export_id": row["export_id"], "status": row["status"], "output": output,
-                    "name": path.name if path else None, "bytes": row["bytes"],
+                    "name": path.name if path else None,
+                    "path": str(path) if path else None, "bytes": row["bytes"],
                     "available": bool(path and path.is_file()),
                     "created_at": row["created_at"]})
     return out
+
+
+def delete_export(video_id, export_id) -> bool:
+    """Remove one export: its row and its folder. False when there is none.
+    A running export is the caller's to refuse (only the server that runs it
+    knows it is running)."""
+    if not str(export_id).startswith("exp_") or not str(export_id)[4:].isalnum():
+        raise ValueError(f"not an export id: {export_id!r}")
+    connection = _open(video_id)
+    try:
+        with connection:
+            removed = connection.execute("DELETE FROM exports WHERE export_id = ?",
+                                         (export_id,)).rowcount
+    finally:
+        connection.close()
+    directory = exports_dir(video_id) / export_id
+    if directory.is_dir():
+        shutil.rmtree(directory)
+        removed = removed or 1
+    return bool(removed)
 
 
 def export_manifest(video_id, export_id):

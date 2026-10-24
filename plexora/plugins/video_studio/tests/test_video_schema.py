@@ -65,8 +65,11 @@ def test_an_empty_document_normalises_to_a_complete_one():
     out = doc["output"]
     assert (out["width"], out["height"], out["fps"]) == (1920, 1080, 30)
     assert (out["format"], out["quality"], out["bitrate_mbps"]) == ("mp4", "good", None)
-    # The scale bar and label are on by default; nothing else is drawn over the data.
-    assert {k for k, v in out["overlays"].items() if v} == {"scalebar", "label"}
+    # The scale bar and label are on by default, and the tag that says a fade
+    # is a change of display; nothing else is drawn over the data.
+    assert {k for k, v in out["overlays"].items() if v} == {"scalebar", "label", "disclosure"}
+    assert schema.normalize_output({"overlays": {"disclosure": False}})["overlays"][
+        "disclosure"] is False
     assert set(out["overlays"]) == set(schema.OVERLAYS)
     view = doc["base"]["view"]
     assert (view["t"], view["z"], view["mode"], view["slab"]) == (0, 0, "plane", None)

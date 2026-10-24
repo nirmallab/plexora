@@ -708,7 +708,7 @@
                     // not the project's key.
                     extra: { datasetName: global.PlexoraProjectTitle?.current?.() || this.env.datasource,
                              attribution: choice.settings.attribution,
-                             disclose: true },
+                             disclose: choice.settings.overlays?.disclosure !== false },
                     onProgress: ({ done, total }) => {
                         this.bar.setHint(`Rendering frame ${done} of ${total}`);
                         this.progress = { done, total };
@@ -769,8 +769,26 @@
 
         // -- agent ---------------------------------------------------------------------------
 
-        async agentPreview({ video_id: videoId, at_s: at, play = true }) {
-            if (videoId && videoId !== this.saved.videoId) await this.loadVideo(videoId);
+        /** Throws while an export borrows the viewer: a second render (or a
+         *  preview) driving it would put its frames into the running file. */
+        refuseWhileExporting() {
+            if (!this.exporting) return;
+            throw new Error(`an export of ${this.saved.videoId || "a video"} is running in this `
+                            + "viewer; wait for it, or cancel it, first");
+        }
+
+        /** Opens `videoId` unless it is open at `revision` or newer: the
+         *  agent names the revision it saved, so a missed change notice
+         *  cannot leave an older copy here to play or render. */
+        async ensureVideo(videoId, revision) {
+            if (!videoId) return;
+            const stale = Number.isFinite(revision) && revision > (this.saved.revision ?? -1);
+            if (videoId !== this.saved.videoId || stale) await this.loadVideo(videoId, { quiet: true });
+        }
+
+        async agentPreview({ video_id: videoId, revision, at_s: at, play = true }) {
+            this.refuseWhileExporting();
+            await this.ensureVideo(videoId, revision);
             if (Number.isFinite(at)) this.preview.seek(at);
             if (play) this.preview.play();
             else this.preview.pause();
@@ -778,8 +796,13 @@
                      duration_s: this.project?.duration_s ?? null };
         }
 
-        async agentExport({ video_id: videoId, output = {}, prefer = "server" }) {
-            if (videoId && videoId !== this.saved.videoId) await this.loadVideo(videoId);
+        /** Answers once the render has started, not when the file exists:
+         *  the server follows the export from there (its writer, or the
+         *  browser's finished row), so a heavy scene's preparation cannot
+         *  outlast the command's acknowledgement. */
+        async agentExport({ video_id: videoId, revision, output = {}, prefer = "server" }) {
+            this.refuseWhileExporting();
+            await this.ensureVideo(videoId, revision);
             if (!this.project) throw new Error("no video is open");
             const settings = {
                 width: output.width || this.project.output.width, height: output.height || this.project.output.height,
@@ -800,19 +823,16 @@
                 || global.PlexoraVideoEncoders.defaultRoute(rows);
             if (!route) throw new Error("no encoder can write this format here");
             settings.format = route.format;
-            const started = new Promise((resolve) => {
-                this.runExport({ settings, route }, { onStarted: resolve }).catch(() => resolve(null));
+            // Checked again: the awaits above are where a second command
+            // could have started one.
+            this.refuseWhileExporting();
+            const started = await new Promise((resolve, reject) => {
+                this.runExport({ settings, route }, { onStarted: resolve })
+                    .then(() => resolve(null), reject);
             });
-            await started;
-            // The export id appears once the server writer has been opened.
-            for (let i = 0; i < 100; i += 1) {
-                const list = await this.api.exports(this.saved.videoId).catch(() => null);
-                const running = list?.exports?.find((e) => e.status === "running");
-                if (running) return { export_id: running.export_id, route: route.route };
-                if (!this.exporting) break;
-                await new Promise((resolve) => setTimeout(resolve, 200));
-            }
-            return { export_id: null, route: route.route };
+            if (!started) throw new Error("the export stopped before it started");
+            return { video_id: started.video_id, revision: this.saved.revision,
+                     route: route.route, started: true };
         }
 
         async sendFrameToFigure() {

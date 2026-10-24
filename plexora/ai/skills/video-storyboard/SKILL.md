@@ -46,7 +46,13 @@ plugin licensed as a whole, `plugin:video_studio`).
    switched the viewer to the volume view says so).
 5. `preview_video` so they can watch it in their viewer. Adjust with
    `edit_video` until they are happy.
-6. Only on their go-ahead: `export_video` (a job; `job_wait` follows it).
+6. Only on their go-ahead: `export_video`, once. It reports progress while it
+   waits and returns the job if it is still running; `job_wait` follows it
+   from there. Never send it again while one runs: it is refused, and a
+   `viewer_not_responding` that is not `retryable` means the tab took it and
+   may still be rendering. For a looping web video, pass
+   `output.overlays.disclosure: false` so fades are not tagged
+   "display transition" on the frames.
 
 ## Tools
 
@@ -54,7 +60,7 @@ plugin licensed as a whole, `plugin:video_studio`).
 
 ## Evidence
 
-Report the export's file name and size, its frame count and duration from the
+Report the export's file name, `path` and size, its frame count and duration from the
 manifest, and the preset and parameters it was made with (`get_video`).
 
 ## Uncertainty
@@ -71,7 +77,11 @@ manifest, and the preset and parameters it was made with (`get_video`).
 `duplicate_video` write a video in Plexora's own store, never the image;
 every receipt carries an `undo_hint`. `delete_video` removes a video and its
 exports and needs the user's confirmation. `export_video` writes a file and
-its manifest beside the video.
+its manifest beside the video; `delete_video_export` removes one export (not
+undoable; confirm with the user first).
+
+A `camera3d` keyframe's `q` is `[x, y, z, w]`, w last: straight down the
+stack is `[1, 0, 0, 0]`.
 
 ## Provenance
 
