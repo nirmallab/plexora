@@ -14,6 +14,9 @@
  *     whenever the grid was open.
  *   - IT LEAVES NOTHING BEHIND: document listeners, a window listener and an
  *     observer, all released on close.
+ *   - THE SEARCH ONLY NARROWS. It hides tiles and refits; picking from it goes
+ *     through the same choice as a click, and its first Escape clears rather
+ *     than closes.
  *
  * Run directly: `node tests/js/dataset_strip_probe.mjs`
  */
@@ -48,6 +51,7 @@ function element(tag = "div", doc = null) {
         style: {},
         textContent: "",
         title: "",
+        value: "",
         parentNode: null,
         rect: box(0, 0, 0, 0),
         scrollLeft: 0, scrollWidth: 0, clientWidth: 0, offsetLeft: 0, offsetWidth: 0,
@@ -162,6 +166,7 @@ function boot({ wrapper = true, furniture = {}, marked = [], observer = false } 
     return {
         strip, host, chip, anchor, doc, docListeners, winListeners, observers, byId,
         root: () => (host ? find(host, (n) => hasClass(n, "dataset-nav-strip")) : null),
+        part: (cls) => (host ? find(host, (n) => hasClass(n, cls)) : null),
         tiles: () => {
             const grid = host && find(host, (n) => hasClass(n, "dataset-nav-strip-grid"));
             return grid ? grid.children : [];
@@ -188,7 +193,7 @@ const HOST = { width: 1200, height: 800 };
 const CHIP = box(12, 1038, 150, 28);           // bottom 40, right 1188
 const TILE = boot().strip._tileFor(150);
 const rowsFor = (height) => Math.floor(
-    (height - 2 * S.PAD - 2 * S.BORDER + S.CELL_GAP) / (TILE.height + S.CELL_GAP));
+    (height - 2 * S.PAD - 2 * S.BORDER - S.HEAD + S.CELL_GAP) / (TILE.height + S.CELL_GAP));
 const fit = (obstacles, count = 60) => boot().strip.fit({ host: HOST, anchor: CHIP, obstacles, count });
 
 console.log("dataset strip");
@@ -224,6 +229,19 @@ check("a plugin dock moves it left, at the same width", () => {
     assert.equal(placed.width, 150);
 });
 
+check("the search row costs exactly its height and the gap under it", () => {
+    assert.equal(S.HEAD, S.SEARCH + S.CELL_GAP);
+    assert.equal(S.SEARCH, 22, "viewer.css .dataset-nav-strip-search says 22px");
+    const roomy = { width: 1200, height: 44 + 3 * (TILE.height + S.CELL_GAP) + 2 * S.PAD + S.MARGIN };
+    const placed = boot().strip.fit({ host: roomy, anchor: CHIP, obstacles: [], count: 3 });
+    assert.equal(placed.rows, 2, "three rows' room less the search holds two");
+});
+
+check("a dock level with the search counts as beside it", () => {
+    const dock = box(44 + S.HEAD + TILE.height - 2, 1011, 177, 400);
+    assert.equal(fit([dock], 14).right, 1200 - (1011 - S.GAP));
+});
+
 check("a dock stacked under the chip puts it beside the dock, full height", () => {
     // Figure Builder's dock starts 6px under the chip, level with the first row.
     const dock = box(46, 1011, 177, 400);
@@ -239,7 +257,7 @@ check("the legend under the chip caps the rows, and keeps a gap", () => {
     const top = 40 + S.GAP;
     // 60 samples are more than one column, so the scrollbar's gutter is paid for.
     assert.equal(placed.rows, rowsFor(500 - S.GAP - top - S.SCROLLBAR));
-    const bottom = top + placed.rows * (TILE.height + S.CELL_GAP) - S.CELL_GAP
+    const bottom = top + S.HEAD + placed.rows * (TILE.height + S.CELL_GAP) - S.CELL_GAP
         + 2 * S.PAD + 2 * S.BORDER + S.SCROLLBAR;
     assert.ok(bottom <= 500 - S.GAP, `bottom ${bottom} clears the legend`);
 });
@@ -253,7 +271,7 @@ check("something low that is not under it costs it nothing", () => {
 check("rows never exceed the members and never fall below one", () => {
     assert.equal(fit([], 1).rows, 1);
     assert.equal(fit([], 0).rows, 1);
-    assert.equal(fit([box(44 + TILE.height + 10, 900, 288, 500)], 20).rows, 1,
+    assert.equal(fit([box(44 + S.HEAD + TILE.height + 10, 900, 288, 500)], 20).rows, 1,
         "a legend just below the first row");
 });
 
@@ -266,7 +284,8 @@ check("a column holds what fits, and the rest start a column beside it", () => {
 });
 
 check("rows leave room for the scrollbar only when it is drawn", () => {
-    const tall = { width: 1200, height: 44 + 2 * (TILE.height + S.CELL_GAP) + 2 * S.PAD + S.MARGIN };
+    const tall = { width: 1200,
+        height: 44 + S.HEAD + 2 * (TILE.height + S.CELL_GAP) + 2 * S.PAD + S.MARGIN };
     const few = boot().strip.fit({ host: tall, anchor: CHIP, obstacles: [], count: 2 });
     assert.equal(few.rows, 2, "two fit in one column, no scrollbar, two rows");
     const many = boot().strip.fit({ host: tall, anchor: CHIP, obstacles: [], count: 400 });
@@ -516,6 +535,144 @@ check("a vertical wheel scrolls it sideways only when there is overflow", () => 
     wheel(50);
     assert.equal(grid.scrollLeft, 50);
     assert.equal(prevented, true);
+});
+
+// ---------------------------------------------------------------- search
+
+const shown = (t) => t.tiles().filter((n) => n.style.display !== "none")
+    .map((n) => n.attributes["data-sample"]);
+const typeInto = (t, text) => {
+    const input = t.part("dataset-nav-strip-input");
+    input.value = text;
+    input.fire("input");
+    return input;
+};
+const pressIn = (node, key) => {
+    let stopped = false;
+    for (const fn of node.listeners.keydown || []) {
+        fn({ key, target: node, preventDefault() {}, stopPropagation: () => { stopped = true; } });
+    }
+    return stopped;
+};
+
+check("a search row sits over the grid, and the current tile keeps focus", () => {
+    const t = boot();
+    openOn(t);
+    const [search, grid] = t.root().children;
+    assert.ok(hasClass(search, "dataset-nav-strip-search"));
+    assert.ok(hasClass(grid, "dataset-nav-strip-grid"));
+    const input = t.part("dataset-nav-strip-input");
+    assert.equal(input.placeholder, "Search samples");
+    assert.equal(input.attributes["aria-label"], "Search samples");
+    assert.equal(t.doc.activeElement, t.tiles()[1], "so B and N still walk");
+});
+
+check("typing keeps the tiles that hold every word, in any case", () => {
+    const t = boot();
+    openOn(t, { members: ["Tonsil core 1", "Tonsil core 2", "Lung core 1", "lung 7"], current: "lung 7" });
+    typeInto(t, "LUNG");
+    assert.deepEqual(shown(t), ["Lung core 1", "lung 7"]);
+    typeInto(t, "core   1");
+    assert.deepEqual(shown(t), ["Tonsil core 1", "Lung core 1"]);
+    typeInto(t, "  ");
+    assert.equal(shown(t).length, 4, "blank is everything");
+    assert.equal(t.tiles().length, 4, "hidden, never removed");
+});
+
+check("a title is searched as well as the name", () => {
+    const t = boot();
+    t.strip.open({ anchor: t.anchor, chip: t.chip, members: SAMPLES, current: "s1",
+                   titles: { s3: "Patient 42 biopsy" } });
+    typeInto(t, "42");
+    assert.deepEqual(shown(t), ["s3"]);
+});
+
+check("the grid refits to what is shown", () => {
+    const t = boot();
+    openOn(t);
+    const grid = t.part("dataset-nav-strip-grid");
+    typeInto(t, "s4");
+    assert.equal(grid.style.gridTemplateRows, `repeat(1, ${TILE.height}px)`);
+    typeInto(t, "");
+    assert.equal(grid.style.gridTemplateRows, `repeat(5, ${TILE.height}px)`);
+});
+
+check("nothing matching hides the grid and says so in one line", () => {
+    const t = boot();
+    openOn(t);
+    typeInto(t, "zzz");
+    const empty = t.part("dataset-nav-strip-empty");
+    assert.equal(t.part("dataset-nav-strip-grid").style.display, "none");
+    assert.equal(empty.style.display, "");
+    assert.equal(empty.textContent, "No sample matches");
+    typeInto(t, "s");
+    assert.equal(t.part("dataset-nav-strip-grid").style.display, "");
+    assert.equal(empty.style.display, "none");
+});
+
+check("Enter picks the first match; on the current sample it only closes", () => {
+    let t = boot();
+    let picked = [];
+    openOn(t, { picked });
+    pressIn(typeInto(t, "s4"), "Enter");
+    assert.deepEqual(picked, [["s4", false]]);
+    t = boot();
+    picked = [];
+    openOn(t, { picked });
+    pressIn(typeInto(t, "s2"), "Enter");
+    assert.equal(t.strip.isOpen(), false);
+    assert.equal(picked.length, 0, "no reload of the page already on screen");
+    t = boot();
+    picked = [];
+    openOn(t, { picked });
+    pressIn(typeInto(t, "zzz"), "Enter");
+    assert.equal(t.strip.isOpen(), true, "nothing to pick");
+});
+
+check("ArrowDown from the search reaches the first match; the arrows walk only matches", () => {
+    const t = boot();
+    openOn(t, { members: Array.from({ length: 12 }, (_, i) => "m" + i), current: "m0" });
+    const input = typeInto(t, "m1");
+    const byName = (name) => t.tiles().find((n) => n.attributes["data-sample"] === name);
+    assert.equal(pressIn(input, "ArrowDown"), true);
+    assert.equal(t.doc.activeElement, byName("m1"));
+    const grid = t.part("dataset-nav-strip-grid");
+    const gridKey = (key, from) => {
+        for (const fn of grid.listeners.keydown) {
+            fn({ key, target: from, preventDefault() {}, stopPropagation() {} });
+        }
+    };
+    gridKey("ArrowDown", byName("m1"));
+    assert.equal(t.doc.activeElement, byName("m10"), "past the hidden m2");
+    gridKey("ArrowUp", byName("m1"));
+    assert.equal(t.doc.activeElement, input, "up off the top is the search");
+});
+
+check("Escape clears a search first and closes second", () => {
+    const t = boot();
+    openOn(t);
+    const input = typeInto(t, "s4");
+    const escape = () => t.fireDoc("keydown", { key: "Escape", stopPropagation() {}, preventDefault() {} });
+    escape();
+    assert.equal(t.strip.isOpen(), true);
+    assert.equal(input.value, "");
+    assert.equal(shown(t).length, 5);
+    assert.ok(!hasClass(t.part("dataset-nav-strip-search"), "has-query"));
+    escape();
+    assert.equal(t.strip.isOpen(), false);
+});
+
+check("the clear button is drawn only with a query, and empties it", () => {
+    const t = boot();
+    openOn(t);
+    const search = t.part("dataset-nav-strip-search");
+    assert.ok(!hasClass(search, "has-query"));
+    const input = typeInto(t, "s3");
+    assert.ok(hasClass(search, "has-query"));
+    t.part("dataset-nav-strip-clear").fire("click");
+    assert.equal(input.value, "");
+    assert.equal(shown(t).length, 5);
+    assert.equal(t.doc.activeElement, input, "back in the field to type again");
 });
 
 check("a page with no canvas opens nothing", () => {

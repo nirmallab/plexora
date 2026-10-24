@@ -3323,6 +3323,92 @@ body.sidebar-collapsed .viewer-shell,
     }
 }
 
+/* The search over the thumbnails: the tiles' own muted fill, no border until
+   it has focus, so it reads as part of the frame rather than a form. Its
+   height and the gap under it are repeated in datasetStrip.js (SEARCH,
+   CELL_GAP); change both. */
+.dataset-nav-strip-search {
+    align-items: center;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px transparent;
+    box-sizing: border-box;
+    color: var(--text-muted);
+    cursor: text;
+    display: flex;
+    font-size: 10px;
+    gap: 5px;
+    height: 22px;
+    margin-bottom: 4px;
+    padding: 0 2px 0 7px;
+    transition: box-shadow var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.dataset-nav-strip-search:hover {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.dataset-nav-strip-search:focus-within {
+    background: rgba(148, 163, 184, 0.12);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+    color: var(--text-secondary);
+}
+
+.dataset-nav-strip-input {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    flex: 1;
+    font: inherit;
+    font-size: 11px;
+    min-width: 0;
+    outline: none;
+    padding: 0;
+}
+
+.dataset-nav-strip-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.8;
+}
+
+/* Only there when there is something to clear. Visibility rather than
+   display, so the field does not change width as the first letter goes in. */
+.dataset-nav-strip-clear {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: 2px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 10px;
+    height: 18px;
+    justify-content: center;
+    padding: 0;
+    width: 18px;
+}
+
+/* Hidden while empty rather than shown once filled: a `visibility: visible`
+   would survive the router hiding the viewer (test_app_router). */
+.dataset-nav-strip-search:not(.has-query) .dataset-nav-strip-clear {
+    visibility: hidden;
+}
+
+.dataset-nav-strip-clear:hover {
+    background: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+/* In place of the grid when nothing matches: one quiet line, not a tile. */
+.dataset-nav-strip-empty {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.2;
+    padding: 4px 3px 3px;
+}
+
 /* A grid rather than a wrapping flex column, so a full column is followed by
    another beside it, reached by scrolling. */
 .dataset-nav-strip-grid {
@@ -3436,6 +3522,32 @@ body.sidebar-collapsed .viewer-shell,
 .brightfield-ground .dataset-nav-strip {
     background: rgba(255, 255, 255, 0.94);
     border-color: rgba(18, 24, 32, 0.25);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-search,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-search {
+    background: rgba(18, 24, 32, 0.05);
+    color: rgba(18, 24, 32, 0.55);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-search:focus-within,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-search:focus-within {
+    box-shadow: inset 0 0 0 1px rgba(18, 24, 32, 0.3);
+    color: rgba(18, 24, 32, 0.75);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-input,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-input {
+    color: rgba(18, 24, 32, 0.9);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-input::placeholder,
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-clear,
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-empty,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-input::placeholder,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-clear,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-empty {
+    color: rgba(18, 24, 32, 0.5);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-name,

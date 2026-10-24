@@ -9,8 +9,16 @@
  * with Next. This file only picks; it never navigates or persists anything.
  *
  * THE SHAPE. Exactly the chip's width, key caps and all, so it reads as the
- * chip opening downward: one thumbnail per row, stacked for as far as the
- * canvas has room, and any further columns scroll sideways.
+ * chip opening downward: a thin search row, then one thumbnail per row,
+ * stacked for as far as the canvas has room, and any further columns scroll
+ * sideways.
+ *
+ * THE SEARCH only narrows what is shown: every word typed must appear in the
+ * sample's name or its title, and the grid refits to what is left. Focus
+ * still opens on the current tile, so B and N keep walking with the strip
+ * open; the field is a click, a Shift+Tab or an ArrowUp from the first tile
+ * away. In it, ArrowDown goes to the first match and Enter picks it; Escape
+ * clears a search before it closes the strip.
  *
  * WHERE IT MAY GO is measured, not assumed: fit() is plain arithmetic over the
  * boxes of whatever else sits on the canvas -- the sample's caption and the
@@ -39,6 +47,10 @@ window.PlexoraDatasetStrip = (function () {
     const CELL_GAP = 4;
     const COLUMNS = 1;
     const SCROLLBAR = 10;   // the thin horizontal scrollbar, as Chrome draws it
+    //: The search row over the grid, and the gap under it. Both repeated in
+    //: viewer.css (.dataset-nav-strip-search); change both.
+    const SEARCH = 22;
+    const HEAD = SEARCH + CELL_GAP;
 
     //: Core's own canvas furniture, by id. Plugin chrome opts in by attribute.
     const FURNITURE_IDS = [
@@ -64,13 +76,13 @@ window.PlexoraDatasetStrip = (function () {
      *  scrollbar's gutter. */
     function shape(room, count, cell) {
         const rowsIn = (height) => clamp(Math.floor(
-            (height - 2 * PAD - 2 * BORDER + CELL_GAP) / (cell.height + CELL_GAP)), 1, count);
+            (height - 2 * PAD - 2 * BORDER - HEAD + CELL_GAP) / (cell.height + CELL_GAP)), 1, count);
         let rows = rowsIn(room);
         const columns = Math.ceil(count / rows);
         const scrolls = columns > COLUMNS;
         if (scrolls) rows = rowsIn(room - SCROLLBAR);
         else rows = Math.ceil(count / Math.min(COLUMNS, count));
-        const height = rows * (cell.height + CELL_GAP) - CELL_GAP + 2 * PAD + 2 * BORDER
+        const height = HEAD + rows * (cell.height + CELL_GAP) - CELL_GAP + 2 * PAD + 2 * BORDER
             + (scrolls ? SCROLLBAR : 0);
         return { rows, height };
     }
@@ -83,24 +95,26 @@ window.PlexoraDatasetStrip = (function () {
      * starts above that line and reaches below it (a plugin dock) moves it
      * left, clear of it; one that starts below it (the legend, the lens)
      * caps the height -- but only if it lies under the strip, so a lens the
-     * strip never reaches costs it no rows.
+     * strip never reaches costs it no rows. "That line" is the foot of the
+     * search row and the first row of tiles, the least the strip can be.
      */
     function fit({ host, anchor, obstacles = [], count }) {
         const top = anchor.bottom + GAP;
         const width = anchor.right - anchor.left;
         const cell = tileFor(width);
+        const least = top + HEAD + cell.height;
         let rightLimit = anchor.right;
         for (const box of obstacles) {
             // Beside the strip rather than under it: anything already level
-            // with its first row (a plugin dock stacked under the chip).
-            if (!(box.top < top + cell.height && box.bottom > top)) continue;
+            // with its search or first row (a plugin dock stacked under the chip).
+            if (!(box.top < least && box.bottom > top)) continue;
             if ((box.left + box.right) / 2 >= host.width / 2) {
                 rightLimit = Math.min(rightLimit, box.left - GAP);
             }
         }
         const left = rightLimit - width;
         const n = Math.max(1, count || 0);
-        const below = obstacles.filter((box) => box.top >= top + cell.height
+        const below = obstacles.filter((box) => box.top >= least
             && box.left < rightLimit && box.right > left);
 
         let floor = host.height - MARGIN;
@@ -218,6 +232,115 @@ window.PlexoraDatasetStrip = (function () {
         return item;
     }
 
+    // -- search -------------------------------------------------------------
+
+    /** The words of a query, lower-cased; none for a blank one. */
+    function terms(query) {
+        return String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+    }
+
+    /** Whether every word is in the tile's name or the title it shows. */
+    function matches(item, words) {
+        const text = (item.getAttribute("data-sample") + "\n" + item.title).toLowerCase();
+        return words.every((word) => text.indexOf(word) !== -1);
+    }
+
+    /**
+     * Show the tiles that match `query` and refit to them. Hidden by an
+     * inline display rather than detached: moving a focused tile out of the
+     * DOM and back would drop its focus.
+     */
+    function filter(query) {
+        if (!state) return;
+        const { all, grid, empty, search } = state;
+        const words = terms(query);
+        state.query = words.length ? String(query) : "";
+        state.tiles = all.filter((item) => {
+            const shown = matches(item, words);
+            item.style.display = shown ? "" : "none";
+            return shown;
+        });
+        const none = !state.tiles.length;
+        grid.style.display = none ? "none" : "";
+        empty.style.display = none ? "" : "none";
+        search.className = "dataset-nav-strip-search" + (state.query ? " has-query" : "");
+        grid.scrollLeft = 0;
+        refit();
+    }
+
+    function onSearchInput() {
+        if (state) filter(state.input.value);
+    }
+
+    function onSearchKey(event) {
+        if (!state) return;
+        const first = state.tiles[0];
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (first && first.focus) first.focus();
+        } else if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            // Through the tile's own choice, so the current sample only closes.
+            if (first) state.choose(first.getAttribute("data-sample"),
+                                    first.className.indexOf("is-current") !== -1);
+        }
+    }
+
+    /** Back to every tile. Focus is left where it is (a tile is still a
+     *  tile) unless `focusInput`, for the clear button, which has none. */
+    function clearSearch(focusInput) {
+        if (!state) return;
+        state.input.value = "";
+        filter("");
+        if (focusInput && state.input.focus) state.input.focus();
+    }
+
+    function searchRow() {
+        // A div rather than a <label>, which may not hold the clear button, so
+        // a press on the glass is sent to the field by hand. Font Awesome
+        // swaps the glass's span for an <svg>, so it is not named: anything
+        // but the field and the clear button counts.
+        const row = document.createElement("div");
+        row.className = "dataset-nav-strip-search";
+        row.addEventListener("click", (event) => {
+            if (!state || event.target === state.input || inside(clear, event.target)) return;
+            state.input.focus();
+        });
+
+        const icon = document.createElement("span");
+        icon.className = "fas fa-magnifying-glass";
+        icon.setAttribute("aria-hidden", "true");
+        row.appendChild(icon);
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "dataset-nav-strip-input";
+        input.placeholder = "Search samples";
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.setAttribute("aria-label", "Search samples");
+        input.addEventListener("input", onSearchInput);
+        input.addEventListener("keydown", onSearchKey);
+        row.appendChild(input);
+
+        const clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "dataset-nav-strip-clear";
+        clear.title = "Clear search";
+        clear.setAttribute("aria-label", "Clear search");
+        clear.tabIndex = -1;
+        const cross = document.createElement("span");
+        cross.className = "fas fa-xmark";
+        cross.setAttribute("aria-hidden", "true");
+        clear.appendChild(cross);
+        clear.addEventListener("click", () => clearSearch(true));
+        row.appendChild(clear);
+
+        return { row, input };
+    }
+
     // -- dismissal ----------------------------------------------------------
 
     function onKeyDown(event) {
@@ -226,6 +349,8 @@ window.PlexoraDatasetStrip = (function () {
         if (!state || event.key !== "Escape") return;
         event.stopPropagation();
         if (event.preventDefault) event.preventDefault();
+        // A search first: the first Escape takes back what was typed.
+        if (state.query || state.input.value) { clearSearch(); return; }
         const anchor = state.anchor;
         close();
         if (anchor && anchor.focus) anchor.focus();
@@ -254,7 +379,9 @@ window.PlexoraDatasetStrip = (function () {
         if (step === undefined) return;
         event.preventDefault();
         event.stopPropagation();
-        const next = state.tiles[clamp(step, 0, last)];
+        // Up off the top of the first column is the search.
+        const next = step < 0 && event.key === "ArrowUp"
+            ? state.input : state.tiles[clamp(step, 0, last)];
         if (next && next.focus) next.focus();
     }
 
@@ -293,9 +420,18 @@ window.PlexoraDatasetStrip = (function () {
         root.setAttribute("role", "group");
         root.setAttribute("aria-label", label ? "Samples in " + label : "Samples");
 
+        const { row: search, input } = searchRow();
+        root.appendChild(search);
+
         const grid = document.createElement("div");
         grid.className = "dataset-nav-strip-grid";
         root.appendChild(grid);
+
+        const empty = document.createElement("div");
+        empty.className = "dataset-nav-strip-empty";
+        empty.textContent = "No sample matches";
+        empty.style.display = "none";
+        root.appendChild(empty);
 
         const choose = (name, isCurrent) => {
             close();
@@ -308,7 +444,10 @@ window.PlexoraDatasetStrip = (function () {
         grid.addEventListener("wheel", onWheel, { passive: false });
 
         host.appendChild(root);
-        state = { host, anchor, chip, root, grid, tiles, rows: 1, observer: null };
+        state = {
+            host, anchor, chip, root, grid, empty, search, input,
+            all: tiles, tiles: tiles.slice(), query: "", choose, rows: 1, observer: null,
+        };
         anchor.setAttribute("aria-expanded", "true");
         refit();
 
@@ -365,7 +504,7 @@ window.PlexoraDatasetStrip = (function () {
         //: Test seams.
         _obstacles: obstacles,
         _refit: refit,
-        _sizes: { GAP, MARGIN, PAD, BORDER, CELL_GAP, COLUMNS, SCROLLBAR },
+        _sizes: { GAP, MARGIN, PAD, BORDER, CELL_GAP, COLUMNS, SCROLLBAR, SEARCH, HEAD },
         _tileFor: tileFor,
     };
 })();

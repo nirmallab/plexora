@@ -3,7 +3,7 @@
 Where it may go on the canvas (never over the channel names, the caption or a
 plugin's dock), what closes it without navigating, and that its capture-phase
 key handler takes Escape and nothing else -- so B and N still walk while it is
-open. Navigation itself is datasetNav.js's go(), fenced in test_dataset_nav.py.
+open -- and that its search only narrows what is shown. Navigation itself is datasetNav.js's go(), fenced in test_dataset_nav.py.
 
 The checks live in tests/js/dataset_strip_probe.mjs and run against the shipped
 file; this wrapper runs it and pins its lines.
@@ -25,6 +25,8 @@ CHECKS = (
     "one thumbnail per row fills it, at 4:3",
     "the caption and the expand button leave it alone",
     "a plugin dock moves it left, at the same width",
+    "the search row costs exactly its height and the gap under it",
+    "a dock level with the search counts as beside it",
     "a dock stacked under the chip puts it beside the dock, full height",
     "the legend under the chip caps the rows, and keeps a gap",
     "something low that is not under it costs it nothing",
@@ -54,6 +56,15 @@ CHECKS = (
     "a page with no ResizeObserver still opens",
     "arrows walk the grid: down one, right one column",
     "a vertical wheel scrolls it sideways only when there is overflow",
+    "a search row sits over the grid, and the current tile keeps focus",
+    "typing keeps the tiles that hold every word, in any case",
+    "a title is searched as well as the name",
+    "the grid refits to what is shown",
+    "nothing matching hides the grid and says so in one line",
+    "Enter picks the first match; on the current sample it only closes",
+    "ArrowDown from the search reaches the first match; the arrows walk only matches",
+    "Escape clears a search first and closes second",
+    "the clear button is drawn only with a query, and empties it",
     "a page with no canvas opens nothing",
 )
 
