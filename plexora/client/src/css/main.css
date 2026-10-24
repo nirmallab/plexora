@@ -8129,7 +8129,7 @@ dialog .file-source .data-location-place {
     background: var(--accent-channel-tint);
 }
 
-.plx-dsb-tick {
+.plx-dsb-tick[type="checkbox"] {
     accent-color: var(--accent-channel);
     margin: 0;
 }

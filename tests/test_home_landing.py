@@ -327,15 +327,19 @@ def test_a_pick_with_anything_to_decide_opens_the_dialog_rather_than_guessing():
     sample with nothing to decide still opens in the same press.
     """
     landing = source("src", "js", "views", "quickViewLanding.js")
-    body = landing[landing.index("async function uncertainty(path)"):]
+    body = landing[landing.index("function uncertain(proposal)"):]
     body = body[:body.index("\n    }\n")]
     assert "samples.length > 1" in body
     assert "(sample.questions || []).length > 0" in body
     assert "(proposal.warnings || []).length > 0" in body
     assert "(proposal.unrecognised || []).length > 0" in body
     # Nothing readable is not a guess: the POST says why, on the card.
-    assert "if (!samples.length) return null;" in body
+    assert "if (!samples.length) return false;" in body
     assert "window.PlexoraImportSample.open({paths: [path], proposal});" in landing
+    # A folder that is a whole cohort goes to New Dataset, ahead of the
+    # import dialog (tests/test_dataset_builder_js.py pins the dialog).
+    submit = landing[landing.index("async function submitQuickView(path)"):]
+    assert submit.index("cohortFolder(path, proposal)") < submit.index("uncertain(proposal)")
 
     dialog = source("src", "js", "views", "importSample.js")
     assert "if (options.proposal) showRead(options.paths, options.proposal);" in dialog

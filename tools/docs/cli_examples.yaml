@@ -171,8 +171,8 @@ commands:
         command: plexora dataset create "Cluster cohort" --node hpc --images /scratch/me/slide1.ome.tif /scratch/me/slide2.ome.tif
       - title: Scan a folder and show what would be created
         command: plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run
-      - title: Save the scan as a spec file to edit, then create from it
-        command: plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run --json > cohort.json
+      - title: Print the scan as a spec file that --from reads, to save and edit
+        command: plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run --json
     python:
       code: |
         import plexora

@@ -102,10 +102,10 @@ plexora dataset create "Cluster cohort" --node hpc --images /scratch/me/slide1.o
 plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run
 ```
 
-**Save the scan as a spec file to edit, then create from it**
+**Print the scan as a spec file that --from reads, to save and edit**
 
 ```bash
-plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run --json > cohort.json
+plexora dataset create "Melanoma cohort" --scan /data/cohort --dry-run --json
 ```
 
 ## Python equivalent
