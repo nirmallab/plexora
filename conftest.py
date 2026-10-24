@@ -46,6 +46,10 @@ def plexora_data_root(tmp_path, monkeypatch):
     # the `telemetry_enabled` fixture.
     monkeypatch.setenv("PLEXORA_TELEMETRY", "off")
     monkeypatch.delenv("PLEXORA_TELEMETRY_ENDPOINT", raising=False)
+    # The shipped default is the live Worker; a test that drops the variable
+    # to mean "no endpoint" must get none, not production.
+    from plexora.telemetry import config as telemetry_config
+    monkeypatch.setattr(telemetry_config, "DEFAULT_ENDPOINT", "")
     # The settings file is real and per-user, so a developer who has recorded
     # `shared_dirs` on their own machine would otherwise have those roots
     # merged into every test's project listing. A dot-prefixed file rather than

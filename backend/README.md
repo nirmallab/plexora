@@ -73,7 +73,7 @@ shares and slice knobs, and nothing else changes.
 Every response to the client that is a 2xx, 429 or 503 carries `config`
 with exactly `level_max, upload_interval_s, sample, disabled_until`.
 
-## Runbook (the owner runs this; nothing here has been deployed)
+## Runbook (the owner runs this; deployed at https://analytics.plexoraapp.com)
 
 ```bash
 cd backend && npm i

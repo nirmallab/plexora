@@ -997,6 +997,9 @@ def smoke_boot(ctx, python: Path | None = None, timeout=180):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("PYTHON", "CONDA", "VIRTUAL_ENV", "PLEXORA_"))}
         env["PLEXORA_DATA_PATH"] = data
+        # A build boot is not an install: without this every release would
+        # register a fresh one with the telemetry service and upload it.
+        env["DO_NOT_TRACK"] = "1"
         started = time.time()
         process = subprocess.Popen(
             [str(python), "-I", "-B", "-u", "-X", "utf8", "-m", "plexora",
@@ -1427,6 +1430,8 @@ def cmd_checksums(ctx, args):
 
 def _smoke(executable: Path, env=None, cwd=None) -> None:
     say(f"$ {executable} --smoke-test")
+    # The shell passes DO_NOT_TRACK through to Python: see smoke_boot.
+    env = dict(os.environ if env is None else env, DO_NOT_TRACK="1")
     started = time.time()
     done = subprocess.run([str(executable), "--smoke-test"], capture_output=True,
                           text=True, timeout=300, env=env, cwd=cwd)

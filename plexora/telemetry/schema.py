@@ -45,7 +45,7 @@ SCHEMA_VERSION = 1
 #: else's code, and its name is theirs to publish, not ours: it is reported as
 #: `ext:<8 hex>` of its name.
 FIRST_PARTY = ("core", "cell_explorer", "figure_builder", "gating", "qc", "roi",
-               "transcripts", "visium_hd", "rotate", "depth")
+               "segmentation", "transcripts", "video_studio", "visium_hd", "rotate", "depth")
 
 # -- bands ------------------------------------------------------------------
 
@@ -602,6 +602,12 @@ RESERVED_LICENSE_FIELDS = ("license_account_id", "license_id_hash", "seat_id",
 MAX_EVENTS_PER_BATCH = 200
 MAX_ROWS_PER_EVENT = 500
 MAX_BATCH_GZIP_BYTES = 64 * 1024
+#: The Worker also refuses (413) a batch whose cleaned line passes
+#: MAX_CLEAN_BYTES, 128 KB (backend/src/env.ts). Counter rows gzip well, so a
+#: batch under the gzip cap can be twice that uncompressed; the line adds a
+#: few hundred bytes of its own, hence the margin. A Worker knob, not a
+#: vector: the client only has to stay under it.
+MAX_BATCH_RAW_BYTES = 120 * 1024
 WINDOW_PATTERN = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}"
 _WINDOW = re.compile(WINDOW_PATTERN)
 

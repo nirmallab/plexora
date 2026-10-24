@@ -39,11 +39,12 @@ ENV_DEBUG = "PLEXORA_TELEMETRY_DEBUG"
 
 SETTINGS_KEY = "telemetry"
 
-#: Where uploads go when `PLEXORA_TELEMETRY_ENDPOINT` does not say. Empty
-#: until the Worker is deployed (backend/README.md): with no endpoint the
-#: queue still fills -- bounded, and visible in `plexora telemetry preview`
-#: -- but no uploader thread starts and nothing leaves the machine.
-DEFAULT_ENDPOINT = ""
+#: Where uploads go when `PLEXORA_TELEMETRY_ENDPOINT` does not say: the
+#: deployed Worker (backend/wrangler.toml's custom domain). With no endpoint
+#: at all the queue still fills -- bounded, and visible in `plexora telemetry
+#: preview` -- but no uploader thread starts and nothing leaves the machine.
+#: The suite empties this (conftest.py), so no test can reach it.
+DEFAULT_ENDPOINT = "https://analytics.plexoraapp.com"
 
 _OFF_WORDS = {"0", "false", "no", "off", "none", "disable", "disabled"}
 _ON_WORDS = {"1", "true", "yes", "on", "enable", "enabled"}

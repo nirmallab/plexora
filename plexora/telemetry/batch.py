@@ -126,7 +126,8 @@ def body(batch_id, client, events) -> dict:
             "events": events}
 
 
-def builder(client, mode, names, *, max_gzip=schema.MAX_BATCH_GZIP_BYTES, on_dropped=None):
+def builder(client, mode, names, *, max_gzip=schema.MAX_BATCH_GZIP_BYTES,
+            max_raw=schema.MAX_BATCH_RAW_BYTES, on_dropped=None):
     """A `build` callable for `Queue.take_batch`."""
 
     def build(batch_id, counter_rows, records):
@@ -140,9 +141,11 @@ def builder(client, mode, names, *, max_gzip=schema.MAX_BATCH_GZIP_BYTES, on_dro
                     on_dropped(dropped)
                 return None, used_c, used_r, 0, 0
             payload, raw = gzip_json(body(batch_id, client, events))
-            # Both caps: the Worker refuses more than 200 events outright, and
-            # one group of more than 500 rows is chunked into several.
-            fits = len(payload) <= max_gzip and len(events) <= schema.MAX_EVENTS_PER_BATCH
+            # Every cap: the Worker refuses more than 200 events outright, or
+            # a batch too big gzipped or once cleaned; one group of more than
+            # 500 rows is chunked into several.
+            fits = (len(payload) <= max_gzip and raw <= max_raw
+                    and len(events) <= schema.MAX_EVENTS_PER_BATCH)
             if fits or (limit <= 8 and max_events <= 8):
                 if not fits:
                     # Cannot be made small enough: unsendable, so dropped

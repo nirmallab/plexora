@@ -190,3 +190,17 @@ def test_batch_respects_gzip_cap(q):
     taken = q.take_batch(build)
     assert taken is not None and len(taken[1]) <= 8 * 1024
     assert q.snapshot(limit=10000)[0]  # the rest stays for the next batch
+
+
+def test_batch_respects_raw_cap_when_it_gzips_well(q):
+    # The Worker measures the cleaned line uncompressed: a run of counter
+    # rows under the gzip cap was refused (413) and then dropped.
+    rows = [("error.fingerprint", "n", dims(where="server", fp=f"{i:016x}",
+                                            exc_type="KeyError"), "count", 1, None, 0, 0)
+            for i in range(2000)]
+    q.add_counters(WINDOW_OLD, rows)
+    client = {"install_id": "0" * 32}
+    build = batch.builder(client, "diagnostics", frozenset(), max_raw=16 * 1024)
+    _id, payload = q.take_batch(build)
+    assert len(__import__("gzip").decompress(payload)) <= 16 * 1024
+    assert q.snapshot(limit=10000)[0]
