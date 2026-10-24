@@ -2510,6 +2510,28 @@ class Project:
         return None
 
     @staticmethod
+    def at_directory(path) -> str | None:
+        """The name of the registered project whose directory IS `path`, or None.
+
+        Dropping a project folder on the window means "open it", not "import
+        its contents as a new sample" -- which would find the project's own
+        derived pyramids and propose them as images.
+        """
+        try:
+            candidate = Path(path).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError):
+            return None
+        if candidate.name not in Project.load_all():
+            return None
+        for root in paths.roots():
+            try:
+                if paths.project_dir(candidate.name, root).resolve() == candidate:
+                    return candidate.name
+            except (OSError, RuntimeError):
+                continue
+        return None
+
+    @staticmethod
     def config_path_for(name: str) -> Path:
         """The config.json holding `name`'s entry.
 

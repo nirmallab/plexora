@@ -351,6 +351,13 @@ window.__plexoraReady
     .then(() => restoreCarriedState())
     .catch((error) => console.error("main: carrying the previous sample over failed", error));
 
+// Files dropped on another page that named THIS sample -- "open the project
+// this image belongs to, then attach its mask" (services/dropRouter.js). Run
+// once the viewer is up, and only here: the handoff names the sample it is for.
+window.__plexoraReady
+    .then(() => window.PlexoraDropRouter?.takeHandoff?.(datasource))
+    .catch((error) => console.error("main: the dropped files could not be added", error));
+
 //INITS
 
 /**

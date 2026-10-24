@@ -2191,15 +2191,38 @@
                 window.PlexoraDesktop.openUrl(event.currentTarget.href).catch(() => {});
             });
         });
-        el("settings_license_file")?.addEventListener("change", async (event) => {
-            const file = event.target.files && event.target.files[0];
+        const readLicenceFile = async (file) => {
             if (!file) return;
             // The certificate is one line of the file; the rest is comments.
             const found = CERTIFICATE_LINE.exec(await file.text());
             el("settings_license_text").value = found ? found[0] : "";
             text(el("settings_license_file_name"), file.name);
             this.say(found ? "" : "That file does not contain a licence certificate.");
+        };
+        el("settings_license_file")?.addEventListener("change", (event) => {
+            readLicenceFile(event.target.files && event.target.files[0]);
         });
+        // In the desktop app a file dropped from Explorer or Finder arrives as
+        // a path, which the file input under it never sees: the box takes it
+        // through core's drop registry and reads it here, the same as a pick.
+        const licenceInput = el("settings_license_file");
+        const licenceBox = typeof licenceInput?.closest === "function"
+            ? licenceInput.closest(".license-drop") : null;
+        if (licenceBox && typeof attachDropTarget === "function") {
+            attachDropTarget(licenceBox, {
+                filter: "any", mode: "file", count: "one",
+                accepts: (path, name) => (/\.(bioc|txt)$/i.test(name)
+                    ? true : "Drop the .bioc licence file here."),
+                hint: () => "Read licence file",
+                onDrop: async (path) => {
+                    try {
+                        readLicenceFile(await window.PlexoraDesktop.fileFromPath(path));
+                    } catch (error) {
+                        this.say(error.message || "That file could not be read.");
+                    }
+                },
+            });
+        }
         el("settings_license_refresh")?.addEventListener("click", () => this.act("settings/license/refresh"));
         el("settings_license_deactivate")?.addEventListener("click", async () => {
             const go = await window.PlexoraConfirm.ask({

@@ -16,6 +16,12 @@
  *     field with a Local/Remote handle is moved back; one with its own switch
  *     set to Remote says why it will not take it.
  *   - **A modal shuts out the page under it**, for drops as for clicks.
+ *   - **A drop walks outward past a zone that is not its target** -- several
+ *     files over a one-path row go to the dialog around it -- and stops at a
+ *     zone that refuses, or that says "not mine" (`accepts` -> false) for
+ *     the zone around it to take.
+ *   - **The label beside the pointer** says what the drop will do, from the
+ *     zone's `hint` and the plan (`provideDropPlan`), asked once per drag.
  *
  * Run directly:  node tests/js/path_drop_probe.mjs
  */
@@ -60,6 +66,19 @@ class El {
         this.readOnly = false;
         this.isModal = false;
         this.open = false;
+        this.style = {};
+        this.dataset = {};
+        this.textContent = "";
+        this.offsetWidth = 120;
+        this.offsetHeight = 22;
+        this.id = "";
+        this.children = [];
+    }
+    appendChild(child) {
+        child.parentElement = this;
+        this.children.push(child);
+        if (child.id && this.registry) this.registry[child.id] = child;
+        return child;
     }
     get classList() {
         const set = this.cls;
@@ -102,6 +121,8 @@ class El {
 function makeWorld({ desktop = true } = {}) {
     const html = new El("html");
     const body = new El("body", { parent: html });
+    const byId = {};
+    body.registry = byId;
     const listeners = {};
     const dialogs = [];
     const toasts = [];
@@ -115,6 +136,8 @@ function makeWorld({ desktop = true } = {}) {
             return !event.defaultPrevented;
         },
         elementFromPoint: () => pointed,
+        getElementById: (id) => byId[id] || null,
+        createElement: (tag) => new El(tag),
         querySelectorAll: (selector) => (selector === "dialog[open]"
             ? dialogs.filter((dialog) => dialog.open) : []),
     };
@@ -125,6 +148,8 @@ function makeWorld({ desktop = true } = {}) {
         PlexoraDesktop: desktop ? { platform: "windows" } : null,
         PlexoraToast: { show: (options) => toasts.push(options) },
         PlexoraDataLocation: { handleOf: (input) => handles.get(input) || null },
+        innerWidth: 1000,
+        innerHeight: 800,
     };
     window.window = window;
     const context = createContext({
@@ -154,10 +179,11 @@ function makeWorld({ desktop = true } = {}) {
             return { row, input, button };
         },
         point(element) { pointed = element; },
-        drag(phase, paths, at) {
+        drag(phase, paths, at, x = 1, y = 1) {
             if (at) pointed = at;
-            return send("plexora:native-drag", { phase, paths, x: 1, y: 1 });
+            return send("plexora:native-drag", { phase, paths, x, y });
         },
+        hint: () => byId.plx_drop_hint || null,
         drop(paths, at) {
             if (at) pointed = at;
             return send("plexora:native-drop", { paths, x: 1, y: 1 });
@@ -310,6 +336,133 @@ const TABLE = "C:\\data\\cells.csv";
     const many = world.drop([SLIDE, TABLE], card);
     check("a zone that takes several is handed every path",
           many.defaultPrevented && Array.isArray(got) && got.length === 2);
+}
+
+// -- walking outward -----------------------------------------------------------
+
+{
+    const world = makeWorld();
+    const dialog = world.el("dialog");
+    let got = null;
+    world.context.attachDropTarget(dialog, {
+        filter: "any", mode: "any", count: "many",
+        onDrop: (paths) => { got = paths; },
+    });
+    const { row, input } = world.field({ mode: "any", filter: "any" }, { parent: dialog });
+    world.drag("enter", [SLIDE, TABLE], input);
+    const lit = dialog.cls.has("is-drop-over") && !row.cls.has("is-drop-over");
+    const both = world.drop([SLIDE, TABLE], input);
+    check("several files over a one-path row light and go to the zone around it",
+          lit && both.defaultPrevented && Array.isArray(got) && got.length === 2
+          && input.value === "");
+
+    got = null;
+    world.drop([SLIDE], input);
+    check("one file over the row is still the row's", input.value === SLIDE && got === null);
+}
+
+{
+    const world = makeWorld();
+    const viewer = world.el("div");
+    const panel = world.el("section", { parent: viewer });
+    let viewerGot = null;
+    let panelGot = null;
+    world.context.attachDropTarget(viewer, {
+        filter: "any", mode: "any", count: "many",
+        onDrop: (paths) => { viewerGot = paths; },
+    });
+    world.context.attachDropTarget(panel, {
+        filter: "any", mode: "file", count: "one",
+        accepts: (path, name) => /\.geojson$/i.test(name),
+        onDrop: (path) => { panelGot = path; },
+    });
+    world.drop([SLIDE], panel);
+    check("a zone that says a file is not its kind passes it to the zone around it",
+          panelGot === null && Array.isArray(viewerGot) && viewerGot[0] === SLIDE);
+    world.drop(["C:\\data\\regions.geojson"], panel);
+    check("and keeps the files that are", /regions/.test(panelGot || ""));
+}
+
+{
+    const world = makeWorld();
+    const dialog = world.el("dialog");
+    world.context.attachDropTarget(dialog, {
+        filter: "any", mode: "file", count: "one",
+        several: "Drop one file.",
+        onDrop: () => {},
+    });
+    const event = world.drop([SLIDE, TABLE], dialog);
+    check("a one-file zone with `several` refuses a drag of several with its reason",
+          event.defaultPrevented && /one file/.test(world.toasts.at(-1)?.note || ""));
+}
+
+{
+    const world = makeWorld();
+    const { row } = world.field({ mode: "any", filter: "any", drop: false });
+    check("drop: false leaves the row unregistered", !row.hasAttribute("data-plx-drop"));
+}
+
+// -- the label and the plan ------------------------------------------------------
+
+{
+    const world = makeWorld();
+    const viewer = world.el("div");
+    let asked = 0;
+    let resolve = null;
+    world.context.provideDropPlan(() => {
+        asked += 1;
+        return new Promise((done) => { resolve = done; });
+    });
+    let dropped = null;
+    world.context.attachDropTarget(viewer, {
+        filter: "any", mode: "any", count: "many",
+        hint: (paths, { plan }) => (plan ? { label: plan.summary.hint, tone: "ask" }
+                                         : "Add to this sample"),
+        onDrop: (paths, { plan }) => { dropped = plan; },
+    });
+    world.drag("enter", [SLIDE], viewer, 100, 200);
+    world.drag("over", [], viewer, 110, 210);
+    world.drag("over", [], viewer, 120, 220);
+    const hint = world.hint();
+    check("the zone's label is drawn beside the pointer",
+          hint && hint.cls.has("is-shown") && hint.textContent === "Add to this sample"
+          && hint.style.left === "138px" && hint.style.top === "242px");
+    check("the plan is asked for once per drag", asked === 1);
+    resolve({ summary: { hint: "Attach segmentation mask to slide" } });
+    await new Promise((done) => setTimeout(done, 0));
+    check("the label is redrawn when the plan lands",
+          hint.textContent === "Attach segmentation mask to slide" && hint.dataset.tone === "ask");
+    world.drop([SLIDE], viewer);
+    check("the plan reaches the drop", dropped && dropped.summary.hint.startsWith("Attach"));
+    check("and the label goes with the drop", !hint.cls.has("is-shown"));
+    world.drag("enter", [SLIDE], viewer);
+    check("the next drag asks again", asked === 2);
+    world.drag("leave", [], null);
+    check("leaving the window takes the label away", !hint.cls.has("is-shown"));
+}
+
+{
+    const world = makeWorld();
+    const { input } = world.field({ mode: "any", filter: "image" });
+    world.drag("enter", [TABLE], input, 50, 50);
+    const hint = world.hint();
+    check("a refused box's label says why, in the refused tone",
+          hint && /takes an image/.test(hint.textContent) && hint.dataset.tone === "refused");
+}
+
+{
+    const world = makeWorld();
+    const dialog = world.el("dialog");
+    dialog.open = true;
+    dialog.isModal = true;
+    world.dialogs.push(dialog);
+    world.context.attachDropTarget(dialog, {
+        filter: "any", mode: "any", count: "many",
+        hint: () => "Load it", onDrop: () => {},
+    });
+    world.drag("enter", [SLIDE], dialog);
+    check("a zone inside a modal lights itself and draws no label",
+          dialog.cls.has("is-drop-over") && !(world.hint() && world.hint().cls.has("is-shown")));
 }
 
 if (failures) {

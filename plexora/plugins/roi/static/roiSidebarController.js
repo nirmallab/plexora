@@ -394,6 +394,28 @@ class RoiSidebarController {
             picker.value = "";  // so re-picking the same file fires again
             if (file) await this.importGeoJSON(file);
         });
+        // A GeoJSON dropped on this panel from Explorer or Finder (desktop
+        // app) is an Import. Anything else dropped here is not this panel's
+        // and goes on to the viewer around it, which knows masks and tables.
+        const panel = this.el("roi_panel_section");
+        if (panel && typeof attachDropTarget === "function") {
+            this._detachDrop?.();
+            this._detachDrop = attachDropTarget(panel, {
+                filter: "any", mode: "file", count: "one",
+                accepts: (path, name) => /\.(geo)?json$/i.test(name),
+                hint: () => "Import regions",
+                onDrop: async (path) => {
+                    let file;
+                    try {
+                        file = await window.PlexoraDesktop.fileFromPath(path);
+                    } catch (error) {
+                        this.notify(error.message || "That file could not be read.");
+                        return;
+                    }
+                    await this.importGeoJSON(file);
+                },
+            });
+        }
 
         this.el("roi_save_to_source")?.addEventListener("click", () => this.saveToSource());
         this.el("roi_map_to_cells")?.addEventListener("click", () => this.mapToCells());

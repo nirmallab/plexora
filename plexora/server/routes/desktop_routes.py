@@ -22,7 +22,7 @@ from pathlib import Path
 
 from flask import jsonify, request
 
-from plexora import app, get_config_names, paths
+from plexora import app, paths
 
 
 def _base_url():
@@ -30,26 +30,12 @@ def _base_url():
 
 
 def _project_at(path):
-    """The name of the registered project whose directory IS `path`, or None.
+    """The registered project whose directory IS `path` (`Project.at_directory`).
 
-    Dropping a project folder on the window means "open it", not "import its
-    contents as a new sample" -- which would find the project's own derived
-    pyramids and propose them as images.
-    """
-    try:
-        candidate = Path(path).expanduser().resolve()
-    except (OSError, RuntimeError):
-        return None
-    names = set(get_config_names())
-    if candidate.name not in names:
-        return None
-    for root in paths.roots():
-        try:
-            if paths.project_dir(candidate.name, root).resolve() == candidate:
-                return candidate.name
-        except (OSError, RuntimeError):
-            continue
-    return None
+    Kept under this name because tests replace it here."""
+    from plexora.server.models.project import Project
+
+    return Project.at_directory(path)
 
 
 @app.route('/desktop/open', methods=['POST'])

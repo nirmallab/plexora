@@ -945,3 +945,10 @@
     margin-top: var(--space-2);
     padding: var(--space-2);
 }
+
+/* A GeoJSON from Explorer or Finder over the panel (desktop app; core's drop
+   registry, browsePicker.js): Import. An inset outline, so nothing moves. */
+#roi_panel_section.is-drop-over {
+    outline: 2px dashed var(--accent-channel);
+    outline-offset: -4px;
+}

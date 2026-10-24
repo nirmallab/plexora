@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261023_strip_search">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261024_drop_router">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -551,7 +551,7 @@
    are the channel list and a registered layer's channel panel, and both are the
    viewer's. Only has to exist by the time the user clicks one of those upload
    buttons, so deferred is ample. #}
-<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20261020_sftp_files" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20261024_drop_router" defer></script>
 {# What the last sample arranged, on its way into this one. BEFORE main.js
    and deferred like it, so the snapshot is on hand by the time init() builds
    the channel slots -- the sidebar reads it while deciding which channels to
@@ -643,7 +643,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261022_views3d" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261024_drop_router" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.
@@ -826,6 +826,6 @@
         {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261024_dsb" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261024_dsb_drop" defer></script>
 {% endif %}
 {% endblock %}

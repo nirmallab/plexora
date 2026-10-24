@@ -1544,6 +1544,33 @@ Entry points:
   `POST /telemetry/ingest` (a tab's aggregate; see the **Telemetry** section
   below). Answers even when telemetry is off — off is a mode, not an error —
   and never reads a datasource.
+- `routes/drop_routes.py` — `POST /drop/inspect` `{paths, datasource?, target?,
+  node?, forget?}` -> `drop_plan.inspect_drop`'s plan; a 404 for a
+  `datasource` that is not registered (`UnknownDatasource`). The page asks
+  once while files hover, to label where they would land, and once on the
+  drop with `forget: true`, so a file attached a moment ago is seen as
+  attached. Writes nothing. Registered by side-effect import in
+  `create_app`, so `route_count` is +1 in every boundary golden.
+- `models/drop_plan.py` — **what dropped files are FOR, given what is open.**
+  `import_proposal.inspect_paths` says what a file IS; this composes that
+  with a snapshot of the open project and turns each item into one action,
+  `auto` / `needs_confirm` / `blocked`, whose `route` is literally a request
+  to a route that already exists (`/import/layers`, `/import/sample`,
+  `/upload_channels`) or a navigation by sample name, so a confirmed drop
+  and one that ran on its own take one path and the page's existing waits
+  follow either. `decide(item, open)` is the confidence policy and is pure:
+  a mask whose size differs from the image is never attached without asking,
+  whatever it is called; an existing mask is never replaced without asking;
+  a name alone never moves the user to another project. `register_sniffer(fn)`
+  (`fn(path, context) -> dict | None`, asked of every local file before the
+  engine) is how a plugin's own sheet avoids being read as a cell table.
+  Plans are cached briefly, keyed on the paths, their mtimes and the
+  config.json mtimes, so a re-registration invalidates them; `forget()`
+  clears the cache. A dropped project folder resolves through
+  `Project.at_directory(path)` (the registered project whose directory IS
+  that path), because opening it is the meaning, not importing its derived
+  pyramids as images; `desktop_routes._project_at` is now a shim over it,
+  kept under that name because tests monkeypatch it there.
 - `routes/segment_routes.py` — `/segment/v1/status`, `/install`, `/install/cancel`
   and `/segment` (view + prompts -> polygon, over `plexora/vision/`). A
   segment call before the model is installed is a 409 `not_ready` that carries
@@ -2702,6 +2729,13 @@ A third-party pip package and a bundled one get exactly the same thing.
   gains no branch when the next instrument ships. `manifest.layers(project)`
   is the same list flattened for a UI, and `manifest.summary()["layers"]` is
   the count and modality set a library card is drawn from.
+- `register_drop_sniffer(fn)` — a plugin's own file kind, recognised when it
+  is dropped on the window (`drop_plan.register_sniffer`). The sniffer's
+  action `kind` names an executor the plugin's JS registers with
+  `PlexoraDropRouter.registerExecutor`, because core never names a plugin
+  route. Gating registers one for its gates CSV
+  (`plugins/gating/server/routes.py`), which would otherwise be read as a
+  table of cells.
 - `plexora/api/__init__.py` also re-exports `manifest` (the module in
   `server/models/manifest.py`), so a plugin that wants to ask "does this
   project have a table" uses the same answer core does rather than
@@ -5016,11 +5050,16 @@ deliberately left out and what should be built next.
   (`plugins.updater.pubkey` empty in `tauri.conf.json`) answers `kind:
   "unsupported"` rather than pretending to check. Native file drops arrive as a
   cancelable `plexora:native-drop` `CustomEvent` carrying paths, not bytes; a
-  handler that does not cancel it falls through to
-  `PlexoraImportSample.dropPaths`. The handlers that cancel it are the figure
-  canvas and every path field, through `browsePicker.js`'s drop-target
-  registry (below), so a drop over a box fills that box and only a drop over
-  nothing opens the Import dialog. `plexora:native-drag`'s `over` phase
+  drop nobody cancels goes to `PlexoraDropRouter.unclaimed` (below), and only
+  on a page without the router to `PlexoraImportSample.dropPaths`. The
+  handlers that cancel it are the registered zones of `browsePicker.js`'s
+  drop-target registry (below) -- every path field, the figure canvas, the
+  gating list, the ROI panel, the settings licence box, the channel-names and
+  Import dialogs -- so a drop over a box fills that box. The four
+  `tauri://drag-*` events are heard on the current webview's own `listen`
+  (`dragListen`), not the global one, because the global listener hears
+  every window's events and with two windows open one drop was handled by
+  both. `plexora:native-drag`'s `over` phase
   carries the paths its `enter` phase brought (held in `dragPaths`, cleared on
   `leave` and on the drop), because the shell names them on enter and never
   again, and a field deciding whether to light under the pointer needs to know
@@ -5032,8 +5071,8 @@ deliberately left out and what should be built next.
   action any one of them drops silently does nothing.
 
   **The drop-target registry (`services/browsePicker.js`), desktop app only.**
-  `attachDropTarget(zoneEl, {filter, mode, accept, count, enabled, accepts,
-  onOver, onDrop})` makes an element a place a dropped file goes, and is a
+  `attachDropTarget(zoneEl, {filter, mode, accept, count, several, enabled,
+  accepts, hint, onOver, onDrop})` makes an element a place a dropped file goes, and is a
   no-op without `window.PlexoraDesktop`, so a browser tab is unchanged.
   `fillPathInput(inputEl, path)` sets the value and fires `input`, `keyup` and
   a bubbling `change` -- what Browse's `onPicked` now calls too, so a drop and
@@ -5043,8 +5082,14 @@ deliberately left out and what should be built next.
   out has nothing to detach. The innermost zone under `elementFromPoint` wins,
   and with a modal `<dialog>` open only zones inside it count, because a drop
   must not fill a field the dialog is covering. Each zone's verdict is take,
-  refuse or pass: a `count: "one"` zone passes on a multi-path drag (it falls
-  through to `dropPaths`, which adds them all); a suffix the explorer knows
+  refuse or pass, and the resolver walks OUTWARD from the innermost zone past
+  every one that passes, stopping at a refusal (the drop was aimed there) or
+  at the open modal's edge -- three files over a one-path row inside a dialog
+  that takes several are the dialog's, not nobody's. A `count: "one"` zone
+  passes on a multi-path drag unless it sets `several`, the reason it refuses
+  instead (for a zone that is the whole of a modal, where nothing outside can
+  take it); an `accepts` that returns `false` means "not mine" and passes too
+  (a mask over the ROI panel is the viewer's); a suffix the explorer knows
   (`explorerTypes.js`'s `EXTENSIONS`, or a store) that the zone's
   `normalizeAccept` rejects is refused with the reason in a `PlexoraToast`
   (tone `warning`) and an `is-drop-refused` flash; a name with an unknown
@@ -5052,7 +5097,7 @@ deliberately left out and what should be built next.
   The lit zone gets `is-drop-over` or `is-drop-refused`, and
   `html.has-drop-target` hides the window overlay's dashed frame (main.css
   `html.is-native-dragging.has-drop-target body::after`), since that frame
-  says "this opens the Import dialog". The class is **not** `is-drop-target`,
+  says "this drop lands somewhere in the window" (the drop router decides what). The class is **not** `is-drop-target`,
   which is Figure Builder's Sortable ghost class. `attachBrowseButton`
   registers the field's `.import-field-row` (or its `parentElement`) by
   itself, so every field that uses it takes drops with no call-site edit; a
@@ -5062,14 +5107,41 @@ deliberately left out and what should be built next.
   toggle (`fileSourceRow.js`, channel names) has no handle to move, so while
   it points at another machine it refuses with a reason instead.
   The Import dialog's inline mask/data/layer row (`renderInlinePick`)
-  registers its wrap as a zone that calls `submitSlot(path, "drop", adding)`;
-  the home page registers the whole landing (see the home page below). Styles:
+  registers its wrap as a zone that calls `submitSlot(path, "drop", adding)`,
+  and the whole dialog is a `count: "many"` zone while it is in `pick` or
+  `proposal`, so several files over a one-path row walk out to it and join
+  the import together; `PlexoraImportSample.addToSample(sample, paths)` is
+  the same scoped add with no dialog, answering `{ok: false, needs:
+  proposal}` for anything the server would have to guess so the caller opens
+  the dialog on it rather than registering a default nobody saw. The home page registers the whole landing (see the home page below). Styles:
   main.css `.import-field-row.is-drop-over > .form-control` /
   `.is-drop-refused` plus the inline-pick aliases, quickView.css
   `.quick-view-card.is-drop-over`, settings.css
-  `.settings-input-row.is-drop-over > .settings-input`. Covered by
+  `.settings-input-row.is-drop-over > .settings-input`. A zone's `hint(paths,
+  {state, reason, plan})` is the label drawn beside the pointer
+  (`#plx_drop_hint`, tone `ok`/`ask`/`refused`), never for a zone inside a
+  modal, which lights itself; `plan` is the server's answer from
+  `provideDropPlan(fn)` (`dropRouter.js` supplies it), asked once per drag
+  and handed to `onDrop` as well. Covered by
   `tests/js/path_drop_probe.mjs`, run and pinned line by line by
   `tests/test_path_drop.py`.
+- `services/dropRouter.js` — `window.PlexoraDropRouter` (`unclaimed`,
+  `runPlan`, `planFor`, `claims`, `takeHandoff`, `registerExecutor`): what a
+  file dropped on the window does where no field claimed it, in the desktop
+  app. Loaded from `base.html` right after `browsePicker.js`, whose registry
+  it extends. It registers the viewer (`#bodyDiv`) and the Open Project page
+  as `count: "many"` zones and asks `POST /drop/inspect` what the paths are
+  relative to the open sample; an `auto` action runs, a `needs_confirm` one
+  asks in a compact confirm, a `blocked` one says why. `unclaimed` with a
+  modal open refuses with a notice. Every action is a request to a route
+  that already existed, so a confirmed drop and an automatic one are the
+  same request. An action that needs another sample open first ("open the
+  project this image belongs to, then attach its mask") is carried across
+  the navigation in sessionStorage under `plexora:drop-handoff`, and
+  `main.js` calls `takeHandoff(datasource)` once the viewer is up. Plugin
+  kinds run through `registerExecutor(kind, fn)` (gating's `upload_gates`).
+  Covered by `tests/js/drop_router_probe.mjs` (run by
+  `tests/test_drop_router.py`); the server policy by `tests/test_drop_plan.py`.
 - `services/pointerDrag.js` — pointer-driven intra-page drags (`cardList.js`'s
   reordering, anything SortableJS would otherwise own), used only inside the
   desktop app's window: its native file-drop handling swallows the HTML5 drag
@@ -5901,7 +5973,11 @@ deliberately left out and what should be built next.
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
   which comes next. `main.js`'s `adoptChannelNames` is what takes the result on
-  without a reload. See "Naming an image's channels" below. Still keeps its
+  without a reload. The whole dialog is a drop zone while open, because a
+  markers.csv dropped beside its field used to fall through to the Import
+  dialog and become a sample; `apply()` is the same write with no dialog,
+  what the drop router calls for a channel list dropped on the image. See
+  "Naming an image's channels" below. Still keeps its
   own private copy of the Local/Remote/Upload row rather than calling
   `views/fileSourceRow.js` below — a known duplication, not yet unwound.
 - `views/fileSourceRow.js` (`window.PlexoraFileSourceRow`) —
@@ -6975,8 +7051,11 @@ the card, because the space around the card is the biggest target on the
 screen and the page has exactly one thing to do with a file: one path goes
 through `take()`, the same as a Browse pick, and several go to
 `PlexoraImportSample.open({paths})`, since several files are a decision about
-several samples. It is disabled while `busy()`, so that drop falls through to
-the bridge's Import dialog rather than starting a second load over the first;
+several samples -- unless the drop plan says more than "a new sample" (a
+project to open, a mask belonging to a sample already here), which
+`PlexoraDropRouter.claims(plan)` detects and `runPlan` carries out. It is
+disabled while `busy()`, so that drop falls through to the drop router
+rather than starting a second load over the first;
 while a drag is over it the `dropping` state paints
 `.quick-view-card.is-drop-over` and the line "Drop to open it.".
 `tests/test_home_landing.py` holds both halves — that the page is
@@ -9881,6 +9960,20 @@ in **5.6 s**.
   golden-pinned.** The key is in the viewer page's `flask_variables`, so it
   is part of the boundary goldens' `pages` record; renaming or dropping it
   fails all of them, not just `tests/test_hd_default.py`.
+- **A drop nobody claims goes to `PlexoraDropRouter.unclaimed`; with a modal
+  open it is refused, never sent to the Import dialog.** Falling through to
+  Import over an open dialog is how a markers.csv dropped beside "Add channel
+  names" was imported as a sample. A dialog that wants files registers
+  itself as a zone.
+- **Core never names a plugin route: a plugin's drop kind is a server sniffer
+  plus a client executor.** `api.register_drop_sniffer` recognises the file
+  and names an action kind; the plugin's JS registers that kind with
+  `PlexoraDropRouter.registerExecutor`. Core's plan only ever routes to core
+  routes (`/import/layers`, `/import/sample`, `/upload_channels`).
+- **A drop never replaces or guesses without asking.** `drop_plan.decide`
+  never marks `auto` a mask whose size differs from the image or one that
+  would replace an existing mask, and never moves the user to another
+  project on a name alone; those are `needs_confirm`.
 
 ## Validation
 
@@ -12751,6 +12844,23 @@ asset tag `20261012_no_cell_model`; `boundary_gating.json`'s `route_count`
 236 → 232 (the four cell-model routes out) and `test_plugin_boundary` counts
 13 gating routes (12 API plus static).
 
+**Desktop drop routing (2026-10-24).** `POST /drop/inspect` is +1
+`route_count` in every boundary golden, and the goldens were regenerated
+for the asset tag `20261024_drop_router`. New tests: `tests/test_drop_plan.py`
+(the server policy), `tests/test_drop_router.py` driving
+`tests/js/drop_router_probe.mjs`; `path_drop_probe.mjs`,
+`channel_names_probe.mjs` and `desktop_bridge_probe.mjs` were extended. No
+full-suite count was reported for this change. Failures observed on a clean
+HEAD before it (macOS, 2026-10-24), so not caused by it:
+`test_roi_magic_js::test_probe`,
+`test_ai_routes::test_the_balance_carries_an_estimate_for_the_open_project`,
+two in `test_gating_delta`,
+`test_mini_map::test_the_probe_catches_a_missing_contrast_clamp`, two in
+`test_slider_css`, `test_plugin_css_boundary[gating]`, and
+`test_settings_remotes_page::test_only_one_place_quotes_the_three_numbers`
+(asset tags dated `20261016` contain "16"); plus `spatialbridge`/`bs4`
+`ModuleNotFoundError`s when `../spatialagents/src` is not on `PYTHONPATH`.
+
 ## Sharp Edges
 
 - **The desktop app sets a native menu bar on macOS only.** On Windows and
@@ -13797,6 +13907,14 @@ A table added to the OPEN sample (`register_layers`) reloads it
 place will not read) -- the record alone left the viewer serving no cells
 until a restart -- and the dialog's `finishScoped` hands it to
 `PlexoraLoadProgress.track`, which follows a table read behind the viewer.
+When one `register_layers` call attaches a mask and a table and the table
+is refused, the mask goes back to what was there (`_restore_mask`), so a
+sample is never left with a new mask over its old cells.
+`import_proposal._scoped_sample` skips a mask or table the sample already
+has, so dropping the same file again is "already attached" rather than a
+second attach that rebuilds the pyramid; a flat table is recognised by name,
+size and mtime rather than path, because attaching COPIES it into the
+project.
 
 **Mask detection decides by pixels; names only break ties.** The old rule let
 a 16-bit file with a mask-ish name, or any plane with under 2048 values and a

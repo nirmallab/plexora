@@ -149,6 +149,11 @@ sections:
         symbols:
           - plexora.api.table_operation
           - plexora.api.table_stream
+      - key: drops
+        title: Dropped files
+        description: Recognise a file kind of the plugin's own when it is dropped on the desktop app's window.
+        symbols:
+          - plexora.api.register_drop_sniffer
       - key: resources
         title: Resources
         description: Where a file is, and the errors raised when it cannot be read here.

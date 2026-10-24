@@ -301,3 +301,37 @@ def test_the_switch_is_the_same_control_the_import_fields_use():
         assert f'"{name}"' in dialog, name
     css = source("src", "css", "main.css")
     assert ".data-location-option.is-active" in css
+
+
+# -- a file dropped on the dialog (desktop app) --------------------------------
+
+
+def test_markers_csv_dropped_anywhere_on_the_dialog_loads_it(probe):
+    """The reported bug. The dialog's one path row used to be its only drop
+    target: a markers.csv let go on the title, the hint or the buttons was
+    claimed by nothing, fell through to the Import dialog, and was read as a
+    sample. The whole dialog is the target now, and a drop is a Load."""
+    assert "the whole dialog is the drop target, not its path row" in probe, probe
+    assert "a drop is a Load at once: the file goes to the server as a path" in probe, probe
+    assert "...and the names are applied" in probe, probe
+    assert "closing the dialog takes its zone away" in probe, probe
+
+
+def test_a_drop_the_dialog_cannot_take_now_says_why(probe):
+    assert "...and it takes one file, refusing several with a reason" in probe, probe
+    assert "...and while it is read the dialog is not a drop target" in probe, probe
+    assert ("while a column is being chosen a drop is refused, with what to do instead"
+            in probe), probe
+    assert "after a mismatch a second file can be dropped straight on" in probe, probe
+
+
+def test_a_dropped_file_is_read_where_it_is(probe):
+    assert "a file dropped from this computer moves the switch back to Local" in probe, probe
+    assert "in a browser tab a file dropped on the dialog is sent as bytes" in probe, probe
+
+
+def test_names_can_be_applied_without_the_dialog(probe):
+    """markers.csv dropped on the viewer (services/dropRouter.js): applied at
+    once when the server needs nothing more, the dialog only to ask."""
+    assert "apply() renames with no dialog when the server needs nothing more" in probe, probe
+    assert "...and opens the dialog only to ask which column" in probe, probe

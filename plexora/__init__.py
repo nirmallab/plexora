@@ -236,7 +236,7 @@ def create_app(plugins=None):
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes, desktop_routes, update_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes, desktop_routes, drop_routes, update_routes
     # Optional, anonymous usage telemetry (plexora/telemetry). Its routes answer
     # whatever the mode, and nothing in the app depends on them.
     from plexora.server.routes import telemetry_routes

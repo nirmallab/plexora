@@ -343,8 +343,10 @@
     // Re-dispatched as DOM events so any view can claim a drop over itself
     // (the figure canvas does, and so does every path field, through
     // browsePicker.js's attachDropTarget): `plexora:native-drop` is
-    // cancelable, and one nobody cancels opens the Import dialog with the
-    // paths already in it.
+    // cancelable, and one nobody cancels goes to the drop router
+    // (dropRouter.js), which asks the server what the files are relative to
+    // what is open -- or, on a page without it, opens the Import dialog with
+    // the paths already in it.
 
     function cssPoint(position) {
         const ratio = window.devicePixelRatio || 1;
@@ -381,7 +383,9 @@
             detail: {paths, x: point.x, y: point.y}, cancelable: true,
         });
         if (!document.dispatchEvent(event)) return;
-        if (window.PlexoraImportSample) {
+        if (window.PlexoraDropRouter) {
+            window.PlexoraDropRouter.unclaimed(paths, point);
+        } else if (window.PlexoraImportSample) {
             window.PlexoraImportSample.dropPaths(paths);
         } else {
             openPaths(paths);
@@ -420,14 +424,33 @@
         }).catch(() => {});
     }
 
+    /**
+     * Where this window's own drag events are heard. The global `listen`
+     * hears an event whatever window it was for, so with two windows open one
+     * drop was handled by both; the current webview's `listen` -- what Tauri's
+     * own `onDragDropEvent` uses -- hears only this one's.
+     */
+    function dragListen() {
+        try {
+            const webview = tauri.webview?.getCurrentWebview?.();
+            if (webview && typeof webview.listen === "function") {
+                return (name, handler) => webview.listen(name, handler);
+            }
+        } catch (error) {
+            // An older shell: the global listener, as before.
+        }
+        return listen;
+    }
+
     if (typeof listen === "function") {
         listen("plexora://menu", (event) => runMenu(String(event.payload?.id || "")));
         listen("plexora://opens-pending", () => collectOpens());
         listen("plexora://download-finished", (event) => onDownloadFinished(event.payload));
-        listen("tauri://drag-enter", (event) => onNativeDrag("enter", event.payload));
-        listen("tauri://drag-over", (event) => onNativeDrag("over", event.payload));
-        listen("tauri://drag-leave", () => onNativeDrag("leave", null));
-        listen("tauri://drag-drop", (event) => onNativeDrop(event.payload));
+        const onDrag = dragListen();
+        onDrag("tauri://drag-enter", (event) => onNativeDrag("enter", event.payload));
+        onDrag("tauri://drag-over", (event) => onNativeDrag("over", event.payload));
+        onDrag("tauri://drag-leave", () => onNativeDrag("leave", null));
+        onDrag("tauri://drag-drop", (event) => onNativeDrop(event.payload));
     }
 
     document.addEventListener("DOMContentLoaded", () => {

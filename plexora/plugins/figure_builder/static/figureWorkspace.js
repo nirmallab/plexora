@@ -987,16 +987,19 @@ class FigureWorkspace {
         scroll.addEventListener("drop", (event) => this.dropFiles(event));
         // In the desktop app a file dropped from Explorer or Finder arrives as
         // a PATH from the shell rather than as a DOM drop (desktopBridge.js).
-        // Claimed when it lands on this page, and read into the same
-        // importFiles the browser's drop feeds.
-        if (window.PlexoraDesktop) {
-            document.addEventListener("plexora:native-drop", (event) => {
-                if (!scroll.isConnected) return;
-                const { x, y, paths } = event.detail || {};
-                const under = document.elementFromPoint(x, y);
-                if (!under || !scroll.contains(under)) return;
-                event.preventDefault();
-                this.importNativePaths(paths, { clientX: x, clientY: y });
+        // The page is a drop zone in core's registry (browsePicker.js), so it
+        // lights and labels itself like every other target, a drop over a
+        // dialog on top of it is not taken, and it is registered once per
+        // bind rather than adding a document listener each time.
+        this._detachDrop?.();
+        if (typeof attachDropTarget === "function") {
+            this._detachDrop = attachDropTarget(scroll, {
+                filter: "image", mode: "file", count: "many",
+                hint: (paths) => (paths.length > 1
+                    ? `Add ${paths.length} images to this figure` : "Add to this figure"),
+                onDrop: (paths, { x, y }) => {
+                    this.importNativePaths(paths, { clientX: x, clientY: y });
+                },
             });
         }
         // The floating bar is positioned from where the selection is on SCREEN,

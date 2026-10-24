@@ -60,7 +60,8 @@ function makeElement(id, extra = {}) {
     };
 }
 
-function makeWorld({ desktop = true, platform = "windows" } = {}) {
+function makeWorld({ desktop = true, platform = "windows", router = false,
+                     webview = false } = {}) {
     const listeners = {};
     const classes = new Set();
     const elements = {
@@ -97,6 +98,8 @@ function makeWorld({ desktop = true, platform = "windows" } = {}) {
     const drops = [];
     const navigations = [];
     const pending = [];
+    const routed = [];
+    const webviewListeners = {};
     const window = {
         document,
         devicePixelRatio: 2,
@@ -106,6 +109,9 @@ function makeWorld({ desktop = true, platform = "windows" } = {}) {
         PlexoraImportSample: { dropPaths: (paths) => drops.push(paths), open: () => {} },
         PlexoraRouter: { go: (url) => navigations.push(url) },
     };
+    if (router) {
+        window.PlexoraDropRouter = { unclaimed: (paths, point) => routed.push({ paths, point }) };
+    }
     if (desktop) {
         window.__TAURI__ = {
             core: {
@@ -120,6 +126,16 @@ function makeWorld({ desktop = true, platform = "windows" } = {}) {
                 listen: (name, fn) => { (tauriListeners[name] ||= []).push(fn); return Promise.resolve(() => {}); },
             },
         };
+        if (webview) {
+            window.__TAURI__.webview = {
+                getCurrentWebview: () => ({
+                    listen: (name, fn) => {
+                        (webviewListeners[name] ||= []).push(fn);
+                        return Promise.resolve(() => {});
+                    },
+                }),
+            };
+        }
         window.__PLEXORA_DESKTOP__ = { version: "0.0.23", platform, arch: "x86_64",
                                        webview: "webview2", serverOrigin: "http://127.0.0.1:8420" };
     }
@@ -133,6 +149,10 @@ function makeWorld({ desktop = true, platform = "windows" } = {}) {
     runInContext(SOURCE, context);
     return {
         window, document, classes, elements, invoked, toasts, drops, navigations, pending,
+        routed, tauriListeners, webviewListeners,
+        emitOnWebview(name, payload) {
+            (webviewListeners[name] || []).forEach((fn) => fn({ payload }));
+        },
         emit(name, payload) { (tauriListeners[name] || []).forEach((fn) => fn({ payload })); },
         key(init) {
             const event = { type: "keydown", repeat: false, defaultPrevented: false,
@@ -244,6 +264,30 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     await tick(); await tick();
     check("a project handed over by a second launch is opened",
           world.navigations.includes("/tonsil%202"));
+}
+
+// -- the drop router -------------------------------------------------------------
+
+{
+    const world = makeWorld({ router: true });
+    world.emit("tauri://drag-drop", { paths: ["C:\\data\\markers.csv"], position: { x: 20, y: 40 } });
+    check("an unclaimed drop goes to the drop router, with where it landed",
+          world.routed.length === 1 && world.routed[0].paths[0] === "C:\\data\\markers.csv"
+          && world.routed[0].point.x === 10 && world.drops.length === 0);
+    world.document.addEventListener("plexora:native-drop", (event) => event.preventDefault());
+    world.emit("tauri://drag-drop", { paths: ["C:\\data\\b.csv"], position: { x: 0, y: 0 } });
+    check("and a claimed one does not", world.routed.length === 1);
+}
+
+{
+    const world = makeWorld({ webview: true });
+    check("drag events are heard on this window's webview, not every window's",
+          ["tauri://drag-enter", "tauri://drag-over", "tauri://drag-leave", "tauri://drag-drop"]
+              .every((name) => (world.webviewListeners[name] || []).length === 1
+                               && !world.tauriListeners[name])
+          && (world.tauriListeners["plexora://menu"] || []).length === 1);
+    world.emitOnWebview("tauri://drag-drop", { paths: ["C:\\data\\x.tif"], position: { x: 0, y: 0 } });
+    check("and a drop heard there is handled", world.drops.length === 1);
 }
 
 // -- on macOS ------------------------------------------------------------------

@@ -1458,6 +1458,17 @@
                 background var(--duration-fast) var(--ease-standard);
 }
 
+/* A .bioc file from Explorer or Finder over the box (desktop app). */
+.license-drop.is-drop-over {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+}
+
+.license-drop.is-drop-refused {
+    background: var(--accent-danger-soft);
+    border-color: var(--accent-danger);
+}
+
 .license-drop:hover,
 .license-drop:focus-within {
     background: var(--accent-channel-tint);

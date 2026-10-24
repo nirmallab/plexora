@@ -933,9 +933,20 @@ PlexoraPage.register(function () {
                 dropping = lit;
                 paint();
             },
-            onDrop: (paths) => {
+            hint: (paths, {plan}) => (plan && plan.summary && plan.summary.hint)
+                ? {label: plan.summary.hint, tone: plan.summary.tone || "ok"} : "",
+            onDrop: (paths, {plan}) => {
                 problem = "";
                 if (menuOpen()) closeMenu(false);
+                // What the server read while the files hovered, when it says
+                // more than "a new sample": a project to open, a mask that
+                // belongs to one of the samples already here, a channel list
+                // with nothing to name. The drop router carries those out.
+                const router = window.PlexoraDropRouter;
+                if (router && router.claims(plan)) {
+                    router.runPlan(plan, paths);
+                    return;
+                }
                 if (paths.length > 1) {
                     window.PlexoraImportSample?.open({paths});
                     return;

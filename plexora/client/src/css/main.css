@@ -639,8 +639,9 @@ html:not(.is-desktop) .desktop-only {
 }
 
 /* A file from Explorer or Finder is being dragged over the window. Drawn on
-   the whole window because the drop is accepted anywhere: it opens the Import
-   dialog, or joins the one already open. */
+   the whole window because the drop is accepted anywhere: what is not dropped
+   on a zone goes to the drop router (dropRouter.js), which opens, attaches or
+   imports it. */
 /* The chip that follows the pointer in a desktop-app drag (pointerDrag.js).
    Positioned by the script; never under the pointer, so it cannot be the
    thing the drop lands on. */
@@ -662,6 +663,81 @@ html:not(.is-desktop) .desktop-only {
     z-index: 2147483001;
 }
 
+/* What a file dragged in from Explorer or Finder would do where the pointer
+   is (browsePicker.js, paintHint): one line of glass beside the cursor --
+   "Attach segmentation mask to LSP12345", "Open image". The tooltip's glass,
+   over the window's drag frame (2147483000) and never under the pointer, so
+   it cannot be what the drop lands on. The dot says the tone: the accent for
+   a drop that will just happen, amber for one that asks first, red for one
+   that is refused. */
+.plx-drop-hint {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.80), rgba(12, 16, 22, 0.76) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    color: #f1f5f9;
+    font-size: 12px;
+    font-weight: 600;
+    left: 0;
+    line-height: 1.4;
+    max-width: min(320px, calc(100vw - 16px));
+    opacity: 0;
+    overflow: hidden;
+    padding: 6px 12px 6px 26px;
+    pointer-events: none;
+    position: fixed;
+    text-overflow: ellipsis;
+    top: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+    z-index: 2147483001;
+}
+
+.plx-drop-hint.is-shown {
+    opacity: 1;
+}
+
+.plx-drop-hint::before {
+    background: var(--accent-channel);
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    content: "";
+    height: 7px;
+    left: 11px;
+    position: absolute;
+    top: 50%;
+    translate: 0 -50%;
+    width: 7px;
+}
+
+.plx-drop-hint[data-tone="ask"]::before {
+    background: var(--accent-warning);
+    box-shadow: 0 0 0 3px var(--accent-warning-soft);
+}
+
+.plx-drop-hint[data-tone="refused"]::before {
+    background: var(--accent-danger);
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
+}
+
+/* A dialog that takes a dropped file anywhere on it (channelNamesUpload.js,
+   importSample.js): its edge lights. An outline rather than the border, so
+   the dialog's own border and shadow are left exactly as they are. */
+.channel-names-modal.is-drop-over,
+.plx-import.is-drop-over {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.channel-names-modal.is-drop-refused,
+.plx-import.is-drop-refused {
+    outline: 2px solid var(--accent-danger);
+    outline-offset: -2px;
+}
+
 html.is-pointer-dragging,
 html.is-pointer-dragging * {
     cursor: grabbing !important;
@@ -679,8 +755,9 @@ html.is-native-dragging body::after {
 }
 
 /* Over a box or a card that will take the file (has-drop-target, set by
-   browsePicker.js): that box is lit, and the window's frame -- "this drop opens
-   the Import dialog" -- would be saying something else. The tint stays. */
+   browsePicker.js): that box is lit, and the window's frame -- "this drop
+   lands somewhere in the window" -- would be saying something else. The tint
+   stays. */
 html.is-native-dragging.has-drop-target body::after {
     border-color: transparent;
 }

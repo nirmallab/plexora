@@ -30,6 +30,43 @@ def _files(datasource):
     return api.store(datasource, PLUGIN_NAME).directory()
 
 
+#: The columns that make a CSV a sheet of gates (what Download writes and
+#: Upload reads) rather than a table of cells.
+GATES_COLUMNS = {"channel", "gate_start", "gate_end"}
+
+
+def _gates_sheet(path, context):
+    """A gates CSV dropped on the window: this plugin's, not a cell table."""
+    if not str(path).lower().endswith(".csv"):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as handle:
+            header = handle.readline()
+    except OSError:
+        return None
+    columns = {cell.strip().strip('"').lower() for cell in header.split(",")}
+    if not GATES_COLUMNS <= columns:
+        return None
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if not context.get("open"):
+        action = {"kind": "upload_gates", "status": "blocked",
+                  "reason": "needs_open_sample",
+                  "message": f"{name} holds gates. Open the sample they are "
+                             "for, then drop it on Thresholding."}
+    elif context.get("target") == "gating":
+        action = {"kind": "upload_gates", "status": "auto",
+                  "message": f"Load gates from {name}"}
+    else:
+        action = {"kind": "upload_gates", "status": "needs_confirm",
+                  "reason": "overwrites_gates",
+                  "message": f"Load the gates in {name}? Gates already set "
+                             "for the same markers are replaced."}
+    return {"kind": "gates", "label": name, "detail": "Gates", "action": action}
+
+
+api.register_drop_sniffer(_gates_sheet)
+
+
 @gating_bp.route('/get_gated_cell_ids', methods=['GET'])
 def get_gated_cell_ids():
     datasource = request.args.get('datasource')

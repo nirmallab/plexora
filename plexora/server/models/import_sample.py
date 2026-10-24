@@ -765,13 +765,22 @@ def register_layers(project_name, proposal, *, answers=None):
     table = next((l for l in proposal.layers if l.role == "table"), None)
     registered = [l for l in proposal.layers if l.role == "layer"]
 
+    before = Project.find(project_name)
     if mask is not None:
         attach_segmentation(project_name, mask.src)
     if table is not None:
         previous = Project.find(project_name)
-        replace_project_data(project_name, table.src, {
-            "table": table.table, **_subset_of(table, answers),
-        })
+        try:
+            replace_project_data(project_name, table.src, {
+                "table": table.table, **_subset_of(table, answers),
+            })
+        except Exception:
+            # Not half done: the mask this call attached goes back to what was
+            # there, so a refused table never leaves a sample with a new mask
+            # and its old cells (the `reclassify` rule).
+            if mask is not None and before is not None:
+                _restore_mask(project_name, before.segmentation)
+            raise
         _reload_if_open(project_name, previous)
 
     def _apply(project):

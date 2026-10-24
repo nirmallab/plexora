@@ -495,13 +495,20 @@ function serverDialogs() {
 // a page the router swaps out, leaves nothing to clean up: an element that is
 // gone can no longer be under the pointer, and its entry goes with it.
 
-//: zone element -> {filter, mode, accept, count, enabled, accepts, onOver, onDrop}
+//: zone element -> {filter, mode, accept, count, enabled, accepts, hint, onOver, onDrop}
 const DROP_ZONES = new WeakMap();
 let dropListening = false;
 //: The zone lit right now, and how: {zone, state: "over" | "refused"}.
 let dropLit = null;
 //: What the drag in progress carries, for a bridge that names it only once.
 let dropPaths = [];
+//: Where the pointer last was during this drag, in CSS pixels.
+let dropPoint = null;
+//: `(paths) => Promise<plan | null>`: what the files ARE relative to the open
+//: project (dropRouter.js asks the server). Asked once per drag.
+let planProvider = null;
+//: The answer for the drag in progress: {key, plan, pending}.
+let dropPlan = null;
 //: Every file suffix the explorer knows, stores aside, built on first use.
 let knownSuffixes = null;
 
@@ -521,6 +528,47 @@ function fillPathInput(inputEl, path) {
 }
 
 /**
+ * @function provideDropPlan - say what dragged files are, for zones that label
+ * themselves by it. `fn(paths)` returns a promise of the plan
+ * (`/drop/inspect`) or null. Asked once per drag, on the first move that names
+ * the paths; the zone under the pointer is relit when the answer lands.
+ */
+function provideDropPlan(fn) {
+    planProvider = typeof fn === "function" ? fn : null;
+}
+
+/** The plan for the drag in progress, asked for if it has not been. */
+function planFor(paths) {
+    if (!planProvider || !paths.length) return null;
+    const key = paths.join("\n");
+    if (dropPlan && dropPlan.key === key) return dropPlan;
+    const entry = {key, plan: null, pending: true, promise: null};
+    dropPlan = entry;
+    let asked;
+    try {
+        asked = Promise.resolve(planProvider(paths.slice()));
+    } catch (error) {
+        asked = Promise.resolve(null);
+    }
+    entry.promise = asked.then((plan) => {
+        entry.plan = plan || null;
+        entry.pending = false;
+        // Relit with what it now knows, if this drag is still going on.
+        if (dropPlan === entry && dropPoint && dropPaths.length) relight();
+        return entry.plan;
+    }, () => {
+        entry.pending = false;
+        return null;
+    });
+    return entry;
+}
+
+/** What the drag in progress knows so far: the plan, or null while asked. */
+function currentPlan() {
+    return dropPlan && !dropPlan.pending ? dropPlan.plan : null;
+}
+
+/**
  * @function attachDropTarget - make an element a place a dropped file goes.
  * Desktop app only; anywhere else it does nothing and says so by returning a
  * no-op.
@@ -535,21 +583,33 @@ function fillPathInput(inputEl, path) {
  *   validation's business, and goes in.
  * @param count "one" (one path; a drag of several lights nothing and falls
  *   through to the Import dialog, which takes several) or "many".
+ * @param several for a "one" zone that is the whole of a modal, the reason a
+ *   drag of several is refused there rather than passed on (nothing outside a
+ *   modal can take it).
  * @param enabled () => boolean; false and the zone is not there, for a field
  *   that is busy reading what it was last given.
- * @param accepts (path, name) => true | string, a veto of the caller's own; a
- *   string is the reason given.
- * @param onOver (lit, state) for a zone that says more than its class does.
- * @param onDrop (path, {zone, x, y}), or the array of paths for "many".
+ * @param accepts (path, name) => true | string | false, a veto of the
+ *   caller's own; a string is the reason given, and false means "not mine":
+ *   the zone passes and the drop goes to the zone around it.
+ * @param hint (paths, {state, reason, plan}) => string | {label, tone} | "",
+ *   the label drawn beside the pointer while the drag is over this zone
+ *   (tone "ok", "ask" or "refused"). Not drawn for a zone inside a modal,
+ *   which lights itself.
+ * @param onOver (lit, state, info) for a zone that says more than its class
+ *   does; `info` is {paths, reason, plan}.
+ * @param onDrop (path, {zone, x, y, plan}), or the array of paths for "many".
+ *   `plan` is the server's plan when one was asked for this drag, else null.
  * @returns a function that unregisters the zone.
  */
 function attachDropTarget(zoneEl, {filter = "any", mode = "file", accept = null,
-                                   count = "one", enabled = null, accepts = null,
-                                   onOver = null, onDrop = null} = {}) {
+                                   count = "one", several = "", enabled = null,
+                                   accepts = null, hint = null, onOver = null,
+                                   onDrop = null} = {}) {
     if (!zoneEl || typeof onDrop !== "function" || !window.PlexoraDesktop) {
         return () => {};
     }
-    DROP_ZONES.set(zoneEl, {filter, mode, accept, count, enabled, accepts, onOver, onDrop});
+    DROP_ZONES.set(zoneEl, {filter, mode, accept, count, several, enabled, accepts,
+                            hint, onOver, onDrop});
     zoneEl.setAttribute("data-plx-drop", "");
     listenForDrops();
     return () => {
@@ -611,12 +671,17 @@ function suffixRefusal(name, spec) {
 function dropVerdict(paths, spec) {
     if (spec.enabled && !spec.enabled()) return {state: "pass"};
     if (!paths.length) return {state: "take"};
-    if (spec.count !== "many" && paths.length !== 1) return {state: "pass"};
+    if (spec.count !== "many" && paths.length !== 1) {
+        return spec.several ? {state: "refuse", reason: spec.several} : {state: "pass"};
+    }
     for (const path of paths) {
         const name = dropName(path);
         if (spec.accepts) {
             const said = spec.accepts(path, name);
             if (typeof said === "string" && said) return {state: "refuse", reason: said};
+            // Not this zone's kind of file at all: the drop is somebody
+            // else's -- a mask over the ROI panel is the viewer's.
+            if (said === false) return {state: "pass"};
         }
         const reason = suffixRefusal(name, spec);
         if (reason) return {state: "refuse", reason};
@@ -637,75 +702,191 @@ function openModal() {
     return modal.length ? modal[modal.length - 1] : null;
 }
 
+/** The next registered zone at or above `el`, or null. */
+function zoneFrom(el) {
+    let zone = el && typeof el.closest === "function" ? el.closest("[data-plx-drop]") : null;
+    while (zone && !DROP_ZONES.has(zone)) {
+        const up = zone.parentElement;
+        zone = up && typeof up.closest === "function" ? up.closest("[data-plx-drop]") : null;
+    }
+    return zone;
+}
+
 /** The innermost registered zone under a point, or null. While a modal is
  *  open only a zone inside it counts: the page under the backdrop is not
  *  there to the pointer, and must not be there to a drop either. */
 function zoneAt(x, y) {
     const hit = typeof document.elementFromPoint === "function"
         ? document.elementFromPoint(x, y) : null;
-    let zone = hit && typeof hit.closest === "function" ? hit.closest("[data-plx-drop]") : null;
-    while (zone && !DROP_ZONES.has(zone)) {
-        const up = zone.parentElement;
-        zone = up && typeof up.closest === "function" ? up.closest("[data-plx-drop]") : null;
-    }
+    const zone = zoneFrom(hit);
     if (!zone) return null;
     const modal = openModal();
     if (modal && !modal.contains(zone)) return null;
     return zone;
 }
 
-function tellZone(zone, lit, state) {
+/**
+ * The zone these paths land in at a point, and its verdict. Starts at the
+ * innermost zone and walks OUTWARD past every zone that passes: three files
+ * over a one-path row inside a dialog that takes several are the dialog's,
+ * not nobody's. A zone that refuses stops the walk -- the drop was aimed at
+ * it -- and so does the open modal's edge.
+ */
+function resolveZone(x, y, paths) {
+    const modal = openModal();
+    let zone = zoneAt(x, y);
+    while (zone) {
+        if (modal && !modal.contains(zone)) break;
+        const spec = DROP_ZONES.get(zone);
+        const verdict = spec ? dropVerdict(paths, spec) : {state: "pass"};
+        if (verdict.state !== "pass") return {zone, spec, verdict};
+        zone = zoneFrom(zone.parentElement);
+    }
+    return {zone: null, spec: null, verdict: {state: "pass"}};
+}
+
+function tellZone(zone, lit, state, info) {
     const spec = DROP_ZONES.get(zone);
     if (!spec || typeof spec.onOver !== "function") return;
     try {
-        spec.onOver(lit, state);
+        spec.onOver(lit, state, info || {});
     } catch (error) {
         console.error("browsePicker: a drop zone's onOver failed.", error);
     }
 }
 
-/** Light one zone (or none) and put out the last. */
-function lightZone(zone, state) {
+/** The one label that follows the pointer while it is over a zone. */
+function hintElement(create) {
+    if (typeof document.getElementById !== "function") return null;
+    let el = document.getElementById("plx_drop_hint");
+    if (!el && create && document.body && typeof document.createElement === "function") {
+        el = document.createElement("div");
+        el.id = "plx_drop_hint";
+        el.className = "plx-drop-hint";
+        el.setAttribute("role", "status");
+        el.setAttribute("aria-live", "polite");
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
+function hideHint() {
+    const el = hintElement(false);
+    if (el) el.classList.remove("is-shown");
+}
+
+/** What a zone says about the drag over it, as {label, tone}, or null. */
+function zoneHint(zone, spec, state, info) {
+    if (!spec || typeof spec.hint !== "function") {
+        return state === "refused" && info.reason ? {label: info.reason, tone: "refused"} : null;
+    }
+    let said;
+    try {
+        said = spec.hint(info.paths || [], {state, reason: info.reason, plan: info.plan});
+    } catch (error) {
+        said = null;
+    }
+    if (!said) return null;
+    if (typeof said === "string") {
+        return {label: said, tone: state === "refused" ? "refused" : "ok"};
+    }
+    return said.label ? {label: said.label, tone: said.tone || "ok"} : null;
+}
+
+/** Draw the label beside the pointer: right of it and below, where the drag
+ *  ghost is not, and pulled back inside the window at its edges. */
+function paintHint(zone, spec, state, info) {
+    const modal = openModal();
+    const said = modal && modal.contains(zone) ? null : zoneHint(zone, spec, state, info);
+    if (!said || !dropPoint) {
+        hideHint();
+        return;
+    }
+    const el = hintElement(true);
+    if (!el) return;
+    el.textContent = said.label;
+    el.dataset.tone = said.tone;
+    el.classList.add("is-shown");
+    const width = el.offsetWidth || 0;
+    const height = el.offsetHeight || 0;
+    const right = (window.innerWidth || 0) - 8;
+    const bottom = (window.innerHeight || 0) - 8;
+    let left = dropPoint.x + 18;
+    let top = dropPoint.y + 22;
+    if (right > 0 && left + width > right) left = Math.max(8, dropPoint.x - 12 - width);
+    if (bottom > 0 && top + height > bottom) top = Math.max(8, dropPoint.y - 12 - height);
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+}
+
+/** Light one zone (or none) and put out the last. `info` is what the zone is
+ *  told and labelled with: {paths, reason, plan}. */
+function lightZone(zone, state, info) {
     const before = dropLit;
-    if (before && before.zone === zone && before.state === state) return;
-    if (before) before.zone.classList.remove("is-drop-over", "is-drop-refused");
-    dropLit = zone && state ? {zone, state} : null;
-    if (dropLit) zone.classList.add(state === "refused" ? "is-drop-refused" : "is-drop-over");
-    document.documentElement.classList.toggle("has-drop-target", Boolean(dropLit));
-    if (before && before.zone !== zone) tellZone(before.zone, false, null);
-    if (dropLit) tellZone(zone, true, state);
+    const same = before && before.zone === zone && before.state === state;
+    if (!same) {
+        if (before) before.zone.classList.remove("is-drop-over", "is-drop-refused");
+        dropLit = zone && state ? {zone, state} : null;
+        if (dropLit) zone.classList.add(state === "refused" ? "is-drop-refused" : "is-drop-over");
+        document.documentElement.classList.toggle("has-drop-target", Boolean(dropLit));
+        if (before && before.zone !== zone) tellZone(before.zone, false, null);
+    }
+    if (!dropLit) {
+        hideHint();
+        return;
+    }
+    const detail = info || {paths: dropPaths.slice(), reason: "", plan: currentPlan()};
+    // Told when it lights and again when the plan lands -- not on every move
+    // of the pointer, which is sixty times a second.
+    if (!same || detail.plan !== dropLit.plan) tellZone(zone, true, state, detail);
+    dropLit.plan = detail.plan;
+    paintHint(zone, DROP_ZONES.get(zone), state, detail);
+}
+
+/** Light whatever is under the last point, for these paths. */
+function relight() {
+    if (!dropPoint) return;
+    const found = resolveZone(dropPoint.x, dropPoint.y, dropPaths);
+    const info = {paths: dropPaths.slice(), reason: found.verdict.reason || "",
+                  plan: currentPlan()};
+    if (found.verdict.state === "take") lightZone(found.zone, "over", info);
+    else if (found.verdict.state === "refuse") lightZone(found.zone, "refused", info);
+    else lightZone(null, null);
 }
 
 function onNativeDragOverField(event) {
     const detail = event.detail || {};
     if (detail.phase === "leave") {
         dropPaths = [];
+        dropPoint = null;
+        dropPlan = null;
         lightZone(null, null);
         return;
     }
     if (Array.isArray(detail.paths) && detail.paths.length) dropPaths = detail.paths.slice();
-    const zone = zoneAt(detail.x, detail.y);
-    const spec = zone ? DROP_ZONES.get(zone) : null;
-    const verdict = spec ? dropVerdict(dropPaths, spec) : {state: "pass"};
-    if (verdict.state === "take") lightZone(zone, "over");
-    else if (verdict.state === "refuse") lightZone(zone, "refused");
-    else lightZone(null, null);
+    if (Number.isFinite(detail.x) && Number.isFinite(detail.y)) {
+        dropPoint = {x: detail.x, y: detail.y};
+    }
+    if (dropPaths.length) planFor(dropPaths);
+    relight();
 }
 
 function onNativeDropOnField(event) {
     const detail = event.detail || {};
     const paths = Array.isArray(detail.paths) && detail.paths.length
         ? detail.paths.slice() : dropPaths.slice();
+    const plan = dropPlan && dropPlan.key === paths.join("\n") ? currentPlan() : null;
     // The shell sends no `leave` after a drop, so whatever was lit goes out
-    // here, claimed or not.
+    // here, claimed or not -- and the plan with it: what the drop changes, the
+    // next drag has to be asked about again.
     dropPaths = [];
+    dropPoint = null;
+    dropPlan = null;
     lightZone(null, null);
     if (event.defaultPrevented || !paths.length) return;
-    const zone = zoneAt(detail.x, detail.y);
-    const spec = zone ? DROP_ZONES.get(zone) : null;
-    if (!spec) return;
-    const verdict = dropVerdict(paths, spec);
-    if (verdict.state === "pass") return;
+    const found = resolveZone(detail.x, detail.y, paths);
+    if (!found.zone) return;
+    const {zone, spec, verdict} = found;
     event.preventDefault();
     if (verdict.state === "refuse") {
         refuseDrop(zone, verdict.reason);
@@ -713,7 +894,7 @@ function onNativeDropOnField(event) {
     }
     try {
         spec.onDrop(spec.count === "many" ? paths : paths[0],
-                    {zone, x: detail.x, y: detail.y});
+                    {zone, x: detail.x, y: detail.y, plan});
     } catch (error) {
         console.error("browsePicker: a drop zone's onDrop failed.", error);
     }
@@ -747,7 +928,7 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
                                                 node = null,
                                                 examples = null,
                                                 accept = null, primary = "",
-                                                title = ""} = {}) {
+                                                title = "", drop = true} = {}) {
     if (!buttonEl || !inputEl) return;
     const nodeNow = () => (typeof node === "function" ? node() : node);
 
@@ -787,6 +968,9 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
     }
 
     buttonEl.addEventListener("click", () => go(mode));
+    // `drop: false` for a field whose whole dialog is the target instead
+    // (channelNamesUpload.js): a drop there loads the file, not just the box.
+    if (!drop) return;
 
     // The row is the target, not the input alone: the switch and the button
     // beside the box are part of what the pointer is aiming at.

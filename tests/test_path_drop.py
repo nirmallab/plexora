@@ -46,6 +46,21 @@ CHECKS = (
     "a box with its own Remote switch set to Remote refuses with a reason",
     "onOver hears the zone light and go out",
     "a zone that takes several is handed every path",
+    "several files over a one-path row light and go to the zone around it",
+    "one file over the row is still the row's",
+    "a zone that says a file is not its kind passes it to the zone around it",
+    "and keeps the files that are",
+    "a one-file zone with `several` refuses a drag of several with its reason",
+    "drop: false leaves the row unregistered",
+    "the zone's label is drawn beside the pointer",
+    "the plan is asked for once per drag",
+    "the label is redrawn when the plan lands",
+    "the plan reaches the drop",
+    "and the label goes with the drop",
+    "the next drag asks again",
+    "leaving the window takes the label away",
+    "a refused box's label says why, in the refused tone",
+    "a zone inside a modal lights itself and draws no label",
 )
 
 

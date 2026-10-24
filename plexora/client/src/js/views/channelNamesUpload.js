@@ -83,6 +83,8 @@ window.PlexoraChannelNames = (function () {
     let actionButtons = [];
     //: Whether a request is out. See submit().
     let busy = false;
+    //: Unregisters the dialog as a drop zone (browsePicker.attachDropTarget).
+    let detachDrop = null;
     //: Everything that survives a stage change. `path` above all: the user
     //: typed that once, and being sent back to an empty box because they
     //: ticked a checkbox would be the modal losing their work.
@@ -221,7 +223,74 @@ window.PlexoraChannelNames = (function () {
         form.append(parts.title, parts.subtitle, parts.body, parts.error, parts.actions);
         node.appendChild(form);
         document.body.appendChild(node);
+        listenForDrops(node);
         return node;
+    }
+
+    /**
+     * The whole dialog takes a file dropped on it, and a drop LOADS it.
+     *
+     * Its one path row used to be the only drop target, and only filled the
+     * box: a markers.csv let go anywhere else -- on the title, the hint, the
+     * buttons, the next stage -- was claimed by nothing and fell through to
+     * the Import dialog, which opened over this one and read the channel list
+     * as a sample. Now the dialog is the target from edge to edge, at every
+     * stage that can take a file, and a drop is a Load.
+     */
+    function listenForDrops(node) {
+        if (typeof attachDropTarget === "function") {
+            detachDrop = attachDropTarget(node, {
+                filter: "channels", mode: "file", count: "one",
+                several: "Drop one file: the channel names of one image.",
+                enabled: () => Boolean(session) && !busy,
+                accepts: () => (session.stage === "choose"
+                    ? "Press “Choose a different file” first." : true),
+                onOver: (lit, state) => {
+                    if (!parts) return;
+                    parts.subtitle.textContent = lit && state === "over"
+                        ? "Drop to load it." : session.subtitle;
+                },
+                onDrop: (path) => dropped(path),
+            });
+        }
+        // A browser tab gets the BYTES of a dropped file, never its path --
+        // which is all this dialog needs for a list of a few kilobytes. The
+        // desktop app's drop arrives as a path, above, and is left to it.
+        node.addEventListener("dragover", (event) => {
+            if (window.PlexoraDesktop || !hasFiles(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            node.classList.toggle("is-drop-over", session?.stage !== "choose");
+        });
+        node.addEventListener("dragleave", (event) => {
+            if (!node.contains(event.relatedTarget)) node.classList.remove("is-drop-over");
+        });
+        node.addEventListener("drop", (event) => {
+            if (window.PlexoraDesktop || !hasFiles(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            node.classList.remove("is-drop-over");
+            const file = event.dataTransfer.files[0];
+            if (!file || !session || busy || session.stage === "choose") return;
+            if (session.stage !== "source") renderSource();
+            session.file = file;
+            session.path = "";
+            session.description = null;
+            submit();
+        });
+    }
+
+    function hasFiles(event) {
+        const types = event.dataTransfer && event.dataTransfer.types;
+        return Boolean(types) && Array.from(types).includes("Files");
+    }
+
+    /** A path dropped on the dialog: back to the file stage if a mismatch is
+     *  up, then exactly what typing it and pressing Load does. */
+    function dropped(path) {
+        if (!session || busy) return;
+        if (session.stage !== "source") renderSource();
+        session.take?.(path);
     }
 
     /** Replace the stage: its heading, its body, and its buttons, together.
@@ -229,7 +298,9 @@ window.PlexoraChannelNames = (function () {
      *  kept the previous stage's buttons is the failure mode worth designing
      *  out -- "Use this column" left over on the mismatch screen would apply
      *  the column that just failed. */
-    function stage({ title, subtitle, body, actions }) {
+    function stage({ name, title, subtitle, body, actions }) {
+        session.stage = name;
+        session.subtitle = subtitle;
         parts.title.textContent = title;
         parts.subtitle.textContent = subtitle;
         parts.body.replaceChildren(...body);
@@ -251,6 +322,7 @@ window.PlexoraChannelNames = (function () {
     }
 
     function clearError() {
+        if (!parts) return;
         parts.error.hidden = true;
         parts.error.textContent = "";
     }
@@ -260,7 +332,14 @@ window.PlexoraChannelNames = (function () {
     }
 
     function close() {
-        if (!dialog) return;
+        detachDrop?.();
+        detachDrop = null;
+        if (!dialog) {
+            // `apply` without a dialog: nothing on screen, only the session.
+            session = null;
+            busy = false;
+            return;
+        }
         dialog.close();
         dialog.remove();
         dialog = null;
@@ -317,15 +396,23 @@ window.PlexoraChannelNames = (function () {
             // a stage; only a real error gets the red line.
             if (result.needs_column) {
                 task?.done?.();
+                ensureDialog();
                 return renderChoose(result);
             }
             if (result.mismatch) {
                 task?.done?.();
+                ensureDialog();
                 return renderMismatch(result);
             }
             throw new Error(result.error || "That file could not be read.");
         } catch (error) {
             task?.fail?.("Channel names");
+            if (session && !dialog) {
+                // Applied without a dialog and refused: the dialog, on the
+                // file it was given, with the server's reason under it.
+                ensureDialog();
+                renderSource();
+            }
             showError(error.message || "That file could not be read.");
         } finally {
             busy = false;
@@ -365,6 +452,9 @@ window.PlexoraChannelNames = (function () {
                 mode: "file",
                 filter: "channels",
                 node: () => nodeName() || null,
+                // The whole dialog is the drop target (listenForDrops), and a
+                // drop there loads the file rather than only filling this box.
+                drop: false,
             });
         }
         const load = button("btn btn-primary channel-names-load", "Load",
@@ -618,6 +708,36 @@ window.PlexoraChannelNames = (function () {
             submit();
         }
 
+        /**
+         * A file dropped from this computer's Explorer or Finder: it is on
+         * this computer, whatever the switch said, so the switch moves to
+         * Local first. Then Load -- through the node that can read it when
+         * Plexora runs elsewhere, or as bytes the desktop app reads here
+         * when there is no such node.
+         */
+        session.take = async (value) => {
+            if (session.where !== LOCAL) choose(LOCAL, null);
+            input.value = value;
+            input.classList.remove("is-invalid");
+            if (plainPath() || nodeName()) return loadChosen();
+            const desktop = window.PlexoraDesktop;
+            if (!desktop || !desktop.fileFromPath) {
+                showError("Plexora is running elsewhere and cannot read paths on "
+                          + "this computer — send the file with Upload… instead.");
+                return;
+            }
+            try {
+                session.file = await desktop.fileFromPath(value);
+            } catch (error) {
+                showError(error.message || "That file could not be read.");
+                return;
+            }
+            if (!session) return;
+            session.path = "";
+            session.description = null;
+            submit();
+        };
+
         paint();
         // The path the last attempt used, so a file that came back as the
         // wrong column or the wrong count is one edit away rather than one
@@ -669,6 +789,7 @@ window.PlexoraChannelNames = (function () {
         });
 
         stage({
+            name: "source",
             title: title(),
             subtitle: SUBTITLE,
             body: [path],
@@ -811,6 +932,7 @@ window.PlexoraChannelNames = (function () {
             : [];
 
         stage({
+            name: "choose",
             title: "Which column has the channel names?",
             subtitle: `${description.filename} has ${description.column_count} columns. `
                 + `This image has ${description.channel_count} channels.`,
@@ -868,6 +990,7 @@ window.PlexoraChannelNames = (function () {
             : [];
 
         stage({
+            name: "mismatch",
             title: "That file does not match this image",
             subtitle: result.filename
                 ? `Read from ${result.filename}.`
@@ -896,8 +1019,51 @@ window.PlexoraChannelNames = (function () {
      *                           order, once the server has accepted them; the
      *                           caller decides what to do about a page that is
      *                           now showing the old ones
+     * @param options.path       a file to load at once, as a drop on the
+     *                           dialog does
      */
     function open(options) {
+        startSession(options);
+        dialog = buildDialog();
+        // Escape is a plain way out at every stage. Nothing here is saved
+        // half-way -- the server applies a whole list or none of it -- so
+        // there is no state to warn about losing.
+        dialog.addEventListener("cancel", close);
+        renderSource();
+        dialog.showModal();
+        if (options.path) session.take(options.path);
+    }
+
+    /**
+     * Apply a channel list with no dialog: a markers.csv dropped on the
+     * viewer, already read by the server's drop plan. The dialog appears only
+     * when the server has something to ask -- which column, or a count that
+     * does not fit -- or a reason it refused, and then exactly as `open`
+     * draws it.
+     *
+     * @param options as `open`, plus `path` (required) and the plan's
+     *   `column`/`hasHeader` when it read them.
+     * @returns a promise that settles when the request has.
+     */
+    function apply(options) {
+        startSession(options);
+        session.path = options.path || "";
+        const extra = {};
+        if (options.column !== undefined && options.column !== null && options.column !== "") {
+            extra.column = String(options.column);
+            extra.has_header = options.hasHeader ? "true" : "false";
+        }
+        return submit(extra);
+    }
+
+    function ensureDialog() {
+        if (dialog) return;
+        dialog = buildDialog();
+        dialog.addEventListener("cancel", close);
+        dialog.showModal();
+    }
+
+    function startSession(options) {
         close();
         session = {
             datasource: options.datasource,
@@ -918,15 +1084,14 @@ window.PlexoraChannelNames = (function () {
             //: the machine the last one came from.
             where: serverIsElsewhere() ? REMOTE : LOCAL,
             place: serverIsElsewhere() ? serverPlace() : null,
+            //: Which stage is on screen ("source", "choose", "mismatch") and
+            //: its subtitle, for the drop zone to refuse and restore by.
+            stage: "",
+            subtitle: SUBTITLE,
+            //: Set by renderSource: load a path as if typed and Loaded.
+            take: null,
         };
-        dialog = buildDialog();
-        // Escape is a plain way out at every stage. Nothing here is saved
-        // half-way -- the server applies a whole list or none of it -- so
-        // there is no state to warn about losing.
-        dialog.addEventListener("cancel", close);
-        renderSource();
-        dialog.showModal();
     }
 
-    return { open };
+    return { open, apply };
 })();

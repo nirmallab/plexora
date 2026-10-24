@@ -408,7 +408,9 @@ def test_what_was_added_is_taken_on_without_losing_the_session(probe):
     assert "if (result.reload) {" in source
     # Through the load chip, which follows a table read behind the viewer
     # and takes it on -- at once when it was read in place.
-    assert "await window.PlexoraLoadProgress?.track?.(state.sample);" in source
+    # (`afterLayers`, shared with the drop router's dialog-less add.)
+    assert "await window.PlexoraLoadProgress?.track?.(sample);" in source
+    assert "await afterLayers(result, {sample});" in source
     progress = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
                 / "loadProgress.js").read_text(encoding="utf-8")
     track = progress[progress.index("async function track("):]

@@ -233,6 +233,22 @@ window.PlexoraImportSample = (function () {
             else close();
         });
         portal("attach", node);
+        // The whole dialog takes files dropped from Explorer or Finder while
+        // it is picking: several files over a card's one-path row walk out to
+        // here (browsePicker's outward walk) and join the import together.
+        if (typeof attachDropTarget === "function") {
+            attachDropTarget(node, {
+                filter: "any", mode: "any", count: "many",
+                enabled: () => Boolean(state)
+                    && (state.phase === "pick" || state.phase === "proposal"),
+                onDrop: (paths) => {
+                    if (state.location && !state.location.isLocal()) {
+                        state.location.setWhere("local", null);
+                    }
+                    addPaths(paths);
+                },
+            });
+        }
         return node;
     }
 
@@ -309,6 +325,7 @@ window.PlexoraImportSample = (function () {
      *   The library page re-lists from it.
      * @param paths - files or folders to start with: what was dropped on the
      *   desktop app's window, or opened from Explorer/Finder.
+     * @param answers - answers already known (question id -> value).
      */
     function open(options) {
         options = options || {};
@@ -324,7 +341,9 @@ window.PlexoraImportSample = (function () {
             //: file below the one it was on.
             picked: [],
             proposal: null,
-            answers: {},
+            //: Seeded by a caller that already knows an answer -- the drop
+            //: router, which matched a table's image by name.
+            answers: Object.assign({}, options.answers || {}),
             sample: options.sample || null,
             modality: options.modality || null,
             dataset: options.dataset || null,
@@ -3090,10 +3109,29 @@ window.PlexoraImportSample = (function () {
     async function finishScoped(result) {
         setStatus("Added.");
         if (result.reload) {
-            // A mask inserts the "Area" placeholder into imageData, and every
-            // channel index on this page is wired into the GL pass. Said out
-            // loud rather than reloading under the user's feet.
+            // Said out loud rather than reloading under the user's feet.
             setStatus("Added. Reloading, because a mask changes the channel list…");
+        }
+        const sample = state.sample;
+        const after = state && state.onAdded;
+        await afterLayers(result, {sample});
+        if (result.reload) return;
+        close();
+        try {
+            after?.(result);
+        } catch (error) {
+            console.error("importSample: the caller could not repaint.", error);
+        }
+    }
+
+    /**
+     * What the open page does once `/import/layers` has answered, dialog or
+     * not: a mask reloads it (it inserts the "Area" placeholder into
+     * imageData, and every channel index on this page is wired into the GL
+     * pass); anything else is taken on in place.
+     */
+    async function afterLayers(result, {sample, onAdded} = {}) {
+        if (result.reload) {
             window.setTimeout(() => window.location.reload(), 600);
             return;
         }
@@ -3108,17 +3146,59 @@ window.PlexoraImportSample = (function () {
             // tools -- now, or when a large one has been read behind the
             // viewer, with the navbar chip saying how far it has got.
             try {
-                await window.PlexoraLoadProgress?.track?.(state.sample);
+                await window.PlexoraLoadProgress?.track?.(sample);
             } catch (error) {
                 console.error("importSample: could not take on the table.", error);
             }
         }
-        const after = state && state.onAdded;
-        close();
         try {
-            after?.(result);
+            onAdded?.(result);
         } catch (error) {
             console.error("importSample: the caller could not repaint.", error);
+        }
+    }
+
+    /**
+     * Add files to a sample that exists, with no dialog: what a drop on the
+     * viewer does once the drop router has decided what the files are for.
+     *
+     * Inspected first, scoped, so anything the server would have to guess --
+     * a file it cannot read, a question with no answer -- comes back as
+     * `{ok: false, needs: proposal}` for the caller to open the dialog on,
+     * rather than being registered with a default nobody saw. A file already
+     * part of the sample inspects to nothing, and is `{ok: true, result:
+     * null}`.
+     *
+     * @returns {ok, result} | {ok: false, needs} | {ok: false, error}
+     */
+    async function addToSample(sample, paths, {answers = {}, onAdded = null} = {}) {
+        try {
+            const inspected = await fetch(plexoraUrl("import/inspect"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({paths, answers, sample}),
+            });
+            const proposal = await readJson(inspected);
+            if (!inspected.ok) throw new Error(proposal.error || "Could not read those files.");
+            const found = (proposal.samples || [])[0];
+            if (!found || (proposal.unrecognised || []).length) {
+                return {ok: false, needs: proposal};
+            }
+            if (!(found.layers || []).length) return {ok: true, result: null};
+            if (found.layers.some((layer) => (layer.needs || []).length)) {
+                return {ok: false, needs: proposal};
+            }
+            const response = await fetch(plexoraUrl("import/layers"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({sample, paths, answers}),
+            });
+            const result = await readJson(response);
+            if (!response.ok) throw new Error(result.error || "Could not add that.");
+            await afterLayers(result, {sample, onAdded});
+            return {ok: true, result};
+        } catch (error) {
+            return {ok: false, error: error.message || String(error)};
         }
     }
 
@@ -3441,5 +3521,5 @@ window.PlexoraImportSample = (function () {
         });
     }
 
-    return {open, close, dropPaths};
+    return {open, close, dropPaths, addToSample};
 })();

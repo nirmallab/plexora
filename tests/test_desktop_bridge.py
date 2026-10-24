@@ -50,6 +50,10 @@ CHECKS = (
     'a project handed over by a second launch is opened',
     'on macOS the menu owns Cmd+N and the page leaves it alone',
     'and the Full Screen row prints the Mac\'s chord',
+    'an unclaimed drop goes to the drop router, with where it landed',
+    'and a claimed one does not',
+    "drag events are heard on this window's webview, not every window's",
+    'and a drop heard there is handled',
 )
 
 

@@ -1,0 +1,54 @@
+---
+title: "register_drop_sniffer"
+description: "Recognise a file kind of this plugin's own when it is dropped on the window."
+generated: true
+symbol: "plexora.api.register_drop_sniffer"
+signature: "register_drop_sniffer(fn) -> None"
+source:
+  end: 124
+  path: "plexora/api/__init__.py"
+  start: 100
+---
+
+{/* GENERATED from plexora.api.register_drop_sniffer. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import register_drop_sniffer
+```
+
+```python
+register_drop_sniffer(fn) -> None
+```
+
+The desktop app asks the server what dropped files are before doing
+anything with them. Core knows images, masks, cell tables and channel
+lists; a sheet that belongs to a plugin -- gating's gates CSV, say --
+would otherwise be read as a table of cells. A sniffer sees every local
+file first and claims the ones that are its own.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"fn"} type={"callable"} required>
+
+`fn(path, context) -> dict | None`. `context` is
+`{"open": <the open sample, or None>, "target": <the drop zone>}`.
+Return None for anything that is not this plugin's (cheaply: it
+is asked about every dropped file), or
+`\{"kind", "label", "detail"?, "action": \{"kind", "status",
+"reason"?, "message"\}\}`. `status` is `"auto"`, `"needs_confirm"`
+or `"blocked"`; the action's `kind` names an executor this
+plugin's own JS registers with `PlexoraDropRouter.registerExecutor`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"None"}>
+
+None
+
+</Returns>

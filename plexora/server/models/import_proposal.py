@@ -3968,6 +3968,17 @@ def _identity(src) -> str:
     return str(Path(src).resolve())
 
 
+def _file_signature(src):
+    """`(name, size, mtime)` of a local file, or None."""
+    if not src or is_remote_locator(src) or _is_node_address(src):
+        return None
+    try:
+        stat = Path(src).stat()
+    except OSError:
+        return None
+    return Path(src).name, stat.st_size, stat.st_mtime_ns
+
+
 def _scoped_sample(name, found, questions, bundles):
     """"+ Add Layer": everything is a layer of a sample that already exists."""
     from plexora.server.models.project import Project
@@ -3981,6 +3992,16 @@ def _scoped_sample(name, found, questions, bundles):
                   if l.src}
     if project is not None and project.image.src:
         registered.add(_identity(project.image.src))
+    # The mask and table this sample already has: dropping the same file again
+    # is "already attached", not a second attach that rebuilds the pyramid.
+    if project is not None:
+        for src in (project.segmentation.source,
+                    project.dataset.src if project.dataset else None):
+            if src:
+                try:
+                    registered.add(_identity(src))
+                except (OSError, RuntimeError, ValueError):
+                    pass
 
     layers = []
     reference_pixel_size = ((project.image.pixel_size or {}).get("value")
@@ -3994,9 +4015,17 @@ def _scoped_sample(name, found, questions, bundles):
     frame_scale = next((b.get("frameScale") for b in
                         (project.bundles if project else ())
                         if b.get("frameScale")), None)
+    # A flat table is COPIED into the project when attached, timestamps and
+    # all (`import_routes._copy_into_project`), so the original is recognised
+    # by name, size and mtime rather than by path.
+    table_copy = _file_signature(project.dataset.src) if (
+        project is not None and project.dataset is not None) else None
     for layer in found:
         try:
             if layer.src and _identity(layer.src) in registered:
+                continue
+            if (layer.role == "table" and table_copy is not None
+                    and _file_signature(layer.src) == table_copy):
                 continue
         except OSError:
             pass

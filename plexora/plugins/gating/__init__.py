@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261021_glass_margin"
+VERSION = "20261024_drop_router"
 
 
 def _blueprint():

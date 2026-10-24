@@ -6251,3 +6251,15 @@
     white-space: nowrap;
     width: 1px;
 }
+
+/* A file from Explorer or Finder over this (desktop app; core's drop registry,
+   browsePicker.js). An inset outline, so nothing moves. */
+#fb_canvas_scroll.is-drop-over {
+    outline: 2px dashed var(--accent-channel);
+    outline-offset: -4px;
+}
+
+#fb_canvas_scroll.is-drop-refused {
+    outline: 2px dashed var(--accent-danger);
+    outline-offset: -4px;
+}

@@ -1288,3 +1288,11 @@
     font-variant-numeric: tabular-nums;
     margin: 0;
 }
+
+/* A CSV from Explorer or Finder over the list (desktop app; core's drop
+   registry, browsePicker.js). An inset outline, so nothing moves. Never
+   refused: a file that is not a CSV passes on to the viewer around it. */
+#csv_gating_list.is-drop-over {
+    outline: 2px dashed var(--accent-channel);
+    outline-offset: -4px;
+}

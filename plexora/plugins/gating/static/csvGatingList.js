@@ -1,3 +1,8 @@
+/** Whether a drop plan (core's dropRouter.js) read the file as gates. */
+function isGatesPlan(plan) {
+    return Boolean(plan) && (plan.items || []).some((item) => item.kind === "gates");
+}
+
 /**
  * @class CSVGatingList - A view to select and deselect channels for gating, and to set gates (filter ranges) in the tabular data
  */
@@ -209,6 +214,31 @@ class CSVGatingList {
             return this.applyGates()
         });
 
+        // In the desktop app a file dropped from Explorer or Finder arrives as
+        // a PATH (desktopBridge.js), which Dropzone above never sees. The list
+        // takes a CSV through core's drop registry -- a sheet of gates is
+        // uploaded as the arrow's picker uploads it; anything the server read
+        // as something else (a cell table) goes on to the drop router. A file
+        // that is not a CSV is not this list's and passes to the viewer.
+        const gatesList = document.getElementById("csv_gating_list");
+        if (gatesList && typeof attachDropTarget === "function") {
+            attachDropTarget(gatesList, {
+                filter: "any", mode: "file", count: "one",
+                accepts: (path, name) => /\.csv$/i.test(name),
+                hint: (paths, {plan}) => (isGatesPlan(plan) || !plan
+                    ? "Load gates" : (plan.summary?.hint || "")),
+                onDrop: (path, {plan}) => {
+                    if (plan && !isGatesPlan(plan) && window.PlexoraDropRouter) {
+                        window.PlexoraDropRouter.runPlan(plan, [path]);
+                        return;
+                    }
+                    this.uploadGatesFrom(path);
+                },
+            });
+        }
+        window.PlexoraDropRouter?.registerExecutor("upload_gates",
+            (action) => this.uploadGatesFrom(action.paths[0]));
+
         // Adding upload when you press on the up arrow
         let arrow = document.getElementById('gating_upload_icon')
         arrow.onclick = () => {
@@ -255,6 +285,25 @@ class CSVGatingList {
         // Add events
         this.addDownloadEvents();
         this.addEventsLinked();
+    }
+
+    /**
+     * Upload a gates CSV named by a path on this computer (a desktop drop),
+     * the way the arrow's picker uploads a chosen one.
+     */
+    async uploadGatesFrom(path) {
+        let file;
+        try {
+            file = await window.PlexoraDesktop.fileFromPath(path);
+        } catch (error) {
+            window.PlexoraToast?.show?.({title: "Gates not loaded",
+                note: error.message || String(error), tone: "warning"});
+            return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        await this.api.submitGatingUpload(formData);
+        await this.applyGates('file');
     }
 
     /**

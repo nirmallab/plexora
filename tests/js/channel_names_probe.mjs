@@ -18,6 +18,10 @@
  *      field carries, and what it settles is where the file is read: a path
  *      the server can open goes over as a path, and a file on a data node is
  *      fetched through the relay and posted as bytes.
+ *   4. **The whole dialog takes a dropped file, and a drop loads it.** Its
+ *      path row used to be the only drop target: a markers.csv let go on the
+ *      title or the buttons was claimed by nothing and fell through to the
+ *      Import dialog, which read it as a sample.
  *
  * The shipped file is run against a DOM stand-in. Nothing here parses a CSV:
  * that is the server's, deliberately (server/utils/channel_file.py), and the
@@ -167,6 +171,8 @@ function boot(options = {}) {
     let exists = true;
     let readFails = null;
     const applied = [];
+    //: Every drop zone the dialog registered: {zone, spec}.
+    const dropZones = [];
 
     function respond(url) {
         if (url.includes("check_file_existence")) return exists;
@@ -211,6 +217,11 @@ function boot(options = {}) {
             },
         },
     };
+    if (options.desktop !== false) {
+        win.PlexoraDesktop = {
+            fileFromPath: (path) => Promise.resolve({ name: path.split("/").pop(), path }),
+        };
+    }
     if (options.connects !== undefined) {
         win.PlexoraConnectionModal = {
             open: () => Promise.resolve(options.connects),
@@ -229,6 +240,13 @@ function boot(options = {}) {
         attachBrowseButton: (button, input, options) => {
             browseCalls.push(options);
         },
+        // browsePicker's registry, recorded: path_drop_probe.mjs holds what it
+        // does with a zone; this file holds which zone the dialog registers.
+        attachDropTarget: (zone, spec) => {
+            const entry = { zone, spec, attached: true };
+            dropZones.push(entry);
+            return () => { entry.attached = false; };
+        },
         Option: function Option(text, value) {
             const option = makeElement("option");
             option.textContent = text;
@@ -245,12 +263,19 @@ function boot(options = {}) {
     });
     runInContext(readFileSync(SOURCE, "utf8"), context, { filename: "channelNamesUpload.js" });
 
-    win.PlexoraChannelNames.open({
-        datasource: "tonsil",
-        onApplied: (names) => applied.push(names),
-    });
+    if (options.open !== false) {
+        win.PlexoraChannelNames.open({
+            datasource: "tonsil",
+            onApplied: (names) => applied.push(names),
+        });
+    }
 
     const api = {
+        win,
+        body,
+        dropZones,
+        /** The zone the open dialog registered, still attached. */
+        get dropZone() { return dropZones.filter((z) => z.attached).at(-1) || null; },
         applied,
         requests,
         browseCalls,
@@ -835,6 +860,104 @@ const CLUSTER = [
         app.activeSide === "R" && app.chip.textContent === "HMS-O2"
         && app.pathInput.value === "/scratch/panel.csv",
         "the alternative is answering 'which machine' once per attempt");
+}
+
+// -- a file dropped on the dialog ------------------------------------------------
+
+{
+    const app = boot();
+    const zone = app.dropZone;
+    check("the whole dialog is the drop target, not its path row",
+        zone && zone.zone === app.dialog && zone.spec.filter === "channels"
+        && app.browseCalls[0].drop === false);
+    check("...and it takes one file, refusing several with a reason",
+        zone.spec.count === "one" && /one file/i.test(zone.spec.several || ""));
+    zone.spec.onDrop("/data/run/markers.csv");
+    check("a drop is a Load at once: the file goes to the server as a path",
+        app.uploads.length === 1
+        && app.lastUpload.options.body.get("path") === "/data/run/markers.csv"
+        && !app.lastUpload.options.body.has("file"));
+    check("...and while it is read the dialog is not a drop target",
+        zone.spec.enabled() === false);
+    await tick();
+    await tick();
+    check("...and the names are applied", app.applied.length === 1);
+    check("closing the dialog takes its zone away", app.dropZone === null);
+}
+
+{
+    const app = boot();
+    app.reply(description());
+    app.dropZone.spec.onDrop("/data/panel.xlsx");
+    await tick();
+    await tick();
+    const refusal = app.dropZone.spec.accepts("/data/other.csv", "other.csv");
+    check("while a column is being chosen a drop is refused, with what to do instead",
+        app.title === "Which column has the channel names?"
+        && typeof refusal === "string" && /different file/.test(refusal));
+}
+
+{
+    const app = boot();
+    app.reply({ success: false, mismatch: true, marker_count: 3, channel_count: 2,
+                filename: "markers.csv" });
+    app.dropZone.spec.onDrop("/data/markers.csv");
+    await tick();
+    await tick();
+    app.reply({ success: true, names: ["DAPI", "CD3"] });
+    const accepted = app.dropZone.spec.accepts("/data/right.csv", "right.csv");
+    app.dropZone.spec.onDrop("/data/right.csv");
+    await tick();
+    await tick();
+    check("after a mismatch a second file can be dropped straight on",
+        accepted === true && app.lastUpload.options.body.get("path") === "/data/right.csv"
+        && app.applied.length === 1);
+}
+
+{
+    const app = boot({ places: [CLUSTER[1]] });
+    await app.press("R");
+    app.dropZone.spec.onDrop("/Users/me/markers.csv");
+    check("a file dropped from this computer moves the switch back to Local",
+        app.uploads.length === 1
+        && app.lastUpload.options.body.get("path") === "/Users/me/markers.csv"
+        && app.reads.length === 0);
+}
+
+{
+    const app = boot({ desktop: false });
+    const file = { name: "markers.csv" };
+    let stopped = false;
+    app.dialog.fire("drop", {
+        dataTransfer: { types: ["Files"], files: [file] },
+        stopPropagation() { stopped = true; },
+    });
+    await tick();
+    check("in a browser tab a file dropped on the dialog is sent as bytes",
+        stopped && app.uploads.length === 1
+        && app.lastUpload.options.body.get("file") === file);
+}
+
+{
+    const app = boot({ open: false });
+    const names = [];
+    await app.win.PlexoraChannelNames.apply({
+        datasource: "tonsil", path: "/data/markers.csv", column: 2, hasHeader: true,
+        onApplied: (got) => names.push(got),
+    });
+    const body = app.lastUpload.options.body;
+    check("apply() renames with no dialog when the server needs nothing more",
+        names.length === 1 && app.dialog === null
+        && body.get("path") === "/data/markers.csv" && body.get("column") === "2"
+        && body.get("has_header") === "true");
+}
+
+{
+    const app = boot({ open: false });
+    app.reply(description());
+    await app.win.PlexoraChannelNames.apply({ datasource: "tonsil", path: "/data/panel.xlsx" });
+    check("...and opens the dialog only to ask which column",
+        app.dialog && app.dialog.modalOpen && app.title === "Which column has the channel names?");
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

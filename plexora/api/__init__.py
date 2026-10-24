@@ -97,6 +97,33 @@ def notify_viewers(project, plugin, kind, payload=None) -> int:
     return viewer_sessions.publish(project, plugin, kind, payload or {}, origin="server")
 
 
+def register_drop_sniffer(fn) -> None:
+    """Recognise a file kind of this plugin's own when it is dropped on the window.
+
+    The desktop app asks the server what dropped files are before doing
+    anything with them. Core knows images, masks, cell tables and channel
+    lists; a sheet that belongs to a plugin -- gating's gates CSV, say --
+    would otherwise be read as a table of cells. A sniffer sees every local
+    file first and claims the ones that are its own.
+
+    Args:
+        fn (callable): `fn(path, context) -> dict | None`. `context` is
+            `{"open": <the open sample, or None>, "target": <the drop zone>}`.
+            Return None for anything that is not this plugin's (cheaply: it
+            is asked about every dropped file), or
+            `{"kind", "label", "detail"?, "action": {"kind", "status",
+            "reason"?, "message"}}`. `status` is `"auto"`, `"needs_confirm"`
+            or `"blocked"`; the action's `kind` names an executor this
+            plugin's own JS registers with `PlexoraDropRouter.registerExecutor`.
+
+    Returns:
+        None
+    """
+    from plexora.server.models import drop_plan
+
+    drop_plan.register_sniffer(fn)
+
+
 def layers(project, *, kind=None, modality=None) -> list:
     """Every layer of one sample's spatial scene, optionally filtered.
 
@@ -198,6 +225,7 @@ __all__ = [
     "normalize_shortcut",
     "notify_viewers",
     "project_data",
+    "register_drop_sniffer",
     "requirement",
     "sample",
     "store",
