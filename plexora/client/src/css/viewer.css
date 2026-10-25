@@ -1845,6 +1845,19 @@
     min-width: 0;
 }
 
+/* The bar's two numbers sit at its ends, not against the track as on every
+   other range slider: the low one starts under the eye's glyph, the high one
+   ends under the › of the next button, so the line spans the whole bar. */
+.channel-contrast-range .plx-slider.is-range .plx-number-group:first-child .plx-number {
+    padding-left: var(--contrast-number-inset-start, 4px);
+    text-align: left;
+}
+
+.channel-contrast-range .plx-slider.is-range .plx-number-group:last-child .plx-number {
+    padding-right: var(--contrast-number-inset-end, 6px);
+    text-align: right;
+}
+
 .channel-contrast.is-empty .channel-contrast-range {
     opacity: 0.4;
     pointer-events: none;
