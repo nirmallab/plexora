@@ -206,3 +206,20 @@ def test_an_older_node_that_sends_no_size_still_plans(root, o2, monkeypatch):
     assert "Restarting the data node" in first["channels"]["warning"]
     [(_id, spec)] = dataset_build.specs_for(plan, only=[first["id"]])
     assert "channel_names" not in spec
+
+
+def test_a_folder_on_a_node_is_checked_by_one_stat(root, o2, monkeypatch):
+    """Starting a scan used to ask the node to DETECT the folder, which looks
+    inside it for DICOM instances -- the slow part, on a cluster's network
+    filesystem. A stat of the name says folder or file just as well."""
+    from plexora import nodes as node_api
+
+    fx.mcmicro(root / "run", size=512)
+    asked = []
+    monkeypatch.setattr(node_api, "detect_on_node",
+                        lambda *args: asked.append(args) or {"kind": None})
+    found, place = dataset_scan.check_roots([str(root / "run") + "/"], node="hms-o2")
+    assert found == [str((root / "run").resolve())] and place == ("node", "hms-o2")
+    assert not asked
+    with pytest.raises(ValueError, match="is not there on hms-o2"):
+        dataset_scan.check_roots([str(root / "missing")], node="hms-o2")

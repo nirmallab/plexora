@@ -120,6 +120,21 @@ await check("a folder on a data node names the node, and so does an added folder
     assert.deepEqual(plain(s.asked[2].body), { paths: ["sftp://me@transfer.example/n/files/run"] });
 });
 
+await check("a start that is stopped lets go of the scan it started", async () => {
+    const timers = clock();
+    const s = server((path, method) => {
+        if (path === "datasets/scan" && method === "POST") return { hold: true, reply: ok(plan()) };
+    });
+    const c = builder.createController({ request: s.request, timers });
+    const started = c.start(["/n/files/run"], "hms-o2");
+    c.stopStart();
+    s.held.forEach((release) => release());
+    assert.equal(await started, false);
+    await settle();
+    assert.equal(c.state.phase, "pick");
+    assert.equal(s.asked.at(-1).path, "datasets/scan/scan-1/cancel");
+});
+
 await check("quick corrections go as one request, and a late answer is dropped", async () => {
     const timers = clock();
     let planPosts = 0;

@@ -19,6 +19,7 @@ PROBE = REPO_ROOT / "tests" / "js" / "dataset_builder_probe.mjs"
 CHECKS = (
     "a scan polls until it is no longer pending, then stops",
     "a folder on a data node names the node, and so does an added folder",
+    "a start that is stopped lets go of the scan it started",
     "quick corrections go as one request, and a late answer is dropped",
     "a refused correction puts back what the server last agreed",
     "create posts the overrides and polls the build to its end",

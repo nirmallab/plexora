@@ -196,6 +196,9 @@ window.PlexoraDatasetBuilder = (function () {
         let pollTimer = null;
         let planTimer = null;
         let polling = false;
+        //: Which start is the current one; `stopStart` moves it on, so the
+        //: reply to a start somebody stopped is recognised and let go.
+        let startSeq = 0;
 
         const changed = () => { if (!state.closed) onChange(state); };
 
@@ -215,9 +218,19 @@ window.PlexoraDatasetBuilder = (function () {
         async function start(paths, node = null) {
             state.error = null;
             state.node = node || null;
+            const ticket = ++startSeq;
             const body = node ? {paths, node} : {paths};
-            const reply = await request("datasets/scan", {method: "POST", body});
-            if (state.closed) return false;
+            const reply = await request("datasets/scan", {method: "POST", body}).catch(
+                (error) => ({ok: false, body: {error: error.message}}));
+            if (state.closed || ticket !== startSeq) {
+                // Stopped, or closed, while the folder was being checked: the
+                // scan that request started is nobody's, so it is stopped too.
+                if (reply.ok && reply.body.token) {
+                    request(`datasets/scan/${reply.body.token}/cancel`, {method: "POST"})
+                        .catch(() => {});
+                }
+                return false;
+            }
             if (!reply.ok) {
                 state.error = reply.body.error || "The folder could not be read.";
                 changed();
@@ -380,7 +393,13 @@ window.PlexoraDatasetBuilder = (function () {
             }
         }
 
-        return {state, start, addFolder, poll, cancelScan, change, sendPlan, create,
+        /** Let go of a start still waiting for its folder to be checked. */
+        function stopStart() {
+            startSeq += 1;
+            state.error = null;
+        }
+
+        return {state, start, stopStart, addFolder, poll, cancelScan, change, sendPlan, create,
                 resumeBuild, close};
     }
 
@@ -847,6 +866,7 @@ window.PlexoraDatasetBuilder = (function () {
                 onDrop: (path) => {
                     // A dropped folder is on this computer, whatever the chip says.
                     if (controller.state.phase === "pick") {
+                        if (ui.starting) return;
                         chooseWhere(null);
                         startScan(path);
                     } else if (controller.state.phase === "plan" && !ui.where) {
@@ -923,7 +943,12 @@ window.PlexoraDatasetBuilder = (function () {
                         </button>
                     </div>
                 </div>
-                <p class="plx-dsb-hint">Every image in the folder becomes a sample; masks and
+                <div class="plx-dsb-progress plx-dsb-starting" data-role="starting" hidden>
+                    <div class="plx-import-step-bar is-indeterminate"><span class="plx-import-step-fill"></span></div>
+                    <span class="plx-dsb-progress-text" data-role="starting-text"></span>
+                    <button class="plx-dsb-link" type="button" data-act="stop-start">Stop</button>
+                </div>
+                <p class="plx-dsb-hint" data-role="hint">Every image in the folder becomes a sample; masks and
                     tables beside it are matched by name and folder. Files stay where they are.</p>
             </div>`;
         const name = part("name");
@@ -953,12 +978,14 @@ window.PlexoraDatasetBuilder = (function () {
             }
         });
         part("browse").addEventListener("click", () => {
+            if (ui.starting) return;
             if (path.value.trim()) startScan(path.value.trim());
             else browse((picked) => startScan(picked), "Choose the folder that holds the samples");
         });
         part("machine")?.addEventListener("click", (event) => openMachineMenu(event.currentTarget));
+        part("starting").querySelector('[data-act="stop-start"]').addEventListener("click", stopStart);
         paintMachine();
-        paintFoot();
+        paintStarting();
         setTimeout(() => (ui?.name ? path : name)?.focus(), 0);
     }
 
@@ -980,28 +1007,97 @@ window.PlexoraDatasetBuilder = (function () {
         });
     }
 
+    /**
+     * Scan a folder. Until the server has checked it -- on a server, a round
+     * trip or two over a slow link -- the box shows the folder, the box,
+     * Browse and the machine are locked so it cannot be picked twice, and a
+     * bar runs with Stop beside it. The scan's own progress takes over once
+     * it has started.
+     */
     async function startScan(path) {
-        if (!ui || !path) return;
+        if (!ui || !path || ui.starting) return;
         const address = addressOf(path);
         ui.root = address;
-        if (!ui.nameTouched || !ui.name.trim()) ui.name = basename(address);
-        setStatus(ui.where ? `Reading the folder on ${ui.where.label}…` : "Reading the folder…");
+        if (!ui.nameTouched || !ui.name.trim()) {
+            ui.name = basename(address);
+            const name = part("name");
+            if (name) name.value = ui.name;
+        }
+        const box = part("path");
+        if (box) {
+            box.value = shownPath(address);
+            part("pick")?.setAttribute("data-face", "add");
+        }
+        ui.starting = true;
+        setStatus("");
+        paintStarting();
         const ok = await controller.start([address], ui.where?.node || null);
-        if (!ui) return;
+        if (!ui || !ui.starting) return;      // closed, or stopped
+        ui.starting = false;
         if (!ok) {
+            paintStarting();
             setStatus(controller.state.error, true);
             return;
         }
         rememberWhere();
-        setStatus("");
+    }
+
+    function stopStart() {
+        if (!ui?.starting) return;
+        ui.starting = false;
+        controller.stopStart();
+        paintStarting();
+        setStatus("Stopped. Choose the folder again, or another one.");
+        part("path")?.focus();
+    }
+
+    /** The pick step while a folder is being checked: locked, with a bar. */
+    function paintStarting() {
+        if (!ui || controller?.state.phase !== "pick") return;
+        const busy = Boolean(ui.starting);
+        for (const role of ["path", "browse", "machine"]) {
+            const control = part(role);
+            if (control) control.disabled = busy;
+        }
+        part("pick")?.classList.toggle("is-busy", busy);
+        const row = part("starting");
+        if (row) {
+            row.hidden = !busy;
+            part("starting-text").textContent = ui.where
+                ? `Reading the folder on ${ui.where.label}…` : "Reading the folder…";
+        }
+        const hint = part("hint");
+        if (hint) hint.hidden = busy;
+        // The end of a long path is the part anybody recognises. A task later:
+        // disabling the box puts it back to its start.
+        const box = part("path");
+        if (box) setTimeout(() => { box.scrollLeft = box.scrollWidth; }, 0);
+        paintFoot();
+    }
+
+    /** A path as the box shows it: on a files-only server, without its address. */
+    function shownPath(address) {
+        const base = ui?.where?.files?.base;
+        if (base && address.startsWith(base)) {
+            try {
+                return decodeURIComponent(address.slice(base.length)) || "/";
+            } catch (error) {
+                return address.slice(base.length);
+            }
+        }
+        return address;
     }
 
     async function addFolder(path) {
-        if (!ui || !path) return;
+        if (!ui || !path || ui.adding) return;
         const address = addressOf(path);
+        ui.adding = true;
+        paintFoot();
         setStatus(`Adding ${basename(address)}…`);
         const ok = await controller.addFolder(address);
         if (!ui) return;
+        ui.adding = false;
+        paintFoot();
         if (ok) setStatus("");
         else setStatus(controller.state.error, true);
     }
@@ -1507,7 +1603,10 @@ window.PlexoraDatasetBuilder = (function () {
         const plan = state.scan;
         let left = "";
         let right = "";
-        if (state.phase === "pick") {
+        if (state.phase === "pick" && ui.starting) {
+            right = `<button class="plx-button" type="button" data-act="close">Cancel</button>
+                <button class="plx-button plx-button-primary" type="button" disabled>Reading…</button>`;
+        } else if (state.phase === "pick") {
             const name = ui.name.trim();
             const path = part("path")?.value.trim();
             const label = path ? "Scan folder" : name ? "Create empty dataset" : "Create";
@@ -1529,7 +1628,8 @@ window.PlexoraDatasetBuilder = (function () {
                 : fresh ? `Create ${samples(projects.length)}` : `Add ${samples(projects.length)}`;
             const reason = !ui.name.trim() ? "Name the dataset"
                 : state.planning ? "Updating…" : "";
-            left = `<button class="plx-button" type="button" data-act="add-folder">
+            left = `<button class="plx-button" type="button" data-act="add-folder"
+                    ${ui.adding ? "disabled" : ""}>
                     <span class="fas fa-folder-plus" aria-hidden="true"></span> Add folder…</button>
                 <button class="plx-button" type="button" data-act="save-spec"
                     title="Save the plan as a file that plexora dataset create --from reads">
@@ -1567,6 +1667,7 @@ window.PlexoraDatasetBuilder = (function () {
         const state = controller?.state;
         if (!state) return;
         if (state.phase === "pick") {
+            if (ui.starting) return;
             const path = part("path")?.value.trim();
             if (path) return startScan(path);
             if (ui.name.trim()) return createEmpty();

@@ -113,6 +113,9 @@ CHANNEL_FOLDER_MIN = 6
 #: How many of a suspected channel folder's files are opened to decide it.
 CHANNEL_FOLDER_PROBES = 3
 
+#: Pictures, never a sample's image or mask (see `_kind_of_file`).
+PICTURE_SUFFIXES = (".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+
 #: Name fragments that make an uninspected raster a provisional mask.
 _MASK_WORDS = ("mask", "label", "seg", "cellpose", "mesmer", "unmicst",
                "stardist", "deepcell", "nuclei", "nucleus", "nuclear",
@@ -356,11 +359,22 @@ def _derived_copy(name, siblings) -> str | None:
     return None
 
 
-def _kind_of_file(name, size):
-    """What a file is by its name alone, or None for nothing to look at."""
+def _kind_of_file(name, size, folder=""):
+    """What a file is by its name alone, or None for nothing to look at.
+
+    A picture is not imaging data: a JPEG never is (it is lossy, so not even
+    a mask), and a PNG is looked at only when its name or folder says mask --
+    Cellpose writes its masks as `*_cp_masks.png` -- and then only as one. The
+    rest are QC plots, thumbnails and figures, which a cohort folder is full
+    of and a dataset has no use for.
+    """
     from plexora.server.models.import_proposal import IMAGE_SUFFIXES
 
     lowered = name.lower()
+    if lowered.endswith(PICTURE_SUFFIXES):
+        return None
+    if lowered.endswith(".png"):
+        return "raster" if _named_like_a_mask(f"{folder}/{name}") else None
     if lowered.endswith(IMAGE_SUFFIXES) or lowered.endswith((".btf", ".ome.btf")):
         return "raster"
     if lowered.endswith(".parquet"):
@@ -376,13 +390,15 @@ def _kind_of_file(name, size):
     return None
 
 
+def _named_like_a_mask(text) -> bool:
+    words = re.findall(r"[a-z]+", str(text).lower())
+    return any(word.startswith(_MASK_WORDS) for word in words)
+
+
 def _guess_role(entry):
     """A role from names alone, for a file not inspected yet."""
     if entry.kind == "raster":
-        words = re.findall(r"[a-z]+", entry.rel.lower())
-        if any(word.startswith(_MASK_WORDS) for word in words):
-            return "mask"
-        return "image"
+        return "mask" if _named_like_a_mask(entry.rel) else "image"
     if entry.kind == "table":
         return "channels" if entry.name.lower() == "markers.csv" else "table"
     if entry.kind in ("parquet", "shapes"):
@@ -556,7 +572,7 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
                 size, mtime_ns = child.stat()
             except OSError:
                 continue
-            kind = _kind_of_file(name, size)
+            kind = _kind_of_file(name, size, _basename(directory))
             if kind is None or _side_file(name):
                 continue
             source = _derived_copy(name, names)
@@ -846,6 +862,10 @@ def _raster_fields(entry, layers, warnings, path=None):
     if ambiguous and role == "image" and _guess_role(entry) == "mask":
         # Pixels consistent with both, and the name and folder say mask.
         role = "mask"
+    if role != "mask" and entry.name.lower().endswith(".png"):
+        return {"inspected": True, "role": None,
+                "reason": f"{entry.name} is a picture, not a label mask; a PNG is "
+                          "read here only as a segmentation mask."}
     ome_name = None
     if path is not None and role == "image" and \
             entry.name.lower().endswith((".tif", ".tiff")):
@@ -1141,12 +1161,38 @@ def _remote_root(text, place):
             raise ValueError(f"{text} is not a folder.")
         return sftp.url_for(name, path)
 
+    import ntpath
+
+    from plexora import nodes as node_api
+
+    # One stat of the name in its folder, not `detect_on_node`: detection
+    # looks INSIDE a folder for DICOM instances, which on a cluster's network
+    # filesystem is the slow part of starting a scan.
+    paths = ntpath if re.match(r"^[A-Za-z]:[\\/]", text) or "\\" in text else posixpath
+    trimmed = text.rstrip("/\\") or text
+    folder, leaf = paths.split(trimmed)
+    try:
+        found = node_api.stat_entries_on_node(name, folder, [leaf]) if leaf else None
+    except KeyError:
+        raise ValueError(f"No data node named {name!r} is registered here.") from None
+    except Exception as error:  # noqa: BLE001 -- the node's own sentence
+        raise ValueError(f"{name}: {error}") from None
+    if found is None:
+        return _node_root_by_detection(name, text)
+    entry = (found.get("entries") or {}).get(leaf)
+    if entry is None:
+        raise ValueError(f"{text} is not there on {name}.")
+    if not entry.get("is_dir"):
+        raise ValueError(f"{leaf} is a file. Choose the folder that holds the samples.")
+    return paths.join(found.get("path") or folder, leaf)
+
+
+def _node_root_by_detection(name, text):
+    """`_remote_root` on a node too old to stat a name."""
     from plexora import nodes as node_api
 
     try:
         detected = node_api.detect_on_node(name, text)
-    except KeyError:
-        raise ValueError(f"No data node named {name!r} is registered here.") from None
     except Exception as error:  # noqa: BLE001 -- the node's own sentence
         raise ValueError(f"{name}: {error}") from None
     if detected.get("kind"):

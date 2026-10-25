@@ -7450,6 +7450,24 @@ dialog .file-source .data-location-place {
     margin: 0;
 }
 
+.plx-dsb-hint[hidden] {
+    display: none;
+}
+
+/* While the folder is being checked: the box shows it and takes nothing. */
+.plx-dsb-pick .plx-import-pick.is-busy .plx-import-field {
+    opacity: 0.6;
+}
+
+.plx-dsb-pick .plx-import-input:disabled,
+.plx-dsb-pick .plx-import-machine:disabled {
+    cursor: default;
+}
+
+.plx-dsb-starting {
+    margin-top: 2px;
+}
+
 .plx-dsb-top {
     align-items: flex-end;
     display: flex;

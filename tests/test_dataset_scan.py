@@ -47,6 +47,34 @@ def test_hidden_temporary_and_system_files_are_skipped(tmp_path):
     assert _rels(_walk(root)) == ["A.ome.tiff"]
 
 
+def test_pictures_are_not_samples_and_a_png_is_only_ever_a_mask(tmp_path):
+    """A cohort folder is full of QC plots, thumbnails and figures. None of it
+    is imaging data: a JPEG never is, and a PNG only when it is a mask --
+    which is how Cellpose writes them."""
+    import numpy as np
+    from PIL import Image
+
+    root = tmp_path / "cohort"
+    fx.image(root / "A.ome.tiff")
+    root.joinpath("qc").mkdir()
+    Image.fromarray(np.zeros((300, 300, 3), np.uint8)).save(root / "A_overview.jpg")
+    Image.fromarray(np.zeros((300, 300, 3), np.uint8)).save(root / "A_thumbnail.png")
+    Image.fromarray(np.zeros((300, 300, 3), np.uint8)).save(root / "plot.webp")
+    labels = np.zeros((256, 256), np.uint16)
+    labels[20:40, 20:40] = 1
+    labels[90:120, 60:80] = 2
+    Image.fromarray(labels).save(root / "A_cp_masks.png")
+    Image.fromarray(np.zeros((300, 300, 3), np.uint8)).save(root / "masks_figure.png")
+
+    inventory = dataset_scan.scan([root])
+    assert _rels(inventory) == ["A.ome.tiff", "A_cp_masks.png", "masks_figure.png"]
+    entries = {entry.name: entry for entry in inventory.entries.values()}
+    assert entries["A_cp_masks.png"].role == "mask"
+    # Named like a mask, but a photograph: refused, never proposed as an image.
+    assert entries["masks_figure.png"].role is None
+    assert "picture" in entries["masks_figure.png"].reason
+
+
 def test_plexoras_own_pyramids_are_not_samples(tmp_path):
     root = tmp_path / "cohort"
     fx.image(root / "A.tif")
