@@ -657,14 +657,20 @@ class ViewerSidebar {
         top.classList.add("channel-slot-top");
         row.appendChild(top);
         row.addEventListener("click", (event) => {
-            const hit = event.target?.closest?.(
-                ".channel-slot-eye, .channel-slot-actions, .color-swatch-mount");
-            if (hit) return;
+            // The path the click took, not `target.closest`: the Auto button
+            // swaps its icon inside its own click handler (wand, busy,
+            // revert), so by the time the click reaches the row the icon it
+            // hit is detached, `closest` finds no button, and the row read it
+            // as a click on itself and turned the channel off.
+            const path = event.composedPath?.() || [];
+            const within = (selector) => path.some((node) => node?.matches?.(selector))
+                || Boolean(event.target?.closest?.(selector));
+            if (within(".channel-slot-eye, .channel-slot-actions, .color-swatch-mount")) return;
             const current = this.channelSlots[slot.index];
             // The name opens the marker search and turns nothing on yet: a
             // channel that is off comes on when a marker is picked, or when
             // the list is closed without one (the search's onClose).
-            if (event.target?.closest?.(".marker-combobox")) {
+            if (within(".marker-combobox")) {
                 if (current && current.name && !current.enabled) this._enableOnClose = current.index;
                 if (current && current.index !== this.selectedSlot) this.selectSlot(current.index, { enable: false });
                 return;
