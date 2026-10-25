@@ -24,9 +24,11 @@ keeps only Plexora's gates, its Free semantics and its words.
 same path SCIMAP Pro's site has). Plexora Pro is a yearly subscription per
 seat at one flat price per use class, academic or commercial, and both are
 bought self-serve: the total is the seat price times the seats, and a
-subscription renews at the price it was bought at. One seat is an Individual
-account; two or more make a Team, whose owner gives the other seats out in
-the portal. Buy opens Plans & prices in the portal, where Paddle's checkout
+subscription renews at the price it was bought at. Account type, seats and
+devices are separate (platform, 2026-10-25): an Individual account may hold
+several seats, the others waiting to be given, and becomes a Team only when its
+owner invites someone or asks; a seat covers two devices and more are added to
+it in pairs (device packs, per product), never as seats. Buy opens Plans & prices in the portal, where Paddle's checkout
 runs. The platform then makes the buyer's seat and emails its licence key,
 which stays under Licences in the portal to show and copy again. Settings ›
 License (on Free and on a trial), `plexora license status` and a Pro
@@ -323,7 +325,8 @@ connects SCIMAP Pro on the same machine.
 Without a browser, use the seat's **licence key** (`BIOC-XXXX-XXXX-XXXX-XXXX`):
 it is emailed to you when you are given the seat (and again if it is replaced),
 is under Licences at account.biocognia.com, can be shown there again at any
-time, works on each of the seat's devices up to its device limit, and keeps
+time, works on each of the seat's devices up to its allowance (two, plus any
+devices added to the seat), and keeps
 working through renewals. Replacing it there stops the old key; devices already
 connected stay connected. Paste it in Settings › License › Licence key or pass
 it to `plexora license activate`. A one-time activation code (`BIOC-XXXX-XXXX`)
