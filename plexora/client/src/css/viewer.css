@@ -1639,6 +1639,18 @@
     width: 22px;
 }
 
+/* Press and drag down the eyes to set every row passed (sweepEyes): no
+   scrolling or text selection under a touch or a drag. */
+.channel-slot-eye {
+    touch-action: none;
+    user-select: none;
+}
+
+.channel-eye-sweeping,
+.channel-eye-sweeping * {
+    cursor: ns-resize !important;
+}
+
 .channel-slot-eye:hover,
 .channel-contrast-icon:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.08);
@@ -1648,14 +1660,12 @@
 .channel-slot .channel-eye-off,
 .channel-contrast .channel-eye-off,
 .channel-slot.is-disabled .channel-eye-on,
-.channel-contrast.is-off .channel-eye-on,
-.channel-contrast.is-empty .channel-eye-on {
+.channel-contrast.is-off .channel-eye-on {
     display: none;
 }
 
 .channel-slot.is-disabled .channel-eye-off,
-.channel-contrast.is-off .channel-eye-off,
-.channel-contrast.is-empty .channel-eye-off {
+.channel-contrast.is-off .channel-eye-off {
     display: inline-block;
 }
 
@@ -1863,6 +1873,14 @@
    its four digits is cut, and the tooltip holds the whole of it. */
 .channel-contrast-range .plx-number {
     text-overflow: ellipsis;
+    /* The track follows the boxes, so it eases with them. */
+    transition: width 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .channel-contrast-range .plx-number {
+        transition: none;
+    }
 }
 
 .channel-contrast.is-empty .channel-contrast-range {

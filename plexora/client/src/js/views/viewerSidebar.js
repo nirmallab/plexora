@@ -690,9 +690,12 @@ class ViewerSidebar {
         eye.innerHTML = '<span class="fas fa-eye channel-eye-on" aria-hidden="true"></span>'
             + '<span class="fas fa-eye-slash channel-eye-off" aria-hidden="true"></span>';
         eye.addEventListener("click", () => {
+            // A press already did its work (sweepEyes); this is its click.
+            if (this._eyeSweepClick) return;
             const current = this.channelSlots[slot.index];
             if (current?.name) this.setSlotEnabled(current.index, !current.enabled);
         });
+        eye.addEventListener("pointerdown", (event) => this.sweepEyes(slot.index, event));
         top.appendChild(eye);
         this.paintEye(eye, slot);
 
@@ -794,6 +797,85 @@ class ViewerSidebar {
         const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
             + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
         input.style.setProperty("--name-width", `${Math.ceil(ctx.measureText(text).width + pad + 2)}px`);
+    }
+
+    /** Whether any row's channel is on: what the bar's eye shows. */
+    anySlotEnabled() {
+        return this.channelSlots.some((slot) => slot?.name && slot.visible && slot.enabled);
+    }
+
+    /** The bar's eye: every row with a channel on, or every one off. */
+    setAllSlotsEnabled(enabled) {
+        this.channelSlots.forEach((slot) => {
+            if (slot?.name && slot.visible && slot.enabled !== enabled) {
+                this.setSlotEnabled(slot.index, enabled);
+            }
+        });
+        this.paintContrastHeader();
+    }
+
+    /**
+     * Press an eye and drag along the column: every row the pointer passes
+     * is set to ONE state, not flipped. Which state comes from the rows
+     * swept, as they were before the press: mostly on, they go off; mostly
+     * off, they come on; a tie goes the way a click on the first eye would.
+     * So a row already in that state is left alone, and a row the pointer
+     * leaves again (dragging back) gets its own state back. A press with no
+     * drag sweeps one row, which is a click.
+     */
+    sweepEyes(startIndex, event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const eye = event.currentTarget;
+        const entries = this.channelSlots
+            .filter((slot) => slot?.name && slot.visible && this.slotRow(slot.index))
+            .map((slot) => ({ slot, row: this.slotRow(slot.index), was: slot.enabled }))
+            .sort((a, b) => a.row.getBoundingClientRect().top - b.row.getBoundingClientRect().top);
+        const start = entries.findIndex((entry) => entry.slot.index === startIndex);
+        if (start < 0) return;
+        let end = start;
+        const apply = () => {
+            const lo = Math.min(start, end);
+            const hi = Math.max(start, end);
+            const swept = entries.slice(lo, hi + 1);
+            const on = swept.filter((entry) => entry.was).length;
+            const off = swept.length - on;
+            const target = on === off ? !entries[start].was : on < off;
+            entries.forEach((entry, at) => {
+                const want = at >= lo && at <= hi ? target : entry.was;
+                if (entry.slot.enabled !== want) this.setSlotEnabled(entry.slot.index, want);
+            });
+        };
+        const rowAt = (y) => {
+            for (let at = 0; at < entries.length; at += 1) {
+                const box = entries[at].row.getBoundingClientRect();
+                if (y < box.bottom || at === entries.length - 1) return at;
+            }
+            return end;
+        };
+        const move = (moveEvent) => {
+            const at = rowAt(moveEvent.clientY);
+            if (at === end) return;
+            end = at;
+            apply();
+        };
+        const finish = () => {
+            eye.removeEventListener("pointermove", move);
+            eye.removeEventListener("pointerup", finish);
+            eye.removeEventListener("pointercancel", finish);
+            eye.removeEventListener("lostpointercapture", finish);
+            this.el("channel_slot_list")?.classList.remove("channel-eye-sweeping");
+            // The click this press ends in has been handled already.
+            this._eyeSweepClick = true;
+            setTimeout(() => { this._eyeSweepClick = false; }, 0);
+        };
+        // Captured, so the drag keeps reporting once it leaves this eye.
+        try { eye.setPointerCapture?.(event.pointerId); } catch (error) { /* synthetic event */ }
+        eye.addEventListener("pointermove", move);
+        eye.addEventListener("pointerup", finish);
+        eye.addEventListener("pointercancel", finish);
+        eye.addEventListener("lostpointercapture", finish);
+        this.el("channel_slot_list")?.classList.add("channel-eye-sweeping");
+        apply();
     }
 
     /** A row's eye: what it says matches whether the channel is drawn. */
@@ -1167,10 +1249,7 @@ class ViewerSidebar {
             <div class="slider-auto-row channel-contrast-range"><div class="sidebar-slider"></div></div>`;
         list.parentNode.insertBefore(bar, list);
         const on = (selector, fn) => bar.querySelector(selector)?.addEventListener("click", fn);
-        on(".channel-contrast-eye", () => {
-            const slot = this.resolveSelectedSlot();
-            if (slot) this.setSlotEnabled(slot.index, !slot.enabled);
-        });
+        on(".channel-contrast-eye", () => this.setAllSlotsEnabled(!this.anySlotEnabled()));
         on(".channel-contrast-hist", (event) => {
             event.stopPropagation();
             this.toggleHistogram();
@@ -1202,7 +1281,9 @@ class ViewerSidebar {
         const slot = this.channelSlots[this.selectedSlot];
         const usable = Boolean(slot && slot.visible && slot.name);
         bar.classList.toggle("is-empty", !usable);
-        bar.classList.toggle("is-off", usable && !slot.enabled);
+        // The eye is every slot's, not the selected one's: on while any is.
+        const anyOn = this.anySlotEnabled();
+        bar.classList.toggle("is-off", !anyOn);
         const name = bar.querySelector(".channel-contrast-name");
         if (name) {
             name.textContent = usable ? slot.name : "No channel";
@@ -1210,8 +1291,11 @@ class ViewerSidebar {
         }
         const eye = bar.querySelector(".channel-contrast-eye");
         if (eye) {
-            this.paintEye(eye, usable ? slot : { enabled: false, name: "" });
-            eye.disabled = !usable;
+            const label = anyOn ? "Hide every channel" : "Show every channel";
+            eye.title = label;
+            eye.setAttribute("aria-label", label);
+            eye.setAttribute("aria-pressed", anyOn ? "true" : "false");
+            eye.disabled = !this.channelSlots.some((s) => s?.name && s.visible);
         }
         const count = bar.querySelector(".channel-contrast-count");
         const columns = this.columns || [];
@@ -2738,7 +2822,9 @@ class ViewerSidebar {
         this.fitMarkerName(slot, row);
         this.syncSlotAutoButton(slot);
         this.updateSlotReadout(slot);
-        if (slot.index === this.selectedSlot) this.paintContrastHeader();
+        // Every slot's change, not only the selected one's: the bar's eye
+        // says whether any channel is on.
+        this.paintContrastHeader();
     }
 
     /**
