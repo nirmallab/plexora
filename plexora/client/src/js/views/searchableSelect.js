@@ -50,6 +50,10 @@ class SearchableSelect {
         // generated input, so there is no stable id to point one at.
         this.ariaLabel = options.ariaLabel || "";
         this.onChange = options.onChange || (() => {});
+        //: Called once each time an open menu closes, with `{picked}`: true
+        //: when it closed because an option was chosen (onChange follows),
+        //: false for a click elsewhere, Escape or a blur.
+        this.onClose = options.onClose || null;
         this.trigger = options.trigger === "button" ? "button" : "input";
         //: `query -> names`, replacing the substring filter over `options`.
         //: For a vocabulary too long to list: eighteen thousand genes on a
@@ -265,7 +269,13 @@ class SearchableSelect {
     }
 
     close() {
+        const wasOpen = this.isOpen;
         this.isOpen = false;
+        if (wasOpen && this.onClose) {
+            const picked = Boolean(this._picked);
+            this._picked = false;
+            try { this.onClose({ picked }); } catch (error) { console.error(error); }
+        }
         if (!this.menu) return;
         this.menu.classList.remove("is-open");
         this.anchor.setAttribute("aria-expanded", "false");
@@ -396,7 +406,9 @@ class SearchableSelect {
     selectOption(name) {
         if (this.isDisabled(name)) return;
         this.setValue(name);
+        this._picked = true;
         this.close();
+        this._picked = false;
         // Focus goes back to what opened the menu, or a keyboard user is left
         // on an element that is no longer visible.
         if (this.trigger === "button") this.button.focus();
