@@ -182,7 +182,7 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261024_drop_router",
-        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb_busy",
+        "/client/src/js/views/datasetBuilder.js?v=20261025_dsb_select",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
@@ -191,7 +191,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261024_dsb_busy",
+        "/client/src/css/main.css?v=20261025_dsb_select",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
@@ -403,7 +403,7 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261024_drop_router",
-        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb_busy",
+        "/client/src/js/views/datasetBuilder.js?v=20261025_dsb_select",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
@@ -468,7 +468,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261024_dsb_busy",
+        "/client/src/css/main.css?v=20261025_dsb_select",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261024_drop_router",
         "/client/src/css/quickView.css?v=20261021_native_drop",
@@ -728,7 +728,7 @@
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261013_reading_orb",
         "/client/src/js/views/importSample.js?v=20261024_drop_router",
-        "/client/src/js/views/datasetBuilder.js?v=20261024_dsb_busy",
+        "/client/src/js/views/datasetBuilder.js?v=20261025_dsb_select",
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
@@ -802,7 +802,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261024_dsb_busy",
+        "/client/src/css/main.css?v=20261025_dsb_select",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261024_drop_router",
         "/client/src/css/quickView.css?v=20261021_native_drop",

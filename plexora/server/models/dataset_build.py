@@ -123,10 +123,13 @@ def specs_for(plan, only=None) -> list:
     return found
 
 
-def spec_document(plan, name, description="") -> dict:
-    """The file `plexora dataset create NAME --from FILE` reads, for this plan."""
+def spec_document(plan, name, description="", only=None) -> dict:
+    """The file `plexora dataset create NAME --from FILE` reads, for this plan.
+
+    @param only - project ids to keep (the samples ticked in the dialog).
+    """
     return {"name": name, "description": description or "",
-            "projects": [spec for _id, spec in specs_for(plan)]}
+            "projects": [spec for _id, spec in specs_for(plan, only)]}
 
 
 def build(plan, *, name, description="", exist_ok=False, only=None,

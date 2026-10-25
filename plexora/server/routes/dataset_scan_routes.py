@@ -89,7 +89,8 @@ def dataset_scan_spec(token):
         return _unknown(token)
     name = (request.args.get("name") or "").strip() or "Dataset"
     document = dataset_build.spec_document(plan, name,
-                                           request.args.get("description") or "")
+                                           request.args.get("description") or "",
+                                           only=request.args.getlist("only") or None)
     return Response(json.dumps(document, indent=2), mimetype="application/json")
 
 

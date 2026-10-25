@@ -632,6 +632,26 @@ window.PlexoraDatasetBuilder = (function () {
             ${said ? `<ul class="plx-dsb-warn-list">${said}</ul>` : ""}</div>`;
     }
 
+    /** Whether a sample can be ticked: there is something to create. */
+    function choosable(project) {
+        return project.status !== "unavailable";
+    }
+
+    /** Whether a sample is ticked: every one is, until somebody unticks it. */
+    function chosen(project, view) {
+        return choosable(project) && !(view.leftOut && view.leftOut.has(project.id));
+    }
+
+    function pickHtml(project, view) {
+        const on = chosen(project, view);
+        const editable = view.phase === "plan" && choosable(project);
+        const why = choosable(project) ? "" : " title=\"Its image is no longer there\"";
+        return `<div class="plx-dsb-cell plx-dsb-pickcell" role="cell"${why}>
+            <input class="plx-dsb-tick" type="checkbox" data-act="pick"
+                ${on ? "checked" : ""} ${editable ? "" : "disabled"}
+                aria-label="Include ${esc(project.name)}"></div>`;
+    }
+
     function rowHtml(project, view) {
         const status = projectStatus(project, view.build);
         const expanded = view.expanded.has(project.id);
@@ -644,8 +664,10 @@ window.PlexoraDatasetBuilder = (function () {
                    title="${view.phase === "plan" ? "Rename" : esc(project.name)}">${esc(project.name)}</button>`;
         return `<div class="plx-dsb-row${expanded ? " is-expanded" : ""}${
                     view.busy.has(project.id) ? " is-busy" : ""}${
-                    project.status === "existing" ? " is-existing" : ""}"
+                    project.status === "existing" ? " is-existing" : ""}${
+                    chosen(project, view) ? "" : " is-left-out"}"
                     data-project="${esc(project.id)}" role="row">
+                ${pickHtml(project, view)}
                 <div class="plx-dsb-cell" role="cell">
                     <button class="plx-dsb-expand" type="button" data-act="toggle"
                         aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} details for ${esc(project.name)}">
@@ -664,7 +686,17 @@ window.PlexoraDatasetBuilder = (function () {
     function tableHtml(plan, view) {
         const projects = (plan?.projects || []).filter((p) => matchesFilter(p, view.filter));
         view.shared = sharedNames(plan?.projects || []);
+        // The header box speaks for the rows on screen: with a filter on, it
+        // ticks or unticks what the filter shows and leaves the rest alone.
+        const open = projects.filter(choosable);
+        const ticked = open.filter((p) => chosen(p, view)).length;
+        const all = open.length > 0 && ticked === open.length;
         const head = `<div class="plx-dsb-head" role="row">
+            <span class="plx-dsb-pickcell" role="columnheader"><input class="plx-dsb-tick"
+                type="checkbox" data-act="pick-all" data-mixed="${ticked > 0 && !all}"
+                ${all ? "checked" : ""} ${view.phase === "plan" && open.length ? "" : "disabled"}
+                aria-label="${all ? "Deselect" : "Select"} all samples"
+                title="${all ? "Deselect" : "Select"} all"></span>
             <span role="columnheader"></span><span role="columnheader">Sample</span>
             <span role="columnheader">Image</span><span role="columnheader">Segmentation</span>
             <span role="columnheader">Data</span><span role="columnheader">Status</span></div>`;
@@ -848,6 +880,10 @@ window.PlexoraDatasetBuilder = (function () {
             callout: null,
             openExcluded: false,
             lastSelected: null,
+            //: Samples unticked in the table, by id. A set of the ones LEFT
+            //: OUT, so a sample a correction or an added folder brings is in.
+            leftOut: new Set(),
+            lastPicked: null,
             dragging: null,
             signature: null,
             onClose: options.onClose || null,
@@ -1556,6 +1592,7 @@ window.PlexoraDatasetBuilder = (function () {
             build: state.phase === "building" || state.phase === "done" ? state.build : null,
             expanded: ui.expanded,
             selected: ui.selected,
+            leftOut: ui.leftOut,
             busy: ui.busy,
             filter: ui.filter,
             renaming: ui.renaming,
@@ -1576,10 +1613,14 @@ window.PlexoraDatasetBuilder = (function () {
         const signature = JSON.stringify([
             plan?.projects, plan?.unassigned, plan?.excluded, view.phase, view.build?.projects,
             Array.from(ui.expanded), Array.from(ui.selected), Array.from(ui.busy),
+            Array.from(ui.leftOut),
             ui.filter, ui.renaming, state.planning]);
         if (!force && signature === ui.signature) return;
         ui.signature = signature;
         part("table").innerHTML = tableHtml(plan, view);
+        // Some ticked and some not: `indeterminate` is a property, never markup.
+        const all = part("table").querySelector('[data-act="pick-all"]');
+        if (all) all.indeterminate = all.dataset.mixed === "true";
         part("table").classList.toggle("is-planning", Boolean(state.planning));
         const total = (plan?.projects || []).length;
         const shown = (plan?.projects || []).filter((p) => matchesFilter(p, ui.filter)).length;
@@ -1593,7 +1634,14 @@ window.PlexoraDatasetBuilder = (function () {
     }
 
     function creatable(plan) {
-        return (plan?.projects || []).filter((p) => p.status !== "unavailable");
+        return (plan?.projects || []).filter((p) => chosen(p, {leftOut: ui?.leftOut}));
+    }
+
+    /** `only` for the create route: null while every sample is ticked. */
+    function onlyChosen(plan) {
+        const open = (plan?.projects || []).filter(choosable);
+        const picked = creatable(plan);
+        return picked.length === open.length ? null : picked.map((p) => p.id);
     }
 
     function paintFoot() {
@@ -1620,14 +1668,17 @@ window.PlexoraDatasetBuilder = (function () {
                 <button class="plx-button plx-button-primary" type="button" disabled>Scanning…</button>`;
         } else if (state.phase === "plan") {
             const projects = creatable(plan);
+            const open = (plan?.projects || []).filter(choosable).length;
             const unavailable = (plan?.counts?.unavailable || 0);
             const existing = projects.filter((p) => p.existing).length;
             const fresh = projects.length - existing;
-            const label = !projects.length ? "Nothing to create"
+            const label = !open ? "Nothing to create"
+                : !projects.length ? "Select samples to create"
                 : unavailable ? `Leave out ${unavailable} and create`
                 : fresh ? `Create ${samples(projects.length)}` : `Add ${samples(projects.length)}`;
             const reason = !ui.name.trim() ? "Name the dataset"
-                : state.planning ? "Updating…" : "";
+                : state.planning ? "Updating…"
+                : projects.length < open ? `${projects.length} of ${open} selected` : "";
             left = `<button class="plx-button" type="button" data-act="add-folder"
                     ${ui.adding ? "disabled" : ""}>
                     <span class="fas fa-folder-plus" aria-hidden="true"></span> Add folder…</button>
@@ -1679,7 +1730,7 @@ window.PlexoraDatasetBuilder = (function () {
             part("name")?.focus();
             return;
         }
-        await go({name});
+        await go({name, only: onlyChosen(state.scan)});
     }
 
     async function go({name, only = null, existOk = false}) {
@@ -1729,8 +1780,10 @@ window.PlexoraDatasetBuilder = (function () {
         const name = ui.name.trim() || "Dataset";
         let response;
         try {
+            const only = (onlyChosen(state.scan) || [])
+                .map((id) => `&only=${encodeURIComponent(id)}`).join("");
             response = await fetch(plexoraUrl(`datasets/scan/${state.token}/spec?name=${
-                encodeURIComponent(name)}`));
+                encodeURIComponent(name)}${only}`));
         } catch (error) {
             setStatus("The spec could not be saved.", true);
             return;
@@ -1952,6 +2005,29 @@ window.PlexoraDatasetBuilder = (function () {
                 default:
                     break;
             }
+        });
+        // Samples ticked in or out of the dataset; shift-click ticks or
+        // unticks a run of rows, the way the files' ticks do.
+        body.addEventListener("click", (event) => {
+            const box = event.target.closest('[data-act="pick"], [data-act="pick-all"]');
+            if (!box || controller.state.phase !== "plan") return;
+            const shown = (controller.state.scan?.projects || [])
+                .filter((p) => matchesFilter(p, ui.filter) && choosable(p)).map((p) => p.id);
+            if (box.dataset.act === "pick-all") {
+                const every = shown.every((id) => !ui.leftOut.has(id));
+                shown.forEach((id) => (every ? ui.leftOut.add(id) : ui.leftOut.delete(id)));
+            } else {
+                const id = box.closest("[data-project]").dataset.project;
+                let run = [id];
+                if (event.shiftKey && ui.lastPicked && shown.includes(ui.lastPicked)) {
+                    const [a, b] = [shown.indexOf(ui.lastPicked), shown.indexOf(id)].sort((x, y) => x - y);
+                    run = shown.slice(a, b + 1);
+                }
+                run.forEach((each) => (box.checked ? ui.leftOut.delete(each) : ui.leftOut.add(each)));
+                ui.lastPicked = id;
+            }
+            paintTable(true);
+            paintFoot();
         });
         // Ticks: a change event, so shift-click can select a run of rows.
         body.addEventListener("click", (event) => {

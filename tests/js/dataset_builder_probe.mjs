@@ -256,6 +256,26 @@ await check("the edits keep one placement per file", () => {
     assert.ok(!o.assign.some((a) => a.path === "/a"));
 });
 
+await check("each sample has a tick, and the header box says all, some or none", () => {
+    const row = (id, status = "matched") => ({ id, name: id, status, image: { path: `/d/${id}.tif`,
+        rel: `${id}.tif`, name: `${id}.tif` }, mask: null, table: null, warnings: [] });
+    const view = (leftOut) => ({ phase: "plan", build: null, expanded: new Set(), selected: new Set(),
+        busy: new Set(), filter: { text: "", status: "all" }, renaming: null, shared: new Set(),
+        leftOut: new Set(leftOut) });
+    const plan = { projects: [row("A"), row("B"), row("C", "unavailable")] };
+    const every = builder.html.table(plan, view([]));
+    assert.equal((every.match(/data-act="pick"/g) || []).length, 3);
+    assert.match(every, /data-act="pick-all" data-mixed="false"\s+checked/);
+    // A sample whose image has gone cannot be ticked.
+    const gone = every.slice(every.indexOf('data-project="C"'));
+    assert.match(gone, /data-act="pick"\s+disabled/);
+    const some = builder.html.table(plan, view(["B"]));
+    assert.match(some, /data-act="pick-all" data-mixed="true"/);
+    assert.match(some, /is-left-out"\s+data-project="B"/);
+    const none = builder.html.table(plan, view(["A", "B"]));
+    assert.match(none, /data-act="pick-all" data-mixed="false"\s+aria-label/);
+});
+
 await check("names and paths are escaped in the table", () => {
     const html = builder.html.table({
         projects: [{ id: "p:x", name: "<img src=x onerror=1>", status: "matched",
