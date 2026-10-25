@@ -776,12 +776,15 @@ class ViewerSidebar {
             }
             return;
         }
-        const text = input.value || input.placeholder || "";
+        // The slot's own name, not the field: the field may still hold the
+        // previous marker, or a half-typed search.
+        const text = slot?.name || input.value || input.placeholder || "";
         const canvas = ViewerSidebar._measure || (ViewerSidebar._measure = document.createElement("canvas"));
         const ctx = canvas.getContext?.("2d");
         if (!ctx) return;
         const style = getComputedStyle(input);
-        ctx.font = style.font || `${style.fontSize} ${style.fontFamily}`;
+        // From its parts: WebKit can leave the `font` shorthand empty.
+        ctx.font = `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${style.fontSize} ${style.fontFamily}`;
         const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
             + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
         input.style.setProperty("--name-width", `${Math.ceil(ctx.measureText(text).width + pad + 2)}px`);
@@ -2692,11 +2695,13 @@ class ViewerSidebar {
         row.style.setProperty("--slot-color", slot.colorHex);
         row.classList.toggle("is-selected", slot.index === this.selectedSlot);
         this.paintEye(row.querySelector(".channel-slot-eye"), slot);
-        this.fitMarkerName(slot, row);
         const colorPicker = this.colorPickers.get(slot.index);
         if (colorPicker) colorPicker.setValue(slot.colorHex);
         const markerSelect = this.markerSelects.get(slot.index);
         if (markerSelect) markerSelect.setValue(slot.name);
+        // After setValue: measured before it, the field kept the width of
+        // the marker it held before, and a longer new name was cut short.
+        this.fitMarkerName(slot, row);
         this.syncSlotAutoButton(slot);
         this.updateSlotReadout(slot);
         if (slot.index === this.selectedSlot) this.paintContrastHeader();
