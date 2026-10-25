@@ -72,7 +72,7 @@ def test_the_window_is_one_row_with_the_numbers_on_the_slider():
         "the header row the two number boxes used to sit on is back"
     )
     bar = source[source.index("    bindContrastSlider(slot) {"):]
-    bar = bar[: bar.index("    resetSelectedRange() {")]
+    bar = bar[: bar.index("    clearSelectedRange() {")]
     assert "fieldsSlot:" not in bar, (
         "the contrast slider is parking its number boxes off the track again"
     )

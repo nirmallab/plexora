@@ -1153,8 +1153,8 @@ class ViewerSidebar {
                 <button type="button" class="channel-contrast-icon channel-contrast-hist" title="Histogram" aria-label="Histogram" aria-haspopup="dialog" aria-expanded="false">
                     <span class="fas fa-chart-simple" aria-hidden="true"></span>
                 </button>
-                <button type="button" class="channel-contrast-icon channel-contrast-reset" title="Reset to the full range" aria-label="Reset to the full range">
-                    <span class="fas fa-rotate-left" aria-hidden="true"></span>
+                <button type="button" class="channel-contrast-icon channel-contrast-clear" title="Clear: the full range" aria-label="Clear: the full range">
+                    <span class="fas fa-eraser" aria-hidden="true"></span>
                 </button>
                 <span class="channel-contrast-count"></span>
                 <button type="button" class="channel-contrast-nav channel-contrast-prev" title="Previous channel${keys ? " (J)" : ""}" aria-label="Previous channel"${keys ? ' aria-keyshortcuts="J"' : ""}>
@@ -1175,7 +1175,7 @@ class ViewerSidebar {
             event.stopPropagation();
             this.toggleHistogram();
         });
-        on(".channel-contrast-reset", () => this.resetSelectedRange());
+        on(".channel-contrast-clear", () => this.clearSelectedRange());
         on(".channel-contrast-prev", () => this.stepChannel(-1));
         on(".channel-contrast-next", () => this.stepChannel(1));
         this.contrastBar = bar;
@@ -1217,7 +1217,7 @@ class ViewerSidebar {
         const columns = this.columns || [];
         const at = usable ? columns.indexOf(slot.name) : -1;
         if (count) count.textContent = at >= 0 ? `${at + 1}/${columns.length}` : "";
-        for (const selector of [".channel-contrast-hist", ".channel-contrast-reset"]) {
+        for (const selector of [".channel-contrast-hist", ".channel-contrast-clear"]) {
             const button = bar.querySelector(selector);
             if (button) button.disabled = !usable;
         }
@@ -1269,12 +1269,30 @@ class ViewerSidebar {
         this.channelSlotSliders.set(slot.index, slider);
     }
 
-    /** The selected channel back to its whole range, as if dragged there. */
-    resetSelectedRange() {
+    /**
+     * Clear: the selected channel's slider back to its base position, the
+     * whole range, as if dragged there. Revert is the row's button: the
+     * window that was on screen is kept as its way back (revertSlotRange),
+     * the same way back Auto leaves, with the remembered override too, since
+     * this one is a range set by hand.
+     */
+    clearSelectedRange() {
         const slot = this.resolveSelectedSlot();
         if (!slot) return;
-        slot.preAutoRange = null;
-        this.setSlotRange(slot.index, this.getImageRange(slot.name), true);
+        const full = this.getImageRange(slot.name);
+        const moved = Number(slot.range[0]) !== Number(full[0]) || Number(slot.range[1]) !== Number(full[1]);
+        if (moved) {
+            slot.preAutoRange = {
+                range: [...slot.range],
+                userRangeChanged: slot.userRangeChanged,
+                autoLeveled: slot.autoLeveled,
+                rangeSource: slot.rangeSource || null,
+                curve: slot.curve || null,
+                override: slot.name && this.markerRangeOverrides.has(slot.name)
+                    ? [...this.markerRangeOverrides.get(slot.name)] : null,
+            };
+        }
+        this.setSlotRange(slot.index, full, true);
         this.updateSlotReadout(slot);
         this.syncSlotAutoButton(slot);
         this.scheduleSaveChannels();
@@ -1751,16 +1769,17 @@ class ViewerSidebar {
     }
 
     /**
-     * Put back the window that was on screen when Auto was pressed.
+     * Put back the window that was on screen when Auto or Clear was pressed.
      *
      * The two flags travel with the range because they are part of what
      * "before" was: a channel that had never been levelled must be free to
      * level itself again the next time it is switched on, exactly as it would
      * have been had Auto never been pressed.
      *
-     * `markerRangeOverrides` is not touched. Auto never wrote to it -- both
-     * of its passes go through `setSlotRange(..., false)` -- so there is
-     * nothing of the user's in there for this to undo.
+     * After Auto, `markerRangeOverrides` is not touched. Auto never wrote to
+     * it -- both of its passes go through `setSlotRange(..., false)` -- so
+     * there is nothing of the user's in there for this to undo. Clear
+     * (clearSelectedRange) did write it, and its way back says what it held.
      */
     revertSlotRange(slotIndex) {
         const slot = this.channelSlots[slotIndex];
@@ -1775,6 +1794,11 @@ class ViewerSidebar {
         slot.userRangeChanged = before.userRangeChanged;
         slot.autoLeveled = before.autoLeveled;
         slot.rangeSource = before.rangeSource || null;
+        // Only Clear writes the override, so only its way back carries one.
+        if ("override" in before && slot.name) {
+            if (before.override) this.markerRangeOverrides.set(slot.name, before.override);
+            else this.markerRangeOverrides.delete(slot.name);
+        }
         const curves = globalThis.PlexoraDisplayCurve;
         if (curves && !curves.same(slot.curve, before.curve)) {
             this.setSlotCurve?.(slotIndex, before.curve, { save: false, source: null });
