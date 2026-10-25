@@ -3,12 +3,12 @@ title: "create_dataset_from_directory"
 description: "Scan folders and register what they hold as one dataset."
 generated: true
 symbol: "plexora.create_dataset_from_directory"
-signature: "create_dataset_from_directory(name, *roots, overrides=None, description='', exist_ok=False) -> Dataset"
+signature: "create_dataset_from_directory(name, *roots, overrides=None, description='', exist_ok=False, node=None) -> Dataset"
 aliases: ["scan", "folder", "directory", "cohort folder", "mcmicro"]
 source:
-  end: 615
+  end: 621
   path: "plexora/datasets.py"
-  start: 567
+  start: 570
 ---
 
 {/* GENERATED from plexora.datasets.create_dataset_from_directory. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -24,6 +24,7 @@ create_dataset_from_directory(
     overrides=None,
     description='',
     exist_ok=False,
+    node=None,
 ) -> Dataset
 ```
 
@@ -31,7 +32,9 @@ create_dataset_from_directory(
 image becomes a project, with the mask, table and channel names matched
 to it. Files are registered where they are, not copied. Files the plan
 could not place (`unassigned`) are left out; pass `overrides` to place
-them, or use [`plan_dataset`](/docs/python-api/datasets/plan-dataset) first to see them.
+them, or use [`plan_dataset`](/docs/python-api/datasets/plan-dataset) first to see them. On a files-only server
+(`sftp://`) images and masks stream from where they are and each cell
+table is copied to this computer, since a CSV cannot be streamed.
 
 ## When to use
 
@@ -72,6 +75,12 @@ A note about the dataset.
 
 Add to an existing dataset of this name
 instead of raising.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The data node the folders are on.
 
 </Param>
 

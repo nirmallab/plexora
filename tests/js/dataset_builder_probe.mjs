@@ -104,6 +104,22 @@ await check("a scan polls until it is no longer pending, then stops", async () =
                      ["assign", "detach", "exclude", "learn", "new_project", "rename"]);
 });
 
+await check("a folder on a data node names the node, and so does an added folder", async () => {
+    const timers = clock();
+    const s = server((path, method) => {
+        if (path === "datasets/scan" && method === "POST") return ok(plan());
+    });
+    const c = builder.createController({ request: s.request, timers });
+    await c.start(["/n/files/run"], "hms-o2");
+    assert.deepEqual(plain(s.asked[0].body), { paths: ["/n/files/run"], node: "hms-o2" });
+    await c.addFolder("/n/files/run2");
+    assert.deepEqual(plain(s.asked[1].body),
+                     { paths: ["/n/files/run2"], token: "scan-1", node: "hms-o2" });
+    // On this computer, or over SFTP (whose address names its server), no node.
+    await c.start(["sftp://me@transfer.example/n/files/run"]);
+    assert.deepEqual(plain(s.asked[2].body), { paths: ["sftp://me@transfer.example/n/files/run"] });
+});
+
 await check("quick corrections go as one request, and a late answer is dropped", async () => {
     const timers = clock();
     let planPosts = 0;

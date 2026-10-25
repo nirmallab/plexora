@@ -701,6 +701,13 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
             subset_value=(payload.get("subset_value") or "").strip() or None,
             reinspect=True)
 
+    if _is_sftp_table(data_path_str):
+        # A CSV on a files-only server: nothing streams one, so it is brought
+        # across once, staged as an upload is, and from there it is an
+        # ordinary local table -- copied into the project, the staged copy
+        # dropped (`_copy_into_project`).
+        data_path_str = str(_fetch_sftp_table(data_path_str))
+
     if is_remote_locator(data_path_str):
         # A table at a web address: read where it is, through the chunk cache.
         # Only zarr is read from the web, so none of the local-file steps below
@@ -889,6 +896,33 @@ def _tenx_context(name, source, spatial):
     scale = float((spatial or {}).get("frame_scale") or 1.0)
     return {"converted": target, "scale": scale,
             "obs_id_field": "cell_id" if layout.kind == "cells" else None}
+
+
+def _is_sftp_table(value) -> bool:
+    from plexora.server.models.import_proposal import SFTP_TABLE_SUFFIXES
+
+    text = str(value or "").strip().lower()
+    return text.startswith("sftp://") and text.endswith(SFTP_TABLE_SUFFIXES)
+
+
+def _fetch_sftp_table(url):
+    """The table at an `sftp://` address, downloaded into the uploads area."""
+    from plexora.server.models import layer_jobs
+    from plexora.server.utils import remote_store, sftp
+
+    _sweep_uploads()
+    name = remote_store.url_name(url)
+    staged = _uploads_root() / uuid.uuid4().hex
+    label = f"Copying {name} to this computer"
+
+    def progress(done, total):
+        layer_jobs.registration_progress(done, total, label)
+
+    try:
+        return sftp.download(url, staged / name, progress=progress)
+    except BaseException:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
 
 
 def _copy_into_project(name, table_path):

@@ -29,18 +29,20 @@ def _payload():
 @_json_errors
 def dataset_scan_start():
     payload = _payload()
-    if payload.get("node"):
-        return jsonify(error="Scanning a folder on a data node is not available "
-                             "yet. Import its samples one at a time with "
-                             "Import Sample."), 400
-    paths = [tidy_pick(path) for path in payload.get("paths") or ()]
+    node = str(payload.get("node") or "").strip() or None
+    # A path on a node is that machine's spelling, never tidied against this
+    # one's filesystem.
+    paths = [str(path).strip() if node else tidy_pick(path)
+             for path in payload.get("paths") or ()]
     paths = [path for path in paths if path]
     try:
         found = dataset_scan.start_scan(paths, token=payload.get("token") or None,
-                                        limits=payload.get("limits"))
+                                        limits=payload.get("limits"), node=node)
     except KeyError:
         return _unknown(payload.get("token"))
-    except ValueError as error:
+    except (ValueError, ConnectionError) as error:
+        # ConnectionError: a files-only server this Plexora is not connected
+        # to, which says so in a sentence (`sftp.SFTPNotConnected`).
         return jsonify(error=str(error)), 400
     return jsonify(found), 202
 

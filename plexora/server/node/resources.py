@@ -726,6 +726,11 @@ def detect_kind(path: str) -> dict:
         verdict = looks_like_label_image(resolved)
         detected["mask"] = verdict
         detected["kind"] = "segmentation" if verdict else "image"
+        # The header's size and channel count, so a primary planning a whole
+        # folder (`dataset_scan`) can match masks by size and check a channel
+        # list's length, as it does on its own disk. Added later than the
+        # rest: a primary reading an older node finds no `geometry`.
+        detected["geometry"] = _geometry_or_none(resolved)
         return detected
     if suffix in TABLE_SUFFIXES or suffix == ".parquet":
         detected["kind"] = "table"
@@ -733,6 +738,17 @@ def detect_kind(path: str) -> dict:
 
     detected["reason"] = f"Plexora does not read {resolved.name}."
     return detected
+
+
+def _geometry_or_none(path):
+    from plexora.server.models.import_proposal import _geometry_of
+
+    try:
+        found = _geometry_of(path)
+    except Exception:  # noqa: BLE001 -- a header nobody can read is no geometry
+        return None
+    return {key: found.get(key) for key in ("width", "height", "numChannels")} \
+        if found else None
 
 
 def _provider_for(kind: str, path: str, rgb: bool = False):

@@ -408,14 +408,16 @@ def _existing_for(entry, config):
     if entry.kind == "bundle":
         from plexora.server.models.project import Project
 
-        root = os.path.realpath(entry.path)
+        remote = "://" in entry.path
+        root = entry.path if remote else os.path.realpath(entry.path)
         for name, record in config.items():
             try:
                 bundles = Project.from_entry(name, record).bundles
             except Exception:  # noqa: BLE001 -- one odd record is not a plan failure
                 continue
             for bundle in bundles:
-                if bundle.get("root") and os.path.realpath(bundle["root"]) == root:
+                if bundle.get("root") and (bundle["root"] if remote else
+                                           os.path.realpath(bundle["root"])) == root:
                     return name
         return None
     try:
@@ -433,7 +435,7 @@ def _panel_names(entry, count):
     key = (entry.key, count)
     if key not in _PANEL_CACHE:
         try:
-            _PANEL_CACHE[key] = names(entry.path, count)
+            _PANEL_CACHE[key] = names(entry.proxy or entry.path, count)
         except Exception:  # noqa: BLE001
             _PANEL_CACHE[key] = None
     return _PANEL_CACHE[key]
@@ -474,14 +476,20 @@ def plan(inventory, overrides=None, *, config=None) -> dict:
             excluded_items[hit] += 1
             continue
         kept.append(entry)
-    excluded = [{"path": item, "count": count, "folder": os.path.isdir(item)}
+    remote = inventory.place is not None
+    excluded = [{"path": item, "count": count,
+                 "folder": (item not in inventory.entries) if remote
+                 else os.path.isdir(item)}
                 for item, count in excluded_items.items()]
 
     duplicates, unique, by_real, by_copy = [], [], {}, {}
     for entry in kept:
         same = by_real.get(entry.real)
         how = "the same file, reached through a link"
-        if same is None and entry.kind != "bundle" and entry.size > 0:
+        # Not on a server: its dates are whole seconds, and mcmicro names
+        # every sample's mask `cell.ome.tif`, so two masks written in the same
+        # second at the same size would pass for copies of each other.
+        if same is None and not remote and entry.kind != "bundle" and entry.size > 0:
             same = by_copy.get((entry.name.lower(), entry.size, entry.mtime_ns))
             how = "an identical copy"
         if same is not None:
@@ -1016,8 +1024,10 @@ def plan(inventory, overrides=None, *, config=None) -> dict:
 
     from plexora.server.models.dataset_scan import SCAN_MAX_DEPTH, SCAN_MAX_ENTRIES
 
+    place = inventory.place
     return {
         "roots": list(inventory.roots),
+        "place": {"kind": place[0], "name": place[1]} if place else None,
         "projects": result_projects,
         "unassigned": unassigned,
         "unrecognised": unrecognised,
@@ -1159,6 +1169,11 @@ def _channels_slot(entry, project, user=False):
     if count and names is None:
         slot["warning"] = (f"{entry.name} does not list {count} names; the image "
                            "keeps its own channel names.")
+    elif not count:
+        # A data node from before `/detect` reported a size.
+        slot["warning"] = (f"The image's channel count is not known here, so "
+                           f"{entry.name} is not applied. Restarting the data "
+                           "node on the current version fixes this.")
     return slot
 
 
@@ -1248,6 +1263,10 @@ def verify(result) -> dict:
     vanished image makes its project `unavailable`. Nothing else changes.
     """
     result = copy.deepcopy(result)
+    if result.get("place"):
+        # Asked of a server, a file each, on every correction: too slow to be
+        # worth it. Creation checks every path before it registers anything.
+        return result
     unavailable = []
     for project in result["projects"]:
         image = project["image"]

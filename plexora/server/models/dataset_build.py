@@ -12,6 +12,13 @@ channel_names?}`. A run or store (Xenium, Visium, SpatialData, DICOM) is
 Sample registers it, because its parts are not files `create_project` can be
 told about one by one.
 
+Where the files are decides the rest. On a data node a spec names the node
+(`node`), and the node reads its own files as `create_project` already
+arranges. On a files-only server (`sftp://`) every project is a `paths` spec
+with each file's role stated in `answers` (`added-as:`), because that is the
+route that streams an image and a mask from such a server and copies its CSV
+table across (`replace_project_data`).
+
 Creation is a background task (`layer_jobs`, pseudo-sample `dataset-build`):
 every path is checked first, then each project is registered in turn, and one
 that fails is reported and skipped rather than stopping the rest --
@@ -35,19 +42,27 @@ _BUILDS: dict = {}
 _LOCK = threading.Lock()
 
 
-def spec_for(project) -> dict | None:
-    """One plan project as a project spec, or None when it cannot be made."""
+def spec_for(project, place=None) -> dict | None:
+    """One plan project as a project spec, or None when it cannot be made.
+
+    @param place - the plan's `place`: None on this computer.
+    """
     if project.get("status") == "unavailable":
         return None
+    kind = (place or {}).get("kind")
     image = project["image"]
     extras = [project.get(slot) for slot in ("mask", "table")]
     if project["kind"] == "bundle":
         paths = [image["path"]] + [slot["path"] for slot in extras
                                    if slot and slot.get("path") and not slot.get("bundled")]
         spec = {"paths": paths, "name": project["name"]}
+        if kind == "node":
+            spec["node"] = place["name"]
         if project.get("existing"):
             spec["exist_ok"] = True
         return spec
+    if kind == "sftp":
+        return _sftp_spec(project)
     spec = {"image": image["path"], "name": project["name"]}
     mask, table = extras
     if mask and mask.get("path"):
@@ -60,6 +75,33 @@ def spec_for(project) -> dict | None:
     channels = project.get("channels") or {}
     if channels.get("names"):
         spec["channel_names"] = list(channels["names"])
+    if kind == "node":
+        spec["node"] = place["name"]
+    if project.get("existing"):
+        spec["exist_ok"] = True
+    return spec
+
+
+def _sftp_spec(project) -> dict:
+    """A project on a files-only server, as the files Import Sample is given.
+
+    Each file's role is said (`added-as:`), so a whole-cell mask is never read
+    as a second image and a table never has to be guessed at. The channel
+    list goes in as a file: Import Sample names the image's channels from it.
+    """
+    paths = [project["image"]["path"]]
+    answers = {}
+    for slot, role in (("mask", "mask"), ("table", "table")):
+        found = project.get(slot)
+        if found and found.get("path"):
+            paths.append(found["path"])
+            answers[f"added-as:{found['path']}"] = role
+    channels = project.get("channels") or {}
+    if channels.get("names") and channels.get("path"):
+        paths.append(channels["path"])
+    spec = {"paths": paths, "name": project["name"]}
+    if answers:
+        spec["answers"] = answers
     if project.get("existing"):
         spec["exist_ok"] = True
     return spec
@@ -75,7 +117,7 @@ def specs_for(plan, only=None) -> list:
     for project in plan["projects"]:
         if wanted is not None and project["id"] not in wanted:
             continue
-        spec = spec_for(project)
+        spec = spec_for(project, plan.get("place"))
         if spec is not None:
             found.append((project["id"], spec))
     return found

@@ -93,6 +93,10 @@ window.PlexoraDatasetBuilder = (function () {
         ["existing", "Already imported"],
     ];
 
+    //: The machine the last pick was read from -- Import Sample's own key, so
+    //: the two dialogs open on the same machine.
+    const WHERE_KEY = "plexora.import.where";
+
     let dialog = null;
     let ui = null;
     let controller = null;
@@ -173,6 +177,9 @@ window.PlexoraDatasetBuilder = (function () {
         const state = {
             phase: "pick",
             token: null,
+            //: The data node the folders are on; null here or on an `sftp://`
+            //: server, whose addresses name it themselves.
+            node: null,
             //: The last snapshot: progress, counts and the plan, as one object.
             scan: null,
             //: What the user has said, as the server will be told it.
@@ -205,9 +212,11 @@ window.PlexoraDatasetBuilder = (function () {
             }
         }
 
-        async function start(paths) {
+        async function start(paths, node = null) {
             state.error = null;
-            const reply = await request("datasets/scan", {method: "POST", body: {paths}});
+            state.node = node || null;
+            const body = node ? {paths, node} : {paths};
+            const reply = await request("datasets/scan", {method: "POST", body});
             if (state.closed) return false;
             if (!reply.ok) {
                 state.error = reply.body.error || "The folder could not be read.";
@@ -223,10 +232,11 @@ window.PlexoraDatasetBuilder = (function () {
         }
 
         async function addFolder(path) {
-            if (!state.token) return start([path]);
+            if (!state.token) return start([path], state.node);
             state.error = null;
-            const reply = await request("datasets/scan", {
-                method: "POST", body: {paths: [path], token: state.token}});
+            const body = {paths: [path], token: state.token};
+            if (state.node) body.node = state.node;
+            const reply = await request("datasets/scan", {method: "POST", body});
             if (state.closed) return false;
             if (!reply.ok) {
                 state.error = reply.body.error || "That folder could not be added.";
@@ -825,6 +835,9 @@ window.PlexoraDatasetBuilder = (function () {
             onCreated: options.onCreated || null,
             detachDrop: null,
             learnedSeen: 0,
+            //: Which machine the folder is on: null for this computer, else a
+            //: place from `PlexoraRemotes` -- `{id, label, node, files}`.
+            where: whereFor(options),
         };
         controller = createController({onChange});
         dialog = build();
@@ -832,8 +845,16 @@ window.PlexoraDatasetBuilder = (function () {
             ui.detachDrop = attachDropTarget(dialog, {
                 mode: "directory", count: "one", filter: "any",
                 onDrop: (path) => {
-                    if (controller.state.phase === "pick") startScan(path);
-                    else if (controller.state.phase === "plan") addFolder(path);
+                    // A dropped folder is on this computer, whatever the chip says.
+                    if (controller.state.phase === "pick") {
+                        chooseWhere(null);
+                        startScan(path);
+                    } else if (controller.state.phase === "plan" && !ui.where) {
+                        addFolder(path);
+                    } else if (controller.state.phase === "plan") {
+                        setStatus(`That folder is on this computer; this dataset is read `
+                                  + `from ${ui.where.label}.`, true);
+                    }
                 },
             });
         }
@@ -845,12 +866,14 @@ window.PlexoraDatasetBuilder = (function () {
         }
         renderPick();
         if (options.root) startScan(options.root);
+        else if (!ui.where) restoreWhere();
         return dialog;
     }
 
     function close() {
         if (!dialog) return;
         const after = ui?.onClose;
+        ui?.unwatchPlaces?.();
         const state = controller?.state;
         if (state && state.phase === "building" && state.token) {
             lastBuild = {token: state.token, name: ui.name};
@@ -885,7 +908,7 @@ window.PlexoraDatasetBuilder = (function () {
                 <label class="plx-dsb-label" for="plx-dsb-path">Folder</label>
                 <div class="plx-import-pick" data-role="pick" data-face="browse">
                     <div class="plx-import-pick-row">
-                        <div class="plx-import-field">
+                        <div class="plx-import-field">${machineHtml()}
                             <input id="plx-dsb-path" class="plx-import-input" data-role="path" type="text"
                                    placeholder="Paste a folder path, or browse" spellcheck="false"
                                    autocomplete="off">
@@ -933,6 +956,8 @@ window.PlexoraDatasetBuilder = (function () {
             if (path.value.trim()) startScan(path.value.trim());
             else browse((picked) => startScan(picked), "Choose the folder that holds the samples");
         });
+        part("machine")?.addEventListener("click", (event) => openMachineMenu(event.currentTarget));
+        paintMachine();
         paintFoot();
         setTimeout(() => (ui?.name ? path : name)?.focus(), 0);
     }
@@ -944,6 +969,10 @@ window.PlexoraDatasetBuilder = (function () {
         }
         browseForPath({
             mode: "directory", filter: "any", start: ui?.root || "",
+            // On a server, its own filesystem: a data node by name, a
+            // files-only server by its `sftp://` base, whose listing hands
+            // back addresses the scan takes as they are.
+            node: browseNode(),
             anchorEl: part("browse") || null, title, primary: "Choose folder",
             onPicked: (picked) => onPicked(Array.isArray(picked) ? picked[0] : picked),
             onUnavailable: () => setStatus("The file browser could not be opened; "
@@ -953,23 +982,189 @@ window.PlexoraDatasetBuilder = (function () {
 
     async function startScan(path) {
         if (!ui || !path) return;
-        ui.root = path;
-        if (!ui.nameTouched || !ui.name.trim()) ui.name = basename(path);
-        setStatus("Reading the folder…");
-        const ok = await controller.start([path]);
+        const address = addressOf(path);
+        ui.root = address;
+        if (!ui.nameTouched || !ui.name.trim()) ui.name = basename(address);
+        setStatus(ui.where ? `Reading the folder on ${ui.where.label}…` : "Reading the folder…");
+        const ok = await controller.start([address], ui.where?.node || null);
         if (!ui) return;
         if (!ok) {
             setStatus(controller.state.error, true);
             return;
         }
+        rememberWhere();
         setStatus("");
     }
 
     async function addFolder(path) {
         if (!ui || !path) return;
-        setStatus(`Adding ${basename(path)}…`);
-        const ok = await controller.addFolder(path);
-        if (ui && ok) setStatus("");
+        const address = addressOf(path);
+        setStatus(`Adding ${basename(address)}…`);
+        const ok = await controller.addFolder(address);
+        if (!ui) return;
+        if (ok) setStatus("");
+        else setStatus(controller.state.error, true);
+    }
+
+    // -- which machine ----------------------------------------------------------------
+
+    const Remotes = () => window.PlexoraRemotes;
+
+    /** The machine `open()` was told about: a node, or an `sftp://` root. */
+    function whereFor(options) {
+        if (options.node) {
+            return {id: options.node, label: options.node, node: options.node, files: null};
+        }
+        const root = String(options.root || "");
+        const match = /^(sftp:\/\/[^/]+)/i.exec(root);
+        if (!match) return null;
+        const known = (Remotes()?.snapshot()?.places || []).find(
+            (place) => place.files && place.files.base === match[1]);
+        if (known) return placeOf(known);
+        const host = match[1].replace(/^sftp:\/\/(?:[^@/]*@)?/i, "");
+        return {id: match[1], label: host, node: null, files: {base: match[1], home: ""}};
+    }
+
+    function placeOf(place) {
+        return {id: place.id, label: place.label || place.id, node: place.node || null,
+                files: place.files || null};
+    }
+
+    /** What the scan is sent for a path typed or picked on the chosen machine. */
+    function addressOf(path) {
+        const text = String(path || "").trim();
+        const files = ui?.where?.files;
+        if (!files || /^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text;
+        return window.PlexoraLocators
+            ? window.PlexoraLocators.sftpUrl(files.base, text, files.home)
+            : text;
+    }
+
+    function browseNode() {
+        return ui?.where ? (ui.where.node || ui.where.files?.base || null) : null;
+    }
+
+    function machineHtml() {
+        if (!Remotes()) return "";
+        // Every icon is in the markup from the start; which one shows is CSS
+        // over `.is-remote` (Font Awesome swaps each span for an svg once).
+        return `<button class="plx-import-machine" type="button" data-role="machine"
+                    aria-haspopup="menu" aria-expanded="false">
+                <span class="plx-import-machine-local" aria-hidden="true"><span class="fas fa-laptop"></span></span>
+                <span class="plx-import-machine-dot" aria-hidden="true"></span>
+                <span class="plx-import-machine-label">Local</span>
+                <span class="plx-import-machine-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span></span>
+            </button>`;
+    }
+
+    function paintMachine() {
+        const button = part("machine");
+        if (!button) return;
+        const name = ui.where ? ui.where.label : "Local";
+        button.classList.toggle("is-remote", Boolean(ui.where));
+        button.querySelector(".plx-import-machine-label").textContent = name;
+        button.setAttribute("aria-label", `The folder is on ${ui.where ? name : "this computer"}. `
+                                          + "Change machine");
+        button.title = ui.where ? `Folders on ${name}` : "Folders on this computer";
+        const path = part("path");
+        if (path) {
+            path.placeholder = ui.where?.files
+                ? `Paste a folder path on ${name}, or browse`
+                : "Paste a folder path, or browse";
+        }
+    }
+
+    function openMachineMenu(anchor) {
+        if (!window.PlexoraMenu || !Remotes()) return;
+        const places = Remotes().snapshot()?.places || [];
+        const current = ui.where ? ui.where.id : null;
+        const items = [{label: "This computer", checked: !ui.where, onSelect: () => chooseWhere(null)},
+                       {separator: true}];
+        places.forEach((place) => {
+            const up = place.kind === "server" || Boolean(place.node) || Boolean(place.files);
+            items.push({
+                label: up ? place.label : `${place.label} — not connected`,
+                checked: place.id === current,
+                onSelect: () => (up ? chooseWhere(placeOf(place)) : connectWhere(place)),
+            });
+        });
+        items.push({separator: true}, {label: "Add a server…", onSelect: () => connectWhere(null)});
+        window.PlexoraMenu.open(anchor, items, {align: "left"});
+    }
+
+    function chooseWhere(where) {
+        if (!ui) return;
+        if ((ui.where?.id || null) !== (where?.id || null)) {
+            // A path means nothing on another machine: the box starts empty.
+            const path = part("path");
+            if (path) path.value = "";
+            part("pick")?.setAttribute("data-face", "browse");
+        }
+        ui.where = where;
+        paintMachine();
+        part("path")?.focus();
+    }
+
+    /** Connect a saved server that is down, or add one, and use it once it is up. */
+    async function connectWhere(place) {
+        if (!window.PlexoraConnectionModal) return;
+        const outcome = await window.PlexoraConnectionModal.open(place
+            ? {name: place.id, kind: "node",
+               intent: place.files_only
+                   ? "Opening an SFTP connection to this machine, so the folders on "
+                     + "it can be read. Nothing is started there."
+                   : "Opening a data node on this machine, so the folders on it "
+                     + "can be read."}
+            : {kind: "node",
+               intent: "Add the machine the folder is on. Plexora will handle the "
+                       + "SSH connection."});
+        if (!ui || !outcome || !outcome.connected) return;
+        chooseWhere({id: outcome.name, label: outcome.label || place?.label || outcome.name,
+                     node: outcome.node || null, files: outcome.files || null});
+    }
+
+    function rememberWhere() {
+        try {
+            if (ui?.where) {
+                localStorage.setItem(WHERE_KEY, JSON.stringify({
+                    id: ui.where.id, kind: "remote", label: ui.where.label,
+                    node: ui.where.node || null}));
+            } else {
+                localStorage.removeItem(WHERE_KEY);
+            }
+        } catch (error) { /* storage refused: nothing to remember it in */ }
+    }
+
+    /** Open on the machine the last pick was read from, once it is known to be up. */
+    function restoreWhere() {
+        let wanted = null;
+        try {
+            wanted = JSON.parse(localStorage.getItem(WHERE_KEY) || "null");
+        } catch (error) { wanted = null; }
+        if (!wanted || !wanted.id || !Remotes()) return;
+        const owner = ui;
+        const apply = (snapshot) => {
+            if (ui !== owner || ui.where || part("path")?.value.trim()) return;
+            const place = (snapshot.places || []).find((entry) => entry.id === wanted.id);
+            if (!place || !(place.node || place.files)) return;
+            ui.where = placeOf(place);
+            paintMachine();
+        };
+        const now = Remotes().snapshot();
+        if (now && now.loaded) {
+            apply(now);
+            return;
+        }
+        let done = false;
+        let stop = null;
+        stop = Remotes().subscribe((snapshot) => {
+            if (done) return;
+            done = true;
+            apply(snapshot);
+            stop?.();
+        });
+        if (done) stop?.();
+        else ui.unwatchPlaces = () => { done = true; stop?.(); };
     }
 
     async function createEmpty() {
@@ -1084,8 +1279,10 @@ window.PlexoraDatasetBuilder = (function () {
 
     function paintRoots(scan) {
         const roots = scan.roots || (ui.root ? [ui.root] : []);
-        part("roots").innerHTML = roots.map((root) => `<span class="plx-dsb-root" title="${esc(root)}">
-            <span class="fas fa-folder" aria-hidden="true"></span><code>${esc(tail(root))}</code></span>`).join("");
+        const where = ui.where ? ` on ${ui.where.label}` : "";
+        const icon = ui.where ? "fa-server" : "fa-folder";
+        part("roots").innerHTML = roots.map((root) => `<span class="plx-dsb-root" title="${esc(root + where)}">
+            <span class="fas ${icon}" aria-hidden="true"></span><code>${esc(tail(root))}</code></span>`).join("");
     }
 
     function paintProgress(state) {

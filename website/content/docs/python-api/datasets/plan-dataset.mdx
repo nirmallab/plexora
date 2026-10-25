@@ -3,10 +3,10 @@ title: "plan_dataset"
 description: "Work out which images, masks and tables under these folders belong together, without registering anything."
 generated: true
 symbol: "plexora.plan_dataset"
-signature: "plan_dataset(*roots, overrides=None, limits=None) -> dict"
+signature: "plan_dataset(*roots, overrides=None, limits=None, node=None) -> dict"
 aliases: ["scan", "folder", "directory", "match masks", "cohort folder"]
 source:
-  end: 564
+  end: 567
   path: "plexora/datasets.py"
   start: 513
 ---
@@ -18,7 +18,7 @@ from plexora import plan_dataset
 ```
 
 ```python
-plan_dataset(*roots, overrides=None, limits=None) -> dict
+plan_dataset(*roots, overrides=None, limits=None, node=None) -> dict
 ```
 
 Walks every folder under `roots` (names and file sizes first, then each
@@ -30,6 +30,9 @@ dialog shows, so a script and the dialog agree about a folder.
 A match is `high` when it is strong and well clear of any other candidate,
 `medium` when it is likely but worth a look, and anything less is left in
 `unassigned` with its best suggestions rather than guessed.
+
+The folders can be on this computer, on a data node (`node=`), or on a
+files-only server this Plexora is connected to (an `sftp://` address).
 
 ## When to use
 
@@ -60,6 +63,12 @@ Corrections, as the dialog makes them --
 <Param name={"limits"} type={"dict"} default={"None"} kind={"keyword-only"}>
 
 `{"max_depth": 8, "max_entries": 200000}`.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The data node the folders are on.
 
 </Param>
 

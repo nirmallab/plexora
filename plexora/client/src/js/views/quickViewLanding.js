@@ -389,7 +389,9 @@ PlexoraPage.register(function () {
      */
     function cohortFolder(path, proposal) {
         if (!window.PlexoraDatasetBuilder || !proposal) return false;
-        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return false;
+        // A web address is a store, never a folder to walk -- except on a
+        // files-only server, whose folders New Dataset reads over SFTP.
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) && !/^sftp:\/\//i.test(path)) return false;
         const samples = proposal.samples || [];
         const folder = kind === "directory" || kindOf(path) === "directory"
             || !/\.[a-z0-9]{2,6}$/i.test(path.replace(/[\\/]+$/, ""));
@@ -462,6 +464,11 @@ PlexoraPage.register(function () {
         pathInput.scrollLeft = pathInput.scrollWidth;
         const shape = kindOf(path);
         if (shape) kind = shape;
+        const folderNode = nodeFolder(path);
+        if (folderNode) {
+            openFolderOnNode(path, folderNode);
+            return;
+        }
         if (!checkable()) {
             // On another machine the path has to become a node address before
             // it means anything. `change` is what starts the share; its
@@ -521,12 +528,40 @@ PlexoraPage.register(function () {
         }
     }
 
+    /**
+     * The data node a path in the box is a FOLDER on, or null. A node cannot
+     * share a folder (it serves files), so a folder there -- a run, a cohort
+     * -- goes to New Dataset, which walks it on the node. An OME-Zarr image
+     * is a folder that IS one image, and is shared as before.
+     */
+    function nodeFolder(path) {
+        if (!window.PlexoraDatasetBuilder || !location || checkable()) return null;
+        const place = location.place && location.place();
+        if (place && place.files) return null;
+        const node = location.browseNode();
+        const trimmed = String(path || "").replace(/[\\/]+$/, "");
+        if (!node || !trimmed || /\.zarr$/i.test(trimmed)) return null;
+        const folder = kind === "directory" || !/\.[a-z0-9]{2,6}$/i.test(trimmed);
+        return folder ? node : null;
+    }
+
+    function openFolderOnNode(path, node) {
+        phase = "idle";
+        paint();
+        window.PlexoraDatasetBuilder.open({root: path, node});
+    }
+
     /** The button: Browse with an empty box, Load with a path in it. */
     function go() {
         if (busy() || goButton.disabled) return;
         const typed = pathInput.value.trim();
         if (!typed) {
             browseForImage(kind);
+            return;
+        }
+        const folderNode = isWebAddress(typed) ? null : nodeFolder(typed);
+        if (folderNode) {
+            openFolderOnNode(typed, folderNode);
             return;
         }
         if (!checkable() && !isWebAddress(typed)) {
