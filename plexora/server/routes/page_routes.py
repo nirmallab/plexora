@@ -616,6 +616,11 @@ def image_viewer(datasource):
         # a full HTML page. Callers expecting JSON got HTML and no error.
         abort(404)
     _stamp_last_opened(datasource)
+    # An image still on default channel names takes its dataset's: one panel
+    # named once (`dataset_answers`).
+    from plexora.server.models import dataset_answers
+
+    dataset_answers.adopt_channel_names(datasource)
     project = Project.load(datasource)
     image_kind = project.image.kind
 

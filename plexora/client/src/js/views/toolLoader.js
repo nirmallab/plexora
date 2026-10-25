@@ -868,6 +868,17 @@ window.PlexoraToolLoader = (function () {
         const response = await fetch(`${baseUrl}/${datasource}/tools/${toolName}/panel`);
         const payload = await response.json();
 
+        if (payload.answered_from && !options.quiet) {
+            // This sample's table was set up from another sample in its
+            // dataset with the same columns (dataset_answers.py) rather than
+            // asked about again. Said once, so a table that differs is caught.
+            window.PlexoraToast?.show({
+                title: `Table set up like ${payload.answered_from}`,
+                note: "Same columns, same dataset. If this table differs, change it "
+                      + "in the sample's settings.",
+            });
+        }
+
         if (payload.needs) {
             // The tool is installed and compatible but the project is
             // missing something it declared. Ask for exactly that, then

@@ -569,9 +569,12 @@ window.PlexoraDatasetBuilder = (function () {
         const subset = slot.subset
             ? `<p class="plx-dsb-subset">One file; this sample reads the rows where
                 <code>${esc(slot.subset.column)} == ${esc(slot.subset.value)}</code>.</p>` : "";
-        const names = slotName === "channels" && slot.names
-            ? `<p class="plx-dsb-subset">${esc(slot.names.length)} names: ${
-                esc(slot.names.slice(0, 8).join(", "))}${slot.names.length > 8 ? " …" : ""}</p>` : "";
+        const listed = slot.names || slot.names_after;
+        const names = slotName === "channels" && listed
+            ? `<p class="plx-dsb-subset">${esc(listed.length)} names: ${
+                esc(listed.slice(0, 8).join(", "))}${listed.length > 8 ? " …" : ""}${
+                slot.names ? "" : " · applied as each image is registered, if it has "
+                    + `${esc(listed.length)} channels`}</p>` : "";
         const alternatives = (slot.alternatives || []).map((alt) => `
             <div class="plx-dsb-alt">
                 <code class="plx-dsb-path" title="${esc(alt.path)}">${esc(alt.rel || alt.path)}</code>

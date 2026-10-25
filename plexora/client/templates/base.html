@@ -254,8 +254,8 @@
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261024_drop_router" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
-    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261025_dsb_select" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261013_compact_popover" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261025_dataset_answers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261025_dataset_answers" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}
