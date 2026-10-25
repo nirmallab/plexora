@@ -22,6 +22,14 @@ can say which belong together. This module finds them.
   twice. Past `SCAN_INSPECT_BUDGET_S` the rest keep their provisional role and
   are marked uninspected, which caps what the planner may say about them.
 
+**Where the files are.** A folder on this computer is walked with `os.scandir`;
+one on a files-only server (`sftp://...`) through that server's SFTP
+connection; one on a data node through the node's own listing (`list_dir`).
+One scan is in one place. A remote file is read the way Import Sample reads
+one: over SFTP an image's header and a few windows, a table's first rows
+(`sftp.head_copy`); on a node, the node's own reading (`detect_on_node`),
+which says image or mask but not the size.
+
 What is skipped and why is recorded, not dropped: hidden files and folders,
 temporary files, Plexora's own pyramid copies, linked folders (never followed:
 a link back up the tree would walk forever), unreadable folders, and the
@@ -36,6 +44,7 @@ cancelled between directories or files, and its thread is named `layer-*`
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import threading
 import time
@@ -151,6 +160,8 @@ class Entry:
     #: The folder this file is one channel of, when its folder holds one
     #: single-channel image per marker (`CD3.tif`, `Ki67.tif`, ...).
     channel_folder: str | None = None
+    #: A local copy of a remote channel list, which is read for its names.
+    proxy: str | None = None
 
     @property
     def key(self):
@@ -175,7 +186,7 @@ class Entry:
 _INSPECTED_FIELDS = ("inspected", "role", "modality", "geometry", "pixel_size",
                      "ambiguous", "subset", "columns", "label", "detail",
                      "ome_name", "layers", "warnings", "reason", "kind",
-                     "channel_folder")
+                     "channel_folder", "proxy")
 
 
 @dataclass
@@ -189,6 +200,9 @@ class Inventory:
     counts: dict = field(default_factory=lambda: {
         "dirs": 0, "files": 0, "candidates": 0, "inspected": 0})
     budget_hit: dict | None = None
+    #: Where the roots are: None for this computer, `("sftp", target)` for a
+    #: files-only server, `("node", name)` for a data node. See `place_of`.
+    place: tuple | None = None
     #: Bumped on every change, so a plan can be cached against it.
     version: int = 0
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
@@ -212,6 +226,97 @@ class Inventory:
             entries = list(self.entries.values())
         return sorted(entries, key=lambda e: (order.get(e.root, 1 << 30),
                                               e.rel.lower(), e.rel))
+
+
+# -- where the files are ---------------------------------------------------------
+
+
+def place_of(paths, node=None):
+    """Where `paths` are: None for this computer, `("sftp", target)` for a
+    files-only server, `("node", name)` for a data node.
+
+    One place per scan. A web address other than `sftp://` is refused: a
+    bucket has no folders to walk, only a store to read, which is Import
+    Sample's job.
+    """
+    from plexora.server.providers.base import is_remote_locator
+    from plexora.server.utils import sftp
+
+    if node:
+        return ("node", str(node))
+    places = set()
+    for raw in paths or ():
+        text = str(raw).strip()
+        if text.lower().startswith(f"{sftp.SCHEME}://"):
+            places.add(("sftp", sftp.target_of(text)))
+        elif is_remote_locator(text):
+            raise ValueError(
+                f"{text} is a web address. A folder can be scanned on this "
+                "computer, on a data node or on a files-only server; a store "
+                "at a web address is added with Import Sample.")
+        else:
+            places.add(None)
+    if len(places) > 1:
+        raise ValueError("The folders of one dataset are scanned in one place: "
+                         "all on this computer, or all on the same server.")
+    return next(iter(places), None)
+
+
+def is_remote(place) -> bool:
+    return place is not None
+
+
+class _Child:
+    """One name in a listed folder, wherever the folder is."""
+
+    __slots__ = ("name", "path", "is_dir", "is_link", "_entry", "_stat")
+
+    def __init__(self, name, path, is_dir, is_link=False, *, entry=None, stat=None):
+        self.name, self.path = name, path
+        self.is_dir, self.is_link = is_dir, is_link
+        self._entry, self._stat = entry, stat
+
+    def stat(self):
+        """`(size, mtime_ns)`. Asked only of a candidate file, so a local
+        folder of thousands of other files costs no `stat` each."""
+        if self._stat is None:
+            found = self._entry.stat()  # follows a link to a file
+            self._stat = (found.st_size, found.st_mtime_ns)
+        return self._stat
+
+
+def _listing(directory, place):
+    """`[_Child]` in `directory`, by name. Raises what the listing raised."""
+    if place is None:
+        with os.scandir(directory) as found:
+            return [_Child(entry.name, entry.path, _is_dir(entry), _is_link(entry),
+                           entry=entry)
+                    for entry in sorted(found, key=lambda e: e.name)]
+    kind, name = place
+    if kind == "sftp":
+        from plexora.server.utils import sftp
+
+        client = sftp.require_client(name)
+        path = sftp.path_of(directory)
+        # `listdir` follows links, so a linked folder arrives as a folder; the
+        # depth limit is what stops a link back up the tree.
+        return [_Child(child, sftp.url_for(name, posixpath.join(path, child)),
+                       attrs.is_dir, attrs.is_link,
+                       stat=(int(attrs.size or 0), int(attrs.mtime or 0) * 10 ** 9))
+                for child, attrs in sorted(client.listdir(path), key=lambda c: c[0])]
+    from plexora import nodes as node_api
+
+    answer = node_api.list_dir_on_node(name, directory)
+    if answer.get("truncated"):
+        raise OSError(f"{directory} holds more entries than {name} lists at once.")
+    return [_Child(row["name"], row.get("path") or posixpath.join(directory, row["name"]),
+                   bool(row.get("is_dir")), row.get("kind") == "broken",
+                   stat=(int(row.get("size") or 0), int(row.get("mtime") or 0) * 10 ** 9))
+            for row in sorted(answer.get("entries") or (), key=lambda r: r["name"])]
+
+
+def _basename(path) -> str:
+    return posixpath.basename(str(path).rstrip("/")) or str(path)
 
 
 # -- the walk ------------------------------------------------------------------
@@ -287,12 +392,13 @@ def _guess_role(entry):
     return None
 
 
-def _store_type(path, name, child_names):
+def _store_type(path, name, child_names, place=None):
     """`(type, label)` for a directory that is one unit, else None.
 
     The cheap names test first (`dataset_marks.store_by_names`), then the
     import engine's own detector for the type it suggested, in the engine's
     order, so a folder kept whole here is what Import Sample would make of it.
+    A remote folder is judged by its names alone: the detectors open files.
     """
     from plexora.server.utils import dataset_marks, dicom_wsi, ome_zarr, spatial_scene
 
@@ -302,6 +408,8 @@ def _store_type(path, name, child_names):
             return ("n5" if name.lower().endswith(".n5") else "zarr"), "Store"
         return None
     kind = mark["type"]
+    if place is not None:
+        return kind, mark.get("label") or kind
     confirm = {
         "visium_hd": spatial_scene.is_visium_hd_run,
         "xenium": spatial_scene.is_xenium_run,
@@ -329,12 +437,21 @@ def _entitled(kind) -> bool:
     return entitlement is None or import_proposal._licensed(entitlement)
 
 
-def _new_entry(path, root, *, kind, size=0, mtime_ns=0, symlink=False, fmt=None):
-    real = os.path.realpath(path)
-    rel = Path(os.path.relpath(path, root)).as_posix() if path != root else Path(path).name
-    entry = Entry(path=path, real=real, root=root, rel=rel, name=Path(path).name,
+def _new_entry(path, root, *, kind, size=0, mtime_ns=0, symlink=False, fmt=None,
+               place=None, name=None):
+    if place is None:
+        real = os.path.realpath(path)
+        rel = Path(os.path.relpath(path, root)).as_posix() if path != root else Path(path).name
+        name = name or Path(path).name
+    else:
+        # A remote path is never resolved here: the address IS its identity.
+        real = path
+        name = name or _basename(path)
+        prefix = root.rstrip("/") + "/"
+        rel = path[len(prefix):] if path.startswith(prefix) else name
+    entry = Entry(path=path, real=real, root=root, rel=rel, name=name,
                   size=size, mtime_ns=mtime_ns, kind=kind, format=fmt,
-                  symlink=symlink, label=Path(path).name)
+                  symlink=symlink, label=name)
     entry.role = _guess_role(entry)
     return entry
 
@@ -346,9 +463,11 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
     @returns The inventory, which also carries what was skipped and why.
     """
     max_depth, max_entries = _limits(limits)
+    place = inventory.place
     queue = deque()
     for root in roots:
-        root = str(Path(root).expanduser())
+        root = (str(Path(root).expanduser()) if place is None
+                else (str(root).rstrip("/") or "/"))
         if root not in inventory.roots:
             inventory.roots.append(root)
         queue.append((root, 0, root))
@@ -358,13 +477,12 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
         if cancel is not None and cancel.is_set():
             return inventory
         directory, depth, root = queue.popleft()
-        real_dir = os.path.realpath(directory)
+        real_dir = os.path.realpath(directory) if place is None else directory
         if real_dir in seen_dirs:
             continue
         seen_dirs.add(real_dir)
         try:
-            with os.scandir(directory) as listing:
-                children = sorted(listing, key=lambda e: e.name)
+            children = _listing(directory, place)
         except PermissionError:
             inventory.errors.append({"path": directory,
                                      "error": "Permission denied"})
@@ -373,20 +491,22 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
             inventory.errors.append({"path": directory,
                                      "error": error.strerror or str(error)})
             continue
+        except Exception as error:  # noqa: BLE001 -- a node's refusal, said
+            inventory.errors.append({"path": directory, "error": str(error)})
+            continue
         done += 1
         with inventory.lock:
             inventory.counts["dirs"] += 1
         names = [child.name for child in children]
 
-        store = _store_type(directory, Path(directory).name, names)
+        store = _store_type(directory, _basename(directory), names, place)
         if store is not None:
             _add_store(inventory, directory, root, store)
             if progress:
                 progress(done, done + len(queue), directory)
             continue
 
-        child_dirs = {child.name.lower() for child in children
-                      if _is_dir(child)}
+        child_dirs = {child.name.lower() for child in children if child.is_dir}
         has_registered = bool(child_dirs & REGISTERED_DIR_NAMES)
         for child in children:
             name = child.name
@@ -397,10 +517,10 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
                                             "limit": max_entries}
                 queue.clear()
                 break
-            if _is_dir(child):
+            if child.is_dir:
                 if name.startswith(".") or name in SKIP_DIR_NAMES:
                     continue
-                if _is_link(child):
+                if child.is_link:
                     inventory.skipped.append({
                         "path": child.path,
                         "reason": "A link to another folder; links are not followed."})
@@ -433,11 +553,11 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
             if _is_temp(name):
                 continue
             try:
-                stat = child.stat()  # follows a link to a file
+                size, mtime_ns = child.stat()
             except OSError:
                 continue
-            kind = _kind_of_file(name, stat.st_size)
-            if kind is None or _side_file(child.path):
+            kind = _kind_of_file(name, size)
+            if kind is None or _side_file(name):
                 continue
             source = _derived_copy(name, names)
             if source is not None:
@@ -446,8 +566,8 @@ def walk(roots, inventory, *, cancel=None, progress=None, limits=None):
                     "reason": f"Plexora's own pyramid of {source}."})
                 continue
             inventory.add(_new_entry(child.path, root, kind=kind,
-                                     size=stat.st_size, mtime_ns=stat.st_mtime_ns,
-                                     symlink=_is_link(child)))
+                                     size=size, mtime_ns=mtime_ns,
+                                     symlink=child.is_link, place=place, name=name))
         if progress:
             progress(done, done + len(queue), directory)
     return inventory
@@ -479,20 +599,22 @@ def _is_link(entry) -> bool:
 
 def _add_store(inventory, directory, root, store):
     kind, _label = store
+    place = inventory.place
     try:
-        stat = os.stat(directory)
-        mtime = stat.st_mtime_ns
+        mtime = os.stat(directory).st_mtime_ns if place is None else 0
     except OSError:
         mtime = 0
     if kind == "zarr":
         entry = _new_entry(directory, root, kind="raster", fmt="zarr",
-                           mtime_ns=mtime)
+                           mtime_ns=mtime, place=place)
     elif kind == "n5":
-        entry = _new_entry(directory, root, kind="raster", fmt="n5", mtime_ns=mtime)
+        entry = _new_entry(directory, root, kind="raster", fmt="n5", mtime_ns=mtime,
+                           place=place)
         entry.role, entry.inspected = None, True
         entry.reason = "An N5 store; Plexora reads OME-Zarr, not N5."
     else:
-        entry = _new_entry(directory, root, kind="bundle", fmt=kind, mtime_ns=mtime)
+        entry = _new_entry(directory, root, kind="bundle", fmt=kind, mtime_ns=mtime,
+                           place=place)
         if not _entitled(kind):
             from plexora.server.utils import dataset_marks
 
@@ -570,6 +692,10 @@ def _settle_channel_folders(inventory):
     planes of one size, mark the whole folder and read none of the rest."""
     from plexora.server.models import import_proposal
 
+    if inventory.place is not None:
+        # Probing means opening files; on a server that is a round trip each,
+        # and such a folder's files are refused one by one all the same.
+        return
     with inventory.lock:
         entries = list(inventory.entries.values())
     for folder, members in _channel_folder_suspects(entries).items():
@@ -616,10 +742,10 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
                 _apply(entry, record)
         elif time.monotonic() - started > budget:
             with inventory.lock:
-                _classify_by_name(entry)
+                _classify_by_name(entry, inventory.place)
         else:
             try:
-                found = _inspect_one(entry)
+                found = _inspect_one(entry, inventory.place)
             except Exception as error:  # noqa: BLE001 -- one bad file is one row
                 found = {"inspected": True, "role": None,
                          "reason": f"{entry.name}: {error}"}
@@ -636,11 +762,11 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
     return inventory
 
 
-def _classify_by_name(entry):
+def _classify_by_name(entry, place=None):
     """After the budget: a role from the name and, for a raster, its header."""
     from plexora.server.models import import_proposal
 
-    if entry.kind == "raster" and entry.format is None:
+    if entry.kind == "raster" and entry.format is None and place is None:
         entry.geometry = import_proposal._geometry_of(entry.path)
     entry.role = _guess_role(entry)
     entry.ambiguous = entry.kind == "raster"
@@ -656,10 +782,12 @@ def _first(layers, *roles):
     return layers[0] if layers else None
 
 
-def _inspect_one(entry):
+def _inspect_one(entry, place=None):
     """The fields inspection fills for one entry, as a dict."""
     from plexora.server.models import import_proposal as engine
 
+    if place is not None:
+        return _inspect_remote(entry, place)
     path = Path(entry.path)
     if entry.kind == "bundle":
         return _inspect_bundle(entry)
@@ -668,33 +796,7 @@ def _inspect_one(entry):
             layers, questions, _, warnings = engine._detect_directory(path, {})
         else:
             layers, questions, _, warnings = engine._detect_file(path, {})
-        layer = _first(layers, "image", "mask")
-        if layer is None:
-            return {"inspected": True, "role": None,
-                    "reason": (warnings[0] if warnings
-                               else f"{entry.name} is not an image Plexora reads."),
-                    "warnings": tuple(warnings)}
-        if layer.dependency:
-            install = layer.dependency.get("install") or "an extra package"
-            return {"inspected": True, "role": None,
-                    "reason": f"{entry.name} needs {install} to be read."}
-        if layer.geometry is None and entry.format is None:
-            return {"inspected": True, "role": None,
-                    "reason": f"{entry.name} could not be read as an image."}
-        ambiguous = any(str(need).startswith("mask-or-image:")
-                        for need in layer.needs)
-        role = layer.role if layer.role in ("image", "mask") else "layer"
-        if ambiguous and role == "image" and _guess_role(entry) == "mask":
-            # Pixels consistent with both, and the name and folder say mask.
-            role = "mask"
-        ome_name = None
-        if role == "image" and entry.name.lower().endswith((".tif", ".tiff")):
-            ome_name = engine._ome_image_name(path)
-        return {"inspected": True, "role": role, "modality": layer.modality,
-                "geometry": dict(layer.geometry) if layer.geometry else None,
-                "pixel_size": layer.pixel_size, "ambiguous": ambiguous,
-                "label": entry.name, "detail": layer.detail or "",
-                "ome_name": ome_name, "warnings": tuple(warnings)}
+        return _raster_fields(entry, layers, warnings, path)
     if entry.kind == "parquet":
         layers, _, _, warnings = engine._detect_parquet(path)
         layer = _first(layers, "table")
@@ -715,6 +817,165 @@ def _inspect_one(entry):
     if entry.kind == "table":
         return _inspect_table(entry, path)
     return {"inspected": True, "role": None}
+
+
+def _raster_fields(entry, layers, warnings, path=None):
+    """What one raster's detection says, as the fields inspection fills.
+
+    @param path - the local file, for the image's own OME name; None for a
+        remote one, whose name is read only when it is imported.
+    """
+    from plexora.server.models import import_proposal as engine
+
+    layer = _first(layers, "image", "mask")
+    if layer is None:
+        return {"inspected": True, "role": None,
+                "reason": (warnings[0] if warnings
+                           else f"{entry.name} is not an image Plexora reads."),
+                "warnings": tuple(warnings)}
+    if layer.dependency:
+        install = layer.dependency.get("install") or "an extra package"
+        return {"inspected": True, "role": None,
+                "reason": f"{entry.name} needs {install} to be read."}
+    if layer.geometry is None and entry.format is None:
+        return {"inspected": True, "role": None,
+                "reason": f"{entry.name} could not be read as an image."}
+    ambiguous = any(str(need).startswith("mask-or-image:")
+                    for need in layer.needs)
+    role = layer.role if layer.role in ("image", "mask") else "layer"
+    if ambiguous and role == "image" and _guess_role(entry) == "mask":
+        # Pixels consistent with both, and the name and folder say mask.
+        role = "mask"
+    ome_name = None
+    if path is not None and role == "image" and \
+            entry.name.lower().endswith((".tif", ".tiff")):
+        ome_name = engine._ome_image_name(path)
+    return {"inspected": True, "role": role, "modality": layer.modality,
+            "geometry": dict(layer.geometry) if layer.geometry else None,
+            "pixel_size": layer.pixel_size, "ambiguous": ambiguous,
+            "label": entry.name, "detail": layer.detail or "",
+            "ome_name": ome_name, "warnings": tuple(warnings)}
+
+
+def _inspect_remote(entry, place):
+    """`_inspect_one` for a file on a files-only server or a data node.
+
+    Read by the same engine Import Sample reads one remote file with, so a
+    file the scan proposes is one the import will take. Over SFTP an image is
+    its header and, for a single plane, a few windows (`_detect_remote`); a
+    file whose name or folder says mask is read as one when its header is one
+    plane of integers, which spares the windows. On a node the node reads its
+    own file (`detect_on_node`) and says image or mask, but not the size.
+    """
+    from plexora.server.models import import_proposal as engine
+
+    kind, name = place
+    if entry.kind == "bundle":
+        return _inspect_bundle(entry, node=name if kind == "node" else None)
+    if entry.kind == "raster" and kind == "sftp":
+        declared = "mask" if _guess_role(entry) == "mask" else None
+        layers, _questions, _bundle, warnings = engine._detect_remote(
+            entry.path, {}, declared)
+        return _raster_fields(entry, layers, warnings)
+    if entry.kind == "raster":
+        return _node_raster(entry, name)
+    if entry.kind == "table":
+        return _remote_table(entry, place)
+    if kind == "node" and entry.kind == "parquet":
+        return {"inspected": True, "role": "table", "modality": "cells",
+                "label": entry.name, "detail": "parquet"}
+    where = "a data node" if kind == "node" else name
+    return {"inspected": True, "role": None,
+            "reason": f"{entry.name} is not read from {where}; Plexora reads "
+                      "images, masks and CSV tables there."}
+
+
+def _node_raster(entry, node):
+    from plexora import nodes as node_api
+
+    try:
+        detected = node_api.detect_on_node(node, entry.path)
+    except Exception as error:  # noqa: BLE001 -- the node's sentence, as the row's
+        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}"}
+    found = detected.get("kind")
+    if found not in ("image", "segmentation"):
+        return {"inspected": True, "role": None,
+                "reason": detected.get("reason")
+                or f"{entry.name} is not an image Plexora reads."}
+    ambiguous = detected.get("mask") is None
+    role = "mask" if found == "segmentation" else "image"
+    if ambiguous and _guess_role(entry) == "mask":
+        role = "mask"
+    # An older node does not send the size; the plan then matches by name.
+    geometry = detected.get("geometry") or None
+    detail = "Segmentation mask" if role == "mask" else "Image"
+    if geometry and geometry.get("width") and geometry.get("height"):
+        detail += f" · {geometry['width']}×{geometry['height']} px"
+    return {"inspected": True, "role": role, "ambiguous": ambiguous,
+            "geometry": dict(geometry) if geometry else None,
+            "label": entry.name, "detail": detail}
+
+
+def _remote_table(entry, place):
+    """A remote table, from a local copy of its first rows.
+
+    A channel list is small, so its copy is the whole file and is kept as the
+    entry's `proxy`: the planner reads the names from it.
+    """
+    from plexora.server.models import import_proposal as engine
+
+    kind, name = place
+    lowered = entry.name.lower()
+    if kind == "sftp" and not lowered.endswith(engine.SFTP_TABLE_SUFFIXES):
+        return {"inspected": True, "role": None,
+                "reason": f"{entry.name} is not read from {name}; a table on a "
+                          "files-only server is copied over as CSV or TSV."}
+    if kind == "node" and lowered.endswith(".h5ad"):
+        return {"inspected": True, "role": "table", "modality": "cells",
+                "label": entry.name, "detail": "anndata"}
+    try:
+        if kind == "sftp":
+            from plexora.server.utils import sftp
+
+            local, whole = sftp.head_copy(entry.path)
+        else:
+            local, whole = _node_head_copy(name, entry)
+    except Exception as error:  # noqa: BLE001
+        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}"}
+    found = _inspect_table(entry, Path(local))
+    if found.get("role") == "channels" and whole:
+        found["proxy"] = str(local)
+    found.pop("subset", None)
+    return found
+
+
+def _node_head_copy(node, entry, limit=None):
+    """`(local path, whole)`: the first rows of a file on a node, kept here."""
+    import hashlib
+    import tempfile
+
+    from plexora import nodes as node_api
+    from plexora.server.utils import sftp
+
+    limit = limit or sftp.HEAD_BYTES
+    key = hashlib.sha1(f"{node}\0{entry.path}\0{entry.size}\0{entry.mtime_ns}"
+                       .encode()).hexdigest()[:16]
+    local = Path(tempfile.gettempdir()) / "plexora-node-heads" / key / entry.name
+    whole = 0 < entry.size <= limit
+    if not local.exists():
+        response = node_api.open_file_on_node(node, entry.path, timeout=60.0)
+        try:
+            data = response.read(limit)
+        finally:
+            response.close()
+        if not whole:
+            cut = data.rfind(b"\n")
+            data = data[:cut + 1] if cut > 0 else data
+        local.parent.mkdir(parents=True, exist_ok=True)
+        partial = local.with_name(local.name + ".partial")
+        partial.write_bytes(data)
+        os.replace(partial, local)
+    return local, whole
 
 
 def _inspect_table(entry, path):
@@ -764,11 +1025,11 @@ def _parquet_columns(path):
         return ()
 
 
-def _inspect_bundle(entry):
+def _inspect_bundle(entry, node=None):
     """A run or store, read by the import engine as Import Sample reads it."""
     from plexora.server.models import import_proposal as engine
 
-    proposal = engine.inspect_paths([entry.path])
+    proposal = engine.inspect_paths([entry.path], node=node)
     if not proposal.samples:
         reasons = [item.get("reason") for item in proposal.unrecognised]
         return {"inspected": True, "role": None,
@@ -795,9 +1056,14 @@ def _bundle_label(kind):
     return dataset_marks.TYPE_LABELS.get(kind, kind or "Run")
 
 
-def scan(roots, *, cancel=None, progress=None, limits=None, budget_s=None):
-    """Walk and inspect `roots` synchronously. The API's and the CLI's scan."""
-    inventory = Inventory()
+def scan(roots, *, cancel=None, progress=None, limits=None, budget_s=None, node=None):
+    """Walk and inspect `roots` synchronously. The API's and the CLI's scan.
+
+    @param node - the data node `roots` are on; an `sftp://` root names its
+        own server.
+    """
+    roots, place = check_roots(roots, node=node)
+    inventory = Inventory(place=place)
     walk(roots, inventory, cancel=cancel, progress=progress, limits=limits)
     inspect(inventory, cancel=cancel, progress=progress, budget_s=budget_s)
     return inventory
@@ -840,30 +1106,70 @@ def _evict():
                 return
 
 
-def _check_roots(paths):
+def check_roots(paths, *, node=None):
+    """`(roots, place)`: the folders to scan, each checked to be one."""
+    place = place_of(paths, node)
     roots = []
     for raw in paths or ():
-        path = Path(str(raw)).expanduser()
-        if not path.is_dir():
-            raise ValueError(f"{raw} is not a folder.")
-        roots.append(str(path.resolve()))
+        if not str(raw).strip():
+            continue
+        if place is None:
+            path = Path(str(raw)).expanduser()
+            if not path.is_dir():
+                raise ValueError(f"{raw} is not a folder.")
+            roots.append(str(path.resolve()))
+        else:
+            roots.append(_remote_root(str(raw).strip(), place))
     if not roots:
         raise ValueError("Choose a folder to scan.")
-    return roots
+    return roots, place
 
 
-def start_scan(paths, *, token=None, limits=None) -> dict:
+def _remote_root(text, place):
+    """A remote folder, checked to be one, in the spelling the walk uses."""
+    kind, name = place
+    if kind == "sftp":
+        from plexora.server.utils import sftp
+
+        client = sftp.require_client(name)
+        path = sftp.path_of(text)
+        try:
+            attrs = client.stat(path)
+        except FileNotFoundError:
+            raise ValueError(f"{text} is not there.") from None
+        if not attrs.is_dir:
+            raise ValueError(f"{text} is not a folder.")
+        return sftp.url_for(name, path)
+
+    from plexora import nodes as node_api
+
+    try:
+        detected = node_api.detect_on_node(name, text)
+    except KeyError:
+        raise ValueError(f"No data node named {name!r} is registered here.") from None
+    except Exception as error:  # noqa: BLE001 -- the node's own sentence
+        raise ValueError(f"{name}: {error}") from None
+    if detected.get("kind"):
+        raise ValueError(f"{detected.get('name') or text} is a file. Choose the "
+                         "folder that holds the samples.")
+    return str(detected.get("path") or text).rstrip("/") or "/"
+
+
+def start_scan(paths, *, token=None, limits=None, node=None) -> dict:
     """Start scanning `paths` in the background; the first snapshot.
 
     With `token`, adds `paths` to that scan instead (`extend_scan`).
+
+    @param node - the data node `paths` are on. An `sftp://` path names its
+        own server; anything else is a folder on this computer.
     """
     if token:
-        return extend_scan(token, paths)
-    roots = _check_roots(paths)
+        return extend_scan(token, paths, node=node)
+    roots, place = check_roots(paths, node=node)
     token = "scan-" + uuid.uuid4().hex[:8]
     from plexora.server.models import dataset_plan
 
-    record = Scan(token=token, inventory=Inventory(), limits=limits,
+    record = Scan(token=token, inventory=Inventory(place=place), limits=limits,
                   overrides=dataset_plan.clean_overrides({}))
     with _SCANS_LOCK:
         _SCANS[token] = record
@@ -872,11 +1178,14 @@ def start_scan(paths, *, token=None, limits=None) -> dict:
     return snapshot(token)
 
 
-def extend_scan(token, paths) -> dict:
+def extend_scan(token, paths, *, node=None) -> dict:
     """Add folders to a scan: only the new folders are walked."""
     record = _get(token)
-    roots = [root for root in _check_roots(paths)
-             if root not in record.inventory.roots]
+    found, place = check_roots(paths, node=node)
+    if place != record.inventory.place:
+        raise ValueError("Add a folder from the same place as the others: one "
+                         "dataset is scanned on one computer or server.")
+    roots = [root for root in found if root not in record.inventory.roots]
     if roots:
         _run(record, roots)
     return snapshot(token)

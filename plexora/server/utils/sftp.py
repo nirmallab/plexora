@@ -847,6 +847,88 @@ def listing(base, raw="", *, limit: int = 2000, show_hidden: bool = False) -> di
             "partial": False, "dataset": None, "platform": ""}
 
 
+# -- whole files -----------------------------------------------------------
+
+#: What `head_copy` brings across: a header and enough rows to read it by.
+HEAD_BYTES = 1024 * 1024
+
+#: One read of `download`, written out before the next is asked for.
+DOWNLOAD_CHUNK = 16 * 1024 ** 2
+
+
+def head_copy(url, limit: int = HEAD_BYTES):
+    """`(local path, whole)`: the start of the file at `url`, on this machine.
+
+    For a table, which nothing here streams: what it IS is read from its header
+    and first rows, and those are a megabyte at most. The copy keeps the file's
+    own name, because detection reads names too, and is kept by address, size
+    and date, so asking twice reads once. A copy that stops short ends at a
+    line break; `whole` says it is the entire file, which a channel list
+    always is.
+    """
+    import hashlib
+    import os
+    import tempfile
+    from pathlib import Path
+
+    path = path_of(url)
+    client = require_client(target_of(url))
+    attrs = client.stat(path)
+    size = int(attrs.size or 0)
+    key = hashlib.sha1(f"{url}\0{size}\0{attrs.mtime}".encode()).hexdigest()[:16]
+    local = (Path(tempfile.gettempdir()) / "plexora-sftp-heads" / key
+             / path.rsplit("/", 1)[-1])
+    whole = size <= limit
+    if not local.exists():
+        data = client.read_range(path, 0, min(size, limit))
+        if not whole:
+            cut = data.rfind(b"\n")
+            data = data[:cut + 1] if cut > 0 else data
+        local.parent.mkdir(parents=True, exist_ok=True)
+        partial = local.with_name(local.name + ".partial")
+        partial.write_bytes(data)
+        os.replace(partial, local)
+    return local, whole
+
+
+def download(url, destination, *, progress: Optional[Callable] = None,
+             chunk: int = DOWNLOAD_CHUNK):
+    """Copy the file at `url` to `destination`; the destination.
+
+    Written to a `.partial` beside it and renamed at the end, so a copy cut
+    off half way is never mistaken for the file.
+
+    @param progress - `progress(done, total)` in bytes, after each chunk.
+    """
+    import os
+    from pathlib import Path
+
+    path = path_of(url)
+    client = require_client(target_of(url))
+    size = client.stat(path).size
+    if size is None:
+        raise SFTPError(f"{client.label} does not say how long {path} is")
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".partial")
+    done = 0
+    try:
+        with open(partial, "wb") as out:
+            while done < size:
+                data = client.read_range(path, done, min(size, done + chunk))
+                if not data:
+                    raise SFTPError(f"{path} ended {size - done} bytes early")
+                out.write(data)
+                done += len(data)
+                if progress:
+                    progress(done, size)
+        os.replace(partial, destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 # -- the fsspec filesystem ---------------------------------------------------
 
 

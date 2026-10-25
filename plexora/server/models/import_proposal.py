@@ -1916,6 +1916,8 @@ def _detect_remote(url, answers, declared=None):
     from plexora.server.utils import ome_zarr, remote_image, remote_store
 
     name = remote_store.url_name(url)
+    if url.lower().startswith("sftp://") and name.lower().endswith(SFTP_TABLE_SUFFIXES):
+        return _sftp_table(url)
     # A file names its own kind: a DICOM instance, a TIFF, an Imaris file or
     # a picture is streamed and proposed as the image it is, with no zarr
     # probing.
@@ -1972,6 +1974,43 @@ def _detect_remote(url, answers, declared=None):
         url, answers, declared, candidates=candidates)
     return (layers + found_layers, questions + found_questions, bundle,
             image_warnings + warnings)
+
+
+#: Tables on a files-only server that are copied to this machine on import.
+#: Not `.h5ad` (an AnnData is read where it lies, and a whole one is not a
+#: copy to make behind somebody's back) and not `.parquet` (its schema is at
+#: the END of the file, so its first megabyte says nothing).
+SFTP_TABLE_SUFFIXES = (".csv", ".tsv", ".txt")
+
+
+def _sftp_table(url):
+    """A delimited file on a files-only server, read from its first rows.
+
+    Nothing streams a CSV, so the table is copied to this machine when the
+    sample is registered (`replace_project_data`); until then its header and
+    first rows (`sftp.head_copy`) are what say what it is. A channel list is
+    small enough to be read whole, and its names are taken from that copy.
+    """
+    from plexora.server.utils import remote_store, sftp
+
+    name = remote_store.url_name(url)
+    try:
+        local, whole = sftp.head_copy(url)
+    except sftp.SFTPNotConnected as error:
+        return [], [], None, [str(error)]
+    except OSError as error:
+        return [], [], None, [f"{name}: {error}"]
+    layers, questions, bundle, warnings = _detect_table(local)
+    for layer in layers:
+        if layer.role == "channels":
+            continue
+        layer.src = str(url)
+        if not whole:
+            # The rows counted were the copy's, not the file's.
+            layer.render = {**(layer.render or {}),
+                            "detail": "copied to this computer when imported"}
+            layer.detail = describe(layer)
+    return layers, questions, bundle, warnings
 
 
 def _remote_image_layer(url, answers=None, declared=None):

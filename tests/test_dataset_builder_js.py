@@ -18,6 +18,7 @@ PROBE = REPO_ROOT / "tests" / "js" / "dataset_builder_probe.mjs"
 
 CHECKS = (
     "a scan polls until it is no longer pending, then stops",
+    "a folder on a data node names the node, and so does an added folder",
     "quick corrections go as one request, and a late answer is dropped",
     "a refused correction puts back what the server last agreed",
     "create posts the overrides and polls the build to its end",
@@ -75,6 +76,25 @@ def test_new_dataset_and_a_cohort_folder_open_it():
     assert re.search(r"open: \(id\) =>", page), "the page lets a finished build land in its folder"
     landing = (CLIENT / "src" / "js" / "views" / "quickViewLanding.js").read_text(encoding="utf-8")
     assert "PlexoraDatasetBuilder.open({root: path})" in landing
+
+
+def test_a_folder_on_a_server_goes_to_new_dataset_too():
+    """A cohort on a cluster is the usual case. A files-only server's folder
+    is read as an `sftp://` address like any other cohort folder; a node
+    cannot share a folder at all, so a folder there opens New Dataset before
+    the share is attempted -- from the box and from the browser alike."""
+    landing = (CLIENT / "src" / "js" / "views" / "quickViewLanding.js").read_text(encoding="utf-8")
+    cohort = landing[landing.index("function cohortFolder(path, proposal)"):]
+    cohort = cohort[:cohort.index("\n    }\n")]
+    assert "!/^sftp:\\/\\//i.test(path)" in cohort
+    assert "PlexoraDatasetBuilder.open({root: path, node})" in landing
+    for gesture in ("function go()", "function take(path)"):
+        body = landing[landing.index(gesture):]
+        assert body.index("nodeFolder(") < body.index("checkable()"), gesture
+    dialog = (CLIENT / "src" / "js" / "views" / "datasetBuilder.js").read_text(encoding="utf-8")
+    # Browsing and typing both happen on the chosen machine.
+    assert "node: browseNode()," in dialog
+    assert "PlexoraLocators.sftpUrl(files.base, text, files.home)" in dialog
 
 
 def test_every_icon_is_a_font_awesome_7_name():

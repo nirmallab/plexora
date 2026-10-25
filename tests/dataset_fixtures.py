@@ -119,14 +119,14 @@ def layout_e(root):
     return root
 
 
-def mcmicro(root, samples=("LSP1", "LSP2")):
+def mcmicro(root, samples=("LSP1", "LSP2"), size=256):
     """What mcmicro writes, per sample, under one project folder."""
     (root / "markers.csv").parent.mkdir(parents=True, exist_ok=True)
     (root / "markers.csv").write_text(MARKERS, encoding="utf-8")
     for name in samples:
-        image(root / "registration" / f"{name}.ome.tif")
-        mask(root / "segmentation" / f"unmicst-{name}" / "cell.ome.tif")
-        mask(root / "segmentation" / f"unmicst-{name}" / "nuclei.ome.tif")
+        image(root / "registration" / f"{name}.ome.tif", size)
+        mask(root / "segmentation" / f"unmicst-{name}" / "cell.ome.tif", size)
+        mask(root / "segmentation" / f"unmicst-{name}" / "nuclei.ome.tif", size)
         csv(root / "quantification" / f"{name}--unmicst_cell.csv")
         image(root / "probability-maps" / "unmicst" / f"{name}_Probabilities_0.tif",
               channels=1)

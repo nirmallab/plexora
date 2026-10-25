@@ -510,7 +510,7 @@ def _spec_label(spec) -> str:
     return _describe(_locate(spec["image"], "image", spec.get("node")))
 
 
-def plan_dataset(*roots, overrides=None, limits=None) -> dict:
+def plan_dataset(*roots, overrides=None, limits=None, node=None) -> dict:
     """Work out which images, masks and tables under these folders belong
     together, without registering anything.
 
@@ -523,6 +523,9 @@ def plan_dataset(*roots, overrides=None, limits=None) -> dict:
     A match is `high` when it is strong and well clear of any other candidate,
     `medium` when it is likely but worth a look, and anything less is left in
     `unassigned` with its best suggestions rather than guessed.
+
+    The folders can be on this computer, on a data node (`node=`), or on a
+    files-only server this Plexora is connected to (an `sftp://` address).
 
     When to use:
         Use this to see what `create_dataset_from_directory` would make, or to
@@ -537,6 +540,7 @@ def plan_dataset(*roots, overrides=None, limits=None) -> dict:
             "detach": [path], "new_project": [{"image", "name"}],
             "rename": {project_id: name}, "learn": [{"path", "project"}]}`.
         limits (dict, optional): `{"max_depth": 8, "max_entries": 200000}`.
+        node (str, optional): The data node the folders are on.
 
     Returns:
         dict: The plan: `projects` (each with `image`, `mask`, `table`,
@@ -559,20 +563,21 @@ def plan_dataset(*roots, overrides=None, limits=None) -> dict:
 
     if not roots:
         raise ValueError("Name at least one folder to scan.")
-    folders = dataset_scan._check_roots(roots)
-    inventory = dataset_scan.scan(folders, limits=limits)
+    inventory = dataset_scan.scan(roots, limits=limits, node=node)
     return dataset_plan.verify(dataset_plan.plan(inventory, overrides))
 
 
 def create_dataset_from_directory(name, *roots, overrides=None, description="",
-                                  exist_ok=False) -> Dataset:
+                                  exist_ok=False, node=None) -> Dataset:
     """Scan folders and register what they hold as one dataset.
 
     `plan_dataset`, then `create_dataset` with the projects it planned: every
     image becomes a project, with the mask, table and channel names matched
     to it. Files are registered where they are, not copied. Files the plan
     could not place (`unassigned`) are left out; pass `overrides` to place
-    them, or use `plan_dataset` first to see them.
+    them, or use `plan_dataset` first to see them. On a files-only server
+    (`sftp://`) images and masks stream from where they are and each cell
+    table is copied to this computer, since a CSV cannot be streamed.
 
     When to use:
         Use this for a cohort folder whose files are named consistently --
@@ -587,6 +592,7 @@ def create_dataset_from_directory(name, *roots, overrides=None, description="",
         description (str, optional): A note about the dataset.
         exist_ok (bool, optional): Add to an existing dataset of this name
             instead of raising.
+        node (str, optional): The data node the folders are on.
 
     Returns:
         Dataset: The dataset, holding every project registered or adopted.
@@ -606,7 +612,7 @@ def create_dataset_from_directory(name, *roots, overrides=None, description="",
     """
     from plexora.server.models import dataset_build
 
-    plan = plan_dataset(*roots, overrides=overrides)
+    plan = plan_dataset(*roots, overrides=overrides, node=node)
     specs = [spec for _id, spec in dataset_build.specs_for(plan)]
     if not specs:
         raise ValueError("No images to register were found under "
@@ -1456,7 +1462,10 @@ def _validate_batch(specs) -> dict:
         if spec.get("paths"):
             if default_node is None:
                 for path in spec["paths"]:
-                    _existing_path(path, "file")
+                    if str(path).lower().startswith("sftp://"):
+                        _existing_sftp(path)
+                    else:
+                        _existing_path(path, "file")
         else:
             _check_located(_locate(spec["image"], "image", default_node), checked)
         for key in ("segmentation", "data"):
@@ -1469,6 +1478,16 @@ def _validate_batch(specs) -> dict:
             raise ValueError(f"there is already a project called {name!r}")
         taken.add(str(name))
     return checked
+
+
+def _existing_sftp(url):
+    """A file on a files-only server that is really there (and connected)."""
+    from plexora.server.utils import sftp
+
+    try:
+        sftp.require_client(sftp.target_of(url)).stat(sftp.path_of(url))
+    except FileNotFoundError:
+        raise ValueError(f"no such file: {url}") from None
 
 
 def _existing_path(value, what) -> Path:

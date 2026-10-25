@@ -855,7 +855,8 @@ def _build_dataset_parser():
                              "a project, with the segmentation mask, cell "
                              "table and channel names matched to it by name "
                              "and folder. Files that cannot be matched with "
-                             "confidence are listed and left out.")
+                             "confidence are listed and left out. With --node, "
+                             "folders on that data node.")
     create.add_argument("--dry-run", action="store_true",
                         help="With --scan: show what would be created and "
                              "register nothing. With --json, print it as a "
@@ -2202,11 +2203,7 @@ def _create_from_scan(api, args):
     if args.images or args.spec_file:
         print("Use --scan, --images or --from, not more than one.", file=sys.stderr)
         return 2
-    if args.node:
-        print("--scan reads folders on this machine; --node is not supported "
-              "with it.", file=sys.stderr)
-        return 2
-    plan = api.plan_dataset(*args.scan)
+    plan = api.plan_dataset(*args.scan, node=args.node)
     if args.dry_run:
         if args.json:
             print(json.dumps(dataset_build.spec_document(
