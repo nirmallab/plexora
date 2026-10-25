@@ -1567,15 +1567,11 @@
 
 /* The row the contrast bar is editing. Not a stand-in for visibility: a
    selected row that is off keeps the ring and dims its name. */
-.channel-slot.is-selected {
-    background: rgba(56, 189, 248, 0.08);
-    border-color: var(--accent-channel);
-    box-shadow: 0 0 0 2px var(--accent-channel-tint, rgba(56, 189, 248, 0.10));
-}
-
-/* Being dragged by its grip (Sortable's chosen / ghost classes). */
+/* The selected row is marked by its Selected pill alone, no outline.
+   Being dragged (Sortable's chosen / ghost classes): */
 .channel-slot.is-dragging {
     box-shadow: var(--shadow-md);
+    cursor: grabbing;
 }
 
 .channel-slot.is-drop-target {
@@ -1620,34 +1616,9 @@
     align-items: center;
     display: grid;
     gap: 4px;
-    grid-template-columns: 12px 22px 18px minmax(0, 1fr) auto;
+    grid-template-columns: 22px 18px minmax(0, 1fr) auto;
     min-height: 24px;
     min-width: 0;
-}
-
-/* Grip: faint at rest, there when the row is hovered or the grip focused. */
-.channel-slot-grip {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 3px;
-    color: rgba(255, 255, 255, 0.18);
-    cursor: grab;
-    display: inline-flex;
-    font-size: 10px;
-    height: 22px;
-    justify-content: center;
-    padding: 0;
-    width: 12px;
-}
-
-.channel-slot:hover .channel-slot-grip,
-.channel-slot-grip:focus-visible {
-    color: var(--text-muted);
-}
-
-.channel-slot-grip:active {
-    cursor: grabbing;
 }
 
 /* The eye: what is drawn. Both glyphs are in the button; the row's
@@ -1700,12 +1671,24 @@
 
 /* The marker search, unchanged in what it does, drawn as the row's name:
    no box until it is hovered or typed in. */
+.channel-slot .marker-combobox {
+    justify-self: start;
+    max-width: 100%;
+}
+
+.channel-slot .marker-combobox:focus-within {
+    justify-self: stretch;
+}
+
+/* As wide as the name (fitMarkerName), and the whole row while typing. */
 .channel-slot .marker-combobox-input {
     background: transparent;
     border-color: transparent;
+    cursor: pointer;
     font-size: 13px;
     height: 24px;
     padding: 0 4px;
+    width: var(--name-width, 100%);
 }
 
 .channel-slot .marker-combobox-input:hover {
@@ -1715,7 +1698,9 @@
 .channel-slot .marker-combobox-input:focus {
     background: var(--surface-2);
     border-color: var(--accent-channel);
+    cursor: text;
     outline: none;
+    width: 100%;
 }
 
 .channel-slot-badge {

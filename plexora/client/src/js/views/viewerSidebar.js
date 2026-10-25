@@ -648,8 +648,8 @@ class ViewerSidebar {
         row.setAttribute("id", this.slotId("channel_slot", slot.index));
         row.style.setProperty("--slot-color", slot.colorHex);
 
-        // ONE LINE PER CHANNEL: grip, eye, colour, marker, the Selected pill,
-        // Auto and remove. The window is not in the row any more -- every slot
+        // ONE LINE PER CHANNEL: eye, colour, marker, the Selected pill, Auto
+        // and remove. The row itself is what drags (ensureSlotSortable). The window is not in the row any more -- every slot
         // shares the contrast bar over the list (ensureContrastBar), which
         // edits whichever row is selected. A click anywhere on the row that
         // is not one of its own buttons selects it.
@@ -658,23 +658,10 @@ class ViewerSidebar {
         row.appendChild(top);
         row.addEventListener("click", (event) => {
             const hit = event.target?.closest?.(
-                ".channel-slot-grip, .channel-slot-eye, .channel-slot-actions, .color-swatch-mount");
+                ".channel-slot-eye, .channel-slot-actions, .color-swatch-mount");
             if (hit) return;
             this.selectSlot(slot.index);
         });
-
-        const grip = document.createElement("button");
-        grip.type = "button";
-        grip.classList.add("channel-slot-grip");
-        grip.title = "Drag to reorder (or ↑ ↓)";
-        grip.setAttribute("aria-label", "Reorder channel");
-        grip.innerHTML = '<span class="fas fa-grip-vertical" aria-hidden="true"></span>';
-        grip.addEventListener("keydown", (event) => {
-            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-            event.preventDefault();
-            this.moveSlot(slot.index, event.key === "ArrowUp" ? -1 : 1);
-        });
-        top.appendChild(grip);
 
         const eye = document.createElement("button");
         eye.type = "button";
@@ -697,7 +684,9 @@ class ViewerSidebar {
         this.colorPickers.set(slot.index, colorPicker);
 
         // The marker search, unchanged: type into the name to find another
-        // channel for this slot.
+        // channel for this slot. Only as wide as the name until it is
+        // focused (fitMarkerName), so the space after it selects the row
+        // rather than opening the list.
         const comboMount = document.createElement("div");
         top.appendChild(comboMount);
         const markerSelect = new SearchableSelect(comboMount, {
@@ -738,7 +727,28 @@ class ViewerSidebar {
         actions.appendChild(remove);
 
         row.classList.toggle("is-selected", slot.index === this.selectedSlot);
+        this.fitMarkerName(slot, row);
         return row;
+    }
+
+    /**
+     * Size a row's marker field to its name. Measured, because an <input>
+     * does not size itself to its value, and a width in `ch` is a guess in a
+     * proportional face. While the field is focused the stylesheet widens
+     * it to the whole row, which is also the width its list opens at.
+     */
+    fitMarkerName(slot, row = this.slotRow(slot?.index)) {
+        const input = row?.querySelector?.(".marker-combobox-input");
+        if (!input || typeof getComputedStyle !== "function") return;
+        const text = input.value || input.placeholder || "";
+        const canvas = ViewerSidebar._measure || (ViewerSidebar._measure = document.createElement("canvas"));
+        const ctx = canvas.getContext?.("2d");
+        if (!ctx) return;
+        const style = getComputedStyle(input);
+        ctx.font = style.font || `${style.fontSize} ${style.fontFamily}`;
+        const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+            + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+        input.style.setProperty("--name-width", `${Math.ceil(ctx.measureText(text).width + pad + 2)}px`);
     }
 
     /** A row's eye: what it says matches whether the channel is drawn. */
@@ -1120,6 +1130,7 @@ class ViewerSidebar {
         on(".channel-contrast-next", () => this.stepChannel(1));
         this.contrastBar = bar;
         this.ensureSlotSortable(list);
+        document.fonts?.ready?.then?.(() => this.channelSlots.forEach((slot) => this.fitMarkerName(slot)));
         return bar;
     }
 
@@ -1348,12 +1359,14 @@ class ViewerSidebar {
 
     // -- reordering -----------------------------------------------------------
 
-    /** Drag by the grip, on the library the layer cards use. */
+    /** Drag a row to reorder, on the library the layer cards use. The row
+     *  is the handle; its controls are not, so they still click. */
     ensureSlotSortable(list) {
         if (this._slotSortable || typeof window.Sortable !== "function") return;
         this._slotSortable = new window.Sortable(list, {
-            handle: ".channel-slot-grip",
             draggable: ".channel-slot",
+            filter: "input, button, .color-swatch-mount",
+            preventOnFilter: false,
             animation: 150,
             forceFallback: Boolean(window.PlexoraDesktop),
             ghostClass: "is-drop-target",
@@ -1367,20 +1380,6 @@ class ViewerSidebar {
                 this.applySlotOrder(order);
             },
         });
-    }
-
-    /** One step up or down among the rows showing, from the keyboard. */
-    moveSlot(slotIndex, dir) {
-        if (this.review) return;
-        const shown = this.channelSlots.filter((slot) => slot.visible).map((slot) => slot.index);
-        const at = shown.indexOf(slotIndex);
-        const other = shown[at + dir];
-        if (at < 0 || other === undefined) return;
-        const order = this.channelSlots.map((slot) => slot.index);
-        order[slotIndex] = other;
-        order[other] = slotIndex;
-        this.applySlotOrder(order);
-        this.slotRow(other)?.querySelector(".channel-slot-grip")?.focus?.();
     }
 
     /**
@@ -2661,6 +2660,7 @@ class ViewerSidebar {
         row.style.setProperty("--slot-color", slot.colorHex);
         row.classList.toggle("is-selected", slot.index === this.selectedSlot);
         this.paintEye(row.querySelector(".channel-slot-eye"), slot);
+        this.fitMarkerName(slot, row);
         const colorPicker = this.colorPickers.get(slot.index);
         if (colorPicker) colorPicker.setValue(slot.colorHex);
         const markerSelect = this.markerSelects.get(slot.index);
