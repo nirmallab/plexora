@@ -61,37 +61,33 @@ def test_auto_stores_the_window_it_replaces_and_offers_it_back():
 def test_the_window_is_one_row_with_the_numbers_on_the_slider():
     """No header row, and no `fieldsSlot` parking the boxes away from the track.
 
-    `fieldsSlot` is the slider option that reparents its two number boxes
-    somewhere else; it exists for exactly this panel and the figure builder's.
-    While it was passed, the numbers could be anywhere on the page and the row
-    they sat on was a second line by definition.
+    The window lives in the shared contrast bar over the list now, one line:
+    `min ---o====o--- max`. `fieldsSlot` is the slider option that reparents
+    the two number boxes; the bar's slider must not pass it. (The histogram
+    popover's slider does, on purpose: its boxes sit under a full-width
+    histogram whose axis the track has to match.)
     """
     source = SIDEBAR.read_text(encoding="utf8")
     assert "slot-detail-header" not in source, (
         "the header row the two number boxes used to sit on is back"
     )
-    # The option key, not the word -- the comment beside the slider's options
-    # names it to say why it is absent.
-    assert "fieldsSlot:" not in source, (
+    bar = source[source.index("    bindContrastSlider(slot) {"):]
+    bar = bar[: bar.index("    resetSelectedRange() {")]
+    assert "fieldsSlot:" not in bar, (
         "the contrast slider is parking its number boxes off the track again"
     )
-    assert 'rangeRow.classList.add("slider-auto-row")' in source
-    row = source[source.index('rangeRow.classList.add("slider-auto-row")'):]
-    row = row[: row.index("detail.appendChild(rangeRow)")]
-    assert "rangeRow.appendChild(auto)" not in row, (
-        "Auto is back inside the fold; it belongs on the slot's header line"
-    )
+    assert 'class="slider-auto-row channel-contrast-range"' in source
 
 
-def test_auto_sits_on_the_header_between_the_chevron_and_the_x():
-    """Always showing, in the order: fold, Auto, remove.
+def test_auto_sits_on_the_row_between_the_badge_and_the_x():
+    """Always showing, in the order: Selected pill, Auto, remove.
 
-    Inside the fold, levelling a channel meant opening its slider first.
+    Inside a fold, levelling a channel meant opening its slider first.
     """
     source = SIDEBAR.read_text(encoding="utf8")
     order = [source.index(f"actions.appendChild({name})")
-             for name in ("expandToggle", "auto", "remove")]
-    assert order == sorted(order), "the header icons are out of order"
+             for name in ("badge", "auto", "remove")]
+    assert order == sorted(order), "the row's icons are out of order"
     assert '"slider-auto-button", "channel-slot-auto"' in source
     assert ".slider-auto-button.channel-slot-auto {" in VIEWER_CSS.read_text(encoding="utf8")
 

@@ -551,7 +551,7 @@ class FigureWorkspace {
         // nothing to offer here -- an unassigned capture lived in the viewer
         // page's memory and died with it.
         this.el("fb_tray_bin")?.addEventListener("click", () => this.openCaptureBin());
-        // And the views saved in the viewer (K): to go back to, or straight
+        // And the views saved in the viewer (M): to go back to, or straight
         // onto the page.
         this.el("fb_tray_bookmarks")?.addEventListener("click", () => this.openBookmarks());
 
@@ -845,7 +845,7 @@ class FigureWorkspace {
     }
 
     /**
-     * The views saved in the viewer (K), without going through the captures:
+     * The views saved in the viewer (M), without going through the captures:
      * each one can be gone back to -- the viewer opens at it -- or put
      * straight onto this figure's page. The dialog stays open, so several can
      * be added in a row; each says it was.

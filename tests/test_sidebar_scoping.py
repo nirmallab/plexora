@@ -32,7 +32,7 @@ CHECKS = [
     "an instance resolves its own row",
     "syncSlotDom writes its own row and not the other instance's",
     "...and the other instance's row keeps its enabled state",
-    "applySlotExpansion expands its own row only",
+    "selectSlot marks its own row only",
     "the Auto button swapped is its own",
     "an unpinned instance listens for the HD toggle",
     "destroy() takes the HD listener back off",

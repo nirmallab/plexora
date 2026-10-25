@@ -304,7 +304,7 @@ def test_the_way_to_more_panels_is_one_press_and_remembers_this_figure():
         "the image-file button opens nothing"
 
     # What is already kept, side by side and named: the views saved in the
-    # viewer (K), and the captures -- not one behind the other's icon.
+    # viewer (M), and the captures -- not one behind the other's icon.
     assert 'id="fb_tray_bookmarks"' in body and "</span> Bookmarks" in body, \
         "the bookmarks have no button of their own in the panel tray"
     assert 'id="fb_tray_bin"' in body and "</span> Captures" in body, \

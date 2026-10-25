@@ -1543,16 +1543,44 @@
 .channel-slot-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: 4px;
 }
 
+/* ONE LINE PER CHANNEL. The window moved out of the row into the shared
+   contrast bar over the list (.channel-contrast), so a row is 30px and
+   twenty channels fit where four expanded cards used to. */
 .channel-slot {
     background: rgba(8, 21, 30, 0.76);
     border: 1px solid rgba(56, 189, 248, 0.18);
     border-radius: 7px;
-    padding: 7px 9px 4px 12px;
+    cursor: pointer;
+    padding: 2px 4px 2px 6px;
     position: relative;
-    transition: opacity var(--duration-base) var(--ease-standard);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.channel-slot:hover {
+    border-color: rgba(56, 189, 248, 0.3);
+}
+
+/* The row the contrast bar is editing. Not a stand-in for visibility: a
+   selected row that is off keeps the ring and dims its name. */
+.channel-slot.is-selected {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 2px var(--accent-channel-tint, rgba(56, 189, 248, 0.10));
+}
+
+/* Being dragged by its grip (Sortable's chosen / ghost classes). */
+.channel-slot.is-dragging {
+    box-shadow: var(--shadow-md);
+}
+
+.channel-slot.is-drop-target {
+    border-style: dashed;
+    opacity: 0.45;
 }
 
 .channel-slot::before {
@@ -1580,16 +1608,347 @@
                 box-shadow var(--duration-base) var(--ease-standard);
 }
 
-.channel-slot.is-disabled {
-    opacity: 0.58;
+.channel-slot.is-disabled .channel-color-swatch {
+    opacity: 0.45;
+}
+
+.channel-slot.is-disabled .marker-combobox-input {
+    color: var(--text-muted);
 }
 
 .channel-slot-top {
     align-items: center;
     display: grid;
-    gap: 7px;
-    grid-template-columns: 28px 24px minmax(0, 1fr) auto;
+    gap: 4px;
+    grid-template-columns: 12px 22px 18px minmax(0, 1fr) auto;
+    min-height: 24px;
     min-width: 0;
+}
+
+/* Grip: faint at rest, there when the row is hovered or the grip focused. */
+.channel-slot-grip {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    color: rgba(255, 255, 255, 0.18);
+    cursor: grab;
+    display: inline-flex;
+    font-size: 10px;
+    height: 22px;
+    justify-content: center;
+    padding: 0;
+    width: 12px;
+}
+
+.channel-slot:hover .channel-slot-grip,
+.channel-slot-grip:focus-visible {
+    color: var(--text-muted);
+}
+
+.channel-slot-grip:active {
+    cursor: grabbing;
+}
+
+/* The eye: what is drawn. Both glyphs are in the button; the row's
+   `.is-disabled` picks one (FontAwesome's svg keeps these classes). */
+.channel-slot-eye,
+.channel-contrast-icon {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    padding: 0;
+    width: 22px;
+}
+
+.channel-slot-eye:hover,
+.channel-contrast-icon:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.channel-slot .channel-eye-off,
+.channel-contrast .channel-eye-off,
+.channel-slot.is-disabled .channel-eye-on,
+.channel-contrast.is-off .channel-eye-on,
+.channel-contrast.is-empty .channel-eye-on {
+    display: none;
+}
+
+.channel-slot.is-disabled .channel-eye-off,
+.channel-contrast.is-off .channel-eye-off,
+.channel-contrast.is-empty .channel-eye-off {
+    display: inline-block;
+}
+
+.channel-slot.is-disabled .channel-slot-eye {
+    color: var(--text-muted);
+}
+
+.channel-slot .channel-color-swatch {
+    border-radius: 4px;
+    height: 16px;
+    width: 16px;
+}
+
+/* The marker search, unchanged in what it does, drawn as the row's name:
+   no box until it is hovered or typed in. */
+.channel-slot .marker-combobox-input {
+    background: transparent;
+    border-color: transparent;
+    font-size: 13px;
+    height: 24px;
+    padding: 0 4px;
+}
+
+.channel-slot .marker-combobox-input:hover {
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+.channel-slot .marker-combobox-input:focus {
+    background: var(--surface-2);
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.channel-slot-badge {
+    background: rgba(56, 189, 248, 0.16);
+    border-radius: 999px;
+    color: #7dd3fc;
+    display: none;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 16px;
+    padding: 0 7px;
+}
+
+.channel-slot.is-selected .channel-slot-badge {
+    display: inline-block;
+    margin-right: 4px;
+}
+
+/* THE SHARED CONTRAST BAR, over the list: the selected channel's eye, name,
+   histogram, reset, n/N and J/K, then its window. A constant height whatever
+   is selected, so the list under it never jumps. */
+.channel-contrast {
+    background: rgba(56, 189, 248, 0.06);
+    border: 1px solid rgba(56, 189, 248, 0.18);
+    border-radius: 7px;
+    container-type: inline-size;
+    margin: 8px 0;
+    padding: 4px 6px 0 4px;
+}
+
+.channel-contrast-top {
+    align-items: center;
+    display: flex;
+    gap: 2px;
+    height: 24px;
+    min-width: 0;
+}
+
+.channel-contrast .channel-contrast-eye {
+    color: var(--accent-channel);
+    font-size: 12px;
+}
+
+.channel-contrast.is-off .channel-contrast-eye {
+    color: var(--text-muted);
+}
+
+.channel-contrast-icon:disabled,
+.channel-contrast-nav:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.channel-contrast-hist[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+.channel-contrast-title {
+    display: flex;
+    flex: 1 1 auto;
+    font-size: 12px;
+    gap: 4px;
+    min-width: 0;
+    overflow: hidden;
+    padding-left: 2px;
+    white-space: nowrap;
+}
+
+.channel-contrast-word {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.channel-contrast-dot {
+    color: var(--text-muted);
+}
+
+.channel-contrast-name {
+    color: var(--text-secondary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.channel-contrast.is-empty .channel-contrast-name {
+    color: var(--text-muted);
+}
+
+/* A narrow sidebar keeps the channel's name and drops the word. */
+@container (max-width: 300px) {
+    .channel-contrast-word,
+    .channel-contrast-dot {
+        display: none;
+    }
+
+    .channel-contrast-name {
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+}
+
+.channel-contrast-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding: 0 3px;
+}
+
+/* ‹ J and K ›: the key is printed on the button, not hidden in a tooltip. */
+.channel-contrast-nav {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 9px;
+    gap: 4px;
+    height: 22px;
+    margin-left: 2px;
+    padding: 0 5px;
+}
+
+.channel-contrast-nav:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--border-strong);
+    color: #fff;
+}
+
+.channel-contrast-nav .plx-kbd {
+    line-height: 13px;
+    min-width: 14px;
+    padding: 0 3px;
+}
+
+.channel-contrast-range {
+    min-width: 0;
+}
+
+.channel-contrast.is-empty .channel-contrast-range {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* The histogram, hung under the bar it belongs to. Portaled onto <body>,
+   like the opacity popover, and the same surface. */
+.channel-histogram-popover {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    box-sizing: border-box;
+    opacity: 0;
+    padding: 8px 10px 8px;
+    position: fixed;
+    transform: translateY(-4px) scale(0.98);
+    transform-origin: top left;
+    transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+    z-index: 500;
+}
+
+.channel-histogram-popover[hidden] {
+    display: none;
+}
+
+.channel-histogram-popover.is-open {
+    opacity: 1;
+    transform: none;
+}
+
+.channel-histogram-head {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.channel-histogram-title {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.channel-histogram-name {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.channel-histogram-close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 20px;
+    justify-content: center;
+    padding: 0;
+    width: 20px;
+}
+
+.channel-histogram-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.channel-histogram-canvas {
+    border-bottom: 1px solid var(--border-subtle);
+    display: block;
+    height: 72px;
+    width: 100%;
+}
+
+.channel-histogram-fields {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2px;
+}
+
+.channel-histogram-note {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.channel-histogram-note:empty {
+    display: none;
 }
 
 /* Fold, Auto, remove: three 24x26 icons 2px apart, as one cluster. */
@@ -1984,8 +2343,8 @@
    this stylesheet draws it too. On a channel slot it sits on the header line
    between the chevron and the X, sized to them rather than to a slider row. */
 .slider-auto-button.channel-slot-auto {
-    height: 26px;
-    width: 24px;
+    height: 22px;
+    width: 22px;
 }
 
 /* Borderless, like the chevron and Auto beside it. A box around this one
@@ -2001,11 +2360,11 @@
     cursor: pointer;
     display: inline-flex;
     font-size: 11px;
-    height: 26px;
+    height: 22px;
     justify-content: center;
     padding: 0;
     transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-    width: 24px;
+    width: 22px;
 }
 
 .slot-remove-button:hover,

@@ -2322,7 +2322,8 @@ CHANNEL_ROW_SOURCES = ("user", "auto", "gating", "default")
 def _row_meta(meta):
     """The optional per-row fields of a saved channel row, validated: `source`
     (CHANNEL_ROW_SOURCES), `curve` (linear or asinh), `cofactor` (raw units,
-    asinh only) and `display_rev` (the gating calibration it came from)."""
+    asinh only), `display_rev` (the gating calibration it came from) and
+    `position` (the row's place in the sidebar, so a reorder survives)."""
     out = {}
     if not isinstance(meta, dict):
         return out
@@ -2339,6 +2340,9 @@ def _row_meta(meta):
         out["curve"] = "linear"
     if isinstance(meta.get("display_rev"), str):
         out["display_rev"] = meta["display_rev"][:64]
+    position = meta.get("position")
+    if isinstance(position, int) and not isinstance(position, bool) and 0 <= position < 1000:
+        out["position"] = position
     return out
 
 
