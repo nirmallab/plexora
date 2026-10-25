@@ -1074,22 +1074,129 @@ window.PlexoraDatasetBuilder = (function () {
         }
     }
 
+    /**
+     * Which machine, as the home page and Import Sample ask it: Local, then
+     * every saved server with its state, then Add and Manage. Drawn in the
+     * dialog (the body scrolls and would clip it) as the assign picker is, so
+     * the same outside click and Escape close it.
+     */
     function openMachineMenu(anchor) {
-        if (!window.PlexoraMenu || !Remotes()) return;
-        const places = Remotes().snapshot()?.places || [];
-        const current = ui.where ? ui.where.id : null;
-        const items = [{label: "This computer", checked: !ui.where, onSelect: () => chooseWhere(null)},
-                       {separator: true}];
+        if (!Remotes()) return;
+        if (ui.picker && ui.pickerAnchor === anchor) {
+            closePicker();
+            return;
+        }
+        closePicker();
+        const menu = document.createElement("div");
+        menu.className = "plx-import-menu plx-dsb-machine-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Where the folder is");
+        dialog.appendChild(menu);
+        ui.picker = menu;
+        ui.pickerAnchor = anchor;
+        anchor.setAttribute("aria-expanded", "true");
+        let key = "";
+        const draw = (places) => {
+            if (ui?.picker !== menu) return;
+            const current = ui.where ? ui.where.id : null;
+            const next = JSON.stringify([current, places.map((place) =>
+                [place.id, place.node, Boolean(place.files), place.state, place.phase])]);
+            // A poll that changes nothing must not rebuild the list under the focus.
+            if (next === key) return;
+            key = next;
+            menu.replaceChildren(...machineRows(places, current));
+        };
+        draw(Remotes().snapshot()?.places || []);
+        // While it is open, a server that comes up shows here.
+        const unwatch = Remotes().subscribe((snapshot) => draw(snapshot.places || []),
+                                            {active: true});
+        const remove = menu.remove.bind(menu);
+        menu.remove = () => {
+            unwatch?.();
+            anchor.setAttribute("aria-expanded", "false");
+            remove();
+        };
+        menu.addEventListener("keydown", (event) => {
+            const items = Array.from(menu.querySelectorAll(".plx-import-menu-item:not(:disabled)"));
+            const at = items.indexOf(document.activeElement);
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                items[(at + step + items.length) % items.length]?.focus();
+            } else if (event.key === "Tab") {
+                closePicker();
+            }
+        });
+        const box = anchor.getBoundingClientRect();
+        menu.style.left = `${Math.round(box.left - 2)}px`;
+        menu.style.top = `${Math.round(box.bottom + 10)}px`;
+        menu.querySelector(".plx-import-menu-item")?.focus();
+    }
+
+    function machineRows(places, current) {
+        const node = (tag, className, text) => {
+            const made = document.createElement(tag);
+            if (className) made.className = className;
+            if (text != null) made.textContent = text;
+            return made;
+        };
+        const item = ({icon, dot, name, sub, checked, onPick, href, disabled, add}) => {
+            const row = node(href ? "a" : "button", "plx-import-menu-item" + (add ? " is-add" : ""));
+            row.setAttribute("role", checked === undefined ? "menuitem" : "menuitemradio");
+            if (checked !== undefined) row.setAttribute("aria-checked", checked ? "true" : "false");
+            if (href) {
+                row.href = href;
+            } else {
+                row.type = "button";
+                row.disabled = Boolean(disabled);
+                row.addEventListener("click", onPick);
+            }
+            const lead = node("span", dot || "plx-import-menu-icon");
+            lead.setAttribute("aria-hidden", "true");
+            if (!dot) lead.appendChild(node("span", `fas fa-${icon}`));
+            row.append(lead, node("span", "plx-import-menu-name", name));
+            if (sub) row.append(node("span", "plx-import-menu-sub", sub));
+            if (checked) {
+                const tick = node("span", "plx-import-menu-check");
+                tick.setAttribute("aria-hidden", "true");
+                tick.appendChild(node("span", "fas fa-check"));
+                row.append(tick);
+            }
+            return row;
+        };
+        const sep = () => {
+            const line = node("div", "plx-import-menu-sep");
+            line.setAttribute("role", "separator");
+            return line;
+        };
+        const rows = [item({icon: "laptop", name: "Local", sub: "This computer", checked: !current,
+                            onPick: () => { closePicker(); chooseWhere(null); }}),
+                      sep(), node("div", "plx-import-menu-label", "Remote")];
+        if (!places.length) rows.push(node("div", "plx-import-menu-empty", "No servers yet."));
         places.forEach((place) => {
             const up = place.kind === "server" || Boolean(place.node) || Boolean(place.files);
-            items.push({
-                label: up ? place.label : `${place.label} — not connected`,
+            const waiting = !up && Remotes().isOpening?.(place.state);
+            const row = item({
+                dot: "plx-import-menu-dot" + (up ? "" : (waiting ? " is-waiting" : " is-off")),
+                name: place.label,
+                sub: up ? "Connected" : (waiting ? (place.phase || "Connecting…") : "Not connected"),
                 checked: place.id === current,
-                onSelect: () => (up ? chooseWhere(placeOf(place)) : connectWhere(place)),
+                disabled: waiting,
+                onPick: () => {
+                    closePicker();
+                    if (up) chooseWhere(placeOf(place));
+                    else connectWhere(place);
+                },
             });
+            row.dataset.place = place.id;
+            rows.push(row);
         });
-        items.push({separator: true}, {label: "Add a server…", onSelect: () => connectWhere(null)});
-        window.PlexoraMenu.open(anchor, items, {align: "left"});
+        rows.push(sep(), item({icon: "plus", name: "Add a server…", add: true,
+                               onPick: () => { closePicker(); connectWhere(null); }}));
+        rows.push(item({icon: "gear", name: "Manage servers", sub: "Settings",
+                        href: (typeof plexoraUrl === "function" ? plexoraUrl("settings")
+                               : "/settings") + "#remotes"}));
+        return rows;
     }
 
     function chooseWhere(where) {
