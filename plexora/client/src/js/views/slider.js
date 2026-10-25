@@ -201,6 +201,7 @@ class PlexoraSlider {
             parse = (text) => Number(text),
             constrain = (v) => v,
             onInput = null, onCommit = null,
+            fitChars = null,
         } = options;
 
         const group = document.createElement("div");
@@ -238,11 +239,32 @@ class PlexoraSlider {
             input.style.setProperty("width",
                 `max(var(--plx-number-width, 44px), calc(${chars}ch + 10px))`);
         };
+        // With `fitChars` (a number of characters): the box is as wide as the
+        // number in it, up to that many characters, and the rest is cut
+        // (with the whole number in the tooltip; focused, all of it shows).
+        // Not while `held`: a slider holds its boxes during a drag, because a
+        // box that grew on the tick 999 became 1000 would shorten the track
+        // and slide the handle out from under the pointer.
+        api.held = false;
+        const fitWidth = () => {
+            if (!fitChars) return;
+            const text = String(input.value ?? "");
+            input.title = text.length > fitChars ? text : "";
+            if (api.held) return;
+            const chars = Math.max(1, focused() ? text.length : Math.min(text.length, fitChars));
+            input.style.setProperty("--plx-number-width",
+                `calc(${chars}ch + var(--plx-number-pad, 8px) + 1px)`);
+        };
+        api.hold = (flag) => {
+            api.held = Boolean(flag);
+            fitWidth();
+        };
         const write = (next) => {
             if (!Number.isFinite(next)) return;
             api.committed = next;
             api.previewed = false;
             input.value = shown(next);
+            fitWidth();
         };
         // NOT WHILE AN ENTRY IS UNDER WAY. A preview goes out to the panel
         // on every keystroke, and a panel that echoes it straight back --
@@ -312,9 +334,11 @@ class PlexoraSlider {
                 input.value = format(api.committed);
                 fit();
             }
+            fitWidth();
         });
         input.addEventListener("input", () => {
             fit();
+            fitWidth();
             const parsed = read();
             if (!Number.isFinite(parsed)) return;
             api.previewed = true;
@@ -353,6 +377,7 @@ class PlexoraSlider {
                 input.value = display(api.committed);
                 fit();
             }
+            fitWidth();
         });
         input.addEventListener("keydown", (event) => {
             if (event?.key === "Escape") {
@@ -495,6 +520,7 @@ class PlexoraSlider {
                     decimals: this.decimals,
                     unit: this.unit,
                     width: opts.fieldWidth || null,
+                    fitChars: opts.fitFields?.[which] || null,
                     ariaLabel: labels[which],
                     value: this.values[which],
                     format: (v) => this.formatValue(v),
@@ -796,6 +822,7 @@ class PlexoraSlider {
     /** Release, or the commit half of an arrow key. */
     released(which) {
         this.nodes.inputs[which].classList.remove("is-dragging");
+        this.holdFields(false);
         this.emit("onChange", which);
     }
 
@@ -819,10 +846,18 @@ class PlexoraSlider {
         // mouse click, which is where the ring-shaped box around the track
         // came from. Pointer users get the halo; the ring is for the keyboard.
         input.classList.add("is-pointer-focus");
+        this.holdFields(true);
     }
 
     dropped(which) {
         this.nodes.inputs[which].classList.remove("is-dragging");
+        this.holdFields(false);
+    }
+
+    /** Boxes that fit their number (`fitFields`) keep their width while a
+     *  thumb is held, and take the number's when it is let go. */
+    holdFields(flag) {
+        for (const which of this.ends) this.nodes.fields[which]?.hold?.(flag);
     }
 
     /** A drag no hand is making (an agent showing the adjustment it settled
@@ -830,6 +865,7 @@ class PlexoraSlider {
     showDrag(which, on) {
         const input = this.nodes.inputs[which];
         if (input) input.classList.toggle("is-dragging", Boolean(on));
+        this.holdFields(Boolean(on));
     }
 
     /** Not on pointerup: the thumb still has focus after a click, and putting
@@ -839,6 +875,7 @@ class PlexoraSlider {
         const input = this.nodes.inputs[which];
         input.classList.remove("is-dragging");
         input.classList.remove("is-pointer-focus");
+        this.holdFields(false);
     }
 
     keyed(which) {

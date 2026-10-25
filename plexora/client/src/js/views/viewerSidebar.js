@@ -1255,6 +1255,10 @@ class ViewerSidebar {
                     high: `${this.idPrefix}channel_contrast_max`,
                 },
                 ariaLabels: ["Contrast window minimum", "Contrast window maximum"],
+                // Each box as wide as its number, so the track takes the rest
+                // of the bar: up to four digits low, five high (a 16-bit
+                // maximum); a longer low end is cut, whole in its tooltip.
+                fitFields: { low: 4, high: 5 },
                 // Per tick: a BRUSH_MOVE, which imageViewer coalesces into one
                 // repaint per animation frame. On release: the 400ms save.
                 onInput: (values) => {
