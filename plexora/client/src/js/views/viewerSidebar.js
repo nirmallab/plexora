@@ -660,6 +660,14 @@ class ViewerSidebar {
             const hit = event.target?.closest?.(
                 ".channel-slot-eye, .channel-slot-actions, .color-swatch-mount");
             if (hit) return;
+            const current = this.channelSlots[slot.index];
+            // A second click on the selected row turns it off, and a third on
+            // again. Not on its name: that opens the marker search.
+            if (current && current.index === this.selectedSlot && current.name
+                && !event.target?.closest?.(".marker-combobox")) {
+                this.setSlotEnabled(current.index, !current.enabled);
+                return;
+            }
             this.selectSlot(slot.index);
         });
 
@@ -1061,13 +1069,18 @@ class ViewerSidebar {
         this.syncContrastBar();
     }
 
-    /** The selected slot, falling back to the first channel showing (then
-     *  the first named row) when the selection has gone away. */
+    /**
+     * The selected slot. With none (first load, or the selected row was
+     * removed) it falls back to slot 2 -- the row J/K stepped through before
+     * any row could be selected, and the one gating mirrors its marker into
+     * -- then the first channel showing, then the first named row.
+     */
     resolveSelectedSlot() {
         const usable = (slot) => slot && slot.visible && slot.name;
         let slot = this.channelSlots[this.selectedSlot];
         if (!usable(slot)) {
-            slot = this.channelSlots.find((s) => usable(s) && s.enabled)
+            slot = (usable(this.channelSlots[1]) ? this.channelSlots[1] : null)
+                || this.channelSlots.find((s) => usable(s) && s.enabled)
                 || this.channelSlots.find(usable) || null;
             this.selectedSlot = slot ? slot.index : -1;
         }
@@ -1230,57 +1243,60 @@ class ViewerSidebar {
         this.scheduleSaveChannels();
     }
 
-    // -- J/K: review every channel through slot 2 -----------------------------
+    // -- J/K: step the selected row through every channel --------------------
 
     /**
-     * The next (`dir` 1) or previous (-1) channel of the image, shown alone.
+     * The next (`dir` 1) or previous (-1) channel of the image, shown alone,
+     * in the SELECTED row, starting from the marker that row holds.
      *
      * The first step remembers every row -- marker, on or off, window -- and
-     * which row was selected; slot 2 then takes each channel in turn (the
-     * row gating mirrors its marker into) with every other row off. Nothing
-     * is added to the list and nothing is saved while it runs. Esc
-     * (`endReview`) puts the rows back exactly; a window tuned on the way is
-     * kept for that channel, as any edit is.
+     * which row was selected. Each step then puts the neighbouring channel in
+     * the selected row with every other row off; select another row on the
+     * way and the steps carry on in that one. Nothing is added to the list
+     * and nothing is saved while it runs. Esc (`endReview`) puts every row
+     * back exactly; a window tuned on the way is kept for that channel, as
+     * any edit is.
      */
     stepChannel(dir) {
         const names = this.columns || [];
         const n = names.length;
         if (!n || !this.el("channel_slot_list")) return;
+        let slot = this.resolveSelectedSlot();
         if (!this.review) {
-            const start = this.resolveSelectedSlot();
-            const startAt = start ? names.indexOf(start.name) : -1;
-            const snapshot = {
-                selected: this.selectedSlot,
-                count: this.channelSlots.length,
-                slots: this.channelSlots.map((slot) => ({
-                    name: slot.name,
-                    enabled: Boolean(slot.enabled),
-                    visible: Boolean(slot.visible),
-                    range: Array.isArray(slot.range) ? [...slot.range] : slot.range,
-                    userRangeChanged: slot.userRangeChanged,
-                    autoLeveled: slot.autoLeveled,
-                    rangeSource: slot.rangeSource || null,
-                    curve: slot.curve || null,
-                })),
+            this.review = {
+                snapshot: {
+                    selected: this.selectedSlot,
+                    count: this.channelSlots.length,
+                    slots: this.channelSlots.map((s) => ({
+                        name: s.name,
+                        enabled: Boolean(s.enabled),
+                        visible: Boolean(s.visible),
+                        range: Array.isArray(s.range) ? [...s.range] : s.range,
+                        userRangeChanged: s.userRangeChanged,
+                        autoLeveled: s.autoLeveled,
+                        rangeSource: s.rangeSource || null,
+                        curve: s.curve || null,
+                    })),
+                },
             };
-            while (this.channelSlots.length < 2) {
-                const used = this.channelSlots.filter((s) => s.name).map((s) => s.name);
-                if (!this.createAdditionalSlot(used)) break;
-            }
-            const reviewSlot = Math.min(1, this.channelSlots.length - 1);
-            if (reviewSlot < 0) return;
             this.suspendPersistence();
-            this.review = { slot: reviewSlot, at: startAt < 0 ? (dir > 0 ? -1 : 0) : startAt, snapshot };
         }
-        const review = this.review;
-        review.at = (((review.at + dir) % n) + n) % n;
-        const name = names[review.at];
-        this.channelSlots.forEach((slot) => {
-            if (slot.index !== review.slot && slot.enabled && slot.name) this.setSlotEnabled(slot.index, false);
+        // Nothing to start from (no named row): a row of its own.
+        if (!slot) {
+            const used = this.channelSlots.filter((s) => s.name).map((s) => s.name);
+            slot = this.channelSlots.find((s) => !s.visible) || this.createAdditionalSlot(used);
+            if (!slot) return;
+        }
+        const at = names.indexOf(slot.name);
+        const next = at < 0 ? (dir > 0 ? 0 : n - 1) : (((at + dir) % n) + n) % n;
+        const name = names[next];
+        this.channelSlots.forEach((other) => {
+            if (other.index !== slot.index && other.enabled && other.name) this.setSlotEnabled(other.index, false);
         });
-        this.setSlotMarker(review.slot, name, { keepColor: true, enable: true, reveal: true });
-        this.selectSlot(review.slot, { enable: false });
-        this.slotRow(review.slot)?.scrollIntoView?.({ block: "nearest" });
+        this.setSlotMarker(slot.index, name, { keepColor: true, enable: true, reveal: true });
+        if (!slot.enabled) this.setSlotEnabled(slot.index, true);
+        this.selectSlot(slot.index, { enable: false });
+        this.slotRow(slot.index)?.scrollIntoView?.({ block: "nearest" });
     }
 
     /** Put back the rows J/K found. Returns false when no review is running. */
@@ -1294,23 +1310,26 @@ class ViewerSidebar {
             // duplicate still showing (disableDuplicateChannels).
             this.channelSlots.forEach((slot, i) => {
                 const was = snapshot.slots[i];
-                if (slot.enabled && slot.name && (!was || !was.enabled || i === review.slot)) {
+                if (slot.enabled && slot.name && (!was || !was.enabled || slot.name !== was.name)) {
                     this.setSlotEnabled(i, false);
                 }
             });
-            const was = snapshot.slots[review.slot];
-            const slot = this.channelSlots[review.slot];
-            if (slot && was && was.name) {
-                if (slot.name !== was.name) this.setSlotMarker(review.slot, was.name, { keepColor: true });
+            // Every row J/K changed gets its marker and its window back.
+            this.channelSlots.forEach((slot, i) => {
+                const was = snapshot.slots[i];
+                if (!was || !was.name || slot.name === was.name) return;
+                this.setSlotMarker(i, was.name, { keepColor: true });
                 slot.userRangeChanged = was.userRangeChanged;
                 slot.autoLeveled = was.autoLeveled;
                 slot.rangeSource = was.rangeSource;
                 slot.curve = was.curve;
-                if (Array.isArray(was.range)) this.setSlotRange(review.slot, was.range, false);
-            }
-            // A row J/K had to add goes away again.
-            for (let i = this.channelSlots.length - 1; i >= snapshot.count; i--) this.removeChannelSlot(i);
-            if (slot && was && !was.visible) this.removeChannelSlot(review.slot);
+                if (Array.isArray(was.range)) this.setSlotRange(i, was.range, false);
+            });
+            // A row J/K had to add or reveal goes away again.
+            this.channelSlots.forEach((slot, i) => {
+                const was = snapshot.slots[i];
+                if (slot.visible && (!was || !was.visible)) this.removeChannelSlot(i);
+            });
             this.channelSlots.forEach((s, i) => {
                 const before = snapshot.slots[i];
                 if (before && before.enabled && s.name && !s.enabled) this.setSlotEnabled(i, true);
