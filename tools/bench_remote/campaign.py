@@ -171,6 +171,18 @@ class Primary:
         raise RuntimeError("sftp connect timed out")
 
     def sftp_pid(self) -> int | None:
+        """The ssh that carries the SFTP bytes over the network: the profile's
+        persistent master when it multiplexes, else the session's own ssh."""
+        remote = json.loads((self.data / "remotes.json").read_text(encoding="utf-8")).get(
+            self.cfg["sftp_remote"], {})
+        opts = remote.get("ssh_opts") or []
+        if any(str(o).startswith("ControlPath=") for o in opts):
+            argv = ["ssh", *[x for o in opts for x in ("-o", o)], "-O", "check", self.cfg["sftp_target"]]
+            done = subprocess.run(argv, capture_output=True, text=True)
+            import re
+            match = re.search(r"pid=(\d+)", done.stderr + done.stdout)
+            if match:
+                return int(match.group(1))
         if not self.info:
             return None
         out = subprocess.run(["pgrep", "-P", str(self.info["pid"]), "-f", "sftp"],
@@ -446,22 +458,16 @@ class Campaign:
         out = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                "tcp_login": tcp_rtt(c["login"].split("@")[-1], n=20),
                "tcp_transfer": tcp_rtt(self.cfg["sftp_target"].split("@")[-1], n=20)}
-        # ssh session setup, as each arm's first connection pays it.
-        for name, target in (("login", c["login"]), ("transfer", self.cfg["sftp_target"])):
-            times = []
-            for _ in range(3):
-                t0 = time.time()
-                subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=no",
-                                "-o", "ControlPath=none", target, "true"],
-                               capture_output=True, timeout=120)
-                times.append(time.time() - t0)
-            out[f"ssh_setup_{name}_s"] = summary(times)
+        # ssh login set-up is read off C0 (each arm's first connection there is
+        # a fresh login); timing more logins here would cost Duo pushes.
         # Raw SFTP throughput with Plexora's own client: 256 MB read from the
         # middle of the image in one pipelined span.
         script = (
             "import sys,time,subprocess; sys.path.insert(0, %r)\n"
             "from plexora.server.utils import sftp\n"
-            "p=subprocess.Popen(['ssh','-T','-x','-a','-o','BatchMode=yes','-s',%r,'sftp'],"
+            "p=subprocess.Popen(['ssh','-T','-x','-a','-o','BatchMode=yes',"
+            "'-o','ControlMaster=auto','-o','ControlPath=~/.ssh/plx-bench-xfer-%%r@%%h:%%p',"
+            "'-o','ControlPersist=12h','-s',%r,'sftp'],"
             "stdin=subprocess.PIPE,stdout=subprocess.PIPE)\n"
             "c=sftp.SFTPClient(p); c.handshake(60)\n"
             "off=300*1024**3; n=256*1024**2\n"
@@ -564,6 +570,7 @@ def main(argv=None):
         finally:
             camp.node_down()
             camp.primary.stop()
+            camp.site.close_tunnel()
     elif args.cmd == "c0":
         lo, _, hi = args.reps.partition("-")
         try:
@@ -574,6 +581,7 @@ def main(argv=None):
         finally:
             camp.node_down()
             camp.primary.stop()
+            camp.site.close_tunnel()
     elif args.cmd == "probes":
         print(json.dumps(camp.probes(), indent=1))
 

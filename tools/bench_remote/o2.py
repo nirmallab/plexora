@@ -1,11 +1,13 @@
 """The far side of the remote-access benchmark: a data node in a SLURM job.
 
 Everything here runs over the system ssh, as Plexora's own connections do.
-The harness's control commands (srun steps, fadvise, /proc reads) share one
-multiplexed ssh master so each costs a round trip rather than a login; the
-measured connections -- the node's own launch, its tunnel, the files-only
-server -- never use that master, so their setup is timed as a user would
-see it.
+Every connection to the login node -- control commands (srun steps,
+fadvise, /proc reads), the node's launch, and the tunnel's hop -- goes
+through ONE multiplexed ssh master, authenticated once and kept for the
+session: each new login would cost the user a Duo push. The tunnel to the
+compute node is opened once per session too and outlives node restarts
+(the node always comes back on the same port), so a cold node start is the
+job step and the process start, not a fresh login.
 
 Nothing here touches anything but the user's own processes and files:
 the page cache is dropped for the benchmark's file only (`posix_fadvise`
@@ -19,6 +21,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import time
 import urllib.request
@@ -40,12 +43,60 @@ class Site:
     cpus: int = 10
     control_path: str = "~/.ssh/plx-bench-%r@%h:%p"
     node: str = ""                  # compute host, filled in by `locate`
+    tunnel: subprocess.Popen | None = None
+    tunnel_ports: tuple = ()
+
+    def master_options(self) -> list:
+        return ["-o", "BatchMode=yes", "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={self.control_path}", "-o", "ControlPersist=12h"]
+
+    def master_pid(self) -> int | None:
+        """The master ssh: every byte to and from the login node crosses it."""
+        done = subprocess.run(["ssh", *self.master_options(), "-O", "check", self.login],
+                              capture_output=True, text=True)
+        import re as _re
+        match = _re.search(r"pid=(\d+)", done.stderr + done.stdout)
+        return int(match.group(1)) if match else None
+
+    def ensure_tunnel(self, local_port: int, node_port: int) -> float:
+        """The forward to the compute node's loopback, hopping through the
+        master; seconds spent opening it (0 when it was already up)."""
+        if self.tunnel and self.tunnel.poll() is None and self.tunnel_ports == (local_port, node_port):
+            return 0.0
+        self.close_tunnel()
+        hop = " ".join(["ssh", *self.master_options(), "-W", "%h:%p", self.login])
+        t0 = time.time()
+        self.tunnel = subprocess.Popen(
+            ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+             "-o", "ServerAliveInterval=30", "-o", f"ProxyCommand={hop}",
+             f"{self.login.split('@')[0]}@{self.node}",
+             "-L", f"{local_port}:127.0.0.1:{node_port}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.tunnel_ports = (local_port, node_port)
+        # Up once the local port listens.
+        while time.time() - t0 < 120:
+            try:
+                with socket.create_connection(("127.0.0.1", local_port), timeout=1):
+                    return time.time() - t0
+            except OSError:
+                if self.tunnel.poll() is not None:
+                    raise RuntimeError("the tunnel to the compute node closed")
+                time.sleep(0.2)
+        raise RuntimeError("the tunnel to the compute node did not open")
+
+    def close_tunnel(self) -> None:
+        if self.tunnel and self.tunnel.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.tunnel.pid), signal.SIGTERM)
+                self.tunnel.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+        self.tunnel = None
+        self.tunnel_ports = ()
 
     def ssh(self, command: str, *, timeout: float = 120, check: bool = True) -> str:
         """Run `command` on the login node over the shared control master."""
-        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=auto",
-                "-o", f"ControlPath={self.control_path}", "-o", "ControlPersist=30m",
-                self.login, command]
+        argv = ["ssh", *self.master_options(), self.login, command]
         done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         if check and done.returncode != 0:
             raise RuntimeError(f"ssh {command[:80]!r} failed: {done.stderr.strip()[-400:]}")
@@ -144,7 +195,7 @@ class Node:
         t0 = time.time()
         # -tt: ending this ssh hangs the remote step up, as a closed terminal would.
         self.launcher = subprocess.Popen(
-            ["ssh", "-tt", "-o", "BatchMode=yes", s.login, remote],
+            ["ssh", "-tt", *s.master_options(), s.login, remote],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
             text=True, bufsize=1, start_new_session=True)
         announced = None
@@ -171,17 +222,12 @@ class Node:
                 log.write(line)
             log.close()
         threading.Thread(target=drain, daemon=True).start()
-        self.tunnel = subprocess.Popen(
-            ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
-             "-o", "ServerAliveInterval=30", "-J", s.login,
-             f"{s.login.split('@')[0]}@{s.node}",
-             "-L", f"{self.local_port}:127.0.0.1:{self.node_port}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         if not s.node:
             raise RuntimeError("the job's compute node is not known (Site.locate)")
+        opened = s.ensure_tunnel(self.local_port, self.node_port)
         healthy = self.wait_health(deadline)
-        self.timings = {"t_node_announce": announced - t0, "t_tunnel_health": healthy - announced,
-                        "t_node_up": healthy - t0}
+        self.timings = {"t_node_announce": announced - t0, "t_tunnel_open": opened,
+                        "t_tunnel_health": healthy - announced, "t_node_up": healthy - t0}
         return self.timings
 
     def wait_health(self, deadline: float) -> float:
@@ -199,21 +245,17 @@ class Node:
 
     def wire_pid(self) -> int | None:
         """The process that carries the tunnel's bytes over the network: the
-        `ssh -W` ProxyJump child (the outer ssh only talks to it locally)."""
-        if not self.tunnel:
-            return None
-        out = subprocess.run(["pgrep", "-P", str(self.tunnel.pid)], capture_output=True,
-                             text=True).stdout.split()
-        return int(out[0]) if out else self.tunnel.pid
+        login master (the tunnel's hop is a channel on it)."""
+        return self.site.master_pid()
 
     def stop(self) -> None:
-        for proc in (self.tunnel, self.launcher):
+        for proc in (self.launcher,):
             if proc and proc.poll() is None:
                 try:
                     os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):
                     pass
-        for proc in (self.tunnel, self.launcher):
+        for proc in (self.launcher,):
             if proc:
                 try:
                     proc.wait(timeout=15)
