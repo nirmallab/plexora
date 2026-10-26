@@ -1044,9 +1044,15 @@ class ViewerSidebar {
         // touched this slot's slider.
         if (this.isHdMode() && !slot.userRangeChanged) {
             this.channelList.ensureChannelStats(slot.name).then(() => {
-                // Nor a contrast show's slot: its window is on screen already.
-                if (slot.userRangeChanged || slot.rangeSource === "agent") return;
-                slot.range = this.getRawImageRange(slot.name);
+                // Only the placeholder: a window anyone has set stays. Nor a
+                // contrast show's slot (`agent`), and not one auto-levelling
+                // set or is setting -- every later switch-on put the full
+                // range back over the fitted window, on the slider only (the
+                // canvas kept the fit until the next switch-on drew it).
+                if (slot.userRangeChanged || slot.autoLeveled || slot.autoLeveling
+                        || slot.rangeEase || slot.rangeSource) return;
+                // Drawn as well: the canvas and the slider show one window.
+                this.setSlotRange(slot.index, this.getRawImageRange(slot.name), false);
                 this.channelList.sel[fullName] = slot.range;
                 this.syncSlotDom(slot);
             });

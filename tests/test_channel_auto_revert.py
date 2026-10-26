@@ -141,3 +141,20 @@ def test_the_two_numbers_are_text_until_they_are_focused():
     # moment it was clicked.
     assert "box-shadow: inset" in focused
     assert "border:" not in focused
+
+
+def test_switching_a_channel_on_again_keeps_its_fitted_window():
+    """In HD, activateChannel swaps a new slot's placeholder range for the
+    channel's real one once its stats land. It used to do that on EVERY
+    switch-on of a slot nobody had set by hand, so an auto-levelled window
+    was replaced by the full range -- on the slider only; the canvas kept the
+    fit until the next switch-on drew the full range. Only the placeholder
+    is replaced now, and it is drawn as well as shown.
+    """
+    source = SIDEBAR.read_text(encoding="utf8")
+    start = source.index("    activateChannel(slot) {")
+    body = source[start:source.index("    deactivateChannel(slot) {")]
+    assert "slot.autoLeveled || slot.autoLeveling" in body
+    assert "slot.rangeEase || slot.rangeSource" in body
+    assert "this.setSlotRange(slot.index, this.getRawImageRange(slot.name), false);" in body
+    assert "slot.range = this.getRawImageRange(slot.name);" not in body
