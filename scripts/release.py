@@ -1543,6 +1543,8 @@ def cmd_ci(ctx, args):
             run(["git", "tag", "-a", f"v{version}", "-m", f"Plexora {version}"])
     remote = args.remote
     run(["git", "push", remote, "HEAD"])
+    if not args.no_gate:
+        gate()
     run(["git", "push", remote, f"v{version}"])
     say("waiting for the Release workflow to start...")
     run_id = None
@@ -1562,6 +1564,47 @@ def cmd_ci(ctx, args):
     out.mkdir(parents=True, exist_ok=True)
     run(["gh", "release", "download", f"v{version}", "--dir", out, "--clobber"])
     say(f"-> {out}")
+
+
+def _successfulSuite(sha: str) -> str | None:
+    """A weekly.yml or monthly.yml run that passed on this commit, if any."""
+    for workflow in ("weekly.yml", "monthly.yml"):
+        done = run(["gh", "run", "list", "--workflow", workflow, "--commit", sha, "--status", "success",
+                    "--limit", "1", "--json", "databaseId"], capture=True, check=False)
+        found = json.loads(done.stdout or "[]")
+        if found:
+            return f"{workflow} run {found[0]['databaseId']}"
+    return None
+
+
+def gate():
+    """The release workflow builds a tag only once the full suite has passed on
+    its commit (its preflight checks). Start that run and wait for it -- about
+    15 minutes on the public runners -- unless one has already passed."""
+    sha = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+    passed = _successfulSuite(sha)
+    if passed:
+        say(f"gate: {passed} passed on {sha[:10]}")
+        return
+    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).stdout.strip()
+    run(["gh", "workflow", "run", "weekly.yml", "--ref", branch])
+    say("waiting for the weekly suite to start...")
+    run_id = None
+    for _ in range(60):
+        done = run(["gh", "run", "list", "--workflow", "weekly.yml", "--commit", sha,
+                    "--event", "workflow_dispatch", "--limit", "1", "--json", "databaseId"],
+                   capture=True, check=False)
+        found = json.loads(done.stdout or "[]")
+        if found:
+            run_id = str(found[0]["databaseId"])
+            break
+        time.sleep(10)
+    if not run_id:
+        raise StepError("The weekly suite did not start.", "Check GitHub Actions.")
+    done = run(["gh", "run", "watch", run_id, "--exit-status"], check=False)
+    if done.returncode != 0:
+        raise StepError(f"The full suite failed on {sha[:10]} (run {run_id}); the tag was not pushed.",
+                        f"Read the run's summary: gh run view {run_id} --web")
 
 
 def cmd_clean(ctx, args):
@@ -1654,6 +1697,8 @@ def build_parser():
     ci = subs.add_parser("ci", help="Tag and let GitHub Actions build every OS.")
     ci.add_argument("--bump", default=None)
     ci.add_argument("--remote", default="plexora")
+    ci.add_argument("--no-gate", action="store_true",
+                    help="Push the tag without waiting for the full suite (the release then fails its gate).")
 
     clean = subs.add_parser("clean", help="Remove build products.")
     clean.add_argument("--all", action="store_true")

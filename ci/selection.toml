@@ -1,0 +1,106 @@
+# Which tests a push runs (Tier 1, .github/workflows/ci.yml). Read by
+# select_tests.py in nirmallab/.github, which documents the rules; locally:
+#
+#   python <nirmallab/.github>/scripts/select_tests.py --base plexora/main | xargs python -m pytest -p no:randomly -m "not perf"
+#
+# Every push runs `essential`, plus the test files that import what changed
+# (and a plugin's own tests for a change inside it), cheapest first until
+# `budget_seconds` of recorded time is spent. A change too broad to map adds
+# `core`. Whatever the budget leaves out runs in the weekly full suite, and the
+# job summary lists it.
+
+package = "plexora"
+test_roots = ["tests", "plexora/plugins"]
+durations = "ci/durations.json"
+# Recorded on an M2 Pro; the public 4-vCPU runner with -n 4 is about as fast.
+budget_seconds = 150
+
+essential = [
+    "tests/test_import_costs_nothing.py",
+    "tests/test_import_entry_points.py",
+    "tests/test_cli.py",
+    "tests/test_server_records.py",
+    "tests/test_licensing_manifest.py",
+    "tests/test_licensing_enforcement.py",
+    "tests/test_licensing_plugins.py",
+    "tests/test_pricing_sync.py",
+    "tests/test_release_script.py",
+    "tests/test_docs_coverage.py",
+    "tests/test_docs_signatures.py",
+    "tests/test_docs_envvars.py",
+]
+
+core = [
+    "tests/test_app_router.py",
+    "tests/test_app_shell.py",
+    "tests/test_api_dataset.py",
+    "tests/test_api_store.py",
+    "tests/test_datasets_api.py",
+    "tests/test_config_store.py",
+    "tests/test_layer_manager.py",
+    "tests/test_layer_state.py",
+    "tests/test_licensing_hardening.py",
+]
+
+[paths]
+none = [
+    "*.md",
+    "LICENSE",
+    "docs/**",
+    "desktop/**",
+    "backend/**",
+    "website/app/**",
+    "website/components/**",
+    "website/public/**",
+    "website/lib/**",
+    "website/*.json",
+    "website/*.mjs",
+    "website/*.ts",
+]
+core = [
+    "pyproject.toml",
+    "uv.lock",
+    "conftest.py",
+    "tests/conftest.py",
+    "tests/*_fixtures.py",
+    "tests/helpers.py",
+    "tests/node_harness.py",
+    "tests/fixtures/**",
+    "plexora/__init__.py",
+    "plexora/paths.py",
+    "plexora/_*.py",
+    "plexora/server/__init__.py",
+    "plexora/licensing/**",
+]
+
+[flags]
+# The committed browser API pages are generated from these two files.
+browser_api = ["plexora/client/src/js/pluginRegistry.js", "plexora/client/src/js/main.js"]
+
+[map]
+# A plugin's own tests cover a change inside it.
+"plexora/plugins/cell_explorer/**" = ["plexora/plugins/cell_explorer/tests/*.py"]
+"plexora/plugins/figure_builder/**" = ["plexora/plugins/figure_builder/tests/*.py"]
+"plexora/plugins/gating/**" = ["plexora/plugins/gating/tests/*.py", "tests/test_gating_*.py"]
+"plexora/plugins/qc/**" = ["plexora/plugins/qc/tests/*.py"]
+"plexora/plugins/roi/**" = ["plexora/plugins/roi/tests/*.py"]
+"plexora/plugins/segmentation/**" = ["plexora/plugins/segmentation/tests/*.py"]
+"plexora/plugins/transcripts/**" = ["plexora/plugins/transcripts/tests/*.py"]
+"plexora/plugins/video_studio/**" = ["plexora/plugins/video_studio/tests/*.py"]
+"plexora/plugins/visium_hd/**" = ["plexora/plugins/visium_hd/tests/*.py"]
+# The client is tested through the JS probes and the node harness.
+"plexora/client/**" = ["tests/test_*_js.py", "tests/test_agent_client_probes.py"]
+"tools/docs/**" = ["tests/test_docs_*.py"]
+"website/content/**" = ["tests/test_docs_*.py"]
+"scripts/release.py" = ["tests/test_release_script.py"]
+# Golden files, by the tests that compare against them.
+"tests/golden/boundary_*" = ["tests/test_plugin_boundary.py"]
+"tests/_plugin_boundary_probe.py" = ["tests/test_plugin_boundary.py"]
+"tests/golden/**" = [
+    "tests/test_plugin_boundary.py",
+    "tests/test_display_curve.py",
+    "tests/test_hd_default.py",
+    "tests/test_layer_transform.py",
+    "tests/test_slider.py",
+    "tests/test_telemetry_privacy.py",
+]

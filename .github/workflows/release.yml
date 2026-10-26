@@ -5,6 +5,11 @@ name: Release
 # tag that starts this and downloads what it produces; a manual run (no tag)
 # builds dev-named installers without publishing anything.
 #
+# A tag builds only once a full-suite run (weekly.yml or monthly.yml) has
+# passed on its commit; the preflight checks, and `scripts/release.py ci`
+# starts that run and waits for it before pushing the tag. The preflight used
+# to run the whole suite itself, 28-47 minutes, and re-ran it on every retry.
+#
 # Signing turns on when its secrets exist -- see scripts/release.py's SIGNING
 # block and DEPLOYMENT.md. Until then the same jobs produce unsigned builds.
 
@@ -15,7 +20,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   UV_LINK_MODE: copy
@@ -40,6 +49,11 @@ env:
 jobs:
   preflight:
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The gate asks which full-suite runs passed on this commit.
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -66,20 +80,26 @@ jobs:
       # The client bundle is committed; CI verifies it rather than rebuilding.
       - run: python scripts/release.py client --verify-only
       - run: python scripts/release.py --build-dir build wheel
-      - name: Tests
+      - name: A full suite passed on this commit
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # The JS probes import the client's own packages from node_modules.
-          npm ci --prefix plexora/client --no-audit --no-fund
-          uv venv --python 3.13 .venv
-          # Every extra the suite has tests for: `ai` is the MCP SDK behind
-          # `plexora mcp serve`, `bridge` is spatialbridge, the protocol the
-          # bridge_* capabilities and their conformance tests speak.
-          uv pip install --python .venv -e ".[dev,spatial,wsi,remote,jupyter,ai,bridge]"
-          .venv/bin/python -m pytest -q -p no:randomly
+          for workflow in weekly.yml monthly.yml; do
+            run=$(gh run list -R "$GITHUB_REPOSITORY" -w "$workflow" -c "$GITHUB_SHA" -s success -L 1 \
+                  --json databaseId -q '.[0].databaseId')
+            if [ -n "$run" ]; then
+              echo "Gate: $workflow run $run passed on $GITHUB_SHA."
+              exit 0
+            fi
+          done
+          echo "::error::No successful weekly.yml or monthly.yml run exists for $GITHUB_SHA. Run: gh workflow run weekly.yml --ref main (on this commit), wait for it to pass, then re-run this workflow."
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: python-dist
           path: build/dist/*
+          retention-days: 7
 
   build:
     needs: preflight
@@ -96,6 +116,7 @@ jobs:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -144,11 +165,15 @@ jobs:
             release/*/*.deb
             release/*/*.app.tar.gz
             release/*/*.sig
+          retention-days: 7
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [preflight, build]
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
