@@ -25,7 +25,7 @@ NEW_OR_CHANGED = ("qc.sample_examples", "qc.registration_write_regions",
                   "qc.export", "qc.get_results", "qc.artifacts_run", "qc.artifacts_status",
                   "qc.artifacts_set", "qc.artifacts_clear", "qc.artifacts_write_regions",
                   "qc.segment_roi", "qc.render_artifact_overview",
-                  "qc.inspect_artifact_channels")
+                  "qc.inspect_artifact_channels", "qc.set_categories", "qc.write_source")
 
 
 def test_every_field_of_the_check_tools_is_documented():
@@ -140,11 +140,14 @@ def test_the_export_says_why_each_region_and_cell_was_flagged(tmp_path):
     assert record["category"] == "blur_focus" and record["tool"]["name"] == "blur"
     assert record["geometry_ref"].startswith("qc_regions.geojson#")
     assert record["threshold_source"] == "auto" and record["n_cells"]
-    reasons = {r["reason"] for r in body["cell_reasons"]}
-    assert "region:out_of_focus" in reasons
+    # DNA_2's cycle is not the one the cells were segmented from: blur there
+    # flags that cycle's markers in the cells, and keeps the cells.
+    markers = {r["reason"] for r in body["marker_reasons"]}
+    assert "region:out_of_focus" in markers
+    assert "region:out_of_focus" not in {r["reason"] for r in body["cell_reasons"]}
     with open(files["findings"], newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    assert {r["kind"] for r in rows} >= {"region", "cell_reason"}
+    assert {r["kind"] for r in rows} >= {"region"}
     assert all(r["category"] for r in rows)
     geo = json.loads(open(files["regions"], encoding="utf-8").read())
     props = geo["features"][0]["properties"]
@@ -152,9 +155,10 @@ def test_the_export_says_why_each_region_and_cell_was_flagged(tmp_path):
     both = ok(invoke(session, "export_qc", {"project": "qcsynth"}))
     with open(both["files"]["cells"], newline="", encoding="utf-8") as handle:
         table = list(csv.DictReader(handle))
-    flagged = [r for r in table if r["reasons"]]
-    assert flagged and all(r["qc_category"] == "blur_focus" for r in flagged)
-    assert {r["flag_source"] for r in flagged} == {"roi"}
+    flagged = [r for r in table if r["marker_flags"]]
+    assert flagged and all(r["blur_focus"] == "channel" for r in flagged)
+    assert all(r["status"] == "pass" for r in flagged)
+    assert {r["source"] for r in flagged} == {"auto"}
 
 
 @pytest.mark.pro

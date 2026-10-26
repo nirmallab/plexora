@@ -6,7 +6,7 @@ symbol: "plexora.api.ProjectData"
 signature: "ProjectData(name: str, image: ImageHandle, segmentation: SegHandle, table: TableHandle, schema: DatasetSchema | None, project: Project)"
 badge: "class"
 source:
-  end: 1261
+  end: 1276
   path: "plexora/api/dataset.py"
   start: 1146
 ---
@@ -125,6 +125,23 @@ not called for every marker.
 A boolean numpy array, one entry per row of `table.geometry()`,
 True where the cell is not called; None when every row is called
 (no QC, or nothing failed).
+
+</Returns>
+
+### annotations
+
+```python
+annotations() -> dict
+```
+
+Per-cell values plugins derive for this project's cells -- QC's status and category, say -- without a write into the user's file (`Plugin.cell_annotations_factory`).
+
+<Returns type={"dict"}>
+
+`\{name: \{kind, values, categories, colors, label,
+provider, fingerprint\}\}`; `values` holds one entry per row of
+`table.frame()` (None where nothing is said). Empty without a
+table or a provider.
 
 </Returns>
 

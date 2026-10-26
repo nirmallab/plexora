@@ -249,9 +249,20 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    no nucleus (`no_nucleus`: warned, excluded under `strict`). A nucleus
    lost by a cycle flags that cycle's markers in the cell (`dna_loss`),
    never the whole cell.
-6. Offer `export_qc` for files. Only on the user's explicit request,
-   `write_qc_to_source` with `confirm: true` writes the calls into their own
-   table file.
+6. Offer `export_qc` for files: cells.csv (each cell's `status` --
+   pass / flagged / excluded -- a column per category, the reasons, the
+   marker flags), `what: "anndata"` for the same as an obs-only AnnData.
+   Only on the user's explicit request, `write_qc_to_source` with
+   `confirm: true` writes the calls into their own table file (the panel's
+   "Save into file" does the same): `plexora_qc_*` columns, the obsm flag
+   frames and `uns["plexora_qc"]` in AnnData, and a `plexora_qc_regions`
+   shapes element in SpatialData. Only this image's rows of a shared file
+   are touched, and the file is backed up first.
+7. A category the user does not want to leave cells out (staining they
+   will handle downstream, say): `set_qc_categories` with the whole set of
+   categories switched off. Its findings stay recorded, drawn and exported,
+   as notes; nothing is deleted, and the receipt's undo puts it back. This is
+   not `dismiss_qc_finding` (QC was wrong about one finding).
 
 ## Tools
 

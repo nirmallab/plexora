@@ -3,11 +3,15 @@
 A cell belongs to a region when enough of its segmentation mask lies inside
 the polygon (`cells.roi_overlap_fraction` of its area, holes honoured) --
 membership by overlap, because a cell half in a fold is half unreadable, and
-a centroid says nothing about that. Without a mask (or when a region is too
-large to read within the pixel budget) the rule falls back to the centroid,
-and says so (`method`). The fraction of every overlapping cell is kept, so a
-strictness change re-derives membership without reading the mask again. A
-cell in several regions is listed under each; it is never counted twice.
+a centroid says nothing about that. The area is the cell's whole area over
+the mask (`cells/areas.py`), not the part inside the region's box, so a large
+cell the box cuts is not read as mostly inside. Without a mask (or when a
+region is too large to read within the pixel budget) the rule falls back to
+the centroid, and says so (`method`). A region that names its cells (object
+review's `labels` solid) takes exactly those (`method="labels"`). The
+fraction of every overlapping cell is kept, so a strictness change re-derives
+membership without reading the mask again. A cell in several regions is
+listed under each; it is never counted twice.
 """
 
 from __future__ import annotations
@@ -78,9 +82,28 @@ def _fill(shape, box, level, size):
     return canvas.astype(bool)
 
 
-def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
+def _labelled(region):
+    solid = region.get("solid") or {}
+    return solid.get("ids") if solid.get("kind") == "labels" else None
+
+
+def _areas(ds, provider, regions, in_depth, median_diameter_px):
+    """The cells' whole areas when some region will be read from the mask."""
+    if provider is None or in_depth or not any(
+            not r.get("extent") and _labelled(r) is None for r in regions):
+        return None
+    from plexora.plugins.qc.server.cells import areas
+
+    try:
+        return areas.label_areas(ds, provider, median_diameter_px=median_diameter_px)
+    except Exception:
+        return None
+
+
+def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS, areas=True):
     """(pairs DataFrame(cell_id, roi_id, fraction, method), per_roi) for the
-    regions [{roi_id, geometry, ...}]."""
+    regions [{roi_id, geometry, ...}]. `areas` is the cells' whole areas
+    (`cells.areas.Areas`); True looks them up, None counts within each box."""
     import shapely
 
     ids, xs, ys = _ids_and_xy(ds)
@@ -88,7 +111,6 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
     record = ds.project
     extra = int(getattr(record.segmentation, "extra_levels", 0) or 0)
     width, height = record.image.width or 0, record.image.height or 0
-    pad = 2 * float(median_diameter_px) if median_diameter_px else 64.0
     rows_cell, rows_roi, rows_fraction, rows_method = [], [], [], []
     per_roi = {}
     spent = 0
@@ -96,7 +118,24 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
     # A 3-D label volume's pixels are one plane's: a cell on other planes is
     # not in them, so its regions are mapped by centroid (and by plane, below).
     in_depth = _labels_in_depth(ds)
+    if areas is True:
+        areas = _areas(ds, provider, regions, in_depth, median_diameter_px)
+    # With whole areas known the box is the polygon's own; without them it is
+    # padded so a cell on the edge is counted (mostly) whole.
+    pad = 1.0 if areas is not None else (
+        2 * float(median_diameter_px) if median_diameter_px else 64.0)
     for region in regions:
+        named = _labelled(region)
+        if named is not None:
+            roi_id = region["roi_id"]
+            chosen = np.asarray(sorted(int(v) for v in named), dtype=np.int64)
+            chosen = chosen[np.isin(chosen, known)] if known.size else chosen[:0]
+            rows_cell.extend(chosen.tolist())
+            rows_roi.extend([roi_id] * chosen.size)
+            rows_fraction.extend([1.0] * chosen.size)
+            rows_method.extend(["labels"] * chosen.size)
+            per_roi[roi_id] = {"method": "labels", "n_cells": int(chosen.size)}
+            continue
         shape = _shape(region["geometry"])
         if shape.is_empty:
             continue
@@ -122,7 +161,16 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
             else:
                 spent += cost
                 labels = np.nonzero(inside)[0]
-                fraction = inside[labels] / np.maximum(1, total[labels])
+                fallback = 0
+                if areas is not None:
+                    whole = areas.of(labels)
+                    missing = ~np.isfinite(whole) | (whole <= 0)
+                    fallback = int(np.count_nonzero(missing))
+                    whole = np.where(missing, total[labels] * float(4 ** level), whole)
+                    fraction = np.minimum(1.0, inside[labels] * float(4 ** level)
+                                          / np.maximum(1.0, whole))
+                else:
+                    fraction = inside[labels] / np.maximum(1, total[labels])
                 keep = np.isin(labels, known) if known.size else np.zeros(0, bool)
                 labels, fraction = labels[keep], fraction[keep]
                 rows_cell.extend(labels.tolist())
@@ -130,7 +178,9 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
                 rows_fraction.extend(fraction.astype(np.float32).tolist())
                 rows_method.extend(["mask"] * labels.size)
                 per_roi[roi_id] = {"method": "mask", "level": level, "n_cells": int(labels.size),
-                                   "pixels_read": int(cost)}
+                                   "pixels_read": int(cost),
+                                   "area": "whole" if areas is not None else "box",
+                                   "area_fallback": fallback}
                 continue
         inside = np.asarray(shapely.contains_xy(shape, xs, ys), dtype=bool)
         chosen = ids[inside]
@@ -162,7 +212,9 @@ def _within_extents(ds, regions, pairs):
     the cells on them: the table's z role, rounded to the nearest plane, and
     its t role. A table without a z role keeps every pair -- the planes cannot
     be told apart there (the ROI plugin's rule, `cells_in_roi`)."""
-    limited = {r["roi_id"]: r["extent"] for r in regions if r.get("extent")}
+    # A region that names its cells already is the plane set: never narrowed.
+    limited = {r["roi_id"]: r["extent"] for r in regions
+               if r.get("extent") and _labelled(r) is None}
     if not limited or ds.schema is None:
         return pairs
     z_role, t_role = ds.schema.get("z"), ds.schema.get("t")

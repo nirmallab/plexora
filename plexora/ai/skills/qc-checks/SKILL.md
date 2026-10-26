@@ -99,8 +99,13 @@ microns.
    fold, a bubble, torn tissue you can see in a picture -- is outlined with
    `segment_qc_roi` (see Outlining an object below).
 7. Report with `get_qc_results`: each category's regions and cells with
-   denominators, the bars and their sources. Offer `export_qc` with
-   `what: "provenance"`.
+   denominators, the bars and their sources. Cells and area are different
+   numbers: a category's cells as "% of cells" (`categories[].cells_any` and
+   `fraction`, distinct cells over the table's cells), a region's extent as
+   "% of tissue area". Never add a category's per-reason counts
+   (`cells_excluded_by_reason` and the like): a cell with two reasons would
+   count twice. Offer
+   `export_qc` with `what: "provenance"`.
 
 ## Tools
 

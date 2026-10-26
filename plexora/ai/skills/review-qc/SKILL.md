@@ -59,6 +59,12 @@ earlier ones).
    - a region is right whatever the strictness: `approve_qc_roi` pins its
      action and locks it;
    - a cell reason, marker flag or channel verdict is wrong: `dismiss_qc_finding` sets it aside (recorded, restorable with `restore`) -- a channel verdict with `finding` `channel`, since the panel no longer lists channels;
+   - a whole category is right but should not leave cells out (the user will
+     handle it downstream): `set_qc_categories` -- its cells become notes,
+     every finding kept. A dismissal says QC was wrong; this says the finding
+     stands but does not count;
+   - why one cell is out: `explain_cell` (its `qc` block: left out or not,
+     the markers it is not called for, each reason with its regions);
    - the user wants the cells outside the tissue left out: `approve_qc_roi`
      on the Background ROI with `action` `exclude` (or they rename it to
      exclude) -- never on your own;

@@ -320,36 +320,77 @@ class PlexoraProvider(Adapter):
         regions = _with_bridge_member(export.regions_geojson(ds, result), "qc",
                                       self._provenance("qc.export", operation_id))
         cells = results.cells(project)
-        excluded, reasons = [], {}
+        from plexora.agent import cell_exclusions
+        from plexora.plugins.qc.server.cells import columns
+
+        data = self.session.data(project)
+        # Left out under the mode gating uses (`qc`, default strict: warned
+        # cells too), so SCIMAP Pro drops the cells Plexora's own estimates
+        # dropped; flagged-but-kept cells travel beside them.
+        try:
+            record = cell_exclusions.current(data)
+        except Exception:  # no table to read: the stored calls alone
+            record = None
+        mode = record.mode if record is not None else cell_exclusions.current_mode()
+        excluded, flagged, reasons, status_counts = [], [], {}, {}
         if cells is not None and cells.height and "pass" in cells.columns:
-            failed = cells.filter(~cells["pass"].fill_null(True))
-            for row in failed.iter_rows(named=True):
+            whole = set(record.whole.tolist()) if record is not None else None
+            action = cells["action"] if "action" in cells.columns else None
+            for row in cells.select([c for c in ("cell_id", "pass", "action",
+                                                 "primary_reason", "reasons")
+                                     if c in cells.columns]).iter_rows(named=True):
                 cell = str(row.get("cell_id"))
-                excluded.append(cell)
-                if row.get("primary_reason"):
-                    reasons[cell] = str(row["primary_reason"])
+                out_of = (int(row["cell_id"]) in whole) if whole is not None \
+                    else row.get("pass") is False
+                if out_of:
+                    excluded.append(cell)
+                    why = row.get("primary_reason") or next(iter(row.get("reasons") or []),
+                                                            None)
+                    if why:
+                        reasons[cell] = str(why)
+                elif row.get("action") == "warn":
+                    flagged.append(cell)
+            if action is not None:
+                words = action.replace_strict({"exclude": "excluded", "warn": "flagged",
+                                               "pass": "pass"}, default="pass")
+                status_counts = {w: int((words == w).sum())
+                                 for w in ("excluded", "flagged", "pass")}
         summary = dict(results.summary(result))
         summary["n_excluded"] = len(excluded)
+        summary["n_flagged"] = len(flagged)
+        summary["status_counts"] = status_counts
+        summary["mode"] = mode
+        summary["columns_version"] = columns.COLUMNS_VERSION
+        summary["disabled_categories"] = results.disabled_categories(document)
         summary["cell_id"] = _cell_id_rule(project)
         # Beyond the excluded cells: per marker, the cells QC flagged that
         # marker unreliable in -- not called for it, under the call mode.
-        from plexora.agent import cell_exclusions
-
         summary["call_mode"] = cell_exclusions.current_call_mode()
         not_called = {}
         try:
-            record = cell_exclusions.call_record(self.session.data(project))
+            called = cell_exclusions.call_record(data)
         except Exception:  # no table to read: the excluded cells stand alone
-            record = None
-        if record is not None:
+            called = None
+        if called is not None:
             not_called = {marker: [str(i) for i in ids.tolist()]
-                          for marker, ids in sorted(record.by_marker.items()) if ids.size}
+                          for marker, ids in sorted(called.by_marker.items()) if ids.size}
+        # The calls in the user's own file: named only when Plexora wrote this
+        # very result there (`write_qc_to_source` keeps a ledger), never from
+        # a column that merely exists.
+        written = results.last_source_write(document, result.get("result_id"))
+        if written is not None and written.get("columns_version") == columns.COLUMNS_VERSION:
+            summary["per_cell"] = {"uri": f"obs:{written.get('pass_column') or 'plexora_qc_pass'}",
+                                   "path": written.get("path"),
+                                   "image_id": written.get("image_id"), "at": written.get("at")}
+            summary["status_ref"] = f"obs:{written.get('status_column') or 'plexora_qc_status'}"
         out = {"result_id": str(result.get("result_id")),
                "image_id": self._image_id(project, image_id),
-               "excluded": excluded, "reasons": reasons, "regions": regions,
-               "not_called": not_called, "summary": summary,
+               "excluded": excluded, "flagged": flagged, "reasons": reasons,
+               "regions": regions, "not_called": not_called, "summary": summary,
                "provenance": self._provenance("qc.export", operation_id).model_dump(
                    exclude_none=True)}
+        if summary.get("per_cell"):
+            out["per_cell"] = {"uri": summary["per_cell"]["uri"]}
         return out
 
     def _collect_selection(self, project, *, image_id, operation_id, arguments):

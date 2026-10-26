@@ -152,6 +152,19 @@ class QcApi {
         return this._change("plugins/qc/findings/dismiss", body);
     }
 
+    /** Which categories count toward exclusions: the whole set switched off
+     *  (`[]` counts every one). Their findings stay, as notes. */
+    setCategoryExclusion(disabled) {
+        return this._change("plugins/qc/categories/exclusion",
+                            { disabled_categories: disabled || [] });
+    }
+
+    /** The QC calls into the project's own table file (confirmed by the
+     *  user first); `replace` only as the answer to a 409. */
+    cellsWrite({ replace = false } = {}) {
+        return this._post("plugins/qc/cells/write", { what: "qc", replace });
+    }
+
     async _get(path, params) {
         return this._read(await fetch(this.url(path) + "?"
             + new URLSearchParams(Object.assign({ datasource: this.datasource }, params || {}))));

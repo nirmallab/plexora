@@ -81,7 +81,7 @@ def encode(dataset, column: str, descriptor: dict, t=None) -> tuple[bytes, str, 
     cell is labelled as some other category and nothing reports it.
     """
     ids, keep = cell_ids(dataset)
-    values = np.asarray(dataset.table.metadata_values(column).values)
+    values = variables.column_values(dataset, column, descriptor)
     if values.size == keep.size:
         values = values[keep]
     elif values.size != ids.size:

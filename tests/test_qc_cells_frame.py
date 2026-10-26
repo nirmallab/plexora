@@ -18,8 +18,9 @@ from tests.qc_fixtures import make_qc_project
 
 
 def _reference_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method,
-                     background):
-    """The construction `_cells_frame` replaced (lists of lists per row)."""
+                     background, *, rows=None, category_status=None):
+    """The construction `_cells_frame` replaced (lists of lists per row), with
+    the columns added since (`row`, `category_status`, marker `note` flags)."""
     n = int(ids.size)
     rows_roi = [list(roi_ids.get(i, [])) for i in range(n)]
     failing = np.zeros(n, dtype=bool)
@@ -44,20 +45,26 @@ def _reference_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_me
                 primary[row] = reason
     marker_flags = [[] for _ in range(n)]
     unreliable = [[] for _ in range(n)]
+    flagged_any = np.zeros(n, dtype=bool)
     by_marker = {}
     for (marker, reason), masks in sorted(flags.items()):
-        for status in ("exclude", "warn"):
-            rows = np.flatnonzero(masks[status])
-            if not rows.size:
+        for status in ("exclude", "warn", "note"):
+            hit = np.flatnonzero(masks[status]) if status in masks else np.zeros(0, int)
+            if not hit.size:
                 continue
-            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = int(rows.size)
-            for row in rows:
+            for row in hit:
                 marker_flags[row].append(f"{marker}|{reason}|{status}")
+            if status == "note":
+                continue
+            flagged_any[hit] = True
+            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = int(hit.size)
+            for row in hit:
                 if status == "exclude" and marker not in unreliable[row]:
                     unreliable[row].append(marker)
     action = np.where(failing, "exclude", np.where(warned, "warn", "pass"))
     frame = pl.DataFrame({
         "cell_id": pl.Series(ids, dtype=pl.Int64),
+        "row": pl.Series(np.arange(n) if rows is None else rows, dtype=pl.Int64),
         "pass": pl.Series(~failing, dtype=pl.Boolean),
         "action": pl.Series(action.tolist(), dtype=pl.Utf8),
         "primary_reason": pl.Series(primary.tolist(), dtype=pl.Utf8),
@@ -71,10 +78,11 @@ def _reference_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_me
         "marker_flags": pl.Series(marker_flags, dtype=pl.List(pl.Utf8)),
         "roi_ids": pl.Series(rows_roi, dtype=pl.List(pl.Utf8)),
         "roi_method": pl.Series(roi_method.tolist(), dtype=pl.Utf8),
+        "category_status": category_status if category_status is not None
+        else pl.Series([[] for _ in range(n)], dtype=pl.List(pl.Utf8)),
         "result_id": pl.Series([result_id] * n, dtype=pl.Utf8),
     })
     noted_any = np.array([bool(v) for v in noted_by], dtype=bool)
-    flagged_any = np.array([bool(f) for f in marker_flags], dtype=bool)
     unreliable_any = np.array([bool(u) for u in unreliable], dtype=bool)
     return frame, failing, warned, by_marker, noted_any, flagged_any, unreliable_any
 

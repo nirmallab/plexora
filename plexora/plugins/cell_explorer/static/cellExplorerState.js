@@ -131,7 +131,11 @@ class CellExplorerState {
         if (!column) return { colors: {}, hidden: [] };
         let entry = this.settings.categorical[column];
         if (!entry) {
-            entry = this.settings.categorical[column] = { colors: {}, hidden: [] };
+            // A derived column (QC's status, say) arrives with the colours its
+            // provider gives each level: the starting point, the user's to change.
+            const seeded = this.descriptor?.(column)?.colors;
+            entry = this.settings.categorical[column] = {
+                colors: seeded ? Object.assign({}, seeded) : {}, hidden: [] };
         }
         entry.colors = entry.colors || {};
         entry.hidden = entry.hidden || [];

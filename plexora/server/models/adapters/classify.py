@@ -144,6 +144,10 @@ def is_likely_image_identifier_name(column_name: Any) -> bool:
     normalized to something absent from it. So the name is now read as words,
     and any one of them naming an image is enough.
     """
+    # A column Plexora itself wrote into the file (QC's `plexora_qc_roi_ids`,
+    # a gate's calls) annotates cells; it never says which image they are in.
+    if str(column_name).startswith("plexora_"):
+        return False
     normalized = normalize_column_name(column_name)
     if not normalized:
         return False

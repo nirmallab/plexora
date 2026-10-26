@@ -14,6 +14,8 @@ produced is Free, and stays usable after a licence lapses:
                          action and every cell's call re-derived, no packet
     approve_qc_roi       pin a region's action (and lock it)
     dismiss_qc_finding   set aside a cell reason, marker flag or channel verdict
+    set_qc_categories    which categories count toward exclusions (the rest stay
+                         recorded as notes)
     set_qc_cycles        say which channels were imaged together
     export_qc            CSV / GeoJSON / JSON files
     write_qc_to_source   the calls into the user's own AnnData / table file
@@ -140,6 +142,7 @@ def get_results(call, inp):
     out = {"project": inp.project, "revision": results.revision(inp.project),
            "active_result_id": document.get("active_result_id"),
            "strictness": document.get("strictness"), "sync": sync,
+           "exclusion_filter": {"disabled_categories": results.disabled_categories(document)},
            "cycles_override": document.get("cycles_override"),
            "checks": _checks(call, inp.project)}
     if result is None:
@@ -186,7 +189,8 @@ def get_results(call, inp):
     reasons = provenance.cell_reason_records(result)
     out["categories"] = provenance.categories_summary(
         live, reasons, provenance.marker_reason_records(result),
-        n_cells=int((result.get("cells") or {}).get("n") or 0))
+        n_cells=int((result.get("cells") or {}).get("n") or 0),
+        by_category=(result.get("cells") or {}).get("by_category"))
     out["cell_reasons"] = [{k: r.get(k) for k in (
         "reason", "category", "words", "tool", "channels", "cutoffs", "verdicts",
         "offset_steps", "threshold_source", "notes", "n_excluded", "n_warned", "denominator",
@@ -711,12 +715,94 @@ def dismiss_finding(call, inp):
             "finding": key, "cells": cells}
 
 
+class CategoriesInput(ProjectInput):
+    disabled_categories: list[str] = Field(
+        description="The whole set of categories that should NOT count toward exclusions "
+                    "(blur_focus, registration, segmentation, tissue_acquisition, "
+                    "staining_signal, review, or a custom category's id); [] counts every "
+                    "category. Their findings stay recorded, drawn and exported as notes.")
+    expected_revision: str | None = Field(None, description="The QC revision this change "
+                                          "was decided on (get_qc_results' `revision`); a "
+                                          "newer one is refused rather than overwritten.")
+
+
+def _known_categories(ds):
+    from plexora.plugins.qc.server import roi_link, schemas
+
+    known = [c for c in schemas.category_order() if c != schemas.BACKGROUND["id"]]
+    try:
+        known += [c["id"] if isinstance(c, dict) else str(c)
+                  for c in roi_link.custom_categories(ds)]
+    except Exception:  # an unreadable ROI document: the built-in categories only
+        pass
+    return known
+
+
+def set_categories(call, inp):
+    """Which categories count toward exclusions. A category switched off keeps
+    every finding, region and flag: its reasons become notes (the cells stay
+    listed, drawn and exported, and nothing leaves them out of gating). The
+    whole set is given, so the undo is the previous set."""
+    from plexora.plugins.qc.server import schemas
+    from plexora.plugins.qc.server.cells import calls
+
+    results = _results()
+    ds = call.session.image_data(inp.project)
+    known = _known_categories(ds)
+    wanted = list(dict.fromkeys(str(c) for c in inp.disabled_categories))
+    if schemas.BACKGROUND["id"] in wanted:
+        raise AgentError("invalid_input", "the background is a note already: it never "
+                         "counts toward exclusions unless its region is renamed")
+    unknown = [c for c in wanted if c not in known]
+    if unknown:
+        raise AgentError("invalid_input", f"not a QC category: {', '.join(unknown)}",
+                         detail={"allowed": known})
+    with results.lock(inp.project):
+        document = results.load(inp.project)
+        before = results.revision(inp.project, document)
+        if inp.expected_revision and inp.expected_revision != before:
+            raise AgentError("conflict", "the QC results changed since they were read",
+                             detail={"revision": before}, retryable=True)
+        previous = results.disabled_categories(document)
+        order = {c: i for i, c in enumerate(known)}
+        wanted.sort(key=lambda c: order.get(c, len(order)))
+        changed = previous != wanted
+        if changed:
+            document.setdefault("exclusion_filter", {})["disabled_categories"] = wanted
+            document["exclusion_filter"].setdefault("disabled_reasons", [])
+            results.save(inp.project, document)
+    cells = None
+    if changed and results.active(results.load(inp.project)) is not None \
+            and call.session.project(inp.project).has_table:
+        cells = calls.write_for_active(call, inp.project, refresh_regions=False)
+    after = results.revision(inp.project)
+    receipt = make_receipt(call, changed=changed,
+                           before={"disabled_categories": previous},
+                           after={"disabled_categories": wanted},
+                           revision_before=before, revision_after=after,
+                           persistent_state=STATE, reversible=changed,
+                           undo_hint={"tool": "set_qc_categories", "arguments": {
+                               "project": inp.project, "disabled_categories": previous}}
+                           if changed else None)
+    by_category = (cells or {}).get("by_category") or {}
+    return {"receipt": receipt.model_dump(mode="json"), "disabled_categories": wanted,
+            "enabled_categories": [c for c in known if c not in wanted],
+            "categories": {c: {k: v for k, v in by_category[c].items()
+                               if k in ("n_any", "n_excluded", "n_flagged", "n_noted",
+                                        "fraction", "enabled")}
+                           for c in by_category if by_category[c].get("n_any")},
+            "n_fail": (cells or {}).get("n_fail"), "n_warn": (cells or {}).get("n_warn")}
+
+
 # -- files -----------------------------------------------------------------------------
 
 
 class ExportInput(ProjectInput):
-    what: Literal["rois", "cells", "provenance", "both"] = Field(
-        "both", description="rois: qc_regions.geojson; cells: cells.csv; provenance: "
+    what: Literal["rois", "cells", "anndata", "provenance", "both"] = Field(
+        "both", description="rois: qc_regions.geojson; cells: cells.csv; anndata: "
+                            "cells.h5ad (obs-only AnnData: the same columns, the obsm "
+                            "flag frames and uns['plexora_qc']; join on cell_id); "
+                            "provenance: "
                             "qc_provenance.json (every region, cell reason and marker "
                             "reason with its category, subtype, tool, score, threshold "
                             "and threshold_source, and the agent's judgment) and "
@@ -1440,15 +1526,25 @@ def capabilities():
              permission="reversible_write", input_model=DismissInput,
              handler=dismiss_finding, writes=("qc",), persistent=True,
              reads=("qc", "table")),
+        free(name="qc.set_categories", tool_name="set_qc_categories",
+             purpose="Choose which QC categories count toward exclusions. A category "
+                     "switched off keeps every finding, region and flag recorded: its "
+                     "cells are noted, not excluded or warned, so gating and every other "
+                     "estimate stop leaving them out. Give the whole set; reversible.",
+             permission="reversible_write", input_model=CategoriesInput,
+             handler=set_categories, writes=("qc",), persistent=True,
+             reads=("qc", "rois", "table")),
         free(name="qc.set_cycles", tool_name="set_qc_cycles",
              purpose="Say which channels were imaged together (cycles), when the names do "
                      "not: the next scan checks registration and tissue loss per cycle.",
              permission="reversible_write", input_model=CyclesInput, handler=set_cycles,
              writes=("qc",), persistent=True),
         free(name="qc.export", tool_name="export_qc",
-             purpose="Write a project's QC to files: cells.csv (pass, reasons, "
-                     "qc_category, flag_source, regions, and Segmentation QC's seg_qc_* "
-                     "columns when it has run), qc_regions.geojson (category, subtype, "
+             purpose="Write a project's QC to files: cells.csv (status, pass, reasons, "
+                     "category and one column per category, flag_source, source, regions, "
+                     "and Segmentation QC's seg_qc_* columns when it has run), cells.h5ad "
+                     "(the same as an obs-only AnnData, what='anndata'), "
+                     "qc_regions.geojson (category, subtype, "
                      "score, threshold, verdict per region), qc_provenance.json and "
                      "qc_findings.csv (why every region and cell was flagged), "
                      "summary.json (with `segmentation_qc`), result.json.",
@@ -1457,9 +1553,13 @@ def capabilities():
              tags=TAGS + ("export", "csv", "geojson", "download")),
         free(name="qc.write_source", tool_name="write_qc_to_source",
              purpose="Write the QC calls into the user's own table: AnnData obs/obsm/uns "
-                     "(plexora_qc_*, and Segmentation QC's plexora_seg_qc_* when it has run), "
-                     "or columns of a CSV/Parquet. Modifies the user's file: needs "
-                     "--allow-source-writes and confirm: true, only on request.",
+                     "(plexora_qc_*: status, one column per category, marker flags, and "
+                     "Segmentation QC's plexora_seg_qc_* when it has run), a SpatialData "
+                     "table plus a plexora_qc_regions shapes element, or columns of a "
+                     "CSV/Parquet (backed up first). Only this image's rows of a shared "
+                     "file are touched; works on a data node's table too. Modifies the "
+                     "user's file: needs --allow-source-writes and confirm: true, only on "
+                     "request.",
              permission="source_file_write", input_model=WriteSourceInput,
              handler=write_source, writes=("source_file",), reversible=False,
              source_file_write=True, persistent=True,

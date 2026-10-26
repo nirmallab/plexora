@@ -1223,6 +1223,21 @@ class ProjectData:
                 out = mask.copy() if out is None else (out | mask)
         return out
 
+    def annotations(self) -> dict:
+        """Per-cell values plugins derive for this project's cells -- QC's
+        status and category, say -- without a write into the user's file
+        (`Plugin.cell_annotations_factory`).
+
+        Returns:
+            dict: `{name: {kind, values, categories, colors, label,
+            provider, fingerprint}}`; `values` holds one entry per row of
+            `table.frame()` (None where nothing is said). Empty without a
+            table or a provider.
+        """
+        from plexora.agent import cell_exclusions
+
+        return cell_exclusions.annotations(self)
+
     def calls(self, gates: Mapping[str, tuple], mode: str = "and"):
         """A gate's call per row, with QC's third state.
 

@@ -500,21 +500,21 @@
           "tool_panel_slot": "qc/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/qc/static/qcApi.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcTree.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcLayers.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcDraw.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcHover.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcRegistration.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcBlur.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcArtifacts.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcSegmentation.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcStack.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcSidebarController.js?v=20261012_license_tiers",
-          "/plugins/qc/static/qcAgentBridge.js?v=20261012_license_tiers"
+          "/plugins/qc/static/qcApi.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcTree.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcLayers.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcDraw.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcHover.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcRegistration.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcBlur.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcArtifacts.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcSegmentation.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcStack.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcSidebarController.js?v=20261025_qc_cells",
+          "/plugins/qc/static/qcAgentBridge.js?v=20261025_qc_cells"
         ],
         "active_tool_styles": [
-          "/plugins/qc/static/qc.css?v=20261012_license_tiers"
+          "/plugins/qc/static/qc.css?v=20261025_qc_cells"
         ],
         "available_tools": [
           {
@@ -846,18 +846,18 @@
         "/client/src/js/views/toolLoader.js?v=20261013_compact_popover",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/qc/static/qcApi.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcTree.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcLayers.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcDraw.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcHover.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcRegistration.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcBlur.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcArtifacts.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcSegmentation.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcStack.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcSidebarController.js?v=20261012_license_tiers",
-        "/plugins/qc/static/qcAgentBridge.js?v=20261012_license_tiers",
+        "/plugins/qc/static/qcApi.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcTree.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcLayers.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcDraw.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcHover.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcRegistration.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcBlur.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcArtifacts.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcSegmentation.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcStack.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcSidebarController.js?v=20261025_qc_cells",
+        "/plugins/qc/static/qcAgentBridge.js?v=20261025_qc_cells",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -925,7 +925,7 @@
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/qc/static/qc.css?v=20261012_license_tiers"
+        "/plugins/qc/static/qc.css?v=20261025_qc_cells"
       ],
       "tool_mounts": [
         [
@@ -939,7 +939,7 @@
       ]
     }
   },
-  "route_count": 299,
+  "route_count": 301,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -1148,6 +1148,8 @@
     "POST /plugins/qc/blur/run",
     "POST /plugins/qc/blur/set",
     "POST /plugins/qc/categories",
+    "POST /plugins/qc/categories/exclusion",
+    "POST /plugins/qc/cells/write",
     "POST /plugins/qc/color",
     "POST /plugins/qc/export",
     "POST /plugins/qc/findings/dismiss",

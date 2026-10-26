@@ -33,6 +33,13 @@ from plexora.plugins.qc.server import polygons, results, schemas
 NOTE_TOKEN = re.compile(r"(?:^|\s)qc:(cand_[0-9a-f]{10}|user_[0-9a-z_]+)\b")
 #: The subtype a region drawn by hand was given, until QC adopts it.
 CLASS_TOKEN = re.compile(r"(?:^|\s)qc-class:([a-z_]+)\b")
+#: Which channels a region drawn by hand is about, in its notes:
+#: `qc-channels: all_channels`, `qc-channels: cycle 2` (or `cycles 2, 3`), or
+#: `qc-channels: CD3, CD8` -- the `schemas.channel_token` vocabulary. Without
+#: it a hand-drawn region is about every channel; the view it was drawn in is
+#: provenance, never scope.
+CHANNELS_TOKEN = re.compile(r"(?:^|\s)qc-channels:[ \t]*([^\n]+)")
+_CYCLES_WORDS = re.compile(r"^cycles?\s+([\d,\s]+)$", re.I)
 
 
 def _repo(ds):
@@ -81,6 +88,80 @@ def class_token(notes):
     match = CLASS_TOKEN.search(notes or "")
     klass = match.group(1) if match else None
     return klass if klass in schemas.ARTIFACT_CLASSES else None
+
+
+def channels_token(notes):
+    """The `qc-channels:` token of an ROI's notes, stripped, or None."""
+    match = CHANNELS_TOKEN.search(notes or "")
+    token = match.group(1).strip().rstrip(".").strip() if match else ""
+    return token or None
+
+
+def _channel_context(ds, document):
+    """(channel names, cycles [{index, channels}]) of the image: the user's
+    cycle groups (`set_qc_cycles`) when stated, else the inferred ones."""
+    from plexora.plugins.qc.server import cycles as cycle_rules
+
+    try:
+        names = list(ds.image.channel_names)
+    except Exception:
+        return [], []
+    try:
+        found = cycle_rules.infer(names, override=(document or {}).get("cycles_override"))
+    except Exception:
+        return names, []
+    return names, list(found.get("cycles") or [])
+
+
+def scope_of_token(token, channel_names, cycles):
+    """(scope, channels, cycles) a `qc-channels:` token names, or None when
+    it names nothing this image has."""
+    text = str(token or "").strip()
+    if not text:
+        return None
+    if text.casefold() in ("all", "all_channels", "all channels", "every channel"):
+        return "all_channels", [], []
+    match = _CYCLES_WORDS.match(text)
+    if match:
+        wanted = [int(v) for v in re.findall(r"\d+", match.group(1))]
+        chosen = [c for c in cycles or [] if int(c.get("index") or 0) in wanted]
+        members = [n for c in chosen for n in c.get("channels") or []]
+        if not members:
+            return None
+        indices = [int(c["index"]) for c in chosen]
+        return ("cycle" if len(indices) == 1 else "cycles"), members, indices
+    folded = {str(n).casefold(): n for n in channel_names or []}
+    names = [folded.get(part.strip().casefold()) for part in text.split(",")]
+    names = list(dict.fromkeys(n for n in names if n))
+    if not names:
+        return None
+    return ("channel" if len(names) == 1 else "channels"), names, []
+
+
+def _rescope(candidate, row, token, context):
+    """Apply a `qc-channels:` token to a candidate and its meta row; True
+    when something changed. A token removed from a hand-drawn region puts it
+    back on every channel."""
+    if token == candidate.get("channels_token"):
+        return False
+    if token is None:
+        if candidate.get("created_by") != "user":
+            candidate.pop("channels_token", None)
+            return False
+        scoped = ("all_channels", [], [])
+    else:
+        scoped = scope_of_token(token, *context)
+        if scoped is None:
+            return False
+    scope, channels, cycles = scoped
+    candidate.update(scope=scope, channels=list(channels), cycles=list(cycles))
+    if token is None:
+        candidate.pop("channels_token", None)
+    else:
+        candidate["channels_token"] = token
+    if row is not None:
+        row.update(scope=scope, channels=list(channels), cycles=list(cycles))
+    return True
 
 
 def _labels(state):
@@ -634,6 +715,7 @@ def sync(ds, document, *, save=True) -> dict:
     rows = meta.to_dicts() if meta.height else []
     known = set()
     changed_rows = []
+    context = None  # (channel names, cycles), read once when a token needs it
     live_ids = {c.get("roi_id") for c in ((result or {}).get("candidates") or {}).values()}
     for row in rows:
         known.add(row["roi_id"])
@@ -722,6 +804,14 @@ def sync(ds, document, *, save=True) -> dict:
                 report["locked"].append(row["roi_id"])
             changed_rows.append(row)
         if candidate is not None:
+            token = channels_token(feature.get("notes"))
+            if token != candidate.get("channels_token"):
+                if context is None:
+                    context = _channel_context(ds, document)
+                if _rescope(candidate, row, token, context):
+                    changed_rows.append(row)
+                    report.setdefault("rescoped", []).append(row["roi_id"])
+        if candidate is not None:
             user["locked"] = bool(row.get("locked"))
             user["approved"] = bool(row.get("approved"))
             if row.get("approved_action"):
@@ -765,10 +855,18 @@ def sync(ds, document, *, save=True) -> dict:
         # its name says otherwise; one drawn in a finding's category excludes.
         action = schemas.action_of_name(feature.get("name")) or schemas.default_action(klass)
         candidate["action"] = action
+        token = channels_token(feature.get("notes"))
+        if token is not None:
+            if context is None:
+                context = _channel_context(ds, document)
+            _rescope(candidate, None, token, context)
         adopted_rows.append({
             "roi_id": roi_id, "candidate_id": candidate_id, "result_id": result["result_id"],
-            "session_id": None, "class": klass, "channels": [], "cycles": [],
-            "scope": "all_channels", "severity": None, "confidence": None, "action": action,
+            "session_id": None, "class": klass,
+            "channels": list(candidate.get("channels") or []),
+            "cycles": list(candidate.get("cycles") or []),
+            "scope": candidate.get("scope") or "all_channels", "severity": None,
+            "confidence": None, "action": action,
             "strictness_used": None, "detector": "user", "detector_version": "1",
             "evidence_artifacts": [], "agent_id": None, "created_by": "user",
             "created_at": results.now_iso(), "user_edited": False, "approved": True,
@@ -833,6 +931,9 @@ def live_regions(ds, result) -> list:
                     # A region on some planes of a z-stack (or one frame):
                     # its cells are the ones on them (propagate.py).
                     "extent": feature.get("extent"),
+                    # A region that names its cells (object review's
+                    # `labels` solid) is those cells exactly.
+                    "solid": feature.get("solid"),
                     "channels": list(candidate.get("channels") or [])})
     return out
 
@@ -873,6 +974,24 @@ def membership_meta(result) -> dict:
     return out
 
 
+def membership_hash(region) -> str:
+    """What a region's cells depend on, hashed: its outline, its planes and
+    the cells it names. Two derives that see the same hash would map the
+    same cells, so the second keeps the first's pairs (`calls`)."""
+    import hashlib
+    import json
+
+    from plexora.plugins.qc.server import polygons
+
+    solid = region.get("solid") or {}
+    named = sorted(int(v) for v in solid.get("ids") or ()) if solid.get("kind") == "labels" \
+        else None
+    blob = json.dumps({"g": polygons.geometry_hash(region.get("geometry")) if
+                       region.get("geometry") else None,
+                       "e": region.get("extent"), "ids": named}, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def parent_of(key) -> str:
     """The ROI a membership key belongs to."""
     return str(key).split("#", 1)[0]
@@ -897,7 +1016,7 @@ def membership_regions(ds, result) -> list:
             if meta.get("geometry") else None
         if geometry is None:
             continue
-        out.append({**region, "roi_id": key, "parent_roi_id": parent,
+        out.append({**region, "solid": None, "roi_id": key, "parent_roi_id": parent,
                     "candidate_id": meta.get("id"), "class": meta.get("class"),
                     "action": meta.get("action") or "exclude", "geometry": geometry,
                     "channels": list(meta.get("channels") or [])})

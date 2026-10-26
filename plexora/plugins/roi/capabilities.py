@@ -18,7 +18,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_IDS, MAX_VERTICES
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
-from plexora.agent.schemas import AgentModel, ProjectInput
+from plexora.agent.schemas import AgentModel, ProjectInput, QcInput
 from plexora.api.plugin import Requires
 from plexora.plugins.roi import PLUGIN
 
@@ -301,14 +301,33 @@ def delete_roi(call, inp):
     return {"receipt": receipt.model_dump(mode="json")}
 
 
-class CellsInput(RoiInput):
+class CellsInput(RoiInput, QcInput):
     max_ids: int = Field(200, ge=0, le=MAX_IDS)
 
 
 def cells_in_roi(call, inp):
+    from plexora.agent import cell_exclusions
+
+    # The cells QC leaves out under the asked mode (`qc`): counted beside the
+    # region's cells, never removed from them.
+    keep, qc = None, None
     try:
-        return _guarded(_service().cells_in_roi, call.data, inp.roi_id,
-                        max_ids=inp.max_ids)
+        record = cell_exclusions.current(call.data)
+        if record is not None:
+            keep = cell_exclusions.row_mask(call.data, None, record)
+            if keep is None:  # QC ran and leaves nothing out
+                import numpy as np
+
+                keep = np.ones(call.data.table.geometry().height, dtype=bool)
+            qc = cell_exclusions.describe(call.data, record)
+    except Exception:  # the count stands without QC
+        keep, qc = None, None
+    try:
+        out = _guarded(_service().cells_in_roi, call.data, inp.roi_id,
+                       max_ids=inp.max_ids, keep=keep)
+        if qc is not None and isinstance(out, dict):
+            out["qc"] = qc
+        return out
     except LookupError as exc:
         if isinstance(exc, KeyError):
             raise

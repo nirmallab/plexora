@@ -395,15 +395,44 @@ markers; otherwise it is recorded as `excessive_background`, with
 
 Region membership (`propagate.py`): the fraction of each cell's mask inside
 the polygon (holes honoured), read at the smallest level within
-`MAX_ROI_PIXELS`; centroid fallback without a mask or past the budget
-(recorded as `roi_method`). A cell in several regions lists them all; exclude
-beats warn; nothing is counted twice.
+`MAX_ROI_PIXELS`, over the cell's WHOLE area (`cells/areas.py`: one bincount
+pass over the mask per mask fingerprint, cached under the QC store; Segmentation
+QC's own areas reused when it measured the same mask at full resolution) -- the
+area inside the region's box would inflate a large cell the box cuts.
+Centroid fallback without a mask or past the budget (recorded as
+`roi_method`); a region that names its cells (object review's `labels`
+solid) takes exactly those (`method: "labels"`). A cell in several regions
+lists them all; exclude beats warn; nothing is counted twice. Blur is scoped
+to the measured channel's cycle when the cycles are resolved (focus is per
+acquisition), else that channel; a hand-drawn region can be scoped with a
+`qc-channels: <all_channels | cycle N | names>` line in its notes.
 
-`qc_cells` holds per cell: `pass`, `action`, `primary_reason`
-(`schemas.PRIMARY_ORDER`), `reasons` and `excluded_by` (whole-cell),
-`noted_by`, `background`, `reason_count`, `unreliable_markers`,
-`marker_flags` (`marker|reason|status`), `roi_ids`, `roi_method` and the
-`m_*` measurements -- one row per cell of the table, whatever its calls.
+Pairs are kept per region with the region's `geometry_hash`
+(`roi_link.membership_hash`): a re-derive reads only regions that changed.
+`result.cells.inputs` (`cells/inputs.py`) fingerprints the mask, table, pixel
+size, transform, Segmentation QC, DNA retention, strictness and category
+switch; a change to the first four reads every region again, and the
+exclusion provider treats any of them as stale. `results.lock` also holds an
+advisory file lock, so a server and a headless run cannot lose each other's
+writes.
+
+**The category switch** (`set_qc_categories`, `document["exclusion_filter"]`):
+a category switched off keeps every finding, but `derive` records its
+reasons as notes and its marker flags with status `note` (never in
+`unreliable_markers`). Precedence: a dismissed finding, then the switch, then
+the strictness preset. Each cell's strongest status per category is
+`category_status` (`category|excluded|flagged|channel|noted`), and
+`summary.by_category` counts DISTINCT cells per category -- what the panel's
+"% of cells" reads (a region's "% of tissue area" is `report.affected_area`,
+an area, never a cell count).
+
+`qc_cells` (`CELLS_VERSION` 7) holds per cell: `cell_id`, `row` (its row in
+the loaded table: repeated ids and writers rely on it), `pass`, `action`,
+`primary_reason` (`schemas.PRIMARY_ORDER`), `reasons` and `excluded_by`
+(whole-cell), `noted_by`, `background`, `reason_count`, `unreliable_markers`,
+`marker_flags` (`marker|reason|status`, status exclude / warn / note),
+`roi_ids`, `roi_method`, `category_status` -- one row per cell of the table,
+whatever its calls.
 The result's `cells` summary keeps the counts (`n_fail`, `n_warn`,
 `n_noted`, `n_background`, `n_no_nucleus`, `by_reason`, `warn_by_reason`,
 `note_by_reason`) and what every call rests on: `evidence` (per reason:
@@ -445,27 +474,37 @@ to files), `roi_meta`, `qc_cells`, `qc_cell_rois`. Session folders are swept;
 results are not. `reset_qc` snapshots first and never deletes a region the
 user drew, edited or locked; `restore_qc` puts it all back.
 
-Exports (`export_qc`, `what` rois | cells | provenance | both): `cells.csv`
-(one row per input cell, with `qc_category`, `categories`, `flag_source`,
-`noted`), `qc_regions.geojson` (with
+Every per-cell export reads one column builder, `cells/columns.py` (`build`,
+`obsm_frames`, `uns_body`, `dictionary`): `status` (pass / flagged /
+excluded), `pass`, `primary_reason`, `category`, `categories`, one column per
+category (and `custom`) with the cell's strongest status there, the reason
+lists, `marker_flags`, `roi_ids`, `roi_method`, `flag_source`, `source`
+(auto / manual / ai / mixed).
+
+Exports (`export_qc`, `what` rois | cells | anndata | provenance | both):
+`cells.csv` (one row per input cell, the canonical columns), `cells.h5ad`
+(the same obs-only, the obsm frames, `uns["plexora_qc"]`), `qc_regions.geojson` (with
 category, subtype, score, threshold and its source, the agent's verdict,
 cells), `qc_provenance.json` (`provenance.document`: vocabulary, checks,
 every region, cell reason and marker reason), `qc_findings.csv` (the same,
 one row each), `summary.json` (with the checks), `result.json`. Source write
-(`write_qc_to_source`, `source_file_write`): AnnData `obs["plexora_qc_pass" |
-"_primary_reason" | "_category" | "_reason_count" | "_unreliable_markers" |
-"_noted" | "_background"]` (`_category` from the non-noted reasons only; a
-cell only noted keeps it empty), `obsm["plexora_qc_flags"]` (a boolean DataFrame, one
-column per whole-cell reason), `obsm["plexora_qc_marker_flags"]` (one boolean
-column per marker: unreliable in that cell), `uns["plexora_qc"]` (with cell and
-marker definitions and the category vocabulary -- a file written before it
-has the old keys, so rewriting needs `replace`); CSV/Parquet get the scalar columns,
-`plexora_qc_background`, `plexora_qc_reasons`, `plexora_qc_noted`,
-`plexora_qc_unreliable_markers` and `plexora_qc_marker_flags`. No export
-drops a row: the background and every other call are columns.
-`plexora_qc_pass` is about the whole cell: filter on
-it and on the markers you read. Rows of other images are `<NA>`; existing QC keys are
-refused without `replace`; `obs` is backed up first.
+(`write_qc_to_source`, `source_file_write`; the panel's "Save into file"):
+every canonical column prefixed `plexora_qc_` in obs or the flat file,
+`obsm["plexora_qc_flags"]` (one boolean column per whole-cell reason),
+`obsm["plexora_qc_marker_flags"]` / `["plexora_qc_marker_warn"]` (per marker:
+excluded / only warned in that cell), `uns["plexora_qc"]` version 2 (the
+column dictionary and `results` keyed by image id: settings, inputs, regions),
+and for SpatialData a `plexora_qc_regions` shapes element mapped onto the
+labels element's coordinate systems (`spatialdata_write.py`; the table's
+`instance_key` is checked first). It is a table operation (`qc.write_cells`,
+`tableops.py`), so a node-hosted table is written on the node; `gather` reads
+QC's store on the primary. Rows are placed by `row` (with an id check) or by
+`obs_id_field`; in a shared file only this image's rows count as "existing"
+and only they are replaced. The flat file is copied, `obs` saved, before the
+rewrite (`<qc store>/backups/`); `document["source_writes"]` records each
+write (what the SCIMAP Pro hand-off may point at). No export drops a row.
+`plexora_qc_pass` is about the whole cell: filter on it and on the markers
+you read.
 
 ## 10. Licensing
 
@@ -518,6 +557,15 @@ reshaped or deleted in the ROI panel with no `refresh_qc` since -- runs the
 same sync and derivation `refresh_qc` does before answering. A region drawn
 by hand in a QC category therefore leaves its cells out of the next gate fit
 without any QC tool being called.
+
+Other readers, all through core seams (core never imports QC):
+`Plugin.cell_annotations_factory` gives `qc_status` / `qc_category` per row
+(`exclusions.annotations`; `ProjectData.annotations()`), which Cell Explorer
+lists as derived columns; the exclusion provider's `explain(ds, cell_id)` is
+`explain_cell`'s `qc` block (`cell_exclusions.explain`);
+`count_cells_in_roi` reports `n_qc_excluded`; `bridge_collect qc` sends the
+mode-aware `excluded`, `flagged`, `not_called` and, after a recorded source
+write, `per_cell` / `status_ref`.
 
 ## 12. The free image checks: Registration Check, Blur QC, Segmentation QC and the Artifact Detector
 

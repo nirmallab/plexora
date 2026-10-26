@@ -55,6 +55,14 @@ path and roles). The analysis side reads the same file; nothing is copied.
    `set_selection` with `show` for a larger set the user will come back to.
 6. Report what the other side reported -- its experimental unit and its
    number of replicates, verbatim -- before any reading of it.
+7. QC travels with `bridge_collect` kind `qc`: `excluded` is what Plexora's
+   own estimates leave out under `summary.mode`, `flagged` the cells warned
+   but kept, `not_called` per marker the cells that marker is not to be read
+   in -- hand over all three, not only the exclusions, so a marker problem
+   leaves a marker out of a cell rather than the cell. When the calls were
+   written into the table (`write_qc_to_source`), `per_cell` and
+   `summary.status_ref` name the obs columns holding each cell's pass and
+   status.
 
 ## Tools
 

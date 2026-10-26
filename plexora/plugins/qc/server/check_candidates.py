@@ -92,6 +92,15 @@ def _scope(engine, check_unit, lost_in=None, reference=None, region=None):
         members = [c["name"] for c in scan.channels if cycle and c.get("cycle") == cycle] \
             or [channel]
         return "cycle", members, [int(cycle)] if cycle else []
+    if check == "blur" and cycle:
+        # Focus is set per acquisition: a channel out of focus says its cycle
+        # was -- when the cycles are certain; otherwise that channel alone.
+        from plexora.plugins.qc.server import cycles as cycle_rules
+
+        if cycle_rules.resolved(scan.meta.get("cycles"))[0]:
+            members = [c["name"] for c in scan.channels if c.get("cycle") == cycle] \
+                or [channel]
+            return "cycle", members, [int(cycle)]
     return "channel", [channel], [int(cycle)] if cycle else []
 
 
@@ -210,10 +219,6 @@ def global_unit(engine, check_unit, field, bar):
     geometry = polygons.mask_to_geometry(tissue, scan.grid)
     check = check_unit["check"]
     scope, channels, cycles = _scope(engine, check_unit)
-    if check == "blur" and cycles:
-        # A whole channel out of focus is how its cycle was acquired.
-        members = [c["name"] for c in scan.channels if c.get("cycle") == cycles[0]]
-        scope, channels = "cycle", members or channels
     audit = _audit(engine, check_unit, channels)
     from plexora.plugins.qc.server.scan import bbox_fullres
 

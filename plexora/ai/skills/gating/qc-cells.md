@@ -20,6 +20,9 @@ the viewer, left out of counts, and written as `obsm` beside the gates
   confidence is capped: tell the user.
 - No QC on the image: offer skill qc-image first when the tissue looks
   damaged; do not block on it.
+- `qc_exclusion.disabled_categories` names QC categories the user switched
+  off for exclusions (`set_qc_categories`): their cells are noted, not left
+  out. Say so beside the counts.
 - QC changed after a gate was decided (QC run for the first time, a region
   drawn or moved, strictness changed): `gating_qc` lists the marker under
   `stale_qc`. It was fitted on cells QC now fails, or without cells it now

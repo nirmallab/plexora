@@ -231,10 +231,13 @@ class CellExplorerSidebarController {
             this.scheduleSave();
         };
         window.addEventListener("plexora:cell-layer-opacity-changed", onOpacity);
+        const onQc = (event) => this.onQcChanged(event);
+        window.addEventListener("plexora:qc-changed", onQc);
 
         this.ctx.onCleanup?.(() => {
             window.removeEventListener("plexora:cell-mode-changed", onMode);
             window.removeEventListener("plexora:cell-layer-opacity-changed", onOpacity);
+            window.removeEventListener("plexora:qc-changed", onQc);
         });
         this.ctx.onCleanup?.(() => this.destroy());
     }
@@ -551,7 +554,31 @@ class CellExplorerSidebarController {
         const descriptor = this.state.descriptor(name);
         if (!descriptor) return "";
         if (descriptor.kind === "continuous") return "numeric";
-        return `${descriptor.n_categories || 0} categories`;
+        // Not in the file: derived by a plugin (QC's status), read live.
+        const from = descriptor.derived
+            ? `from ${String(descriptor.provider || "a plugin").toUpperCase()} · ` : "";
+        return `${from}${descriptor.n_categories || 0} categories`;
+    }
+
+    /** QC's calls moved: the derived columns' levels and values are stale.
+     *  Re-read the catalogue, and the column on screen when it is one. */
+    async onQcChanged(event) {
+        const datasource = event?.detail?.datasource;
+        if (datasource && this.ctx.datasource && datasource !== this.ctx.datasource) return;
+        if (!(this.state.descriptors || []).some((d) => d.derived)
+            && !this.state.descriptor(this.state.column)?.derived) return;
+        try {
+            const catalogue = await this.api.variables();
+            this.state.descriptors = catalogue.variables || this.state.descriptors;
+        } catch (error) {
+            return;
+        }
+        this.render();
+        const column = this.state.column;
+        if (column && this.state.descriptor(column)?.derived) {
+            this.api.forget?.(column);
+            await this.select(column, { persist: false });
+        }
     }
 
     /**

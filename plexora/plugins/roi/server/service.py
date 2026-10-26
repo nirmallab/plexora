@@ -377,12 +377,13 @@ def delete_roi(ds, roi_id, *, base_revision=None):
     return base, after, before
 
 
-def cells_in_roi(ds, roi_id, *, max_ids=1_000):
+def cells_in_roi(ds, roi_id, *, max_ids=1_000, keep=None):
     """Which cells' centroids fall inside one region -- counted, not written.
 
     Returns {roi_id, n_cells, n_total, fraction, cell_ids (bounded),
     truncated}. The containment rule is `mapping.assign`'s: holes are outside,
-    and the boundary is strict.
+    and the boundary is strict. `keep` (one bool per table row, False for a
+    cell QC leaves out) adds `n_qc_excluded` and `n_cells_passing`.
     """
     state = _state(ds)
     _, feature = schema.find(_features(state), roi_id)
@@ -441,7 +442,11 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
     ids = frame[id_column].to_numpy()[inside] if id_column in frame.columns else np.empty(0)
     total = int(frame.height)
     count = int(inside.sum())
-    return {
+    passing = {}
+    if keep is not None and np.asarray(keep).shape[0] == inside.shape[0]:
+        left_out = int((inside & ~np.asarray(keep, dtype=bool)).sum())
+        passing = {"n_qc_excluded": left_out, "n_cells_passing": count - left_out}
+    return {**passing,
         "roi_id": roi_id,
         "n_cells": count,
         "n_total": total,

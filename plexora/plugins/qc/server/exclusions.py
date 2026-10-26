@@ -13,7 +13,15 @@ in the ROI panel since the calls were derived (no `refresh_qc` yet) would
 otherwise be invisible to gating, so a stale result is re-derived first -- the
 same sync and derivation `refresh_qc` runs, QC's own reversible derived state,
 never a source write. Staleness is the ROI document's hash against the one
-stamped on the result's cells when they were derived (`calls.write_for_active`).
+stamped on the result's cells when they were derived (`calls.write_for_active`),
+and the inputs the calls were derived from (`cells/inputs.py`: the mask, the
+table, the pixel size, the segmentation transform, Segmentation QC's and DNA
+retention's results) against what they are now -- a mask replaced on disk
+changes the calls with no region drawn.
+
+A category switched off for exclusions (`set_qc_categories`) is applied when
+the calls are derived: its findings are notes there, so nothing here needs to
+know about it beyond reporting it (`source["disabled_categories"]`).
 
 On a z-stack whose cells were measured in 3-D, `strict` also leaves out the
 cells the stack's first or last plane cuts off (`touches_z_bounds` in the
@@ -90,11 +98,32 @@ def _rederive(ds):
     calls.write_for_active(_call_for(ds), ds.name)
 
 
-def _stale(ds, result, roi_rev) -> bool:
+def _stale(ds, result, roi_rev, now=None) -> bool:
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
     cells = (result or {}).get("cells") or {}
     if "n" not in cells:
         return True
-    return cells.get("roi_revision") != roi_rev
+    if cells.get("roi_revision") != roi_rev:
+        return True
+    stored = cells.get("inputs")
+    if stored is None:  # derived before inputs were stamped: the regions decide
+        return False
+    now = now if now is not None else _inputs(ds)
+    if now is None:
+        return False
+    return bool(cell_inputs.changed(stored, now)
+                & set(cell_inputs.MAPPING + cell_inputs.DIRECT))
+
+
+def _inputs(ds):
+    """The calls' inputs now (stats and record fields), or None."""
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
+    try:
+        return cell_inputs.fingerprints(ds)
+    except Exception:
+        return None
 
 
 def _marker_flags(frame, statuses):
@@ -106,7 +135,7 @@ def _marker_flags(frame, statuses):
     if "marker_flags" not in frame.columns or not frame.height:
         return {}
     flat = frame.select(pl.col("cell_id").cast(pl.Int64), pl.col("marker_flags")) \
-        .explode("marker_flags").drop_nulls("marker_flags")
+        .explode("marker_flags", empty_as_null=True).drop_nulls("marker_flags")
     if not flat.height:
         return {}
     parts = flat.with_columns(pl.col("marker_flags").str.split_exact("|", 2).alias("p")) \
@@ -200,9 +229,15 @@ def _record(ds, mode, document, result):
                                                  else "manual"),
               "n_exclude": int(excluded.sum()), "n_warn": int(warned.sum()),
               "n_marker": int(sum(np.unique(v).size for v in by_marker.values())),
-              "regions": len(regions)}
+              "regions": len(regions),
+              "disabled_categories": results.disabled_categories(document)}
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
+    # The document's revision carries the strictness and the category switch;
+    # the inputs digest a mask or table replaced under unchanged regions.
+    stamped = cell_inputs.digest((result.get("cells") or {}).get("inputs") or {})
     fp = hashlib.sha1(f"{result.get('result_id')}|{results.revision(ds.name, document)}"
-                      .encode()).hexdigest()[:16]
+                      f"|{stamped}".encode()).hexdigest()[:16]
     return cell_exclusions.make_record(ids[whole_mask], by_marker, fingerprint=fp,
                                        mode=mode, source=source, notes=notes,
                                        verdict=verdict)
@@ -219,6 +254,19 @@ def _file_token(project):
     except (OSError, ValueError, AttributeError):
         return None
     return (st.st_mtime_ns, st.st_size)
+
+
+def _inputs_token(ds):
+    """`_file_token` and the digest of the calls' inputs that live outside
+    the store (the mask, the table, the pixel size...): either changing
+    means the stored record may be out of date."""
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
+    token = _file_token(ds.name)
+    if token is None:
+        return None
+    now = _inputs(ds)
+    return (*token, cell_inputs.digest(now) if now is not None else "")
 
 
 _FAST: dict = {}
@@ -247,7 +295,7 @@ def _qc_provider(ds, mode):
         # Asked from inside QC's own derivation (a render it draws, say): the
         # calls are being made, so there is nothing to leave out yet.
         return None
-    token = _file_token(ds.name)
+    token = _inputs_token(ds)
     if token is not None:
         with _CACHE_LOCK:
             found = _FAST.get((ds.name, mode, token), _ABSENT)
@@ -258,7 +306,7 @@ def _qc_provider(ds, mode):
         record = _provide(ds, mode)
     finally:
         _BUSY.on = False
-    after = _file_token(ds.name)
+    after = _inputs_token(ds)
     if after is not None:
         with _CACHE_LOCK:
             if len(_FAST) > _CACHE_MAX:
@@ -268,17 +316,21 @@ def _qc_provider(ds, mode):
 
 
 def _provide(ds, mode):
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
     roi_rev = roi_revision(ds.name)
     document = results.load(ds.name)
     result = results.active(document)
     if result is None and not _has_qc_regions(ds):
         return None
-    key = (ds.name, mode, roi_rev, results.revision(ds.name, document))
+    now = _inputs(ds)
+    stamp = cell_inputs.digest(now) if now is not None else ""
+    key = (ds.name, mode, roi_rev, results.revision(ds.name, document), stamp)
     with _CACHE_LOCK:
         if key in _CACHE:
             return _CACHE[key]
     try:
-        if result is None or _stale(ds, result, roi_rev):
+        if result is None or _stale(ds, result, roi_rev, now):
             _rederive(ds)
             document = results.load(ds.name)
             result = results.active(document)
@@ -297,7 +349,7 @@ def _provide(ds, mode):
         return record
     # Keyed by what was read before any re-derive as well as after, so the
     # next call with the same inputs is a dictionary lookup.
-    after = (ds.name, mode, roi_revision(ds.name), results.revision(ds.name, document))
+    after = (ds.name, mode, roi_revision(ds.name), results.revision(ds.name, document), stamp)
     with _CACHE_LOCK:
         if len(_CACHE) > _CACHE_MAX:
             _CACHE.clear()
@@ -406,5 +458,164 @@ def summary(ds, mode="strict") -> dict:
     return block
 
 
+# -- what one cell's QC says (`explain_cell`) --------------------------------------
+
+
+def explain(ds, cell_id) -> dict | None:
+    """One cell's QC, compactly: {status, why, reasons [{reason, category,
+    status, channels, value, cutoff, regions}], markers [{marker, reason,
+    status}], regions, roi_method}; None when QC says nothing of it."""
+    from plexora.plugins.qc.server import viewer_data
+
+    record = viewer_data.cell_by_id(ds, ds.name, int(cell_id))
+    if record is None:
+        return None
+    if not record.get("calls", True):
+        return {"status": None, "why": record.get("note"), "reasons": [], "markers": []}
+    reasons = [{"reason": r["reason"], "words": r.get("words"), "category": r.get("category"),
+                "status": r.get("status"), "channels": r.get("channels") or [],
+                "value": r.get("value"), "cutoff": r.get("cutoff"),
+                "category_enabled": r.get("category_enabled", True),
+                "regions": [v.get("roi_id") for v in r.get("via_regions") or []]}
+               for r in record.get("reasons") or []]
+    markers = [{"marker": m["marker"], "reason": m["reason"], "status": m.get("status"),
+                "category": m.get("category")} for m in record.get("markers") or []]
+    action = record.get("action") or "pass"
+    status = {"exclude": "excluded", "warn": "flagged"}.get(action) or (
+        "marker_only" if any(m["status"] in ("unreliable", "flagged") for m in markers)
+        else "noted" if reasons or markers else "pass")
+    first = next((r for r in reasons if r["status"] == "fail"), None) \
+        or next((r for r in reasons if r["status"] == "warn"), None)
+    if first is not None:
+        why = (f"{'excluded' if first['status'] == 'fail' else 'flagged'}: "
+               f"{first.get('words') or first['reason']}"
+               + (f" (in {', '.join(first['regions'][:3])})" if first["regions"] else ""))
+    elif status == "marker_only":
+        names = sorted({m["marker"] for m in markers
+                        if m["status"] in ("unreliable", "flagged")})
+        why = f"kept; not to be read in {', '.join(names[:6])}"
+    elif reasons:
+        why = "kept; noted: " + ", ".join(r.get("words") or r["reason"] for r in reasons[:3])
+    else:
+        why = "nothing flagged"
+    return {"status": status, "why": why, "primary_reason": record.get("primary_reason"),
+            "reasons": reasons, "markers": markers,
+            "regions": [r.get("roi_id") for r in record.get("regions") or []],
+            "roi_method": record.get("roi_method"),
+            "unreliable_markers": record.get("unreliable_markers") or []}
+
+
+class _Provider:
+    """`provider(ds, mode)` for `cell_exclusions`, and `explain(ds, cell_id)`
+    for `explain_cell` -- one object, so core asks one thing of a plugin."""
+
+    def __call__(self, ds, mode):
+        return provider(ds, mode)
+
+    @staticmethod
+    def explain(ds, cell_id):
+        return explain(ds, cell_id)
+
+
 def factory():
-    return provider
+    return _Provider()
+
+
+# -- per-cell annotations (`Plugin.cell_annotations_factory`) ------------------------
+
+#: The statuses `qc_status` takes, strongest first, and their colours.
+ANNOTATION_STATUSES = ("excluded", "flagged", "marker_only", "noted", "pass")
+STATUS_COLORS = {"excluded": "#ef4444", "flagged": "#f59e0b", "marker_only": "#a78bfa",
+                 "noted": "#94a3b8", "pass": "#d1d5db"}
+_ANNOTATIONS: dict = {}
+
+
+def annotations(ds) -> dict:
+    """{qc_status, qc_category} over the loaded table's rows, from the active
+    result's calls (None for a row QC has no call for); {} without calls."""
+    import polars as pl
+
+    from plexora.plugins.qc.server import schemas
+    from plexora.plugins.qc.server.cells import columns
+
+    token = _inputs_token(ds)
+    key = (ds.name, token)
+    with _CACHE_LOCK:
+        if token is not None and key in _ANNOTATIONS:
+            return _ANNOTATIONS[key]
+    # Calls made stale by a region drawn since are derived again first, as
+    # for gating: what is coloured is what is left out.
+    try:
+        _qc_provider(ds, "strict")
+    except Exception:  # the stored calls stand
+        pass
+    token = _inputs_token(ds)
+    key = (ds.name, token)
+    document = results.load(ds.name)
+    result = results.active(document)
+    frame = results.cells(ds.name) if result is not None else None
+    out = {}
+    if frame is not None and frame.height and (
+            "result_id" not in frame.columns
+            or frame["result_id"][0] == result.get("result_id")):
+        geometry = ds.table.geometry()
+        n = geometry.height if geometry is not None else 0
+        flags = frame["marker_flags"] if "marker_flags" in frame.columns else \
+            pl.Series([[]] * frame.height, dtype=pl.List(pl.Utf8))
+        kept = flags.list.eval(pl.element().str.ends_with("|exclude")
+                               | pl.element().str.ends_with("|warn")).list.any()
+        noted = (frame["noted_by"].list.len() > 0) if "noted_by" in frame.columns else \
+            pl.Series([False] * frame.height)
+        noted = noted | flags.list.eval(pl.element().str.ends_with("|note")).list.any()
+        status = (pl.DataFrame({"a": frame["action"], "k": kept.fill_null(False),
+                                "n": noted.fill_null(False)})
+                  .select(pl.when(pl.col("a") == "exclude").then(pl.lit("excluded"))
+                          .when(pl.col("a") == "warn").then(pl.lit("flagged"))
+                          .when(pl.col("k")).then(pl.lit("marker_only"))
+                          .when(pl.col("n")).then(pl.lit("noted"))
+                          .otherwise(pl.lit("pass")))
+                  .to_series().to_list())
+        category = columns.build(frame)["category"].to_list()
+        if "row" in frame.columns:
+            rows = frame["row"].to_numpy()
+        else:  # derived before rows were stored: the first row of each id
+            from plexora.server.utils.label_overlay import cell_ids
+
+            ids, keep = cell_ids(geometry, ds.schema.cell_id if ds.schema else None)
+            where = np.flatnonzero(keep)
+            first = {}
+            for position, cid in zip(where.tolist(), ids.tolist()):
+                first.setdefault(int(cid), position)
+            rows = np.asarray([first.get(int(c), -1) for c in frame["cell_id"].to_list()])
+        status_values = [None] * n
+        category_values = [None] * n
+        for row, word, cat in zip(rows.tolist(), status, category):
+            if 0 <= row < n:
+                status_values[row] = word
+                category_values[row] = cat or None
+        stamp = f"{result.get('result_id')}|{results.revision(ds.name, document)}"
+        present = sorted({c for c in category_values if c},
+                         key=lambda c: list(schemas.category_order()).index(c)
+                         if c in schemas.category_order() else 99)
+        out = {
+            "qc_status": {"label": "QC status", "values": status_values,
+                          "categories": list(ANNOTATION_STATUSES), "colors": dict(STATUS_COLORS),
+                          "fingerprint": stamp,
+                          "description": "excluded / flagged (kept, warned) / marker_only "
+                                         "(a marker unreliable, the cell kept) / noted / pass"},
+            "qc_category": {"label": "QC category", "values": category_values,
+                            "categories": present,
+                            "colors": {c: schemas.category_color(c) for c in present},
+                            "fingerprint": stamp,
+                            "description": "the category of the reason that flags the cell"},
+        }
+    with _CACHE_LOCK:
+        if len(_ANNOTATIONS) > _CACHE_MAX:
+            _ANNOTATIONS.clear()
+        if token is not None:
+            _ANNOTATIONS[key] = out
+    return out
+
+
+def annotations_factory():
+    return annotations

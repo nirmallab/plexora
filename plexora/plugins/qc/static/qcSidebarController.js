@@ -983,10 +983,17 @@ class QcSidebarController {
 
     toggleHidden(key) {
         // A row asked for while ROI QC is off is shown, and ROI QC with it.
-        if (this.hidden.has(key) || this.roiMuted) this.hidden.delete(key);
+        const showing = this.hidden.has(key) || this.roiMuted;
+        if (showing) this.hidden.delete(key);
         else this.hidden.add(key);
         this.roiMuted = false;
         this.saveHidden();
+        // An eye opened on cells: the cell layer is drawn on demand, and an
+        // eye on a layer nobody drew would show nothing.
+        if (showing && /^[qk]:/.test(key)) {
+            this.ctx.layers?.showCells?.();
+            this.ensureDrawn();
+        }
         this.redraw();
     }
 
@@ -1030,12 +1037,136 @@ class QcSidebarController {
         return (groups || []).filter((g) => g && g.level !== "marker");
     }
 
-    /** The QC reason groups and Segmentation QC's two, in one cell table. */
+    /** One group per category of the cells only a marker was flagged in
+     *  (excluded or warned for that channel, the cell kept): `m:<category>`,
+     *  drawn faint and last, so a whole-cell reason on the same cell wins.
+     *  Noted marker flags (a category switched off) are left out. */
+    static markerGroups(groups, colorOf) {
+        const byCategory = new Map();
+        for (const group of groups || []) {
+            if (!group || group.level !== "marker" || group.status === "noted") continue;
+            const key = group.category || "tissue_acquisition";
+            if (!byCategory.has(key)) byCategory.set(key, { ids: new Set(), words: "" });
+            const entry = byCategory.get(key);
+            for (const id of group.ids || []) entry.ids.add(id);
+            entry.words = entry.words || group.category_words || "";
+            entry.truncated = entry.truncated || Boolean(group.truncated);
+        }
+        return [...byCategory.entries()].map(([category, entry]) => ({
+            key: `m:${category}`, level: "marker_any", category,
+            category_words: entry.words, status: "note", reason: null,
+            label: "Markers flagged (cell kept)",
+            definition: "A marker of these cells is unreliable for them (excluded or "
+                + "flagged for that channel only): the cells themselves are kept",
+            color: colorOf ? colorOf(category) : null, ids: [...entry.ids],
+            count: entry.ids.size, bbox: null, truncated: Boolean(entry.truncated),
+        }));
+    }
+
+    /** The QC reason groups, the marker-only cells and Segmentation QC's two,
+     *  in one cell table. */
     setCellGroups() {
         this._cellIndex = null;
+        const groups = this.cellData && this.cellData.groups;
+        this._markerGroups = QcSidebarController.markerGroups(
+            groups, (key) => this.categoryColor(key));
         this.cellLayer.setGroups([
-            ...QcSidebarController.panelGroups(this.cellData && this.cellData.groups),
-            ...this.segmentation.groups()]);
+            ...QcSidebarController.panelGroups(groups),
+            ...this.segmentation.groups(),
+            ...this._markerGroups]);
+    }
+
+    /** A share of the table's cells as the panel writes it: "3.9%", "<0.1%". */
+    static percent(n, total) {
+        if (!total || !n) return "0%";
+        const share = (100 * n) / total;
+        if (share < 0.1) return "<0.1%";
+        return `${share >= 10 ? share.toFixed(0) : share.toFixed(1)}%`;
+    }
+
+    /** The categories the user switched off for exclusions. */
+    disabledCategories() {
+        return (this.cellData && this.cellData.disabled_categories)
+            || ((this.state || {}).exclusion_filter || {}).disabled_categories || [];
+    }
+
+    /** "Counts toward exclusions" off or on for one category: the whole set is
+     *  sent. Nothing is hidden or deleted; the category's cells become notes. */
+    async setCategoryExclusion(category, counts) {
+        const now = new Set(this.disabledCategories());
+        if (counts) now.delete(category);
+        else now.add(category);
+        const words = QcSidebarController.capital(this.categoryWords(category));
+        const done = await this.act("Changing what counts toward exclusions",
+            () => this.api.setCategoryExclusion([...now]));
+        if (!done) return;
+        const stats = (done.categories || {})[category] || {};
+        const n = stats.n_any || 0;
+        this.message(counts
+            ? `${words} counts toward exclusions again`
+            : `${words} no longer counts toward exclusions: its `
+                + `${n.toLocaleString()} cell${n === 1 ? "" : "s"} stay flagged, as notes`);
+        await this.reload();
+    }
+
+    /** "Save into file": the QC calls into the table this project was opened
+     *  from. Asked first, always; a 409 (an earlier save's columns) is asked
+     *  about again, and only that answer sends `replace`. */
+    async saveIntoFile() {
+        const confirm = window.PlexoraConfirm;
+        if (this._saving || !confirm) return;
+        const cells = this.cellData || {};
+        const words = QcSidebarController.tableWords(cells.table_kind) || "table";
+        const off = (cells.disabled_categories || []).map(
+            (c) => this.categoryWords(c)).join(", ");
+        const preset = (((this.state || {}).strictness) || {}).preset || "standard";
+        const go = await confirm.ask({
+            title: `Save into your ${words} file?`,
+            body: "Adds QC's columns to the table this project was opened from: "
+                + "plexora_qc_status (pass / flagged / excluded), plexora_qc_pass, one "
+                + "column per category, the reasons, the marker flags and the regions"
+                + (cells.table_kind === "anndata" || cells.table_kind === "spatialdata"
+                    ? ", and the flag frames in obsm and the settings in uns" : "")
+                + (cells.table_kind === "spatialdata"
+                    ? "; the regions as a shapes element (plexora_qc_regions)" : "")
+                + ". Rows of other images in the same file are left as they are, and the "
+                + "file is backed up first."
+                + `\n\nStrictness: ${preset}.`
+                + (off ? ` Not counting toward exclusions: ${off}.` : "")
+                + (cells.source_on_node ? "\n\nThe table is on a data node: it is "
+                    + "written there." : ""),
+            confirm: "Save", danger: false,
+        });
+        if (!go) return;
+        this._saving = true;
+        try {
+            let answer = await this.api.cellsWrite().catch(() => null);
+            if (answer && answer.status === 409) {
+                const replace = await confirm.ask({
+                    title: "Replace the earlier columns?",
+                    body: "This file already holds QC columns from an earlier save for this "
+                        + "image. Replace them? Nothing else in the file is touched.",
+                    confirm: "Replace",
+                });
+                if (!replace) return;
+                answer = await this.api.cellsWrite({ replace: true }).catch(() => null);
+            }
+            if (!answer || !answer.ok) {
+                this.message((answer && answer.data.error && answer.data.error.message)
+                    || "Could not save into the file");
+                return;
+            }
+            const written = answer.data.written || {};
+            this.message(`Saved ${(written.columns || []).length} columns for `
+                + `${(written.n_cells || 0).toLocaleString()} cells into your ${words} file`);
+        } finally {
+            this._saving = false;
+        }
+    }
+
+    static tableWords(kind) {
+        return { csv: "CSV", parquet: "Parquet", anndata: "AnnData",
+                 spatialdata: "SpatialData" }[kind] || null;
     }
 
     cellGroupVisible(group) {
@@ -1388,7 +1519,8 @@ class QcSidebarController {
             this.show("g:regions", spec.key);
             this.ctx.layers?.showCells?.();
             this.ensureDrawn();
-            this.fit(QcSidebarController.union(ref.map((g) => g.bbox)), 300);
+            const boxes = ref.map((g) => g.bbox).filter(Boolean);
+            if (boxes.length) this.fit(QcSidebarController.union(boxes), 300);
             this.redraw();
         }
     }
@@ -1602,13 +1734,22 @@ class QcSidebarController {
         }
         if (spec.kind === "cellcat") {
             const keys = (spec.ref || []).map((g) => `k:${g.key}`);
+            const category = spec.category;
+            const counts = !this.disabledCategories().includes(category);
             return [
                 { label: "Frame these cells", onSelect: () => this.activate(spec) },
                 hideItem(spec.key),
                 { label: "Show all", onSelect: () => {
-                    this.show("g:regions", spec.key, ...keys);
+                    this.show("g:regions", spec.key, ...keys, `k:m:${category}`);
                     this.redraw();
                 } },
+                { label: "Counts toward exclusions", className: "is-sectioned",
+                  checked: counts, disabled: !category || category === "background",
+                  hint: counts
+                      ? "Stop these cells being left out of gating and analyses: they stay "
+                          + "flagged, as notes, and nothing is deleted"
+                      : "Leave these cells out again",
+                  onSelect: () => this.setCategoryExclusion(category, !counts) },
             ];
         }
         if (spec.kind === "dismissed") {
@@ -1671,10 +1812,17 @@ class QcSidebarController {
         }
         const s = this.state || {};
         const hasResult = Boolean(s.summary);
+        const cells = this.cellData || {};
+        const words = QcSidebarController.tableWords(cells.table_kind);
         QcTree.menu(anchor, [
             { label: "Cells (CSV)", disabled: !this.cellData?.available,
-              hint: "Every cell's pass / warn / exclude call and its reasons",
+              hint: "Every cell's status (pass / flagged / excluded), a column per category, "
+                  + "its reasons and marker flags",
               onSelect: () => this.download("cells.csv") },
+            { label: "Cells (AnnData, obs only)", disabled: !this.cellData?.available,
+              hint: "The same as an .h5ad with no matrix, the flag frames in obsm: join it "
+                  + "onto your own AnnData by cell id",
+              onSelect: () => this.download("cells.h5ad") },
             { label: "Regions (GeoJSON)", disabled: !hasResult,
               hint: "The QC regions with their category, subtype, action and threshold",
               onSelect: () => this.download("regions.geojson") },
@@ -1689,6 +1837,12 @@ class QcSidebarController {
                                            && s.provenance.session_id),
               hint: "The session's report, in a new tab",
               onSelect: () => this.download("report.html") },
+            { label: words ? `Save into ${words} file…` : "Save into file…",
+              className: "is-sectioned", disabled: !cells.available || !words,
+              hint: words ? "Add QC's columns to the table this project was opened from "
+                  + "(asked first; backed up)"
+                  : "This project's cells are not in a file QC can write into",
+              onSelect: () => this.saveIntoFile() },
         ], { heading: "Download" });
     }
 
@@ -1983,9 +2137,11 @@ class QcSidebarController {
         // "ROI (12 regions · 1,204 cells out)" was more than the line could
         // hold beside + and the eye.
         node.textContent = `${nRegions} region${nRegions === 1 ? "" : "s"}`;
+        const pct = (n) => QcSidebarController.percent(n || 0, cells.n);
         node.title = `${regions.exclude || 0} excluding, ${regions.warn || 0} flagging`
-            + (cells.n ? `; ${cells.n_fail || 0} cells excluded, ${cells.n_warn || 0} flagged`
-                : "");
+            + (cells.n ? `; ${(cells.n_fail || 0).toLocaleString()} cells excluded `
+                + `(${pct(cells.n_fail)}), ${(cells.n_warn || 0).toLocaleString()} flagged `
+                + `(${pct(cells.n_warn)}) of ${cells.n.toLocaleString()} cells` : "");
     }
 
     /** Every row, in order, for QcTree. */
@@ -2005,6 +2161,14 @@ class QcSidebarController {
             if (!byCategory.has(key)) byCategory.set(key, []);
             byCategory.get(key).push(group);
         }
+        // The cells only a marker was flagged in: one row per category.
+        const markerOnly = new Map((this._markerGroups || []).map((g) => [g.category, g]));
+        for (const category of markerOnly.keys()) {
+            if (!byCategory.has(category)) byCategory.set(category, []);
+        }
+        const counted = (cells && cells.categories) || {};
+        const total = (cells && cells.n) || 0;
+        const disabled = new Set(this.disabledCategories());
         const cellCategories = [...byCategory.keys()].sort((a, b) => this.categoryRank(a)
             - this.categoryRank(b));
         const dismissedCells = ((cells && cells.dismissed) || [])
@@ -2018,9 +2182,11 @@ class QcSidebarController {
                        activatable: false, eye: true, menu: true,
                        title: cells && cells.available
                            ? `${regions.length} region${regions.length === 1 ? "" : "s"}; `
-                               + `${(cells.n_fail || 0).toLocaleString()} cells excluded, `
-                               + `${(cells.n_warn || 0).toLocaleString()} flagged, of `
-                               + `${(cells.n || 0).toLocaleString()}`
+                               + `${(cells.n_fail || 0).toLocaleString()} cells excluded `
+                               + `(${QcSidebarController.percent(cells.n_fail, total)}), `
+                               + `${(cells.n_warn || 0).toLocaleString()} flagged `
+                               + `(${QcSidebarController.percent(cells.n_warn, total)}), of `
+                               + `${total.toLocaleString()} cells`
                            : "",
                        hidden: hid("g:regions"), ownHidden: hid("g:regions") });
         }
@@ -2055,7 +2221,7 @@ class QcSidebarController {
                 const share = typeof region.refined_fraction === "number"
                     ? region.refined_fraction : region.tissue_fraction;
                 const tissue = typeof share === "number"
-                    ? ` · ${(share * 100).toFixed(1)}% of tissue` : "";
+                    ? ` · ${(share * 100).toFixed(1)}% of tissue area` : "";
                 const traced = QcSidebarController.tracedWords(region);
                 const drawn = (region.view_channels || []).map((v) => v.name);
                 const also = QcSidebarController.alsoWords(region);
@@ -2121,23 +2287,56 @@ class QcSidebarController {
         // hides all of its reasons.
         for (const category of cellCategories) {
             const members = byCategory.get(category);
+            const marker = markerOnly.get(category);
             const key = `q:${category}`;
             const failing = members.filter((g) => g.status === "fail");
             const warning = members.filter((g) => g.status === "warn");
-            const count = members.reduce((n, g) => n + (g.count || 0), 0);
-            const words = QcSidebarController.capital(members[0].category_words
-                || this.categoryWords(category));
-            const verb = failing.length ? "excluded" : warning.length ? "flagged" : "noted";
-            out.push({ key, level: 1, kind: "cellcat", ref: members,
-                       color: this.categoryEntry(category) ? this.categoryColor(category)
-                           : members[0].color || this.categoryColor(category),
-                       shape: failing.length ? "fill" : warning.length ? "ring" : "faint",
+            // Distinct cells (a cell with two reasons of one category is one
+            // cell), against every cell of the table: "% of cells", never
+            // the "% of tissue area" a region row gives.
+            const stats = counted[category];
+            const count = stats ? stats.n_any
+                : members.reduce((n, g) => n + (g.count || 0), 0) + (marker ? marker.count : 0);
+            const words = QcSidebarController.capital((members[0] || {}).category_words
+                || (marker || {}).category_words || this.categoryWords(category));
+            const off = disabled.has(category) || (stats && stats.enabled === false);
+            const parts = stats ? [
+                stats.n_excluded ? `${stats.n_excluded.toLocaleString()} excluded` : "",
+                stats.n_flagged ? `${stats.n_flagged.toLocaleString()} flagged` : "",
+                stats.n_marker_only ? `${stats.n_marker_only.toLocaleString()} with a marker `
+                    + "flagged (kept)" : "",
+                stats.n_noted ? `${stats.n_noted.toLocaleString()} noted` : "",
+            ].filter(Boolean).join(", ") : `${members.length} reason`
+                + `${members.length === 1 ? "" : "s"}`;
+            const color = this.categoryEntry(category) ? this.categoryColor(category)
+                : (members[0] || marker || {}).color || this.categoryColor(category);
+            out.push({ key, level: 1, kind: "cellcat", ref: members, category,
+                       color,
+                       shape: off ? "faint" : failing.length ? "fill" : warning.length ? "ring"
+                           : "faint",
                        label: `${words}: ${count.toLocaleString()} cell${count === 1 ? "" : "s"}`,
+                       note: total ? `${QcSidebarController.percent(count, total)} of cells` : "",
+                       tag: off ? "off" : "", tagTone: "plain",
                        expandable: true, eye: true, menu: true,
-                       title: `${words}: ${count.toLocaleString()} cell flags (${verb}) over `
-                           + `${members.length} reason${members.length === 1 ? "" : "s"}`,
+                       title: `${words}: ${count.toLocaleString()} of `
+                           + `${total.toLocaleString()} cells `
+                           + `(${QcSidebarController.percent(count, total)} of cells) — `
+                           + `${parts}`
+                           + (off ? ". Does not count toward exclusions: these cells are "
+                               + "noted, not left out" : ""),
                        hidden: hid("g:regions") || hid(key), ownHidden: hid(key) });
             for (const group of members) out.push(reasonRow(group));
+            if (marker) {
+                const markerKey = `k:${marker.key}`;
+                out.push({
+                    key: markerKey, level: 2, kind: "reason", ref: marker, color: marker.color,
+                    shape: "faint", label: marker.label,
+                    title: `${marker.label}: ${(marker.count || 0).toLocaleString()} cells — `
+                        + `${marker.definition}${marker.truncated ? " (list truncated)" : ""}`,
+                    tag: "kept", tagTone: "plain", count: marker.count, eye: true, menu: false,
+                    hidden: !this.cellGroupVisible(marker), ownHidden: hid(markerKey),
+                });
+            }
         }
 
         // Findings judged wrong and set aside: kept out of the counts above,

@@ -1111,7 +1111,9 @@ Entry points:
   when NO cell has a finite x/y ("no cell has a position"); a NaN position is
   tolerated (see `data_model`'s ball tree), and a NaN in a categorical
   celltype column becomes `""` rather than crashing polars. `classify.py` is the single marker-vs-metadata
-  predictor (it replaced three drifting denylists); `inspection.py` reads a
+  predictor (it replaced three drifting denylists; `is_likely_image_identifier_name`
+  never picks a `plexora_*` column, because one Plexora wrote annotates cells
+  and never names their image); `inspection.py` reads a
   not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
   `load_table` is split into `_read_frame()` + `_normalize()`, the same
   read/shape separation `memory_adapter.py` (below) reuses for a
@@ -2946,7 +2948,15 @@ deliberately left out and what should be built next.
   tell gating what QC already measured; `describe` adds `n_not_called`,
   `digest` and `channel_verdict` for a marker; the wire is `WIRE_VERSION` 2,
   and a version-1 payload still decodes. `ProjectData.not_called()`/
-  `.calls()` (`api/dataset.py`) are the plugin-facing form.
+  `.calls()` (`api/dataset.py`) are the plugin-facing form. `explain(ds,
+  cell_id)` asks each provider that has an `explain` attribute what it says
+  of one cell (`explain_cell`'s `qc` block). It is also the second seam, what a
+  plugin *says* of each cell rather than which it leaves out:
+  `Plugin.cell_annotations_factory` (`provider(ds) -> {name: {kind,
+  values (one per loaded row), categories, colors, label, fingerprint}}`),
+  merged by `annotations(ds)` and exposed as `ProjectData.annotations()`, is
+  how Cell Explorer colours by QC's `qc_status`/`qc_category` with no write
+  into the user's file and no import of the plugin.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
@@ -3001,7 +3011,9 @@ deliberately left out and what should be built next.
   `render_cell_gallery` and `explain_cell`, the two capabilities that put
   actual cell-image pixels in an agent's hands (`rendered_pixels` egress, the
   most permissive class); the gallery selects among QC-passed cells only
-  (`agent/cell_exclusions.py`). `agent/plots.grid` lays the gallery out;
+  (`agent/cell_exclusions.py`), and `explain_cell` takes a `qc` mode and
+  returns a `qc` block (`cell_exclusions.explain`: left out or not, the
+  markers it is not called for, each provider's reasons). `agent/plots.grid` lays the gallery out;
   `agent/render.roi_features`/`rois_containing` answer "which ROI is this
   cell in" from the same shapely polygons the ROI plugin edits.
 - `agent/tokens.py` — bearer tokens for the HTTP transport, stored as sha256
@@ -3748,13 +3760,22 @@ deliberately left out and what should be built next.
   property of the regions GeoJSON, an `agent: ...` line in the ROI's notes
   (`roi_link.agent_note`), and `notes` in `get_qc_results`' `cell_reasons`,
   `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
-  `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs, one of the
+  `qc_cell_rois` tables, each pair keeping the `geometry_hash` it was read
+  under; `lock()` also holds an advisory `qc.lock` file for its outermost
+  hold, because a server and a headless `plexora ai run qc` are two processes;
+  the document gained `exclusion_filter` (`disabled_categories`) and the
+  `source_writes` ledger, `record_source_write`/`last_source_write`, which is
+  what the SCIMAP Pro hand-off may point at), `roi_link.py` (QC regions are ROIs, one of the
   five categories (`qc_<category>`, `qc_review`) with the class as its
   subtype in `roi_meta`/notes — see Key Invariants; `migrate_categories`
   moves a project's pre-categories `qc_<class>` regions into the five on
   first write, keeping each region's class; a region drawn by hand as a
   named subtype carries `qc-class:<class>` in its notes until QC adopts
-  it; after consolidation cells follow each finding, not the merged ROI:
+  it, and a `qc-channels:` token (`all_channels`, `cycle 2`, `CD3, CD8`)
+  scopes a hand-drawn region's channels, which are otherwise every channel,
+  because the view it was drawn in is provenance, never scope;
+  `membership_hash` is the hash incremental pairs are kept by;
+  after consolidation cells follow each finding, not the merged ROI:
   `membership_meta`/`membership_regions` give a finding's own class,
   channels and action, membership keys are `<roi id>#<n>` and `parent_of`
   maps one back to its ROI; a whole-cycle registration shift and a failed
@@ -3763,7 +3784,20 @@ deliberately left out and what should be built next.
   cell; a polygon drawn in "QC: Background" is adopted as `note`, and the
   Background ROI renamed "QC exclude: ..." is the user excluding its
   cells), `propagate.py` (ROI-to-cell-mask overlap with a centroid
-  fallback), `cells/` (`calls.derive` — per-cell calls from the regions,
+  fallback; the fraction's denominator is the cell's whole area
+  (`cells/areas.py`, one bincount pass per mask cached per mask fingerprint
+  under `label_areas/`), not the part inside the region's box, so a large
+  cell the box cuts is not read as mostly inside; a region with a `labels`
+  solid takes exactly the cells it names, `method="labels"`), `cells/`
+  (`inputs.py` fingerprints what the calls were derived from — mask, table,
+  pixel size, transform, cells version (`MAPPING`: every pair re-read) and
+  Segmentation QC/DNA retention (`DIRECT`: flags re-read, no mask) — from
+  stats and record fields only, so `exclusions._stale` can ask on every
+  estimate; `columns.py` is the one per-cell column builder every export
+  writes (`status` pass/flagged/excluded, one column per category with its
+  strongest status excluded > flagged > channel > noted, `source`
+  auto/manual/ai/mixed; `COLUMNS_VERSION` "2"), so cells.csv, the source
+  write and cells.h5ad cannot disagree; `calls.derive` — per-cell calls from the regions,
   the channel-level verdicts, Segmentation QC's calls (`seg`: `seg_under`/
   `seg_over` noted, `seg_small`/`seg_large` warned or excluded where
   `area.size_alone`, `seg_irregular` warned) and DNA retention's (`dna`:
@@ -3773,7 +3807,15 @@ deliberately left out and what should be built next.
   Segmentation QC or DNA retention result is left out with a
   `seg_flags_stale`/`dna_flags_stale` warning; `strictness.RETIRED_KEYS`
   drops retired keys from a saved custom table rather than refusing it;
-  `calls.write_for_active` stamps
+  a category switched off (`exclusion_filter`, `set_qc_categories`) keeps
+  every finding but demotes its reasons to notes and its marker flags to
+  `note`, a dismissal beating the switch beating the preset; the frame
+  carries `row` (each call's row in the table as loaded, repeated ids and
+  all) and `category_status`, the summary `by_category` distinct counts,
+  computed from the same masks so no reader recounts reasons; a region whose
+  `geometry_hash` is unchanged keeps its stored pairs and only new or
+  changed regions are read from the mask, unless a `MAPPING` input changed
+  (`CELLS_VERSION` "7"); `calls.write_for_active` stamps
   `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
   moved since makes the calls detectably stale), `tissue.py` (the one
   definition of tissue: `estimate` wraps `scan.tissue_estimate` and adds the
@@ -3802,7 +3844,11 @@ deliberately left out and what should be built next.
   `plugins/qc/__init__.py`: it turns the active calls into an
   `ExclusionRecord` for a mode, and re-derives calls that are stale or
   missing — sync + `write_for_active` — on demand, so gating never estimates
-  on calls the ROIs have outrun; the free capability `get_qc_exclusions`
+  on calls the ROIs have outrun — or the inputs: a mask replaced on disk
+  makes the calls stale with no region drawn; the provider object also
+  answers `explain`, and `annotations` is QC's `cell_annotations_factory`
+  (`qc_status` excluded/flagged/marker_only/noted/pass, `qc_category`); the
+  free capability `get_qc_exclusions`
   reports the same record by reason and marker), `digest.py` (what fills the
   record's `notes`/`verdict`: `marker_digest`, a fixed-order `key=value; ...`
   line of at most `MAX_CHARS` 300, templated never prose, so the same stored
@@ -3814,16 +3860,34 @@ deliberately left out and what should be built next.
   because a real epithelial edge looks the same, and a broad background
   calibrated against the panel's other channels, a finding only, because a
   warning on every cell would take the marker out of every fit), `export.py`, `source_write.py`
-  (both now also carry Segmentation QC's `seg_qc_*` cell columns;
+  (both write `cells/columns.py`'s columns — `plexora_qc_`-prefixed in the
+  source write — plus Segmentation QC's `seg_qc_*` cell columns;
   `export.py` also writes `qc_provenance.json`/`qc_findings.csv` via
-  `provenance.py`, and `cells.csv` gained `qc_category`/`categories`/
-  `flag_source` and `noted`; `source_write.py` adds obs `plexora_qc_category`,
-  `plexora_qc_noted` and `plexora_qc_background`; every export keeps every
+  `provenance.py`, and `what="anndata"` writes `cells.h5ad`, an obs-only
+  AnnData (no X) with the obsm frames and `uns["plexora_qc"]`, joined on
+  `cell_id`; `source_write.py` is `gather` (reads QC's store on the primary
+  into a payload, frames as base64 Parquet) and `apply`, run through the
+  `qc.write_cells` table operation (`tableops.py`, via `ds.table.run`, so a
+  node's table is written on the node), then `write` records the ledger
+  entry; rows are placed by `row` with an id check, a shared AnnData has
+  only this image's rows touched, the flat file or `obs` is backed up first,
+  and it adds obsm `plexora_qc_marker_warn` and `uns["plexora_qc"]` version
+  "2" keyed by image id; `spatialdata_write.py` checks the table's
+  `instance_key` against the loaded ids before any write and writes the
+  regions as a `plexora_qc_regions` shapes element mapped through the
+  labels element's composed transform, replacing only this image's rows of
+  an element QC itself wrote (`producer` `plexora_qc`, via ROI's
+  `adapters.write_shapes_element`); every export keeps every
   input row), `report.py` (the Channels table carries the audit's verdict,
   class and reason — the staining output; the Cells table counts excluded,
   warned and noted per reason; marker flags as counts only; a "DNA
   retention by cycle" section), `routes.py`
-  (`POST /plugins/qc/regions/refine`; also the routes for the four free
+  (`POST /plugins/qc/regions/refine`; `POST /plugins/qc/cells/write` (the
+  panel's confirmed "Save into file", `write_qc_to_source` with
+  `allow_source_writes`) and `POST /plugins/qc/categories/exclusion` (the
+  whole disabled set, `set_qc_categories`; not `/categories`, which makes a
+  category to draw in); the download route serves `cells.h5ad` too, and asks
+  `export_qc` only for the `what` the file needs; also the routes for the four free
   image checks below (including `/plugins/qc/blur[, /map, /mask, /run, /set,
   /clear, /regions/write]` and `/plugins/qc/artifacts[, /objects, /run, /set,
   /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
@@ -3955,7 +4019,10 @@ deliberately left out and what should be built next.
   (`threshold_source: user_relative`), bounded by `adjust_max_steps` either
   way. `write_blur_regions`
   writes the blurred regions as `qc_blur_focus` ROIs (`created_by`/
-  `detector` `"blur"`, `severity` `None`) with their action pinned via
+  `detector` `"blur"`, `severity` `None`), each scoped to the measured
+  channel's whole cycle when `cycles.resolved` holds (the user's groups or
+  inferred), else to that channel alone, because focus is set per
+  acquisition (the session's `check_candidates` follows the same rule), with their action pinned via
   `user_state.approved` so a strictness change never renames them; rewriting
   bulk-deletes any unedited blur ROI first, and each region's write returns
   its own child receipt. The nuclear-channel rule
@@ -3964,7 +4031,12 @@ deliberately left out and what should be built next.
   `capabilities.py` is the Free tier (`ai:qc:analytics`) plus the new Pro
   `sample_qc_examples` (also `ai:qc:analytics`: places sampled across a
   check's score distribution, one row per part of it, to judge by eye —
-  built on `score_review.py` above);
+  built on `score_review.py` above); its `set_qc_categories`
+  (`qc.set_categories`, Free, receipted, the undo the previous set) takes
+  the whole set of categories that do not count toward exclusions — the
+  Background is refused, being a note already — and re-derives the calls;
+  `export_qc` gained `what="anndata"`, and `write_qc_to_source` now writes a
+  SpatialData table plus its shapes element and a node-hosted table too;
   `capabilities_session.py` is Pro (`ai:qc:session`, including `refine_roi` ->
   `refine_qc_roi`, and the session options `refine`/`refine_margin_um`, env
   `PLEXORA_QC_REFINE`, plus `plan_checks` for the session's new `check` unit
@@ -4067,7 +4139,11 @@ deliberately left out and what should be built next.
   channel and preview sheets and the frame mapping; set
   `PLEXORA_VISUAL_DUMP=<folder>` to keep the PNGs for a person to look at),
   `test_qc_visual_session.py` (3 tests: the pass inside a session),
-  `test_qc_segment_tool.py`), `tests/test_presets_nuclear.py`,
+  `test_qc_segment_tool.py`, `test_qc_cells_derive.py` (whole-area
+  fractions, the category switch, incremental pairs, inputs, `qc-channels:`,
+  blur by cycle), `test_qc_cells_exports.py` (source writes, cells.h5ad,
+  `explain_cell`, the ROI count, annotations, the hand-off),
+  `test_qc_columns.py`), `tests/test_presets_nuclear.py`,
   `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`
   (including the hover card's `cell_at`, by mask and by nearest centroid),
   `plexora/plugins/qc/tests/test_segmentation_qc.py` (11 tests),
@@ -4094,7 +4170,10 @@ deliberately left out and what should be built next.
   serves the tighten-from-itself test and the glass refusal); bench
   `plexora/ai/bench_qc.py` (`plexora ai bench qc`; its oracle and
   `tests/test_qc_session.py`'s `QCOracle` answer `visual_scan` with
-  `nothing_found`).
+  `nothing_found`; a scene's truth splits out `bad_marker_cells` — an
+  out-of-focus region in a cycle the cells were not segmented from leaves
+  them standing with that cycle's markers unreliable — scored as
+  `marker_recall`/`marker_precision` beside the cell metrics).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
   marker vocabulary automatic gating grounds its biology in (packaged via
   `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
@@ -4435,7 +4514,14 @@ deliberately left out and what should be built next.
   child receipt per project, `<op>.001`, `<op>.002`, … under the parent
   operation id, so a multi-project gate apply is auditable per project.
   ROI's headless path is `plugins/roi/server/service.py`, through the same
-  revision-checked `ROIRepository.apply` the panel's autosave uses. Both:
+  revision-checked `ROIRepository.apply` the panel's autosave uses;
+  `count_cells_in_roi` takes a `qc` mode and adds `n_qc_excluded`/
+  `n_cells_passing` and the `qc` block beside the region's count, never
+  removing a cell from it. ROI's `adapters._assign_column` keys a file's obs
+  by the raw id column under a table correction (the corrected ids would
+  match the neighbouring row), and `adapters.write_shapes_element` is the
+  one shapes writer, replacing an existing element only when asked and only
+  when every row's `producer` is the caller's. Both:
   setting a gate/ROI never touches the source file, and every write is a
   `Receipt`.
 - `tests/agent_fixtures.py` (`make_synthetic_project`, `local_handles` — an
@@ -9822,7 +9908,17 @@ in **5.6 s**.
   (`noted_by`, `background`, `plexora_qc_background`); only the user's
   renaming to exclude or `approve_qc_roi(action="exclude")` removes them.
   `cells.csv`, the source write and every other export carry one row per
-  input cell, flagged by annotation columns, never by dropping rows.
+  input cell, flagged by annotation columns, never by dropping rows. A
+  source write places each call by its stored `row` and refuses when the
+  table's ids there are not the ones the calls were made for, and in a file
+  shared by several images it touches only this image's rows, because a
+  write into the user's file that lands on the neighbouring cell is worse
+  than none.
+- **Switching a QC category off never deletes a finding.** A category in
+  `exclusion_filter.disabled_categories` has its reasons recorded as notes
+  in `cells.calls`, so its cells stay listed, drawn and exported while
+  nothing leaves them out; turning it back on is a re-derive from the stored
+  pairs, not a re-run.
 - **Cross-cycle checks need a resolved cycle assignment.**
   `cycles.resolved` (confidence >= `RESOLVED_CONFIDENCE`, 0.9) gates the
   Registration Check and the scan's registration and `tissue_loss` detectors
