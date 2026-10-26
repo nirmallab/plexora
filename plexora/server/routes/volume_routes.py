@@ -965,6 +965,28 @@ def volume_perf(datasource):
 _PERF_PROVIDERS: dict = {}
 
 
+def _remote_perf(_datasource) -> dict:
+    """The chunk cache over remote files (https, gs, sftp ...): what this
+    process downloaded, each open store's hits and misses, and what the disk
+    cache holds."""
+    from plexora.server.utils import remote_store
+
+    return {"bytes_fetched": remote_store.bytes_fetched(),
+            "stores": [{"url": store.root_url,
+                        **dict(store.stats)} for store in remote_store.open_stores()],
+            "disk": remote_store.cache_index().usage()}
+
+
+def _sftp_perf(_datasource) -> dict:
+    """What each files-only server's SFTP conversation has carried."""
+    from plexora.server.utils import sftp
+
+    return sftp.stats()
+
+
+_PERF_PROVIDERS.update(remote=_remote_perf, sftp=_sftp_perf)
+
+
 @app.route('/volume/<string:datasource>/section', methods=['GET'])
 def section_geometry(datasource):
     """What a section pane's tile source needs for `view=xzy<y>` / `yzx<x>`:

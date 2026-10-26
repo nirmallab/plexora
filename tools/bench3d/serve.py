@@ -35,28 +35,34 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def server_env(data: Path, extra: dict | None = None, root: Path | None = None) -> dict:
-    home = data.parent / "home"
-    home.mkdir(parents=True, exist_ok=True)
+def server_env(data: Path, extra: dict | None = None, root: Path | None = None,
+               real_home: bool = False) -> dict:
+    """The server's environment. `real_home` keeps the user's HOME -- their
+    ssh keys and config, which a server that opens ssh connections (a data
+    node's tunnel, a files-only server) needs -- while the data root still
+    points into the bench directory."""
     env = dict(os.environ)
+    if not real_home:
+        home = data.parent / "home"
+        home.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = str(home)
     env.update({
         "PYTHONPATH": str(root or ROOT),
         "PLEXORA_DATA_PATH": str(data),
-        "HOME": str(home),
         "PLEXORA_TESTING": "1",
         "PLEXORA_TELEMETRY": "off",
         "DO_NOT_TRACK": "1",
         "PYTHONUNBUFFERED": "1",
     })
-    if os.name == "nt":
+    if os.name == "nt" and not real_home:
         # Windows ignores HOME: platformdirs (the settings file, and with it
         # the viewer prefs a run writes) resolves the known folders from the
         # profile -- %USERPROFILE%\AppData\Local\plexora -- so the profile and
         # its two AppData folders move into the scratch home too.
         env.update({
-            "USERPROFILE": str(home),
-            "LOCALAPPDATA": str(home / "AppData" / "Local"),
-            "APPDATA": str(home / "AppData" / "Roaming"),
+            "USERPROFILE": env["HOME"],
+            "LOCALAPPDATA": str(Path(env["HOME"]) / "AppData" / "Local"),
+            "APPDATA": str(Path(env["HOME"]) / "AppData" / "Roaming"),
         })
     env.update(extra or {})
     return env
@@ -75,7 +81,7 @@ def wait_up(port: int, timeout: float = 90.0) -> bool:
 
 
 def start(data: Path, port: int = 0, extra: dict | None = None, python: str | None = None,
-          root: Path | None = None) -> dict:
+          root: Path | None = None, real_home: bool = False) -> dict:
     """Serve `data` from the checkout at `root` (default: this one)."""
     root = Path(root).expanduser().resolve() if root else ROOT
     data = Path(data).expanduser().resolve()
@@ -89,7 +95,7 @@ def start(data: Path, port: int = 0, extra: dict | None = None, python: str | No
     with open(log, "w", encoding="utf-8") as handle:
         process = subprocess.Popen(
             [python or sys.executable, str(root / "run.py"), str(port)],
-            cwd=str(root), env=server_env(data, extra, root), stdout=handle,
+            cwd=str(root), env=server_env(data, extra, root, real_home), stdout=handle,
             stderr=subprocess.STDOUT, **group)
     if not wait_up(port):
         stop(process.pid)
