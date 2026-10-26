@@ -58,3 +58,18 @@ reason = "zbus_names via zbus (Linux D-Bus); waits on Tauri's zbus bump."
 id = "RUSTSEC-2026-0372"
 ignoreUntil = 2027-01-31
 reason = "zvariant_derive via zbus (Linux D-Bus); waits on Tauri's zbus bump."
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0367"
+ignoreUntil = 2027-01-31
+reason = "zip 4 via tauri-plugin-updater (Windows only; 2.14.0, the latest, still requires zip ^4). It extracts only update archives whose minisign signature has already verified, and the updater is off until PLEXORA_UPDATER_PUBKEY is set."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0368"
+ignoreUntil = 2027-01-31
+reason = "zip 4 via tauri-plugin-updater (Windows only; 2.14.0, the latest, still requires zip ^4). It extracts only update archives whose minisign signature has already verified, and the updater is off until PLEXORA_UPDATER_PUBKEY is set."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0369"
+ignoreUntil = 2027-01-31
+reason = "zip 4 via tauri-plugin-updater (Windows only; 2.14.0, the latest, still requires zip ^4). It extracts only update archives whose minisign signature has already verified, and the updater is off until PLEXORA_UPDATER_PUBKEY is set."
+
